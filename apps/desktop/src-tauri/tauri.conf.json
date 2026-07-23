@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MSCanvas",
+  "version": "0.1.0",
+  "identifier": "org.mscanvas.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "MSCanvas",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 960,
+        "minHeight": 640,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "capabilities": [
+        "main-capability"
+      ],
+      "csp": {
+        "default-src": "'self' customprotocol: asset:",
+        "connect-src": "ipc: http://ipc.localhost",
+        "font-src": "'self' data:",
+        "img-src": "'self' asset: http://asset.localhost blob: data:",
+        "style-src": "'self' 'unsafe-inline'"
+      },
+      "devCsp": {
+        "default-src": "'self' http://127.0.0.1:1420 customprotocol: asset:",
+        "connect-src": "ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420",
+        "font-src": "'self' data:",
+        "img-src": "'self' http://127.0.0.1:1420 asset: http://asset.localhost blob: data:",
+        "style-src": "'self' 'unsafe-inline' http://127.0.0.1:1420",
+        "script-src": "'self' http://127.0.0.1:1420"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Science",
+    "shortDescription": "A modern workspace for mass spectrometry data.",
+    "longDescription": "MSCanvas is a local-first mass spectrometry viewer, converter and scientific figure workspace."
+  }
+}

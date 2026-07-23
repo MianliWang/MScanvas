@@ -1,0 +1,27 @@
+name: Windows desktop smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+      - name: Enable pinned pnpm
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.15.1 --activate
+      - name: Install Rust
+        shell: pwsh
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - run: pnpm install --no-frozen-lockfile
+      - name: Build Tauri application
+        run: pnpm tauri build --no-bundle

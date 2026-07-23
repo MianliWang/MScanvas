@@ -1,0 +1,28 @@
+name: UX research finding
+description: Record a synthesized workflow/usability finding without sensitive raw recordings.
+title: "[UX]: "
+labels: [ux, research]
+body:
+  - type: textarea
+    id: task
+    attributes:
+      label: Task and prototype/version
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Observed evidence
+      description: Completion, confusion, quote paraphrases, errors and affected participants. Avoid personal identifiers.
+    validations:
+      required: true
+  - type: textarea
+    id: implication
+    attributes:
+      label: Product implication or hypothesis
+    validations:
+      required: true
+  - type: textarea
+    id: next
+    attributes:
+      label: Next validation or change

@@ -1,0 +1,55 @@
+# JavaScript
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.pnpm-store/
+
+# Rust
+/target/
+**/target/
+
+# Tauri
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/.cargo/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Test and tooling
+playwright-report/
+test-results/
+.vitest/
+.tmp/
+.cache/
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Local data and scientific fixtures
+*.raw
+*.RAW
+*.wiff
+*.wiff2
+*.d/
+*.mzML
+*.mzXML
+*.mgf
+local-data/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.pfx
+*.p12
+
+# Logs
+*.log

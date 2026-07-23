@@ -1,0 +1,19 @@
+[package]
+name = "mscanvas-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "mscanvas_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+mscanvas-core = { path = "../../../crates/core" }
+serde.workspace = true
+tauri.workspace = true

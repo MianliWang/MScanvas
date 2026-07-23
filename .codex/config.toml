@@ -1,0 +1,10 @@
+# Project-local Codex defaults. Loaded only after the repository is trusted.
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+# The source-of-truth proposal is intentionally comprehensive.
+project_doc_max_bytes = 131072
+project_root_markers = [".git", "Cargo.toml", "pnpm-workspace.yaml", "PROJECT_PROPOSAL.md"]
+
+[sandbox_workspace_write]
+network_access = false

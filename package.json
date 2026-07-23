@@ -1,0 +1,30 @@
+{
+  "name": "mscanvas-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A modern open-source workspace for mass spectrometry data.",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@11.15.1",
+  "engines": {
+    "node": ">=22.12.0",
+    "pnpm": ">=11.15.1"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @mscanvas/desktop dev",
+    "tauri": "pnpm --filter @mscanvas/desktop tauri",
+    "build": "pnpm --filter @mscanvas/desktop build",
+    "lint": "pnpm --filter @mscanvas/desktop lint",
+    "typecheck": "pnpm --filter @mscanvas/desktop typecheck",
+    "test": "pnpm --filter @mscanvas/desktop test",
+    "check:repo": "python scripts/check_repo.py",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm check:repo"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MianliWang/MScanvas.git"
+  },
+  "homepage": "https://github.com/MianliWang/MScanvas#readme",
+  "bugs": {
+    "url": "https://github.com/MianliWang/MScanvas/issues"
+  }
+}
