@@ -45,6 +45,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
     "category": "Science",
     "shortDescription": "A modern workspace for mass spectrometry data.",
     "longDescription": "MSCanvas is a local-first mass spectrometry viewer, converter and scientific figure workspace."

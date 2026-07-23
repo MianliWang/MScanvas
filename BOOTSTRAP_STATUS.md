@@ -21,11 +21,66 @@
 - Dependency-free repository validation completed.
 - GitHub repository created at `MianliWang/MScanvas`.
 - Initial source tree synchronized to the `main` branch.
+- Deterministic Node, pnpm and Rust versions documented and enforced by repository
+  validation.
+- `pnpm-lock.yaml` and `Cargo.lock` generated and committed for frozen/locked use.
+- Frontend lint, typecheck, tests and production build verified on Windows.
+- Rust format, Clippy and workspace tests verified on Windows.
+- Tauri's Windows icon prerequisite repaired and a release desktop executable built.
+- The mock shell's main-window capability audited and narrowed to no Tauri core API
+  permissions.
 
 The original local bootstrap commit is documented in
 [`docs/development/INITIALIZATION_REPORT.md`](docs/development/INITIALIZATION_REPORT.md).
 The GitHub commit SHA may differ because the source tree was transferred through the
 GitHub API after the remote repository was created.
+
+## Verified toolchain
+
+| Component | Repository contract | First verified local runtime |
+| --- | --- | --- |
+| Node.js | `22.23.1` in `.node-version`; minimum `22.13.0` | `22.15.1` |
+| pnpm | `11.15.1` | `11.15.1` |
+| Rust | `1.97.1` with rustfmt and Clippy | `1.97.1` |
+| Python | dependency-free repository checker | `3.14.3` |
+
+CI reads the exact Node version from `.node-version`. Local bootstrap accepts newer
+compatible Node 22 releases while enforcing pnpm and Rust exactly.
+
+## Bootstrap failures repaired
+
+- GitHub Actions could not activate pnpm because the Corepack bundled with the old
+  Node pin rejected pnpm's current signing key. CI and bootstrap now install the
+  exact pnpm version through npm and verify it before use.
+- Rust CI reached Tauri's build script before Clippy and failed because the required
+  Windows icon did not exist. A repository-owned neutral source icon plus generated
+  PNG/ICO outputs now make the desktop build deterministic. The artwork is a
+  bootstrap placeholder, not final product branding.
+- Once dependency installation was unblocked, the frontend exposed real bootstrap
+  defects in Vitest setup and an obsolete explicit esbuild minifier selection. The
+  tests now import their APIs and clean up deterministically, and Vite uses its
+  built-in Oxc minifier.
+
+No Rust source lint suppression or Clippy weakening was required.
+
+## Windows validation completed on 2026-07-23
+
+| Command | Result |
+| --- | --- |
+| `pnpm install --frozen-lockfile` | Passed |
+| `pnpm lint` | Passed |
+| `pnpm typecheck` | Passed |
+| `pnpm test` | Passed (2 frontend tests) |
+| `pnpm build` | Passed |
+| `cargo fmt --all --check` | Passed |
+| `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | Passed |
+| `cargo test --locked --workspace --all-targets` | Passed (5 Rust tests) |
+| `python -B scripts/check_repo.py` | Passed |
+| `pwsh -NoProfile -File .\\scripts\\bootstrap.ps1` | Passed end to end |
+| `pnpm tauri build --no-bundle` | Passed; produced a Windows release executable |
+
+The desktop executable was built but not launched. This record therefore does not
+claim a rendered Windows runtime smoke test.
 
 ## Validation completed during repository initialization
 
@@ -39,28 +94,21 @@ GitHub API after the remote repository was created.
 
 ## Intentionally pending
 
-The bootstrap execution environment did not have the pinned Rust toolchain and could
-not reach the configured npm registry. Consequently:
-
-- `pnpm-lock.yaml` has not been generated;
-- `Cargo.lock` has not been generated;
-- frontend lint, typecheck, tests and production build have not been executed;
-- Rust format, Clippy and tests have not been executed;
-- Tauri desktop launch has not been verified on Windows;
-- real ProteoWizard discovery, RAW preview and conversion spikes have not run.
-
-The first toolchain-enabled Windows setup should install dependencies, run all checks,
-commit both lockfiles and update this file with the verified results.
+- Launch and interact with `pnpm tauri dev` on Windows; a build alone is not a
+  rendered runtime check.
+- Run real ProteoWizard discovery, RAW preview and conversion spikes against an
+  independently installed, licensed backend and representative acquisition data.
+- Enable branch protection after the first green remote CI run.
 
 ## First verified-bootstrap checklist
 
 - [x] Create `MianliWang/MScanvas` on GitHub.
 - [x] Synchronize the initialized source tree to `main`.
-- [ ] Install pnpm and the Rust toolchain declared by this repository.
-- [ ] Run `pnpm install` and commit `pnpm-lock.yaml`.
-- [ ] Run `cargo generate-lockfile` and commit `Cargo.lock`.
-- [ ] Run all frontend and Rust checks.
+- [x] Install pnpm and the Rust toolchain declared by this repository.
+- [x] Run `pnpm install` and commit `pnpm-lock.yaml`.
+- [x] Run `cargo generate-lockfile` and commit `Cargo.lock`.
+- [x] Run all frontend and Rust checks.
 - [ ] Run `pnpm tauri dev` on Windows.
-- [ ] Confirm Tauri capability configuration remains minimal.
+- [x] Confirm Tauri capability configuration remains minimal.
 - [ ] Complete the M0 ProteoWizard preview/conversion technical spike.
 - [ ] Enable branch protection after the first green CI run.

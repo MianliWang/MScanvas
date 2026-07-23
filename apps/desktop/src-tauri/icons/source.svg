@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Bootstrap placeholder only; this is not a final MSCanvas branding decision. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">MSCanvas bootstrap icon</title>
+  <desc id="description">A neutral mass-spectrum trace used for pre-alpha desktop builds.</desc>
+  <rect width="512" height="512" rx="104" fill="#0f172a"/>
+  <path d="M88 392H424" fill="none" stroke="#cbd5e1" stroke-linecap="round" stroke-width="20"/>
+  <path d="M120 376V292M184 376V212M248 376V120M312 376V260M376 376V176" fill="none" stroke="#38bdf8" stroke-linecap="round" stroke-width="24"/>
+  <circle cx="248" cy="120" r="18" fill="#f472b6"/>
+</svg>

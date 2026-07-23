@@ -39,7 +39,7 @@
 - Source ZIP extraction and validation.
 - Git bundle verification, clone and validation.
 
-## Pending in a toolchain-enabled Windows environment
+## Pending at initialization
 
 - `pnpm install` and creation of `pnpm-lock.yaml`.
 - `cargo generate-lockfile` and creation of `Cargo.lock`.
@@ -47,6 +47,10 @@
 - Rust format, Clippy and tests.
 - Tauri development/build smoke test.
 - Real ProteoWizard discovery, `msaccess` preview and `msconvert` execution spikes.
+
+These bullets record the state of the original initialization, not the current
+repository state. Later verified bootstrap results and remaining work are tracked in
+[`BOOTSTRAP_STATUS.md`](../../BOOTSTRAP_STATUS.md).
 
 ## Remote synchronization note
 

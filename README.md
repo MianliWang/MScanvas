@@ -32,12 +32,15 @@ This bootstrap includes:
 - repo-local Codex guidance and skills;
 - frontend, Rust and repository-quality CI workflows.
 
-Dependency installation could not be completed in the bootstrap environment, so lockfiles are intentionally pending. See [`BOOTSTRAP_STATUS.md`](BOOTSTRAP_STATUS.md).
+The first Windows bootstrap now has committed pnpm and Cargo lockfiles, frozen/locked
+CI installs and a deterministic desktop build prerequisite. See
+[`BOOTSTRAP_STATUS.md`](BOOTSTRAP_STATUS.md) for the commands actually verified and
+the remaining runtime/backend work.
 
 ## Development prerequisites
 
-- Node.js 22.12 or newer;
-- pnpm 11.15.1 through Corepack;
+- Node.js 22.13 or newer (`.node-version` pins the CI runtime);
+- pnpm 11.15.1 installed through npm;
 - Rust 1.97.1 through rustup;
 - Windows 10/11 for the supported desktop target;
 - ProteoWizard installed separately for real vendor-data conversion.
@@ -45,12 +48,14 @@ Dependency installation could not be completed in the bootstrap environment, so 
 ## Getting started
 
 ```powershell
-corepack enable
-corepack prepare pnpm@11.15.1 --activate
+npm install --global --no-audit --no-fund pnpm@11.15.1
 rustup toolchain install 1.97.1 --component rustfmt clippy
-pnpm install
+pnpm install --frozen-lockfile
 pnpm dev
 ```
+
+For a fail-closed installation and complete local check pass, run
+`pwsh -File .\scripts\bootstrap.ps1` from the repository root.
 
 To launch the Tauri desktop host:
 
@@ -61,12 +66,15 @@ pnpm tauri dev
 Run repository checks:
 
 ```powershell
+pnpm install --frozen-lockfile
+pnpm lint
 pnpm typecheck
 pnpm test
+pnpm build
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace
-python scripts/check_repo.py
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace --all-targets
+python -B scripts/check_repo.py
 ```
 
 ## Repository map
