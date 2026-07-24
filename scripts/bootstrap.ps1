@@ -2,6 +2,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $MinimumNodeVersion = [version]"22.13.0"
+$NodeMajorVersion = 22
 $PnpmVersion = "11.15.1"
 $RustToolchain = "1.97.1"
 
@@ -21,8 +22,8 @@ function Assert-NativeSuccess {
 $NodeVersionText = (& node --version).Trim()
 Assert-NativeSuccess -Step "Read Node.js version" -ExitCode $LASTEXITCODE
 $NodeVersion = [version]$NodeVersionText.TrimStart([char]"v")
-if ($NodeVersion -lt $MinimumNodeVersion) {
-    throw "Node.js $MinimumNodeVersion or newer is required; found $NodeVersion."
+if ($NodeVersion -lt $MinimumNodeVersion -or $NodeVersion.Major -ne $NodeMajorVersion) {
+    throw "Node.js >=$MinimumNodeVersion <23 is required; found $NodeVersion."
 }
 
 Write-Host "Installing pinned pnpm $PnpmVersion through npm..."

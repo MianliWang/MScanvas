@@ -39,7 +39,8 @@ the remaining runtime/backend work.
 
 ## Development prerequisites
 
-- Node.js 22.13 or newer (`.node-version` pins the CI runtime);
+- Node.js 22.13 or newer within the Node 22 release line (`.node-version` pins the
+  exact CI runtime);
 - pnpm 11.15.1 installed through npm;
 - Rust 1.97.1 through rustup;
 - Windows 10/11 for the supported desktop target;

@@ -13,7 +13,8 @@ from urllib.parse import unquote
 ROOT = Path(__file__).resolve().parents[1]
 
 PINNED_NODE = "22.23.1"
-MINIMUM_NODE = ">=22.13.0"
+SUPPORTED_NODE = ">=22.13.0 <23"
+MINIMUM_NODE = "22.13.0"
 PINNED_PNPM = "11.15.1"
 PINNED_RUST = "1.97.1"
 
@@ -121,8 +122,8 @@ def validate_project_contract(errors: list[str]) -> None:
         fail(f"root packageManager must remain pinned to pnpm@{PINNED_PNPM}", errors)
 
     engines = package.get("engines", {})
-    if engines.get("node") != MINIMUM_NODE:
-        fail(f"root Node engine must remain {MINIMUM_NODE}", errors)
+    if engines.get("node") != SUPPORTED_NODE:
+        fail(f"root Node engine must remain {SUPPORTED_NODE}", errors)
     if engines.get("pnpm") != PINNED_PNPM:
         fail(f"root pnpm engine must remain exactly {PINNED_PNPM}", errors)
 
@@ -159,7 +160,8 @@ def validate_project_contract(errors: list[str]) -> None:
             f"cargo +{PINNED_RUST} test --locked",
         ],
         "scripts/bootstrap.ps1": [
-            f'$MinimumNodeVersion = [version]"{MINIMUM_NODE.removeprefix(">=")}"',
+            f'$MinimumNodeVersion = [version]"{MINIMUM_NODE}"',
+            '$NodeMajorVersion = 22',
             f'$PnpmVersion = "{PINNED_PNPM}"',
             f'$RustToolchain = "{PINNED_RUST}"',
             "Assert-NativeSuccess",
