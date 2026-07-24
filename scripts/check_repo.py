@@ -12,18 +12,31 @@ from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 
+PINNED_NODE = "22.23.1"
+SUPPORTED_NODE = ">=22.13.0 <23"
+MINIMUM_NODE = "22.13.0"
+PINNED_PNPM = "11.15.1"
+PINNED_RUST = "1.97.1"
+
 REQUIRED = [
     "PROJECT_PROPOSAL.md",
     "AGENTS.md",
     "README.md",
     "LICENSE",
     "Cargo.toml",
+    "Cargo.lock",
     "package.json",
+    "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
+    ".node-version",
+    "apps/desktop/src-tauri/icons/source.svg",
+    "apps/desktop/src-tauri/icons/icon.ico",
+    "apps/desktop/src-tauri/icons/icon.png",
     "docs/product/FEATURE_CATALOG.md",
     "docs/product/PRIMARY_WORKFLOWS.md",
     "docs/ux/UX_PROCESS.md",
     "docs/architecture/ARCHITECTURE.md",
+    "docs/development/DEPENDENCY_POLICY.md",
     ".codex/config.toml",
     ".codex/rules/default.rules",
 ]
@@ -106,8 +119,86 @@ def validate_markdown_links(errors: list[str]) -> None:
 
 def validate_project_contract(errors: list[str]) -> None:
     package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
-    if package.get("packageManager") != "pnpm@11.15.1":
-        fail("root packageManager must remain pinned to pnpm@11.15.1 until intentionally updated", errors)
+    if package.get("packageManager") != f"pnpm@{PINNED_PNPM}":
+        fail(f"root packageManager must remain pinned to pnpm@{PINNED_PNPM}", errors)
+
+    engines = package.get("engines", {})
+    if engines.get("node") != SUPPORTED_NODE:
+        fail(f"root Node engine must remain {SUPPORTED_NODE}", errors)
+    if engines.get("pnpm") != PINNED_PNPM:
+        fail(f"root pnpm engine must remain exactly {PINNED_PNPM}", errors)
+
+    node_version = (ROOT / ".node-version").read_text(encoding="utf-8").strip()
+    if node_version != PINNED_NODE:
+        fail(f".node-version must remain pinned to {PINNED_NODE}", errors)
+
+    rust_toolchain = tomllib.loads((ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"))
+    if rust_toolchain.get("toolchain", {}).get("channel") != PINNED_RUST:
+        fail(f"rust-toolchain.toml must remain pinned to {PINNED_RUST}", errors)
+
+    desktop_package = json.loads(
+        (ROOT / "apps/desktop/package.json").read_text(encoding="utf-8")
+    )
+    node_types = desktop_package.get("devDependencies", {}).get("@types/node", "")
+    match = re.match(r"^[~^]?(\d+)", node_types)
+    if match is None or int(match.group(1)) != int(PINNED_NODE.split(".", 1)[0]):
+        fail("@types/node major must match the pinned Node runtime major", errors)
+
+    required_pins = {
+        ".github/workflows/frontend.yml": [
+            "node-version-file: .node-version",
+            f"pnpm@{PINNED_PNPM}",
+            "pnpm install --frozen-lockfile",
+            "pnpm lint",
+        ],
+        ".github/workflows/windows-smoke.yml": [
+            "node-version-file: .node-version",
+            f"pnpm@{PINNED_PNPM}",
+            "pnpm install --frozen-lockfile",
+        ],
+        ".github/workflows/rust.yml": [
+            f"cargo +{PINNED_RUST} clippy --locked",
+            f"cargo +{PINNED_RUST} test --locked",
+        ],
+        "scripts/bootstrap.ps1": [
+            f'$MinimumNodeVersion = [version]"{MINIMUM_NODE}"',
+            '$NodeMajorVersion = 22',
+            f'$PnpmVersion = "{PINNED_PNPM}"',
+            f'$RustToolchain = "{PINNED_RUST}"',
+            "Assert-NativeSuccess",
+            "pnpm install --frozen-lockfile",
+            "clippy --locked",
+            "test --locked",
+        ],
+    }
+    for relative, snippets in required_pins.items():
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        for snippet in snippets:
+            if snippet not in text:
+                fail(f"missing bootstrap contract in {relative}: {snippet}", errors)
+        if "--no-frozen-lockfile" in text:
+            fail(f"non-frozen pnpm install is forbidden in {relative}", errors)
+        if "corepack prepare" in text:
+            fail(f"stale bundled Corepack activation is forbidden in {relative}", errors)
+
+    capability = json.loads(
+        (ROOT / "apps/desktop/src-tauri/capabilities/default.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    if capability.get("permissions"):
+        fail("the mock shell must not expose unused Tauri core API permissions", errors)
+
+    dependabot = (ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
+    for snippet in [
+        "version-update:semver-minor",
+        "version-update:semver-patch",
+        "applies-to: version-updates",
+    ]:
+        if snippet not in dependabot:
+            fail(f"missing Dependabot policy contract: {snippet}", errors)
+    if "version-update:semver-major" in dependabot:
+        fail("automated Dependabot major version updates require deliberate review", errors)
 
     config = tomllib.loads((ROOT / ".codex/config.toml").read_text(encoding="utf-8"))
     if int(config.get("project_doc_max_bytes", 0)) < (ROOT / "PROJECT_PROPOSAL.md").stat().st_size:

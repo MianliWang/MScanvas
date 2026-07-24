@@ -29,7 +29,7 @@ git push -u origin HEAD
 Open a pull request against `main` and include the checks actually run, UX evidence
 for user-facing changes and any remaining unverified assumptions.
 
-## First verified bootstrap
+## Reproduce the verified bootstrap
 
 On a Windows development machine with Node, pnpm and Rust available:
 
@@ -37,9 +37,11 @@ On a Windows development machine with Node, pnpm and Rust available:
 ./scripts/bootstrap.ps1
 ```
 
-Review and commit the generated `pnpm-lock.yaml` and `Cargo.lock`, then update
-`BOOTSTRAP_STATUS.md` with the checks and desktop/backend spikes that were actually
-verified.
+The script installs the repository's exact pnpm and Rust toolchain versions, requires
+the committed lockfiles, uses frozen/locked dependency resolution and stops on the
+first failed native command. It does not regenerate lockfiles during normal setup.
+Record newly completed desktop or backend spikes in `BOOTSTRAP_STATUS.md`; do not
+infer a runtime result from a successful build.
 
 ## Repository protection
 

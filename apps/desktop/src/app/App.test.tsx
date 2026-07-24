@@ -1,12 +1,17 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { App } from "./App";
+
+afterEach(cleanup);
 
 describe("MSCanvas application shell", () => {
   it("clears the logical workspace without implying source-file deletion", () => {
     render(<App />);
 
-    expect(screen.getByText("QC_pool_01.raw")).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: "Select QC_pool_01.raw" }),
+    ).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
 
     expect(screen.getByText("No data in this workspace")).toBeInTheDocument();
