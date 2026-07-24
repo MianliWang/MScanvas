@@ -21,7 +21,7 @@ M0 will evaluate `msaccess` or another documented ProteoWizard command route as 
 
 If the spike fails, compare temporary open-format indexing or a narrow native reader bridge.
 
-## Partial spike result — 2026-07-24
+## Bounded spike result — 2026-07-24
 
 The first bounded Windows pass found no runnable `msconvert.exe` or `msaccess.exe` on `PATH` or in the reviewed normal installation roots. Windows Installer retains a ProteoWizard version record, but its `ProductState` is `ABSENT`; that residual metadata is not an installed version or a usable backend.
 
@@ -29,12 +29,25 @@ Explicit authorization was later granted to download and install the current off
 
 The narrower portable continuation then verified the official download page, its `bt83` release record and its own S3 resolver for the matching Windows x86_64 `3.0.26204` / `a09eea9` tarball. The `97,078,806`-byte archive had SHA-256 `A0B92B40456E080B1CB5CBEDAE0B95664F43FE3B723972FE388A60E0341564E2`, no redirects, and no unsafe archive path, duplicate normalized path, link or extraction escape. Static inventory found exactly one `msconvert.exe` and one `msaccess.exe`; both were unsigned. No portable binary was executed on the host.
 
-The isolation gate then stopped fail-clean: Windows Sandbox was not enabled and no existing disposable Windows VM was available. Enabling a Windows feature or repurposing the registered non-Windows VMware guests was outside the authorization. The spike therefore could not inspect help, obtain executable-reported release/build data, or measure metadata, TIC/BPC, scan listing, spectrum extraction, conversion, parser stability, locale behavior or real process cancellation. Vendor RAW testing was explicitly excluded. Every runtime capability remains status D (still unverified); the A/B/C decision about `msaccess` remains deferred, and this ADR stays proposed.
+The local isolation gate stopped fail-clean without changing Windows features. A later exact-head evidence workflow used an ephemeral GitHub-hosted `windows-2025` VM. The unsigned portable tools ran only as a temporary non-elevated standard user after exact archive/fixture/executable hashes, scoped ACLs/environment, an owned Windows Job and three exact-program outbound blocks were verified. Independent cleanup proved the process tree, firewall rules, user/profile/logon right, runtime root and private state absent. No source checkout was present in the runtime job.
 
-The code-contract portion did validate fail-closed canonical-path discovery/planning, matching release/build identity checks, bounded diagnostic capture and Windows Job Object cancellation with a controlled parent/grandchild process tree, including root-exits-first and late-cancellation cases. Non-probe harness operations reject truncated help before requiring exact option/query markers, reject output inside directory-formatted inputs and require a fresh empty output directory. This mock and structural evidence does not substitute for real ProteoWizard measurements.
+Exact run [`30129182032`](https://github.com/MianliWang/MScanvas/actions/runs/30129182032) at `f0d7957fbbe129263a9a89684b6ce549b1b3a086` passed both jobs and every cleanup/publication gate. Complete help confirmed the typed argv and executable-reported normalized release `3.0.26204`; `msconvert` also emitted revision `a09eea9`, while `msaccess` did not emit a revision. The verified four-spectrum/two-chromatogram synthetic mzML fixture produced parseable metadata, summary, spectrum table, derived TIC, filtered TIC and one selected spectrum. One-shot backend durations were 90–205 ms and do not establish representative latency.
+
+The decision is capability-specific:
+
+- **A:** discovery/build identity for this verified portable pair.
+- **B:** metadata; summary/counts; derived TIC and MS-level filtering; scan listing; selected-spectrum extraction; overall conversion and mzML conversion, each with the limitations in the spike report.
+- **C:** mzXML conversion for the tested multi-source fixture, because exit 0 serialized only 3 of 4 spectra; it is unsuitable without mandatory integrity validation.
+- **D:** BPC, repeated navigation, large arrays, progress, real cancellation, locale stability and vendor-format coverage.
+
+The table formatter abbreviates spectrum IDs while binary output uses raw IDs; the measured `19` and `scan=19` refer to the same index-0/scan-19 spectrum. A durable adapter must canonicalize identity rather than exact-compare formatter strings. The `tic` query sums binary intensities and emits index order, so it must be labeled as a derived/recomputed TIC and normalized for RT display rather than silently treated as a stored TIC chromatogram.
+
+Process exit status is also insufficient as an operation result. `msaccess` returned exit 0/no output for both a deliberately unavailable index and an unsupported text input; only the latter emitted stderr. A typed preview executor must distinguish expected no-result from missing/malformed required output without relying on one locale's error text.
+
+The code-contract portion validated fail-closed canonical-path discovery/planning, matching release/build identity checks, bounded diagnostic capture and Windows Job Object cancellation with a controlled parent/grandchild process tree, including root-exits-first and late-cancellation cases. Non-probe harness operations reject truncated help before requiring exact option/query markers, reject output inside directory-formatted inputs and require a fresh empty output directory. Those controlled cancellation tests do not substitute for a real ProteoWizard cancellation observation.
 
 The detailed evidence and explicit not-run matrix are recorded in the [M0 ProteoWizard spike report](../../spikes/M0_PROTEOWIZARD_SPIKE.md).
 
 ## Next evidence gate
 
-Before changing this ADR's status, prepare an explicitly approved disposable Windows environment and re-verify the recorded portable archive hash there. The next pass must capture complete non-truncated help and matching executable-reported identities before reconciling argv, then exercise the pinned lawful mzML fixture for metadata, counts, TIC, BPC capability, scan listing, one spectrum, an unavailable-scan case and mzML/mzXML conversion, with timings, output structure/hashes, parser/locale observations and failure evidence. Real cancellation remains a separate gate requiring a sufficiently long operation. Vendor-format coverage requires a separately authorized acquisition and remains unverified.
+This ADR remains proposed because its representative-data, repeated-navigation, large-array and real-cancellation exit criteria are not met. The next slice should implement the typed preview-result and semantic-integrity boundary for the B capabilities, including canonical spectrum identity, RT normalization, derived-TIC labeling and operation-specific output requirements. Keep BPC and mzXML unavailable initially. Then measure repeated navigation and a representative lawful open-format file before exposing the provider as a normal viewer workflow. Real cancellation, a second locale and vendor-format coverage remain separate explicit gates.

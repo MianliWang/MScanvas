@@ -44,7 +44,7 @@ This catalog is the concise feature index. Detailed semantics remain in [`PROJEC
 | ID | Feature | Priority | Acceptance summary |
 |---|---|---:|---|
 | CNV-001 | mzML output | P0 | Default open format with typed backend mapping. |
-| CNV-002 | mzXML output | P0 | Available as clearly labelled legacy compatibility output. |
+| CNV-002 | mzXML output | P1 | Disabled until representative multi-source source/output spectrum counts pass; if enabled later, clearly labels legacy chromatogram/metadata limits. |
 | CNV-003 | Output location | P0 | Source sibling/subfolder/custom choices never write inside recognized vendor dataset roots. |
 | CNV-004 | No additional centroiding | P0 | No peak-picking filter is inserted by this option. |
 | CNV-005 | Explicit centroid presets | P0 | MS2 or MS1+MS2 changes are visibly marked as lossy. |

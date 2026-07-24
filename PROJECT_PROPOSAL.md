@@ -3,7 +3,7 @@
 ## Product & Engineering Source of Truth
 
 **Status:** Pre-alpha proposal and repository contract  
-**Updated:** 2026-07-23  
+**Updated:** 2026-07-24
 **License:** Apache-2.0  
 **Canonical repository:** `MianliWang/MScanvas`  
 **Initial target:** Windows desktop  
@@ -20,7 +20,7 @@ MSCanvas is a modern, free, open-source and local-first workspace for mass-spect
 1. add vendor RAW files or folders through normal drag-and-drop and file pickers;
 2. curate a batch with familiar multi-selection, remove-selected and one-action clear-list behavior;
 3. inspect acquisition metadata, TIC/BPC, scans and mass spectra through linked views;
-4. convert vendor data to mzML or mzXML through a mature external backend such as ProteoWizard;
+4. convert vendor data to mzML through a mature external backend such as ProteoWizard, with mzXML gated as legacy compatibility until representative source/output integrity checks pass;
 5. manage per-file progress, cancellation, failure isolation and retry;
 6. export the viewed chromatogram or spectrum as a clean scientific figure and export the underlying data.
 
@@ -126,7 +126,7 @@ The primary product through the first public beta:
 - profile and centroid spectrum views;
 - virtualized scan table;
 - linked selection and keyboard navigation;
-- RAW to mzML/mzXML conversion;
+- RAW to mzML conversion, with legacy mzXML gated by representative integrity evidence;
 - per-file queue, cancel, retry and output handling;
 - PNG/SVG and underlying-data export.
 
@@ -250,7 +250,7 @@ High-frequency pointer movement must not cause broad React/global-state updates 
 
 Normal mode provides semantic controls:
 
-- output format: mzML default, mzXML marked legacy compatibility;
+- output format: mzML default; mzXML hidden or disabled until representative multi-source source/output integrity checks pass, then marked legacy compatibility;
 - output location: sibling/subfolder/custom, never inside a recognized vendor dataset root;
 - no additional centroiding;
 - explicit centroid MS2 or centroid MS1+MS2 presets, marked lossy;
@@ -589,7 +589,7 @@ Metadata, TIC/BPC, spectrum, virtualized scan table, linked selection, lazy cach
 
 ### M3 — Conversion workflow
 
-Typed mzML/mzXML settings, queue, cancellation, retry, failure isolation, transactional outputs.
+Typed mzML settings, queue, cancellation, retry, failure isolation and transactional outputs; mzXML compatibility remains gated by representative integrity checks.
 
 ### M4 — Figure/data export
 
@@ -660,7 +660,7 @@ The first useful release succeeds when a researcher can, without documentation:
 2. remove selected rows or clear the list without restarting or deleting data;
 3. choose a file and inspect TIC/BPC and spectra through linked selection;
 4. understand whether centroiding will occur;
-5. convert selected/all files to mzML/mzXML;
+5. convert selected/all files to mzML, and expose mzXML only after its integrity gate passes;
 6. continue after one file fails and retry only that item;
 7. find outputs and understand failures;
 8. export a clean scientific plot and its underlying data.
