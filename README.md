@@ -88,6 +88,7 @@ python -B scripts/check_repo.py
 - [`ROADMAP.md`](ROADMAP.md) — milestone sequence.
 - [`BOOTSTRAP_STATUS.md`](BOOTSTRAP_STATUS.md) — verified and pending setup work.
 - [`docs/development/PUBLISHING.md`](docs/development/PUBLISHING.md) — repository, branch-protection and future release workflow.
+- [`docs/development/DEPENDENCY_POLICY.md`](docs/development/DEPENDENCY_POLICY.md) — routine update grouping, deliberate majors and visible security updates.
 - [`docs/development/INITIALIZATION_REPORT.md`](docs/development/INITIALIZATION_REPORT.md) — what the bootstrap created, validated and deferred.
 
 ## Source of truth

@@ -36,6 +36,7 @@ REQUIRED = [
     "docs/product/PRIMARY_WORKFLOWS.md",
     "docs/ux/UX_PROCESS.md",
     "docs/architecture/ARCHITECTURE.md",
+    "docs/development/DEPENDENCY_POLICY.md",
     ".codex/config.toml",
     ".codex/rules/default.rules",
 ]
@@ -187,6 +188,17 @@ def validate_project_contract(errors: list[str]) -> None:
     )
     if capability.get("permissions"):
         fail("the mock shell must not expose unused Tauri core API permissions", errors)
+
+    dependabot = (ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
+    for snippet in [
+        "version-update:semver-minor",
+        "version-update:semver-patch",
+        "applies-to: version-updates",
+    ]:
+        if snippet not in dependabot:
+            fail(f"missing Dependabot policy contract: {snippet}", errors)
+    if "version-update:semver-major" in dependabot:
+        fail("automated Dependabot major version updates require deliberate review", errors)
 
     config = tomllib.loads((ROOT / ".codex/config.toml").read_text(encoding="utf-8"))
     if int(config.get("project_doc_max_bytes", 0)) < (ROOT / "PROJECT_PROPOSAL.md").stat().st_size:
