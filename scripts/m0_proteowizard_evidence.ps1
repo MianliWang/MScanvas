@@ -46,6 +46,28 @@ function Get-StableFailureCode {
     return "unexpected_orchestration_failure"
 }
 
+function Get-StableEvidenceToken {
+    param(
+        [AllowEmptyString()][string]$Value,
+        [Parameter(Mandatory = $true)][string]$Fallback
+    )
+    if ($Value -cmatch '^[a-z][a-z0-9_]{0,63}$') { return $Value }
+    return $Fallback
+}
+
+function Write-StableEvidenceFailure {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("run", "publication", "publication_fallback", "cleanup", "cleanup_attestation")]
+        [string]$Kind,
+        [AllowEmptyString()][string]$Stage,
+        [Parameter(Mandatory = $true)][string]$Code
+    )
+    $safeStage = Get-StableEvidenceToken -Value $Stage -Fallback "unknown_stage"
+    $safeCode = Get-StableEvidenceToken -Value $Code -Fallback "unexpected_orchestration_failure"
+    Write-Host "M0B $Kind blocked stage=$safeStage code=$safeCode"
+}
+
 function Write-Stage {
     param([Parameter(Mandatory = $true)][string]$Name)
     $script:CurrentStage = $Name
@@ -797,7 +819,8 @@ function Assert-FullPathUnder {
 function Protect-AdminOnlyPath {
     param(
         [Parameter(Mandatory = $true)][string]$LiteralPath,
-        [switch]$Directory
+        [switch]$Directory,
+        [string]$FailureCode
     )
     $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
     $systemSid = [System.Security.Principal.SecurityIdentifier]::new("S-1-5-18")
@@ -830,7 +853,52 @@ function Protect-AdminOnlyPath {
         }
     }
     $security.SetAccessRuleProtection($true, $false)
-    Set-Acl -LiteralPath $LiteralPath -AclObject $security
+    try { Set-Acl -LiteralPath $LiteralPath -AclObject $security }
+    catch {
+        if ($FailureCode -cmatch '^[a-z][a-z0-9_]{0,63}$') { Stop-Evidence $FailureCode }
+        if ($Directory) { Stop-Evidence "directory_acl_protection_failed" }
+        Stop-Evidence "file_acl_protection_failed"
+    }
+}
+
+function Assert-AdminOnlyPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$LiteralPath,
+        [switch]$Directory,
+        [Parameter(Mandatory = $true)][string]$FailureCode
+    )
+    try { $security = Get-Acl -LiteralPath $LiteralPath }
+    catch { Stop-Evidence $FailureCode }
+    if (-not $security.AreAccessRulesProtected) { Stop-Evidence $FailureCode }
+    $expectedSids = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::Ordinal
+    )
+    [void]$expectedSids.Add([System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+    [void]$expectedSids.Add("S-1-5-18")
+    [void]$expectedSids.Add("S-1-5-32-544")
+    $rules = @($security.GetAccessRules(
+        $true,
+        $false,
+        [System.Security.Principal.SecurityIdentifier]
+    ))
+    if ($rules.Count -ne 3) { Stop-Evidence $FailureCode }
+    $directoryInheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+        [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+    foreach ($rule in $rules) {
+        $expectedInheritance = if ($Directory) {
+            $directoryInheritance
+        }
+        else { [System.Security.AccessControl.InheritanceFlags]::None }
+        if (-not $expectedSids.Remove($rule.IdentityReference.Value) -or
+            $rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
+            $rule.FileSystemRights -ne [System.Security.AccessControl.FileSystemRights]::FullControl -or
+            $rule.InheritanceFlags -ne $expectedInheritance -or
+            $rule.PropagationFlags -ne [System.Security.AccessControl.PropagationFlags]::None -or
+            $rule.IsInherited) {
+            Stop-Evidence $FailureCode
+        }
+    }
+    if ($expectedSids.Count -ne 0) { Stop-Evidence $FailureCode }
 }
 
 function Save-CleanupState {
@@ -842,8 +910,60 @@ function Save-CleanupState {
     if (-not [System.IO.Directory]::Exists($stateParent)) {
         Stop-Evidence "cleanup_state_parent_missing"
     }
-    $State | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $StatePath -Encoding utf8NoBOM
-    Protect-AdminOnlyPath -LiteralPath $StatePath
+    $stateAlreadyExists = [System.IO.File]::Exists($StatePath)
+    if ($stateAlreadyExists) {
+        Assert-AdminOnlyPath -LiteralPath $StatePath -FailureCode "cleanup_state_acl_invalid"
+    }
+    $json = $State | ConvertTo-Json -Depth 5
+    try {
+        [System.IO.File]::WriteAllText(
+            $StatePath,
+            $json,
+            [System.Text.UTF8Encoding]::new($false, $true)
+        )
+    }
+    catch { Stop-Evidence "cleanup_state_write_failed" }
+    if (-not $stateAlreadyExists) {
+        Protect-AdminOnlyPath -LiteralPath $StatePath -FailureCode "cleanup_state_acl_protection_failed"
+    }
+    Assert-AdminOnlyPath -LiteralPath $StatePath -FailureCode "cleanup_state_acl_invalid"
+}
+
+function Invoke-CleanupStateSelfTest {
+    param([Parameter(Mandatory = $true)][string]$TempRoot)
+    $existingStatePath = Get-Variable -Scope Script -Name StatePath -ErrorAction SilentlyContinue
+    $previousStatePath = if ($null -ne $existingStatePath) { $existingStatePath.Value } else { $null }
+    $selfTestStatePath = Join-Path $TempRoot ("cleanup-state-selftest-" +
+        [Guid]::NewGuid().ToString('N') + ".json")
+    try {
+        $script:StatePath = $selfTestStatePath
+        $state = @{
+            schemaVersion = 1
+            runtimeRoot = "<selftest-runtime>"
+            username = ""
+            sid = ""
+            temporaryUserCreated = $false
+            remoteInteractiveDenyApplied = $false
+            firewallRules = @()
+        }
+        Save-CleanupState $state
+        $state.remoteInteractiveDenyApplied = $true
+        Save-CleanupState $state
+        $roundTripped = [System.IO.File]::ReadAllText($selfTestStatePath) | ConvertFrom-Json
+        if (-not $roundTripped.remoteInteractiveDenyApplied) {
+            Stop-Evidence "cleanup_state_selftest_roundtrip_failed"
+        }
+        Assert-AdminOnlyPath -LiteralPath $selfTestStatePath `
+            -FailureCode "cleanup_state_selftest_acl_invalid"
+        return [ordered]@{ passed = $true; repeatedWriteVerified = $true; aclVerified = $true }
+    }
+    finally {
+        if ([System.IO.File]::Exists($selfTestStatePath)) {
+            [System.IO.File]::Delete($selfTestStatePath)
+        }
+        if ($null -ne $existingStatePath) { $script:StatePath = $previousStatePath }
+        else { Remove-Variable -Scope Script -Name StatePath -ErrorAction SilentlyContinue }
+    }
 }
 
 function Assert-Bundle {
@@ -969,6 +1089,32 @@ function Test-WindowsArchiveSegment {
     return $true
 }
 
+function Get-ValidatedArchiveMemberKey {
+    param(
+        [Parameter(Mandatory = $true)][string]$Portable,
+        [Parameter(Mandatory = $true)][string]$ToolsDirectory
+    )
+    if ($Portable.StartsWith('./', [System.StringComparison]::Ordinal)) {
+        $Portable = $Portable.Substring(2)
+    }
+    if ($Portable.StartsWith('/') -or $Portable.StartsWith('//') -or
+        $Portable -match '^[A-Za-z]:' -or $Portable.Contains('//')) {
+        Stop-Evidence "archive_member_rooted"
+    }
+    $trimmed = $Portable.TrimEnd('/')
+    $segments = @($trimmed.Split('/'))
+    $invalidSegments = @($segments | Where-Object { -not (Test-WindowsArchiveSegment $_) })
+    if ($segments.Count -eq 0 -or $invalidSegments.Count -ne 0) {
+        Stop-Evidence "archive_member_path_invalid"
+    }
+    $key = [string]::Join('/', $segments)
+    $prospective = Join-Path $ToolsDirectory ($key.Replace('/', '\'))
+    if ($prospective.Length -gt 240) {
+        Stop-Evidence "archive_member_path_too_long"
+    }
+    return $key
+}
+
 function Expand-VerifiedArchive {
     param(
         [Parameter(Mandatory = $true)][string]$ArchivePath,
@@ -978,6 +1124,7 @@ function Expand-VerifiedArchive {
     if (-not [System.IO.File]::Exists($tar)) {
         Stop-Evidence "archive_tool_missing"
     }
+    Write-Stage "archive_member_listing"
     $memberOutput = @(& $tar -tf $ArchivePath 2>&1)
     if ($LASTEXITCODE -ne 0 -or $memberOutput.Count -ne $ExpectedArchiveMembers) {
         Stop-Evidence "archive_listing_invalid"
@@ -987,6 +1134,7 @@ function Expand-VerifiedArchive {
         Stop-Evidence "archive_type_listing_invalid"
     }
 
+    Write-Stage "archive_member_validation"
     $normalized = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     for ($index = 0; $index -lt $memberOutput.Count; $index++) {
         $member = [string]$memberOutput[$index]
@@ -1004,30 +1152,18 @@ function Expand-VerifiedArchive {
             }
             continue
         }
-        if ($portable.StartsWith('/') -or $portable.StartsWith('//') -or
-            $portable -match '^[A-Za-z]:' -or $portable.Contains('//')) {
-            Stop-Evidence "archive_member_rooted"
-        }
-        $trimmed = $portable.TrimEnd('/')
-        $segments = @($trimmed.Split('/'))
-        $invalidSegments = @($segments | Where-Object { -not (Test-WindowsArchiveSegment $_) })
-        if ($segments.Count -eq 0 -or $invalidSegments.Count -ne 0) {
-            Stop-Evidence "archive_member_path_invalid"
-        }
-        $key = [string]::Join('/', $segments)
+        $key = Get-ValidatedArchiveMemberKey -Portable $portable -ToolsDirectory $ToolsDirectory
         if (-not $normalized.Add($key)) {
             Stop-Evidence "archive_duplicate_member"
         }
-        $prospective = Join-Path $ToolsDirectory ($key.Replace('/', '\'))
-        if ($prospective.Length -gt 240) {
-            Stop-Evidence "archive_member_path_too_long"
-        }
     }
 
+    Write-Stage "archive_payload_extraction"
     $extractOutput = @(& $tar -xf $ArchivePath -C $ToolsDirectory 2>&1)
     if ($LASTEXITCODE -ne 0 -or $extractOutput.Count -ne 0) {
         Stop-Evidence "archive_extraction_failed"
     }
+    Write-Stage "archive_inventory_validation"
     $toolsFull = [System.IO.Path]::GetFullPath($ToolsDirectory).TrimEnd('\') + '\'
     $items = @(Get-ChildItem -LiteralPath $ToolsDirectory -Recurse -Force)
     if ($items.Count -ne $ExpectedExtractedItems) {
@@ -1047,6 +1183,7 @@ function Expand-VerifiedArchive {
         }
     }
 
+    Write-Stage "archive_executable_identity"
     $msconvert = @(Get-ChildItem -LiteralPath $ToolsDirectory -Recurse -File -Filter "msconvert.exe")
     $msaccess = @(Get-ChildItem -LiteralPath $ToolsDirectory -Recurse -File -Filter "msaccess.exe")
     if ($msconvert.Count -ne 1 -or $msaccess.Count -ne 1) {
@@ -2563,6 +2700,75 @@ function Assert-SelfTestRejects {
     Stop-Evidence $FailureCode
 }
 
+function Invoke-ArchiveMemberSelfTest {
+    param([Parameter(Mandatory = $true)][string]$TempRoot)
+    $validationRoot = Join-Path $TempRoot "archive-member-validation-target"
+    $prefixedKey = Get-ValidatedArchiveMemberKey -Portable "./x" -ToolsDirectory $validationRoot
+    $plainKey = Get-ValidatedArchiveMemberKey -Portable "x" -ToolsDirectory $validationRoot
+    if ($prefixedKey -cne "x" -or $plainKey -cne "x") {
+        Stop-Evidence "archive_member_selftest_normalization_failed"
+    }
+    foreach ($unsafe in @("./../x", "././x", ".//x", "./C:/x")) {
+        Assert-SelfTestRejects {
+            Get-ValidatedArchiveMemberKey -Portable $unsafe -ToolsDirectory $validationRoot
+        } "archive_member_selftest_rejection_failed"
+    }
+    $duplicates = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    if (-not $duplicates.Add($prefixedKey) -or $duplicates.Add($plainKey)) {
+        Stop-Evidence "archive_member_selftest_duplicate_failed"
+    }
+
+    $tar = Join-Path $env:SystemRoot "System32\tar.exe"
+    if (-not [System.IO.File]::Exists($tar)) {
+        Stop-Evidence "archive_member_selftest_tool_missing"
+    }
+    $root = Join-Path $TempRoot ("archive-member-selftest-" + [Guid]::NewGuid().ToString('N'))
+    $source = Join-Path $root "source"
+    $archive = Join-Path $root "fixture.tar"
+    [System.IO.Directory]::CreateDirectory($source) | Out-Null
+    try {
+        [System.IO.File]::WriteAllText((Join-Path $source "x"), "synthetic archive member")
+        $createOutput = @(& $tar -cf $archive -C $source . 2>&1)
+        if ($LASTEXITCODE -ne 0 -or $createOutput.Count -ne 0) {
+            Stop-Evidence "archive_member_selftest_creation_failed"
+        }
+        $members = @(& $tar -tf $archive 2>&1)
+        if ($LASTEXITCODE -ne 0 -or $members.Count -ne 2 -or
+            -not ($members | Where-Object { $_ -in @('.', './') } | Select-Object -First 1) -or
+            -not ($members | Where-Object { $_ -ceq './x' } | Select-Object -First 1)) {
+            Stop-Evidence "archive_member_selftest_listing_failed"
+        }
+        $syntheticKeys = [System.Collections.Generic.HashSet[string]]::new(
+            [System.StringComparer]::OrdinalIgnoreCase
+        )
+        foreach ($member in $members) {
+            $portable = ([string]$member).Replace('\', '/')
+            if ($portable -in @('.', './')) { continue }
+            $key = Get-ValidatedArchiveMemberKey -Portable $portable -ToolsDirectory $validationRoot
+            if (-not $syntheticKeys.Add($key)) {
+                Stop-Evidence "archive_member_selftest_synthetic_duplicate"
+            }
+        }
+        if ($syntheticKeys.Count -ne 1 -or -not $syntheticKeys.Contains("x")) {
+            Stop-Evidence "archive_member_selftest_synthetic_normalization_failed"
+        }
+    }
+    finally {
+        if ([System.IO.Directory]::Exists($root)) {
+            [System.IO.Directory]::Delete($root, $true)
+        }
+    }
+    return [ordered]@{
+        passed = $true
+        pureAcceptedCases = 2
+        pureRejectedCases = 4
+        duplicateCollisionVerified = $true
+        syntheticTarVerified = $true
+    }
+}
+
 function Invoke-SanitizerSelfTest {
     $dangerous = @(
         'source=(D:\a\b)',
@@ -2781,6 +2987,9 @@ msLevel <mslevels>
         helpParser = [ordered]@{ passed = $true; queryCount = $queries.Count; nearMissRejected = $true }
         summaryRoundTrip = [ordered]@{ passed = $true }
         capabilityCrossCheckGate = [ordered]@{ passed = $true; contradictionDowngradedToC = $true }
+        archiveMembers = Invoke-ArchiveMemberSelfTest -TempRoot $TempRoot
+        cleanupState = Invoke-CleanupStateSelfTest -TempRoot $TempRoot
+        evidencePublication = Invoke-EvidencePublicationSelfTest -TempRoot $TempRoot
         sanitizer = Invoke-SanitizerSelfTest
         scientificParsers = Invoke-ScientificParserSelfTest
         conversionValidator = Invoke-ConversionValidatorSelfTest $layout
@@ -3418,7 +3627,58 @@ function Assert-SanitizedEvidenceText {
     }
 }
 
-function Publish-SanitizedEvidence {
+function New-SanitizedEvidencePair {
+    param(
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Summary,
+        [Parameter(Mandatory = $true)][string[]]$SensitiveValues
+    )
+    $json = $Summary | ConvertTo-Json -Depth 14
+    $markdown = New-SummaryMarkdown $Summary
+    Assert-SanitizedEvidenceText -Text ($json + "`n" + $markdown) -SensitiveValues $SensitiveValues
+    return [ordered]@{ json = $json; markdown = $markdown }
+}
+
+function Assert-ExactSanitizedEvidencePair {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string[]]$SensitiveValues
+    )
+    if (-not [System.IO.Directory]::Exists($Root)) {
+        Stop-Evidence "evidence_pair_root_missing"
+    }
+    $items = @(Get-ChildItem -LiteralPath $Root -Force)
+    $files = @($items | Where-Object { -not $_.PSIsContainer })
+    $names = @($files | Select-Object -ExpandProperty Name | Sort-Object)
+    if ($items.Count -ne 2 -or $files.Count -ne 2 -or
+        (Compare-Object -ReferenceObject @("summary.json", "summary.md") -DifferenceObject $names)) {
+        Stop-Evidence "evidence_pair_allowlist_invalid"
+    }
+    if ($items | Where-Object {
+        ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+    } | Select-Object -First 1) {
+        Stop-Evidence "evidence_pair_reparse_point_present"
+    }
+    $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    try {
+        $json = [System.IO.File]::ReadAllText((Join-Path $Root "summary.json"), $strictUtf8)
+        $markdown = [System.IO.File]::ReadAllText((Join-Path $Root "summary.md"), $strictUtf8)
+    }
+    catch { Stop-Evidence "evidence_pair_read_failed" }
+    Assert-SanitizedEvidenceText -Text ($json + "`n" + $markdown) -SensitiveValues $SensitiveValues
+    try { $parsed = $json | ConvertFrom-Json -AsHashtable }
+    catch { Stop-Evidence "evidence_pair_json_invalid" }
+    if ($parsed -isnot [System.Collections.IDictionary]) {
+        Stop-Evidence "evidence_pair_json_invalid"
+    }
+    try { $expectedMarkdown = New-SummaryMarkdown $parsed }
+    catch { Stop-Evidence "evidence_pair_schema_invalid" }
+    if ($markdown -cne $expectedMarkdown) {
+        Stop-Evidence "evidence_pair_markdown_mismatch"
+    }
+    return $parsed
+}
+
+function Write-SanitizedEvidencePair {
     param(
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Summary,
         [Parameter(Mandatory = $true)][string[]]$SensitiveValues
@@ -3431,24 +3691,150 @@ function Publish-SanitizedEvidence {
     if ([System.IO.Path]::GetFileName($fullPublish) -ne "m0b-publish") {
         Stop-Evidence "publish_root_name_invalid"
     }
-    if (-not [System.IO.Directory]::Exists($fullPublish)) {
-        [System.IO.Directory]::CreateDirectory($fullPublish) | Out-Null
+    if ([System.IO.Directory]::Exists($fullPublish) -or [System.IO.File]::Exists($fullPublish)) {
+        Stop-Evidence "publish_root_preexisting"
     }
-    Protect-AdminOnlyPath -LiteralPath $fullPublish -Directory
 
-    $json = $Summary | ConvertTo-Json -Depth 14
-    $markdown = New-SummaryMarkdown $Summary
-    Assert-SanitizedEvidenceText -Text ($json + "`n" + $markdown) -SensitiveValues $SensitiveValues
-    $jsonPath = Join-Path $fullPublish "summary.json"
-    $markdownPath = Join-Path $fullPublish "summary.md"
-    $json | Set-Content -LiteralPath $jsonPath -Encoding utf8NoBOM
-    $markdown | Set-Content -LiteralPath $markdownPath -Encoding utf8NoBOM
-    Protect-AdminOnlyPath -LiteralPath $jsonPath
-    Protect-AdminOnlyPath -LiteralPath $markdownPath
-    $names = @(Get-ChildItem -LiteralPath $fullPublish -File | Select-Object -ExpandProperty Name | Sort-Object)
-    if (Compare-Object -ReferenceObject @("summary.json", "summary.md") -DifferenceObject $names) {
-        Stop-Evidence "publish_allowlist_invalid"
+    $pair = New-SanitizedEvidencePair -Summary $Summary -SensitiveValues $SensitiveValues
+    $stagingName = "m0b-publish-staging-" + [Guid]::NewGuid().ToString('N')
+    $staging = Assert-FullPathUnder -Candidate (Join-Path $env:RUNNER_TEMP $stagingName) `
+        -Parent $env:RUNNER_TEMP -FailureCode "publish_staging_outside_runner_temp"
+    try {
+        try { [System.IO.Directory]::CreateDirectory($staging) | Out-Null }
+        catch { Stop-Evidence "publish_staging_creation_failed" }
+        Protect-AdminOnlyPath -LiteralPath $staging -Directory `
+            -FailureCode "publish_staging_directory_acl_failed"
+        $jsonPath = Join-Path $staging "summary.json"
+        $markdownPath = Join-Path $staging "summary.md"
+        $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+        try {
+            [System.IO.File]::WriteAllText($jsonPath, [string]$pair.json, $utf8)
+            [System.IO.File]::WriteAllText($markdownPath, [string]$pair.markdown, $utf8)
+        }
+        catch { Stop-Evidence "publish_pair_write_failed" }
+        Protect-AdminOnlyPath -LiteralPath $jsonPath -FailureCode "publish_json_acl_failed"
+        Protect-AdminOnlyPath -LiteralPath $markdownPath -FailureCode "publish_markdown_acl_failed"
+        Assert-AdminOnlyPath -LiteralPath $staging -Directory `
+            -FailureCode "publish_staging_directory_acl_invalid"
+        Assert-AdminOnlyPath -LiteralPath $jsonPath -FailureCode "publish_json_acl_invalid"
+        Assert-AdminOnlyPath -LiteralPath $markdownPath -FailureCode "publish_markdown_acl_invalid"
+        [void](Assert-ExactSanitizedEvidencePair -Root $staging -SensitiveValues $SensitiveValues)
+        if ([System.IO.Directory]::Exists($fullPublish) -or [System.IO.File]::Exists($fullPublish)) {
+            Stop-Evidence "publish_root_preexisting"
+        }
+        try { [System.IO.Directory]::Move($staging, $fullPublish) }
+        catch { Stop-Evidence "publish_atomic_move_failed" }
+        $staging = $null
     }
+    finally {
+        if (-not [string]::IsNullOrWhiteSpace($staging) -and
+            [System.IO.Directory]::Exists($staging)) {
+            try { [System.IO.Directory]::Delete($staging, $true) }
+            catch { Stop-Evidence "publish_staging_cleanup_failed" }
+        }
+    }
+}
+
+function New-MinimalBlockedSummary {
+    param(
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Summary,
+        [Parameter(Mandatory = $true)][string]$FullPublishCode
+    )
+    $sourceSha = [string]$Summary.sourceSha
+    if ($sourceSha -notmatch '^[0-9a-fA-F]{40}$') {
+        Stop-Evidence "fallback_source_sha_invalid"
+    }
+    $collectedAt = [string]$Summary.collectedAtUtc
+    $parsedTimestamp = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParse(
+            $collectedAt,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::RoundtripKind,
+            [ref]$parsedTimestamp
+        )) {
+        Stop-Evidence "fallback_timestamp_invalid"
+    }
+
+    $primaryStage = "publish_sanitized_evidence"
+    $primaryCode = "full_summary_publish_failed"
+    if ([string]$Summary.status -eq "blocked" -and
+        $Summary.failure -is [System.Collections.IDictionary]) {
+        $primaryStage = Get-StableEvidenceToken -Value ([string]$Summary.failure.stage) `
+            -Fallback "publish_sanitized_evidence"
+        $primaryCode = Get-StableEvidenceToken -Value ([string]$Summary.failure.code) `
+            -Fallback "unexpected_orchestration_failure"
+    }
+    $safeFullPublishCode = Get-StableEvidenceToken -Value $FullPublishCode `
+        -Fallback "unexpected_orchestration_failure"
+    $archiveVerified = $false
+    $fixtureVerified = $false
+    try { $archiveVerified = $Summary.provenance.archive.verified -eq $true }
+    catch { }
+    try { $fixtureVerified = $Summary.provenance.fixture.verified -eq $true }
+    catch { }
+
+    return [ordered]@{
+        schemaVersion = 1
+        status = "blocked"
+        sourceSha = $sourceSha.ToLowerInvariant()
+        collectedAtUtc = $parsedTimestamp.ToUniversalTime().ToString(
+            "O", [System.Globalization.CultureInfo]::InvariantCulture
+        )
+        runner = $null
+        bundle = $null
+        provenance = [ordered]@{
+            archive = [ordered]@{ verified = $archiveVerified }
+            fixture = [ordered]@{ verified = $fixtureVerified; vendorData = $false }
+            executables = $null
+            msiExecuted = $false
+            localDevelopmentHostExecution = $false
+        }
+        isolation = [ordered]@{
+            standardUserExecutionVerified = $false
+            firewallRulesVerifiedBeforeExecution = $false
+        }
+        help = $null
+        fixtureStructure = $null
+        orchestrationSelfTests = $null
+        operations = @()
+        capabilityOutcomes = [ordered]@{
+            vendorCoverage = "not_run_by_scope"
+            cancellation = "not_measurable"
+        }
+        failure = [ordered]@{ stage = $primaryStage; code = $primaryCode }
+        publication = [ordered]@{
+            fullSummaryPublished = $false
+            minimalBlockedFallbackPublished = $true
+            fullSummaryFailureCode = $safeFullPublishCode
+        }
+    }
+}
+
+function Publish-SanitizedEvidence {
+    param(
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Summary,
+        [Parameter(Mandatory = $true)][string[]]$SensitiveValues
+    )
+    try {
+        Write-SanitizedEvidencePair -Summary $Summary -SensitiveValues $SensitiveValues
+        return [ordered]@{ fullSummaryPublished = $true; fallbackPublished = $false }
+    }
+    catch {
+        $fullPublishCode = Get-StableFailureCode $_
+        Write-StableEvidenceFailure -Kind "publication" -Stage "publish_sanitized_evidence" `
+            -Code $fullPublishCode
+    }
+    try {
+        $fallback = New-MinimalBlockedSummary -Summary $Summary -FullPublishCode $fullPublishCode
+        Write-SanitizedEvidencePair -Summary $fallback -SensitiveValues $SensitiveValues
+    }
+    catch {
+        $fallbackCode = Get-StableFailureCode $_
+        Write-StableEvidenceFailure -Kind "publication_fallback" -Stage "publish_sanitized_evidence" `
+            -Code $fallbackCode
+        Stop-Evidence $fallbackCode
+    }
+    return [ordered]@{ fullSummaryPublished = $false; fallbackPublished = $true }
 }
 
 function Write-CleanupAttestation {
@@ -3466,15 +3852,177 @@ function Write-CleanupAttestation {
     if (-not [System.IO.File]::Exists($jsonPath) -or -not [System.IO.File]::Exists($markdownPath)) {
         Stop-Evidence "cleanup_publish_summary_missing"
     }
-    $summary = Get-Content -Raw -LiteralPath $jsonPath | ConvertFrom-Json -AsHashtable
+    $summary = Assert-ExactSanitizedEvidencePair -Root $publishFull -SensitiveValues $SensitiveValues
     $summary.teardown = $Attestation
-    $json = $summary | ConvertTo-Json -Depth 16
-    $markdown = New-SummaryMarkdown $summary
-    Assert-SanitizedEvidenceText -Text ($json + "`n" + $markdown) -SensitiveValues $SensitiveValues
-    $json | Set-Content -LiteralPath $jsonPath -Encoding utf8NoBOM
-    $markdown | Set-Content -LiteralPath $markdownPath -Encoding utf8NoBOM
-    Protect-AdminOnlyPath -LiteralPath $jsonPath
-    Protect-AdminOnlyPath -LiteralPath $markdownPath
+    $pair = New-SanitizedEvidencePair -Summary $summary -SensitiveValues $SensitiveValues
+    $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    try {
+        [System.IO.File]::WriteAllText($jsonPath, [string]$pair.json, $utf8)
+        [System.IO.File]::WriteAllText($markdownPath, [string]$pair.markdown, $utf8)
+    }
+    catch { Stop-Evidence "cleanup_attestation_write_failed" }
+    Assert-AdminOnlyPath -LiteralPath $publishFull -Directory `
+        -FailureCode "cleanup_publish_directory_acl_invalid"
+    Assert-AdminOnlyPath -LiteralPath $jsonPath -FailureCode "cleanup_json_acl_invalid"
+    Assert-AdminOnlyPath -LiteralPath $markdownPath -FailureCode "cleanup_markdown_acl_invalid"
+    [void](Assert-ExactSanitizedEvidencePair -Root $publishFull -SensitiveValues $SensitiveValues)
+}
+
+function Invoke-EvidencePublicationSelfTest {
+    param([Parameter(Mandatory = $true)][string]$TempRoot)
+    $root = Join-Path $TempRoot ("evidence-publication-selftest-" + [Guid]::NewGuid().ToString('N'))
+    [System.IO.Directory]::CreateDirectory($root) | Out-Null
+    $previousRunnerTemp = $env:RUNNER_TEMP
+    $existingPublishRoot = Get-Variable -Scope Script -Name PublishRoot -ErrorAction SilentlyContinue
+    $previousPublishRoot = if ($null -ne $existingPublishRoot) { $existingPublishRoot.Value } else { $null }
+    try {
+        $env:RUNNER_TEMP = $root
+        $script:PublishRoot = Join-Path $root "m0b-publish"
+        $sensitiveValues = @("m0b-sensitive-machine", "runneradmin")
+        $summary = [ordered]@{
+            schemaVersion = 1
+            status = "blocked"
+            sourceSha = ('0' * 40)
+            collectedAtUtc = "2026-01-01T00:00:00.0000000+00:00"
+            runner = $null
+            bundle = $null
+            provenance = [ordered]@{
+                archive = [ordered]@{ verified = $true }
+                fixture = [ordered]@{ verified = $true; vendorData = $false }
+                executables = $null
+                msiExecuted = $false
+                localDevelopmentHostExecution = $false
+            }
+            isolation = [ordered]@{
+                standardUserExecutionVerified = $false
+                firewallRulesVerifiedBeforeExecution = $false
+            }
+            help = $null
+            fixtureStructure = $null
+            orchestrationSelfTests = $null
+            operations = @()
+            capabilityOutcomes = [ordered]@{
+                vendorCoverage = "not_run_by_scope"
+                cancellation = "not_measurable"
+            }
+            failure = [ordered]@{
+                stage = "safe_archive_extraction"
+                code = "archive_member_path_invalid"
+            }
+        }
+
+        $safeResult = Publish-SanitizedEvidence -Summary $summary -SensitiveValues $sensitiveValues
+        if (-not $safeResult.fullSummaryPublished -or $safeResult.fallbackPublished) {
+            Stop-Evidence "publication_selftest_full_pair_failed"
+        }
+        $published = Assert-ExactSanitizedEvidencePair -Root $script:PublishRoot `
+            -SensitiveValues $sensitiveValues
+        if ($published.status -cne "blocked" -or
+            $published.failure.stage -cne "safe_archive_extraction" -or
+            $published.failure.code -cne "archive_member_path_invalid") {
+            Stop-Evidence "publication_selftest_primary_failure_lost"
+        }
+        $attestation = [ordered]@{
+            allRuntimeProcessesAbsent = $true
+            firewallRulesAbsent = $true
+            temporaryProfileAbsent = $true
+            temporaryUserAbsent = $true
+            remoteInteractiveDenyRightCleaned = $true
+            runtimeRootAbsent = $true
+            privateStateRemoved = $true
+            cleanupComplete = $true
+            failureCode = $null
+        }
+        Write-CleanupAttestation -Attestation $attestation -SensitiveValues $sensitiveValues
+        $attested = Assert-ExactSanitizedEvidencePair -Root $script:PublishRoot `
+            -SensitiveValues $sensitiveValues
+        if ($attested.status -cne "blocked" -or -not $attested.teardown.cleanupComplete -or
+            $attested.failure.code -cne "archive_member_path_invalid") {
+            Stop-Evidence "publication_selftest_attestation_roundtrip_failed"
+        }
+        [System.IO.Directory]::Delete($script:PublishRoot, $true)
+
+        $unsafeSummary = $summary | ConvertTo-Json -Depth 10 | ConvertFrom-Json -AsHashtable
+        $canary = 'D:\private\runneradmin\sample.raw'
+        $unsafeSummary.help = $canary
+        $captured = @(& {
+            Publish-SanitizedEvidence -Summary $unsafeSummary -SensitiveValues $sensitiveValues
+        } 6>&1)
+        $fallbackResult = @($captured | Where-Object {
+            $_ -is [System.Collections.IDictionary]
+        } | Select-Object -Last 1)
+        if ($fallbackResult.Count -ne 1 -or $fallbackResult[0].fullSummaryPublished -or
+            -not $fallbackResult[0].fallbackPublished) {
+            Stop-Evidence "publication_selftest_fallback_failed"
+        }
+        $stableLog = [string]::Join("`n", @($captured | Where-Object {
+            $_ -isnot [System.Collections.IDictionary]
+        } | ForEach-Object { [string]$_ }))
+        if ($stableLog -notmatch '(?m)^M0B publication blocked stage=publish_sanitized_evidence code=evidence_content_scan_failed$' -or
+            $stableLog.Contains($canary) -or $stableLog.Contains($root)) {
+            Stop-Evidence "publication_selftest_stable_log_failed"
+        }
+        $fallback = Assert-ExactSanitizedEvidencePair -Root $script:PublishRoot `
+            -SensitiveValues $sensitiveValues
+        if ($fallback.status -cne "blocked" -or
+            $fallback.failure.stage -cne "safe_archive_extraction" -or
+            $fallback.failure.code -cne "archive_member_path_invalid" -or
+            $fallback.publication.fullSummaryFailureCode -cne "evidence_content_scan_failed") {
+            Stop-Evidence "publication_selftest_fallback_identity_failed"
+        }
+        $fallbackText = [System.IO.File]::ReadAllText((Join-Path $script:PublishRoot "summary.json")) +
+            "`n" + [System.IO.File]::ReadAllText((Join-Path $script:PublishRoot "summary.md"))
+        if ($fallbackText.Contains($canary) -or $fallbackText.Contains($root) -or
+            $fallbackText.Contains("runneradmin")) {
+            Stop-Evidence "publication_selftest_fallback_leak"
+        }
+        Write-CleanupAttestation -Attestation $attestation -SensitiveValues $sensitiveValues
+        $fallbackAttested = Assert-ExactSanitizedEvidencePair -Root $script:PublishRoot `
+            -SensitiveValues $sensitiveValues
+        if (-not $fallbackAttested.teardown.cleanupComplete -or
+            $fallbackAttested.publication.fullSummaryFailureCode -cne "evidence_content_scan_failed") {
+            Stop-Evidence "publication_selftest_fallback_attestation_failed"
+        }
+        [System.IO.Directory]::Delete($script:PublishRoot, $true)
+
+        [System.IO.Directory]::CreateDirectory($script:PublishRoot) | Out-Null
+        $sentinel = Join-Path $script:PublishRoot "sentinel.txt"
+        [System.IO.File]::WriteAllText($sentinel, "do-not-overwrite")
+        $preexistingRejected = $false
+        try { Write-SanitizedEvidencePair -Summary $summary -SensitiveValues $sensitiveValues }
+        catch {
+            $preexistingRejected = (Get-StableFailureCode $_) -eq "publish_root_preexisting"
+        }
+        if (-not $preexistingRejected -or
+            [System.IO.File]::ReadAllText($sentinel) -cne "do-not-overwrite") {
+            Stop-Evidence "publication_selftest_overwrite_guard_failed"
+        }
+        if ((Get-StableEvidenceToken -Value $canary -Fallback "unknown_stage") -cne "unknown_stage") {
+            Stop-Evidence "publication_selftest_token_guard_failed"
+        }
+        [System.IO.Directory]::Delete($script:PublishRoot, $true)
+        if (Get-ChildItem -LiteralPath $root -Directory -Filter "m0b-publish-staging-*" |
+            Select-Object -First 1) {
+            Stop-Evidence "publication_selftest_staging_residue"
+        }
+        return [ordered]@{
+            passed = $true
+            atomicPairVerified = $true
+            blockedTeardownRoundTripVerified = $true
+            unsafeFullSummaryFallbackVerified = $true
+            stableLoggingVerified = $true
+            overwriteGuardVerified = $true
+        }
+    }
+    finally {
+        if ($null -eq $previousRunnerTemp) { Remove-Item Env:RUNNER_TEMP -ErrorAction SilentlyContinue }
+        else { $env:RUNNER_TEMP = $previousRunnerTemp }
+        if ($null -ne $existingPublishRoot) { $script:PublishRoot = $previousPublishRoot }
+        else { Remove-Variable -Scope Script -Name PublishRoot -ErrorAction SilentlyContinue }
+        if ([System.IO.Directory]::Exists($root)) {
+            [System.IO.Directory]::Delete($root, $true)
+        }
+    }
 }
 
 function Invoke-IsolationCleanup {
@@ -3512,7 +4060,7 @@ function Invoke-IsolationCleanup {
         $attestation.failureCode = $Code
         try { Write-CleanupAttestation -Attestation $attestation -SensitiveValues $sensitiveValues }
         catch { }
-        Write-Host "M0B cleanup stopped fail-clean at $Code."
+        Write-StableEvidenceFailure -Kind "cleanup" -Stage "teardown" -Code $Code
         return 1
     }
 
@@ -3648,6 +4196,9 @@ function Invoke-IsolationCleanup {
     $attestation.failureCode = $null
     try { Write-CleanupAttestation -Attestation $attestation -SensitiveValues $sensitiveValues }
     catch {
+        $attestationCode = Get-StableFailureCode $_
+        Write-StableEvidenceFailure -Kind "cleanup_attestation" -Stage "teardown" `
+            -Code $attestationCode
         $attestation.privateStateRemoved = $false
         $attestation.cleanupComplete = $false
         return & $writeFailure "cleanup_attestation_persist_failed"
@@ -3870,10 +4421,17 @@ function Invoke-EvidenceRun {
 
         $harnessPath = Join-Path $layout.harness "m0_proteowizard_spike.exe"
         Copy-Item -LiteralPath (Join-Path $BundleRoot "m0_proteowizard_spike.exe") -Destination $harnessPath
-        Protect-AdminOnlyPath -LiteralPath $BundleRoot -Directory
+        Write-Stage "protect_runtime_inputs"
+        Protect-AdminOnlyPath -LiteralPath $BundleRoot -Directory `
+            -FailureCode "bundle_root_acl_protection_failed"
+        Assert-AdminOnlyPath -LiteralPath $BundleRoot -Directory `
+            -FailureCode "bundle_root_acl_invalid"
         if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_WORKSPACE) -and
             [System.IO.Directory]::Exists($env:GITHUB_WORKSPACE)) {
-            Protect-AdminOnlyPath -LiteralPath $env:GITHUB_WORKSPACE -Directory
+            Protect-AdminOnlyPath -LiteralPath $env:GITHUB_WORKSPACE -Directory `
+                -FailureCode "runner_workspace_acl_protection_failed"
+            Assert-AdminOnlyPath -LiteralPath $env:GITHUB_WORKSPACE -Directory `
+                -FailureCode "runner_workspace_acl_invalid"
         }
 
         Write-Stage "create_standard_user"
@@ -4174,15 +4732,26 @@ if ($Mode -eq "SelfTest") {
         Stop-Evidence "selftest_temp_containment_invalid"
     }
     [System.IO.Directory]::CreateDirectory($selfTestFull) | Out-Null
+    $selfTestExitCode = 0
     try {
         Invoke-OrchestrationSelfTests -TempRoot $selfTestFull | ConvertTo-Json -Depth 8
     }
+    catch {
+        $selfTestExitCode = 1
+        Write-StableEvidenceFailure -Kind "run" -Stage "deterministic_orchestration_selftests" `
+            -Code (Get-StableFailureCode $_)
+    }
     finally {
         if ([System.IO.Directory]::Exists($selfTestFull)) {
-            [System.IO.Directory]::Delete($selfTestFull, $true)
+            try { [System.IO.Directory]::Delete($selfTestFull, $true) }
+            catch {
+                $selfTestExitCode = 1
+                Write-StableEvidenceFailure -Kind "run" -Stage "deterministic_orchestration_selftests" `
+                    -Code "selftest_cleanup_failed"
+            }
         }
     }
-    exit 0
+    exit $selfTestExitCode
 }
 
 if ($Mode -eq "Cleanup") {
@@ -4237,10 +4806,14 @@ try {
 catch {
     $runExitCode = 1
     $script:Summary.status = "blocked"
+    $stableStage = Get-StableEvidenceToken -Value ([string]$script:CurrentStage) `
+        -Fallback "unknown_stage"
+    $stableCode = Get-StableFailureCode $_
     $script:Summary.failure = [ordered]@{
-        stage = $script:CurrentStage
-        code = Get-StableFailureCode $_
+        stage = $stableStage
+        code = $stableCode
     }
+    Write-StableEvidenceFailure -Kind "run" -Stage $stableStage -Code $stableCode
 }
 
 $sensitiveValues = @($env:COMPUTERNAME, $env:USERNAME)
@@ -4252,21 +4825,10 @@ if (-not [string]::IsNullOrWhiteSpace($StatePath) -and [System.IO.File]::Exists(
     catch { $runExitCode = 1 }
 }
 try {
-    Publish-SanitizedEvidence -Summary $script:Summary -SensitiveValues $sensitiveValues
+    $publication = Publish-SanitizedEvidence -Summary $script:Summary -SensitiveValues $sensitiveValues
+    if (-not $publication.fullSummaryPublished) { $runExitCode = 1 }
 }
 catch {
     $runExitCode = 1
-    try {
-        if (-not [string]::IsNullOrWhiteSpace($PublishRoot)) {
-            $publishFull = [System.IO.Path]::GetFullPath($PublishRoot)
-            $tempFull = [System.IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\') + '\'
-            if ($publishFull.StartsWith($tempFull, [System.StringComparison]::OrdinalIgnoreCase) -and
-                [System.IO.Path]::GetFileName($publishFull) -eq "m0b-publish" -and
-                [System.IO.Directory]::Exists($publishFull)) {
-                [System.IO.Directory]::Delete($publishFull, $true)
-            }
-        }
-    }
-    catch { }
 }
 exit $runExitCode

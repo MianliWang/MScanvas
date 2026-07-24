@@ -229,11 +229,14 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $publish = Join-Path $env:RUNNER_TEMP 'm0b-publish'
-          $names = @(Get-ChildItem -LiteralPath $publish -File | Select-Object -ExpandProperty Name | Sort-Object)
+          if (-not [System.IO.Directory]::Exists($publish)) {
+            throw 'The sanitized evidence publish directory was unavailable.'
+          }
+          $names = @(Get-ChildItem -LiteralPath $publish -File -Force | Select-Object -ExpandProperty Name | Sort-Object)
           if (Compare-Object -ReferenceObject @('summary.json', 'summary.md') -DifferenceObject $names) {
             throw 'The publish directory did not contain exactly the two allowed evidence files.'
           }
-          if (Get-ChildItem -LiteralPath $publish -Directory | Select-Object -First 1) {
+          if (Get-ChildItem -LiteralPath $publish -Directory -Force | Select-Object -First 1) {
             throw 'The publish directory contained an unexpected directory.'
           }
           $jsonText = Get-Content -Raw -LiteralPath (Join-Path $publish 'summary.json')
