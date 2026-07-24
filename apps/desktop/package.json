@@ -23,14 +23,14 @@
     "@tauri-apps/cli": "2.11.4",
     "@testing-library/jest-dom": "^6.0.0",
     "@testing-library/react": "^16.0.0",
+    "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.0.1",
     "jsdom": "^27.0.0",
     "tailwindcss": "4.3.3",
-    "typescript": "6.0.3",
+    "typescript": "7.0.2",
     "vite": "8.1.5",
-    "vitest": "4.1.10",
-    "@types/node": "^22.0.0"
+    "vitest": "4.1.10"
   }
 }
