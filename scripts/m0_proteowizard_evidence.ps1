@@ -1422,12 +1422,85 @@ function Set-AndVerifyRuntimeAcls {
         -TemporarySid $TemporarySid
 }
 
+function Assert-FirewallRuleProjection {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Rules,
+        [Parameter(Mandatory = $true)][object[]]$Applications,
+        [Parameter(Mandatory = $true)][string]$ExpectedName,
+        [Parameter(Mandatory = $true)][string]$ExpectedProgramPath,
+        [Parameter(Mandatory = $true)][AllowNull()][object]$RawEnforcementProperty
+    )
+    if ($Rules.Count -ne 1) { Stop-Evidence "firewall_rule_count_invalid" }
+    $rule = $Rules[0]
+    if ([string]$rule.Name -cne $ExpectedName -or
+        [string]$rule.DisplayName -cne "MSCanvas disposable M0B outbound block") {
+        Stop-Evidence "firewall_rule_identity_invalid"
+    }
+    if ([string]$rule.Direction -cne "Outbound") {
+        Stop-Evidence "firewall_rule_direction_invalid"
+    }
+    if ([string]$rule.Action -cne "Block") {
+        Stop-Evidence "firewall_rule_action_invalid"
+    }
+    if ([string]$rule.Enabled -cne "True") {
+        Stop-Evidence "firewall_rule_disabled"
+    }
+    if ([string]$rule.Profile -cne "Any") {
+        Stop-Evidence "firewall_rule_profile_invalid"
+    }
+    if ([string]$rule.PrimaryStatus -cne "OK") {
+        Stop-Evidence "firewall_rule_primary_status_invalid"
+    }
+    # The localized NetSecurity projection renames enforcement states. Inspect
+    # the underlying locale-independent UInt16 CIM array instead: 1 is fully
+    # enforced and 5 means the rule's profile is inactive. Profile Any can
+    # legitimately include inactive-profile entries, but no other reason is
+    # acceptable and at least one active enforcement is required.
+    $enforcementProperty = $RawEnforcementProperty
+    if ($null -eq $enforcementProperty -or
+        [string]$enforcementProperty.CimType -cne "UInt16Array") {
+        Stop-Evidence "firewall_rule_enforcement_status_shape_invalid"
+    }
+    $enforcementStatuses = @($enforcementProperty.Value)
+    if ($enforcementStatuses.Count -eq 0) {
+        Stop-Evidence "firewall_rule_enforcement_status_missing"
+    }
+    $enforcedCount = 0
+    foreach ($status in $enforcementStatuses) {
+        if ($status -isnot [uint16]) {
+            Stop-Evidence "firewall_rule_enforcement_status_shape_invalid"
+        }
+        switch ([uint16]$status) {
+            1 { $enforcedCount++; continue }
+            5 { continue }
+            default { Stop-Evidence "firewall_rule_blocking_reason_present" }
+        }
+    }
+    if ($enforcedCount -eq 0) {
+        Stop-Evidence "firewall_rule_no_active_enforcement"
+    }
+    if ($Applications.Count -ne 1) {
+        Stop-Evidence "firewall_application_filter_count_invalid"
+    }
+    if (-not [string]::Equals(
+            [string]$Applications[0].Program,
+            $ExpectedProgramPath,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+        Stop-Evidence "firewall_rule_program_path_invalid"
+    }
+}
+
 function Add-VerifiedFirewallRule {
     param(
         [Parameter(Mandatory = $true)][string]$RuleName,
         [Parameter(Mandatory = $true)][string]$ProgramPath,
         [Parameter(Mandatory = $true)][hashtable]$State
     )
+    if (-not [System.IO.Path]::IsPathFullyQualified($ProgramPath) -or
+        -not [System.IO.File]::Exists($ProgramPath)) {
+        Stop-Evidence "firewall_program_path_invalid"
+    }
     if (Get-NetFirewallRule -Name $RuleName -PolicyStore ActiveStore -ErrorAction SilentlyContinue) {
         Stop-Evidence "firewall_rule_collision"
     }
@@ -1436,14 +1509,15 @@ function Add-VerifiedFirewallRule {
     New-NetFirewallRule -Name $RuleName -DisplayName "MSCanvas disposable M0B outbound block" `
         -Direction Outbound -Action Block -Program $ProgramPath -Profile Any -Enabled True `
         -PolicyStore ActiveStore | Out-Null
-    $rule = Get-NetFirewallRule -Name $RuleName -PolicyStore ActiveStore -ErrorAction Stop
-    $application = $rule | Get-NetFirewallApplicationFilter
-    if ($rule.Direction -ne "Outbound" -or $rule.Action -ne "Block" -or
-        [string]$rule.Enabled -ne "True" -or [string]$rule.Profile -ne "Any" -or
-        [string]$rule.PrimaryStatus -ne "OK" -or [string]$rule.EnforcementStatus -ne "Full" -or
-        -not [string]::Equals($application.Program, $ProgramPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-        Stop-Evidence "firewall_rule_verification_failed"
+    $rules = @(Get-NetFirewallRule -Name $RuleName -PolicyStore ActiveStore -ErrorAction Stop)
+    $applications = @($rules | Get-NetFirewallApplicationFilter)
+    $rawEnforcementProperty = if ($rules.Count -eq 1) {
+        $rules[0].PSBase.CimInstanceProperties['EnforcementStatus']
     }
+    else { $null }
+    Assert-FirewallRuleProjection -Rules $rules -Applications $applications `
+        -ExpectedName $RuleName -ExpectedProgramPath $ProgramPath `
+        -RawEnforcementProperty $rawEnforcementProperty
 }
 
 function Assert-FirewallEnforcement {
@@ -2700,6 +2774,107 @@ function Assert-SelfTestRejects {
     Stop-Evidence $FailureCode
 }
 
+function Assert-SelfTestRejectsWithCode {
+    param(
+        [Parameter(Mandatory = $true)][scriptblock]$Action,
+        [Parameter(Mandatory = $true)][string]$ExpectedCode,
+        [Parameter(Mandatory = $true)][string]$FailureCode
+    )
+    try { [void](& $Action) }
+    catch {
+        if ((Get-StableFailureCode $_) -ceq $ExpectedCode) { return }
+        Stop-Evidence $FailureCode
+    }
+    Stop-Evidence $FailureCode
+}
+
+function New-FirewallRuleProjectionSelfTestFixture {
+    param([AllowNull()][AllowEmptyCollection()][uint16[]]$EnforcementCodes)
+    return [pscustomobject]@{
+        Name = "M0B-selftest-rule"
+        DisplayName = "MSCanvas disposable M0B outbound block"
+        Direction = "Outbound"
+        Action = "Block"
+        Enabled = "True"
+        Profile = "Any"
+        PrimaryStatus = "OK"
+        CimInstanceProperties = @{
+            EnforcementStatus = [pscustomobject]@{
+                CimType = "UInt16Array"
+                Value = $EnforcementCodes
+            }
+        }
+    }
+}
+
+function Invoke-FirewallRuleProjectionSelfTest {
+    $name = "M0B-selftest-rule"
+    $program = 'X:\isolated\tool.exe'
+    $application = [pscustomobject]@{ Program = $program }
+
+    $arrayRule = New-FirewallRuleProjectionSelfTestFixture `
+        -EnforcementCodes ([uint16[]]@(5, 1, 1, 1))
+    Assert-FirewallRuleProjection -Rules @($arrayRule) -Applications @($application) `
+        -ExpectedName $name -ExpectedProgramPath $program `
+        -RawEnforcementProperty $arrayRule.CimInstanceProperties.EnforcementStatus
+    $singleRule = New-FirewallRuleProjectionSelfTestFixture -EnforcementCodes ([uint16[]]@(1))
+    Assert-FirewallRuleProjection -Rules @($singleRule) -Applications @($application) `
+        -ExpectedName $name -ExpectedProgramPath $program `
+        -RawEnforcementProperty $singleRule.CimInstanceProperties.EnforcementStatus
+
+    $missingRule = New-FirewallRuleProjectionSelfTestFixture -EnforcementCodes ([uint16[]]@())
+    Assert-SelfTestRejectsWithCode {
+        Assert-FirewallRuleProjection -Rules @($missingRule) -Applications @($application) `
+            -ExpectedName $name -ExpectedProgramPath $program `
+            -RawEnforcementProperty $missingRule.CimInstanceProperties.EnforcementStatus
+    } "firewall_rule_enforcement_status_missing" "firewall_projection_selftest_rejection_failed"
+    $inactiveRule = New-FirewallRuleProjectionSelfTestFixture `
+        -EnforcementCodes ([uint16[]]@(5))
+    Assert-SelfTestRejectsWithCode {
+        Assert-FirewallRuleProjection -Rules @($inactiveRule) -Applications @($application) `
+            -ExpectedName $name -ExpectedProgramPath $program `
+            -RawEnforcementProperty $inactiveRule.CimInstanceProperties.EnforcementStatus
+    } "firewall_rule_no_active_enforcement" "firewall_projection_selftest_rejection_failed"
+    $blockingCodes = @([uint16]0, 2, 3, 4) + @((6..24) | ForEach-Object { [uint16]$_ })
+    foreach ($blockingCode in $blockingCodes) {
+        $blockedRule = New-FirewallRuleProjectionSelfTestFixture `
+            -EnforcementCodes ([uint16[]]@(1, $blockingCode))
+        Assert-SelfTestRejectsWithCode {
+            Assert-FirewallRuleProjection -Rules @($blockedRule) -Applications @($application) `
+                -ExpectedName $name -ExpectedProgramPath $program `
+                -RawEnforcementProperty $blockedRule.CimInstanceProperties.EnforcementStatus
+        } "firewall_rule_blocking_reason_present" "firewall_projection_selftest_rejection_failed"
+    }
+    $wrongShapeRule = New-FirewallRuleProjectionSelfTestFixture -EnforcementCodes ([uint16[]]@(1))
+    $wrongShapeRule.CimInstanceProperties.EnforcementStatus.CimType = "StringArray"
+    Assert-SelfTestRejectsWithCode {
+        Assert-FirewallRuleProjection -Rules @($wrongShapeRule) -Applications @($application) `
+            -ExpectedName $name -ExpectedProgramPath $program `
+            -RawEnforcementProperty $wrongShapeRule.CimInstanceProperties.EnforcementStatus
+    } "firewall_rule_enforcement_status_shape_invalid" "firewall_projection_selftest_rejection_failed"
+    $wrongActionRule = New-FirewallRuleProjectionSelfTestFixture -EnforcementCodes ([uint16[]]@(1))
+    $wrongActionRule.Action = "Allow"
+    Assert-SelfTestRejectsWithCode {
+        Assert-FirewallRuleProjection -Rules @($wrongActionRule) -Applications @($application) `
+            -ExpectedName $name -ExpectedProgramPath $program `
+            -RawEnforcementProperty $wrongActionRule.CimInstanceProperties.EnforcementStatus
+    } "firewall_rule_action_invalid" "firewall_projection_selftest_rejection_failed"
+    $wrongApplication = [pscustomobject]@{ Program = 'X:\isolated\other.exe' }
+    Assert-SelfTestRejectsWithCode {
+        Assert-FirewallRuleProjection -Rules @($singleRule) -Applications @($wrongApplication) `
+            -ExpectedName $name -ExpectedProgramPath $program `
+            -RawEnforcementProperty $singleRule.CimInstanceProperties.EnforcementStatus
+    } "firewall_rule_program_path_invalid" "firewall_projection_selftest_rejection_failed"
+
+    return [ordered]@{
+        passed = $true
+        acceptedRawCimShapes = 2
+        profileInactiveAcceptedWithEnforced = $true
+        rejectedCaseCount = $blockingCodes.Count + 5
+        allKnownBlockingReasonsRejected = $true
+    }
+}
+
 function Invoke-ArchiveMemberSelfTest {
     param([Parameter(Mandatory = $true)][string]$TempRoot)
     $validationRoot = Join-Path $TempRoot "archive-member-validation-target"
@@ -2988,6 +3163,7 @@ msLevel <mslevels>
         summaryRoundTrip = [ordered]@{ passed = $true }
         capabilityCrossCheckGate = [ordered]@{ passed = $true; contradictionDowngradedToC = $true }
         archiveMembers = Invoke-ArchiveMemberSelfTest -TempRoot $TempRoot
+        firewallRuleProjection = Invoke-FirewallRuleProjectionSelfTest
         cleanupState = Invoke-CleanupStateSelfTest -TempRoot $TempRoot
         evidencePublication = Invoke-EvidencePublicationSelfTest -TempRoot $TempRoot
         sanitizer = Invoke-SanitizerSelfTest
@@ -4441,9 +4617,13 @@ function Invoke-EvidenceRun {
 
         Write-Stage "install_exact_firewall_blocks"
         $ruleNonce = [Guid]::NewGuid().ToString('N')
+        Write-Stage "install_firewall_block_msconvert"
         Add-VerifiedFirewallRule -RuleName "M0B-$ruleNonce-msconvert" -ProgramPath $tools.msconvert -State $state
+        Write-Stage "install_firewall_block_msaccess"
         Add-VerifiedFirewallRule -RuleName "M0B-$ruleNonce-msaccess" -ProgramPath $tools.msaccess -State $state
+        Write-Stage "install_firewall_block_harness"
         Add-VerifiedFirewallRule -RuleName "M0B-$ruleNonce-harness" -ProgramPath $harnessPath -State $state
+        Write-Stage "verify_active_firewall_profiles"
         $activeFirewallProfiles = @(Assert-FirewallEnforcement)
         $environment = New-MinimalEnvironment -Layout $layout -Account $account `
             -PortableRoot $tools.portableRoot
