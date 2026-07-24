@@ -12,7 +12,7 @@ jobs:
   check:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install pinned Rust toolchain
         shell: pwsh
         run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy
