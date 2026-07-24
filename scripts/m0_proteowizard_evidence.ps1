@@ -1594,14 +1594,14 @@ function Invoke-SecureProcess {
 }
 
 function Get-Sha256OfBytes {
-    param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][byte[]]$Bytes)
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try { return [Convert]::ToHexString($sha.ComputeHash($Bytes)) }
     finally { $sha.Dispose() }
 }
 
 function Get-Utf8Text {
-    param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][byte[]]$Bytes)
     return [System.Text.Encoding]::UTF8.GetString($Bytes)
 }
 
@@ -3107,6 +3107,12 @@ msLevel <mslevels>
 '@
     $queries = @(Get-MsAccessAnalysisQueries $helpFixture)
     if ($queries.Count -ne 5) { Stop-Evidence "help_parser_selftest_failed" }
+    $emptyCapture = [byte[]]::new(0)
+    if ((Get-Sha256OfBytes -Bytes $emptyCapture) -cne
+            "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855" -or
+        (Get-Utf8Text -Bytes $emptyCapture) -cne "") {
+        Stop-Evidence "empty_capture_stream_selftest_failed"
+    }
     Assert-SelfTestRejects {
         Get-MsAccessAnalysisQueries ($helpFixture.Replace(
             "Analysis commands (used with -x/--exec):",
@@ -3160,6 +3166,7 @@ msLevel <mslevels>
     return [ordered]@{
         embeddedNativeTypesCompiled = $true
         helpParser = [ordered]@{ passed = $true; queryCount = $queries.Count; nearMissRejected = $true }
+        emptyCaptureStreams = [ordered]@{ passed = $true; sha256Verified = $true; utf8Verified = $true }
         summaryRoundTrip = [ordered]@{ passed = $true }
         capabilityCrossCheckGate = [ordered]@{ passed = $true; contradictionDowngradedToC = $true }
         archiveMembers = Invoke-ArchiveMemberSelfTest -TempRoot $TempRoot
@@ -4681,13 +4688,15 @@ function Invoke-EvidenceRun {
             unmanagedPasswordBufferZeroFreedByLauncher = $true
         }
 
-        Write-Stage "capture_complete_help_and_identity"
+        Write-Stage "capture_msconvert_help"
         $msconvertHelp = Invoke-HelpCapture -Label "msconvert" -Executable $tools.msconvert `
             -Account $account -Password $password -Environment $environment -Layout $layout `
             -ExpectedExitCode 0
+        Write-Stage "capture_msaccess_help"
         $msaccessHelp = Invoke-HelpCapture -Label "msaccess" -Executable $tools.msaccess `
             -Account $account -Password $password -Environment $environment -Layout $layout `
             -ExpectedExitCode 1
+        Write-Stage "probe_executable_identity"
         $probe = Invoke-SecureProcess -Account $account -Password $password -Application $harnessPath `
             -Arguments @("--mode", "probe", "--proteowizard-home", $tools.portableRoot) `
             -Environment $environment -Layout $layout -TimeoutMilliseconds 180000
