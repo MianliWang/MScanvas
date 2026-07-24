@@ -1,4 +1,6 @@
+use std::ffi::OsString;
 use std::io::{self, Read};
+use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -68,6 +70,8 @@ impl ProcessOutput {
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ProcessError {
+    #[error("backend child environment is invalid: {detail}")]
+    InvalidEnvironment { detail: String },
     #[error("failed to launch {executable}: {detail}")]
     Launch {
         executable: String,
@@ -144,7 +148,7 @@ pub fn execute_cancellable(
         });
     }
 
-    execute_command_after_assignment(process_command(spec), spec, cancellation, || {})
+    execute_command_after_assignment(process_command(spec)?, spec, cancellation, || {})
 }
 
 fn execute_command_after_assignment(
@@ -410,13 +414,100 @@ fn add_process_cleanup_context(
     ProcessError::Wait { detail }
 }
 
-fn process_command(spec: &CommandSpec) -> Command {
+fn process_command(spec: &CommandSpec) -> Result<Command, ProcessError> {
     let mut command = Command::new(&spec.executable);
     command
+        .env_clear()
         .args(&spec.args)
         .current_dir(&spec.working_directory)
         .stdin(Stdio::null());
+    configure_minimal_environment(&mut command, spec)?;
+    Ok(command)
+}
+
+#[cfg(windows)]
+fn configure_minimal_environment(
+    command: &mut Command,
+    spec: &CommandSpec,
+) -> Result<(), ProcessError> {
+    let windows_root = std::env::var_os("SystemRoot")
+        .or_else(|| std::env::var_os("WINDIR"))
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .ok_or_else(|| ProcessError::InvalidEnvironment {
+            detail: "SystemRoot/WINDIR is missing or not absolute".to_owned(),
+        })?;
+    let temporary_directory = dedicated_temporary_directory()?;
+    let executable_directory =
+        spec.executable
+            .parent()
+            .ok_or_else(|| ProcessError::InvalidEnvironment {
+                detail: "the backend executable has no parent directory".to_owned(),
+            })?;
+    let system32 = windows_root.join("System32");
+    let path = join_unique_paths([
+        executable_directory,
+        system32.as_path(),
+        windows_root.as_path(),
+    ])?;
+
     command
+        .env("SystemRoot", &windows_root)
+        .env("WINDIR", &windows_root)
+        .env("TEMP", &temporary_directory)
+        .env("TMP", &temporary_directory)
+        .env("PATH", path);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn dedicated_temporary_directory() -> Result<std::path::PathBuf, ProcessError> {
+    let temp = std::env::var_os("TEMP").or_else(|| std::env::var_os("TMP"));
+    let temp = temp
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute() && path.is_dir())
+        .ok_or_else(|| ProcessError::InvalidEnvironment {
+            detail: "TEMP/TMP is missing, not absolute, or not an existing directory".to_owned(),
+        })?;
+    Ok(temp)
+}
+
+#[cfg(windows)]
+fn join_unique_paths<'a>(
+    paths: impl IntoIterator<Item = &'a Path>,
+) -> Result<OsString, ProcessError> {
+    let mut unique = Vec::new();
+    for path in paths {
+        if !unique
+            .iter()
+            .any(|existing: &&Path| existing.as_os_str().eq_ignore_ascii_case(path.as_os_str()))
+        {
+            unique.push(path);
+        }
+    }
+    std::env::join_paths(unique).map_err(|error| ProcessError::InvalidEnvironment {
+        detail: format!("minimal PATH could not be constructed: {error}"),
+    })
+}
+
+#[cfg(not(windows))]
+fn configure_minimal_environment(
+    command: &mut Command,
+    spec: &CommandSpec,
+) -> Result<(), ProcessError> {
+    let temporary_directory = std::env::var_os("TMPDIR")
+        .or_else(|| std::env::var_os("TMP"))
+        .or_else(|| std::env::var_os("TEMP"))
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute() && path.is_dir())
+        .unwrap_or_else(std::env::temp_dir);
+    let executable_directory = spec.executable.parent().unwrap_or_else(|| Path::new(""));
+    command
+        .env("TMPDIR", &temporary_directory)
+        .env("TEMP", &temporary_directory)
+        .env("TMP", &temporary_directory)
+        .env("PATH", executable_directory);
+    Ok(())
 }
 
 fn capture_stream(
@@ -759,7 +850,9 @@ mod tests {
     fn missing_executable_is_distinct_from_non_zero_exit() {
         let spec = CommandSpec::new(
             BackendTool::MsConvert,
-            "definitely-not-an-mscanvas-test-executable",
+            std::env::current_dir()
+                .expect("current directory")
+                .join("definitely-not-an-mscanvas-test-executable"),
             std::iter::empty::<OsString>(),
             std::env::current_dir().expect("current directory"),
         );
@@ -788,6 +881,36 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn backend_child_environment_is_allowlisted_and_drops_sensitive_sentinels() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("minimal-environment-verified");
+        let status = Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_environment_parent",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .current_dir(test_directory.path())
+            .env("TEMP", test_directory.path())
+            .env("TMP", test_directory.path())
+            .env("GITHUB_TOKEN", "must-not-reach-backend")
+            .env("ACTIONS_RUNTIME_TOKEN", "must-not-reach-backend")
+            .env("MSCANVAS_CREDENTIAL_SENTINEL", "must-not-reach-backend")
+            .env("USERPROFILE", r"C:\sensitive-profile")
+            .status()
+            .expect("launch controlled environment parent");
+
+        assert!(status.success(), "controlled environment parent failed");
+        assert!(
+            marker.is_file(),
+            "backend child did not verify its environment"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn cancellation_terminates_an_owned_mock_process_tree() {
         let test_directory = TestDirectory::new();
         let release = test_directory.path().join("release");
@@ -806,7 +929,7 @@ mod tests {
             ],
             std::env::current_dir().expect("current directory"),
         );
-        let mut command = process_command(&spec);
+        let mut command = process_command(&spec).expect("construct controlled parent command");
         command.env("MSCANVAS_PROCESS_TEST_DIRECTORY", test_directory.path());
 
         let cancellation = CancellationToken::new();
@@ -957,6 +1080,91 @@ mod tests {
     }
 
     #[cfg(windows)]
+    #[test]
+    #[ignore = "controlled subprocess entry point"]
+    fn controlled_environment_parent() {
+        let working_directory = std::env::current_dir().expect("controlled working directory");
+        let executable = std::env::current_exe().expect("test executable");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            executable,
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_environment_child",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            &working_directory,
+        );
+        let output = execute(&spec).expect("execute controlled environment child");
+        assert!(
+            output.success(),
+            "controlled environment child failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            working_directory
+                .join("minimal-environment-verified")
+                .is_file(),
+            "controlled environment child did not write its marker"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "controlled subprocess entry point"]
+    fn controlled_environment_child() {
+        let working_directory = std::env::current_dir().expect("controlled working directory");
+        let allowed = ["PATH", "SYSTEMROOT", "TEMP", "TMP", "WINDIR"];
+        for (name, _) in std::env::vars_os() {
+            let normalized = name.to_string_lossy().to_ascii_uppercase();
+            assert!(
+                allowed.contains(&normalized.as_str()),
+                "unexpected inherited backend environment variable: {normalized}"
+            );
+            assert!(!normalized.starts_with("GITHUB_"));
+            assert!(!normalized.starts_with("ACTIONS_"));
+            assert!(!normalized.contains("TOKEN"));
+            assert!(!normalized.contains("CREDENTIAL"));
+            assert_ne!(normalized, "USERPROFILE");
+        }
+
+        assert_eq!(
+            std::env::var_os("TEMP").map(PathBuf::from).as_deref(),
+            Some(working_directory.as_path())
+        );
+        assert_eq!(
+            std::env::var_os("TMP").map(PathBuf::from).as_deref(),
+            Some(working_directory.as_path())
+        );
+        assert!(std::env::var_os("SystemRoot").is_some());
+        assert!(std::env::var_os("WINDIR").is_some());
+        let windows_root = PathBuf::from(std::env::var_os("SystemRoot").expect("SystemRoot"));
+        let executable_directory = std::env::current_exe()
+            .expect("test executable")
+            .parent()
+            .expect("test executable parent")
+            .to_path_buf();
+        let actual_path =
+            std::env::split_paths(&std::env::var_os("PATH").expect("backend child receives PATH"))
+                .collect::<Vec<_>>();
+        assert_eq!(
+            actual_path,
+            [
+                executable_directory,
+                windows_root.join("System32"),
+                windows_root,
+            ]
+        );
+        fs::write(
+            working_directory.join("minimal-environment-verified"),
+            b"verified",
+        )
+        .expect("write minimal environment marker");
+    }
+
+    #[cfg(windows)]
     fn controlled_test_directory() -> PathBuf {
         std::env::var_os("MSCANVAS_PROCESS_TEST_DIRECTORY")
             .map(PathBuf::from)
@@ -996,7 +1204,7 @@ mod tests {
             ],
             std::env::current_dir().expect("current directory"),
         );
-        let mut command = process_command(&spec);
+        let mut command = process_command(&spec).expect("construct controlled parent command");
         command
             .env("MSCANVAS_PROCESS_TEST_DIRECTORY", test_directory.path())
             .env("MSCANVAS_PROCESS_TEST_PARENT_EXITS_AFTER_SPAWN", "1")

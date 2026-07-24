@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+use crate::capability::{CapabilityRequirementError, InstalledHelpCapabilities};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendTool {
     MsConvert,
@@ -110,9 +112,13 @@ pub enum PlanError {
     MissingOutputDirectory,
     #[error("spectrum precision must be between 0 and 15 decimal places")]
     InvalidSpectrumPrecision,
+    #[error("filtered TIC planning requires exact installed-help capability evidence")]
+    FilteredTicCapabilityEvidenceRequired,
+    #[error(transparent)]
+    InstalledHelpCapability(#[from] CapabilityRequirementError),
 }
 
-pub fn build_msconvert_command(
+fn build_msconvert_command(
     executable: impl Into<PathBuf>,
     input: &Path,
     output_directory: &Path,
@@ -135,7 +141,47 @@ pub fn build_msconvert_command(
     ))
 }
 
-pub fn build_msaccess_command(
+/// Builds a conversion command only after the complete installed help has
+/// confirmed every option used by the typed plan.
+pub fn build_msconvert_command_with_capabilities(
+    capabilities: &InstalledHelpCapabilities,
+    executable: impl Into<PathBuf>,
+    input: &Path,
+    output_directory: &Path,
+    format: OpenFormat,
+) -> Result<CommandSpec, PlanError> {
+    capabilities.require_conversion(format)?;
+    build_msconvert_command(executable, input, output_directory, format)
+}
+
+#[cfg(test)]
+fn build_msaccess_command(
+    executable: impl Into<PathBuf>,
+    input: &Path,
+    output_directory: &Path,
+    operation: PreviewOperation,
+) -> Result<CommandSpec, PlanError> {
+    if matches!(operation, PreviewOperation::Tic { ms_level: Some(_) }) {
+        return Err(PlanError::FilteredTicCapabilityEvidenceRequired);
+    }
+    build_msaccess_command_inner(executable, input, output_directory, operation)
+}
+
+/// Builds an msaccess command only after the complete installed help has
+/// confirmed the exact option, query, parameter, and filter grammar used by
+/// the typed plan.
+pub fn build_msaccess_command_with_capabilities(
+    capabilities: &InstalledHelpCapabilities,
+    executable: impl Into<PathBuf>,
+    input: &Path,
+    output_directory: &Path,
+    operation: PreviewOperation,
+) -> Result<CommandSpec, PlanError> {
+    capabilities.require_preview_operation(&operation)?;
+    build_msaccess_command_inner(executable, input, output_directory, operation)
+}
+
+fn build_msaccess_command_inner(
     executable: impl Into<PathBuf>,
     input: &Path,
     output_directory: &Path,
@@ -254,18 +300,16 @@ mod tests {
     }
 
     #[test]
-    fn tic_filter_is_one_typed_argument_value() {
-        let command = build_msaccess_command(
+    fn filtered_tic_fails_closed_without_installed_help_evidence() {
+        let error = build_msaccess_command(
             test_path("msaccess.exe"),
             &test_path("sample.mzML"),
             &test_path("preview"),
             PreviewOperation::Tic { ms_level: Some(2) },
         )
-        .expect("valid command");
+        .expect_err("generic planning cannot establish installed filter grammar");
 
-        assert_eq!(command.args[4], OsString::from("tic delimiter=tab"));
-        assert_eq!(command.args[5], OsString::from("--filter"));
-        assert_eq!(command.args[6], OsString::from("msLevel 2"));
+        assert_eq!(error, PlanError::FilteredTicCapabilityEvidenceRequired);
     }
 
     #[test]

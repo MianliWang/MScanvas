@@ -18,6 +18,10 @@ use crate::process::{
     CancellationToken, LaunchFailureKind, ProcessError, ProcessOutput, Termination,
     execute_cancellable,
 };
+use crate::{
+    CapturedHelpStream, CompleteHelpCapture, InstalledHelpCapabilities, PreviewOperation,
+    Sha256Digest,
+};
 
 const MSCONVERT_EXE: &str = "msconvert.exe";
 const MSACCESS_EXE: &str = "msaccess.exe";
@@ -56,8 +60,12 @@ pub struct ToolProbe {
     pub stderr_truncated: bool,
     pub exit_code: Option<i32>,
     pub elapsed: Duration,
+    pub reported_release: Option<String>,
     pub release: Option<String>,
+    pub source_revision: Option<String>,
     pub build_date: Option<String>,
+    /// True when the probe emitted more than one distinct release or build-date value.
+    pub identity_conflict: bool,
 }
 
 impl ToolProbe {
@@ -76,8 +84,11 @@ impl ToolProbe {
             stderr_truncated: false,
             exit_code,
             elapsed,
+            reported_release: None,
             release: None,
+            source_revision: None,
             build_date: None,
+            identity_conflict: false,
         };
         probe.parse_build_metadata();
         probe
@@ -93,8 +104,11 @@ impl ToolProbe {
             stderr_truncated: output.stderr_truncated,
             exit_code: output.exit_code,
             elapsed: output.elapsed,
+            reported_release: None,
             release: None,
+            source_revision: None,
             build_date: None,
+            identity_conflict: false,
         };
         probe.parse_build_metadata();
         probe
@@ -112,10 +126,30 @@ impl ToolProbe {
     }
 
     fn parse_build_metadata(&mut self) {
-        self.release = find_label_value(&self.stdout, "ProteoWizard release:")
-            .or_else(|| find_label_value(&self.stderr, "ProteoWizard release:"));
-        self.build_date = find_label_value(&self.stdout, "Build date:")
-            .or_else(|| find_label_value(&self.stderr, "Build date:"));
+        let (reported_release, release_conflict) = unique_label_value(
+            [&self.stdout[..], &self.stderr[..]],
+            "ProteoWizard release:",
+        );
+        let (build_date, build_date_conflict) =
+            unique_label_value([&self.stdout[..], &self.stderr[..]], "Build date:");
+        self.identity_conflict = release_conflict || build_date_conflict;
+        if self.identity_conflict {
+            self.reported_release = None;
+            self.release = None;
+            self.source_revision = None;
+            self.build_date = None;
+            return;
+        }
+
+        self.reported_release = reported_release;
+        let (release, source_revision) = self
+            .reported_release
+            .as_deref()
+            .map(split_release_revision)
+            .unwrap_or((None, None));
+        self.release = release;
+        self.source_revision = source_revision;
+        self.build_date = build_date;
     }
 }
 
@@ -154,6 +188,10 @@ pub enum DiscoveryFailure {
         executable: String,
         path: PathBuf,
     },
+    ProbeMetadataConflict {
+        executable: String,
+        path: PathBuf,
+    },
     ProbeIdentityMismatch {
         msconvert_release: String,
         msconvert_build_date: String,
@@ -183,6 +221,7 @@ impl DiscoveryFailure {
             | Self::ProbeTimedOut { .. }
             | Self::ProbeNonZero { .. }
             | Self::ProbeMetadataMissing { .. }
+            | Self::ProbeMetadataConflict { .. }
             | Self::ProbeIdentityMismatch { .. } => "version_probe_failed",
         }
     }
@@ -201,6 +240,9 @@ impl DiscoveryFailure {
             Self::ProbeTimedOut { .. } => "A ProteoWizard self-test timed out.",
             Self::ProbeNonZero { .. } => "A ProteoWizard self-test returned an error.",
             Self::ProbeMetadataMissing { .. } => "The ProteoWizard build could not be identified.",
+            Self::ProbeMetadataConflict { .. } => {
+                "A ProteoWizard tool reported conflicting build identities."
+            }
             Self::ProbeIdentityMismatch { .. } => {
                 "The ProteoWizard tools report different build identities."
             }
@@ -226,7 +268,8 @@ impl DiscoveryFailure {
             }
             Self::ProbeTimedOut { .. }
             | Self::ProbeNonZero { .. }
-            | Self::ProbeMetadataMissing { .. } => {
+            | Self::ProbeMetadataMissing { .. }
+            | Self::ProbeMetadataConflict { .. } => {
                 "Run the ProteoWizard installer repair, then repeat the backend self-test."
             }
         }
@@ -695,7 +738,12 @@ fn probe_tool(executable_name: &str, tool: &mut DiscoveredTool, executor: &dyn P
     match executor.execute(path, &args) {
         Ok(mut probe) => {
             probe.parse_build_metadata();
-            if !probe.succeeded() {
+            if probe.identity_conflict {
+                tool.failure = Some(DiscoveryFailure::ProbeMetadataConflict {
+                    executable: executable_name.to_owned(),
+                    path: path.to_path_buf(),
+                });
+            } else if !help_probe_exit_is_accepted(executable_name, &probe) {
                 tool.failure = Some(DiscoveryFailure::ProbeNonZero {
                     executable: executable_name.to_owned(),
                     path: path.to_path_buf(),
@@ -726,6 +774,49 @@ fn probe_tool(executable_name: &str, tool: &mut DiscoveredTool, executor: &dyn P
             });
         }
     }
+}
+
+fn help_probe_exit_is_accepted(executable_name: &str, probe: &ToolProbe) -> bool {
+    if probe.identity_conflict {
+        return false;
+    }
+    if probe.succeeded() {
+        return true;
+    }
+    if !executable_name.eq_ignore_ascii_case(MSACCESS_EXE)
+        || probe.exit_code != Some(1)
+        || probe.release.is_none()
+        || probe.build_date.is_none()
+    {
+        return false;
+    }
+
+    let Ok(stdout_sha256) = Sha256Digest::calculate(&probe.stdout) else {
+        return false;
+    };
+    let Ok(stderr_sha256) = Sha256Digest::calculate(&probe.stderr) else {
+        return false;
+    };
+    let capture = CompleteHelpCapture::new(
+        CapturedHelpStream::new(
+            &probe.stdout,
+            probe.stdout_total_bytes,
+            probe.stdout_truncated,
+            stdout_sha256,
+        ),
+        CapturedHelpStream::new(
+            &probe.stderr,
+            probe.stderr_total_bytes,
+            probe.stderr_truncated,
+            stderr_sha256,
+        ),
+    );
+    let Ok(capabilities) = InstalledHelpCapabilities::parse(BackendTool::MsAccess, capture) else {
+        return false;
+    };
+    capabilities
+        .require_preview_operation(&PreviewOperation::Metadata)
+        .is_ok()
 }
 
 fn missing_tool_failure(executable_name: &str, tool: &DiscoveredTool) -> DiscoveryFailure {
@@ -796,7 +887,13 @@ fn identity_mismatch(
     let msconvert_build_date = msconvert.probe.as_ref()?.build_date.as_ref()?;
     let msaccess_release = msaccess.probe.as_ref()?.release.as_ref()?;
     let msaccess_build_date = msaccess.probe.as_ref()?.build_date.as_ref()?;
-    if msconvert_release == msaccess_release && msconvert_build_date == msaccess_build_date {
+    let msconvert_revision = msconvert.probe.as_ref()?.source_revision.as_deref();
+    let msaccess_revision = msaccess.probe.as_ref()?.source_revision.as_deref();
+    let revisions_compatible = match (msconvert_revision, msaccess_revision) {
+        (Some(left), Some(right)) => left.eq_ignore_ascii_case(right),
+        _ => true,
+    };
+    if msconvert_release == msaccess_release && revisions_compatible {
         None
     } else {
         Some(DiscoveryFailure::ProbeIdentityMismatch {
@@ -808,17 +905,50 @@ fn identity_mismatch(
     }
 }
 
-fn find_label_value(text: &[u8], label: &str) -> Option<String> {
-    let text = String::from_utf8_lossy(text);
-    text.lines().find_map(|line| {
-        let line = line.trim();
-        let prefix = line.get(..label.len())?;
-        if !prefix.eq_ignore_ascii_case(label) {
-            return None;
+fn unique_label_value<'a>(
+    streams: impl IntoIterator<Item = &'a [u8]>,
+    label: &str,
+) -> (Option<String>, bool) {
+    let mut values = Vec::<String>::new();
+    for stream in streams {
+        let text = String::from_utf8_lossy(stream);
+        for line in text.lines() {
+            let line = line.trim();
+            let Some(prefix) = line.get(..label.len()) else {
+                continue;
+            };
+            if !prefix.eq_ignore_ascii_case(label) {
+                continue;
+            }
+            let value = line[label.len()..].trim();
+            if !values.iter().any(|existing| existing == value) {
+                values.push(value.to_owned());
+            }
         }
-        let value = line[label.len()..].trim();
-        (!value.is_empty()).then(|| value.to_owned())
-    })
+    }
+
+    match values.as_slice() {
+        [] => (None, false),
+        [value] if value.is_empty() => (None, false),
+        [value] => (Some(value.clone()), false),
+        _ => (None, true),
+    }
+}
+
+fn split_release_revision(value: &str) -> (Option<String>, Option<String>) {
+    let value = value.trim();
+    if let Some((release, suffix)) = value.rsplit_once(" (")
+        && let Some(revision) = suffix.strip_suffix(')')
+        && (7..=64).contains(&revision.len())
+        && revision.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && !release.trim().is_empty()
+    {
+        return (
+            Some(release.trim().to_owned()),
+            Some(revision.to_ascii_lowercase()),
+        );
+    }
+    ((!value.is_empty()).then(|| value.to_owned()), None)
 }
 
 fn concise_detail(primary: &[u8], fallback: &[u8]) -> String {
@@ -960,6 +1090,114 @@ mod tests {
                 .get(executable)
                 .cloned()
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no fake probe response"))
+        }
+    }
+
+    #[test]
+    fn source_revision_suffix_is_preserved_but_not_compared_as_semantic_release() {
+        let msconvert_probe = ToolProbe::new(
+            "ProteoWizard release: 3.0.26204 (a09eea9)\nBuild date: Jul 1 2026\n",
+            "",
+            Some(0),
+            Duration::from_millis(1),
+        );
+        assert_eq!(
+            msconvert_probe.reported_release.as_deref(),
+            Some("3.0.26204 (a09eea9)")
+        );
+        assert_eq!(msconvert_probe.release.as_deref(), Some("3.0.26204"));
+        assert_eq!(msconvert_probe.source_revision.as_deref(), Some("a09eea9"));
+
+        let msaccess_probe = ToolProbe::new(
+            "ProteoWizard release: 3.0.26204\nBuild date: Jul 1 2026\n",
+            "",
+            Some(1),
+            Duration::from_millis(1),
+        );
+        let mut msconvert = DiscoveredTool::undiscovered();
+        msconvert.probe = Some(msconvert_probe);
+        let mut msaccess = DiscoveredTool::undiscovered();
+        msaccess.probe = Some(msaccess_probe);
+        assert!(identity_mismatch(&msconvert, &msaccess).is_none());
+    }
+
+    #[test]
+    fn duplicate_equal_identity_lines_are_allowed_but_conflicts_are_not_selected() {
+        let equal = ToolProbe::new(
+            "ProteoWizard release: 3.0.26204 (a09eea9)\nBuild date: Jul 1 2026\n",
+            "proteowizard release: 3.0.26204 (a09eea9)\nBuild date: Jul 1 2026\n",
+            Some(0),
+            Duration::from_millis(1),
+        );
+        assert!(!equal.identity_conflict);
+        assert_eq!(equal.release.as_deref(), Some("3.0.26204"));
+        assert_eq!(equal.build_date.as_deref(), Some("Jul 1 2026"));
+
+        let conflicting = ToolProbe::new(
+            "ProteoWizard release: 3.0.26204 (a09eea9)\nBuild date: Jul 1 2026\nBuild date: Jul 2 2026\n",
+            "ProteoWizard release: 3.0.26205\n",
+            Some(0),
+            Duration::from_millis(1),
+        );
+        assert!(conflicting.identity_conflict);
+        assert!(conflicting.reported_release.is_none());
+        assert!(conflicting.release.is_none());
+        assert!(conflicting.source_revision.is_none());
+        assert!(conflicting.build_date.is_none());
+    }
+
+    #[test]
+    fn a_conflicting_identity_probe_fails_discovery_before_metadata_is_used() {
+        let tree = TempTree::new("conflicting-probe-identity");
+        let home = tree.installation("tools", &[MSCONVERT_EXE]);
+        let path = home.join(MSCONVERT_EXE);
+        let mut executor = FakeProbeExecutor::default();
+        executor.responses.insert(
+            path.clone(),
+            ToolProbe::new(
+                "ProteoWizard release: 3.0.26204\nBuild date: Jul 1 2026\n",
+                "ProteoWizard release: 3.0.26205\nBuild date: Jul 1 2026\n",
+                Some(0),
+                Duration::from_millis(1),
+            ),
+        );
+        let mut tool = DiscoveredTool::at(path.clone());
+
+        probe_tool(MSCONVERT_EXE, &mut tool, &executor);
+
+        assert!(matches!(
+            tool.failure,
+            Some(DiscoveryFailure::ProbeMetadataConflict {
+                ref executable,
+                path: ref failure_path,
+            }) if executable == MSCONVERT_EXE && failure_path == &path
+        ));
+    }
+
+    #[test]
+    fn semantic_release_or_dual_revision_mismatch_fails_closed() {
+        for (msconvert_release, msaccess_release) in [
+            ("3.0.26204 (a09eea9)", "3.0.26205"),
+            ("3.0.26204 (a09eea9)", "3.0.26204 (bbbbbbb)"),
+        ] {
+            let mut msconvert = DiscoveredTool::undiscovered();
+            msconvert.probe = Some(ToolProbe::new(
+                format!("ProteoWizard release: {msconvert_release}\nBuild date: Jul 1 2026\n"),
+                "",
+                Some(0),
+                Duration::from_millis(1),
+            ));
+            let mut msaccess = DiscoveredTool::undiscovered();
+            msaccess.probe = Some(ToolProbe::new(
+                format!("ProteoWizard release: {msaccess_release}\nBuild date: Jul 1 2026\n"),
+                "",
+                Some(0),
+                Duration::from_millis(1),
+            ));
+            assert!(matches!(
+                identity_mismatch(&msconvert, &msaccess),
+                Some(DiscoveryFailure::ProbeIdentityMismatch { .. })
+            ));
         }
     }
 
@@ -1193,6 +1431,70 @@ mod tests {
         assert_eq!(probe.stderr, b"backend initialization failed\n".to_vec());
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn exact_msaccess_help_exit_one_is_accepted_only_with_complete_typed_grammar() {
+        let tree = TempTree::new("msaccess-help-exit-one");
+        let home = tree.installation("tools", &[MSCONVERT_EXE, MSACCESS_EXE]);
+        let msconvert_path = home.join(MSCONVERT_EXE);
+        let msaccess_path = home.join(MSACCESS_EXE);
+        let mut executor =
+            FakeProbeExecutor::successful_for([msconvert_path.clone(), msaccess_path.clone()]);
+        executor.responses.insert(
+            msaccess_path.clone(),
+            ToolProbe::new(
+                "",
+                MSACCESS_HELP_EXIT_ONE,
+                Some(1),
+                Duration::from_millis(23),
+            ),
+        );
+
+        let accepted = discover_with(
+            DiscoveryRequest::with_home(&home),
+            &DiscoveryEnvironment::default(),
+            &executor,
+        );
+        assert_eq!(accepted.availability, AvailabilityState::Available);
+        assert_eq!(accepted.msaccess.probe.unwrap().exit_code, Some(1));
+
+        executor.responses.insert(
+            msaccess_path,
+            ToolProbe::new(
+                "ProteoWizard release: 3.0.26013\nBuild date: Jan 13 2026\n",
+                "usage unavailable",
+                Some(1),
+                Duration::from_millis(23),
+            ),
+        );
+        let rejected = discover_with(
+            DiscoveryRequest::with_home(home),
+            &DiscoveryEnvironment::default(),
+            &executor,
+        );
+        assert_eq!(rejected.availability, AvailabilityState::Partial);
+        assert!(matches!(
+            rejected.msaccess.failure,
+            Some(DiscoveryFailure::ProbeNonZero {
+                exit_code: Some(1),
+                ..
+            })
+        ));
+    }
+
+    const MSACCESS_HELP_EXIT_ONE: &str = r#"ProteoWizard release: 3.0.26013
+Build date: Jan 13 2026
+Usage: msaccess [options] [filenames]
+
+Options:
+  -o [ --outdir ] arg (=.) : output directory
+  -x [ --exec ] arg        : execute command
+
+Analysis commands (used with -x/--exec):
+
+  metadata
+"#;
+
     #[test]
     fn timed_out_probe_has_a_distinct_version_probe_failure() {
         let tree = TempTree::new("probe-timeout");
@@ -1216,7 +1518,7 @@ mod tests {
     }
 
     #[test]
-    fn same_release_with_different_build_dates_is_not_an_available_pair() {
+    fn same_release_with_distinct_translation_unit_build_dates_is_compatible() {
         let tree = TempTree::new("different-build-dates");
         let home = tree.installation("tools", &[MSCONVERT_EXE, MSACCESS_EXE]);
         let msconvert_path = home.join(MSCONVERT_EXE);
@@ -1239,19 +1541,16 @@ mod tests {
             &executor,
         );
 
-        assert_eq!(result.availability, AvailabilityState::Partial);
-        assert!(matches!(
-            result.failure,
-            Some(DiscoveryFailure::ProbeIdentityMismatch {
-                ref msconvert_release,
-                ref msconvert_build_date,
-                ref msaccess_release,
-                ref msaccess_build_date,
-            }) if msconvert_release == "3.0.26013"
-                && msconvert_build_date == "Jan 13 2026"
-                && msaccess_release == "3.0.26013"
-                && msaccess_build_date == "Jan 14 2026"
-        ));
+        assert_eq!(result.availability, AvailabilityState::Available);
+        assert!(result.failure.is_none());
+        assert_eq!(
+            result.msconvert.probe.unwrap().build_date.as_deref(),
+            Some("Jan 13 2026")
+        );
+        assert_eq!(
+            result.msaccess.probe.unwrap().build_date.as_deref(),
+            Some("Jan 14 2026")
+        );
     }
 
     #[test]
