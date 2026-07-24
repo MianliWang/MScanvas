@@ -1,6 +1,6 @@
 # Bootstrap status
 
-**Updated:** 2026-07-23
+**Updated:** 2026-07-24
 
 **Canonical repository:** [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas)
 
@@ -63,6 +63,41 @@ compatible Node 22 releases while enforcing pnpm and Rust exactly.
 
 No Rust source lint suppression or Clippy weakening was required.
 
+## M0 ProteoWizard partial progress on 2026-07-24
+
+The Rust adapter now has structural contracts for deterministic configured/`PATH`/reviewed-root discovery, matching-tool release/build probes, canonical absolute paths, typed `msaccess` and `msconvert` argv, bounded redacted diagnostics, normalized failures, direct process capture and Windows-owned process-tree cancellation. An unstable developer-only harness exposes the spike operations without creating a stable CLI contract, rejects output inside directory acquisitions and requires a fresh empty ignored output directory.
+
+Targeted validation after the offline help/cancellation hardening passed with:
+
+| Command | Result |
+| --- | --- |
+| `cargo test --locked -p mscanvas-proteowizard --all-targets` | Passed: 33 tests; 2 controlled subprocess entry points intentionally ignored |
+| `cargo clippy --locked -p mscanvas-proteowizard --all-targets --all-features -- -D warnings` | Passed |
+
+This is code-contract and controlled-mock evidence only. The preserved pre-continuation repository-wide validation passed, but it does not establish real ProteoWizard behavior.
+
+Repository-wide validation passed with:
+
+| Command | Result |
+| --- | --- |
+| `cargo fmt --all --check` | Passed |
+| `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | Passed |
+| `cargo test --locked --workspace --all-targets` | Passed: 32 tests; 2 controlled subprocess entry points intentionally ignored |
+| `python -B scripts/check_repo.py` | Passed |
+| `pnpm install --frozen-lockfile --strict-peer-dependencies` | Passed |
+| `pnpm lint` | Passed |
+| `pnpm typecheck` | Passed |
+| `pnpm test` | Passed: 2 frontend tests |
+| `pnpm build` | Passed |
+| `pnpm tauri build --no-bundle` | Passed; produced an ignored Windows release executable |
+| `git diff --check` | Passed |
+
+Bounded local discovery found no runnable host-installed `msconvert.exe` or `msaccess.exe`. Residual Windows Installer metadata reports a ProteoWizard version record with `ProductState = ABSENT`; it is not an installed version. After explicit download and installation authorization, the exact official Windows x64 MSI (`3.0.26204` / `a09eea9`) was downloaded outside the repository and hashed, but Windows reported Authenticode `NotSigned` with no signer. The mandatory host-install trust gate stopped before execution, installer UI, elevation or installation, and no alternate installer or unofficial source was tried.
+
+A narrower continuation verified the matching official Windows x86_64 portable archive through the ProteoWizard selection page, `bt83` release record and site-owned S3 resolver. The `97,078,806`-byte archive has SHA-256 `A0B92B40456E080B1CB5CBEDAE0B95664F43FE3B723972FE388A60E0341564E2`. All 265 archive members passed path/type checks before extraction, extraction stayed inside a fresh temporary root, and a private inventory covered all 20 executables and 191 DLLs. The target `msconvert.exe` and `msaccess.exe` were both unsigned.
+
+Portable execution was authorized only in an existing isolated Windows environment. Windows Sandbox was not enabled, and no existing disposable Windows VM was available; changing optional features was outside the authorization. The continuation therefore stopped fail-clean without executing a portable binary, acquiring the fixture or running help/open-data/conversion operations. Vendor RAW testing was explicitly out of scope. The M0 architecture decision remains blocked/incomplete with every runtime capability still unverified. See the [M0 ProteoWizard spike report](docs/spikes/M0_PROTEOWIZARD_SPIKE.md).
+
 ## Windows validation completed on 2026-07-23
 
 | Command | Result |
@@ -96,8 +131,10 @@ claim a rendered Windows runtime smoke test.
 
 - Launch and interact with `pnpm tauri dev` on Windows; a build alone is not a
   rendered runtime check.
-- Run real ProteoWizard discovery, RAW preview and conversion spikes against an
-  independently installed, licensed backend and representative acquisition data.
+- Complete real ProteoWizard discovery, preview, conversion and cancellation evidence.
+  Official portable provenance is verified, but runtime evidence remains blocked until
+  an approved disposable Windows environment exists. Vendor coverage is a separate,
+  explicitly unauthorized gate for this spike.
 - Enable branch protection after the first green remote CI run.
 
 ## First verified-bootstrap checklist
@@ -110,5 +147,7 @@ claim a rendered Windows runtime smoke test.
 - [x] Run all frontend and Rust checks.
 - [ ] Run `pnpm tauri dev` on Windows.
 - [x] Confirm Tauri capability configuration remains minimal.
-- [ ] Complete the M0 ProteoWizard preview/conversion technical spike.
+- [ ] Complete the M0 ProteoWizard preview/conversion technical spike; portable provenance
+  and archive safety are verified, but the code-contract slice remains partial and real
+  backend/data evidence is blocked by unavailable Windows isolation.
 - [ ] Enable branch protection after the first green CI run.
