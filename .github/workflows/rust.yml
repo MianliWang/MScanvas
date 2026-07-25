@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   check:
+    name: Rust
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
