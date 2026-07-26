@@ -2,6 +2,16 @@
 
 Before non-trivial work, read `PROJECT_PROPOSAL.md` and the nearest relevant `AGENTS.md`.
 
+## Communication and artifact language
+
+- Communicate with the user in Chinese by default. This includes progress updates, clarifying questions, plans, decisions, blockers, GO/NO-GO reports, and final summaries.
+- Keep implementation and repository artifacts in English. This includes code, identifiers, file and directory names, paths, comments, docstrings, CLI and shell commands, configuration keys, branch names, commit messages, pull-request and issue titles/bodies, review replies, error codes, repository-authored error messages, tests, and repository documentation.
+- Preserve command output, logs, diagnostics, and third-party text in their original form. Explain them in Chinese separately rather than translating or rewriting the evidence.
+- Technical terms may remain in English when that is clearer.
+- Do not switch user-facing communication to English merely because the task prompt, codebase, source material, or GitHub content is written in English.
+- Follow an explicit user request for another language.
+- Nested `AGENTS.md` files may add domain-specific rules but must not weaken this repository-wide language policy.
+
 ## Product rules
 
 - MSCanvas is a local-first mass-spectrometry workbench, not a generic dashboard template.
