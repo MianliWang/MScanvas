@@ -1,10 +1,11 @@
 # M0 ProteoWizard technical spike
 
-- **Status:** Bounded open-format runtime evidence complete; the provider decision remains capability-specific and M0 is incomplete
+- **Status:** Bounded open-format runtime evidence and M0C Slice 1 preview contracts complete; the provider decision remains capability-specific and M0 is incomplete
 - **Date:** 2026-07-24
 - **Starting commit:** `595b6885e2550967ab9af5da1449296e04f49117`
 - **Target branch:** `spike/m0-proteowizard`
 - **Architecture decision:** Partial; `msaccess` is a viable bounded provider for some preview operations, with named B/C/D gaps below
+- **Contract-only update:** 2026-07-26; no additional ProteoWizard execution
 
 ## Executive result
 
@@ -406,9 +407,9 @@ The bounded open-format matrix is complete, but these gaps still block a global 
 9. Vendor RAW correctness, licensed-reader availability and vendor-specific metadata remain unverified by explicit scope.
 10. The isolated build is not installed on the development host and no distribution/installer decision was made.
 
-## Recommended next vertical slice
+## Recommended next vertical slice (recorded 2026-07-24)
 
-The next slice should be **M0C: a typed open-format preview-result boundary with semantic integrity gates**, not vendor UI claims or a second backend:
+At the end of the bounded runtime evidence Goal, the recommended next slice was **M0C: a typed open-format preview-result boundary with semantic integrity gates**, not vendor UI claims or a second backend:
 
 1. Define typed Rust results for metadata, summary, derived TIC, scan rows, selected spectrum and typed unavailable-spectrum outcomes.
 2. Require operation-specific parseable output after process exit 0; keep typed no-result distinct from malformed/unsupported input.
@@ -419,6 +420,10 @@ The next slice should be **M0C: a typed open-format preview-result boundary with
 7. Expose only the validated subset through a narrow Tauri operation and render loading, empty, typed unavailable and error states when the provider contract is ready.
 
 Vendor RAW coverage, BPC strategy, real cancellation, alternate locale and distribution remain later explicit gates.
+
+The subsequent contract audit superseded only the recommendation to normalize RT to
+seconds: the measured output did not emit an RT unit, so Slice 1 preserves an explicit
+unknown unit instead. The dated contract result is recorded below.
 
 ## Implementation validation evidence
 
@@ -434,3 +439,55 @@ The successful exact-head evidence run supplied these remote gates:
 This remote run validates the marker commit and measured backend evidence, not later documentation or workflow removal. The Goal's final Windows suite is run against the final worktree only after every evidence-driven edit and temporary workflow file removal. Its command-by-command results and the final commit identities belong in the final Goal handoff, avoiding a self-referential report rewrite after validation.
 
 No pull request, merge, release, tag or force-push is part of this Goal.
+
+## M0C Slice 1 contract-only update — 2026-07-26
+
+This section records the later Rust/library slice. It does not modify or extend the
+runtime evidence, hashes, timings, operation records or A/B/C/D ratings above, and no
+ProteoWizard executable was run for this update.
+
+### Typed preview boundary
+
+The evidence-backed preview operations now have typed parsers and an operation-specific
+interpreter for metadata, run summary, spectrum table, derived TIC and selected spectrum.
+Metadata preserves section order and opaque ordered field content, including unknown
+fields, without assigning scientific meaning to values that were not retained in the
+runtime evidence. Retention-time values preserve their emitted numeric values and carry
+an explicit unknown unit when no unit is present.
+
+TIC points carry their source spectrum indices and preserve backend/source order. Their
+semantic origin is explicitly derived/recomputed summed intensity, not a stored TIC
+chromatogram. A separate retention-time-ordered projection retains the source indices and
+does not mutate the source-order series.
+
+Canonical spectrum identity preserves the zero-based index and all raw display/native
+representations. It reconciles only recognized exact forms: a numeric display ID such as
+`19`, a native ID such as `scan=19` and an explicitly reported scan number. Conflicting
+scan numbers fail closed, while unknown native-ID forms remain opaque rather than being
+rejected or coerced.
+
+### Operation-specific interpretation
+
+The interpreter combines the requested preview operation, process result and captured
+output manifest instead of treating exit status as the operation result. Exit 0 plus no
+generated output becomes typed `NoResult` only for selected-spectrum lookup. Required
+preview operations reject missing, empty, malformed or unexpectedly multiple outputs;
+non-zero exit and launch/cancellation failures remain distinct from parser failures.
+
+Unsupported-input-like exit 0 plus stderr/no output is not successful metadata and is not
+classified by matching English prose. It remains conservative and unclassified unless a
+future stable structural marker establishes a narrower category.
+
+### Scope boundary and remaining work
+
+This slice added no production or development dependency and changed no UI, Tauri,
+workspace, queue or conversion behavior. It did not enable BPC or mzXML and did not add a
+stable CLI contract. The existing conversion evidence and gates remain exactly as
+recorded above.
+
+M0C remains incomplete. Slice 2 should implement mzML conversion semantic integrity,
+including source/output spectrum and chromatogram count checks and an explicit numeric
+precision policy, then measure repeated navigation and representative lawful open-format
+scale/large-array behavior. BPC strategy, real-backend cancellation and partial-output
+behavior, alternate-locale parsing and vendor-format coverage remain separate explicit
+gates.
