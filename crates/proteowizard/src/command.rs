@@ -171,7 +171,7 @@ pub fn build_msconvert_command_with_capabilities(
         OpenFormat::MzMl => {
             capabilities.require_conversion(format)?;
             let command = build_msconvert_command(executable, input, output_directory, format)?;
-            require_fresh_conversion_output(input, output_directory)?;
+            require_fresh_output_directory(input, output_directory)?;
             Ok(command)
         }
         OpenFormat::MzXml => Err(PlanError::MzXmlIntegrityGateRequired),
@@ -193,7 +193,8 @@ fn build_msaccess_command(
 
 /// Builds an msaccess command only after the complete installed help has
 /// confirmed the exact option, query, parameter, and filter grammar used by
-/// the typed plan.
+/// the typed plan and the output directory is a fresh, inspectable location
+/// outside a directory input.
 pub fn build_msaccess_command_with_capabilities(
     capabilities: &InstalledHelpCapabilities,
     executable: impl Into<PathBuf>,
@@ -205,7 +206,9 @@ pub fn build_msaccess_command_with_capabilities(
         return Err(PlanError::InvalidMsLevelFilter);
     }
     capabilities.require_preview_operation(&operation)?;
-    build_msaccess_command_inner(executable, input, output_directory, operation)
+    let command = build_msaccess_command_inner(executable, input, output_directory, operation)?;
+    require_fresh_output_directory(input, output_directory)?;
+    Ok(command)
 }
 
 fn build_msaccess_command_inner(
@@ -269,7 +272,7 @@ fn validate_paths(
     Ok(())
 }
 
-fn require_fresh_conversion_output(input: &Path, output_directory: &Path) -> Result<(), PlanError> {
+fn require_fresh_output_directory(input: &Path, output_directory: &Path) -> Result<(), PlanError> {
     let canonical_output = std::fs::canonicalize(output_directory)
         .map_err(|error| PlanError::OutputDirectoryInspectionFailed { kind: error.kind() })?;
     let mut entries = std::fs::read_dir(&canonical_output)

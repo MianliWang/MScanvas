@@ -1550,11 +1550,16 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
     #[test]
     fn unfiltered_tic_plan_has_no_filter_argument() {
         let capabilities = msaccess(MSACCESS_HELP);
+        let test_directory = TestDirectory::new();
+        let input = test_directory.path().join("sample.mzML");
+        let output_directory = test_directory.path().join("preview");
+        fs::write(&input, b"source mzML").expect("write source mzML");
+        fs::create_dir(&output_directory).expect("create fresh preview directory");
         let command = build_msaccess_command_with_capabilities(
             &capabilities,
             test_path("msaccess.exe"),
-            &test_path("sample.mzML"),
-            &test_path("preview"),
+            &input,
+            &output_directory,
             PreviewOperation::Tic { ms_level: None },
         )
         .expect("complete TIC grammar permits unfiltered planning");
@@ -1571,13 +1576,18 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
     #[test]
     fn valid_ms_level_filter_bounds_build_exact_arguments() {
         let capabilities = msaccess(MSACCESS_HELP);
+        let test_directory = TestDirectory::new();
+        let input = test_directory.path().join("sample.mzML");
+        let output_directory = test_directory.path().join("preview");
+        fs::write(&input, b"source mzML").expect("write source mzML");
+        fs::create_dir(&output_directory).expect("create fresh preview directory");
 
         for ms_level in [1, u8::MAX] {
             let command = build_msaccess_command_with_capabilities(
                 &capabilities,
                 test_path("msaccess.exe"),
-                &test_path("sample.mzML"),
-                &test_path("preview"),
+                &input,
+                &output_directory,
                 PreviewOperation::Tic {
                     ms_level: Some(ms_level),
                 },
@@ -1590,6 +1600,135 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
                 format!("msLevel {ms_level}")
             );
         }
+    }
+
+    #[test]
+    fn every_public_preview_operation_rejects_a_nonfresh_output_directory() {
+        let capabilities = msaccess(MSACCESS_HELP);
+        let test_directory = TestDirectory::new();
+        let input = test_directory.path().join("sample.mzML");
+        let output_directory = test_directory.path().join("preview");
+        fs::write(&input, b"source mzML").expect("write source mzML");
+        fs::create_dir(&output_directory).expect("create preview directory");
+        fs::write(output_directory.join("previous-output.txt"), b"existing")
+            .expect("write existing preview output");
+
+        for operation in [
+            PreviewOperation::Metadata,
+            PreviewOperation::RunSummary,
+            PreviewOperation::SpectrumTable,
+            PreviewOperation::Tic { ms_level: None },
+            PreviewOperation::Tic { ms_level: Some(1) },
+            PreviewOperation::SpectrumByIndex {
+                index: 7,
+                precision: 8,
+            },
+        ] {
+            let error = build_msaccess_command_with_capabilities(
+                &capabilities,
+                test_path("msaccess.exe"),
+                &input,
+                &output_directory,
+                operation,
+            )
+            .expect_err("a nonfresh preview directory must not produce a command specification");
+
+            assert_eq!(error, PlanError::OutputDirectoryNotEmpty);
+        }
+    }
+
+    #[test]
+    fn public_preview_planning_rejects_output_inside_a_directory_input() {
+        let capabilities = msaccess(MSACCESS_HELP);
+
+        for nested in [false, true] {
+            let test_directory = TestDirectory::new();
+            let input = test_directory.path().join("dataset.raw");
+            fs::create_dir(&input).expect("create directory input");
+            let output_directory = if nested {
+                let output = input.join("preview");
+                fs::create_dir(&output).expect("create nested preview directory");
+                output
+            } else {
+                input.clone()
+            };
+
+            let error = build_msaccess_command_with_capabilities(
+                &capabilities,
+                test_path("msaccess.exe"),
+                &input,
+                &output_directory,
+                PreviewOperation::Metadata,
+            )
+            .expect_err("preview output inside a directory input must fail closed");
+
+            assert_eq!(error, PlanError::OutputDirectoryInsideDirectoryInput);
+        }
+    }
+
+    #[test]
+    fn public_preview_planning_accepts_fresh_sibling_output_for_a_directory_input() {
+        let capabilities = msaccess(MSACCESS_HELP);
+        let test_directory = TestDirectory::new();
+        let input = test_directory.path().join("dataset.raw");
+        let output_directory = test_directory.path().join("preview");
+        fs::create_dir(&input).expect("create directory input");
+        fs::create_dir(&output_directory).expect("create sibling preview directory");
+
+        let command = build_msaccess_command_with_capabilities(
+            &capabilities,
+            test_path("msaccess.exe"),
+            &input,
+            &output_directory,
+            PreviewOperation::RunSummary,
+        )
+        .expect("a fresh sibling preview directory is safe to plan");
+
+        assert_eq!(command.args()[0], input.as_os_str());
+        assert_eq!(command.args()[2], output_directory.as_os_str());
+    }
+
+    #[test]
+    fn public_preview_planning_fails_when_paths_cannot_be_inspected() {
+        let capabilities = msaccess(MSACCESS_HELP);
+
+        let missing_output_tree = TestDirectory::new();
+        let input = missing_output_tree.path().join("sample.mzML");
+        fs::write(&input, b"source mzML").expect("write source mzML");
+        let missing_output = missing_output_tree.path().join("missing");
+        let output_error = build_msaccess_command_with_capabilities(
+            &capabilities,
+            test_path("msaccess.exe"),
+            &input,
+            &missing_output,
+            PreviewOperation::Metadata,
+        )
+        .expect_err("an uninspectable preview directory must fail closed");
+        assert_eq!(
+            output_error,
+            PlanError::OutputDirectoryInspectionFailed {
+                kind: std::io::ErrorKind::NotFound,
+            }
+        );
+
+        let missing_input_tree = TestDirectory::new();
+        let missing_input = missing_input_tree.path().join("missing.mzML");
+        let output_directory = missing_input_tree.path().join("preview");
+        fs::create_dir(&output_directory).expect("create fresh preview directory");
+        let input_error = build_msaccess_command_with_capabilities(
+            &capabilities,
+            test_path("msaccess.exe"),
+            &missing_input,
+            &output_directory,
+            PreviewOperation::Metadata,
+        )
+        .expect_err("an uninspectable preview input must fail closed");
+        assert_eq!(
+            input_error,
+            PlanError::InputPathInspectionFailed {
+                kind: std::io::ErrorKind::NotFound,
+            }
+        );
     }
 
     #[test]
