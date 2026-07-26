@@ -494,9 +494,7 @@ pub fn discover_with(
                 );
             }
         }
-    } else if let Some(candidate) = path_candidate(&environment.path_entries) {
-        candidate
-    } else if let Some(candidate) = common_root_candidate(&environment.common_install_roots) {
+    } else if let Some(candidate) = automatic_candidate(environment) {
         candidate
     } else {
         return DiscoveryResult::unavailable(None, DiscoveryFailure::BackendNotFound);
@@ -588,35 +586,37 @@ fn configured_candidate(
     }
 }
 
-fn path_candidate(path_entries: &[PathBuf]) -> Option<Candidate> {
-    let msconvert_path = find_on_path(path_entries, MSCONVERT_EXE);
-    let msaccess_path = find_on_path(path_entries, MSACCESS_EXE);
-    if msconvert_path.is_none() && msaccess_path.is_none() {
-        return None;
+fn automatic_candidate(environment: &DiscoveryEnvironment) -> Option<Candidate> {
+    let (path_complete, path_partial) = path_candidates(&environment.path_entries);
+    if path_complete.is_some() {
+        return path_complete;
     }
 
-    let fallback_directory = msconvert_path
-        .as_deref()
-        .or(msaccess_path.as_deref())
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or_default();
-    Some(Candidate {
-        source: DiscoverySource::Path,
-        msconvert_path: msconvert_path.unwrap_or_else(|| fallback_directory.join(MSCONVERT_EXE)),
-        msaccess_path: msaccess_path.unwrap_or_else(|| fallback_directory.join(MSACCESS_EXE)),
-    })
+    let (common_complete, common_partial) =
+        common_root_candidates(&environment.common_install_roots);
+    common_complete.or(path_partial).or(common_partial)
 }
 
-fn find_on_path(path_entries: &[PathBuf], executable: &str) -> Option<PathBuf> {
-    path_entries
-        .iter()
-        .map(|directory| directory.join(executable))
-        .find(|candidate| candidate.is_file())
-        .map(|candidate| candidate.canonicalize().unwrap_or(candidate))
+fn path_candidates(path_entries: &[PathBuf]) -> (Option<Candidate>, Option<Candidate>) {
+    let mut first_partial = None;
+    for directory in path_entries {
+        let directory = directory
+            .canonicalize()
+            .unwrap_or_else(|_| directory.clone());
+        let candidate = candidate_from_directory(&directory, DiscoverySource::Path);
+        let has_msconvert = candidate.msconvert_path.is_file();
+        let has_msaccess = candidate.msaccess_path.is_file();
+        if has_msconvert && has_msaccess {
+            return (Some(candidate), first_partial);
+        }
+        if first_partial.is_none() && (has_msconvert || has_msaccess) {
+            first_partial = Some(candidate);
+        }
+    }
+    (None, first_partial)
 }
 
-fn common_root_candidate(common_roots: &[PathBuf]) -> Option<Candidate> {
+fn common_root_candidates(common_roots: &[PathBuf]) -> (Option<Candidate>, Option<Candidate>) {
     let mut first_partial = None;
     for root in common_roots {
         for directory in root_and_direct_children(root) {
@@ -626,14 +626,14 @@ fn common_root_candidate(common_roots: &[PathBuf]) -> Option<Candidate> {
             let has_msconvert = candidate.msconvert_path.is_file();
             let has_msaccess = candidate.msaccess_path.is_file();
             if has_msconvert && has_msaccess {
-                return Some(candidate);
+                return (Some(candidate), first_partial);
             }
             if first_partial.is_none() && (has_msconvert || has_msaccess) {
                 first_partial = Some(candidate);
             }
         }
     }
-    first_partial
+    (None, first_partial)
 }
 
 fn root_and_direct_children(root: &Path) -> Vec<PathBuf> {
@@ -1322,6 +1322,129 @@ mod tests {
             .lock()
             .expect("call list mutex should not be poisoned");
         assert!(calls.iter().all(|(path, _)| path.starts_with(&path_home)));
+    }
+
+    #[test]
+    fn path_search_prefers_a_later_complete_pair_to_an_earlier_partial() {
+        let tree = TempTree::new("path-later-complete");
+
+        for (index, partial_tool) in [MSCONVERT_EXE, MSACCESS_EXE].into_iter().enumerate() {
+            let earlier = tree.installation(format!("earlier partial {index}"), &[partial_tool]);
+            let later = tree.installation(
+                format!("later complete {index}"),
+                &[MSCONVERT_EXE, MSACCESS_EXE],
+            );
+            let executor = FakeProbeExecutor::successful_for([
+                earlier.join(partial_tool),
+                later.join(MSCONVERT_EXE),
+                later.join(MSACCESS_EXE),
+            ]);
+
+            let result = discover_with(
+                DiscoveryRequest::automatic(),
+                &DiscoveryEnvironment::new(vec![earlier, later.clone()], Vec::new()),
+                &executor,
+            );
+
+            assert_eq!(result.availability, AvailabilityState::Available);
+            assert_eq!(result.source, Some(DiscoverySource::Path));
+            assert!(result.same_installation);
+            assert_eq!(
+                result.msconvert.path.as_deref(),
+                Some(later.join(MSCONVERT_EXE).as_path())
+            );
+            assert_eq!(
+                result.msaccess.path.as_deref(),
+                Some(later.join(MSACCESS_EXE).as_path())
+            );
+            let calls = executor
+                .calls
+                .lock()
+                .expect("call list mutex should not be poisoned");
+            assert_eq!(calls.len(), 2);
+            assert!(calls.iter().all(|(path, _)| path.starts_with(&later)));
+        }
+    }
+
+    #[test]
+    fn complete_common_root_pair_precedes_a_partial_path_candidate() {
+        let tree = TempTree::new("common-complete-after-path-partial");
+        let path_home = tree.installation("PATH partial", &[MSCONVERT_EXE]);
+        let common_root = tree.root.join("ProteoWizard");
+        let common_home = tree.installation(
+            "ProteoWizard/ProteoWizard 3.0.99999",
+            &[MSCONVERT_EXE, MSACCESS_EXE],
+        );
+        let executor = FakeProbeExecutor::successful_for([
+            path_home.join(MSCONVERT_EXE),
+            common_home.join(MSCONVERT_EXE),
+            common_home.join(MSACCESS_EXE),
+        ]);
+
+        let result = discover_with(
+            DiscoveryRequest::automatic(),
+            &DiscoveryEnvironment::new(vec![path_home], vec![common_root]),
+            &executor,
+        );
+
+        assert_eq!(result.availability, AvailabilityState::Available);
+        assert_eq!(result.source, Some(DiscoverySource::CommonInstallRoot));
+        assert!(result.same_installation);
+        assert_eq!(
+            result.msconvert.path.as_deref(),
+            Some(common_home.join(MSCONVERT_EXE).as_path())
+        );
+        assert_eq!(
+            result.msaccess.path.as_deref(),
+            Some(common_home.join(MSACCESS_EXE).as_path())
+        );
+        let calls = executor
+            .calls
+            .lock()
+            .expect("call list mutex should not be poisoned");
+        assert_eq!(calls.len(), 2);
+        assert!(calls.iter().all(|(path, _)| path.starts_with(&common_home)));
+    }
+
+    #[test]
+    fn complementary_partial_path_entries_are_not_combined() {
+        let tree = TempTree::new("path-complementary-partials");
+        let first = tree.installation("first partial", &[MSCONVERT_EXE]);
+        let second = tree.installation("second partial", &[MSACCESS_EXE]);
+        let first_msconvert = first.join(MSCONVERT_EXE);
+        let executor =
+            FakeProbeExecutor::successful_for([first_msconvert.clone(), second.join(MSACCESS_EXE)]);
+
+        let result = discover_with(
+            DiscoveryRequest::automatic(),
+            &DiscoveryEnvironment::new(vec![first.clone(), second], Vec::new()),
+            &executor,
+        );
+
+        assert_eq!(result.availability, AvailabilityState::Partial);
+        assert_eq!(result.source, Some(DiscoverySource::Path));
+        assert!(!result.same_installation);
+        assert_eq!(
+            result.msconvert.path.as_deref(),
+            Some(first_msconvert.as_path())
+        );
+        assert_eq!(
+            result.msaccess.path.as_deref(),
+            Some(first.join(MSACCESS_EXE).as_path())
+        );
+        assert!(result.msconvert.exists);
+        assert!(!result.msaccess.exists);
+        assert!(matches!(
+            result.failure,
+            Some(DiscoveryFailure::MissingTool { ref executable, .. })
+                if executable == MSACCESS_EXE
+        ));
+        let calls = executor
+            .calls
+            .lock()
+            .expect("call list mutex should not be poisoned");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, first_msconvert);
     }
 
     #[test]
