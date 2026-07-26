@@ -64,11 +64,12 @@ exact `scan=<N>` native IDs and explicit scan numbers, rejects contradictory sca
 numbers and leaves other native-ID forms opaque.
 
 The interpreter permits exit 0 plus zero output files to become typed `NoResult` only
-for the selected-spectrum operation. Missing, empty, malformed or extra output for a
-required preview operation is a semantic failure, while non-zero exit and process
-launch/cancellation failures remain separate. Unsupported-input-like exit 0 behavior is
-not classified from English stderr and remains conservative when no stable structural
-marker exists.
+for the selected-spectrum operation when both diagnostic streams were captured
+completely and are empty. Diagnostic-bearing or incomplete no-output behavior remains
+unclassified. Missing, empty, malformed or extra output for a required preview operation
+is a semantic failure, while non-zero exit and process launch/cancellation failures
+remain separate. Unsupported-input-like exit 0 behavior is not classified from English
+stderr and remains conservative when no stable structural marker exists.
 
 This slice did not execute ProteoWizard, change dependencies, add UI or Tauri behavior,
 or change conversion behavior. It adds contract and deterministic fixture evidence only;

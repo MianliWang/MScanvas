@@ -118,11 +118,12 @@ numeric display IDs with exact `scan=<N>` native IDs and reported scan numbers, 
 conflicts and keeps unrecognized native-ID forms opaque.
 
 The interpreter treats exit 0 plus no generated output as typed `NoResult` only for a
-selected-spectrum request. Required preview outputs instead fail closed when missing,
-empty, malformed or unexpectedly multiple, and backend/process failures remain separate
-from semantic output interpretation. Unsupported-input-like exit 0 behavior remains
-conservative and unclassified unless a stable structural marker exists; English stderr
-is not a protocol.
+selected-spectrum request whose stdout/stderr captures are complete and empty.
+Diagnostic-bearing or incomplete no-output cases remain unclassified. Required preview
+outputs instead fail closed when missing, empty, malformed or unexpectedly multiple, and
+backend/process failures remain separate from semantic output interpretation.
+Unsupported-input-like exit 0 behavior remains conservative and unclassified unless a
+stable structural marker exists; English stderr is not a protocol.
 
 This was a contract-only slice. It did not execute ProteoWizard, add or update a
 dependency, change UI or Tauri behavior, or change conversion semantics. M0C remains

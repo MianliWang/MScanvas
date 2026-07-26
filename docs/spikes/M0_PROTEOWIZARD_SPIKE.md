@@ -470,9 +470,11 @@ rejected or coerced.
 
 The interpreter combines the requested preview operation, process result and captured
 output manifest instead of treating exit status as the operation result. Exit 0 plus no
-generated output becomes typed `NoResult` only for selected-spectrum lookup. Required
-preview operations reject missing, empty, malformed or unexpectedly multiple outputs;
-non-zero exit and launch/cancellation failures remain distinct from parser failures.
+generated output becomes typed `NoResult` only for selected-spectrum lookup when stdout
+and stderr were captured completely and are both empty. Diagnostic-bearing or incomplete
+no-output behavior remains unclassified. Required preview operations reject missing,
+empty, malformed or unexpectedly multiple outputs; non-zero exit and
+launch/cancellation failures remain distinct from parser failures.
 
 Unsupported-input-like exit 0 plus stderr/no output is not successful metadata and is not
 classified by matching English prose. It remains conservative and unclassified unless a

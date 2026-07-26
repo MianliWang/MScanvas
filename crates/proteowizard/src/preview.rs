@@ -926,7 +926,7 @@ pub enum PreviewInterpretError {
     Cancelled,
     #[error("the preview backend exited with code {exit_code}")]
     BackendNonZeroExit { exit_code: i32 },
-    #[error("the preview backend exited without a classifiable exit code")]
+    #[error("the preview backend behavior could not be classified structurally")]
     UnclassifiedBackendBehavior,
     #[error("the requested preview operation is outside the validated command contract")]
     InvalidOperation { operation: PreviewOperation },
@@ -1130,6 +1130,9 @@ pub fn interpret_preview(
         }
         PreviewOperation::SpectrumByIndex { index, precision } => {
             if manifest.entries.is_empty() {
+                if !diagnostic_streams_are_complete_and_empty(process) {
+                    return Err(PreviewInterpretError::UnclassifiedBackendBehavior);
+                }
                 return Ok(PreviewOutcome::NoResult(
                     PreviewNoResult::SpectrumUnavailable {
                         requested_index: *index,
@@ -1164,6 +1167,17 @@ pub fn interpret_preview(
         }
     };
     Ok(PreviewOutcome::Value(Box::new(value)))
+}
+
+fn diagnostic_streams_are_complete_and_empty(process: &ProcessOutput) -> bool {
+    let captured_stdout_bytes = u64::try_from(process.stdout.len()).unwrap_or(u64::MAX);
+    let captured_stderr_bytes = u64::try_from(process.stderr.len()).unwrap_or(u64::MAX);
+    !process.stdout_truncated
+        && !process.stderr_truncated
+        && process.stdout_total_bytes == captured_stdout_bytes
+        && process.stderr_total_bytes == captured_stderr_bytes
+        && process.stdout.is_empty()
+        && process.stderr.is_empty()
 }
 
 fn malformed(operation: &PreviewOperation, kind: PreviewMalformedKind) -> PreviewInterpretError {
@@ -2525,6 +2539,46 @@ mod tests {
                 operation: PreviewOperation::RunSummary
             })
         );
+    }
+
+    #[test]
+    fn selected_no_result_requires_complete_empty_diagnostic_streams() {
+        let operation = PreviewOperation::SpectrumByIndex {
+            index: 42,
+            precision: 8,
+        };
+
+        let mut stderr_present = completed_process(Vec::new());
+        stderr_present.stderr = b"locale-specific backend prose".to_vec();
+        stderr_present.stderr_total_bytes = stderr_present.stderr.len() as u64;
+
+        let stdout_present = completed_process(b"backend diagnostic".to_vec());
+
+        let mut stderr_truncated = completed_process(Vec::new());
+        stderr_truncated.stderr_truncated = true;
+
+        let mut stdout_truncated = completed_process(Vec::new());
+        stdout_truncated.stdout_truncated = true;
+
+        let mut stderr_length_mismatch = completed_process(Vec::new());
+        stderr_length_mismatch.stderr_total_bytes = 1;
+
+        let mut stdout_length_mismatch = completed_process(Vec::new());
+        stdout_length_mismatch.stdout_total_bytes = 1;
+
+        for process in [
+            stderr_present,
+            stdout_present,
+            stderr_truncated,
+            stdout_truncated,
+            stderr_length_mismatch,
+            stdout_length_mismatch,
+        ] {
+            assert_eq!(
+                interpret_preview(&operation, &process, &PreviewOutputManifest::empty()),
+                Err(PreviewInterpretError::UnclassifiedBackendBehavior)
+            );
+        }
     }
 
     #[test]
