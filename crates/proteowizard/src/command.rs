@@ -58,12 +58,19 @@ impl PreviewOperation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum OutputSafety {
+    None,
+    FreshDirectory(PathBuf),
+    AbsentDestination(PathBuf),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSpec {
     pub(crate) tool: BackendTool,
     pub(crate) executable: PathBuf,
     pub(crate) args: Vec<OsString>,
     pub(crate) working_directory: PathBuf,
-    pub(crate) output_destination: Option<PathBuf>,
+    pub(crate) output_safety: OutputSafety,
 }
 
 impl CommandSpec {
@@ -78,12 +85,20 @@ impl CommandSpec {
             executable: executable.into(),
             args: args.into_iter().map(Into::into).collect(),
             working_directory: working_directory.into(),
-            output_destination: None,
+            output_safety: OutputSafety::None,
         }
     }
 
     pub(crate) fn with_output_destination(mut self, destination: impl Into<PathBuf>) -> Self {
-        self.output_destination = Some(destination.into());
+        self.output_safety = OutputSafety::AbsentDestination(destination.into());
+        self
+    }
+
+    pub(crate) fn with_fresh_output_directory(
+        mut self,
+        output_directory: impl Into<PathBuf>,
+    ) -> Self {
+        self.output_safety = OutputSafety::FreshDirectory(output_directory.into());
         self
     }
 
@@ -109,7 +124,18 @@ impl CommandSpec {
 
     #[must_use]
     pub fn output_destination(&self) -> Option<&Path> {
-        self.output_destination.as_deref()
+        match &self.output_safety {
+            OutputSafety::AbsentDestination(destination) => Some(destination),
+            OutputSafety::None | OutputSafety::FreshDirectory(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub fn fresh_output_directory(&self) -> Option<&Path> {
+        match &self.output_safety {
+            OutputSafety::FreshDirectory(output_directory) => Some(output_directory),
+            OutputSafety::None | OutputSafety::AbsentDestination(_) => None,
+        }
     }
 
     #[must_use]
@@ -254,11 +280,16 @@ pub fn build_msaccess_command_with_capabilities(
         return Err(PlanError::InvalidMsLevelFilter);
     }
     capabilities.require_preview_operation(&operation)?;
-    let command = build_msaccess_command_inner(executable, input, output_directory, operation)?;
-    require_fresh_output_directory(input, output_directory)?;
-    Ok(command)
+    let executable = executable.into();
+    validate_msaccess_request(&executable, input, output_directory, &operation)?;
+    let canonical_output = require_fresh_output_directory(input, output_directory)?;
+    Ok(
+        build_msaccess_command_spec(executable, input, &canonical_output, operation)
+            .with_fresh_output_directory(canonical_output),
+    )
 }
 
+#[cfg(test)]
 fn build_msaccess_command_inner(
     executable: impl Into<PathBuf>,
     input: &Path,
@@ -266,14 +297,38 @@ fn build_msaccess_command_inner(
     operation: PreviewOperation,
 ) -> Result<CommandSpec, PlanError> {
     let executable = executable.into();
-    validate_paths(&executable, input, output_directory)?;
+    validate_msaccess_request(&executable, input, output_directory, &operation)?;
+
+    Ok(build_msaccess_command_spec(
+        executable,
+        input,
+        output_directory,
+        operation,
+    ))
+}
+
+fn validate_msaccess_request(
+    executable: &Path,
+    input: &Path,
+    output_directory: &Path,
+    operation: &PreviewOperation,
+) -> Result<(), PlanError> {
+    validate_paths(executable, input, output_directory)?;
     if matches!(
         operation,
-        PreviewOperation::SpectrumByIndex { precision, .. } if precision > 15
+        PreviewOperation::SpectrumByIndex { precision, .. } if *precision > 15
     ) {
         return Err(PlanError::InvalidSpectrumPrecision);
     }
+    Ok(())
+}
 
+fn build_msaccess_command_spec(
+    executable: PathBuf,
+    input: &Path,
+    output_directory: &Path,
+    operation: PreviewOperation,
+) -> CommandSpec {
     let mut args = vec![
         input.as_os_str().to_owned(),
         OsString::from("--outdir"),
@@ -289,12 +344,7 @@ fn build_msaccess_command_inner(
         args.push(OsString::from(format!("msLevel {ms_level}")));
     }
 
-    Ok(CommandSpec::new(
-        BackendTool::MsAccess,
-        executable,
-        args,
-        output_directory,
-    ))
+    CommandSpec::new(BackendTool::MsAccess, executable, args, output_directory)
 }
 
 fn validate_paths(
@@ -410,14 +460,20 @@ fn require_safe_output_directory(
     Ok(canonical_output)
 }
 
-fn require_fresh_output_directory(input: &Path, output_directory: &Path) -> Result<(), PlanError> {
+fn require_fresh_output_directory(
+    input: &Path,
+    output_directory: &Path,
+) -> Result<PathBuf, PlanError> {
     let canonical_output = inspect_output_directory(output_directory)?;
     let mut entries = std::fs::read_dir(&canonical_output)
         .map_err(|error| PlanError::OutputDirectoryInspectionFailed { kind: error.kind() })?;
     match entries.next() {
         Some(Ok(_)) => Err(PlanError::OutputDirectoryNotEmpty),
         Some(Err(error)) => Err(PlanError::OutputDirectoryInspectionFailed { kind: error.kind() }),
-        None => reject_output_inside_directory_input(input, &canonical_output),
+        None => {
+            reject_output_inside_directory_input(input, &canonical_output)?;
+            Ok(canonical_output)
+        }
     }
 }
 

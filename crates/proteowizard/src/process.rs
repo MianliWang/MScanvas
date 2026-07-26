@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 use crate::CommandSpec;
+use crate::command::OutputSafety;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const JOB_EMPTY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -76,6 +77,10 @@ pub enum ProcessError {
     OutputDestinationExists,
     #[error("the requested output destination could not be inspected: {kind}")]
     OutputDestinationInspectionFailed { kind: io::ErrorKind },
+    #[error("the preview output directory is no longer empty")]
+    OutputDirectoryNotEmpty,
+    #[error("the preview output directory could not be inspected: {kind}")]
+    OutputDirectoryInspectionFailed { kind: io::ErrorKind },
     #[error("failed to launch {executable}: {detail}")]
     Launch {
         executable: String,
@@ -161,7 +166,7 @@ fn execute_command_after_assignment(
     cancellation: &CancellationToken,
     after_assignment: impl FnOnce(),
 ) -> Result<ProcessOutput, ProcessError> {
-    require_output_destination_available(spec)?;
+    require_output_safety(spec)?;
     let started = Instant::now();
     let mut child = command
         .stdout(Stdio::piped())
@@ -254,13 +259,34 @@ fn execute_command_after_assignment(
     })
 }
 
-fn require_output_destination_available(spec: &CommandSpec) -> Result<(), ProcessError> {
-    // This closes stale plans in the conservative sequential queue immediately
-    // before spawn. It is deliberately not described as an atomic reservation:
-    // another process can still create a destination after this snapshot.
-    let Some(destination) = spec.output_destination() else {
-        return Ok(());
-    };
+fn require_output_safety(spec: &CommandSpec) -> Result<(), ProcessError> {
+    // These checks close stale plans in the conservative sequential queue
+    // immediately before spawn. They are deliberately not described as atomic
+    // reservations: another process can still write after either snapshot.
+    match &spec.output_safety {
+        OutputSafety::None => Ok(()),
+        OutputSafety::FreshDirectory(output_directory) => {
+            require_fresh_output_directory(output_directory)
+        }
+        OutputSafety::AbsentDestination(destination) => {
+            require_output_destination_available(destination)
+        }
+    }
+}
+
+fn require_fresh_output_directory(output_directory: &Path) -> Result<(), ProcessError> {
+    let mut entries = std::fs::read_dir(output_directory)
+        .map_err(|error| ProcessError::OutputDirectoryInspectionFailed { kind: error.kind() })?;
+    match entries.next() {
+        Some(Ok(_)) => Err(ProcessError::OutputDirectoryNotEmpty),
+        Some(Err(error)) => {
+            Err(ProcessError::OutputDirectoryInspectionFailed { kind: error.kind() })
+        }
+        None => Ok(()),
+    }
+}
+
+fn require_output_destination_available(destination: &Path) -> Result<(), ProcessError> {
     let parent = destination
         .parent()
         .ok_or(ProcessError::OutputDestinationInspectionFailed {
@@ -894,10 +920,15 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn absent_output_destination_allows_the_controlled_child_to_launch() {
+    fn unrelated_output_entry_does_not_block_an_absent_conversion_destination() {
         let test_directory = TestDirectory::new();
         let marker = test_directory.path().join("child-launched");
         let destination = test_directory.path().join("planned.mzML");
+        fs::write(
+            test_directory.path().join("unrelated.mzML"),
+            b"earlier queue item",
+        )
+        .expect("write unrelated output");
         let spec = CommandSpec::new(
             BackendTool::MsConvert,
             std::env::current_exe().expect("test executable"),
@@ -999,8 +1030,102 @@ mod tests {
         .with_output_destination(&destination);
 
         assert_eq!(
-            require_output_destination_available(&spec),
+            require_output_safety(&spec),
             Err(ProcessError::OutputDestinationExists)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn fresh_preview_output_directory_allows_the_controlled_child_to_launch() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let spec = CommandSpec::new(
+            BackendTool::MsAccess,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        )
+        .with_fresh_output_directory(test_directory.path());
+
+        let output = execute(&spec).expect("a fresh preview output root permits launch");
+
+        assert!(output.success());
+        assert!(marker.is_file(), "the controlled child did not launch");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn stale_preview_plan_is_rejected_before_the_child_launches() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let spec = CommandSpec::new(
+            BackendTool::MsAccess,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        )
+        .with_fresh_output_directory(test_directory.path());
+        fs::write(
+            test_directory.path().join("previous-preview.txt"),
+            b"completed earlier preview",
+        )
+        .expect("populate preview output root after planning");
+
+        let error = execute(&spec).expect_err("the stale preview plan must fail closed");
+
+        assert_eq!(error, ProcessError::OutputDirectoryNotEmpty);
+        assert!(
+            !marker.exists(),
+            "the stale preview plan launched its child"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn missing_preview_output_root_is_rejected_before_the_child_launches() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let preview_output = test_directory.path().join("removed-preview-root");
+        fs::create_dir(&preview_output).expect("create preview output root");
+        let spec = CommandSpec::new(
+            BackendTool::MsAccess,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        )
+        .with_fresh_output_directory(&preview_output);
+        fs::remove_dir(&preview_output).expect("remove preview output root after planning");
+
+        let error = execute(&spec).expect_err("a missing preview output root must fail closed");
+
+        assert_eq!(
+            error,
+            ProcessError::OutputDirectoryInspectionFailed {
+                kind: io::ErrorKind::NotFound,
+            }
+        );
+        assert!(
+            !marker.exists(),
+            "the uninspectable preview plan launched its child"
         );
     }
 

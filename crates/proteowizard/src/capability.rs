@@ -1838,6 +1838,88 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
     }
 
     #[test]
+    fn every_public_preview_operation_records_a_fresh_canonical_output_guard() {
+        let capabilities = msaccess(MSACCESS_HELP);
+        let test_directory = TestDirectory::new();
+        let input = test_directory.path().join("sample.mzML");
+        let output_directory = test_directory.path().join("preview");
+        fs::write(&input, b"source mzML").expect("write source mzML");
+        fs::create_dir(&output_directory).expect("create preview directory");
+        let canonical_output = fs::canonicalize(&output_directory).expect("canonical output root");
+
+        for operation in [
+            PreviewOperation::Metadata,
+            PreviewOperation::RunSummary,
+            PreviewOperation::SpectrumTable,
+            PreviewOperation::Tic { ms_level: None },
+            PreviewOperation::Tic { ms_level: Some(1) },
+            PreviewOperation::SpectrumByIndex {
+                index: 7,
+                precision: 8,
+            },
+        ] {
+            let command = build_msaccess_command_with_capabilities(
+                &capabilities,
+                test_path("msaccess.exe"),
+                &input,
+                &output_directory,
+                operation,
+            )
+            .expect("a fresh output root permits preview planning");
+
+            assert_eq!(command.args()[1], "--outdir");
+            assert_eq!(command.args()[2], canonical_output.as_os_str());
+            assert_eq!(command.working_directory(), canonical_output);
+            assert_eq!(
+                command.fresh_output_directory(),
+                Some(canonical_output.as_path())
+            );
+            assert_eq!(command.output_destination(), None);
+        }
+    }
+
+    #[test]
+    fn preview_validation_precedence_remains_fail_closed() {
+        let capabilities = msaccess(MSACCESS_HELP);
+
+        let invalid_precision_tree = TestDirectory::new();
+        let input = invalid_precision_tree.path().join("sample.mzML");
+        let output_directory = invalid_precision_tree.path().join("preview");
+        fs::write(&input, b"source mzML").expect("write source mzML");
+        fs::create_dir(&output_directory).expect("create preview directory");
+        fs::write(output_directory.join("existing.txt"), b"existing")
+            .expect("populate preview directory");
+        let precision_error = build_msaccess_command_with_capabilities(
+            &capabilities,
+            test_path("msaccess.exe"),
+            &input,
+            &output_directory,
+            PreviewOperation::SpectrumByIndex {
+                index: 0,
+                precision: 16,
+            },
+        )
+        .expect_err("invalid precision must precede output inspection");
+        assert_eq!(precision_error, PlanError::InvalidSpectrumPrecision);
+
+        let stale_output_tree = TestDirectory::new();
+        let missing_input = stale_output_tree.path().join("missing.mzML");
+        let stale_output = stale_output_tree.path().join("preview");
+        fs::create_dir(&stale_output).expect("create preview directory");
+        fs::write(stale_output.join("existing.txt"), b"existing")
+            .expect("populate preview directory");
+        let freshness_error = build_msaccess_command_with_capabilities(
+            &capabilities,
+            test_path("msaccess.exe"),
+            &missing_input,
+            &stale_output,
+            PreviewOperation::Metadata,
+        )
+        .expect_err("nonfresh output must precede input inspection");
+        assert_eq!(freshness_error, PlanError::OutputDirectoryNotEmpty);
+    }
+
+    #[test]
     fn public_preview_planning_rejects_output_inside_a_directory_input() {
         let capabilities = msaccess(MSACCESS_HELP);
 
@@ -1874,6 +1956,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         let output_directory = test_directory.path().join("preview");
         fs::create_dir(&input).expect("create directory input");
         fs::create_dir(&output_directory).expect("create sibling preview directory");
+        let canonical_output = fs::canonicalize(&output_directory).expect("canonical output root");
 
         let command = build_msaccess_command_with_capabilities(
             &capabilities,
@@ -1885,7 +1968,13 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         .expect("a fresh sibling preview directory is safe to plan");
 
         assert_eq!(command.args()[0], input.as_os_str());
-        assert_eq!(command.args()[2], output_directory.as_os_str());
+        assert_eq!(command.args()[2], canonical_output.as_os_str());
+        assert_eq!(command.working_directory(), canonical_output);
+        assert_eq!(
+            command.fresh_output_directory(),
+            Some(canonical_output.as_path())
+        );
+        assert_eq!(command.output_destination(), None);
     }
 
     #[test]
