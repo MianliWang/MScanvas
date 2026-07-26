@@ -950,7 +950,10 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::command::build_msaccess_command_with_capabilities;
+    use crate::command::{
+        PlanError, build_msaccess_command_with_capabilities,
+        build_msconvert_command_with_capabilities,
+    };
 
     const EMPTY_SHA256: Sha256Digest = Sha256Digest::from_bytes([
         0xE3, 0xB0, 0xC4, 0x42, 0x98, 0xFC, 0x1C, 0x14, 0x9A, 0xFB, 0xF4, 0xC8, 0x99, 0x6F, 0xB9,
@@ -1280,7 +1283,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
     }
 
     #[test]
-    fn complete_msconvert_declarations_validate_both_conversion_formats() {
+    fn complete_msconvert_declarations_recognize_both_conversion_grammars() {
         let capabilities =
             InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
                 .expect("valid msconvert fixture");
@@ -1295,6 +1298,51 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         capabilities
             .require_conversion(OpenFormat::MzXml)
             .expect("mzXML grammar");
+    }
+
+    #[test]
+    fn mzxml_grammar_does_not_enable_public_conversion_planning() {
+        let capabilities =
+            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+                .expect("valid msconvert fixture");
+        capabilities
+            .require_conversion(OpenFormat::MzXml)
+            .expect("installed help recognizes the mzXML grammar");
+
+        let error = build_msconvert_command_with_capabilities(
+            &capabilities,
+            test_path("msconvert.exe"),
+            &test_path("sample.raw"),
+            &test_path("converted"),
+            OpenFormat::MzXml,
+        )
+        .expect_err("mzXML must remain unavailable until its integrity gate is implemented");
+
+        assert_eq!(error, PlanError::MzXmlIntegrityGateRequired);
+    }
+
+    #[test]
+    fn complete_mzml_grammar_builds_the_expected_public_conversion_plan() {
+        let capabilities =
+            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+                .expect("valid msconvert fixture");
+        let input = test_path("sample.raw");
+        let output = test_path("converted");
+        let command = build_msconvert_command_with_capabilities(
+            &capabilities,
+            test_path("msconvert.exe"),
+            &input,
+            &output,
+            OpenFormat::MzMl,
+        )
+        .expect("complete installed grammar permits mzML planning");
+
+        assert_eq!(command.args()[0], input.as_os_str());
+        assert_eq!(command.args()[1], "--mzML");
+        assert!(command.contains_argument("--zlib"));
+        assert!(command.contains_argument("--outdir"));
+        assert!(!command.contains_argument("--filter"));
+        assert_eq!(command.args().len(), 5);
     }
 
     #[test]

@@ -114,6 +114,10 @@ pub enum PlanError {
     InvalidSpectrumPrecision,
     #[error("filtered TIC planning requires exact installed-help capability evidence")]
     FilteredTicCapabilityEvidenceRequired,
+    #[error(
+        "mzXML conversion is unavailable until source/output integrity validation is implemented"
+    )]
+    MzXmlIntegrityGateRequired,
     #[error(transparent)]
     InstalledHelpCapability(#[from] CapabilityRequirementError),
 }
@@ -141,8 +145,9 @@ fn build_msconvert_command(
     ))
 }
 
-/// Builds a conversion command only after the complete installed help has
-/// confirmed every option used by the typed plan.
+/// Builds an mzML conversion command only after the complete installed help has
+/// confirmed every option used by the typed plan. mzXML remains unavailable
+/// until source/output integrity validation is implemented.
 pub fn build_msconvert_command_with_capabilities(
     capabilities: &InstalledHelpCapabilities,
     executable: impl Into<PathBuf>,
@@ -150,8 +155,13 @@ pub fn build_msconvert_command_with_capabilities(
     output_directory: &Path,
     format: OpenFormat,
 ) -> Result<CommandSpec, PlanError> {
-    capabilities.require_conversion(format)?;
-    build_msconvert_command(executable, input, output_directory, format)
+    match format {
+        OpenFormat::MzMl => {
+            capabilities.require_conversion(format)?;
+            build_msconvert_command(executable, input, output_directory, format)
+        }
+        OpenFormat::MzXml => Err(PlanError::MzXmlIntegrityGateRequired),
+    }
 }
 
 #[cfg(test)]

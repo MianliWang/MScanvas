@@ -1982,6 +1982,33 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn mzxml_conversion_reaches_the_public_integrity_gate_after_grammar_validation() {
+        let mut cli = convert_cli();
+        cli.format = Some(OpenFormat::MzXml);
+        let mut discovery = discovery_with_help(MSCONVERT_HELP, "");
+        let current_directory = std::env::current_dir().expect("test current directory");
+        discovery.msconvert.path = Some(current_directory.join("msconvert.exe"));
+        let capabilities = validate_installed_command_surface(&cli, &discovery)
+            .expect("installed help recognizes the complete mzXML grammar");
+
+        let error = build_command(
+            &cli,
+            &discovery,
+            &capabilities,
+            &current_directory.join("sample.raw"),
+            &current_directory.join("converted"),
+        )
+        .expect_err("the public planner must not return an mzXML command");
+
+        assert_eq!(error.exit_code, 1);
+        assert_eq!(
+            error.message,
+            "command planning failed: mzXML conversion is unavailable until source/output integrity validation is implemented"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn installed_help_with_truncated_stdout_fails_closed_even_when_grammar_exists() {
         let cli = convert_cli();
         let mut discovery = discovery_with_help(MSCONVERT_HELP, "");
