@@ -60,8 +60,14 @@ impl PreviewOperation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OutputSafety {
     None,
-    FreshDirectory(PathBuf),
-    AbsentDestination(PathBuf),
+    FreshDirectory {
+        output_directory: PathBuf,
+        source_directory_boundary: Option<PathBuf>,
+    },
+    AbsentDestination {
+        destination: PathBuf,
+        source_directory_boundary: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,16 +95,27 @@ impl CommandSpec {
         }
     }
 
-    pub(crate) fn with_output_destination(mut self, destination: impl Into<PathBuf>) -> Self {
-        self.output_safety = OutputSafety::AbsentDestination(destination.into());
+    pub(crate) fn with_output_destination(
+        mut self,
+        destination: impl Into<PathBuf>,
+        source_directory_boundary: Option<PathBuf>,
+    ) -> Self {
+        self.output_safety = OutputSafety::AbsentDestination {
+            destination: destination.into(),
+            source_directory_boundary,
+        };
         self
     }
 
     pub(crate) fn with_fresh_output_directory(
         mut self,
         output_directory: impl Into<PathBuf>,
+        source_directory_boundary: Option<PathBuf>,
     ) -> Self {
-        self.output_safety = OutputSafety::FreshDirectory(output_directory.into());
+        self.output_safety = OutputSafety::FreshDirectory {
+            output_directory: output_directory.into(),
+            source_directory_boundary,
+        };
         self
     }
 
@@ -125,16 +142,33 @@ impl CommandSpec {
     #[must_use]
     pub fn output_destination(&self) -> Option<&Path> {
         match &self.output_safety {
-            OutputSafety::AbsentDestination(destination) => Some(destination),
-            OutputSafety::None | OutputSafety::FreshDirectory(_) => None,
+            OutputSafety::AbsentDestination { destination, .. } => Some(destination),
+            OutputSafety::None | OutputSafety::FreshDirectory { .. } => None,
         }
     }
 
     #[must_use]
     pub fn fresh_output_directory(&self) -> Option<&Path> {
         match &self.output_safety {
-            OutputSafety::FreshDirectory(output_directory) => Some(output_directory),
-            OutputSafety::None | OutputSafety::AbsentDestination(_) => None,
+            OutputSafety::FreshDirectory {
+                output_directory, ..
+            } => Some(output_directory),
+            OutputSafety::None | OutputSafety::AbsentDestination { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn source_directory_boundary(&self) -> Option<&Path> {
+        match &self.output_safety {
+            OutputSafety::FreshDirectory {
+                source_directory_boundary,
+                ..
+            }
+            | OutputSafety::AbsentDestination {
+                source_directory_boundary,
+                ..
+            } => source_directory_boundary.as_deref(),
+            OutputSafety::None => None,
         }
     }
 
@@ -192,6 +226,7 @@ fn build_msconvert_command(
     output_directory: &Path,
     output_file_name: &OsStr,
     format: OpenFormat,
+    source_directory_boundary: Option<PathBuf>,
 ) -> Result<CommandSpec, PlanError> {
     let executable = executable.into();
     validate_paths(&executable, input, output_directory)?;
@@ -211,7 +246,10 @@ fn build_msconvert_command(
         ],
         output_directory,
     )
-    .with_output_destination(output_directory.join(output_file_name)))
+    .with_output_destination(
+        output_directory.join(output_file_name),
+        source_directory_boundary,
+    ))
 }
 
 /// Builds an mzML conversion command only after the complete installed help has
@@ -233,13 +271,14 @@ pub fn build_msconvert_command_with_capabilities(
             let executable = executable.into();
             validate_paths(&executable, input, output_directory)?;
             validate_output_file_name(output_file_name, format)?;
-            let canonical_output = require_safe_output_directory(input, output_directory)?;
+            let safe_output = require_safe_output_directory(input, output_directory)?;
             let command = build_msconvert_command(
                 executable,
                 input,
-                &canonical_output,
+                &safe_output.output_directory,
                 output_file_name,
                 format,
+                safe_output.source_directory_boundary,
             )?;
             require_output_destination_available(
                 command
@@ -282,10 +321,13 @@ pub fn build_msaccess_command_with_capabilities(
     capabilities.require_preview_operation(&operation)?;
     let executable = executable.into();
     validate_msaccess_request(&executable, input, output_directory, &operation)?;
-    let canonical_output = require_fresh_output_directory(input, output_directory)?;
+    let safe_output = require_fresh_output_directory(input, output_directory)?;
     Ok(
-        build_msaccess_command_spec(executable, input, &canonical_output, operation)
-            .with_fresh_output_directory(canonical_output),
+        build_msaccess_command_spec(executable, input, &safe_output.output_directory, operation)
+            .with_fresh_output_directory(
+                &safe_output.output_directory,
+                safe_output.source_directory_boundary,
+            ),
     )
 }
 
@@ -437,10 +479,16 @@ fn inspect_output_directory(output_directory: &Path) -> Result<PathBuf, PlanErro
     Ok(canonical_output)
 }
 
-fn reject_output_inside_directory_input(
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SafeOutputDirectory {
+    output_directory: PathBuf,
+    source_directory_boundary: Option<PathBuf>,
+}
+
+fn source_directory_boundary(
     input: &Path,
     canonical_output: &Path,
-) -> Result<(), PlanError> {
+) -> Result<Option<PathBuf>, PlanError> {
     let canonical_input = std::fs::canonicalize(input)
         .map_err(|error| PlanError::InputPathInspectionFailed { kind: error.kind() })?;
     let input_metadata = std::fs::metadata(&canonical_input)
@@ -448,22 +496,25 @@ fn reject_output_inside_directory_input(
     if input_metadata.is_dir() && canonical_output.starts_with(&canonical_input) {
         return Err(PlanError::OutputDirectoryInsideDirectoryInput);
     }
-    Ok(())
+    Ok(input_metadata.is_dir().then_some(canonical_input))
 }
 
 fn require_safe_output_directory(
     input: &Path,
     output_directory: &Path,
-) -> Result<PathBuf, PlanError> {
+) -> Result<SafeOutputDirectory, PlanError> {
     let canonical_output = inspect_output_directory(output_directory)?;
-    reject_output_inside_directory_input(input, &canonical_output)?;
-    Ok(canonical_output)
+    let source_directory_boundary = source_directory_boundary(input, &canonical_output)?;
+    Ok(SafeOutputDirectory {
+        output_directory: canonical_output,
+        source_directory_boundary,
+    })
 }
 
 fn require_fresh_output_directory(
     input: &Path,
     output_directory: &Path,
-) -> Result<PathBuf, PlanError> {
+) -> Result<SafeOutputDirectory, PlanError> {
     let canonical_output = inspect_output_directory(output_directory)?;
     let mut entries = std::fs::read_dir(&canonical_output)
         .map_err(|error| PlanError::OutputDirectoryInspectionFailed { kind: error.kind() })?;
@@ -471,8 +522,11 @@ fn require_fresh_output_directory(
         Some(Ok(_)) => Err(PlanError::OutputDirectoryNotEmpty),
         Some(Err(error)) => Err(PlanError::OutputDirectoryInspectionFailed { kind: error.kind() }),
         None => {
-            reject_output_inside_directory_input(input, &canonical_output)?;
-            Ok(canonical_output)
+            let source_directory_boundary = source_directory_boundary(input, &canonical_output)?;
+            Ok(SafeOutputDirectory {
+                output_directory: canonical_output,
+                source_directory_boundary,
+            })
         }
     }
 }
@@ -506,6 +560,7 @@ mod tests {
             &output,
             OsStr::new("样本 01.mzML"),
             OpenFormat::MzMl,
+            None,
         )
         .expect("valid command");
 
@@ -529,6 +584,7 @@ mod tests {
             &test_path("converted"),
             OsStr::new("sample.mzXML"),
             OpenFormat::MzXml,
+            None,
         )
         .expect("valid command");
 
@@ -544,6 +600,7 @@ mod tests {
             &test_path("converted"),
             OsStr::new("sample.mzML"),
             OpenFormat::MzMl,
+            None,
         )
         .expect("valid command");
 
@@ -612,6 +669,7 @@ mod tests {
                 &output,
                 OsStr::new("sample.mzML"),
                 OpenFormat::MzMl,
+                None,
             ),
             Err(PlanError::NonAbsoluteExecutable)
         );
@@ -621,7 +679,8 @@ mod tests {
                 Path::new("sample.raw"),
                 &output,
                 OsStr::new("sample.mzML"),
-                OpenFormat::MzMl
+                OpenFormat::MzMl,
+                None,
             ),
             Err(PlanError::NonAbsoluteInput)
         );
@@ -631,7 +690,8 @@ mod tests {
                 &input,
                 Path::new("converted"),
                 OsStr::new("sample.mzML"),
-                OpenFormat::MzMl
+                OpenFormat::MzMl,
+                None,
             ),
             Err(PlanError::NonAbsoluteOutputDirectory)
         );

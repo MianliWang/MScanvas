@@ -95,9 +95,9 @@ pub fn classify_process_failure(
         Ok(output) => output,
         Err(error) => {
             let kind = match error {
-                ProcessError::OutputDestinationExists | ProcessError::OutputDirectoryNotEmpty => {
-                    FailureKind::OutputConflict
-                }
+                ProcessError::OutputDestinationExists
+                | ProcessError::OutputDirectoryNotEmpty
+                | ProcessError::OutputDirectoryInsideDirectoryInput => FailureKind::OutputConflict,
                 ProcessError::OutputDestinationInspectionFailed {
                     kind: std::io::ErrorKind::PermissionDenied,
                 }
@@ -199,9 +199,9 @@ const fn failure_contract(kind: FailureKind) -> (&'static str, Retryability, &'s
             "Choose readable input and a writable output folder, then retry.",
         ),
         FailureKind::OutputConflict => (
-            "The requested output already exists.",
+            "The requested output location conflicts with existing or source data.",
             Retryability::AfterCorrection,
-            "Choose a different output name or a fresh output folder, or resolve the conflict explicitly.",
+            "Choose an unused output name or an empty output folder outside the source acquisition, then retry.",
         ),
         FailureKind::UnwritableOutputDirectory => (
             "ProteoWizard cannot write to the output folder.",
@@ -309,6 +309,16 @@ mod tests {
         let error = ProcessError::OutputDirectoryNotEmpty;
         let failure = classify_process_failure(BackendTool::MsAccess, Err(&error), false)
             .expect("preview output conflict classification");
+
+        assert_eq!(failure.kind, FailureKind::OutputConflict);
+        assert_eq!(failure.retryability, Retryability::AfterCorrection);
+    }
+
+    #[test]
+    fn unsafe_source_boundaries_have_a_stable_output_category() {
+        let error = ProcessError::OutputDirectoryInsideDirectoryInput;
+        let failure = classify_process_failure(BackendTool::MsConvert, Err(&error), false)
+            .expect("output boundary classification");
 
         assert_eq!(failure.kind, FailureKind::OutputConflict);
         assert_eq!(failure.retryability, Retryability::AfterCorrection);

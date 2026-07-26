@@ -1368,6 +1368,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             command.output_destination(),
             Some(canonical_output.join("样本 01.mzML").as_path())
         );
+        assert_eq!(command.source_directory_boundary(), None);
     }
 
     #[test]
@@ -1607,6 +1608,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         let output_directory = test_directory.path().join("converted");
         fs::create_dir(&input).expect("create directory input");
         fs::create_dir(&output_directory).expect("create sibling output directory");
+        let canonical_input = fs::canonicalize(&input).expect("canonical directory input");
         let canonical_output = fs::canonicalize(&output_directory).expect("canonical output root");
 
         let command = build_msconvert_command_with_capabilities(
@@ -1621,6 +1623,10 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
         assert_eq!(command.args()[0], input.as_os_str());
         assert_eq!(command.args()[4], canonical_output.as_os_str());
+        assert_eq!(
+            command.source_directory_boundary(),
+            Some(canonical_input.as_path())
+        );
     }
 
     #[test]
@@ -1875,6 +1881,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
                 Some(canonical_output.as_path())
             );
             assert_eq!(command.output_destination(), None);
+            assert_eq!(command.source_directory_boundary(), None);
         }
     }
 
@@ -1956,6 +1963,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         let output_directory = test_directory.path().join("preview");
         fs::create_dir(&input).expect("create directory input");
         fs::create_dir(&output_directory).expect("create sibling preview directory");
+        let canonical_input = fs::canonicalize(&input).expect("canonical directory input");
         let canonical_output = fs::canonicalize(&output_directory).expect("canonical output root");
 
         let command = build_msaccess_command_with_capabilities(
@@ -1975,6 +1983,10 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             Some(canonical_output.as_path())
         );
         assert_eq!(command.output_destination(), None);
+        assert_eq!(
+            command.source_directory_boundary(),
+            Some(canonical_input.as_path())
+        );
     }
 
     #[test]

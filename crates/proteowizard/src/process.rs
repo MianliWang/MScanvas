@@ -81,6 +81,8 @@ pub enum ProcessError {
     OutputDirectoryNotEmpty,
     #[error("the preview output directory could not be inspected: {kind}")]
     OutputDirectoryInspectionFailed { kind: io::ErrorKind },
+    #[error("the output directory now resolves inside a directory-formatted input")]
+    OutputDirectoryInsideDirectoryInput,
     #[error("failed to launch {executable}: {detail}")]
     Launch {
         executable: String,
@@ -265,17 +267,35 @@ fn require_output_safety(spec: &CommandSpec) -> Result<(), ProcessError> {
     // reservations: another process can still write after either snapshot.
     match &spec.output_safety {
         OutputSafety::None => Ok(()),
-        OutputSafety::FreshDirectory(output_directory) => {
-            require_fresh_output_directory(output_directory)
-        }
-        OutputSafety::AbsentDestination(destination) => {
-            require_output_destination_available(destination)
+        OutputSafety::FreshDirectory {
+            output_directory,
+            source_directory_boundary,
+        } => require_fresh_output_directory(output_directory, source_directory_boundary.as_deref()),
+        OutputSafety::AbsentDestination {
+            destination,
+            source_directory_boundary,
+        } => {
+            require_output_destination_available(destination, source_directory_boundary.as_deref())
         }
     }
 }
 
-fn require_fresh_output_directory(output_directory: &Path) -> Result<(), ProcessError> {
-    let mut entries = std::fs::read_dir(output_directory)
+fn require_fresh_output_directory(
+    output_directory: &Path,
+    source_directory_boundary: Option<&Path>,
+) -> Result<(), ProcessError> {
+    let current_output_directory =
+        if let Some(source_directory_boundary) = source_directory_boundary {
+            let current_output_directory =
+                std::fs::canonicalize(output_directory).map_err(|error| {
+                    ProcessError::OutputDirectoryInspectionFailed { kind: error.kind() }
+                })?;
+            reject_output_inside_source(&current_output_directory, source_directory_boundary)?;
+            current_output_directory
+        } else {
+            output_directory.to_path_buf()
+        };
+    let mut entries = std::fs::read_dir(&current_output_directory)
         .map_err(|error| ProcessError::OutputDirectoryInspectionFailed { kind: error.kind() })?;
     match entries.next() {
         Some(Ok(_)) => Err(ProcessError::OutputDirectoryNotEmpty),
@@ -286,15 +306,44 @@ fn require_fresh_output_directory(output_directory: &Path) -> Result<(), Process
     }
 }
 
-fn require_output_destination_available(destination: &Path) -> Result<(), ProcessError> {
+fn reject_output_inside_source(
+    current_output_directory: &Path,
+    source_directory_boundary: &Path,
+) -> Result<(), ProcessError> {
+    if current_output_directory.starts_with(source_directory_boundary) {
+        return Err(ProcessError::OutputDirectoryInsideDirectoryInput);
+    }
+    Ok(())
+}
+
+fn require_output_destination_available(
+    destination: &Path,
+    source_directory_boundary: Option<&Path>,
+) -> Result<(), ProcessError> {
     let parent = destination
         .parent()
         .ok_or(ProcessError::OutputDestinationInspectionFailed {
             kind: io::ErrorKind::InvalidInput,
         })?;
-    let _entries = std::fs::read_dir(parent)
+    let current_output_directory =
+        if let Some(source_directory_boundary) = source_directory_boundary {
+            let current_output_directory = std::fs::canonicalize(parent).map_err(|error| {
+                ProcessError::OutputDestinationInspectionFailed { kind: error.kind() }
+            })?;
+            reject_output_inside_source(&current_output_directory, source_directory_boundary)?;
+            current_output_directory
+        } else {
+            parent.to_path_buf()
+        };
+    let _entries = std::fs::read_dir(&current_output_directory)
         .map_err(|error| ProcessError::OutputDestinationInspectionFailed { kind: error.kind() })?;
-    match std::fs::symlink_metadata(destination) {
+    let file_name =
+        destination
+            .file_name()
+            .ok_or(ProcessError::OutputDestinationInspectionFailed {
+                kind: io::ErrorKind::InvalidInput,
+            })?;
+    match std::fs::symlink_metadata(current_output_directory.join(file_name)) {
         Ok(_) => Err(ProcessError::OutputDestinationExists),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(ProcessError::OutputDestinationInspectionFailed { kind: error.kind() }),
@@ -924,6 +973,8 @@ mod tests {
         let test_directory = TestDirectory::new();
         let marker = test_directory.path().join("child-launched");
         let destination = test_directory.path().join("planned.mzML");
+        let source = test_directory.path().join("source.mzML");
+        fs::write(&source, b"source sentinel").expect("write source sentinel");
         fs::write(
             test_directory.path().join("unrelated.mzML"),
             b"earlier queue item",
@@ -941,13 +992,17 @@ mod tests {
             ],
             test_directory.path(),
         )
-        .with_output_destination(&destination);
+        .with_output_destination(&destination, None);
 
         let output = execute(&spec).expect("an absent exact destination permits launch");
 
         assert!(output.success());
         assert!(marker.is_file(), "the controlled child did not launch");
         assert!(!destination.exists());
+        assert_eq!(
+            fs::read(source).expect("read source sentinel"),
+            b"source sentinel"
+        );
     }
 
     #[cfg(windows)]
@@ -968,7 +1023,7 @@ mod tests {
             ],
             test_directory.path(),
         )
-        .with_output_destination(&destination);
+        .with_output_destination(&destination, None);
         fs::write(&destination, b"completed earlier queue item")
             .expect("create a conflict after planning");
 
@@ -998,7 +1053,7 @@ mod tests {
             ],
             test_directory.path(),
         )
-        .with_output_destination(&destination);
+        .with_output_destination(&destination, None);
         fs::remove_dir(&output_directory).expect("remove output root after planning");
 
         let error = execute(&spec).expect_err("a missing output root must fail closed");
@@ -1027,7 +1082,7 @@ mod tests {
             std::iter::empty::<OsString>(),
             test_directory.path(),
         )
-        .with_output_destination(&destination);
+        .with_output_destination(&destination, None);
 
         assert_eq!(
             require_output_safety(&spec),
@@ -1052,7 +1107,7 @@ mod tests {
             ],
             test_directory.path(),
         )
-        .with_fresh_output_directory(test_directory.path());
+        .with_fresh_output_directory(test_directory.path(), None);
 
         let output = execute(&spec).expect("a fresh preview output root permits launch");
 
@@ -1077,7 +1132,7 @@ mod tests {
             ],
             test_directory.path(),
         )
-        .with_fresh_output_directory(test_directory.path());
+        .with_fresh_output_directory(test_directory.path(), None);
         fs::write(
             test_directory.path().join("previous-preview.txt"),
             b"completed earlier preview",
@@ -1112,7 +1167,7 @@ mod tests {
             ],
             test_directory.path(),
         )
-        .with_fresh_output_directory(&preview_output);
+        .with_fresh_output_directory(&preview_output, None);
         fs::remove_dir(&preview_output).expect("remove preview output root after planning");
 
         let error = execute(&spec).expect_err("a missing preview output root must fail closed");
@@ -1127,6 +1182,112 @@ mod tests {
             !marker.exists(),
             "the uninspectable preview plan launched its child"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn output_inside_a_retained_source_boundary_is_rejected_before_child_launch() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let source_directory = test_directory.path().join("dataset.raw");
+        let output_directory = source_directory.join("retargeted-output");
+        fs::create_dir_all(&output_directory).expect("create output inside source boundary");
+        let source_directory =
+            fs::canonicalize(source_directory).expect("canonical source directory");
+        let output_directory =
+            fs::canonicalize(output_directory).expect("canonical output directory");
+        let destination = output_directory.join("planned.mzML");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        )
+        .with_output_destination(destination, Some(source_directory));
+
+        let error = execute(&spec).expect_err("output inside the source boundary must fail closed");
+
+        assert_eq!(error, ProcessError::OutputDirectoryInsideDirectoryInput);
+        assert!(
+            !marker.exists(),
+            "the source-boundary violation launched its child"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn preview_inside_a_retained_source_boundary_is_rejected_before_child_launch() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let source_directory = test_directory.path().join("dataset.raw");
+        let output_directory = source_directory.join("retargeted-preview");
+        fs::create_dir_all(&output_directory).expect("create preview inside source boundary");
+        let source_directory =
+            fs::canonicalize(source_directory).expect("canonical source directory");
+        let output_directory =
+            fs::canonicalize(output_directory).expect("canonical preview directory");
+        let spec = CommandSpec::new(
+            BackendTool::MsAccess,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        )
+        .with_fresh_output_directory(output_directory, Some(source_directory));
+
+        let error =
+            execute(&spec).expect_err("preview inside the source boundary must fail closed");
+
+        assert_eq!(error, ProcessError::OutputDirectoryInsideDirectoryInput);
+        assert!(
+            !marker.exists(),
+            "the preview source-boundary violation launched its child"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn output_in_a_sibling_directory_of_the_retained_source_boundary_allows_launch() {
+        let test_directory = TestDirectory::new();
+        let source_directory = test_directory.path().join("dataset.raw");
+        let output_directory = test_directory.path().join("converted");
+        fs::create_dir(&source_directory).expect("create source boundary");
+        fs::create_dir(&output_directory).expect("create sibling output directory");
+        let source_directory =
+            fs::canonicalize(source_directory).expect("canonical source directory");
+        let output_directory =
+            fs::canonicalize(output_directory).expect("canonical output directory");
+        let marker = output_directory.join("child-launched");
+        let destination = output_directory.join("planned.mzML");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            &output_directory,
+        )
+        .with_output_destination(destination, Some(source_directory));
+
+        let output = execute(&spec).expect("a safe sibling output permits launch");
+
+        assert!(output.success());
+        assert!(marker.is_file(), "the controlled child did not launch");
     }
 
     #[test]

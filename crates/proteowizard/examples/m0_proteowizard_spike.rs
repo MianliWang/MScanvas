@@ -16,7 +16,7 @@ use std::time::{Duration, SystemTime};
 
 use mscanvas_proteowizard::{
     AvailabilityState, BackendTool, CancellationToken, CapturedHelpStream, CompleteHelpCapture,
-    ConfiguredLocation, DiscoveredTool, DiscoveryRequest, FailureCondition,
+    ConfiguredLocation, DiscoveredTool, DiscoveryRequest, FailureCondition, FailureKind,
     InstalledHelpCapabilities, OpenFormat, PreviewOperation, Redactor, ReportableProcessOutput,
     Retryability, Sha256Digest, build_msaccess_command_with_capabilities,
     build_msconvert_command_with_capabilities, classify_process_failure, discover,
@@ -24,8 +24,6 @@ use mscanvas_proteowizard::{
 };
 
 const DIAGNOSTIC_PREVIEW_CHARS: usize = 4_096;
-const SCIENTIFIC_STDOUT_PAYLOAD_MAX_BYTES: usize = 256 * 1_024;
-const SCIENTIFIC_STDOUT_BASE64_CHUNK_CHARS: usize = 256;
 const SPECTRUM_PRECISION: u8 = 8;
 
 fn main() -> ExitCode {
@@ -1592,21 +1590,35 @@ fn print_process_output(
     );
     println!("process.output_directory_changed={output_changed}");
     println!("process.partial_output_present={partial_output_present}");
-    print_scientific_stdout_payload(output)?;
-    print_diagnostic_preview("process.stdout_preview", &reportable.stdout);
+    print_scientific_stdout_summary(output)?;
+    println!(
+        "process.stdout_preview={}",
+        scientific_stdout_preview_value(&output.stdout)
+    );
     print_diagnostic_preview("process.stderr_preview", &reportable.stderr);
     Ok(())
 }
 
-fn print_scientific_stdout_payload(
+fn scientific_stdout_preview_value(_stdout: &[u8]) -> &'static str {
+    "<omitted-sensitive>"
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScientificStdoutSummary {
+    bytes: u64,
+    payload_status: &'static str,
+    sha256: Option<Sha256Digest>,
+}
+
+fn scientific_stdout_summary(
     output: &mscanvas_proteowizard::ProcessOutput,
-) -> Result<(), HarnessError> {
-    println!("scientific.stdout_bytes={}", output.stdout_total_bytes);
+) -> Result<ScientificStdoutSummary, HarnessError> {
     if output.stdout_truncated || output.stdout_total_bytes != output.stdout.len() as u64 {
-        println!("scientific.stdout_payload_status=incomplete_capture");
-        println!("scientific.stdout_sha256=unavailable");
-        println!("scientific.stdout_base64_chunk_count=0");
-        return Ok(());
+        return Ok(ScientificStdoutSummary {
+            bytes: output.stdout_total_bytes,
+            payload_status: "incomplete_capture",
+            sha256: None,
+        });
     }
 
     let sha256 = Sha256Digest::calculate(&output.stdout).map_err(|error| {
@@ -1614,58 +1626,29 @@ fn print_scientific_stdout_payload(
             "the complete scientific stdout could not be hashed: {error}"
         ))
     })?;
-    println!("scientific.stdout_sha256={sha256}");
-    if std::str::from_utf8(&output.stdout).is_err() {
-        println!("scientific.stdout_payload_status=invalid_utf8");
-        println!("scientific.stdout_base64_chunk_count=0");
-        return Ok(());
-    }
-    if output.stdout.len() > SCIENTIFIC_STDOUT_PAYLOAD_MAX_BYTES {
-        println!("scientific.stdout_payload_status=omitted_size_limit");
-        println!("scientific.stdout_base64_chunk_count=0");
-        return Ok(());
-    }
-
-    let encoded = encode_base64(&output.stdout);
-    let chunks = encoded
-        .as_bytes()
-        .chunks(SCIENTIFIC_STDOUT_BASE64_CHUNK_CHARS)
-        .collect::<Vec<_>>();
-    println!("scientific.stdout_payload_status=complete");
-    println!("scientific.stdout_base64_chunk_count={}", chunks.len());
-    for (index, chunk) in chunks.iter().enumerate() {
-        let chunk =
-            std::str::from_utf8(chunk).expect("base64 output contains only ASCII characters");
-        println!("scientific.stdout_base64[{index}]={chunk}");
-    }
-    Ok(())
+    Ok(ScientificStdoutSummary {
+        bytes: output.stdout_total_bytes,
+        payload_status: "omitted_sensitive",
+        sha256: Some(sha256),
+    })
 }
 
-fn encode_base64(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut encoded = String::with_capacity(input.len().div_ceil(3) * 4);
-    for chunk in input.chunks(3) {
-        let first = chunk[0];
-        let second = chunk.get(1).copied().unwrap_or(0);
-        let third = chunk.get(2).copied().unwrap_or(0);
-        encoded.push(char::from(ALPHABET[usize::from(first >> 2)]));
-        encoded.push(char::from(
-            ALPHABET[usize::from(((first & 0x03) << 4) | (second >> 4))],
-        ));
-        if chunk.len() > 1 {
-            encoded.push(char::from(
-                ALPHABET[usize::from(((second & 0x0f) << 2) | (third >> 6))],
-            ));
-        } else {
-            encoded.push('=');
-        }
-        if chunk.len() > 2 {
-            encoded.push(char::from(ALPHABET[usize::from(third & 0x3f)]));
-        } else {
-            encoded.push('=');
-        }
-    }
-    encoded
+fn print_scientific_stdout_summary(
+    output: &mscanvas_proteowizard::ProcessOutput,
+) -> Result<(), HarnessError> {
+    let summary = scientific_stdout_summary(output)?;
+    println!("scientific.stdout_bytes={}", summary.bytes);
+    println!(
+        "scientific.stdout_sha256={}",
+        summary
+            .sha256
+            .map_or_else(|| "unavailable".to_owned(), |sha256| sha256.to_string())
+    );
+    println!(
+        "scientific.stdout_payload_status={}",
+        summary.payload_status
+    );
+    Ok(())
 }
 
 fn print_normalized_failure(
@@ -1689,8 +1672,19 @@ fn print_normalized_failure(
             .conditions
             .contains(&FailureCondition::PartialOutputPresent)
     );
-    let technical_detail = redactor.redact(&failure.technical_detail);
+    let technical_detail = reportable_failure_technical_detail(failure, redactor);
     print_diagnostic_preview("failure.technical_detail", &technical_detail);
+}
+
+fn reportable_failure_technical_detail(
+    failure: &mscanvas_proteowizard::NormalizedFailure,
+    redactor: &Redactor,
+) -> String {
+    if failure.kind == FailureKind::BackendNonZeroExit {
+        "<omitted-sensitive>".to_owned()
+    } else {
+        redactor.redact(&failure.technical_detail)
+    }
 }
 
 fn print_diagnostic_preview(label: &str, text: &str) {
@@ -1730,16 +1724,84 @@ mod tests {
     use mscanvas_proteowizard::{DiscoveryResult, DiscoverySource, ToolProbe};
 
     #[test]
-    fn scientific_stdout_base64_encoding_matches_standard_vectors() {
-        for (plain, encoded) in [
-            (b"".as_slice(), ""),
-            (b"f".as_slice(), "Zg=="),
-            (b"fo".as_slice(), "Zm8="),
-            (b"foo".as_slice(), "Zm9v"),
-            (b"foobar".as_slice(), "Zm9vYmFy"),
-        ] {
-            assert_eq!(encode_base64(plain), encoded);
-        }
+    fn scientific_stdout_summary_is_digest_only() {
+        let output = mscanvas_proteowizard::ProcessOutput {
+            stdout: b"sensitive scientific row".to_vec(),
+            stderr: Vec::new(),
+            stdout_total_bytes: 24,
+            stderr_total_bytes: 0,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            exit_code: Some(0),
+            elapsed: Duration::ZERO,
+            termination: mscanvas_proteowizard::Termination::Exited,
+            max_active_processes: None,
+            final_active_processes: None,
+        };
+
+        let summary = scientific_stdout_summary(&output).expect("digest-only summary");
+
+        assert_eq!(summary.bytes, 24);
+        assert_eq!(summary.payload_status, "omitted_sensitive");
+        assert!(summary.sha256.is_some());
+    }
+
+    #[test]
+    fn incomplete_scientific_stdout_has_no_digest() {
+        let output = mscanvas_proteowizard::ProcessOutput {
+            stdout: b"partial scientific row".to_vec(),
+            stderr: Vec::new(),
+            stdout_total_bytes: 128,
+            stderr_total_bytes: 0,
+            stdout_truncated: true,
+            stderr_truncated: false,
+            exit_code: Some(0),
+            elapsed: Duration::ZERO,
+            termination: mscanvas_proteowizard::Termination::Exited,
+            max_active_processes: None,
+            final_active_processes: None,
+        };
+
+        let summary = scientific_stdout_summary(&output).expect("incomplete summary");
+
+        assert_eq!(summary.bytes, 128);
+        assert_eq!(summary.payload_status, "incomplete_capture");
+        assert_eq!(summary.sha256, None);
+    }
+
+    #[test]
+    fn scientific_stdout_preview_never_contains_payload() {
+        let payload = b"scan=42 mz=445.1200 intensity=98231.0";
+
+        let preview = scientific_stdout_preview_value(payload);
+
+        assert_eq!(preview, "<omitted-sensitive>");
+        assert!(!preview.contains("445.1200"));
+        assert!(!preview.contains("98231.0"));
+    }
+
+    #[test]
+    fn nonzero_failure_detail_never_contains_scientific_stdout() {
+        let output = mscanvas_proteowizard::ProcessOutput {
+            stdout: b"scan=42 mz=445.1200 intensity=98231.0".to_vec(),
+            stderr: b"backend error".to_vec(),
+            stdout_total_bytes: 38,
+            stderr_total_bytes: 13,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            exit_code: Some(1),
+            elapsed: Duration::ZERO,
+            termination: mscanvas_proteowizard::Termination::Exited,
+            max_active_processes: None,
+            final_active_processes: None,
+        };
+        let failure = classify_process_failure(BackendTool::MsAccess, Ok(&output), false)
+            .expect("non-zero output produces a normalized failure");
+        let reportable = reportable_failure_technical_detail(&failure, &Redactor::new());
+
+        assert_eq!(reportable, "<omitted-sensitive>");
+        assert!(!reportable.contains("445.1200"));
+        assert!(!reportable.contains("98231.0"));
     }
 
     #[test]
