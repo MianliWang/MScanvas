@@ -72,6 +72,10 @@ impl ProcessOutput {
 pub enum ProcessError {
     #[error("backend child environment is invalid: {detail}")]
     InvalidEnvironment { detail: String },
+    #[error("the requested output destination already exists")]
+    OutputDestinationExists,
+    #[error("the requested output destination could not be inspected: {kind}")]
+    OutputDestinationInspectionFailed { kind: io::ErrorKind },
     #[error("failed to launch {executable}: {detail}")]
     Launch {
         executable: String,
@@ -157,6 +161,7 @@ fn execute_command_after_assignment(
     cancellation: &CancellationToken,
     after_assignment: impl FnOnce(),
 ) -> Result<ProcessOutput, ProcessError> {
+    require_output_destination_available(spec)?;
     let started = Instant::now();
     let mut child = command
         .stdout(Stdio::piped())
@@ -247,6 +252,27 @@ fn execute_command_after_assignment(
         max_active_processes,
         final_active_processes,
     })
+}
+
+fn require_output_destination_available(spec: &CommandSpec) -> Result<(), ProcessError> {
+    // This closes stale plans in the conservative sequential queue immediately
+    // before spawn. It is deliberately not described as an atomic reservation:
+    // another process can still create a destination after this snapshot.
+    let Some(destination) = spec.output_destination() else {
+        return Ok(());
+    };
+    let parent = destination
+        .parent()
+        .ok_or(ProcessError::OutputDestinationInspectionFailed {
+            kind: io::ErrorKind::InvalidInput,
+        })?;
+    let _entries = std::fs::read_dir(parent)
+        .map_err(|error| ProcessError::OutputDestinationInspectionFailed { kind: error.kind() })?;
+    match std::fs::symlink_metadata(destination) {
+        Ok(_) => Err(ProcessError::OutputDestinationExists),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(ProcessError::OutputDestinationInspectionFailed { kind: error.kind() }),
+    }
 }
 
 fn monitor_process(
@@ -866,6 +892,118 @@ mod tests {
         ));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn absent_output_destination_allows_the_controlled_child_to_launch() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let destination = test_directory.path().join("planned.mzML");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        )
+        .with_output_destination(&destination);
+
+        let output = execute(&spec).expect("an absent exact destination permits launch");
+
+        assert!(output.success());
+        assert!(marker.is_file(), "the controlled child did not launch");
+        assert!(!destination.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn stale_conversion_plan_is_rejected_before_the_child_launches() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let destination = test_directory.path().join("planned.mzML");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        )
+        .with_output_destination(&destination);
+        fs::write(&destination, b"completed earlier queue item")
+            .expect("create a conflict after planning");
+
+        let error = execute(&spec).expect_err("the spawn-time recheck must reject a stale plan");
+
+        assert_eq!(error, ProcessError::OutputDestinationExists);
+        assert!(!marker.exists(), "the conflicting plan launched its child");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn missing_destination_parent_is_rejected_before_the_child_launches() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let output_directory = test_directory.path().join("removed-output-root");
+        fs::create_dir(&output_directory).expect("create planned output root");
+        let destination = output_directory.join("planned.mzML");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        )
+        .with_output_destination(&destination);
+        fs::remove_dir(&output_directory).expect("remove output root after planning");
+
+        let error = execute(&spec).expect_err("a missing output root must fail closed");
+
+        assert_eq!(
+            error,
+            ProcessError::OutputDestinationInspectionFailed {
+                kind: io::ErrorKind::NotFound,
+            }
+        );
+        assert!(
+            !marker.exists(),
+            "the uninspectable plan launched its child"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn destination_directory_is_also_an_output_conflict() {
+        let test_directory = TestDirectory::new();
+        let destination = test_directory.path().join("planned.mzML");
+        fs::create_dir(&destination).expect("create destination directory");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            std::iter::empty::<OsString>(),
+            test_directory.path(),
+        )
+        .with_output_destination(&destination);
+
+        assert_eq!(
+            require_output_destination_available(&spec),
+            Err(ProcessError::OutputDestinationExists)
+        );
+    }
+
     #[test]
     fn diagnostic_capture_is_bounded_while_the_stream_is_fully_drained() {
         let payload = vec![b'x'; 129];
@@ -1109,6 +1247,19 @@ mod tests {
                 .is_file(),
             "controlled environment child did not write its marker"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "controlled subprocess entry point"]
+    fn controlled_output_marker() {
+        fs::write(
+            std::env::current_dir()
+                .expect("controlled working directory")
+                .join("child-launched"),
+            b"launched",
+        )
+        .expect("write launch marker");
     }
 
     #[cfg(windows)]

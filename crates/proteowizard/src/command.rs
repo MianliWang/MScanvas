@@ -25,6 +25,13 @@ impl OpenFormat {
             Self::MzXml => "--mzXML",
         }
     }
+
+    const fn extension(self) -> &'static str {
+        match self {
+            Self::MzMl => "mzML",
+            Self::MzXml => "mzXML",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +63,7 @@ pub struct CommandSpec {
     pub(crate) executable: PathBuf,
     pub(crate) args: Vec<OsString>,
     pub(crate) working_directory: PathBuf,
+    pub(crate) output_destination: Option<PathBuf>,
 }
 
 impl CommandSpec {
@@ -70,7 +78,13 @@ impl CommandSpec {
             executable: executable.into(),
             args: args.into_iter().map(Into::into).collect(),
             working_directory: working_directory.into(),
+            output_destination: None,
         }
+    }
+
+    pub(crate) fn with_output_destination(mut self, destination: impl Into<PathBuf>) -> Self {
+        self.output_destination = Some(destination.into());
+        self
     }
 
     #[must_use]
@@ -91,6 +105,11 @@ impl CommandSpec {
     #[must_use]
     pub fn working_directory(&self) -> &Path {
         &self.working_directory
+    }
+
+    #[must_use]
+    pub fn output_destination(&self) -> Option<&Path> {
+        self.output_destination.as_deref()
     }
 
     #[must_use]
@@ -119,6 +138,14 @@ pub enum PlanError {
     OutputDirectoryNotEmpty,
     #[error("output directory must not equal or be nested inside a directory input")]
     OutputDirectoryInsideDirectoryInput,
+    #[error("output file name must be one safe file name")]
+    InvalidOutputFileName,
+    #[error("output file extension must match the selected conversion format")]
+    OutputFileExtensionMismatch,
+    #[error("the requested output destination already exists")]
+    OutputDestinationExists,
+    #[error("the requested output destination could not be inspected: {kind}")]
+    OutputDestinationInspectionFailed { kind: io::ErrorKind },
     #[error("spectrum precision must be between 0 and 15 decimal places")]
     InvalidSpectrumPrecision,
     #[error("MS-level TIC filter must be between 1 and 255")]
@@ -137,10 +164,12 @@ fn build_msconvert_command(
     executable: impl Into<PathBuf>,
     input: &Path,
     output_directory: &Path,
+    output_file_name: &OsStr,
     format: OpenFormat,
 ) -> Result<CommandSpec, PlanError> {
     let executable = executable.into();
     validate_paths(&executable, input, output_directory)?;
+    validate_output_file_name(output_file_name, format)?;
 
     Ok(CommandSpec::new(
         BackendTool::MsConvert,
@@ -151,27 +180,46 @@ fn build_msconvert_command(
             OsString::from("--zlib"),
             OsString::from("--outdir"),
             output_directory.as_os_str().to_owned(),
+            OsString::from("--outfile"),
+            output_file_name.to_owned(),
         ],
         output_directory,
-    ))
+    )
+    .with_output_destination(output_directory.join(output_file_name)))
 }
 
 /// Builds an mzML conversion command only after the complete installed help has
-/// confirmed every option used by the typed plan and the output directory is a
-/// fresh, inspectable location outside a directory input. mzXML remains
-/// unavailable until source/output integrity validation is implemented.
+/// confirmed every option used by the typed plan and the exact output
+/// destination is absent in an inspectable output root outside a directory
+/// input. mzXML remains unavailable until source/output integrity validation is
+/// implemented.
 pub fn build_msconvert_command_with_capabilities(
     capabilities: &InstalledHelpCapabilities,
     executable: impl Into<PathBuf>,
     input: &Path,
     output_directory: &Path,
+    output_file_name: &OsStr,
     format: OpenFormat,
 ) -> Result<CommandSpec, PlanError> {
     match format {
         OpenFormat::MzMl => {
             capabilities.require_conversion(format)?;
-            let command = build_msconvert_command(executable, input, output_directory, format)?;
-            require_fresh_output_directory(input, output_directory)?;
+            let executable = executable.into();
+            validate_paths(&executable, input, output_directory)?;
+            validate_output_file_name(output_file_name, format)?;
+            let canonical_output = require_safe_output_directory(input, output_directory)?;
+            let command = build_msconvert_command(
+                executable,
+                input,
+                &canonical_output,
+                output_file_name,
+                format,
+            )?;
+            require_output_destination_available(
+                command
+                    .output_destination()
+                    .expect("conversion commands have an output destination"),
+            )?;
             Ok(command)
         }
         OpenFormat::MzXml => Err(PlanError::MzXmlIntegrityGateRequired),
@@ -272,24 +320,112 @@ fn validate_paths(
     Ok(())
 }
 
-fn require_fresh_output_directory(input: &Path, output_directory: &Path) -> Result<(), PlanError> {
+fn validate_output_file_name(
+    output_file_name: &OsStr,
+    format: OpenFormat,
+) -> Result<(), PlanError> {
+    let path = Path::new(output_file_name);
+    let mut components = path.components();
+    let is_single_normal_component = matches!(
+        components.next(),
+        Some(std::path::Component::Normal(component)) if component == output_file_name
+    ) && components.next().is_none();
+    let contains_backend_normalized_character = output_file_name
+        .as_encoded_bytes()
+        .iter()
+        .any(|byte| *byte < 0x20 || *byte == 0x7f || b"\\/*:?<>|\"".contains(byte));
+    if !is_single_normal_component || contains_backend_normalized_character {
+        return Err(PlanError::InvalidOutputFileName);
+    }
+    if is_windows_device_name(path) {
+        return Err(PlanError::InvalidOutputFileName);
+    }
+    if !path.extension().is_some_and(|extension| {
+        extension
+            .as_encoded_bytes()
+            .eq_ignore_ascii_case(format.extension().as_bytes())
+    }) {
+        return Err(PlanError::OutputFileExtensionMismatch);
+    }
+    Ok(())
+}
+
+fn is_windows_device_name(path: &Path) -> bool {
+    let Some(stem) = path.file_stem() else {
+        return false;
+    };
+    let first_segment = stem
+        .as_encoded_bytes()
+        .split(|byte| *byte == b'.')
+        .next()
+        .unwrap_or_default();
+    let trimmed_length = first_segment
+        .iter()
+        .rposition(|byte| !matches!(*byte, b' ' | b'.'))
+        .map_or(0, |index| index + 1);
+    let name = &first_segment[..trimmed_length];
+
+    let suffix = name.get(3..).unwrap_or_default();
+    let reserved_port = name.len() > 3
+        && (name[..3].eq_ignore_ascii_case(b"COM") || name[..3].eq_ignore_ascii_case(b"LPT"))
+        && (matches!(suffix, [b'1'..=b'9'])
+            || suffix == "¹".as_bytes()
+            || suffix == "²".as_bytes()
+            || suffix == "³".as_bytes());
+
+    [b"CON".as_slice(), b"PRN", b"AUX", b"NUL"]
+        .iter()
+        .any(|reserved| name.eq_ignore_ascii_case(reserved))
+        || reserved_port
+}
+
+fn inspect_output_directory(output_directory: &Path) -> Result<PathBuf, PlanError> {
     let canonical_output = std::fs::canonicalize(output_directory)
         .map_err(|error| PlanError::OutputDirectoryInspectionFailed { kind: error.kind() })?;
+    let _entries = std::fs::read_dir(&canonical_output)
+        .map_err(|error| PlanError::OutputDirectoryInspectionFailed { kind: error.kind() })?;
+    Ok(canonical_output)
+}
+
+fn reject_output_inside_directory_input(
+    input: &Path,
+    canonical_output: &Path,
+) -> Result<(), PlanError> {
+    let canonical_input = std::fs::canonicalize(input)
+        .map_err(|error| PlanError::InputPathInspectionFailed { kind: error.kind() })?;
+    let input_metadata = std::fs::metadata(&canonical_input)
+        .map_err(|error| PlanError::InputPathInspectionFailed { kind: error.kind() })?;
+    if input_metadata.is_dir() && canonical_output.starts_with(&canonical_input) {
+        return Err(PlanError::OutputDirectoryInsideDirectoryInput);
+    }
+    Ok(())
+}
+
+fn require_safe_output_directory(
+    input: &Path,
+    output_directory: &Path,
+) -> Result<PathBuf, PlanError> {
+    let canonical_output = inspect_output_directory(output_directory)?;
+    reject_output_inside_directory_input(input, &canonical_output)?;
+    Ok(canonical_output)
+}
+
+fn require_fresh_output_directory(input: &Path, output_directory: &Path) -> Result<(), PlanError> {
+    let canonical_output = inspect_output_directory(output_directory)?;
     let mut entries = std::fs::read_dir(&canonical_output)
         .map_err(|error| PlanError::OutputDirectoryInspectionFailed { kind: error.kind() })?;
     match entries.next() {
         Some(Ok(_)) => Err(PlanError::OutputDirectoryNotEmpty),
         Some(Err(error)) => Err(PlanError::OutputDirectoryInspectionFailed { kind: error.kind() }),
-        None => {
-            let canonical_input = std::fs::canonicalize(input)
-                .map_err(|error| PlanError::InputPathInspectionFailed { kind: error.kind() })?;
-            let input_metadata = std::fs::metadata(&canonical_input)
-                .map_err(|error| PlanError::InputPathInspectionFailed { kind: error.kind() })?;
-            if input_metadata.is_dir() && canonical_output.starts_with(&canonical_input) {
-                return Err(PlanError::OutputDirectoryInsideDirectoryInput);
-            }
-            Ok(())
-        }
+        None => reject_output_inside_directory_input(input, &canonical_output),
+    }
+}
+
+fn require_output_destination_available(destination: &Path) -> Result<(), PlanError> {
+    match std::fs::symlink_metadata(destination) {
+        Ok(_) => Err(PlanError::OutputDestinationExists),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(PlanError::OutputDestinationInspectionFailed { kind: error.kind() }),
     }
 }
 
@@ -308,13 +444,25 @@ mod tests {
         let executable = test_path("Program Files/ProteoWizard/msconvert.exe");
         let input = test_path("Mass Spec Data/样本 01.raw");
         let output = test_path("Mass Spec Data/converted");
-        let command = build_msconvert_command(&executable, &input, &output, OpenFormat::MzMl)
-            .expect("valid command");
+        let command = build_msconvert_command(
+            &executable,
+            &input,
+            &output,
+            OsStr::new("样本 01.mzML"),
+            OpenFormat::MzMl,
+        )
+        .expect("valid command");
 
         assert_eq!(command.args[0], input.as_os_str());
         assert_eq!(command.args[1], OsString::from("--mzML"));
         assert_eq!(command.args[3], OsString::from("--outdir"));
-        assert_eq!(command.args.len(), 5);
+        assert_eq!(command.args[5], OsString::from("--outfile"));
+        assert_eq!(command.args[6], OsString::from("样本 01.mzML"));
+        assert_eq!(command.args.len(), 7);
+        assert_eq!(
+            command.output_destination(),
+            Some(output.join("样本 01.mzML").as_path())
+        );
     }
 
     #[test]
@@ -323,6 +471,7 @@ mod tests {
             test_path("msconvert.exe"),
             &test_path("sample.raw"),
             &test_path("converted"),
+            OsStr::new("sample.mzXML"),
             OpenFormat::MzXml,
         )
         .expect("valid command");
@@ -337,6 +486,7 @@ mod tests {
             test_path("msconvert.exe"),
             &test_path("sample.raw"),
             &test_path("converted"),
+            OsStr::new("sample.mzML"),
             OpenFormat::MzMl,
         )
         .expect("valid command");
@@ -400,7 +550,13 @@ mod tests {
         let output = test_path("converted");
 
         assert_eq!(
-            build_msconvert_command("msconvert.exe", &input, &output, OpenFormat::MzMl),
+            build_msconvert_command(
+                "msconvert.exe",
+                &input,
+                &output,
+                OsStr::new("sample.mzML"),
+                OpenFormat::MzMl,
+            ),
             Err(PlanError::NonAbsoluteExecutable)
         );
         assert_eq!(
@@ -408,6 +564,7 @@ mod tests {
                 &executable,
                 Path::new("sample.raw"),
                 &output,
+                OsStr::new("sample.mzML"),
                 OpenFormat::MzMl
             ),
             Err(PlanError::NonAbsoluteInput)
@@ -417,6 +574,7 @@ mod tests {
                 &executable,
                 &input,
                 Path::new("converted"),
+                OsStr::new("sample.mzML"),
                 OpenFormat::MzMl
             ),
             Err(PlanError::NonAbsoluteOutputDirectory)

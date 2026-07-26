@@ -462,6 +462,13 @@ fn run(cli: Cli) -> Result<(), HarnessError> {
         .as_deref()
         .ok_or_else(|| HarnessError::operation("validated output directory is unavailable"))?;
     let (tool, command) = build_command(&cli, &discovery, &capabilities, input, output_dir)?;
+    let expected_conversion_file_name = command
+        .output_destination()
+        .and_then(Path::file_name)
+        .map(OsStr::to_owned);
+    if let Some(output_file_name) = expected_conversion_file_name.as_deref() {
+        redactor.add_literal(&output_file_name.to_string_lossy(), "<output-file>");
+    }
     print_command(&command, &redactor);
 
     let before = snapshot_directory(output_dir)?;
@@ -478,6 +485,11 @@ fn run(cli: Cli) -> Result<(), HarnessError> {
             let conversion_validation = if output.success() && cli.mode == Mode::Convert {
                 Some(validate_conversion_output(
                     &after,
+                    expected_conversion_file_name.as_deref().ok_or_else(|| {
+                        HarnessError::operation(
+                            "validated conversion output file name is unavailable",
+                        )
+                    })?,
                     cli.format.ok_or_else(|| {
                         HarnessError::operation("validated conversion format is unavailable")
                     })?,
@@ -1192,17 +1204,37 @@ fn build_command(
             },
         )
         .map(|command| (BackendTool::MsAccess, command)),
-        Mode::Convert => build_msconvert_command_with_capabilities(
-            capabilities,
-            required_tool_path(&discovery.msconvert, "msconvert")?,
-            input,
-            output_dir,
-            cli.format
-                .ok_or_else(|| HarnessError::operation("validated format is unavailable"))?,
-        )
-        .map(|command| (BackendTool::MsConvert, command)),
+        Mode::Convert => {
+            let format = cli
+                .format
+                .ok_or_else(|| HarnessError::operation("validated format is unavailable"))?;
+            let output_file_name = conversion_output_file_name(input, format)?;
+            build_msconvert_command_with_capabilities(
+                capabilities,
+                required_tool_path(&discovery.msconvert, "msconvert")?,
+                input,
+                output_dir,
+                &output_file_name,
+                format,
+            )
+            .map(|command| (BackendTool::MsConvert, command))
+        }
     };
     planned.map_err(|error| HarnessError::operation(format!("command planning failed: {error}")))
+}
+
+fn conversion_output_file_name(input: &Path, format: OpenFormat) -> Result<OsString, HarnessError> {
+    let stem = input
+        .file_stem()
+        .filter(|stem| !stem.is_empty())
+        .ok_or_else(|| HarnessError::operation("the conversion input has no usable file stem"))?;
+    let mut output_file_name = stem.to_os_string();
+    output_file_name.push(".");
+    output_file_name.push(match format {
+        OpenFormat::MzMl => "mzML",
+        OpenFormat::MzXml => "mzXML",
+    });
+    Ok(output_file_name)
 }
 
 fn validate_installed_command_surface(
@@ -1459,6 +1491,7 @@ const fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
 
 fn validate_conversion_output(
     snapshot: &BTreeMap<OsString, EntryFingerprint>,
+    expected_file_name: &OsStr,
     format: OpenFormat,
     output_directory: &Path,
     input: &Path,
@@ -1479,6 +1512,9 @@ fn validate_conversion_output(
     }
 
     let (file_name, fingerprint) = snapshot.iter().next().expect("one snapshot entry");
+    if file_name != expected_file_name {
+        return Err(ConversionOutputIssue::Unexpected);
+    }
     if !fingerprint.is_file
         || fingerprint.is_directory
         || fingerprint.is_symlink
@@ -1963,17 +1999,22 @@ mod tests {
     #[test]
     fn conversion_fails_closed_until_installed_help_confirms_every_planned_flag() {
         let cli = convert_cli();
-        let incomplete = discovery_with_help(
-            &MSCONVERT_HELP.replace(
+        for (declaration, capability) in [
+            (
                 "  -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data\n",
-                "",
+                "zlib",
             ),
-            "",
-        );
-        let error = validate_installed_command_surface(&cli, &incomplete)
-            .expect_err("missing zlib declaration must fail closed");
-        assert!(error.message.contains("complete typed operation"));
-        assert!(error.message.contains("zlib"));
+            (
+                "  --outfile arg                      : Override the name of output file.\n",
+                "outfile",
+            ),
+        ] {
+            let incomplete = discovery_with_help(&MSCONVERT_HELP.replace(declaration, ""), "");
+            let error = validate_installed_command_surface(&cli, &incomplete)
+                .expect_err("a missing conversion declaration must fail closed");
+            assert!(error.message.contains("complete typed operation"));
+            assert!(error.message.contains(capability));
+        }
 
         let complete = discovery_with_help(MSCONVERT_HELP, "");
         validate_installed_command_surface(&cli, &complete)
@@ -2072,6 +2113,7 @@ mod tests {
         )]);
         let candidate = validate_conversion_output(
             &output,
+            OsStr::new("Experiment_x0020_1.mzML"),
             OpenFormat::MzMl,
             Path::new("output"),
             Path::new("tiny.pwiz.1.1.mzML"),
@@ -2089,6 +2131,7 @@ mod tests {
             BTreeMap::from([(OsString::from("tiny.pwiz.1.1.mzXML"), regular_output(2048))]);
         let candidate = validate_conversion_output(
             &output,
+            OsStr::new("tiny.pwiz.1.1.mzXML"),
             OpenFormat::MzXml,
             Path::new("output"),
             Path::new("tiny.pwiz.1.1.mzML"),
@@ -2103,6 +2146,7 @@ mod tests {
         assert_eq!(
             validate_conversion_output(
                 &BTreeMap::new(),
+                OsStr::new("output.mzML"),
                 OpenFormat::MzMl,
                 Path::new("output"),
                 Path::new("input.mzML")
@@ -2114,6 +2158,7 @@ mod tests {
         assert_eq!(
             validate_conversion_output(
                 &empty,
+                OsStr::new("output.mzML"),
                 OpenFormat::MzMl,
                 Path::new("output"),
                 Path::new("input.mzML")
@@ -2125,6 +2170,7 @@ mod tests {
         assert_eq!(
             validate_conversion_output(
                 &partial,
+                OsStr::new("output.mzML"),
                 OpenFormat::MzMl,
                 Path::new("output"),
                 Path::new("input.mzML")
@@ -2139,6 +2185,7 @@ mod tests {
         assert_eq!(
             validate_conversion_output(
                 &extra,
+                OsStr::new("output.mzML"),
                 OpenFormat::MzMl,
                 Path::new("output"),
                 Path::new("input.mzML")
@@ -2149,10 +2196,25 @@ mod tests {
 
     #[test]
     fn conversion_output_rejects_wrong_format_and_nonregular_entries() {
+        for wrong_name in ["other.mzML", "output.MZML"] {
+            let output = BTreeMap::from([(OsString::from(wrong_name), regular_output(17))]);
+            assert_eq!(
+                validate_conversion_output(
+                    &output,
+                    OsStr::new("output.mzML"),
+                    OpenFormat::MzMl,
+                    Path::new("output"),
+                    Path::new("input.mzML")
+                ),
+                Err(ConversionOutputIssue::Unexpected)
+            );
+        }
+
         let wrong_format = BTreeMap::from([(OsString::from("output.mzXML"), regular_output(17))]);
         assert_eq!(
             validate_conversion_output(
                 &wrong_format,
+                OsStr::new("output.mzML"),
                 OpenFormat::MzMl,
                 Path::new("output"),
                 Path::new("input.mzML")
@@ -2180,6 +2242,7 @@ mod tests {
             assert_eq!(
                 validate_conversion_output(
                     &output,
+                    OsStr::new("output.mzML"),
                     OpenFormat::MzMl,
                     Path::new("output"),
                     Path::new("input.mzML")
@@ -2241,6 +2304,7 @@ Convert mass spec data file formats.
 
 Options:
   -o [ --outdir ] arg (=.)           : set output directory
+  --outfile arg                      : Override the name of output file.
   --mzML                             : write mzML format [default]
   --mzXML                            : write mzXML format
   -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data

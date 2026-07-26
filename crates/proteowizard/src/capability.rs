@@ -370,6 +370,7 @@ impl InstalledHelpCapabilities {
     pub fn require_conversion(&self, format: OpenFormat) -> Result<(), CapabilityRequirementError> {
         self.require_tool(BackendTool::MsConvert)?;
         self.require_option("outdir", OptionArgument::Required)?;
+        self.require_option("outfile", OptionArgument::Required)?;
         self.require_flag_option("zlib")?;
         match format {
             OpenFormat::MzMl => self.require_option("mzML", OptionArgument::None),
@@ -947,6 +948,7 @@ const fn is_identifier_continue(value: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1009,6 +1011,7 @@ Convert mass spec data file formats.
 
 Options:
   -o [ --outdir ] arg (=.)           : set output directory
+  --outfile arg                      : Override the name of output file.
   --mzML                             : write mzML format [default]
   --mzXML                            : write mzXML format
   -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data
@@ -1295,6 +1298,12 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             capabilities.option("zlib").map(OptionDeclaration::argument),
             Some(OptionArgument::Optional)
         );
+        assert_eq!(
+            capabilities
+                .option("outfile")
+                .map(OptionDeclaration::argument),
+            Some(OptionArgument::Required)
+        );
         capabilities
             .require_conversion(OpenFormat::MzMl)
             .expect("mzML grammar");
@@ -1317,6 +1326,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             test_path("msconvert.exe"),
             &test_path("sample.raw"),
             &test_path("converted"),
+            OsStr::new("sample.mzXML"),
             OpenFormat::MzXml,
         )
         .expect_err("mzXML must remain unavailable until its integrity gate is implemented");
@@ -1334,21 +1344,30 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         let output_directory = test_directory.path().join("converted");
         fs::write(&input, b"source RAW").expect("write source RAW");
         fs::create_dir(&output_directory).expect("create fresh output directory");
+        let canonical_output = fs::canonicalize(&output_directory).expect("canonical output root");
         let command = build_msconvert_command_with_capabilities(
             &capabilities,
             test_path("msconvert.exe"),
             &input,
             &output_directory,
+            OsStr::new("样本 01.mzML"),
             OpenFormat::MzMl,
         )
         .expect("complete installed grammar permits mzML planning");
 
         assert_eq!(command.args()[0], input.as_os_str());
         assert_eq!(command.args()[1], "--mzML");
-        assert!(command.contains_argument("--zlib"));
-        assert!(command.contains_argument("--outdir"));
+        assert_eq!(command.args()[2], "--zlib");
+        assert_eq!(command.args()[3], "--outdir");
+        assert_eq!(command.args()[4], canonical_output.as_os_str());
+        assert_eq!(command.args()[5], "--outfile");
+        assert_eq!(command.args()[6], OsStr::new("样本 01.mzML"));
         assert!(!command.contains_argument("--filter"));
-        assert_eq!(command.args().len(), 5);
+        assert_eq!(command.args().len(), 7);
+        assert_eq!(
+            command.output_destination(),
+            Some(canonical_output.join("样本 01.mzML").as_path())
+        );
     }
 
     #[test]
@@ -1369,37 +1388,56 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             test_path("msconvert.exe"),
             &input,
             &output_directory,
+            OsStr::new("sample.mzML"),
             OpenFormat::MzMl,
         )
         .expect_err("an existing default output must not produce a command specification");
 
-        assert_eq!(error, PlanError::OutputDirectoryNotEmpty);
+        assert_eq!(error, PlanError::OutputDestinationExists);
     }
 
     #[test]
-    fn public_mzml_planning_rejects_conversion_into_the_input_parent() {
+    fn public_mzml_planning_allows_a_distinct_target_in_the_input_parent() {
         let capabilities =
             InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
                 .expect("valid msconvert fixture");
         let output_directory = TestDirectory::new();
         let input = output_directory.path().join("sample.mzML");
         fs::write(&input, b"source mzML").expect("write source mzML");
+        let canonical_output =
+            fs::canonicalize(output_directory.path()).expect("canonical output root");
+
+        let command = build_msconvert_command_with_capabilities(
+            &capabilities,
+            test_path("msconvert.exe"),
+            &input,
+            output_directory.path(),
+            OsStr::new("converted.mzML"),
+            OpenFormat::MzMl,
+        )
+        .expect("a distinct exact target does not conflict with the source");
+
+        assert_eq!(
+            command.output_destination(),
+            Some(canonical_output.join("converted.mzML").as_path())
+        );
+        assert_eq!(fs::read(&input).expect("read source mzML"), b"source mzML");
 
         let error = build_msconvert_command_with_capabilities(
             &capabilities,
             test_path("msconvert.exe"),
             &input,
             output_directory.path(),
+            OsStr::new("sample.mzML"),
             OpenFormat::MzMl,
         )
-        .expect_err("the source directory is not a fresh conversion output directory");
-
-        assert_eq!(error, PlanError::OutputDirectoryNotEmpty);
+        .expect_err("the exact source path must never be a conversion destination");
+        assert_eq!(error, PlanError::OutputDestinationExists);
         assert_eq!(fs::read(&input).expect("read source mzML"), b"source mzML");
     }
 
     #[test]
-    fn public_mzml_planning_rejects_any_nonfresh_output_directory() {
+    fn public_mzml_planning_allows_unrelated_entries_in_a_shared_output_root() {
         let capabilities =
             InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
                 .expect("valid msconvert fixture");
@@ -1410,17 +1448,93 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         fs::create_dir(&output_directory).expect("create output directory");
         fs::write(output_directory.join("unrelated.txt"), b"unrelated")
             .expect("write unrelated entry");
+        let canonical_output = fs::canonicalize(&output_directory).expect("canonical output root");
+
+        let command = build_msconvert_command_with_capabilities(
+            &capabilities,
+            test_path("msconvert.exe"),
+            &input,
+            &output_directory,
+            OsStr::new("sample.mzML"),
+            OpenFormat::MzMl,
+        )
+        .expect("unrelated entries do not conflict with the exact destination");
+
+        assert_eq!(
+            command.output_destination(),
+            Some(canonical_output.join("sample.mzML").as_path())
+        );
+    }
+
+    #[test]
+    fn sequential_conversion_plans_reuse_one_output_root_for_distinct_targets() {
+        let capabilities =
+            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+                .expect("valid msconvert fixture");
+        let test_directory = TestDirectory::new();
+        let first_input = test_directory.path().join("first.raw");
+        let second_input = test_directory.path().join("second.raw");
+        let output_directory = test_directory.path().join("converted");
+        fs::write(&first_input, b"first source").expect("write first source");
+        fs::write(&second_input, b"second source").expect("write second source");
+        fs::create_dir(&output_directory).expect("create shared output directory");
+        let canonical_output = fs::canonicalize(&output_directory).expect("canonical output root");
+
+        let first = build_msconvert_command_with_capabilities(
+            &capabilities,
+            test_path("msconvert.exe"),
+            &first_input,
+            &output_directory,
+            OsStr::new("first.mzML"),
+            OpenFormat::MzMl,
+        )
+        .expect("plan first item");
+        fs::write(
+            first
+                .output_destination()
+                .expect("first destination is recorded"),
+            b"first output",
+        )
+        .expect("simulate completed first item");
+
+        let second = build_msconvert_command_with_capabilities(
+            &capabilities,
+            test_path("msconvert.exe"),
+            &second_input,
+            &output_directory,
+            OsStr::new("second.mzML"),
+            OpenFormat::MzMl,
+        )
+        .expect("plan second item in the same output root");
+        assert_eq!(
+            second.output_destination(),
+            Some(canonical_output.join("second.mzML").as_path())
+        );
+    }
+
+    #[test]
+    fn public_mzml_planning_rejects_an_existing_destination_directory() {
+        let capabilities =
+            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+                .expect("valid msconvert fixture");
+        let test_directory = TestDirectory::new();
+        let input = test_directory.path().join("sample.raw");
+        let output_directory = test_directory.path().join("converted");
+        fs::write(&input, b"source RAW").expect("write source RAW");
+        fs::create_dir_all(output_directory.join("sample.mzML"))
+            .expect("create conflicting destination directory");
 
         let error = build_msconvert_command_with_capabilities(
             &capabilities,
             test_path("msconvert.exe"),
             &input,
             &output_directory,
+            OsStr::new("sample.mzML"),
             OpenFormat::MzMl,
         )
-        .expect_err("a nonfresh output directory must fail closed");
+        .expect_err("any object at the exact destination must fail closed");
 
-        assert_eq!(error, PlanError::OutputDirectoryNotEmpty);
+        assert_eq!(error, PlanError::OutputDestinationExists);
     }
 
     #[test]
@@ -1438,6 +1552,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             test_path("msconvert.exe"),
             &input,
             &missing_output,
+            OsStr::new("sample.mzML"),
             OpenFormat::MzMl,
         )
         .expect_err("an uninspectable output directory must fail closed");
@@ -1473,6 +1588,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
                 test_path("msconvert.exe"),
                 &input,
                 &output_directory,
+                OsStr::new("dataset.mzML"),
                 OpenFormat::MzMl,
             )
             .expect_err("output inside a directory input must fail closed");
@@ -1491,18 +1607,20 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         let output_directory = test_directory.path().join("converted");
         fs::create_dir(&input).expect("create directory input");
         fs::create_dir(&output_directory).expect("create sibling output directory");
+        let canonical_output = fs::canonicalize(&output_directory).expect("canonical output root");
 
         let command = build_msconvert_command_with_capabilities(
             &capabilities,
             test_path("msconvert.exe"),
             &input,
             &output_directory,
+            OsStr::new("dataset.mzML"),
             OpenFormat::MzMl,
         )
         .expect("a fresh sibling output directory is safe to plan");
 
         assert_eq!(command.args()[0], input.as_os_str());
-        assert_eq!(command.args()[4], output_directory.as_os_str());
+        assert_eq!(command.args()[4], canonical_output.as_os_str());
     }
 
     #[test]
@@ -1520,6 +1638,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             test_path("msconvert.exe"),
             &missing_input,
             &output_directory,
+            OsStr::new("missing.mzML"),
             OpenFormat::MzMl,
         )
         .expect_err("an uninspectable input must fail closed");
@@ -1530,6 +1649,87 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
                 kind: std::io::ErrorKind::NotFound,
             }
         );
+    }
+
+    #[test]
+    fn public_mzml_planning_rejects_unsafe_output_file_names_and_wrong_extensions() {
+        let capabilities =
+            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+                .expect("valid msconvert fixture");
+
+        for output_file_name in [
+            "",
+            ".",
+            "..",
+            "nested/output.mzML",
+            r"nested\output.mzML",
+            r"C:output.mzML",
+            r"\\server\share\output.mzML",
+            "bad?name.mzML",
+            "CON.mzML",
+            "CON .mzML",
+            "nul.MZML",
+            "AUX.data.mzML",
+            "COM1.mzML",
+            "Lpt9.mzML",
+            "COM¹.mzML",
+            "lpt³.mzML",
+        ] {
+            let error = build_msconvert_command_with_capabilities(
+                &capabilities,
+                test_path("msconvert.exe"),
+                &test_path("sample.raw"),
+                &test_path("converted"),
+                OsStr::new(output_file_name),
+                OpenFormat::MzMl,
+            )
+            .expect_err("unsafe output names must fail before filesystem inspection");
+            assert_eq!(error, PlanError::InvalidOutputFileName);
+        }
+
+        for output_file_name in ["sample", "sample.mzXML"] {
+            let error = build_msconvert_command_with_capabilities(
+                &capabilities,
+                test_path("msconvert.exe"),
+                &test_path("sample.raw"),
+                &test_path("converted"),
+                OsStr::new(output_file_name),
+                OpenFormat::MzMl,
+            )
+            .expect_err("the exact output extension must match the selected format");
+            assert_eq!(error, PlanError::OutputFileExtensionMismatch);
+        }
+    }
+
+    #[test]
+    fn public_conversion_planning_requires_an_exact_outfile_argument_declaration() {
+        let outfile_declaration =
+            "  --outfile arg                      : Override the name of output file.\n";
+        for help in [
+            MSCONVERT_HELP.replace(outfile_declaration, ""),
+            MSCONVERT_HELP.replace(
+                outfile_declaration,
+                "  --outfile [=arg(=name)]           : Override the name of output file.\n",
+            ),
+        ] {
+            let capabilities =
+                InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(&help))
+                    .expect("syntactically valid incomplete msconvert fixture");
+            let error = build_msconvert_command_with_capabilities(
+                &capabilities,
+                test_path("msconvert.exe"),
+                &test_path("sample.raw"),
+                &test_path("converted"),
+                OsStr::new("sample.mzML"),
+                OpenFormat::MzMl,
+            )
+            .expect_err("missing or optional outfile grammar must fail closed");
+
+            assert_eq!(
+                error,
+                PlanError::InstalledHelpCapability(CapabilityRequirementError::Missing("outfile"))
+            );
+        }
     }
 
     #[test]

@@ -95,6 +95,13 @@ pub fn classify_process_failure(
         Ok(output) => output,
         Err(error) => {
             let kind = match error {
+                ProcessError::OutputDestinationExists => FailureKind::OutputConflict,
+                ProcessError::OutputDestinationInspectionFailed {
+                    kind: std::io::ErrorKind::PermissionDenied,
+                } => FailureKind::PermissionDenied,
+                ProcessError::OutputDestinationInspectionFailed { .. } => {
+                    FailureKind::UnwritableOutputDirectory
+                }
                 ProcessError::Launch { kind, .. } if kind.is_not_found() => match tool {
                     BackendTool::MsConvert => FailureKind::MsConvertMissing,
                     BackendTool::MsAccess => FailureKind::MsAccessMissing,
@@ -188,7 +195,7 @@ const fn failure_contract(kind: FailureKind) -> (&'static str, Retryability, &'s
         FailureKind::OutputConflict => (
             "The requested output already exists.",
             Retryability::AfterCorrection,
-            "Choose a different output folder or resolve the conflict explicitly.",
+            "Choose a different output name or resolve the conflict explicitly.",
         ),
         FailureKind::UnwritableOutputDirectory => (
             "ProteoWizard cannot write to the output folder.",
@@ -278,6 +285,39 @@ mod tests {
         let failure = classify_process_failure(BackendTool::MsConvert, Err(&error), false)
             .expect("launch failure classification");
         assert_eq!(failure.kind, FailureKind::BackendLaunchFailed);
+        assert_eq!(failure.retryability, Retryability::AfterCorrection);
+    }
+
+    #[test]
+    fn exact_destination_conflicts_have_a_stable_output_category() {
+        let error = ProcessError::OutputDestinationExists;
+        let failure = classify_process_failure(BackendTool::MsConvert, Err(&error), false)
+            .expect("output conflict classification");
+
+        assert_eq!(failure.kind, FailureKind::OutputConflict);
+        assert_eq!(failure.retryability, Retryability::AfterCorrection);
+    }
+
+    #[test]
+    fn destination_inspection_permission_errors_remain_permission_denied() {
+        let error = ProcessError::OutputDestinationInspectionFailed {
+            kind: std::io::ErrorKind::PermissionDenied,
+        };
+        let failure = classify_process_failure(BackendTool::MsConvert, Err(&error), false)
+            .expect("permission classification");
+
+        assert_eq!(failure.kind, FailureKind::PermissionDenied);
+    }
+
+    #[test]
+    fn missing_destination_parents_are_recoverable_output_errors() {
+        let error = ProcessError::OutputDestinationInspectionFailed {
+            kind: std::io::ErrorKind::NotFound,
+        };
+        let failure = classify_process_failure(BackendTool::MsConvert, Err(&error), false)
+            .expect("output inspection classification");
+
+        assert_eq!(failure.kind, FailureKind::UnwritableOutputDirectory);
         assert_eq!(failure.retryability, Retryability::AfterCorrection);
     }
 
