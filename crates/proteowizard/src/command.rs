@@ -112,6 +112,8 @@ pub enum PlanError {
     MissingOutputDirectory,
     #[error("spectrum precision must be between 0 and 15 decimal places")]
     InvalidSpectrumPrecision,
+    #[error("MS-level TIC filter must be between 1 and 255")]
+    InvalidMsLevelFilter,
     #[error("filtered TIC planning requires exact installed-help capability evidence")]
     FilteredTicCapabilityEvidenceRequired,
     #[error(
@@ -187,6 +189,9 @@ pub fn build_msaccess_command_with_capabilities(
     output_directory: &Path,
     operation: PreviewOperation,
 ) -> Result<CommandSpec, PlanError> {
+    if matches!(&operation, PreviewOperation::Tic { ms_level: Some(0) }) {
+        return Err(PlanError::InvalidMsLevelFilter);
+    }
     capabilities.require_preview_operation(&operation)?;
     build_msaccess_command_inner(executable, input, output_directory, operation)
 }

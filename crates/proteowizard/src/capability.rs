@@ -1346,19 +1346,87 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
     }
 
     #[test]
-    fn filtered_tic_builder_requires_exact_installed_grammar() {
+    fn zero_ms_level_filter_is_rejected_before_public_command_planning() {
+        let capabilities = msaccess(MSACCESS_HELP);
+        let error = build_msaccess_command_with_capabilities(
+            &capabilities,
+            test_path("msaccess.exe"),
+            &test_path("sample.mzML"),
+            &test_path("preview"),
+            PreviewOperation::Tic { ms_level: Some(0) },
+        )
+        .expect_err("zero must not produce a public command specification");
+
+        assert_eq!(error, PlanError::InvalidMsLevelFilter);
+    }
+
+    #[test]
+    fn unfiltered_tic_plan_has_no_filter_argument() {
         let capabilities = msaccess(MSACCESS_HELP);
         let command = build_msaccess_command_with_capabilities(
             &capabilities,
             test_path("msaccess.exe"),
             &test_path("sample.mzML"),
             &test_path("preview"),
-            PreviewOperation::Tic { ms_level: Some(2) },
+            PreviewOperation::Tic { ms_level: None },
         )
-        .expect("exact grammar permits filtered TIC");
+        .expect("complete TIC grammar permits unfiltered planning");
 
-        assert_eq!(command.args()[5], "--filter");
-        assert_eq!(command.args()[6], "msLevel 2");
+        assert!(!command.contains_argument("--filter"));
+        assert!(
+            command
+                .args()
+                .iter()
+                .all(|argument| !argument.to_string_lossy().contains("msLevel"))
+        );
+    }
+
+    #[test]
+    fn valid_ms_level_filter_bounds_build_exact_arguments() {
+        let capabilities = msaccess(MSACCESS_HELP);
+
+        for ms_level in [1, u8::MAX] {
+            let command = build_msaccess_command_with_capabilities(
+                &capabilities,
+                test_path("msaccess.exe"),
+                &test_path("sample.mzML"),
+                &test_path("preview"),
+                PreviewOperation::Tic {
+                    ms_level: Some(ms_level),
+                },
+            )
+            .expect("valid filtered TIC bounds have exact grammar evidence");
+
+            assert_eq!(command.args()[5], "--filter");
+            assert_eq!(
+                command.args()[6].to_string_lossy(),
+                format!("msLevel {ms_level}")
+            );
+        }
+    }
+
+    #[test]
+    fn filtered_tic_public_builder_requires_exact_installed_grammar() {
+        let help = MSACCESS_HELP.replace(
+            "msLevel <mslevels>\nThis filter selects only spectra with the indicated <mslevels>, expressed as an int_set.\n",
+            "",
+        );
+        let capabilities = msaccess(&help);
+        let error = build_msaccess_command_with_capabilities(
+            &capabilities,
+            test_path("msaccess.exe"),
+            &test_path("sample.mzML"),
+            &test_path("preview"),
+            PreviewOperation::Tic { ms_level: Some(1) },
+        )
+        .expect_err("missing exact filter grammar must fail closed");
+
+        assert_eq!(
+            error,
+            PlanError::InstalledHelpCapability(CapabilityRequirementError::Missing(
+                "exact --filter plus `msLevel <mslevels>` grammar and filtered-TIC example"
+            ))
+        );
     }
 
     #[test]
