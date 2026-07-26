@@ -1,6 +1,6 @@
 # Bootstrap status
 
-**Updated:** 2026-07-23
+**Updated:** 2026-07-24
 
 **Canonical repository:** [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas)
 
@@ -63,6 +63,43 @@ compatible Node 22 releases while enforcing pnpm and Rust exactly.
 
 No Rust source lint suppression or Clippy weakening was required.
 
+## M0 ProteoWizard bounded evidence on 2026-07-24
+
+The Rust adapter now has structural contracts for deterministic configured/`PATH`/reviewed-root discovery, matching-tool release/build probes, canonical absolute paths, typed `msaccess` and `msconvert` argv, bounded redacted diagnostics, normalized failures, direct process capture and Windows-owned process-tree cancellation. An unstable developer-only harness exposes the spike operations without creating a stable CLI contract, rejects output inside directory acquisitions and requires a fresh empty ignored output directory.
+
+Targeted validation after the offline help/cancellation hardening passed with:
+
+| Command | Result |
+| --- | --- |
+| `cargo test --locked -p mscanvas-proteowizard --all-targets` | Passed: 33 tests; 2 controlled subprocess entry points intentionally ignored |
+| `cargo clippy --locked -p mscanvas-proteowizard --all-targets --all-features -- -D warnings` | Passed |
+
+That targeted table is code-contract and controlled-process evidence. A later exact-head disposable-VM run established the bounded real-backend behavior summarized below; the preserved pre-continuation repository-wide validation remains historical rather than evidence for the final tree.
+
+Repository-wide validation passed with:
+
+| Command | Result |
+| --- | --- |
+| `cargo fmt --all --check` | Passed |
+| `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | Passed |
+| `cargo test --locked --workspace --all-targets` | Passed: 32 tests; 2 controlled subprocess entry points intentionally ignored |
+| `python -B scripts/check_repo.py` | Passed |
+| `pnpm install --frozen-lockfile --strict-peer-dependencies` | Passed |
+| `pnpm lint` | Passed |
+| `pnpm typecheck` | Passed |
+| `pnpm test` | Passed: 2 frontend tests |
+| `pnpm build` | Passed |
+| `pnpm tauri build --no-bundle` | Passed; produced an ignored Windows release executable |
+| `git diff --check` | Passed |
+
+Bounded local discovery found no runnable host-installed `msconvert.exe` or `msaccess.exe`. Residual Windows Installer metadata reports a ProteoWizard version record with `ProductState = ABSENT`; it is not an installed version. After explicit download and installation authorization, the exact official Windows x64 MSI (`3.0.26204` / `a09eea9`) was downloaded outside the repository and hashed, but Windows reported Authenticode `NotSigned` with no signer. The mandatory host-install trust gate stopped before execution, installer UI, elevation or installation, and no alternate installer or unofficial source was tried.
+
+A narrower continuation verified the matching official Windows x86_64 portable archive through the ProteoWizard selection page, `bt83` release record and site-owned S3 resolver. The `97,078,806`-byte archive has SHA-256 `A0B92B40456E080B1CB5CBEDAE0B95664F43FE3B723972FE388A60E0341564E2`. All 265 archive members passed path/type checks before extraction, extraction stayed inside a fresh temporary root, and a private inventory covered all 20 executables and 191 DLLs. The target `msconvert.exe` and `msaccess.exe` were both unsigned.
+
+The local Windows Sandbox/VM gate stopped without changing optional features. Exact run [`30129182032`](https://github.com/MianliWang/MScanvas/actions/runs/30129182032) later used an ephemeral GitHub-hosted `windows-2025` VM and executed commit `f0d7957fbbe129263a9a89684b6ce549b1b3a086`. The unsigned portable tools ran only as a temporary non-elevated standard user with protected inputs, scoped writable paths, exact-program outbound blocks and owned-process supervision. The fixture/archive/executable identities, complete help, 12 operation records and complete teardown were verified; the sanitized artifact ZIP independently matched SHA-256 `8A07BBDBA9C195A311A00658A9FC7F086E83B6DA3943F41B12B90BC2ED23E927`.
+
+The source-reconciled runtime result is capability-specific. Discovery/build identity is A. Metadata, summary/counts, derived TIC/filtering, scan listing, selected spectrum, overall conversion and mzML conversion are B with named parser/scientific limits. mzXML is C because the tested multi-source fixture lost one of four spectra despite exit 0. BPC, repeated navigation, large arrays, progress, real cancellation, locale stability and vendor RAW coverage remain D. The M0 provider decision is therefore still incomplete, but it is no longer blocked by unavailable isolation or absent open-format runtime evidence. See the [M0 ProteoWizard spike report](docs/spikes/M0_PROTEOWIZARD_SPIKE.md).
+
 ## Windows validation completed on 2026-07-23
 
 | Command | Result |
@@ -96,8 +133,10 @@ claim a rendered Windows runtime smoke test.
 
 - Launch and interact with `pnpm tauri dev` on Windows; a build alone is not a
   rendered runtime check.
-- Run real ProteoWizard discovery, RAW preview and conversion spikes against an
-  independently installed, licensed backend and representative acquisition data.
+- Complete the remaining ProteoWizard provider gates: typed semantic preview results,
+  canonical spectrum identity, representative/repeated-navigation and large-array
+  measurements, BPC strategy, real cancellation, alternate-locale parsing and separately
+  authorized vendor coverage. The bounded open-format disposable-VM matrix is complete.
 - Enable branch protection after the first green remote CI run.
 
 ## First verified-bootstrap checklist
@@ -110,5 +149,6 @@ claim a rendered Windows runtime smoke test.
 - [x] Run all frontend and Rust checks.
 - [ ] Run `pnpm tauri dev` on Windows.
 - [x] Confirm Tauri capability configuration remains minimal.
-- [ ] Complete the M0 ProteoWizard preview/conversion technical spike.
+- [ ] Complete the M0 ProteoWizard provider decision; portable/open-format evidence is
+  complete, while the named B/C/D parser, scale, cancellation, locale, BPC and vendor gates remain.
 - [ ] Enable branch protection after the first green CI run.

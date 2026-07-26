@@ -1,96 +1,34 @@
-//! Typed command planning for user-installed ProteoWizard tools.
+//! Discovery, typed command planning, and spike-level process contracts for a
+//! user-installed ProteoWizard backend.
 
-use std::path::{Path, PathBuf};
+mod capability;
+mod command;
+mod diagnostics;
+mod discovery;
+mod failure;
+mod process;
+mod sha256;
 
-use thiserror::Error;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OpenFormat {
-    MzMl,
-    MzXml,
-}
-
-impl OpenFormat {
-    fn argument(self) -> &'static str {
-        match self {
-            Self::MzMl => "--mzML",
-            Self::MzXml => "--mzXML",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandSpec {
-    pub executable: PathBuf,
-    pub args: Vec<String>,
-    pub working_directory: PathBuf,
-}
-
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum PlanError {
-    #[error("input path has no file name")]
-    MissingInputName,
-    #[error("output directory must not be empty")]
-    MissingOutputDirectory,
-}
-
-pub fn build_msconvert_command(
-    executable: impl Into<PathBuf>,
-    input: &Path,
-    output_directory: &Path,
-    format: OpenFormat,
-) -> Result<CommandSpec, PlanError> {
-    if input.file_name().is_none() {
-        return Err(PlanError::MissingInputName);
-    }
-    if output_directory.as_os_str().is_empty() {
-        return Err(PlanError::MissingOutputDirectory);
-    }
-
-    Ok(CommandSpec {
-        executable: executable.into(),
-        args: vec![
-            input.to_string_lossy().into_owned(),
-            format.argument().to_owned(),
-            "--zlib".to_owned(),
-            "--outdir".to_owned(),
-            output_directory.to_string_lossy().into_owned(),
-        ],
-        working_directory: output_directory.to_path_buf(),
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn paths_with_spaces_are_kept_as_single_argv_values() {
-        let command = build_msconvert_command(
-            r"C:\Program Files\ProteoWizard\msconvert.exe",
-            Path::new(r"D:\Mass Spec Data\样本 01.raw"),
-            Path::new(r"D:\Mass Spec Data\converted"),
-            OpenFormat::MzMl,
-        )
-        .expect("valid command");
-
-        assert_eq!(command.args[0], r"D:\Mass Spec Data\样本 01.raw");
-        assert_eq!(command.args[1], "--mzML");
-        assert_eq!(command.args[3], "--outdir");
-        assert_eq!(command.args.len(), 5);
-    }
-
-    #[test]
-    fn mzxml_is_an_explicit_legacy_format_argument() {
-        let command = build_msconvert_command(
-            "msconvert",
-            Path::new("sample.raw"),
-            Path::new("converted"),
-            OpenFormat::MzXml,
-        )
-        .expect("valid command");
-
-        assert!(command.args.contains(&"--mzXML".to_owned()));
-        assert!(!command.args.contains(&"--mzML".to_owned()));
-    }
-}
+pub use capability::{
+    CapabilityRequirementError, CapturedHelpStream, CompleteHelpCapture, DeclarationKind,
+    HelpCapabilityError, HelpExample, HelpStream, InstalledHelpCapabilities,
+    NamedGrammarDeclaration, OptionArgument, OptionDeclaration, RawHelpHashes, Sha256Digest,
+    Sha256DigestParseError, TicCapability,
+};
+pub use command::{
+    BackendTool, CommandSpec, OpenFormat, PlanError, PreviewOperation,
+    build_msaccess_command_with_capabilities, build_msconvert_command_with_capabilities,
+};
+pub use diagnostics::{Redactor, ReportableProcessOutput};
+pub use discovery::{
+    AvailabilityState, ConfiguredLocation, DiscoveredTool, DiscoveryEnvironment, DiscoveryFailure,
+    DiscoveryRequest, DiscoveryResult, DiscoverySource, ToolProbe, discover,
+};
+pub use failure::{
+    FailureCondition, FailureKind, NormalizedFailure, Retryability, classify_process_failure,
+};
+pub use process::{
+    CancellationToken, LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner,
+    SystemProcessRunner, Termination, execute, execute_cancellable,
+};
+pub use sha256::Sha256Error;

@@ -25,7 +25,7 @@ This roadmap sequences product risk; it is not the authoritative feature definit
 
 ## M3 — Conversion workflow
 
-- Typed conversion settings for mzML/mzXML.
+- Typed conversion settings for mzML; keep mzXML gated until representative multi-source integrity checks pass.
 - Queue, cancellation, retry, failure isolation and output-conflict handling.
 - Transactional outputs and basic integrity checks.
 

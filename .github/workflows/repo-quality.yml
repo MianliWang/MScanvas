@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   structure:
+    name: Repository quality
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
