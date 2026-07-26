@@ -8,6 +8,7 @@ pub enum FailureKind {
     VersionProbeFailed,
     BackendLaunchFailed,
     UnsupportedInput,
+    SourceValidationFailed,
     PermissionDenied,
     OutputConflict,
     UnwritableOutputDirectory,
@@ -33,6 +34,7 @@ impl FailureKind {
             Self::VersionProbeFailed => "version_probe_failed",
             Self::BackendLaunchFailed => "backend_launch_failed",
             Self::UnsupportedInput => "unsupported_input",
+            Self::SourceValidationFailed => "source_validation_failed",
             Self::PermissionDenied => "permission_denied",
             Self::OutputConflict => "output_conflict",
             Self::UnwritableOutputDirectory => "unwritable_output_directory",
@@ -119,6 +121,11 @@ pub fn classify_process_failure(
                 } => FailureKind::PermissionDenied,
                 ProcessError::ExecutableIdentityInspectionFailed { .. }
                 | ProcessError::ExecutableIdentityChanged => FailureKind::BackendLaunchFailed,
+                ProcessError::SourceIdentityInspectionFailed {
+                    kind: std::io::ErrorKind::PermissionDenied,
+                } => FailureKind::PermissionDenied,
+                ProcessError::SourceIdentityInspectionFailed { .. }
+                | ProcessError::SourceIdentityChanged => FailureKind::SourceValidationFailed,
                 ProcessError::Launch { kind, .. } if kind.is_not_found() => match tool {
                     BackendTool::MsConvert => FailureKind::MsConvertMissing,
                     BackendTool::MsAccess => FailureKind::MsAccessMissing,
@@ -203,6 +210,11 @@ const fn failure_contract(kind: FailureKind) -> (&'static str, Retryability, &'s
             "ProteoWizard cannot read this input.",
             Retryability::NotRetryable,
             "Confirm the acquisition format and that the licensed vendor reader is installed.",
+        ),
+        FailureKind::SourceValidationFailed => (
+            "The source acquisition changed after planning.",
+            Retryability::AfterCorrection,
+            "Reselect an unchanged readable source acquisition and create a fresh operation plan.",
         ),
         FailureKind::PermissionDenied => (
             "Windows denied access to a required path.",
@@ -328,6 +340,33 @@ mod tests {
     }
 
     #[test]
+    fn changed_or_missing_sources_have_a_stable_validation_category() {
+        for error in [
+            ProcessError::SourceIdentityChanged,
+            ProcessError::SourceIdentityInspectionFailed {
+                kind: std::io::ErrorKind::NotFound,
+            },
+        ] {
+            let failure = classify_process_failure(BackendTool::MsAccess, Err(&error), false)
+                .expect("source validation classification");
+
+            assert_eq!(failure.kind, FailureKind::SourceValidationFailed);
+            assert_eq!(failure.retryability, Retryability::AfterCorrection);
+        }
+    }
+
+    #[test]
+    fn source_identity_permission_errors_remain_permission_denied() {
+        let error = ProcessError::SourceIdentityInspectionFailed {
+            kind: std::io::ErrorKind::PermissionDenied,
+        };
+        let failure = classify_process_failure(BackendTool::MsConvert, Err(&error), false)
+            .expect("source permission classification");
+
+        assert_eq!(failure.kind, FailureKind::PermissionDenied);
+    }
+
+    #[test]
     fn exact_destination_conflicts_have_a_stable_output_category() {
         let error = ProcessError::OutputDestinationExists;
         let failure = classify_process_failure(BackendTool::MsConvert, Err(&error), false)
@@ -412,6 +451,7 @@ mod tests {
             FailureKind::VersionProbeFailed,
             FailureKind::BackendLaunchFailed,
             FailureKind::UnsupportedInput,
+            FailureKind::SourceValidationFailed,
             FailureKind::PermissionDenied,
             FailureKind::OutputConflict,
             FailureKind::UnwritableOutputDirectory,

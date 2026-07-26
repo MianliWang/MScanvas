@@ -234,6 +234,8 @@ const RUN_SUMMARY_SIGNATURE: &str =
 const SPECTRUM_TABLE_SIGNATURE: &str = "[delimiter=<fixed|space|comma|tab>]";
 const TIC_SIGNATURE: &str = "[mz=<mzLow>[,<mzHigh>]] [delimiter=<fixed|space|comma|tab>]";
 const BINARY_SIGNATURE: &str = "index=<spectrumIndexLow>[,<spectrumIndexHigh>] | sn=<scanNumberLow>[,<scanNumberHigh>] [precision=<precision>]";
+const ZLIB_OPTION_DECLARATION: &str = "-z [ --zlib ] [=arg(=1)]";
+const ZLIB_OPTION_REQUIREMENT: &str = "exact --zlib [=arg(=1)] grammar";
 
 impl TicCapability {
     #[must_use]
@@ -470,7 +472,7 @@ impl InstalledHelpCapabilities {
         self.require_tool(BackendTool::MsConvert)?;
         self.require_option("outdir", OptionArgument::Required)?;
         self.require_option("outfile", OptionArgument::Required)?;
-        self.require_flag_option("zlib")?;
+        self.require_zlib_option()?;
         match format {
             OpenFormat::MzMl => self.require_option("mzML", OptionArgument::None),
             OpenFormat::MzXml => self.require_option("mzXML", OptionArgument::None),
@@ -502,16 +504,14 @@ impl InstalledHelpCapabilities {
         }
     }
 
-    fn require_flag_option(&self, name: &'static str) -> Result<(), CapabilityRequirementError> {
-        if self.option(name).is_some_and(|option| {
-            matches!(
-                option.argument,
-                OptionArgument::None | OptionArgument::Optional
-            )
+    fn require_zlib_option(&self) -> Result<(), CapabilityRequirementError> {
+        if self.option("zlib").is_some_and(|option| {
+            option.argument == OptionArgument::Optional
+                && option.normalized_declaration == ZLIB_OPTION_DECLARATION
         }) {
             Ok(())
         } else {
-            Err(CapabilityRequirementError::Missing(name))
+            Err(CapabilityRequirementError::Missing(ZLIB_OPTION_REQUIREMENT))
         }
     }
 
@@ -1193,6 +1193,7 @@ msconvert data.RAW --mzXML
         let conversion_output = test_directory.path().join("converted");
         fs::write(&input, b"source RAW").expect("write source RAW");
         fs::create_dir(&conversion_output).expect("create conversion output");
+        let canonical_input = fs::canonicalize(&input).expect("canonical source input");
 
         let conversion = build_msconvert_command_with_capabilities(
             &converter_capabilities,
@@ -1213,6 +1214,13 @@ msconvert data.RAW --mzXML
         assert_eq!(
             conversion.executable_sha256,
             Some(FIXTURE_EXECUTABLE_SHA256)
+        );
+        assert_eq!(
+            conversion
+                .source_identity
+                .as_ref()
+                .map(|identity| identity.canonical_path()),
+            Some(canonical_input.as_path())
         );
         assert_ne!(
             conversion.executable(),
@@ -1240,6 +1248,13 @@ msconvert data.RAW --mzXML
 
         assert_eq!(preview.executable(), preview_capabilities.executable());
         assert_eq!(preview.executable_sha256, Some(FIXTURE_EXECUTABLE_SHA256));
+        assert_eq!(
+            preview
+                .source_identity
+                .as_ref()
+                .map(|identity| identity.canonical_path()),
+            Some(canonical_input.as_path())
+        );
     }
 
     #[test]
@@ -1519,6 +1534,12 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         assert_eq!(
             capabilities.option("zlib").map(OptionDeclaration::argument),
             Some(OptionArgument::Optional)
+        );
+        assert_eq!(
+            capabilities
+                .option("zlib")
+                .map(OptionDeclaration::normalized_declaration),
+            Some(ZLIB_OPTION_DECLARATION)
         );
         assert_eq!(
             capabilities
@@ -1946,22 +1967,31 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
     fn public_conversion_planning_requires_the_zlib_declaration() {
         let zlib_declaration =
             "  -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data\n";
-        let help = MSCONVERT_HELP.replace(zlib_declaration, "");
-        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(&help))
-            .expect("syntactically valid incomplete msconvert fixture");
-        let error = build_msconvert_command_with_capabilities(
-            &capabilities,
-            &test_path("sample.raw"),
-            &test_path("converted"),
-            OsStr::new("sample.mzML"),
-            OpenFormat::MzMl,
-        )
-        .expect_err("missing zlib grammar must fail closed");
+        for replacement in [
+            "",
+            "  -z [ --zlib ] [=arg(=0)]           : use zlib compression for binary data\n",
+            "  -z [ --zlib ] [=arg]               : use zlib compression for binary data\n",
+            "  -z [ --zlib ]                      : use zlib compression for binary data\n",
+        ] {
+            let help = MSCONVERT_HELP.replace(zlib_declaration, replacement);
+            let capabilities = parse_capabilities(BackendTool::MsConvert, capture(&help))
+                .expect("syntactically valid incomplete msconvert fixture");
+            let error = build_msconvert_command_with_capabilities(
+                &capabilities,
+                &test_path("sample.raw"),
+                &test_path("converted"),
+                OsStr::new("sample.mzML"),
+                OpenFormat::MzMl,
+            )
+            .expect_err("missing or changed zlib grammar must fail closed");
 
-        assert_eq!(
-            error,
-            PlanError::InstalledHelpCapability(CapabilityRequirementError::Missing("zlib"))
-        );
+            assert_eq!(
+                error,
+                PlanError::InstalledHelpCapability(CapabilityRequirementError::Missing(
+                    ZLIB_OPTION_REQUIREMENT
+                ))
+            );
+        }
     }
 
     #[test]

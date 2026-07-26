@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 use crate::command::OutputSafety;
+#[cfg(all(test, windows))]
+use crate::command::SourceIdentity;
 use crate::{CommandSpec, Sha256Digest, Sha256Error};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -87,6 +89,10 @@ pub enum ProcessError {
     ExecutableIdentityInspectionFailed { kind: io::ErrorKind },
     #[error("the backend executable changed after its capability probe")]
     ExecutableIdentityChanged,
+    #[error("the validated source could not be reverified: {kind}")]
+    SourceIdentityInspectionFailed { kind: io::ErrorKind },
+    #[error("the source changed after command planning")]
+    SourceIdentityChanged,
     #[error("failed to launch {executable}: {detail}")]
     Launch {
         executable: String,
@@ -172,9 +178,10 @@ fn execute_command_after_assignment(
     cancellation: &CancellationToken,
     after_assignment: impl FnOnce(),
 ) -> Result<ProcessOutput, ProcessError> {
-    // Both guards are non-atomic snapshots. Hash first because it is slower, so
-    // the output-safety snapshot remains the final check before spawn.
+    // These are non-atomic snapshots. Hash the executable first, then verify the
+    // source identity, so output safety remains the final check before spawn.
     require_executable_identity(spec)?;
+    require_source_identity(spec)?;
     require_output_safety(spec)?;
     let started = Instant::now();
     let mut child = command
@@ -281,6 +288,19 @@ fn require_executable_identity(spec: &CommandSpec) -> Result<(), ProcessError> {
     })?;
     if actual_sha256 != expected_sha256 {
         return Err(ProcessError::ExecutableIdentityChanged);
+    }
+    Ok(())
+}
+
+fn require_source_identity(spec: &CommandSpec) -> Result<(), ProcessError> {
+    let Some(source_identity) = &spec.source_identity else {
+        return Ok(());
+    };
+    let matches = source_identity
+        .matches_current()
+        .map_err(|error| ProcessError::SourceIdentityInspectionFailed { kind: error.kind() })?;
+    if !matches {
+        return Err(ProcessError::SourceIdentityChanged);
     }
     Ok(())
 }
@@ -1081,6 +1101,116 @@ mod tests {
 
         assert_eq!(error, ProcessError::ExecutableIdentityChanged);
         assert!(!marker.exists(), "the replaced executable was launched");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unchanged_source_identity_allows_the_controlled_child_to_launch() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let source = test_directory.path().join("sample.mzML");
+        fs::write(&source, b"source sentinel").expect("write source sentinel");
+        let source_identity = SourceIdentity::capture(&source).expect("capture source identity");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        )
+        .with_source_identity(source_identity);
+
+        let output = execute(&spec).expect("unchanged source identity permits launch");
+
+        assert!(output.success());
+        assert!(marker.is_file(), "the controlled child did not launch");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn replaced_file_or_directory_source_is_rejected_before_child_launch() {
+        for is_directory in [false, true] {
+            let test_directory = TestDirectory::new();
+            let marker = test_directory.path().join("child-launched");
+            let source = test_directory.path().join("sample.raw");
+            if is_directory {
+                fs::create_dir(&source).expect("create directory source");
+            } else {
+                fs::write(&source, b"source sentinel").expect("write file source");
+            }
+            let source_identity =
+                SourceIdentity::capture(&source).expect("capture source identity");
+            let spec = CommandSpec::new(
+                BackendTool::MsConvert,
+                std::env::current_exe().expect("test executable"),
+                [
+                    "--ignored",
+                    "--exact",
+                    "process::tests::controlled_output_marker",
+                    "--nocapture",
+                    "--test-threads=1",
+                ],
+                test_directory.path(),
+            )
+            .with_source_identity(source_identity);
+            fs::rename(&source, test_directory.path().join("original-source"))
+                .expect("rename planned source");
+            if is_directory {
+                fs::create_dir(&source).expect("create replacement directory source");
+            } else {
+                fs::write(&source, b"replacement source").expect("write replacement file source");
+            }
+
+            let error = execute(&spec).expect_err("a replaced source must fail closed");
+
+            assert_eq!(error, ProcessError::SourceIdentityChanged);
+            assert!(
+                !marker.exists(),
+                "the replaced-source plan launched its child"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn missing_source_fails_during_identity_recheck() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let source = test_directory.path().join("sample.mzML");
+        fs::write(&source, b"source sentinel").expect("write source sentinel");
+        let source_identity = SourceIdentity::capture(&source).expect("capture source identity");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        )
+        .with_source_identity(source_identity);
+        fs::remove_file(&source).expect("remove planned source");
+
+        let error = execute(&spec).expect_err("a missing source must fail closed");
+
+        assert_eq!(
+            error,
+            ProcessError::SourceIdentityInspectionFailed {
+                kind: io::ErrorKind::NotFound,
+            }
+        );
+        assert!(
+            !marker.exists(),
+            "the missing-source plan launched its child"
+        );
     }
 
     #[cfg(windows)]

@@ -422,10 +422,18 @@ fn is_right_path_boundary(input: &str, end: usize, alias: &str) -> bool {
         return true;
     }
 
-    input[end..]
+    let suffix = &input[end..];
+    suffix
         .chars()
         .next()
         .is_some_and(|character| is_separator(character) || is_path_delimiter(character))
+        || is_sentence_ending_period_boundary(suffix)
+}
+
+fn is_sentence_ending_period_boundary(suffix: &str) -> bool {
+    let remainder = suffix.trim_start_matches('.');
+    remainder.len() < suffix.len()
+        && (remainder.is_empty() || remainder.chars().next().is_some_and(is_path_delimiter))
 }
 
 fn is_path_delimiter(character: char) -> bool {
@@ -593,6 +601,67 @@ mod tests {
         assert_eq!(redacted, "Failed <input>; retry <input>");
         assert!(!redacted.contains("Local User"));
         assert!(!redacted.contains("sample 01"));
+    }
+
+    #[test]
+    fn sentence_ending_periods_after_paths_are_preserved_and_redacted() {
+        let redactor =
+            Redactor::default().with_path(Path::new(r"C:\Lab.v2\样本.v1.raw"), "<input>");
+
+        for (text, expected) in [
+            (r"failed C:\Lab.v2\样本.v1.raw.", "failed <input>."),
+            (
+                "failed c:/lab.v2/样本.v1.raw. Retry",
+                "failed <input>. Retry",
+            ),
+            (r#"failed C:\Lab.v2\样本.v1.raw.)"#, "failed <input>.)"),
+            (
+                "failed C:\\Lab.v2\\样本.v1.raw.\r\nRetry",
+                "failed <input>.\r\nRetry",
+            ),
+            (r"failed C:\Lab.v2\样本.v1.raw...", "failed <input>..."),
+        ] {
+            assert_eq!(redactor.redact(text), expected);
+        }
+
+        assert_eq!(
+            redactor.redact(r"failed \\?\c:\lab.v2\样本.v1.raw."),
+            "failed <input>."
+        );
+    }
+
+    #[test]
+    fn periods_inside_longer_path_like_tokens_are_not_boundaries() {
+        let redactor = Redactor::default().with_path(Path::new(r"C:\Data\sample.raw"), "<input>");
+
+        for suffix in [".bak", ".part", ".1", ".中文", r".\child", "./child"] {
+            let text = format!(r"C:\Data\sample.raw{suffix}");
+            assert_eq!(redactor.redact(&text), text);
+        }
+    }
+
+    #[test]
+    fn reportable_diagnostics_redact_an_unquoted_path_before_a_period() {
+        let stderr = br"failed to read C:\private\sample.raw.";
+        let output = ProcessOutput {
+            stdout: Vec::new(),
+            stderr: stderr.to_vec(),
+            stdout_total_bytes: 0,
+            stderr_total_bytes: stderr.len() as u64,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            exit_code: Some(1),
+            elapsed: std::time::Duration::ZERO,
+            termination: Termination::Exited,
+            max_active_processes: None,
+            final_active_processes: None,
+        };
+        let redactor =
+            Redactor::default().with_path(Path::new(r"C:\private\sample.raw"), "<input>");
+
+        let reportable = ReportableProcessOutput::from_process(&output, &redactor);
+
+        assert_eq!(reportable.stderr, "failed to read <input>.");
     }
 
     #[test]

@@ -71,12 +71,216 @@ pub(crate) enum OutputSafety {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SourceIdentity {
+    canonical_path: PathBuf,
+    is_directory: bool,
+    platform: PlatformSourceIdentity,
+}
+
+impl SourceIdentity {
+    pub(crate) fn capture(path: &Path) -> io::Result<Self> {
+        let canonical_path = std::fs::canonicalize(path)?;
+        let (platform, is_directory) = platform_source_identity(&canonical_path)?;
+        if std::fs::canonicalize(&canonical_path)? != canonical_path {
+            return Err(io::Error::other(
+                "the source changed during identity inspection",
+            ));
+        }
+        Ok(Self {
+            canonical_path,
+            is_directory,
+            platform,
+        })
+    }
+
+    pub(crate) fn matches_current(&self) -> io::Result<bool> {
+        Ok(Self::capture(&self.canonical_path)? == *self)
+    }
+
+    pub(crate) fn canonical_path(&self) -> &Path {
+        &self.canonical_path
+    }
+
+    const fn is_directory(&self) -> bool {
+        self.is_directory
+    }
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PlatformSourceIdentity {
+    volume_serial_number: u64,
+    file_id: [u8; 16],
+}
+
+#[cfg(windows)]
+fn validated_windows_source_identity(
+    volume_serial_number: u64,
+    file_id: [u8; 16],
+) -> io::Result<PlatformSourceIdentity> {
+    if file_id == [0; 16] {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "the source filesystem does not expose a stable 128-bit file identity",
+        ));
+    }
+    Ok(PlatformSourceIdentity {
+        volume_serial_number,
+        file_id,
+    })
+}
+
+#[cfg(windows)]
+fn platform_source_identity(path: &Path) -> io::Result<(PlatformSourceIdentity, bool)> {
+    use std::ffi::c_void;
+    use std::fs::OpenOptions;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+
+    const FILE_READ_ATTRIBUTES: u32 = 0x0080;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+    const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_ID_INFO_CLASS: i32 = 0x12;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileTime {
+        low_date_time: u32,
+        high_date_time: u32,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct ByHandleFileInformation {
+        file_attributes: u32,
+        creation_time: FileTime,
+        last_access_time: FileTime,
+        last_write_time: FileTime,
+        volume_serial_number: u32,
+        file_size_high: u32,
+        file_size_low: u32,
+        number_of_links: u32,
+        file_index_high: u32,
+        file_index_low: u32,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileId128 {
+        identifier: [u8; 16],
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileIdInformation {
+        volume_serial_number: u64,
+        file_id: FileId128,
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        #[link_name = "GetFileInformationByHandle"]
+        fn get_file_information_by_handle(
+            file: *mut c_void,
+            information: *mut ByHandleFileInformation,
+        ) -> i32;
+
+        #[link_name = "GetFileInformationByHandleEx"]
+        fn get_file_information_by_handle_ex(
+            file: *mut c_void,
+            information_class: i32,
+            information: *mut c_void,
+            information_size: u32,
+        ) -> i32;
+    }
+
+    let file = OpenOptions::new()
+        .read(true)
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)?;
+    let mut information = ByHandleFileInformation::default();
+    // SAFETY: `file` owns a live handle and `information` is the exact repr(C)
+    // buffer required by GetFileInformationByHandle for the duration of the call.
+    let inspected =
+        unsafe { get_file_information_by_handle(file.as_raw_handle(), &raw mut information) };
+    if inspected == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let mut file_id_information = FileIdInformation::default();
+    // SAFETY: `file` owns the same live handle inspected above and
+    // `file_id_information` is the exact repr(C) FILE_ID_INFO buffer required
+    // by GetFileInformationByHandleEx for the duration of the call.
+    let identity_inspected = unsafe {
+        get_file_information_by_handle_ex(
+            file.as_raw_handle(),
+            FILE_ID_INFO_CLASS,
+            (&raw mut file_id_information).cast(),
+            u32::try_from(std::mem::size_of::<FileIdInformation>())
+                .expect("FILE_ID_INFO size fits in DWORD"),
+        )
+    };
+    if identity_inspected == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let platform = validated_windows_source_identity(
+        file_id_information.volume_serial_number,
+        file_id_information.file_id.identifier,
+    )?;
+
+    Ok((
+        platform,
+        information.file_attributes & FILE_ATTRIBUTE_DIRECTORY != 0,
+    ))
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PlatformSourceIdentity {
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(unix)]
+fn platform_source_identity(path: &Path) -> io::Result<(PlatformSourceIdentity, bool)> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = std::fs::File::open(path)?.metadata()?;
+    Ok((
+        PlatformSourceIdentity {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        },
+        metadata.is_dir(),
+    ))
+}
+
+#[cfg(not(any(windows, unix)))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PlatformSourceIdentity;
+
+#[cfg(not(any(windows, unix)))]
+fn platform_source_identity(_path: &Path) -> io::Result<(PlatformSourceIdentity, bool)> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "the platform does not expose a stable source filesystem identity",
+    ))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSpec {
     pub(crate) tool: BackendTool,
     pub(crate) executable: PathBuf,
     pub(crate) args: Vec<OsString>,
     pub(crate) working_directory: PathBuf,
     pub(crate) executable_sha256: Option<Sha256Digest>,
+    pub(crate) source_identity: Option<SourceIdentity>,
     pub(crate) output_safety: OutputSafety,
 }
 
@@ -93,12 +297,18 @@ impl CommandSpec {
             args: args.into_iter().map(Into::into).collect(),
             working_directory: working_directory.into(),
             executable_sha256: None,
+            source_identity: None,
             output_safety: OutputSafety::None,
         }
     }
 
     pub(crate) fn with_executable_identity(mut self, sha256: Sha256Digest) -> Self {
         self.executable_sha256 = Some(sha256);
+        self
+    }
+
+    pub(crate) fn with_source_identity(mut self, source_identity: SourceIdentity) -> Self {
+        self.source_identity = Some(source_identity);
         self
     }
 
@@ -262,9 +472,9 @@ fn build_msconvert_command(
 /// Builds an mzML conversion command only after the complete installed help has
 /// confirmed every option used by the typed plan and the exact output
 /// destination is absent in an inspectable output root outside a directory
-/// input. The plan retains the probed executable's SHA-256 for a pre-spawn
-/// identity recheck. mzXML remains unavailable until source/output integrity
-/// validation is implemented.
+/// input. The plan retains the probed executable's SHA-256 and the source
+/// filesystem identity for non-atomic pre-spawn rechecks. mzXML remains
+/// unavailable until source/output integrity validation is implemented.
 pub fn build_msconvert_command_with_capabilities(
     capabilities: &InstalledHelpCapabilities,
     input: &Path,
@@ -279,9 +489,10 @@ pub fn build_msconvert_command_with_capabilities(
             validate_paths(&executable, input, output_directory)?;
             validate_output_file_name(output_file_name, format)?;
             let safe_output = require_safe_output_directory(input, output_directory)?;
+            let canonical_input = safe_output.source_identity.canonical_path().to_path_buf();
             let command = build_msconvert_command(
                 executable,
-                &safe_output.canonical_input,
+                &canonical_input,
                 &safe_output.output_directory,
                 output_file_name,
                 format,
@@ -292,7 +503,9 @@ pub fn build_msconvert_command_with_capabilities(
                     .output_destination()
                     .expect("conversion commands have an output destination"),
             )?;
-            Ok(command.with_executable_identity(capabilities.executable_sha256()))
+            Ok(command
+                .with_executable_identity(capabilities.executable_sha256())
+                .with_source_identity(safe_output.source_identity))
         }
         OpenFormat::MzXml => Err(PlanError::MzXmlIntegrityGateRequired),
     }
@@ -315,7 +528,7 @@ fn build_msaccess_command(
 /// confirmed the exact option, query, parameter, and filter grammar used by
 /// the typed plan and the output directory is a fresh, inspectable location
 /// outside a directory input. The plan retains the probed executable's SHA-256
-/// for a pre-spawn identity recheck.
+/// and the source filesystem identity for non-atomic pre-spawn rechecks.
 pub fn build_msaccess_command_with_capabilities(
     capabilities: &InstalledHelpCapabilities,
     input: &Path,
@@ -329,9 +542,10 @@ pub fn build_msaccess_command_with_capabilities(
     let executable = capabilities.executable().to_path_buf();
     validate_msaccess_request(&executable, input, output_directory, &operation)?;
     let safe_output = require_fresh_output_directory(input, output_directory)?;
+    let canonical_input = safe_output.source_identity.canonical_path().to_path_buf();
     Ok(build_msaccess_command_spec(
         executable,
-        &safe_output.canonical_input,
+        &canonical_input,
         &safe_output.output_directory,
         operation,
     )
@@ -339,7 +553,8 @@ pub fn build_msaccess_command_with_capabilities(
         &safe_output.output_directory,
         safe_output.source_directory_boundary,
     )
-    .with_executable_identity(capabilities.executable_sha256()))
+    .with_executable_identity(capabilities.executable_sha256())
+    .with_source_identity(safe_output.source_identity))
 }
 
 #[cfg(test)]
@@ -493,23 +708,25 @@ fn inspect_output_directory(output_directory: &Path) -> Result<PathBuf, PlanErro
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SafeOutputDirectory {
     output_directory: PathBuf,
-    canonical_input: PathBuf,
+    source_identity: SourceIdentity,
     source_directory_boundary: Option<PathBuf>,
 }
 
 fn canonical_input_and_directory_boundary(
     input: &Path,
     canonical_output: &Path,
-) -> Result<(PathBuf, Option<PathBuf>), PlanError> {
-    let canonical_input = std::fs::canonicalize(input)
+) -> Result<(SourceIdentity, Option<PathBuf>), PlanError> {
+    let source_identity = SourceIdentity::capture(input)
         .map_err(|error| PlanError::InputPathInspectionFailed { kind: error.kind() })?;
-    let input_metadata = std::fs::metadata(&canonical_input)
-        .map_err(|error| PlanError::InputPathInspectionFailed { kind: error.kind() })?;
-    if input_metadata.is_dir() && canonical_output.starts_with(&canonical_input) {
+    if source_identity.is_directory()
+        && canonical_output.starts_with(source_identity.canonical_path())
+    {
         return Err(PlanError::OutputDirectoryInsideDirectoryInput);
     }
-    let source_directory_boundary = input_metadata.is_dir().then(|| canonical_input.clone());
-    Ok((canonical_input, source_directory_boundary))
+    let source_directory_boundary = source_identity
+        .is_directory()
+        .then(|| source_identity.canonical_path().to_path_buf());
+    Ok((source_identity, source_directory_boundary))
 }
 
 fn require_safe_output_directory(
@@ -517,11 +734,11 @@ fn require_safe_output_directory(
     output_directory: &Path,
 ) -> Result<SafeOutputDirectory, PlanError> {
     let canonical_output = inspect_output_directory(output_directory)?;
-    let (canonical_input, source_directory_boundary) =
+    let (source_identity, source_directory_boundary) =
         canonical_input_and_directory_boundary(input, &canonical_output)?;
     Ok(SafeOutputDirectory {
         output_directory: canonical_output,
-        canonical_input,
+        source_identity,
         source_directory_boundary,
     })
 }
@@ -537,11 +754,11 @@ fn require_fresh_output_directory(
         Some(Ok(_)) => Err(PlanError::OutputDirectoryNotEmpty),
         Some(Err(error)) => Err(PlanError::OutputDirectoryInspectionFailed { kind: error.kind() }),
         None => {
-            let (canonical_input, source_directory_boundary) =
+            let (source_identity, source_directory_boundary) =
                 canonical_input_and_directory_boundary(input, &canonical_output)?;
             Ok(SafeOutputDirectory {
                 output_directory: canonical_output,
-                canonical_input,
+                source_identity,
                 source_directory_boundary,
             })
         }
@@ -564,6 +781,15 @@ mod tests {
         std::env::current_dir()
             .expect("test current directory")
             .join(relative)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_unsupported_zero_128_bit_source_identity_fails_closed() {
+        let error = validated_windows_source_identity(42, [0; 16])
+            .expect_err("an unavailable 128-bit file identity must not be accepted");
+
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
     }
 
     #[test]
