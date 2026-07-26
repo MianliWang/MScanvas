@@ -614,7 +614,7 @@ impl NumericPrecisionEvidence {
 }
 
 /// Selected-spectrum facts emitted by `binary index=... precision=...`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct SelectedSpectrumResult {
     identity: SpectrumIdentity,
     ms_level: u32,
@@ -633,6 +633,28 @@ pub struct SelectedSpectrumResult {
     precision: NumericPrecisionEvidence,
     value_units: UnitState,
     representation: SpectrumRepresentationState,
+}
+
+impl fmt::Debug for SelectedSpectrumResult {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SelectedSpectrumResult")
+            .field("identity", &self.identity)
+            .field("ms_level", &self.ms_level)
+            .field("retention_time_unit", &self.retention_time.unit)
+            .field("point_count", &self.mz_values.len())
+            .field("precursor_count", &self.precursors.len())
+            .field(
+                "mass_analyzer_type_emitted",
+                &self.mass_analyzer_type.is_some(),
+            )
+            .field("scan_event_emitted", &self.scan_event.is_some())
+            .field("filter_string_emitted", &self.filter_string.is_some())
+            .field("precision", &self.precision)
+            .field("value_units", &self.value_units)
+            .field("representation", &self.representation)
+            .finish()
+    }
 }
 
 impl SelectedSpectrumResult {
@@ -2771,7 +2793,7 @@ mod tests {
     }
 
     #[test]
-    fn manifest_and_identity_debug_output_do_not_expose_raw_content() {
+    fn reportable_debug_output_does_not_expose_raw_content_or_selected_arrays() {
         let manifest = PreviewOutputManifest::single_complete_file(b"sensitive payload");
         let manifest_debug = format!("{manifest:?}");
         assert!(!manifest_debug.contains("sensitive payload"));
@@ -2786,5 +2808,28 @@ mod tests {
         .expect("identity is valid");
         let debug = format!("{identity:?}");
         assert!(!debug.contains("scan=19"));
+
+        let process = completed_process(Vec::new());
+        let outcome = interpret_preview(
+            &PreviewOperation::SpectrumByIndex {
+                index: 0,
+                precision: 8,
+            },
+            &process,
+            &PreviewOutputManifest::single_complete_file(BINARY_FIXTURE),
+        )
+        .expect("selected-spectrum fixture is valid");
+        let selected_debug = format!("{outcome:?}");
+        for sensitive_value in [
+            "scan=1",
+            "synthetic",
+            "445.3",
+            "100.12345678",
+            "200.12345678",
+        ] {
+            assert!(!selected_debug.contains(sensitive_value));
+        }
+        assert!(selected_debug.contains("point_count: 2"));
+        assert!(selected_debug.contains("precursor_count: 1"));
     }
 }
