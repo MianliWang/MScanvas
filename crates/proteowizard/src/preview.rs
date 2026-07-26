@@ -100,10 +100,20 @@ impl fmt::Debug for MetadataEntry {
 }
 
 /// An ordered metadata section containing only opaque, ordered lines.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct MetadataSection {
     kind: MetadataSectionKind,
     entries: Vec<MetadataEntry>,
+}
+
+impl fmt::Debug for MetadataSection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MetadataSection")
+            .field("kind", &self.kind)
+            .field("entry_count", &self.entries.len())
+            .finish()
+    }
 }
 
 impl MetadataSection {
@@ -119,10 +129,20 @@ impl MetadataSection {
 }
 
 /// Structurally parsed metadata with source section and field order preserved.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct MetadataResult {
     leading_entries: Vec<MetadataEntry>,
     sections: Vec<MetadataSection>,
+}
+
+impl fmt::Debug for MetadataResult {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MetadataResult")
+            .field("leading_entry_count", &self.leading_entries.len())
+            .field("section_count", &self.sections.len())
+            .finish()
+    }
 }
 
 impl MetadataResult {
@@ -201,12 +221,27 @@ impl RunRetentionTimeRange {
 }
 
 /// Typed facts established by the run-summary formatter.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct RunSummaryResult {
     total_spectrum_count: u64,
     counts_by_ms_level: Vec<MsLevelCount>,
     chromatogram_count: Option<u64>,
     retention_time_range: Option<RunRetentionTimeRange>,
+}
+
+impl fmt::Debug for RunSummaryResult {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RunSummaryResult")
+            .field("total_spectrum_count", &self.total_spectrum_count)
+            .field("ms_level_bucket_count", &self.counts_by_ms_level.len())
+            .field("chromatogram_count", &self.chromatogram_count)
+            .field(
+                "retention_time_range_emitted",
+                &self.retention_time_range.is_some(),
+            )
+            .finish()
+    }
 }
 
 impl RunSummaryResult {
@@ -366,7 +401,7 @@ pub enum SpectrumIdentityConflict {
 }
 
 /// One exact row from `spectrum_table delimiter=tab`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct SpectrumTableRow {
     identity: SpectrumIdentity,
     event: String,
@@ -383,6 +418,27 @@ pub struct SpectrumTableRow {
     thermo_mono_mz: Option<f64>,
     filter_string_mz: Option<f64>,
     ion_injection_time: Option<f64>,
+}
+
+impl fmt::Debug for SpectrumTableRow {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SpectrumTableRow")
+            .field("identity", &self.identity)
+            .field("event_emitted", &!self.event.is_empty())
+            .field("analyzer_emitted", &!self.analyzer.is_empty())
+            .field("ms_level", &self.ms_level)
+            .field("retention_time_unit", &self.retention_time.unit)
+            .field("charge_emitted", &self.charge.is_some())
+            .field("precursor_mz_emitted", &self.precursor_mz.is_some())
+            .field("thermo_mono_mz_emitted", &self.thermo_mono_mz.is_some())
+            .field("filter_string_mz_emitted", &self.filter_string_mz.is_some())
+            .field(
+                "ion_injection_time_emitted",
+                &self.ion_injection_time.is_some(),
+            )
+            .finish()
+    }
 }
 
 impl SpectrumTableRow {
@@ -463,9 +519,18 @@ impl SpectrumTableRow {
 }
 
 /// Spectrum-table rows in backend/source order.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct SpectrumTableResult {
     rows: Vec<SpectrumTableRow>,
+}
+
+impl fmt::Debug for SpectrumTableResult {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SpectrumTableResult")
+            .field("row_count", &self.rows.len())
+            .finish()
+    }
 }
 
 impl SpectrumTableResult {
@@ -488,13 +553,25 @@ pub enum TicSourceOrder {
 }
 
 /// One TIC point in backend/source order.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct TicPoint {
     identity: SpectrumIdentity,
     ms_level: u32,
     retention_time: RetentionTime,
     summed_intensity: f64,
     source_ordinal: usize,
+}
+
+impl fmt::Debug for TicPoint {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TicPoint")
+            .field("identity", &self.identity)
+            .field("ms_level", &self.ms_level)
+            .field("retention_time_unit", &self.retention_time.unit)
+            .field("source_ordinal", &self.source_ordinal)
+            .finish()
+    }
 }
 
 impl TicPoint {
@@ -525,12 +602,24 @@ impl TicPoint {
 }
 
 /// A derived TIC trace that retains the backend's spectrum-index order.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct TicResult {
     points: Vec<TicPoint>,
     ms_level_filter: Option<u8>,
     intensity_origin: TicIntensityOrigin,
     source_order: TicSourceOrder,
+}
+
+impl fmt::Debug for TicResult {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TicResult")
+            .field("point_count", &self.points.len())
+            .field("ms_level_filter", &self.ms_level_filter)
+            .field("intensity_origin", &self.intensity_origin)
+            .field("source_order", &self.source_order)
+            .finish()
+    }
 }
 
 impl TicResult {
@@ -570,11 +659,20 @@ impl TicResult {
 }
 
 /// One precursor record emitted by the binary formatter.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct SpectrumPrecursor {
     index: u64,
     mz: f64,
     intensity: f64,
+}
+
+impl fmt::Debug for SpectrumPrecursor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SpectrumPrecursor")
+            .field("index", &self.index)
+            .finish()
+    }
 }
 
 impl SpectrumPrecursor {
@@ -1971,7 +2069,8 @@ mod tests {
         let debug = format!("{metadata:?}");
         assert!(!debug.contains("opaque-value"));
         assert!(!debug.contains("retained"));
-        assert!(debug.contains("<opaque-sensitive>"));
+        assert!(!debug.contains("MetadataEntry"));
+        assert!(debug.contains("section_count: 5"));
     }
 
     #[test]
@@ -2793,11 +2892,43 @@ mod tests {
     }
 
     #[test]
-    fn reportable_debug_output_does_not_expose_raw_content_or_selected_arrays() {
+    fn reportable_preview_debug_output_uses_bounded_redacted_projections() {
         let manifest = PreviewOutputManifest::single_complete_file(b"sensitive payload");
         let manifest_debug = format!("{manifest:?}");
         assert!(!manifest_debug.contains("sensitive payload"));
         assert!(manifest_debug.contains("<opaque-sensitive>"));
+
+        let process = completed_process(Vec::new());
+        let metadata_outcome = interpret_preview(
+            &PreviewOperation::Metadata,
+            &process,
+            &PreviewOutputManifest::single_complete_file(METADATA_FIXTURE),
+        )
+        .expect("metadata fixture is valid");
+        let metadata_debug = format!("{metadata_outcome:?}");
+        assert!(!metadata_debug.contains("MetadataEntry"));
+        assert!(!metadata_debug.contains("opaque-value"));
+        assert!(metadata_debug.contains("leading_entry_count: 0"));
+        assert!(metadata_debug.contains("section_count: 5"));
+
+        let metadata = parse_metadata(METADATA_FIXTURE).expect("metadata fixture is valid");
+        let section_debug = format!("{:?}", metadata.sections()[0]);
+        assert!(!section_debug.contains("MetadataEntry"));
+        assert!(!section_debug.contains("opaque-value"));
+        assert!(section_debug.contains("entry_count: 1"));
+
+        let summary_process = completed_process(run_summary_fixture().into_bytes());
+        let summary_outcome = interpret_preview(
+            &PreviewOperation::RunSummary,
+            &summary_process,
+            &PreviewOutputManifest::empty(),
+        )
+        .expect("run-summary fixture is valid");
+        let summary_debug = format!("{summary_outcome:?}");
+        assert!(!summary_debug.contains("RetentionTime"));
+        assert!(!summary_debug.contains("0.1"));
+        assert!(summary_debug.contains("total_spectrum_count: 2"));
+        assert!(summary_debug.contains("ms_level_bucket_count:"));
 
         let identity = SpectrumIdentity::from_raw(
             0,
@@ -2809,7 +2940,6 @@ mod tests {
         let debug = format!("{identity:?}");
         assert!(!debug.contains("scan=19"));
 
-        let process = completed_process(Vec::new());
         let outcome = interpret_preview(
             &PreviewOperation::SpectrumByIndex {
                 index: 0,
@@ -2831,5 +2961,54 @@ mod tests {
         }
         assert!(selected_debug.contains("point_count: 2"));
         assert!(selected_debug.contains("precursor_count: 1"));
+
+        let table_outcome = interpret_preview(
+            &PreviewOperation::SpectrumTable,
+            &process,
+            &PreviewOutputManifest::single_complete_file(SPECTRUM_TABLE_FIXTURE),
+        )
+        .expect("spectrum-table fixture is valid");
+        let table_debug = format!("{table_outcome:?}");
+        for sensitive_value in ["FTMS", "ITMS", "445.3", "500.0"] {
+            assert!(!table_debug.contains(sensitive_value));
+        }
+        assert!(table_debug.contains("row_count: 2"));
+
+        let table =
+            parse_spectrum_table(SPECTRUM_TABLE_FIXTURE).expect("spectrum-table fixture is valid");
+        let row_debug = format!("{:?}", table.rows()[1]);
+        for sensitive_value in ["ITMS", "445.3", "250.0", "75.0"] {
+            assert!(!row_debug.contains(sensitive_value));
+        }
+        assert!(row_debug.contains("precursor_mz_emitted: true"));
+
+        let tic_outcome = interpret_preview(
+            &PreviewOperation::Tic { ms_level: None },
+            &process,
+            &PreviewOutputManifest::single_complete_file(TIC_FIXTURE),
+        )
+        .expect("TIC fixture is valid");
+        let tic_debug = format!("{tic_outcome:?}");
+        for sensitive_value in ["0.1", "0.2", "100.0", "75.0"] {
+            assert!(!tic_debug.contains(sensitive_value));
+        }
+        assert!(tic_debug.contains("point_count: 2"));
+        assert!(tic_debug.contains("RecomputedSummedIntensity"));
+        assert!(tic_debug.contains("SpectrumIndex"));
+
+        let tic = parse_tic(TIC_FIXTURE, None).expect("TIC fixture is valid");
+        let point_debug = format!("{:?}", tic.points()[0]);
+        for sensitive_value in ["0.1", "100.0"] {
+            assert!(!point_debug.contains(sensitive_value));
+        }
+        assert!(point_debug.contains("source_ordinal: 0"));
+
+        let selected = parse_selected_spectrum(BINARY_FIXTURE, 0, 8)
+            .expect("selected-spectrum fixture is valid");
+        let precursor_debug = format!("{:?}", selected.precursors()[0]);
+        for sensitive_value in ["445.3", "12.0"] {
+            assert!(!precursor_debug.contains(sensitive_value));
+        }
+        assert!(precursor_debug.contains("index: 0"));
     }
 }
