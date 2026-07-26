@@ -947,7 +947,10 @@ const fn is_identifier_continue(value: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
     use crate::command::{
@@ -1326,13 +1329,16 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         let capabilities =
             InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
                 .expect("valid msconvert fixture");
-        let input = test_path("sample.raw");
-        let output = test_path("converted");
+        let test_directory = TestDirectory::new();
+        let input = test_directory.path().join("sample.raw");
+        let output_directory = test_directory.path().join("converted");
+        fs::write(&input, b"source RAW").expect("write source RAW");
+        fs::create_dir(&output_directory).expect("create fresh output directory");
         let command = build_msconvert_command_with_capabilities(
             &capabilities,
             test_path("msconvert.exe"),
             &input,
-            &output,
+            &output_directory,
             OpenFormat::MzMl,
         )
         .expect("complete installed grammar permits mzML planning");
@@ -1343,6 +1349,187 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         assert!(command.contains_argument("--outdir"));
         assert!(!command.contains_argument("--filter"));
         assert_eq!(command.args().len(), 5);
+    }
+
+    #[test]
+    fn public_mzml_planning_rejects_an_existing_default_output() {
+        let capabilities =
+            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+                .expect("valid msconvert fixture");
+        let test_directory = TestDirectory::new();
+        let input = test_directory.path().join("sample.raw");
+        let output_directory = test_directory.path().join("converted");
+        fs::write(&input, b"source RAW").expect("write source RAW");
+        fs::create_dir(&output_directory).expect("create output directory");
+        fs::write(output_directory.join("sample.mzML"), b"existing output")
+            .expect("write existing output");
+
+        let error = build_msconvert_command_with_capabilities(
+            &capabilities,
+            test_path("msconvert.exe"),
+            &input,
+            &output_directory,
+            OpenFormat::MzMl,
+        )
+        .expect_err("an existing default output must not produce a command specification");
+
+        assert_eq!(error, PlanError::OutputDirectoryNotEmpty);
+    }
+
+    #[test]
+    fn public_mzml_planning_rejects_conversion_into_the_input_parent() {
+        let capabilities =
+            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+                .expect("valid msconvert fixture");
+        let output_directory = TestDirectory::new();
+        let input = output_directory.path().join("sample.mzML");
+        fs::write(&input, b"source mzML").expect("write source mzML");
+
+        let error = build_msconvert_command_with_capabilities(
+            &capabilities,
+            test_path("msconvert.exe"),
+            &input,
+            output_directory.path(),
+            OpenFormat::MzMl,
+        )
+        .expect_err("the source directory is not a fresh conversion output directory");
+
+        assert_eq!(error, PlanError::OutputDirectoryNotEmpty);
+        assert_eq!(fs::read(&input).expect("read source mzML"), b"source mzML");
+    }
+
+    #[test]
+    fn public_mzml_planning_rejects_any_nonfresh_output_directory() {
+        let capabilities =
+            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+                .expect("valid msconvert fixture");
+        let test_directory = TestDirectory::new();
+        let input = test_directory.path().join("sample.raw");
+        let output_directory = test_directory.path().join("converted");
+        fs::write(&input, b"source RAW").expect("write source RAW");
+        fs::create_dir(&output_directory).expect("create output directory");
+        fs::write(output_directory.join("unrelated.txt"), b"unrelated")
+            .expect("write unrelated entry");
+
+        let error = build_msconvert_command_with_capabilities(
+            &capabilities,
+            test_path("msconvert.exe"),
+            &input,
+            &output_directory,
+            OpenFormat::MzMl,
+        )
+        .expect_err("a nonfresh output directory must fail closed");
+
+        assert_eq!(error, PlanError::OutputDirectoryNotEmpty);
+    }
+
+    #[test]
+    fn public_mzml_planning_fails_when_the_output_directory_cannot_be_inspected() {
+        let capabilities =
+            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+                .expect("valid msconvert fixture");
+        let test_directory = TestDirectory::new();
+        let input = test_directory.path().join("sample.raw");
+        let missing_output = test_directory.path().join("missing");
+        fs::write(&input, b"source RAW").expect("write source RAW");
+
+        let error = build_msconvert_command_with_capabilities(
+            &capabilities,
+            test_path("msconvert.exe"),
+            &input,
+            &missing_output,
+            OpenFormat::MzMl,
+        )
+        .expect_err("an uninspectable output directory must fail closed");
+
+        assert_eq!(
+            error,
+            PlanError::OutputDirectoryInspectionFailed {
+                kind: std::io::ErrorKind::NotFound,
+            }
+        );
+    }
+
+    #[test]
+    fn public_mzml_planning_rejects_output_equal_to_or_nested_inside_a_directory_input() {
+        let capabilities =
+            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+                .expect("valid msconvert fixture");
+
+        for nested in [false, true] {
+            let test_directory = TestDirectory::new();
+            let input = test_directory.path().join("dataset.raw");
+            fs::create_dir(&input).expect("create directory input");
+            let output_directory = if nested {
+                let output = input.join("converted");
+                fs::create_dir(&output).expect("create nested output directory");
+                output
+            } else {
+                input.clone()
+            };
+
+            let error = build_msconvert_command_with_capabilities(
+                &capabilities,
+                test_path("msconvert.exe"),
+                &input,
+                &output_directory,
+                OpenFormat::MzMl,
+            )
+            .expect_err("output inside a directory input must fail closed");
+
+            assert_eq!(error, PlanError::OutputDirectoryInsideDirectoryInput);
+        }
+    }
+
+    #[test]
+    fn public_mzml_planning_accepts_fresh_sibling_output_for_a_directory_input() {
+        let capabilities =
+            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+                .expect("valid msconvert fixture");
+        let test_directory = TestDirectory::new();
+        let input = test_directory.path().join("dataset.raw");
+        let output_directory = test_directory.path().join("converted");
+        fs::create_dir(&input).expect("create directory input");
+        fs::create_dir(&output_directory).expect("create sibling output directory");
+
+        let command = build_msconvert_command_with_capabilities(
+            &capabilities,
+            test_path("msconvert.exe"),
+            &input,
+            &output_directory,
+            OpenFormat::MzMl,
+        )
+        .expect("a fresh sibling output directory is safe to plan");
+
+        assert_eq!(command.args()[0], input.as_os_str());
+        assert_eq!(command.args()[4], output_directory.as_os_str());
+    }
+
+    #[test]
+    fn public_mzml_planning_fails_when_the_input_cannot_be_inspected() {
+        let capabilities =
+            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+                .expect("valid msconvert fixture");
+        let test_directory = TestDirectory::new();
+        let missing_input = test_directory.path().join("missing.raw");
+        let output_directory = test_directory.path().join("converted");
+        fs::create_dir(&output_directory).expect("create fresh output directory");
+
+        let error = build_msconvert_command_with_capabilities(
+            &capabilities,
+            test_path("msconvert.exe"),
+            &missing_input,
+            &output_directory,
+            OpenFormat::MzMl,
+        )
+        .expect_err("an uninspectable input must fail closed");
+
+        assert_eq!(
+            error,
+            PlanError::InputPathInspectionFailed {
+                kind: std::io::ErrorKind::NotFound,
+            }
+        );
     }
 
     #[test]
@@ -1442,5 +1629,35 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         std::env::current_dir()
             .expect("test current directory")
             .join(relative)
+    }
+
+    static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let sequence = NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock after Unix epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "mscanvas-capability-tests-{}-{timestamp}-{sequence}",
+                std::process::id()
+            ));
+            fs::create_dir(&path).expect("create capability test directory");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
 }

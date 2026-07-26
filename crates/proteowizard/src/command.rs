@@ -1,4 +1,5 @@
 use std::ffi::{OsStr, OsString};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
@@ -108,8 +109,16 @@ pub enum PlanError {
     NonAbsoluteOutputDirectory,
     #[error("input path has no file name")]
     MissingInputName,
+    #[error("input path could not be inspected: {kind}")]
+    InputPathInspectionFailed { kind: io::ErrorKind },
     #[error("output directory must not be empty")]
     MissingOutputDirectory,
+    #[error("output directory could not be inspected: {kind}")]
+    OutputDirectoryInspectionFailed { kind: io::ErrorKind },
+    #[error("output directory must be empty to prevent implicit overwrite")]
+    OutputDirectoryNotEmpty,
+    #[error("output directory must not equal or be nested inside a directory input")]
+    OutputDirectoryInsideDirectoryInput,
     #[error("spectrum precision must be between 0 and 15 decimal places")]
     InvalidSpectrumPrecision,
     #[error("MS-level TIC filter must be between 1 and 255")]
@@ -148,8 +157,9 @@ fn build_msconvert_command(
 }
 
 /// Builds an mzML conversion command only after the complete installed help has
-/// confirmed every option used by the typed plan. mzXML remains unavailable
-/// until source/output integrity validation is implemented.
+/// confirmed every option used by the typed plan and the output directory is a
+/// fresh, inspectable location outside a directory input. mzXML remains
+/// unavailable until source/output integrity validation is implemented.
 pub fn build_msconvert_command_with_capabilities(
     capabilities: &InstalledHelpCapabilities,
     executable: impl Into<PathBuf>,
@@ -160,7 +170,9 @@ pub fn build_msconvert_command_with_capabilities(
     match format {
         OpenFormat::MzMl => {
             capabilities.require_conversion(format)?;
-            build_msconvert_command(executable, input, output_directory, format)
+            let command = build_msconvert_command(executable, input, output_directory, format)?;
+            require_fresh_conversion_output(input, output_directory)?;
+            Ok(command)
         }
         OpenFormat::MzXml => Err(PlanError::MzXmlIntegrityGateRequired),
     }
@@ -255,6 +267,27 @@ fn validate_paths(
         return Err(PlanError::MissingOutputDirectory);
     }
     Ok(())
+}
+
+fn require_fresh_conversion_output(input: &Path, output_directory: &Path) -> Result<(), PlanError> {
+    let canonical_output = std::fs::canonicalize(output_directory)
+        .map_err(|error| PlanError::OutputDirectoryInspectionFailed { kind: error.kind() })?;
+    let mut entries = std::fs::read_dir(&canonical_output)
+        .map_err(|error| PlanError::OutputDirectoryInspectionFailed { kind: error.kind() })?;
+    match entries.next() {
+        Some(Ok(_)) => Err(PlanError::OutputDirectoryNotEmpty),
+        Some(Err(error)) => Err(PlanError::OutputDirectoryInspectionFailed { kind: error.kind() }),
+        None => {
+            let canonical_input = std::fs::canonicalize(input)
+                .map_err(|error| PlanError::InputPathInspectionFailed { kind: error.kind() })?;
+            let input_metadata = std::fs::metadata(&canonical_input)
+                .map_err(|error| PlanError::InputPathInspectionFailed { kind: error.kind() })?;
+            if input_metadata.is_dir() && canonical_output.starts_with(&canonical_input) {
+                return Err(PlanError::OutputDirectoryInsideDirectoryInput);
+            }
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
