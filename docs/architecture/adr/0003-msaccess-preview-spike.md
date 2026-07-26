@@ -48,6 +48,38 @@ The code-contract portion validated fail-closed canonical-path discovery/plannin
 
 The detailed evidence and explicit not-run matrix are recorded in the [M0 ProteoWizard spike report](../../spikes/M0_PROTEOWIZARD_SPIKE.md).
 
+## M0C Slice 1 contract result — 2026-07-26
+
+The evidence-backed preview subset now has typed Rust parsers and an operation-specific
+interpreter. Metadata parsing preserves the measured section order and opaque ordered
+field content without inventing field semantics. Run-summary, spectrum-table, derived-TIC
+and selected-spectrum outputs retain their measured structural distinctions, while
+retention-time units remain explicitly unknown whenever the backend did not emit a unit.
+
+TIC remains a derived/recomputed summed-intensity series. Its points preserve source
+spectrum indices and backend order, with a separate retention-time-ordered projection
+that does not mutate the source view. Canonical spectrum identity preserves every raw
+representation and the zero-based index, reconciles only exact numeric display IDs,
+exact `scan=<N>` native IDs and explicit scan numbers, rejects contradictory scan
+numbers and leaves other native-ID forms opaque.
+
+The interpreter permits exit 0 plus zero output files to become typed `NoResult` only
+for the selected-spectrum operation when both diagnostic streams were captured
+completely and are empty. Diagnostic-bearing or incomplete no-output behavior remains
+unclassified. Missing, empty, malformed or extra output for a required preview operation
+is a semantic failure, while non-zero exit and process launch/cancellation failures
+remain separate. Unsupported-input-like exit 0 behavior is not classified from English
+stderr and remains conservative when no stable structural marker exists.
+
+This slice did not execute ProteoWizard, change dependencies, add UI or Tauri behavior,
+or change conversion behavior. It adds contract and deterministic fixture evidence only;
+none of the bounded runtime observations or A/B/C/D ratings above are upgraded.
+
 ## Next evidence gate
 
-This ADR remains proposed because its representative-data, repeated-navigation, large-array and real-cancellation exit criteria are not met. The next slice should implement the typed preview-result and semantic-integrity boundary for the B capabilities, including canonical spectrum identity, RT normalization, derived-TIC labeling and operation-specific output requirements. Keep BPC and mzXML unavailable initially. Then measure repeated navigation and a representative lawful open-format file before exposing the provider as a normal viewer workflow. Real cancellation, a second locale and vendor-format coverage remain separate explicit gates.
+This ADR remains proposed because its representative-data, repeated-navigation,
+large-array and real-cancellation exit criteria are not met. M0C Slice 2 should add mzML
+conversion semantic integrity and measure repeated navigation and a representative lawful
+open-format file before exposing the provider as a normal viewer workflow. Keep BPC and
+mzXML unavailable initially. Real cancellation, a second locale and vendor-format
+coverage remain separate explicit gates.

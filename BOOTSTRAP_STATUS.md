@@ -1,6 +1,6 @@
 # Bootstrap status
 
-**Updated:** 2026-07-24
+**Updated:** 2026-07-26
 
 **Canonical repository:** [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas)
 
@@ -100,6 +100,37 @@ The local Windows Sandbox/VM gate stopped without changing optional features. Ex
 
 The source-reconciled runtime result is capability-specific. Discovery/build identity is A. Metadata, summary/counts, derived TIC/filtering, scan listing, selected spectrum, overall conversion and mzML conversion are B with named parser/scientific limits. mzXML is C because the tested multi-source fixture lost one of four spectra despite exit 0. BPC, repeated navigation, large arrays, progress, real cancellation, locale stability and vendor RAW coverage remain D. The M0 provider decision is therefore still incomplete, but it is no longer blocked by unavailable isolation or absent open-format runtime evidence. See the [M0 ProteoWizard spike report](docs/spikes/M0_PROTEOWIZARD_SPIKE.md).
 
+## M0C Slice 1 preview integrity contracts on 2026-07-26
+
+The ProteoWizard Rust library now owns typed parsers and an operation-specific
+interpreter for the evidence-backed preview subset: metadata, run summary, spectrum
+table, derived TIC and one selected spectrum. Metadata preserves section and field
+order, retains unrecognized field content as opaque data and assigns no scientific
+meaning beyond the measured structure. Retention-time values carry an explicit unknown
+unit when the backend does not emit one; this slice does not assume or normalize them to
+seconds.
+
+TIC points retain their source spectrum indices and backend order and are labeled as
+derived/recomputed summed intensity rather than a stored chromatogram. A separate
+retention-time-ordered projection leaves the source ordering intact. Canonical spectrum
+identity retains the zero-based index and every raw representation, reconciles exact
+numeric display IDs with exact `scan=<N>` native IDs and reported scan numbers, rejects
+conflicts and keeps unrecognized native-ID forms opaque.
+
+The interpreter treats exit 0 plus no generated output as typed `NoResult` only for a
+selected-spectrum request whose stdout/stderr captures are complete and empty.
+Diagnostic-bearing or incomplete no-output cases remain unclassified. Required preview
+outputs instead fail closed when missing, empty, malformed or unexpectedly multiple, and
+backend/process failures remain separate from semantic output interpretation.
+Unsupported-input-like exit 0 behavior remains conservative and unclassified unless a
+stable structural marker exists; English stderr is not a protocol.
+
+This was a contract-only slice. It did not execute ProteoWizard, add or update a
+dependency, change UI or Tauri behavior, or change conversion semantics. M0C remains
+incomplete: Slice 2 must add mzML conversion semantic integrity and representative
+open-format navigation/scale measurements. BPC, real-backend cancellation, alternate
+locale and vendor-format coverage remain separate gates.
+
 ## Windows validation completed on 2026-07-23
 
 | Command | Result |
@@ -133,10 +164,11 @@ claim a rendered Windows runtime smoke test.
 
 - Launch and interact with `pnpm tauri dev` on Windows; a build alone is not a
   rendered runtime check.
-- Complete the remaining ProteoWizard provider gates: typed semantic preview results,
-  canonical spectrum identity, representative/repeated-navigation and large-array
-  measurements, BPC strategy, real cancellation, alternate-locale parsing and separately
-  authorized vendor coverage. The bounded open-format disposable-VM matrix is complete.
+- Complete the remaining ProteoWizard provider gates: M0C Slice 2 conversion semantic
+  integrity, representative/repeated-navigation and large-array measurements, BPC
+  strategy, real cancellation, alternate-locale parsing and separately authorized vendor
+  coverage. The typed preview-result/canonical-identity boundary and the bounded
+  open-format disposable-VM matrix are complete.
 - Enable branch protection after the first green remote CI run.
 
 ## First verified-bootstrap checklist
@@ -150,5 +182,7 @@ claim a rendered Windows runtime smoke test.
 - [ ] Run `pnpm tauri dev` on Windows.
 - [x] Confirm Tauri capability configuration remains minimal.
 - [ ] Complete the M0 ProteoWizard provider decision; portable/open-format evidence is
-  complete, while the named B/C/D parser, scale, cancellation, locale, BPC and vendor gates remain.
+  complete and the M0C Slice 1 preview contracts are implemented, while conversion
+  integrity, representative scale/navigation, cancellation, locale, BPC and vendor gates
+  remain.
 - [ ] Enable branch protection after the first green CI run.

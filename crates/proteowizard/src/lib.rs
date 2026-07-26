@@ -1,11 +1,12 @@
-//! Discovery, typed command planning, and spike-level process contracts for a
-//! user-installed ProteoWizard backend.
+//! Discovery, typed command planning, process supervision, and typed preview
+//! output interpretation for a user-installed ProteoWizard backend.
 
 mod capability;
 mod command;
 mod diagnostics;
 mod discovery;
 mod failure;
+mod preview;
 mod process;
 mod sha256;
 
@@ -26,6 +27,16 @@ pub use discovery::{
 };
 pub use failure::{
     FailureCondition, FailureKind, NormalizedFailure, Retryability, classify_process_failure,
+};
+pub use preview::{
+    MetadataEntry, MetadataResult, MetadataSection, MetadataSectionKind, MsLevelBucket,
+    MsLevelCount, NumericPrecisionEvidence, PreviewInputSource, PreviewInterpretError,
+    PreviewMalformedKind, PreviewNoResult, PreviewOutcome, PreviewOutputEntry,
+    PreviewOutputManifest, PreviewValue, RetentionTime, RunRetentionTimeRange, RunSummaryResult,
+    SelectedSpectrumResult, SpectrumIdentifier, SpectrumIdentifierKind, SpectrumIdentity,
+    SpectrumIdentityConflict, SpectrumPrecursor, SpectrumRepresentationState, SpectrumTableResult,
+    SpectrumTableRow, TicIntensityOrigin, TicPoint, TicResult, TicSourceOrder, UnitState,
+    interpret_preview,
 };
 pub use process::{
     CancellationToken, LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner,

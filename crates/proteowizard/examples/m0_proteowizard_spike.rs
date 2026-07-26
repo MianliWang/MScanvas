@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io::Read;
 #[cfg(windows)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -17,13 +18,16 @@ use std::time::{Duration, SystemTime};
 use mscanvas_proteowizard::{
     AvailabilityState, BackendTool, CancellationToken, ConfiguredLocation, DiscoveredTool,
     DiscoveryRequest, FailureCondition, FailureKind, InstalledHelpCapabilities, OpenFormat,
-    PreviewOperation, Redactor, ReportableProcessOutput, Retryability, Sha256Digest,
-    build_msaccess_command_with_capabilities, build_msconvert_command_with_capabilities,
-    classify_process_failure, discover, execute_cancellable,
+    PreviewInterpretError, PreviewOperation, PreviewOutcome, PreviewOutputEntry,
+    PreviewOutputManifest, PreviewValue, Redactor, ReportableProcessOutput, Retryability,
+    Sha256Digest, build_msaccess_command_with_capabilities,
+    build_msconvert_command_with_capabilities, classify_process_failure, discover,
+    execute_cancellable, interpret_preview,
 };
 
 const DIAGNOSTIC_PREVIEW_CHARS: usize = 4_096;
 const SPECTRUM_PRECISION: u8 = 8;
+const MAX_PREVIEW_TEXT_BYTES: u64 = 8 * 1024 * 1024;
 
 fn main() -> ExitCode {
     match parse_args(env::args_os().skip(1)).and_then(run) {
@@ -458,6 +462,7 @@ fn run(cli: Cli) -> Result<(), HarnessError> {
         .output_dir
         .as_deref()
         .ok_or_else(|| HarnessError::operation("validated output directory is unavailable"))?;
+    let preview_operation = requested_preview_operation(&cli)?;
     let (tool, command) = build_command(&cli, &capabilities, input, output_dir)?;
     let expected_conversion_file_name = command
         .output_destination()
@@ -479,6 +484,16 @@ fn run(cli: Cli) -> Result<(), HarnessError> {
     match process_result {
         Ok(output) => {
             let output_changed = before != after;
+            let preview_interpretation = if let Some(operation) = &preview_operation {
+                let manifest = if output.success() {
+                    capture_preview_output_manifest(output_dir, &after, operation)
+                } else {
+                    PreviewOutputManifest::empty()
+                };
+                Some(interpret_preview(operation, &output, &manifest))
+            } else {
+                None
+            };
             let conversion_validation = if output.success() && cli.mode == Mode::Convert {
                 Some(validate_conversion_output(
                     &after,
@@ -542,6 +557,17 @@ fn run(cli: Cli) -> Result<(), HarnessError> {
                 return Err(HarnessError::operation(
                     "the backend operation did not complete successfully",
                 ));
+            }
+            if let Some(interpretation) = preview_interpretation {
+                match interpretation {
+                    Ok(outcome) => print_preview_outcome(&outcome),
+                    Err(error) => {
+                        print_preview_interpretation_error(&error);
+                        return Err(HarnessError::operation(
+                            "the preview output did not satisfy the typed integrity contract",
+                        ));
+                    }
+                }
             }
             Ok(())
         }
@@ -1213,6 +1239,25 @@ fn build_command(
     planned.map_err(|error| HarnessError::operation(format!("command planning failed: {error}")))
 }
 
+fn requested_preview_operation(cli: &Cli) -> Result<Option<PreviewOperation>, HarnessError> {
+    let operation = match cli.mode {
+        Mode::Metadata => Some(PreviewOperation::Metadata),
+        Mode::RunSummary => Some(PreviewOperation::RunSummary),
+        Mode::SpectrumTable => Some(PreviewOperation::SpectrumTable),
+        Mode::Tic => Some(PreviewOperation::Tic {
+            ms_level: cli.ms_level,
+        }),
+        Mode::Spectrum => Some(PreviewOperation::SpectrumByIndex {
+            index: cli.spectrum_index.ok_or_else(|| {
+                HarnessError::operation("validated spectrum index is unavailable")
+            })?,
+            precision: SPECTRUM_PRECISION,
+        }),
+        Mode::RuntimeProof | Mode::Probe | Mode::Convert => None,
+    };
+    Ok(operation)
+}
+
 fn conversion_output_file_name(input: &Path, format: OpenFormat) -> Result<OsString, HarnessError> {
     let stem = input
         .file_stem()
@@ -1437,6 +1482,98 @@ fn snapshot_directory(
     Ok(snapshot)
 }
 
+fn capture_preview_output_manifest(
+    output_dir: &Path,
+    snapshot: &BTreeMap<OsString, EntryFingerprint>,
+    operation: &PreviewOperation,
+) -> PreviewOutputManifest {
+    let needs_file_bytes = *operation != PreviewOperation::RunSummary && snapshot.len() == 1;
+    let mut entries = Vec::with_capacity(snapshot.len());
+    for (name, fingerprint) in snapshot {
+        if fingerprint.is_directory {
+            entries.push(PreviewOutputEntry::Directory);
+            continue;
+        }
+        if !fingerprint.is_file || fingerprint.is_symlink || fingerprint.is_reparse_point {
+            entries.push(PreviewOutputEntry::Other);
+            continue;
+        }
+        if !needs_file_bytes || fingerprint.length > MAX_PREVIEW_TEXT_BYTES {
+            entries.push(PreviewOutputEntry::incomplete_file(0, fingerprint.length));
+            continue;
+        }
+
+        let path = output_dir.join(name);
+        let Ok(current_metadata) = fs::symlink_metadata(&path) else {
+            entries.push(PreviewOutputEntry::incomplete_file(0, fingerprint.length));
+            continue;
+        };
+        if !current_metadata.is_file()
+            || current_metadata.file_type().is_symlink()
+            || is_reparse_point(&current_metadata)
+        {
+            entries.push(PreviewOutputEntry::Other);
+            continue;
+        }
+        if current_metadata.len() > MAX_PREVIEW_TEXT_BYTES {
+            entries.push(PreviewOutputEntry::incomplete_file(
+                0,
+                current_metadata.len().max(fingerprint.length),
+            ));
+            continue;
+        }
+
+        let Ok(file) = fs::File::open(&path) else {
+            entries.push(PreviewOutputEntry::incomplete_file(0, fingerprint.length));
+            continue;
+        };
+        let Ok(opened_metadata) = file.metadata() else {
+            entries.push(PreviewOutputEntry::incomplete_file(0, fingerprint.length));
+            continue;
+        };
+        if !opened_metadata.is_file() || opened_metadata.len() > MAX_PREVIEW_TEXT_BYTES {
+            entries.push(PreviewOutputEntry::incomplete_file(
+                0,
+                opened_metadata.len().max(fingerprint.length),
+            ));
+            continue;
+        }
+
+        let mut reader = file.take(MAX_PREVIEW_TEXT_BYTES + 1);
+        let mut bytes = Vec::new();
+        if reader.read_to_end(&mut bytes).is_err() {
+            entries.push(PreviewOutputEntry::incomplete_file(0, fingerprint.length));
+            continue;
+        }
+        let captured_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        let final_length = reader
+            .get_ref()
+            .metadata()
+            .ok()
+            .map_or(opened_metadata.len(), |metadata| metadata.len());
+        let observed_total = fingerprint
+            .length
+            .max(current_metadata.len())
+            .max(opened_metadata.len())
+            .max(final_length)
+            .max(captured_bytes);
+        if captured_bytes > MAX_PREVIEW_TEXT_BYTES
+            || captured_bytes != fingerprint.length
+            || captured_bytes != current_metadata.len()
+            || captured_bytes != opened_metadata.len()
+            || captured_bytes != final_length
+        {
+            entries.push(PreviewOutputEntry::incomplete_file(
+                captured_bytes.min(MAX_PREVIEW_TEXT_BYTES),
+                observed_total,
+            ));
+        } else {
+            entries.push(PreviewOutputEntry::complete_file(bytes));
+        }
+    }
+    PreviewOutputManifest::new(entries)
+}
+
 #[cfg(windows)]
 fn is_reparse_point(metadata: &fs::Metadata) -> bool {
     use std::os::windows::fs::MetadataExt;
@@ -1518,6 +1655,67 @@ fn require_fresh_output_directory(
         Err(HarnessError::operation(
             "the explicit output directory must be empty to prevent implicit overwrite during this spike",
         ))
+    }
+}
+
+fn print_preview_outcome(outcome: &PreviewOutcome) {
+    match outcome {
+        PreviewOutcome::NoResult(mscanvas_proteowizard::PreviewNoResult::SpectrumUnavailable {
+            requested_index,
+        }) => {
+            println!("preview.interpretation=no_result");
+            println!("preview.result_kind=spectrum_unavailable");
+            println!("preview.requested_index={requested_index}");
+        }
+        PreviewOutcome::Value(value) => {
+            println!("preview.interpretation=success");
+            match value.as_ref() {
+                PreviewValue::Metadata(metadata) => {
+                    println!("preview.result_kind=metadata");
+                    println!(
+                        "preview.metadata.section_count={}",
+                        metadata.sections().len()
+                    );
+                }
+                PreviewValue::RunSummary(summary) => {
+                    println!("preview.result_kind=run_summary");
+                    println!(
+                        "preview.run_summary.spectrum_count={}",
+                        summary.total_spectrum_count()
+                    );
+                }
+                PreviewValue::SpectrumTable(table) => {
+                    println!("preview.result_kind=spectrum_table");
+                    println!("preview.spectrum_table.row_count={}", table.rows().len());
+                }
+                PreviewValue::Tic(tic) => {
+                    println!("preview.result_kind=tic");
+                    println!("preview.tic.point_count={}", tic.points().len());
+                    println!("preview.tic.intensity_origin={:?}", tic.intensity_origin());
+                    println!("preview.tic.source_order={:?}", tic.source_order());
+                    println!("preview.tic.ms_level_filter={:?}", tic.ms_level_filter());
+                }
+                PreviewValue::SelectedSpectrum(spectrum) => {
+                    println!("preview.result_kind=selected_spectrum");
+                    println!(
+                        "preview.selected_spectrum.index={}",
+                        spectrum.identity().index()
+                    );
+                    println!(
+                        "preview.selected_spectrum.point_count={}",
+                        spectrum.mz_values().len()
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn print_preview_interpretation_error(error: &PreviewInterpretError) {
+    println!("preview.interpretation=error");
+    println!("preview.error_kind={}", error.stable_id());
+    if let PreviewInterpretError::MalformedOutput { kind, .. } = error {
+        println!("preview.malformed_kind={}", kind.stable_id());
     }
 }
 
@@ -2045,6 +2243,103 @@ mod tests {
         let error = require_fresh_output_directory(&populated)
             .expect_err("nonempty spike directory must fail closed");
         assert!(error.message.contains("must be empty"));
+    }
+
+    #[test]
+    fn captured_preview_manifest_feeds_the_library_interpreter_without_paths() {
+        let controlled = PreviewOutputDirectory::new();
+        let metadata = concat!(
+            "fileDescription:\n",
+            "sampleList:\n",
+            "instrumentConfigurationList:\n",
+            "softwareList:\n",
+            "dataProcessingList\n",
+        );
+        fs::write(controlled.path.join("metadata.txt"), metadata)
+            .expect("controlled metadata output is written");
+        let snapshot = snapshot_directory(&controlled.path).expect("output snapshot succeeds");
+        let manifest = capture_preview_output_manifest(
+            &controlled.path,
+            &snapshot,
+            &PreviewOperation::Metadata,
+        );
+        let output = mscanvas_proteowizard::ProcessOutput {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            stdout_total_bytes: 0,
+            stderr_total_bytes: 0,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            exit_code: Some(0),
+            elapsed: Duration::ZERO,
+            termination: mscanvas_proteowizard::Termination::Exited,
+            max_active_processes: None,
+            final_active_processes: None,
+        };
+
+        assert!(matches!(
+            interpret_preview(&PreviewOperation::Metadata, &output, &manifest),
+            Ok(PreviewOutcome::Value(_))
+        ));
+        let debug = format!("{manifest:?}");
+        assert!(!debug.contains("metadata.txt"));
+        assert!(!debug.contains("fileDescription"));
+    }
+
+    #[test]
+    fn preview_output_growth_beyond_the_capture_limit_fails_closed() {
+        let controlled = PreviewOutputDirectory::new();
+        let oversized_length = MAX_PREVIEW_TEXT_BYTES + 1;
+        let file = fs::File::create(controlled.path.join("oversized.txt"))
+            .expect("controlled output is created");
+        file.set_len(1)
+            .expect("controlled initial output length is set");
+        drop(file);
+
+        let snapshot = snapshot_directory(&controlled.path).expect("output snapshot succeeds");
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(controlled.path.join("oversized.txt"))
+            .expect("controlled output is reopened");
+        file.set_len(oversized_length)
+            .expect("controlled output is grown beyond the capture limit");
+        drop(file);
+
+        let manifest = capture_preview_output_manifest(
+            &controlled.path,
+            &snapshot,
+            &PreviewOperation::Metadata,
+        );
+
+        assert_eq!(
+            manifest.entries(),
+            &[PreviewOutputEntry::incomplete_file(0, oversized_length)]
+        );
+    }
+
+    struct PreviewOutputDirectory {
+        path: PathBuf,
+    }
+
+    impl PreviewOutputDirectory {
+        fn new() -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock is after Unix epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "mscanvas-preview-output-test-{}-{nonce}",
+                std::process::id()
+            ));
+            fs::create_dir(&path).expect("controlled preview directory is created");
+            Self { path }
+        }
+    }
+
+    impl Drop for PreviewOutputDirectory {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.path).expect("controlled preview directory is removed");
+        }
     }
 
     #[test]
