@@ -15,12 +15,11 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime};
 
 use mscanvas_proteowizard::{
-    AvailabilityState, BackendTool, CancellationToken, CapturedHelpStream, CompleteHelpCapture,
-    ConfiguredLocation, DiscoveredTool, DiscoveryRequest, FailureCondition, FailureKind,
-    InstalledHelpCapabilities, OpenFormat, PreviewOperation, Redactor, ReportableProcessOutput,
-    Retryability, Sha256Digest, build_msaccess_command_with_capabilities,
-    build_msconvert_command_with_capabilities, classify_process_failure, discover,
-    execute_cancellable,
+    AvailabilityState, BackendTool, CancellationToken, ConfiguredLocation, DiscoveredTool,
+    DiscoveryRequest, FailureCondition, FailureKind, InstalledHelpCapabilities, OpenFormat,
+    PreviewOperation, Redactor, ReportableProcessOutput, Retryability, Sha256Digest,
+    build_msaccess_command_with_capabilities, build_msconvert_command_with_capabilities,
+    classify_process_failure, discover, execute_cancellable,
 };
 
 const DIAGNOSTIC_PREVIEW_CHARS: usize = 4_096;
@@ -459,7 +458,7 @@ fn run(cli: Cli) -> Result<(), HarnessError> {
         .output_dir
         .as_deref()
         .ok_or_else(|| HarnessError::operation("validated output directory is unavailable"))?;
-    let (tool, command) = build_command(&cli, &discovery, &capabilities, input, output_dir)?;
+    let (tool, command) = build_command(&cli, &capabilities, input, output_dir)?;
     let expected_conversion_file_name = command
         .output_destination()
         .and_then(Path::file_name)
@@ -1139,7 +1138,6 @@ fn print_discovered_tool(label: &str, tool: &DiscoveredTool, redactor: &Redactor
 
 fn build_command(
     cli: &Cli,
-    discovery: &mscanvas_proteowizard::DiscoveryResult,
     capabilities: &InstalledHelpCapabilities,
     input: &Path,
     output_dir: &Path,
@@ -1157,7 +1155,6 @@ fn build_command(
         }
         Mode::Metadata => build_msaccess_command_with_capabilities(
             capabilities,
-            required_tool_path(&discovery.msaccess, "msaccess")?,
             input,
             output_dir,
             PreviewOperation::Metadata,
@@ -1165,7 +1162,6 @@ fn build_command(
         .map(|command| (BackendTool::MsAccess, command)),
         Mode::RunSummary => build_msaccess_command_with_capabilities(
             capabilities,
-            required_tool_path(&discovery.msaccess, "msaccess")?,
             input,
             output_dir,
             PreviewOperation::RunSummary,
@@ -1173,7 +1169,6 @@ fn build_command(
         .map(|command| (BackendTool::MsAccess, command)),
         Mode::SpectrumTable => build_msaccess_command_with_capabilities(
             capabilities,
-            required_tool_path(&discovery.msaccess, "msaccess")?,
             input,
             output_dir,
             PreviewOperation::SpectrumTable,
@@ -1181,7 +1176,6 @@ fn build_command(
         .map(|command| (BackendTool::MsAccess, command)),
         Mode::Tic => build_msaccess_command_with_capabilities(
             capabilities,
-            required_tool_path(&discovery.msaccess, "msaccess")?,
             input,
             output_dir,
             PreviewOperation::Tic {
@@ -1191,7 +1185,6 @@ fn build_command(
         .map(|command| (BackendTool::MsAccess, command)),
         Mode::Spectrum => build_msaccess_command_with_capabilities(
             capabilities,
-            required_tool_path(&discovery.msaccess, "msaccess")?,
             input,
             output_dir,
             PreviewOperation::SpectrumByIndex {
@@ -1209,7 +1202,6 @@ fn build_command(
             let output_file_name = conversion_output_file_name(input, format)?;
             build_msconvert_command_with_capabilities(
                 capabilities,
-                required_tool_path(&discovery.msconvert, "msconvert")?,
                 input,
                 output_dir,
                 &output_file_name,
@@ -1239,51 +1231,26 @@ fn validate_installed_command_surface(
     cli: &Cli,
     discovery: &mscanvas_proteowizard::DiscoveryResult,
 ) -> Result<InstalledHelpCapabilities, HarnessError> {
-    let (label, backend_tool, tool) = match cli.mode {
+    let (label, tool) = match cli.mode {
         Mode::RuntimeProof | Mode::Probe => {
             return Err(HarnessError::operation(
                 "this mode does not create an operation capability model",
             ));
         }
         Mode::Metadata | Mode::RunSummary | Mode::SpectrumTable | Mode::Tic | Mode::Spectrum => {
-            ("msaccess", BackendTool::MsAccess, &discovery.msaccess)
+            ("msaccess", &discovery.msaccess)
         }
-        Mode::Convert => ("msconvert", BackendTool::MsConvert, &discovery.msconvert),
+        Mode::Convert => ("msconvert", &discovery.msconvert),
     };
 
-    let probe = tool.probe.as_ref().ok_or_else(|| {
+    tool.probe.as_ref().ok_or_else(|| {
         HarnessError::operation("installed help output was not captured for the required tool")
     })?;
-    let stdout_sha256 = Sha256Digest::calculate(&probe.stdout).map_err(|error| {
+    let capabilities = InstalledHelpCapabilities::from_discovered_tool(tool).map_err(|error| {
         HarnessError::operation(format!(
-            "installed {label} stdout could not be hashed: {error}"
+            "installed {label} help did not establish an unambiguous command grammar: {error}"
         ))
     })?;
-    let stderr_sha256 = Sha256Digest::calculate(&probe.stderr).map_err(|error| {
-        HarnessError::operation(format!(
-            "installed {label} stderr could not be hashed: {error}"
-        ))
-    })?;
-    let capture = CompleteHelpCapture::new(
-        CapturedHelpStream::new(
-            &probe.stdout,
-            probe.stdout_total_bytes,
-            probe.stdout_truncated,
-            stdout_sha256,
-        ),
-        CapturedHelpStream::new(
-            &probe.stderr,
-            probe.stderr_total_bytes,
-            probe.stderr_truncated,
-            stderr_sha256,
-        ),
-    );
-    let capabilities =
-        InstalledHelpCapabilities::parse(backend_tool, capture).map_err(|error| {
-            HarnessError::operation(format!(
-                "installed {label} help did not establish an unambiguous command grammar: {error}"
-            ))
-        })?;
 
     match cli.mode {
         Mode::RuntimeProof | Mode::Probe => unreachable!("non-operation modes returned above"),
@@ -1316,26 +1283,22 @@ fn validate_installed_command_surface(
 
     println!("command_surface.tool={label}");
     println!("command_surface.validated_from_installed_help=true");
-    println!("command_surface.help.stdout_sha256={stdout_sha256}");
-    println!("command_surface.help.stderr_sha256={stderr_sha256}");
-    if backend_tool == BackendTool::MsAccess {
+    let raw_help_hashes = capabilities.raw_help_hashes();
+    println!(
+        "command_surface.help.stdout_sha256={}",
+        raw_help_hashes.stdout
+    );
+    println!(
+        "command_surface.help.stderr_sha256={}",
+        raw_help_hashes.stderr
+    );
+    if capabilities.tool() == BackendTool::MsAccess {
         println!(
             "command_surface.tic_capability={:?}",
             capabilities.tic_capability()
         );
     }
     Ok(capabilities)
-}
-
-fn required_tool_path(tool: &DiscoveredTool, label: &str) -> Result<PathBuf, HarnessError> {
-    if !tool.exists {
-        return Err(HarnessError::operation(format!(
-            "the required {label} tool is unavailable"
-        )));
-    }
-    tool.path
-        .clone()
-        .ok_or_else(|| HarnessError::operation(format!("the required {label} path is unavailable")))
 }
 
 fn print_command(command: &mscanvas_proteowizard::CommandSpec, redactor: &Redactor) {
@@ -1721,7 +1684,6 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use mscanvas_proteowizard::{DiscoveryResult, DiscoverySource, ToolProbe};
 
     #[test]
     fn scientific_stdout_summary_is_digest_only() {
@@ -2057,88 +2019,6 @@ mod tests {
         }
     }
 
-    #[cfg(windows)]
-    #[test]
-    fn conversion_fails_closed_until_installed_help_confirms_every_planned_flag() {
-        let cli = convert_cli();
-        for (declaration, capability) in [
-            (
-                "  -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data\n",
-                "zlib",
-            ),
-            (
-                "  --outfile arg                      : Override the name of output file.\n",
-                "outfile",
-            ),
-        ] {
-            let incomplete = discovery_with_help(&MSCONVERT_HELP.replace(declaration, ""), "");
-            let error = validate_installed_command_surface(&cli, &incomplete)
-                .expect_err("a missing conversion declaration must fail closed");
-            assert!(error.message.contains("complete typed operation"));
-            assert!(error.message.contains(capability));
-        }
-
-        let complete = discovery_with_help(MSCONVERT_HELP, "");
-        validate_installed_command_surface(&cli, &complete)
-            .expect("installed grammar confirms every conversion flag");
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn mzxml_conversion_reaches_the_public_integrity_gate_after_grammar_validation() {
-        let mut cli = convert_cli();
-        cli.format = Some(OpenFormat::MzXml);
-        let mut discovery = discovery_with_help(MSCONVERT_HELP, "");
-        let current_directory = std::env::current_dir().expect("test current directory");
-        discovery.msconvert.path = Some(current_directory.join("msconvert.exe"));
-        let capabilities = validate_installed_command_surface(&cli, &discovery)
-            .expect("installed help recognizes the complete mzXML grammar");
-
-        let error = build_command(
-            &cli,
-            &discovery,
-            &capabilities,
-            &current_directory.join("sample.raw"),
-            &current_directory.join("converted"),
-        )
-        .expect_err("the public planner must not return an mzXML command");
-
-        assert_eq!(error.exit_code, 1);
-        assert_eq!(
-            error.message,
-            "command planning failed: mzXML conversion is unavailable until source/output integrity validation is implemented"
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn installed_help_with_truncated_stdout_fails_closed_even_when_grammar_exists() {
-        let cli = convert_cli();
-        let mut discovery = discovery_with_help(MSCONVERT_HELP, "");
-        let probe = discovery.msconvert.probe.as_mut().expect("msconvert probe");
-        probe.stdout_total_bytes += 1;
-        probe.stdout_truncated = true;
-
-        let error = validate_installed_command_surface(&cli, &discovery)
-            .expect_err("truncated stdout must invalidate installed help");
-        assert!(error.message.contains("stdout help capture is truncated"));
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn installed_help_with_truncated_stderr_fails_closed_even_when_grammar_exists() {
-        let cli = convert_cli();
-        let mut discovery = discovery_with_help(MSCONVERT_HELP, "");
-        let probe = discovery.msconvert.probe.as_mut().expect("msconvert probe");
-        probe.stderr = b"diagnostic".to_vec();
-        probe.stderr_total_bytes = probe.stderr.len() as u64 + 1;
-        probe.stderr_truncated = true;
-
-        let error = validate_installed_command_surface(&cli, &discovery)
-            .expect_err("truncated stderr must invalidate installed help");
-        assert!(error.message.contains("stderr help capture is truncated"));
-    }
-
     #[test]
     fn ms_level_parser_rejects_zero_and_out_of_range_values() {
         assert_eq!(parse_nonzero_u8(OsStr::new("2"), "--ms-level").unwrap(), 2);
@@ -2344,53 +2224,5 @@ mod tests {
             .expect("a sibling output directory is outside the acquisition");
         reject_output_inside_directory_input(&input, &nested_output, false)
             .expect("file inputs do not contain output directories");
-    }
-
-    fn convert_cli() -> Cli {
-        Cli {
-            mode: Mode::Convert,
-            runtime_root: None,
-            proteowizard_home: None,
-            proteowizard_executable: None,
-            input: Some(PathBuf::from("input.mzML")),
-            output_dir: Some(PathBuf::from("output")),
-            spectrum_index: None,
-            ms_level: None,
-            format: Some(OpenFormat::MzMl),
-            cancel_after_ms: None,
-        }
-    }
-
-    const MSCONVERT_HELP: &str = r#"Usage: msconvert [options] [filemasks]
-Convert mass spec data file formats.
-
-Options:
-  -o [ --outdir ] arg (=.)           : set output directory
-  --outfile arg                      : Override the name of output file.
-  --mzML                             : write mzML format [default]
-  --mzXML                            : write mzXML format
-  -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data
-"#;
-
-    fn discovery_with_help(msconvert_help: &str, msaccess_help: &str) -> DiscoveryResult {
-        DiscoveryResult {
-            availability: AvailabilityState::Available,
-            source: Some(DiscoverySource::ConfiguredHome),
-            msconvert: discovered_tool("msconvert.exe", msconvert_help),
-            msaccess: discovered_tool("msaccess.exe", msaccess_help),
-            same_installation: true,
-            release: Some("test-release".to_owned()),
-            build_date: Some("test-build".to_owned()),
-            failure: None,
-        }
-    }
-
-    fn discovered_tool(path: &str, help: &str) -> DiscoveredTool {
-        DiscoveredTool {
-            path: Some(PathBuf::from(path)),
-            exists: true,
-            probe: Some(ToolProbe::new(help, "", Some(0), Duration::from_millis(1))),
-            failure: None,
-        }
     }
 }

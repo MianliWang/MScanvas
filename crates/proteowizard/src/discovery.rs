@@ -18,10 +18,7 @@ use crate::process::{
     CancellationToken, LaunchFailureKind, ProcessError, ProcessOutput, Termination,
     execute_cancellable,
 };
-use crate::{
-    CapturedHelpStream, CompleteHelpCapture, InstalledHelpCapabilities, PreviewOperation,
-    Sha256Digest,
-};
+use crate::{InstalledHelpCapabilities, PreviewOperation, Sha256Digest};
 
 const MSCONVERT_EXE: &str = "msconvert.exe";
 const MSACCESS_EXE: &str = "msaccess.exe";
@@ -66,6 +63,40 @@ pub struct ToolProbe {
     pub build_date: Option<String>,
     /// True when the probe emitted more than one distinct release or build-date value.
     pub identity_conflict: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BoundHelpProbe {
+    pub(crate) tool: BackendTool,
+    pub(crate) executable: PathBuf,
+    pub(crate) executable_sha256: Sha256Digest,
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
+    pub(crate) stdout_total_bytes: u64,
+    pub(crate) stderr_total_bytes: u64,
+    pub(crate) stdout_truncated: bool,
+    pub(crate) stderr_truncated: bool,
+}
+
+impl BoundHelpProbe {
+    fn capture(
+        tool: BackendTool,
+        executable: &Path,
+        executable_sha256: Sha256Digest,
+        probe: &ToolProbe,
+    ) -> Self {
+        Self {
+            tool,
+            executable: executable.to_path_buf(),
+            executable_sha256,
+            stdout: probe.stdout.clone(),
+            stderr: probe.stderr.clone(),
+            stdout_total_bytes: probe.stdout_total_bytes,
+            stderr_total_bytes: probe.stderr_total_bytes,
+            stdout_truncated: probe.stdout_truncated,
+            stderr_truncated: probe.stderr_truncated,
+        }
+    }
 }
 
 impl ToolProbe {
@@ -173,6 +204,15 @@ pub enum DiscoveryFailure {
         path: PathBuf,
         detail: String,
     },
+    ProbeExecutableInspectionFailed {
+        executable: String,
+        path: PathBuf,
+        detail: String,
+    },
+    ProbeExecutableChanged {
+        executable: String,
+        path: PathBuf,
+    },
     ProbeTimedOut {
         executable: String,
         path: PathBuf,
@@ -218,6 +258,8 @@ impl DiscoveryFailure {
             Self::MissingTool { .. } => "tool_missing",
             Self::ToolsFromDifferentInstallations { .. } => "different_installations",
             Self::ProbeLaunchFailed { .. }
+            | Self::ProbeExecutableInspectionFailed { .. }
+            | Self::ProbeExecutableChanged { .. }
             | Self::ProbeTimedOut { .. }
             | Self::ProbeNonZero { .. }
             | Self::ProbeMetadataMissing { .. }
@@ -237,6 +279,12 @@ impl DiscoveryFailure {
                 "The ProteoWizard tools resolve to different installations."
             }
             Self::ProbeLaunchFailed { .. } => "A ProteoWizard tool could not be started.",
+            Self::ProbeExecutableInspectionFailed { .. } => {
+                "A ProteoWizard executable could not be verified."
+            }
+            Self::ProbeExecutableChanged { .. } => {
+                "A ProteoWizard executable changed during its self-test."
+            }
             Self::ProbeTimedOut { .. } => "A ProteoWizard self-test timed out.",
             Self::ProbeNonZero { .. } => "A ProteoWizard self-test returned an error.",
             Self::ProbeMetadataMissing { .. } => "The ProteoWizard build could not be identified.",
@@ -263,7 +311,9 @@ impl DiscoveryFailure {
             Self::ToolsFromDifferentInstallations { .. } | Self::ProbeIdentityMismatch { .. } => {
                 "Choose one installation folder containing matching msconvert.exe and msaccess.exe tools."
             }
-            Self::ProbeLaunchFailed { .. } => {
+            Self::ProbeLaunchFailed { .. }
+            | Self::ProbeExecutableInspectionFailed { .. }
+            | Self::ProbeExecutableChanged { .. } => {
                 "Check file permissions and repair or reinstall the selected ProteoWizard installation."
             }
             Self::ProbeTimedOut { .. }
@@ -282,16 +332,24 @@ pub struct DiscoveredTool {
     pub exists: bool,
     pub probe: Option<ToolProbe>,
     pub failure: Option<DiscoveryFailure>,
+    bound_help_probe: Option<BoundHelpProbe>,
 }
 
 impl DiscoveredTool {
     fn at(path: PathBuf) -> Self {
-        let exists = path.is_file();
+        let (path, exists) = match fs::canonicalize(&path) {
+            Ok(canonical_path) => {
+                let exists = canonical_path.is_file();
+                (canonical_path, exists)
+            }
+            Err(_) => (path, false),
+        };
         Self {
             path: Some(path),
             exists,
             probe: None,
             failure: None,
+            bound_help_probe: None,
         }
     }
 
@@ -301,7 +359,14 @@ impl DiscoveredTool {
             exists: false,
             probe: None,
             failure: None,
+            bound_help_probe: None,
         }
+    }
+
+    pub(crate) fn validated_help_probe(&self) -> Option<&BoundHelpProbe> {
+        (self.exists && self.failure.is_none())
+            .then_some(self.bound_help_probe.as_ref())
+            .flatten()
     }
 }
 
@@ -369,7 +434,7 @@ impl DiscoveryEnvironment {
     }
 }
 
-pub trait ProbeExecutor {
+pub(crate) trait ProbeExecutor {
     fn execute(&self, executable: &Path, args: &[OsString]) -> io::Result<ToolProbe>;
 }
 
@@ -477,7 +542,7 @@ pub fn discover(request: impl Borrow<DiscoveryRequest>) -> DiscoveryResult {
     )
 }
 
-pub fn discover_with(
+pub(crate) fn discover_with(
     request: impl Borrow<DiscoveryRequest>,
     environment: &DiscoveryEnvironment,
     executor: &dyn ProbeExecutor,
@@ -683,12 +748,12 @@ fn evaluate_candidate(candidate: Candidate, executor: &dyn ProbeExecutor) -> Dis
     if !msconvert.exists {
         msconvert.failure = Some(missing_tool_failure(MSCONVERT_EXE, &msconvert));
     } else {
-        probe_tool(MSCONVERT_EXE, &mut msconvert, executor);
+        probe_tool(BackendTool::MsConvert, &mut msconvert, executor);
     }
     if !msaccess.exists {
         msaccess.failure = Some(missing_tool_failure(MSACCESS_EXE, &msaccess));
     } else {
-        probe_tool(MSACCESS_EXE, &mut msaccess, executor);
+        probe_tool(BackendTool::MsAccess, &mut msaccess, executor);
     }
 
     let release = preferred_metadata(&msconvert, &msaccess, |probe| &probe.release);
@@ -729,32 +794,75 @@ fn evaluate_candidate(candidate: Candidate, executor: &dyn ProbeExecutor) -> Dis
     }
 }
 
-fn probe_tool(executable_name: &str, tool: &mut DiscoveredTool, executor: &dyn ProbeExecutor) {
+fn probe_tool(backend_tool: BackendTool, tool: &mut DiscoveredTool, executor: &dyn ProbeExecutor) {
+    tool.probe = None;
+    tool.failure = None;
+    tool.bound_help_probe = None;
     let path = tool
         .path
-        .as_deref()
+        .clone()
         .expect("a discovered tool always has a candidate path");
+    let executable_name = match backend_tool {
+        BackendTool::MsConvert => MSCONVERT_EXE,
+        BackendTool::MsAccess => MSACCESS_EXE,
+    };
+    let pre_probe_sha256 = match Sha256Digest::calculate_file(&path) {
+        Ok(digest) => digest,
+        Err(error) => {
+            tool.failure = Some(DiscoveryFailure::ProbeExecutableInspectionFailed {
+                executable: executable_name.to_owned(),
+                path,
+                detail: error.to_string(),
+            });
+            return;
+        }
+    };
     let args = [OsString::from(HELP_ARGUMENT)];
-    match executor.execute(path, &args) {
+    match executor.execute(&path, &args) {
         Ok(mut probe) => {
             probe.parse_build_metadata();
+            let post_probe_sha256 = match Sha256Digest::calculate_file(&path) {
+                Ok(digest) => digest,
+                Err(error) => {
+                    tool.failure = Some(DiscoveryFailure::ProbeExecutableInspectionFailed {
+                        executable: executable_name.to_owned(),
+                        path,
+                        detail: error.to_string(),
+                    });
+                    tool.probe = Some(probe);
+                    return;
+                }
+            };
+            if pre_probe_sha256 != post_probe_sha256 {
+                tool.failure = Some(DiscoveryFailure::ProbeExecutableChanged {
+                    executable: executable_name.to_owned(),
+                    path,
+                });
+                tool.probe = Some(probe);
+                return;
+            }
+            let bound_help_probe =
+                BoundHelpProbe::capture(backend_tool, &path, post_probe_sha256, &probe);
             if probe.identity_conflict {
                 tool.failure = Some(DiscoveryFailure::ProbeMetadataConflict {
                     executable: executable_name.to_owned(),
-                    path: path.to_path_buf(),
+                    path: path.clone(),
                 });
-            } else if !help_probe_exit_is_accepted(executable_name, &probe) {
+            } else if !help_probe_exit_is_accepted(executable_name, &bound_help_probe, &probe) {
                 tool.failure = Some(DiscoveryFailure::ProbeNonZero {
                     executable: executable_name.to_owned(),
-                    path: path.to_path_buf(),
+                    path: path.clone(),
                     exit_code: probe.exit_code,
                     detail: concise_detail(&probe.stderr, &probe.stdout),
                 });
             } else if probe.release.is_none() || probe.build_date.is_none() {
                 tool.failure = Some(DiscoveryFailure::ProbeMetadataMissing {
                     executable: executable_name.to_owned(),
-                    path: path.to_path_buf(),
+                    path: path.clone(),
                 });
+            }
+            if tool.failure.is_none() {
+                tool.bound_help_probe = Some(bound_help_probe);
             }
             tool.probe = Some(probe);
         }
@@ -762,13 +870,13 @@ fn probe_tool(executable_name: &str, tool: &mut DiscoveredTool, executor: &dyn P
             tool.failure = Some(if error.kind() == io::ErrorKind::TimedOut {
                 DiscoveryFailure::ProbeTimedOut {
                     executable: executable_name.to_owned(),
-                    path: path.to_path_buf(),
+                    path: path.clone(),
                     timeout: PROBE_TIMEOUT,
                 }
             } else {
                 DiscoveryFailure::ProbeLaunchFailed {
                     executable: executable_name.to_owned(),
-                    path: path.to_path_buf(),
+                    path: path.clone(),
                     detail: error.to_string(),
                 }
             });
@@ -776,7 +884,11 @@ fn probe_tool(executable_name: &str, tool: &mut DiscoveredTool, executor: &dyn P
     }
 }
 
-fn help_probe_exit_is_accepted(executable_name: &str, probe: &ToolProbe) -> bool {
+fn help_probe_exit_is_accepted(
+    executable_name: &str,
+    bound_help_probe: &BoundHelpProbe,
+    probe: &ToolProbe,
+) -> bool {
     if probe.identity_conflict {
         return false;
     }
@@ -791,27 +903,7 @@ fn help_probe_exit_is_accepted(executable_name: &str, probe: &ToolProbe) -> bool
         return false;
     }
 
-    let Ok(stdout_sha256) = Sha256Digest::calculate(&probe.stdout) else {
-        return false;
-    };
-    let Ok(stderr_sha256) = Sha256Digest::calculate(&probe.stderr) else {
-        return false;
-    };
-    let capture = CompleteHelpCapture::new(
-        CapturedHelpStream::new(
-            &probe.stdout,
-            probe.stdout_total_bytes,
-            probe.stdout_truncated,
-            stdout_sha256,
-        ),
-        CapturedHelpStream::new(
-            &probe.stderr,
-            probe.stderr_total_bytes,
-            probe.stderr_truncated,
-            stderr_sha256,
-        ),
-    );
-    let Ok(capabilities) = InstalledHelpCapabilities::parse(BackendTool::MsAccess, capture) else {
+    let Ok(capabilities) = InstalledHelpCapabilities::parse_bound_help(bound_help_probe) else {
         return false;
     };
     capabilities
@@ -1014,6 +1106,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+    use crate::{HelpCapabilityError, Sha256Digest};
 
     struct TempTree {
         root: PathBuf,
@@ -1093,6 +1186,189 @@ mod tests {
         }
     }
 
+    struct ReplacingProbeExecutor {
+        replacement: Vec<u8>,
+        response: ToolProbe,
+    }
+
+    impl ProbeExecutor for ReplacingProbeExecutor {
+        fn execute(&self, executable: &Path, _args: &[OsString]) -> io::Result<ToolProbe> {
+            fs::write(executable, &self.replacement)?;
+            Ok(self.response.clone())
+        }
+    }
+
+    #[test]
+    fn discovered_executable_is_canonicalized_before_probe() {
+        let tree = TempTree::new("canonical-probe");
+        let installation = tree.installation("pwiz", &[MSCONVERT_EXE]);
+        let executable = installation.join("..").join("pwiz").join(MSCONVERT_EXE);
+        let canonical_executable =
+            fs::canonicalize(&executable).expect("canonical fake executable");
+        let mut tool = DiscoveredTool::at(executable);
+        let executor = FakeProbeExecutor::successful_for([canonical_executable.clone()]);
+
+        probe_tool(BackendTool::MsConvert, &mut tool, &executor);
+
+        assert_eq!(tool.path.as_deref(), Some(canonical_executable.as_path()));
+        assert!(tool.probe.is_some());
+        assert_eq!(
+            executor.calls.lock().expect("call list mutex").as_slice(),
+            &[(canonical_executable, vec![OsString::from(HELP_ARGUMENT)])]
+        );
+    }
+
+    #[test]
+    fn bound_help_receipt_cannot_be_rebound_to_another_installation() {
+        const COMPLETE_MSCONVERT_HELP: &str = r#"ProteoWizard release: 3.0.26013
+Build date: Jan 13 2026
+Usage: msconvert [options] [filemasks]
+
+Options:
+  -o [ --outdir ] arg (=.)           : set output directory
+  --outfile arg                      : Override the name of output file.
+  --mzML                             : write mzML format [default]
+  --mzXML                            : write mzXML format
+  -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data
+"#;
+        const OTHER_INSTALLATION_HELP: &str = r#"ProteoWizard release: 3.0.26013
+Build date: Jan 13 2026
+Usage: msconvert [options] [filemasks]
+
+Options:
+  -o [ --outdir ] arg (=.)           : set output directory
+  --outfile arg                      : Override the name of output file.
+  --mzML                             : write mzML format [default]
+  --mzXML                            : write mzXML format
+  -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data
+
+Examples:
+  msconvert installation-b.raw --mzML
+"#;
+        let tree = TempTree::new("bound-help-receipt");
+        let installation_a = tree.installation("installation-a", &[MSCONVERT_EXE]);
+        let installation_b = tree.installation("installation-b", &[MSCONVERT_EXE]);
+        let executable_alias = installation_a
+            .join("..")
+            .join("installation-a")
+            .join(MSCONVERT_EXE);
+        let canonical_a = fs::canonicalize(&executable_alias).expect("canonical executable A");
+        let canonical_b =
+            fs::canonicalize(installation_b.join(MSCONVERT_EXE)).expect("canonical executable B");
+        let probe_a = ToolProbe::new(
+            COMPLETE_MSCONVERT_HELP,
+            "",
+            Some(0),
+            Duration::from_millis(17),
+        );
+        let mut executor = FakeProbeExecutor::default();
+        executor.responses.insert(canonical_a.clone(), probe_a);
+        let mut discovered = DiscoveredTool::at(executable_alias);
+
+        probe_tool(BackendTool::MsConvert, &mut discovered, &executor);
+
+        discovered.path = Some(canonical_b.clone());
+        discovered.probe = Some(ToolProbe::new(
+            OTHER_INSTALLATION_HELP,
+            "",
+            Some(0),
+            Duration::from_millis(17),
+        ));
+        let capabilities = InstalledHelpCapabilities::from_discovered_tool(&discovered)
+            .expect("the private receipt retains the original executable and capture");
+
+        assert_eq!(capabilities.executable(), canonical_a);
+        assert_ne!(capabilities.executable(), canonical_b);
+        assert_eq!(
+            capabilities.executable_sha256(),
+            Sha256Digest::calculate_file(&canonical_a).expect("hash executable A")
+        );
+        assert_eq!(
+            capabilities.raw_help_hashes().stdout,
+            Sha256Digest::calculate(COMPLETE_MSCONVERT_HELP.as_bytes())
+                .expect("hash installation A help")
+        );
+        assert_ne!(
+            capabilities.raw_help_hashes().stdout,
+            Sha256Digest::calculate(OTHER_INSTALLATION_HELP.as_bytes())
+                .expect("hash installation B help")
+        );
+    }
+
+    #[test]
+    fn capabilities_require_a_validated_bound_help_receipt() {
+        let tree = TempTree::new("unprobed-capability");
+        let installation = tree.installation("pwiz", &[MSCONVERT_EXE]);
+        let discovered = DiscoveredTool::at(installation.join(MSCONVERT_EXE));
+
+        assert_eq!(
+            InstalledHelpCapabilities::from_discovered_tool(&discovered),
+            Err(HelpCapabilityError::ValidatedHelpProbeRequired)
+        );
+    }
+
+    #[test]
+    fn rejected_probe_cannot_be_promoted_by_mutating_public_status() {
+        let tree = TempTree::new("rejected-probe-receipt");
+        let installation = tree.installation("pwiz", &[MSCONVERT_EXE]);
+        let executable =
+            fs::canonicalize(installation.join(MSCONVERT_EXE)).expect("canonical fake executable");
+        let mut executor = FakeProbeExecutor::default();
+        executor.responses.insert(
+            executable.clone(),
+            ToolProbe::new(
+                "ProteoWizard release: 3.0.26013\nBuild date: Jan 13 2026\nUsage: msconvert [options] [filemasks]\nOptions:\n  --mzML : write mzML\n",
+                "probe failed",
+                Some(1),
+                Duration::from_millis(17),
+            ),
+        );
+        let mut discovered = DiscoveredTool::at(executable);
+
+        probe_tool(BackendTool::MsConvert, &mut discovered, &executor);
+        assert!(matches!(
+            discovered.failure,
+            Some(DiscoveryFailure::ProbeNonZero { .. })
+        ));
+
+        discovered.failure = None;
+        discovered.exists = true;
+        assert_eq!(
+            InstalledHelpCapabilities::from_discovered_tool(&discovered),
+            Err(HelpCapabilityError::ValidatedHelpProbeRequired)
+        );
+    }
+
+    #[test]
+    fn executable_replacement_during_probe_fails_without_a_bound_receipt() {
+        let tree = TempTree::new("probe-executable-replacement");
+        let installation = tree.installation("pwiz", &[MSCONVERT_EXE]);
+        let executable =
+            fs::canonicalize(installation.join(MSCONVERT_EXE)).expect("canonical fake executable");
+        let executor = ReplacingProbeExecutor {
+            replacement: b"different executable".to_vec(),
+            response: ToolProbe::new(
+                "ProteoWizard release: 3.0.26013\nBuild date: Jan 13 2026\n",
+                "",
+                Some(0),
+                Duration::from_millis(17),
+            ),
+        };
+        let mut discovered = DiscoveredTool::at(executable);
+
+        probe_tool(BackendTool::MsConvert, &mut discovered, &executor);
+
+        assert!(matches!(
+            discovered.failure,
+            Some(DiscoveryFailure::ProbeExecutableChanged { .. })
+        ));
+        discovered.failure = None;
+        assert_eq!(
+            InstalledHelpCapabilities::from_discovered_tool(&discovered),
+            Err(HelpCapabilityError::ValidatedHelpProbeRequired)
+        );
+    }
+
     #[test]
     fn source_revision_suffix_is_preserved_but_not_compared_as_semantic_release() {
         let msconvert_probe = ToolProbe::new(
@@ -1163,7 +1439,7 @@ mod tests {
         );
         let mut tool = DiscoveredTool::at(path.clone());
 
-        probe_tool(MSCONVERT_EXE, &mut tool, &executor);
+        probe_tool(BackendTool::MsConvert, &mut tool, &executor);
 
         assert!(matches!(
             tool.failure,

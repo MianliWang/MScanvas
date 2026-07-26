@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use crate::capability::{CapabilityRequirementError, InstalledHelpCapabilities};
+use crate::capability::{CapabilityRequirementError, InstalledHelpCapabilities, Sha256Digest};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendTool {
@@ -76,6 +76,7 @@ pub struct CommandSpec {
     pub(crate) executable: PathBuf,
     pub(crate) args: Vec<OsString>,
     pub(crate) working_directory: PathBuf,
+    pub(crate) executable_sha256: Option<Sha256Digest>,
     pub(crate) output_safety: OutputSafety,
 }
 
@@ -91,8 +92,14 @@ impl CommandSpec {
             executable: executable.into(),
             args: args.into_iter().map(Into::into).collect(),
             working_directory: working_directory.into(),
+            executable_sha256: None,
             output_safety: OutputSafety::None,
         }
+    }
+
+    pub(crate) fn with_executable_identity(mut self, sha256: Sha256Digest) -> Self {
+        self.executable_sha256 = Some(sha256);
+        self
     }
 
     pub(crate) fn with_output_destination(
@@ -255,11 +262,11 @@ fn build_msconvert_command(
 /// Builds an mzML conversion command only after the complete installed help has
 /// confirmed every option used by the typed plan and the exact output
 /// destination is absent in an inspectable output root outside a directory
-/// input. mzXML remains unavailable until source/output integrity validation is
-/// implemented.
+/// input. The plan retains the probed executable's SHA-256 for a pre-spawn
+/// identity recheck. mzXML remains unavailable until source/output integrity
+/// validation is implemented.
 pub fn build_msconvert_command_with_capabilities(
     capabilities: &InstalledHelpCapabilities,
-    executable: impl Into<PathBuf>,
     input: &Path,
     output_directory: &Path,
     output_file_name: &OsStr,
@@ -268,13 +275,13 @@ pub fn build_msconvert_command_with_capabilities(
     match format {
         OpenFormat::MzMl => {
             capabilities.require_conversion(format)?;
-            let executable = executable.into();
+            let executable = capabilities.executable().to_path_buf();
             validate_paths(&executable, input, output_directory)?;
             validate_output_file_name(output_file_name, format)?;
             let safe_output = require_safe_output_directory(input, output_directory)?;
             let command = build_msconvert_command(
                 executable,
-                input,
+                &safe_output.canonical_input,
                 &safe_output.output_directory,
                 output_file_name,
                 format,
@@ -285,7 +292,7 @@ pub fn build_msconvert_command_with_capabilities(
                     .output_destination()
                     .expect("conversion commands have an output destination"),
             )?;
-            Ok(command)
+            Ok(command.with_executable_identity(capabilities.executable_sha256()))
         }
         OpenFormat::MzXml => Err(PlanError::MzXmlIntegrityGateRequired),
     }
@@ -307,10 +314,10 @@ fn build_msaccess_command(
 /// Builds an msaccess command only after the complete installed help has
 /// confirmed the exact option, query, parameter, and filter grammar used by
 /// the typed plan and the output directory is a fresh, inspectable location
-/// outside a directory input.
+/// outside a directory input. The plan retains the probed executable's SHA-256
+/// for a pre-spawn identity recheck.
 pub fn build_msaccess_command_with_capabilities(
     capabilities: &InstalledHelpCapabilities,
-    executable: impl Into<PathBuf>,
     input: &Path,
     output_directory: &Path,
     operation: PreviewOperation,
@@ -319,16 +326,20 @@ pub fn build_msaccess_command_with_capabilities(
         return Err(PlanError::InvalidMsLevelFilter);
     }
     capabilities.require_preview_operation(&operation)?;
-    let executable = executable.into();
+    let executable = capabilities.executable().to_path_buf();
     validate_msaccess_request(&executable, input, output_directory, &operation)?;
     let safe_output = require_fresh_output_directory(input, output_directory)?;
-    Ok(
-        build_msaccess_command_spec(executable, input, &safe_output.output_directory, operation)
-            .with_fresh_output_directory(
-                &safe_output.output_directory,
-                safe_output.source_directory_boundary,
-            ),
+    Ok(build_msaccess_command_spec(
+        executable,
+        &safe_output.canonical_input,
+        &safe_output.output_directory,
+        operation,
     )
+    .with_fresh_output_directory(
+        &safe_output.output_directory,
+        safe_output.source_directory_boundary,
+    )
+    .with_executable_identity(capabilities.executable_sha256()))
 }
 
 #[cfg(test)]
@@ -482,13 +493,14 @@ fn inspect_output_directory(output_directory: &Path) -> Result<PathBuf, PlanErro
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SafeOutputDirectory {
     output_directory: PathBuf,
+    canonical_input: PathBuf,
     source_directory_boundary: Option<PathBuf>,
 }
 
-fn source_directory_boundary(
+fn canonical_input_and_directory_boundary(
     input: &Path,
     canonical_output: &Path,
-) -> Result<Option<PathBuf>, PlanError> {
+) -> Result<(PathBuf, Option<PathBuf>), PlanError> {
     let canonical_input = std::fs::canonicalize(input)
         .map_err(|error| PlanError::InputPathInspectionFailed { kind: error.kind() })?;
     let input_metadata = std::fs::metadata(&canonical_input)
@@ -496,7 +508,8 @@ fn source_directory_boundary(
     if input_metadata.is_dir() && canonical_output.starts_with(&canonical_input) {
         return Err(PlanError::OutputDirectoryInsideDirectoryInput);
     }
-    Ok(input_metadata.is_dir().then_some(canonical_input))
+    let source_directory_boundary = input_metadata.is_dir().then(|| canonical_input.clone());
+    Ok((canonical_input, source_directory_boundary))
 }
 
 fn require_safe_output_directory(
@@ -504,9 +517,11 @@ fn require_safe_output_directory(
     output_directory: &Path,
 ) -> Result<SafeOutputDirectory, PlanError> {
     let canonical_output = inspect_output_directory(output_directory)?;
-    let source_directory_boundary = source_directory_boundary(input, &canonical_output)?;
+    let (canonical_input, source_directory_boundary) =
+        canonical_input_and_directory_boundary(input, &canonical_output)?;
     Ok(SafeOutputDirectory {
         output_directory: canonical_output,
+        canonical_input,
         source_directory_boundary,
     })
 }
@@ -522,9 +537,11 @@ fn require_fresh_output_directory(
         Some(Ok(_)) => Err(PlanError::OutputDirectoryNotEmpty),
         Some(Err(error)) => Err(PlanError::OutputDirectoryInspectionFailed { kind: error.kind() }),
         None => {
-            let source_directory_boundary = source_directory_boundary(input, &canonical_output)?;
+            let (canonical_input, source_directory_boundary) =
+                canonical_input_and_directory_boundary(input, &canonical_output)?;
             Ok(SafeOutputDirectory {
                 output_directory: canonical_output,
+                canonical_input,
                 source_directory_boundary,
             })
         }

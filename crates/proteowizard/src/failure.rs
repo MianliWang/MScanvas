@@ -108,6 +108,17 @@ pub fn classify_process_failure(
                 | ProcessError::OutputDirectoryInspectionFailed { .. } => {
                     FailureKind::UnwritableOutputDirectory
                 }
+                ProcessError::ExecutableIdentityInspectionFailed {
+                    kind: std::io::ErrorKind::NotFound,
+                } => match tool {
+                    BackendTool::MsConvert => FailureKind::MsConvertMissing,
+                    BackendTool::MsAccess => FailureKind::MsAccessMissing,
+                },
+                ProcessError::ExecutableIdentityInspectionFailed {
+                    kind: std::io::ErrorKind::PermissionDenied,
+                } => FailureKind::PermissionDenied,
+                ProcessError::ExecutableIdentityInspectionFailed { .. }
+                | ProcessError::ExecutableIdentityChanged => FailureKind::BackendLaunchFailed,
                 ProcessError::Launch { kind, .. } if kind.is_not_found() => match tool {
                     BackendTool::MsConvert => FailureKind::MsConvertMissing,
                     BackendTool::MsAccess => FailureKind::MsAccessMissing,
@@ -291,6 +302,28 @@ mod tests {
         let failure = classify_process_failure(BackendTool::MsConvert, Err(&error), false)
             .expect("launch failure classification");
         assert_eq!(failure.kind, FailureKind::BackendLaunchFailed);
+        assert_eq!(failure.retryability, Retryability::AfterCorrection);
+    }
+
+    #[test]
+    fn changed_executable_identity_has_a_stable_launch_category() {
+        let error = ProcessError::ExecutableIdentityChanged;
+        let failure = classify_process_failure(BackendTool::MsConvert, Err(&error), false)
+            .expect("executable identity classification");
+
+        assert_eq!(failure.kind, FailureKind::BackendLaunchFailed);
+        assert_eq!(failure.retryability, Retryability::AfterCorrection);
+    }
+
+    #[test]
+    fn missing_validated_executable_retains_the_tool_specific_category() {
+        let error = ProcessError::ExecutableIdentityInspectionFailed {
+            kind: std::io::ErrorKind::NotFound,
+        };
+        let failure = classify_process_failure(BackendTool::MsAccess, Err(&error), false)
+            .expect("missing validated executable classification");
+
+        assert_eq!(failure.kind, FailureKind::MsAccessMissing);
         assert_eq!(failure.retryability, Retryability::AfterCorrection);
     }
 

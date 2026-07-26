@@ -22,8 +22,7 @@ pub use command::{
 pub use diagnostics::{Redactor, ReportableProcessOutput};
 pub use discovery::{
     AvailabilityState, ConfiguredLocation, DiscoveredTool, DiscoveryEnvironment, DiscoveryFailure,
-    DiscoveryRequest, DiscoveryResult, DiscoverySource, ProbeExecutor, ToolProbe, discover,
-    discover_with,
+    DiscoveryRequest, DiscoveryResult, DiscoverySource, ToolProbe, discover,
 };
 pub use failure::{
     FailureCondition, FailureKind, NormalizedFailure, Retryability, classify_process_failure,

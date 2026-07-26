@@ -1,19 +1,21 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use thiserror::Error;
 
 use crate::command::{BackendTool, OpenFormat, PreviewOperation};
+use crate::discovery::{BoundHelpProbe, DiscoveredTool};
 use crate::sha256::{Sha256Error, digest_bytes, digest_file};
 
 /// A SHA-256 digest supplied by the component that captured the complete raw
 /// help stream.
 ///
-/// The adapter deliberately does not implement SHA-256 itself. The evidence
-/// runner must calculate each digest with an approved implementation and pass
-/// it alongside the bytes. Keeping the digest in the parsed model prevents a
-/// later sanitized capability summary from losing its link to the raw capture.
+/// Discovery calculates each digest with the approved Windows implementation
+/// while it creates the opaque executable-bound help receipt. Keeping the
+/// digest in the parsed model prevents a later sanitized capability summary
+/// from losing its link to the raw capture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Sha256Digest([u8; 32]);
 
@@ -248,6 +250,8 @@ impl TicCapability {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledHelpCapabilities {
     tool: BackendTool,
+    executable: PathBuf,
+    executable_sha256: Sha256Digest,
     raw_help_hashes: RawHelpHashes,
     options: BTreeMap<String, OptionDeclaration>,
     analysis_queries: BTreeMap<String, NamedGrammarDeclaration>,
@@ -255,9 +259,93 @@ pub struct InstalledHelpCapabilities {
     examples: Vec<HelpExample>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedHelpCapabilities {
+    tool: BackendTool,
+    raw_help_hashes: RawHelpHashes,
+    options: BTreeMap<String, OptionDeclaration>,
+    analysis_queries: BTreeMap<String, NamedGrammarDeclaration>,
+    spectrum_filters: BTreeMap<String, NamedGrammarDeclaration>,
+    examples: Vec<HelpExample>,
+}
+
+impl ParsedHelpCapabilities {
+    fn bind_to_executable(
+        self,
+        executable: PathBuf,
+        executable_sha256: Sha256Digest,
+    ) -> InstalledHelpCapabilities {
+        InstalledHelpCapabilities {
+            tool: self.tool,
+            executable,
+            executable_sha256,
+            raw_help_hashes: self.raw_help_hashes,
+            options: self.options,
+            analysis_queries: self.analysis_queries,
+            spectrum_filters: self.spectrum_filters,
+            examples: self.examples,
+        }
+    }
+}
+
 impl InstalledHelpCapabilities {
-    pub fn parse(
+    /// Parses installed help only from the private receipt that discovery
+    /// captured together with the canonical executable and SHA-256 identity it
+    /// verified across the probe.
+    pub fn from_discovered_tool(
+        discovered_tool: &DiscoveredTool,
+    ) -> Result<Self, HelpCapabilityError> {
+        let bound_help_probe = discovered_tool
+            .validated_help_probe()
+            .ok_or(HelpCapabilityError::ValidatedHelpProbeRequired)?;
+        Self::parse_bound_help(bound_help_probe)
+    }
+
+    pub(crate) fn parse_bound_help(
+        bound_help_probe: &BoundHelpProbe,
+    ) -> Result<Self, HelpCapabilityError> {
+        validate_stream_parts(
+            HelpStream::Stdout,
+            &bound_help_probe.stdout,
+            bound_help_probe.stdout_total_bytes,
+            bound_help_probe.stdout_truncated,
+        )?;
+        validate_stream_parts(
+            HelpStream::Stderr,
+            &bound_help_probe.stderr,
+            bound_help_probe.stderr_total_bytes,
+            bound_help_probe.stderr_truncated,
+        )?;
+        let stdout_sha256 = Sha256Digest::calculate(&bound_help_probe.stdout)
+            .map_err(|_| HelpCapabilityError::DigestUnavailable(HelpStream::Stdout))?;
+        let stderr_sha256 = Sha256Digest::calculate(&bound_help_probe.stderr)
+            .map_err(|_| HelpCapabilityError::DigestUnavailable(HelpStream::Stderr))?;
+        let capture = CompleteHelpCapture::new(
+            CapturedHelpStream::new(
+                &bound_help_probe.stdout,
+                bound_help_probe.stdout_total_bytes,
+                bound_help_probe.stdout_truncated,
+                stdout_sha256,
+            ),
+            CapturedHelpStream::new(
+                &bound_help_probe.stderr,
+                bound_help_probe.stderr_total_bytes,
+                bound_help_probe.stderr_truncated,
+                stderr_sha256,
+            ),
+        );
+        Self::parse_bound_capture(
+            bound_help_probe.tool,
+            bound_help_probe.executable.clone(),
+            bound_help_probe.executable_sha256,
+            capture,
+        )
+    }
+
+    fn parse_bound_capture(
         tool: BackendTool,
+        executable: PathBuf,
+        executable_sha256: Sha256Digest,
         capture: CompleteHelpCapture<'_>,
     ) -> Result<Self, HelpCapabilityError> {
         validate_stream(HelpStream::Stdout, capture.stdout)?;
@@ -271,15 +359,26 @@ impl InstalledHelpCapabilities {
         let mut parser = HelpParser::new(tool);
         parser.parse_stream(stdout)?;
         parser.parse_stream(stderr)?;
-        parser.finish(RawHelpHashes {
+        let parsed = parser.finish(RawHelpHashes {
             stdout: capture.stdout.sha256,
             stderr: capture.stderr.sha256,
-        })
+        })?;
+        Ok(parsed.bind_to_executable(executable, executable_sha256))
     }
 
     #[must_use]
     pub const fn tool(&self) -> BackendTool {
         self.tool
+    }
+
+    #[must_use]
+    pub fn executable(&self) -> &Path {
+        &self.executable
+    }
+
+    #[must_use]
+    pub(crate) const fn executable_sha256(&self) -> Sha256Digest {
+        self.executable_sha256
     }
 
     #[must_use]
@@ -447,15 +546,29 @@ fn validate_stream(
     stream: HelpStream,
     capture: CapturedHelpStream<'_>,
 ) -> Result<(), HelpCapabilityError> {
-    if capture.truncated {
+    validate_stream_parts(
+        stream,
+        capture.bytes,
+        capture.total_bytes,
+        capture.truncated,
+    )
+}
+
+fn validate_stream_parts(
+    stream: HelpStream,
+    bytes: &[u8],
+    total_bytes: u64,
+    truncated: bool,
+) -> Result<(), HelpCapabilityError> {
+    if truncated {
         return Err(HelpCapabilityError::Truncated(stream));
     }
-    let captured_bytes = u64::try_from(capture.bytes.len()).unwrap_or(u64::MAX);
-    if capture.total_bytes != captured_bytes {
+    let captured_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    if total_bytes != captured_bytes {
         return Err(HelpCapabilityError::LengthMismatch {
             stream,
             captured_bytes,
-            total_bytes: capture.total_bytes,
+            total_bytes,
         });
     }
     Ok(())
@@ -482,6 +595,10 @@ pub enum HelpCapabilityError {
         expected: &'static str,
         actual: String,
     },
+    #[error("a validated help probe bound to its executable is required")]
+    ValidatedHelpProbeRequired,
+    #[error("the {0} help capture digest could not be calculated")]
+    DigestUnavailable(HelpStream),
     #[error("help does not contain an Options declaration section")]
     MissingOptionsSection,
     #[error("contradictory {kind} declaration for {name:?}: {first:?} conflicts with {second:?}")]
@@ -675,14 +792,14 @@ impl HelpParser {
     fn finish(
         self,
         raw_help_hashes: RawHelpHashes,
-    ) -> Result<InstalledHelpCapabilities, HelpCapabilityError> {
+    ) -> Result<ParsedHelpCapabilities, HelpCapabilityError> {
         if !self.saw_usage {
             return Err(HelpCapabilityError::MissingUsage(self.tool));
         }
         if !self.saw_options {
             return Err(HelpCapabilityError::MissingOptionsSection);
         }
-        Ok(InstalledHelpCapabilities {
+        Ok(ParsedHelpCapabilities {
             tool: self.tool,
             raw_help_hashes,
             options: self.options,
@@ -966,6 +1083,7 @@ mod tests {
         0xB8, 0x55,
     ]);
     const FIXTURE_SHA256: Sha256Digest = Sha256Digest::from_bytes([0xAB; 32]);
+    const FIXTURE_EXECUTABLE_SHA256: Sha256Digest = Sha256Digest::from_bytes([0xCD; 32]);
 
     const MSACCESS_HELP: &str = r#"Usage: msaccess [options] [filenames]
 MassSpecAccess - command line access to mass spec data files
@@ -1028,9 +1146,100 @@ msconvert data.RAW --mzXML
         )
     }
 
+    fn parse_capabilities(
+        tool: BackendTool,
+        capture: CompleteHelpCapture<'_>,
+    ) -> Result<InstalledHelpCapabilities, HelpCapabilityError> {
+        let executable = fs::canonicalize(std::env::current_exe().expect("test executable"))
+            .expect("canonical test executable");
+        InstalledHelpCapabilities::parse_bound_capture(
+            tool,
+            executable,
+            FIXTURE_EXECUTABLE_SHA256,
+            capture,
+        )
+    }
+
     fn msaccess(text: &str) -> InstalledHelpCapabilities {
-        InstalledHelpCapabilities::parse(BackendTool::MsAccess, capture(text))
-            .expect("valid msaccess fixture")
+        parse_capabilities(BackendTool::MsAccess, capture(text)).expect("valid msaccess fixture")
+    }
+
+    #[test]
+    fn bound_capabilities_supply_the_only_executable_to_public_plans() {
+        let test_directory = TestDirectory::new();
+        let installation_a = test_directory.path().join("installation-a");
+        let installation_b = test_directory.path().join("installation-b");
+        fs::create_dir(&installation_a).expect("create installation A");
+        fs::create_dir(&installation_b).expect("create installation B");
+        let msconvert_a = installation_a.join("msconvert.exe");
+        let msconvert_b = installation_b.join("msconvert.exe");
+        let msaccess_a = installation_a.join("msaccess.exe");
+        fs::write(&msconvert_a, b"installation A converter").expect("write converter A");
+        fs::write(&msconvert_b, b"installation B converter").expect("write converter B");
+        fs::write(&msaccess_a, b"installation A preview").expect("write preview A");
+
+        let converter_alias = installation_a
+            .join("..")
+            .join("installation-a")
+            .join("msconvert.exe");
+        let converter_capabilities = InstalledHelpCapabilities::parse_bound_capture(
+            BackendTool::MsConvert,
+            fs::canonicalize(&converter_alias).expect("canonical converter A alias"),
+            FIXTURE_EXECUTABLE_SHA256,
+            capture(MSCONVERT_HELP),
+        )
+        .expect("bind converter help to installation A");
+        let input = test_directory.path().join("sample.raw");
+        let conversion_output = test_directory.path().join("converted");
+        fs::write(&input, b"source RAW").expect("write source RAW");
+        fs::create_dir(&conversion_output).expect("create conversion output");
+
+        let conversion = build_msconvert_command_with_capabilities(
+            &converter_capabilities,
+            &input,
+            &conversion_output,
+            OsStr::new("sample.mzML"),
+            OpenFormat::MzMl,
+        )
+        .expect("bound conversion command");
+
+        assert_eq!(
+            converter_capabilities.executable(),
+            fs::canonicalize(&msconvert_a)
+                .expect("canonical converter A")
+                .as_path()
+        );
+        assert_eq!(conversion.executable(), converter_capabilities.executable());
+        assert_eq!(
+            conversion.executable_sha256,
+            Some(FIXTURE_EXECUTABLE_SHA256)
+        );
+        assert_ne!(
+            conversion.executable(),
+            fs::canonicalize(&msconvert_b)
+                .expect("canonical converter B")
+                .as_path()
+        );
+
+        let preview_capabilities = InstalledHelpCapabilities::parse_bound_capture(
+            BackendTool::MsAccess,
+            fs::canonicalize(&msaccess_a).expect("canonical preview executable"),
+            FIXTURE_EXECUTABLE_SHA256,
+            capture(MSACCESS_HELP),
+        )
+        .expect("bind preview help to installation A");
+        let preview_output = test_directory.path().join("preview");
+        fs::create_dir(&preview_output).expect("create preview output");
+        let preview = build_msaccess_command_with_capabilities(
+            &preview_capabilities,
+            &input,
+            &preview_output,
+            PreviewOperation::Metadata,
+        )
+        .expect("bound preview command");
+
+        assert_eq!(preview.executable(), preview_capabilities.executable());
+        assert_eq!(preview.executable_sha256, Some(FIXTURE_EXECUTABLE_SHA256));
     }
 
     #[test]
@@ -1232,7 +1441,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         let help = format!(
             "{MSACCESS_HELP}\nAnalysis commands (used with -x/--exec):\n\n  tic [delimiter=[comma|space]]\n"
         );
-        let error = InstalledHelpCapabilities::parse(BackendTool::MsAccess, capture(&help))
+        let error = parse_capabilities(BackendTool::MsAccess, capture(&help))
             .expect_err("contradictory TIC declarations must fail");
 
         assert!(matches!(
@@ -1257,8 +1466,22 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             CapturedHelpStream::new(&[], 0, false, EMPTY_SHA256),
         );
         assert_eq!(
-            InstalledHelpCapabilities::parse(BackendTool::MsAccess, truncated),
+            parse_capabilities(BackendTool::MsAccess, truncated),
             Err(HelpCapabilityError::Truncated(HelpStream::Stdout))
+        );
+
+        let truncated_stderr = CompleteHelpCapture::new(
+            CapturedHelpStream::new(&[], 0, false, EMPTY_SHA256),
+            CapturedHelpStream::new(
+                MSACCESS_HELP.as_bytes(),
+                MSACCESS_HELP.len() as u64 + 1,
+                true,
+                FIXTURE_SHA256,
+            ),
+        );
+        assert_eq!(
+            parse_capabilities(BackendTool::MsAccess, truncated_stderr),
+            Err(HelpCapabilityError::Truncated(HelpStream::Stderr))
         );
 
         let mismatch = CompleteHelpCapture::new(
@@ -1271,7 +1494,7 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             CapturedHelpStream::new(&[], 0, false, EMPTY_SHA256),
         );
         assert!(matches!(
-            InstalledHelpCapabilities::parse(BackendTool::MsAccess, mismatch),
+            parse_capabilities(BackendTool::MsAccess, mismatch),
             Err(HelpCapabilityError::LengthMismatch {
                 stream: HelpStream::Stdout,
                 ..
@@ -1283,16 +1506,15 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
     fn wrong_program_header_fails_even_when_markers_are_present() {
         let help = MSACCESS_HELP.replacen("Usage: msaccess", "Usage: msconvert", 1);
         assert!(matches!(
-            InstalledHelpCapabilities::parse(BackendTool::MsAccess, capture(&help)),
+            parse_capabilities(BackendTool::MsAccess, capture(&help)),
             Err(HelpCapabilityError::WrongUsage { .. })
         ));
     }
 
     #[test]
     fn complete_msconvert_declarations_recognize_both_conversion_grammars() {
-        let capabilities =
-            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
-                .expect("valid msconvert fixture");
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+            .expect("valid msconvert fixture");
 
         assert_eq!(
             capabilities.option("zlib").map(OptionDeclaration::argument),
@@ -1314,16 +1536,14 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
     #[test]
     fn mzxml_grammar_does_not_enable_public_conversion_planning() {
-        let capabilities =
-            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
-                .expect("valid msconvert fixture");
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+            .expect("valid msconvert fixture");
         capabilities
             .require_conversion(OpenFormat::MzXml)
             .expect("installed help recognizes the mzXML grammar");
 
         let error = build_msconvert_command_with_capabilities(
             &capabilities,
-            test_path("msconvert.exe"),
             &test_path("sample.raw"),
             &test_path("converted"),
             OsStr::new("sample.mzXML"),
@@ -1336,18 +1556,23 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
     #[test]
     fn complete_mzml_grammar_builds_the_expected_public_conversion_plan() {
-        let capabilities =
-            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
-                .expect("valid msconvert fixture");
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+            .expect("valid msconvert fixture");
         let test_directory = TestDirectory::new();
-        let input = test_directory.path().join("sample.raw");
+        let source_directory = test_directory.path().join("source");
+        fs::create_dir(&source_directory).expect("create source directory");
+        let source = source_directory.join("sample.raw");
+        let input = source_directory
+            .join("..")
+            .join("source")
+            .join("sample.raw");
         let output_directory = test_directory.path().join("converted");
-        fs::write(&input, b"source RAW").expect("write source RAW");
+        fs::write(&source, b"source RAW").expect("write source RAW");
         fs::create_dir(&output_directory).expect("create fresh output directory");
+        let canonical_input = fs::canonicalize(&input).expect("canonical file input");
         let canonical_output = fs::canonicalize(&output_directory).expect("canonical output root");
         let command = build_msconvert_command_with_capabilities(
             &capabilities,
-            test_path("msconvert.exe"),
             &input,
             &output_directory,
             OsStr::new("样本 01.mzML"),
@@ -1355,7 +1580,8 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         )
         .expect("complete installed grammar permits mzML planning");
 
-        assert_eq!(command.args()[0], input.as_os_str());
+        assert_eq!(command.args()[0], canonical_input.as_os_str());
+        assert_ne!(command.args()[0], input.as_os_str());
         assert_eq!(command.args()[1], "--mzML");
         assert_eq!(command.args()[2], "--zlib");
         assert_eq!(command.args()[3], "--outdir");
@@ -1373,9 +1599,8 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
     #[test]
     fn public_mzml_planning_rejects_an_existing_default_output() {
-        let capabilities =
-            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
-                .expect("valid msconvert fixture");
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+            .expect("valid msconvert fixture");
         let test_directory = TestDirectory::new();
         let input = test_directory.path().join("sample.raw");
         let output_directory = test_directory.path().join("converted");
@@ -1386,7 +1611,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
         let error = build_msconvert_command_with_capabilities(
             &capabilities,
-            test_path("msconvert.exe"),
             &input,
             &output_directory,
             OsStr::new("sample.mzML"),
@@ -1399,9 +1623,8 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
     #[test]
     fn public_mzml_planning_allows_a_distinct_target_in_the_input_parent() {
-        let capabilities =
-            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
-                .expect("valid msconvert fixture");
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+            .expect("valid msconvert fixture");
         let output_directory = TestDirectory::new();
         let input = output_directory.path().join("sample.mzML");
         fs::write(&input, b"source mzML").expect("write source mzML");
@@ -1410,7 +1633,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
         let command = build_msconvert_command_with_capabilities(
             &capabilities,
-            test_path("msconvert.exe"),
             &input,
             output_directory.path(),
             OsStr::new("converted.mzML"),
@@ -1426,7 +1648,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
         let error = build_msconvert_command_with_capabilities(
             &capabilities,
-            test_path("msconvert.exe"),
             &input,
             output_directory.path(),
             OsStr::new("sample.mzML"),
@@ -1439,9 +1660,8 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
     #[test]
     fn public_mzml_planning_allows_unrelated_entries_in_a_shared_output_root() {
-        let capabilities =
-            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
-                .expect("valid msconvert fixture");
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+            .expect("valid msconvert fixture");
         let test_directory = TestDirectory::new();
         let input = test_directory.path().join("sample.raw");
         let output_directory = test_directory.path().join("converted");
@@ -1453,7 +1673,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
         let command = build_msconvert_command_with_capabilities(
             &capabilities,
-            test_path("msconvert.exe"),
             &input,
             &output_directory,
             OsStr::new("sample.mzML"),
@@ -1469,9 +1688,8 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
     #[test]
     fn sequential_conversion_plans_reuse_one_output_root_for_distinct_targets() {
-        let capabilities =
-            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
-                .expect("valid msconvert fixture");
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+            .expect("valid msconvert fixture");
         let test_directory = TestDirectory::new();
         let first_input = test_directory.path().join("first.raw");
         let second_input = test_directory.path().join("second.raw");
@@ -1483,7 +1701,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
         let first = build_msconvert_command_with_capabilities(
             &capabilities,
-            test_path("msconvert.exe"),
             &first_input,
             &output_directory,
             OsStr::new("first.mzML"),
@@ -1500,7 +1717,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
         let second = build_msconvert_command_with_capabilities(
             &capabilities,
-            test_path("msconvert.exe"),
             &second_input,
             &output_directory,
             OsStr::new("second.mzML"),
@@ -1515,9 +1731,8 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
     #[test]
     fn public_mzml_planning_rejects_an_existing_destination_directory() {
-        let capabilities =
-            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
-                .expect("valid msconvert fixture");
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+            .expect("valid msconvert fixture");
         let test_directory = TestDirectory::new();
         let input = test_directory.path().join("sample.raw");
         let output_directory = test_directory.path().join("converted");
@@ -1527,7 +1742,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
         let error = build_msconvert_command_with_capabilities(
             &capabilities,
-            test_path("msconvert.exe"),
             &input,
             &output_directory,
             OsStr::new("sample.mzML"),
@@ -1540,9 +1754,8 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
     #[test]
     fn public_mzml_planning_fails_when_the_output_directory_cannot_be_inspected() {
-        let capabilities =
-            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
-                .expect("valid msconvert fixture");
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+            .expect("valid msconvert fixture");
         let test_directory = TestDirectory::new();
         let input = test_directory.path().join("sample.raw");
         let missing_output = test_directory.path().join("missing");
@@ -1550,7 +1763,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
         let error = build_msconvert_command_with_capabilities(
             &capabilities,
-            test_path("msconvert.exe"),
             &input,
             &missing_output,
             OsStr::new("sample.mzML"),
@@ -1568,9 +1780,8 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
     #[test]
     fn public_mzml_planning_rejects_output_equal_to_or_nested_inside_a_directory_input() {
-        let capabilities =
-            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
-                .expect("valid msconvert fixture");
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+            .expect("valid msconvert fixture");
 
         for nested in [false, true] {
             let test_directory = TestDirectory::new();
@@ -1586,7 +1797,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
             let error = build_msconvert_command_with_capabilities(
                 &capabilities,
-                test_path("msconvert.exe"),
                 &input,
                 &output_directory,
                 OsStr::new("dataset.mzML"),
@@ -1600,20 +1810,20 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
     #[test]
     fn public_mzml_planning_accepts_fresh_sibling_output_for_a_directory_input() {
-        let capabilities =
-            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
-                .expect("valid msconvert fixture");
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+            .expect("valid msconvert fixture");
         let test_directory = TestDirectory::new();
-        let input = test_directory.path().join("dataset.raw");
+        let source_parent = test_directory.path().join("source");
+        let source = source_parent.join("dataset.raw");
+        let input = source_parent.join("..").join("source").join("dataset.raw");
         let output_directory = test_directory.path().join("converted");
-        fs::create_dir(&input).expect("create directory input");
+        fs::create_dir_all(&source).expect("create directory input");
         fs::create_dir(&output_directory).expect("create sibling output directory");
         let canonical_input = fs::canonicalize(&input).expect("canonical directory input");
         let canonical_output = fs::canonicalize(&output_directory).expect("canonical output root");
 
         let command = build_msconvert_command_with_capabilities(
             &capabilities,
-            test_path("msconvert.exe"),
             &input,
             &output_directory,
             OsStr::new("dataset.mzML"),
@@ -1621,7 +1831,8 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         )
         .expect("a fresh sibling output directory is safe to plan");
 
-        assert_eq!(command.args()[0], input.as_os_str());
+        assert_eq!(command.args()[0], canonical_input.as_os_str());
+        assert_ne!(command.args()[0], input.as_os_str());
         assert_eq!(command.args()[4], canonical_output.as_os_str());
         assert_eq!(
             command.source_directory_boundary(),
@@ -1631,9 +1842,8 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
     #[test]
     fn public_mzml_planning_fails_when_the_input_cannot_be_inspected() {
-        let capabilities =
-            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
-                .expect("valid msconvert fixture");
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+            .expect("valid msconvert fixture");
         let test_directory = TestDirectory::new();
         let missing_input = test_directory.path().join("missing.raw");
         let output_directory = test_directory.path().join("converted");
@@ -1641,7 +1851,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
         let error = build_msconvert_command_with_capabilities(
             &capabilities,
-            test_path("msconvert.exe"),
             &missing_input,
             &output_directory,
             OsStr::new("missing.mzML"),
@@ -1659,9 +1868,8 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
     #[test]
     fn public_mzml_planning_rejects_unsafe_output_file_names_and_wrong_extensions() {
-        let capabilities =
-            InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(MSCONVERT_HELP))
-                .expect("valid msconvert fixture");
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(MSCONVERT_HELP))
+            .expect("valid msconvert fixture");
 
         for output_file_name in [
             "",
@@ -1683,7 +1891,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         ] {
             let error = build_msconvert_command_with_capabilities(
                 &capabilities,
-                test_path("msconvert.exe"),
                 &test_path("sample.raw"),
                 &test_path("converted"),
                 OsStr::new(output_file_name),
@@ -1696,7 +1903,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         for output_file_name in ["sample", "sample.mzXML"] {
             let error = build_msconvert_command_with_capabilities(
                 &capabilities,
-                test_path("msconvert.exe"),
                 &test_path("sample.raw"),
                 &test_path("converted"),
                 OsStr::new(output_file_name),
@@ -1718,12 +1924,10 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
                 "  --outfile [=arg(=name)]           : Override the name of output file.\n",
             ),
         ] {
-            let capabilities =
-                InstalledHelpCapabilities::parse(BackendTool::MsConvert, capture(&help))
-                    .expect("syntactically valid incomplete msconvert fixture");
+            let capabilities = parse_capabilities(BackendTool::MsConvert, capture(&help))
+                .expect("syntactically valid incomplete msconvert fixture");
             let error = build_msconvert_command_with_capabilities(
                 &capabilities,
-                test_path("msconvert.exe"),
                 &test_path("sample.raw"),
                 &test_path("converted"),
                 OsStr::new("sample.mzML"),
@@ -1739,11 +1943,32 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
     }
 
     #[test]
+    fn public_conversion_planning_requires_the_zlib_declaration() {
+        let zlib_declaration =
+            "  -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data\n";
+        let help = MSCONVERT_HELP.replace(zlib_declaration, "");
+        let capabilities = parse_capabilities(BackendTool::MsConvert, capture(&help))
+            .expect("syntactically valid incomplete msconvert fixture");
+        let error = build_msconvert_command_with_capabilities(
+            &capabilities,
+            &test_path("sample.raw"),
+            &test_path("converted"),
+            OsStr::new("sample.mzML"),
+            OpenFormat::MzMl,
+        )
+        .expect_err("missing zlib grammar must fail closed");
+
+        assert_eq!(
+            error,
+            PlanError::InstalledHelpCapability(CapabilityRequirementError::Missing("zlib"))
+        );
+    }
+
+    #[test]
     fn zero_ms_level_filter_is_rejected_before_public_command_planning() {
         let capabilities = msaccess(MSACCESS_HELP);
         let error = build_msaccess_command_with_capabilities(
             &capabilities,
-            test_path("msaccess.exe"),
             &test_path("sample.mzML"),
             &test_path("preview"),
             PreviewOperation::Tic { ms_level: Some(0) },
@@ -1763,7 +1988,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         fs::create_dir(&output_directory).expect("create fresh preview directory");
         let command = build_msaccess_command_with_capabilities(
             &capabilities,
-            test_path("msaccess.exe"),
             &input,
             &output_directory,
             PreviewOperation::Tic { ms_level: None },
@@ -1791,7 +2015,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         for ms_level in [1, u8::MAX] {
             let command = build_msaccess_command_with_capabilities(
                 &capabilities,
-                test_path("msaccess.exe"),
                 &input,
                 &output_directory,
                 PreviewOperation::Tic {
@@ -1832,7 +2055,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         ] {
             let error = build_msaccess_command_with_capabilities(
                 &capabilities,
-                test_path("msaccess.exe"),
                 &input,
                 &output_directory,
                 operation,
@@ -1847,10 +2069,17 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
     fn every_public_preview_operation_records_a_fresh_canonical_output_guard() {
         let capabilities = msaccess(MSACCESS_HELP);
         let test_directory = TestDirectory::new();
-        let input = test_directory.path().join("sample.mzML");
+        let source_directory = test_directory.path().join("source");
+        fs::create_dir(&source_directory).expect("create source directory");
+        let source = source_directory.join("sample.mzML");
+        let input = source_directory
+            .join("..")
+            .join("source")
+            .join("sample.mzML");
         let output_directory = test_directory.path().join("preview");
-        fs::write(&input, b"source mzML").expect("write source mzML");
+        fs::write(&source, b"source mzML").expect("write source mzML");
         fs::create_dir(&output_directory).expect("create preview directory");
+        let canonical_input = fs::canonicalize(&input).expect("canonical preview input");
         let canonical_output = fs::canonicalize(&output_directory).expect("canonical output root");
 
         for operation in [
@@ -1866,13 +2095,14 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         ] {
             let command = build_msaccess_command_with_capabilities(
                 &capabilities,
-                test_path("msaccess.exe"),
                 &input,
                 &output_directory,
                 operation,
             )
             .expect("a fresh output root permits preview planning");
 
+            assert_eq!(command.args()[0], canonical_input.as_os_str());
+            assert_ne!(command.args()[0], input.as_os_str());
             assert_eq!(command.args()[1], "--outdir");
             assert_eq!(command.args()[2], canonical_output.as_os_str());
             assert_eq!(command.working_directory(), canonical_output);
@@ -1898,7 +2128,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             .expect("populate preview directory");
         let precision_error = build_msaccess_command_with_capabilities(
             &capabilities,
-            test_path("msaccess.exe"),
             &input,
             &output_directory,
             PreviewOperation::SpectrumByIndex {
@@ -1917,7 +2146,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
             .expect("populate preview directory");
         let freshness_error = build_msaccess_command_with_capabilities(
             &capabilities,
-            test_path("msaccess.exe"),
             &missing_input,
             &stale_output,
             PreviewOperation::Metadata,
@@ -1944,7 +2172,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
 
             let error = build_msaccess_command_with_capabilities(
                 &capabilities,
-                test_path("msaccess.exe"),
                 &input,
                 &output_directory,
                 PreviewOperation::Metadata,
@@ -1959,23 +2186,25 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
     fn public_preview_planning_accepts_fresh_sibling_output_for_a_directory_input() {
         let capabilities = msaccess(MSACCESS_HELP);
         let test_directory = TestDirectory::new();
-        let input = test_directory.path().join("dataset.raw");
+        let source_parent = test_directory.path().join("source");
+        let source = source_parent.join("dataset.raw");
+        let input = source_parent.join("..").join("source").join("dataset.raw");
         let output_directory = test_directory.path().join("preview");
-        fs::create_dir(&input).expect("create directory input");
+        fs::create_dir_all(&source).expect("create directory input");
         fs::create_dir(&output_directory).expect("create sibling preview directory");
         let canonical_input = fs::canonicalize(&input).expect("canonical directory input");
         let canonical_output = fs::canonicalize(&output_directory).expect("canonical output root");
 
         let command = build_msaccess_command_with_capabilities(
             &capabilities,
-            test_path("msaccess.exe"),
             &input,
             &output_directory,
             PreviewOperation::RunSummary,
         )
         .expect("a fresh sibling preview directory is safe to plan");
 
-        assert_eq!(command.args()[0], input.as_os_str());
+        assert_eq!(command.args()[0], canonical_input.as_os_str());
+        assert_ne!(command.args()[0], input.as_os_str());
         assert_eq!(command.args()[2], canonical_output.as_os_str());
         assert_eq!(command.working_directory(), canonical_output);
         assert_eq!(
@@ -1999,7 +2228,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         let missing_output = missing_output_tree.path().join("missing");
         let output_error = build_msaccess_command_with_capabilities(
             &capabilities,
-            test_path("msaccess.exe"),
             &input,
             &missing_output,
             PreviewOperation::Metadata,
@@ -2018,7 +2246,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         fs::create_dir(&output_directory).expect("create fresh preview directory");
         let input_error = build_msaccess_command_with_capabilities(
             &capabilities,
-            test_path("msaccess.exe"),
             &missing_input,
             &output_directory,
             PreviewOperation::Metadata,
@@ -2041,7 +2268,6 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         let capabilities = msaccess(&help);
         let error = build_msaccess_command_with_capabilities(
             &capabilities,
-            test_path("msaccess.exe"),
             &test_path("sample.mzML"),
             &test_path("preview"),
             PreviewOperation::Tic { ms_level: Some(1) },

@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
-use crate::CommandSpec;
 use crate::command::OutputSafety;
+use crate::{CommandSpec, Sha256Digest, Sha256Error};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const JOB_EMPTY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -83,6 +83,10 @@ pub enum ProcessError {
     OutputDirectoryInspectionFailed { kind: io::ErrorKind },
     #[error("the output directory now resolves inside a directory-formatted input")]
     OutputDirectoryInsideDirectoryInput,
+    #[error("the validated backend executable could not be reverified: {kind}")]
+    ExecutableIdentityInspectionFailed { kind: io::ErrorKind },
+    #[error("the backend executable changed after its capability probe")]
+    ExecutableIdentityChanged,
     #[error("failed to launch {executable}: {detail}")]
     Launch {
         executable: String,
@@ -168,6 +172,9 @@ fn execute_command_after_assignment(
     cancellation: &CancellationToken,
     after_assignment: impl FnOnce(),
 ) -> Result<ProcessOutput, ProcessError> {
+    // Both guards are non-atomic snapshots. Hash first because it is slower, so
+    // the output-safety snapshot remains the final check before spawn.
+    require_executable_identity(spec)?;
     require_output_safety(spec)?;
     let started = Instant::now();
     let mut child = command
@@ -259,6 +266,23 @@ fn execute_command_after_assignment(
         max_active_processes,
         final_active_processes,
     })
+}
+
+fn require_executable_identity(spec: &CommandSpec) -> Result<(), ProcessError> {
+    let Some(expected_sha256) = spec.executable_sha256 else {
+        return Ok(());
+    };
+    let actual_sha256 = Sha256Digest::calculate_file(&spec.executable).map_err(|error| {
+        let kind = match error {
+            Sha256Error::Io { source, .. } => source.kind(),
+            _ => io::ErrorKind::Other,
+        };
+        ProcessError::ExecutableIdentityInspectionFailed { kind }
+    })?;
+    if actual_sha256 != expected_sha256 {
+        return Err(ProcessError::ExecutableIdentityChanged);
+    }
+    Ok(())
 }
 
 fn require_output_safety(spec: &CommandSpec) -> Result<(), ProcessError> {
@@ -965,6 +989,98 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn missing_validated_executable_fails_during_identity_recheck() {
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_dir()
+                .expect("current directory")
+                .join("definitely-not-an-mscanvas-validated-executable"),
+            std::iter::empty::<OsString>(),
+            std::env::current_dir().expect("current directory"),
+        )
+        .with_executable_identity(Sha256Digest::from_bytes([0; 32]));
+
+        assert_eq!(
+            execute(&spec),
+            Err(ProcessError::ExecutableIdentityInspectionFailed {
+                kind: io::ErrorKind::NotFound,
+            })
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn validated_executable_identity_allows_the_controlled_child_to_launch() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let executable = test_directory.path().join("controlled-child.exe");
+        fs::copy(
+            std::env::current_exe().expect("test executable"),
+            &executable,
+        )
+        .expect("copy controlled child executable");
+        let executable_sha256 =
+            Sha256Digest::calculate_file(&executable).expect("hash controlled child executable");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            &executable,
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        )
+        .with_executable_identity(executable_sha256);
+
+        let output = execute(&spec).expect("unchanged executable identity permits launch");
+
+        assert!(output.success());
+        assert!(
+            marker.is_file(),
+            "the validated controlled child did not launch"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn replaced_executable_is_rejected_before_the_child_launches() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let executable = test_directory.path().join("controlled-child.exe");
+        fs::copy(
+            std::env::current_exe().expect("test executable"),
+            &executable,
+        )
+        .expect("copy controlled child executable");
+        let executable_sha256 =
+            Sha256Digest::calculate_file(&executable).expect("hash controlled child executable");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            &executable,
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        )
+        .with_executable_identity(executable_sha256);
+        fs::write(&executable, b"replacement executable")
+            .expect("replace controlled child executable after planning");
+
+        let error = execute(&spec).expect_err("changed executable identity must fail closed");
+
+        assert_eq!(error, ProcessError::ExecutableIdentityChanged);
+        assert!(!marker.exists(), "the replaced executable was launched");
     }
 
     #[cfg(windows)]
