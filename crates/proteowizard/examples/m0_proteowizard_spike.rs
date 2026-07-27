@@ -16,13 +16,16 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime};
 
 use mscanvas_proteowizard::{
-    AvailabilityState, BackendTool, CancellationToken, ConfiguredLocation, DiscoveredTool,
-    DiscoveryRequest, FailureCondition, FailureKind, InstalledHelpCapabilities, OpenFormat,
-    PreviewInterpretError, PreviewOperation, PreviewOutcome, PreviewOutputEntry,
+    AvailabilityState, BackendTool, CancellationToken, ConfiguredLocation,
+    ConversionIntegrityOutcome, ConversionOutputInspection, ConversionOutputRejection,
+    ConversionPolicy, ConversionSourceFacts, DiscoveredTool, DiscoveryRequest, FailureCondition,
+    FailureKind, InstalledHelpCapabilities, MzmlScanLimits, OpenFormat, OutputDirectorySnapshot,
+    OutputEntryKind, PreviewInterpretError, PreviewOperation, PreviewOutcome, PreviewOutputEntry,
     PreviewOutputManifest, PreviewValue, Redactor, ReportableProcessOutput, Retryability,
     Sha256Digest, build_msaccess_command_with_capabilities,
-    build_msconvert_command_with_capabilities, classify_process_failure, discover,
-    execute_cancellable, interpret_preview,
+    build_msconvert_command_with_capabilities, capture_conversion_source, classify_process_failure,
+    conversion_output_file_name, discover, execute_cancellable, inspect_conversion_output,
+    interpret_preview, is_reparse_point, snapshot_output_directory, verify_mzml_conversion,
 };
 
 const DIAGNOSTIC_PREVIEW_CHARS: usize = 4_096;
@@ -473,13 +476,30 @@ fn run(cli: Cli) -> Result<(), HarnessError> {
     }
     print_command(&command, &redactor);
 
-    let before = snapshot_directory(output_dir)?;
+    let before = snapshot_output_directory(output_dir).map_err(|error| {
+        HarnessError::operation(format!(
+            "the output directory could not be inspected: {}",
+            error.stable_id()
+        ))
+    })?;
     require_fresh_output_directory(&before)?;
+    // Source facts must exist before the backend runs so a source that changes
+    // during the conversion is observable afterwards.
+    let conversion_source = if cli.mode == Mode::Convert {
+        capture_and_report_conversion_source(input)
+    } else {
+        None
+    };
     let cancellation = CancellationToken::new();
     let scheduled = schedule_cancellation(&cancellation, cli.cancel_after_ms);
     let process_result = execute_cancellable(&command, &cancellation);
     finish_cancellation(scheduled)?;
-    let after = snapshot_directory(output_dir)?;
+    let after = snapshot_output_directory(output_dir).map_err(|error| {
+        HarnessError::operation(format!(
+            "the output directory could not be inspected: {}",
+            error.stable_id()
+        ))
+    })?;
 
     match process_result {
         Ok(output) => {
@@ -494,60 +514,32 @@ fn run(cli: Cli) -> Result<(), HarnessError> {
             } else {
                 None
             };
-            let conversion_validation = if output.success() && cli.mode == Mode::Convert {
-                Some(validate_conversion_output(
-                    &after,
+            let conversion_integrity = if output.success() && cli.mode == Mode::Convert {
+                let expected_file_name =
                     expected_conversion_file_name.as_deref().ok_or_else(|| {
                         HarnessError::operation(
                             "validated conversion output file name is unavailable",
                         )
-                    })?,
-                    cli.format.ok_or_else(|| {
-                        HarnessError::operation("validated conversion format is unavailable")
-                    })?,
+                    })?;
+                Some(evaluate_conversion_integrity(
+                    conversion_source.as_ref(),
                     output_dir,
-                    input,
+                    expected_file_name,
                 ))
             } else {
                 None
             };
-            if let Some(Ok(candidate)) = &conversion_validation {
-                redactor.add_path(&candidate.path, "<conversion-output>");
-            }
             let partial_output_present = (!output.success() && output_changed)
-                || conversion_validation.as_ref().is_some_and(|validation| {
-                    matches!(validation, Err(ConversionOutputIssue::Partial))
-                });
+                || conversion_integrity
+                    .as_ref()
+                    .is_some_and(ConversionIntegrityReport::reports_partial_output);
             print_process_output(&output, output_changed, partial_output_present, &redactor)?;
-            if let Some(validation) = conversion_validation {
-                match validation {
-                    Ok(candidate) => {
-                        println!("conversion_output.filesystem_validation=candidate_valid");
-                        println!("conversion_output.path=<conversion-output>");
-                        println!("conversion_output.bytes={}", candidate.length);
-                        println!(
-                            "conversion_output.source_basename_preserved={}",
-                            candidate.source_basename_preserved
-                        );
-                        let sha256 =
-                            Sha256Digest::calculate_file(&candidate.path).map_err(|error| {
-                                println!("conversion_output.hash_validation=failed");
-                                HarnessError::operation(format!(
-                                    "the conversion output could not be hashed: {error}"
-                                ))
-                            })?;
-                        println!("conversion_output.sha256={sha256}");
-                        println!(
-                            "conversion_output.xml_validation=deferred_to_evidence_orchestrator"
-                        );
-                    }
-                    Err(issue) => {
-                        println!(
-                            "conversion_output.filesystem_validation={}",
-                            issue.stable_id()
-                        );
-                        return Err(HarnessError::operation(issue.message()));
-                    }
+            if let Some(report) = &conversion_integrity {
+                report.print();
+                if !report.is_acceptable() {
+                    return Err(HarnessError::operation(
+                        "the conversion output did not satisfy the typed integrity contract",
+                    ));
                 }
             }
             if let Some(failure) =
@@ -1225,7 +1217,9 @@ fn build_command(
             let format = cli
                 .format
                 .ok_or_else(|| HarnessError::operation("validated format is unavailable"))?;
-            let output_file_name = conversion_output_file_name(input, format)?;
+            let output_file_name = conversion_output_file_name(input, format).ok_or_else(|| {
+                HarnessError::operation("the conversion input has no usable file stem")
+            })?;
             build_msconvert_command_with_capabilities(
                 capabilities,
                 input,
@@ -1256,20 +1250,6 @@ fn requested_preview_operation(cli: &Cli) -> Result<Option<PreviewOperation>, Ha
         Mode::RuntimeProof | Mode::Probe | Mode::Convert => None,
     };
     Ok(operation)
-}
-
-fn conversion_output_file_name(input: &Path, format: OpenFormat) -> Result<OsString, HarnessError> {
-    let stem = input
-        .file_stem()
-        .filter(|stem| !stem.is_empty())
-        .ok_or_else(|| HarnessError::operation("the conversion input has no usable file stem"))?;
-    let mut output_file_name = stem.to_os_string();
-    output_file_name.push(".");
-    output_file_name.push(match format {
-        OpenFormat::MzMl => "mzML",
-        OpenFormat::MzXml => "mzXML",
-    });
-    Ok(output_file_name)
 }
 
 fn validate_installed_command_surface(
@@ -1404,137 +1384,188 @@ fn finish_cancellation(scheduled: Option<ScheduledCancellation>) -> Result<(), H
         .map_err(|_| HarnessError::operation("the cancellation timer thread panicked"))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct EntryFingerprint {
-    length: u64,
-    modified: Option<SystemTime>,
-    is_file: bool,
-    is_directory: bool,
-    is_symlink: bool,
-    is_reparse_point: bool,
+/// The typed integrity statement the harness can make about one conversion.
+enum ConversionIntegrityReport {
+    /// The source was itself mzML, so a full source-versus-output comparison ran.
+    Compared(ConversionIntegrityOutcome),
+    /// The source is not mzML, so only the output could be inspected. No
+    /// equivalence statement is possible in that case and none is printed.
+    OutputOnly(Result<Box<ConversionOutputInspection>, ConversionOutputRejection>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ConversionOutputCandidate {
-    path: PathBuf,
-    length: u64,
-    source_basename_preserved: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConversionOutputIssue {
-    Missing,
-    Partial,
-    Unexpected,
-    NonRegular,
-    Empty,
-}
-
-impl ConversionOutputIssue {
-    const fn stable_id(self) -> &'static str {
+impl ConversionIntegrityReport {
+    fn reports_partial_output(&self) -> bool {
         match self {
-            Self::Missing => "missing_output",
-            Self::Partial => "partial_output",
-            Self::Unexpected => "unexpected_output",
-            Self::NonRegular => "non_regular_output",
-            Self::Empty => "zero_byte_output",
+            Self::Compared(outcome) => {
+                matches!(outcome, ConversionIntegrityOutcome::PartialOutput)
+            }
+            Self::OutputOnly(result) => {
+                matches!(result, Err(ConversionOutputRejection::PartialOutput))
+            }
         }
     }
 
-    const fn message(self) -> &'static str {
+    fn is_acceptable(&self) -> bool {
         match self {
-            Self::Missing => "msconvert exited successfully without producing an output file",
-            Self::Partial => "msconvert exited successfully but left partial output",
-            Self::Unexpected => {
-                "msconvert exited successfully but produced an unexpected output set"
+            Self::Compared(outcome) => outcome.is_valid(),
+            Self::OutputOnly(result) => result.is_ok(),
+        }
+    }
+
+    fn print(&self) {
+        match self {
+            Self::Compared(outcome) => {
+                println!("conversion_integrity.comparison=source_and_output");
+                println!("conversion_integrity.outcome={}", outcome.stable_id());
+                if let Some(valid) = outcome.valid() {
+                    print_output_inspection(valid.output());
+                    println!(
+                        "conversion_integrity.fully_verified={}",
+                        valid.is_fully_verified()
+                    );
+                    print_stable_id_list(
+                        "conversion_integrity.verified",
+                        valid.verified().iter().map(|item| item.stable_id()),
+                    );
+                    print_stable_id_list(
+                        "conversion_integrity.unverified",
+                        valid.unverified().iter().map(|item| item.stable_id()),
+                    );
+                    print_stable_id_list(
+                        "conversion_integrity.advisory",
+                        valid.advisory().iter().map(|item| item.stable_id()),
+                    );
+                }
             }
-            Self::NonRegular => {
-                "msconvert exited successfully but the output is not a regular non-reparse file"
+            Self::OutputOnly(result) => {
+                println!("conversion_integrity.comparison=output_only_source_not_mzml");
+                match result {
+                    Ok(inspection) => {
+                        println!("conversion_integrity.outcome=output_inspected");
+                        print_output_inspection(inspection);
+                    }
+                    Err(rejection) => {
+                        println!("conversion_integrity.outcome={}", rejection.stable_id());
+                    }
+                }
             }
-            Self::Empty => "msconvert exited successfully but produced an empty output file",
         }
     }
 }
 
-fn snapshot_directory(
-    output_dir: &Path,
-) -> Result<BTreeMap<OsString, EntryFingerprint>, HarnessError> {
-    let entries = fs::read_dir(output_dir)
-        .map_err(|_| HarnessError::operation("the output directory could not be inspected"))?;
-    let mut snapshot = BTreeMap::new();
-    for entry in entries {
-        let entry = entry
-            .map_err(|_| HarnessError::operation("an output directory entry could not be read"))?;
-        let metadata = fs::symlink_metadata(entry.path())
-            .map_err(|_| HarnessError::operation("output entry metadata could not be read"))?;
-        snapshot.insert(
-            entry.file_name(),
-            EntryFingerprint {
-                length: metadata.len(),
-                modified: metadata.modified().ok(),
-                is_file: metadata.is_file(),
-                is_directory: metadata.is_dir(),
-                is_symlink: metadata.file_type().is_symlink(),
-                is_reparse_point: is_reparse_point(&metadata),
-            },
-        );
+fn print_output_inspection(inspection: &ConversionOutputInspection) {
+    println!("conversion_output.bytes={}", inspection.byte_length());
+    println!("conversion_output.sha256={}", inspection.sha256());
+    let facts = inspection.facts();
+    println!("conversion_output.root={}", facts.root().stable_id());
+    println!(
+        "conversion_output.spectrum_count={}",
+        facts.observed_spectrum_count()
+    );
+    println!(
+        "conversion_output.chromatogram_count={}",
+        facts.observed_chromatogram_count()
+    );
+}
+
+fn print_stable_id_list<'a>(label: &str, values: impl Iterator<Item = &'a str>) {
+    let joined = values.collect::<Vec<_>>().join(",");
+    if joined.is_empty() {
+        println!("{label}=<none>");
+    } else {
+        println!("{label}={joined}");
     }
-    Ok(snapshot)
+}
+
+/// Captures the pre-conversion source baseline and reports whether it exists.
+///
+/// A non-mzML source such as a vendor acquisition has no comparable mzML facts,
+/// so the harness records that limitation instead of inventing a baseline.
+fn capture_and_report_conversion_source(input: &Path) -> Option<ConversionSourceFacts> {
+    match capture_conversion_source(input, MzmlScanLimits::default()) {
+        Ok(source) => {
+            println!("conversion_source.facts=captured");
+            println!("conversion_source.bytes={}", source.byte_length());
+            println!("conversion_source.sha256={}", source.sha256());
+            println!(
+                "conversion_source.spectrum_count={}",
+                source.facts().observed_spectrum_count()
+            );
+            println!(
+                "conversion_source.chromatogram_count={}",
+                source.facts().observed_chromatogram_count()
+            );
+            Some(source)
+        }
+        Err(error) => {
+            println!("conversion_source.facts=unavailable");
+            println!("conversion_source.reason={}", error.stable_id());
+            None
+        }
+    }
+}
+
+fn evaluate_conversion_integrity(
+    source: Option<&ConversionSourceFacts>,
+    output_directory: &Path,
+    expected_file_name: &OsStr,
+) -> ConversionIntegrityReport {
+    let limits = MzmlScanLimits::default();
+    match source {
+        Some(source) => ConversionIntegrityReport::Compared(verify_mzml_conversion(
+            source,
+            output_directory,
+            expected_file_name,
+            ConversionPolicy::default(),
+            limits,
+        )),
+        None => ConversionIntegrityReport::OutputOnly(
+            inspect_conversion_output(
+                output_directory,
+                expected_file_name,
+                OpenFormat::MzMl,
+                limits,
+            )
+            .map(Box::new),
+        ),
+    }
 }
 
 fn capture_preview_output_manifest(
     output_dir: &Path,
-    snapshot: &BTreeMap<OsString, EntryFingerprint>,
+    snapshot: &OutputDirectorySnapshot,
     operation: &PreviewOperation,
 ) -> PreviewOutputManifest {
     let needs_file_bytes = *operation != PreviewOperation::RunSummary && snapshot.len() == 1;
     let mut entries = Vec::with_capacity(snapshot.len());
-    for (name, fingerprint) in snapshot {
-        if fingerprint.is_directory {
-            entries.push(PreviewOutputEntry::Directory);
-            continue;
+    for entry in snapshot.entries() {
+        match entry.kind() {
+            OutputEntryKind::Directory => {
+                entries.push(PreviewOutputEntry::Directory);
+                continue;
+            }
+            OutputEntryKind::RegularFile => {}
+            OutputEntryKind::Symlink | OutputEntryKind::ReparsePoint | OutputEntryKind::Other => {
+                entries.push(PreviewOutputEntry::Other);
+                continue;
+            }
         }
-        if !fingerprint.is_file || fingerprint.is_symlink || fingerprint.is_reparse_point {
-            entries.push(PreviewOutputEntry::Other);
-            continue;
-        }
-        if !needs_file_bytes || fingerprint.length > MAX_PREVIEW_TEXT_BYTES {
-            entries.push(PreviewOutputEntry::incomplete_file(0, fingerprint.length));
-            continue;
-        }
-
-        let path = output_dir.join(name);
-        let Ok(current_metadata) = fs::symlink_metadata(&path) else {
-            entries.push(PreviewOutputEntry::incomplete_file(0, fingerprint.length));
-            continue;
-        };
-        if !current_metadata.is_file()
-            || current_metadata.file_type().is_symlink()
-            || is_reparse_point(&current_metadata)
-        {
-            entries.push(PreviewOutputEntry::Other);
-            continue;
-        }
-        if current_metadata.len() > MAX_PREVIEW_TEXT_BYTES {
-            entries.push(PreviewOutputEntry::incomplete_file(
-                0,
-                current_metadata.len().max(fingerprint.length),
-            ));
+        let observed_length = entry.byte_length();
+        if !needs_file_bytes || observed_length > MAX_PREVIEW_TEXT_BYTES {
+            entries.push(PreviewOutputEntry::incomplete_file(0, observed_length));
             continue;
         }
 
-        let Ok(file) = fs::File::open(&path) else {
-            entries.push(PreviewOutputEntry::incomplete_file(0, fingerprint.length));
+        // The shared guard reopens the entry and refuses a swap between the
+        // snapshot and the read, so only a stable regular file reaches a parser.
+        let Ok((file, opened_length)) = entry.open_in(output_dir) else {
+            entries.push(PreviewOutputEntry::incomplete_file(0, observed_length));
             continue;
         };
-        let Ok(opened_metadata) = file.metadata() else {
-            entries.push(PreviewOutputEntry::incomplete_file(0, fingerprint.length));
-            continue;
-        };
-        if !opened_metadata.is_file() || opened_metadata.len() > MAX_PREVIEW_TEXT_BYTES {
+        if opened_length > MAX_PREVIEW_TEXT_BYTES {
             entries.push(PreviewOutputEntry::incomplete_file(
                 0,
-                opened_metadata.len().max(fingerprint.length),
+                opened_length.max(observed_length),
             ));
             continue;
         }
@@ -1542,7 +1573,7 @@ fn capture_preview_output_manifest(
         let mut reader = file.take(MAX_PREVIEW_TEXT_BYTES + 1);
         let mut bytes = Vec::new();
         if reader.read_to_end(&mut bytes).is_err() {
-            entries.push(PreviewOutputEntry::incomplete_file(0, fingerprint.length));
+            entries.push(PreviewOutputEntry::incomplete_file(0, observed_length));
             continue;
         }
         let captured_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
@@ -1550,17 +1581,14 @@ fn capture_preview_output_manifest(
             .get_ref()
             .metadata()
             .ok()
-            .map_or(opened_metadata.len(), |metadata| metadata.len());
-        let observed_total = fingerprint
-            .length
-            .max(current_metadata.len())
-            .max(opened_metadata.len())
+            .map_or(opened_length, |metadata| metadata.len());
+        let observed_total = observed_length
+            .max(opened_length)
             .max(final_length)
             .max(captured_bytes);
         if captured_bytes > MAX_PREVIEW_TEXT_BYTES
-            || captured_bytes != fingerprint.length
-            || captured_bytes != current_metadata.len()
-            || captured_bytes != opened_metadata.len()
+            || captured_bytes != observed_length
+            || captured_bytes != opened_length
             || captured_bytes != final_length
         {
             entries.push(PreviewOutputEntry::incomplete_file(
@@ -1574,81 +1602,10 @@ fn capture_preview_output_manifest(
     PreviewOutputManifest::new(entries)
 }
 
-#[cfg(windows)]
-fn is_reparse_point(metadata: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(windows))]
-const fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
-    false
-}
-
-fn validate_conversion_output(
-    snapshot: &BTreeMap<OsString, EntryFingerprint>,
-    expected_file_name: &OsStr,
-    format: OpenFormat,
-    output_directory: &Path,
-    input: &Path,
-) -> Result<ConversionOutputCandidate, ConversionOutputIssue> {
-    if snapshot.is_empty() {
-        return Err(ConversionOutputIssue::Missing);
-    }
-    if snapshot.keys().any(|name| {
-        let normalized = name.to_string_lossy().to_ascii_lowercase();
-        normalized.ends_with(".partial")
-            || normalized.ends_with(".part")
-            || normalized.ends_with(".tmp")
-    }) {
-        return Err(ConversionOutputIssue::Partial);
-    }
-    if snapshot.len() != 1 {
-        return Err(ConversionOutputIssue::Unexpected);
-    }
-
-    let (file_name, fingerprint) = snapshot.iter().next().expect("one snapshot entry");
-    if file_name != expected_file_name {
-        return Err(ConversionOutputIssue::Unexpected);
-    }
-    if !fingerprint.is_file
-        || fingerprint.is_directory
-        || fingerprint.is_symlink
-        || fingerprint.is_reparse_point
-    {
-        return Err(ConversionOutputIssue::NonRegular);
-    }
-    let expected_extension = match format {
-        OpenFormat::MzMl => "mzML",
-        OpenFormat::MzXml => "mzXML",
-    };
-    let output_path = Path::new(file_name);
-    if !output_path
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case(expected_extension))
-    {
-        return Err(ConversionOutputIssue::Unexpected);
-    }
-    if fingerprint.length == 0 {
-        return Err(ConversionOutputIssue::Empty);
-    }
-
-    let source_basename_preserved = output_path
-        .file_stem()
-        .zip(input.file_stem())
-        .is_some_and(|(output_stem, input_stem)| output_stem.eq_ignore_ascii_case(input_stem));
-    Ok(ConversionOutputCandidate {
-        path: output_directory.join(file_name),
-        length: fingerprint.length,
-        source_basename_preserved,
-    })
-}
-
-fn require_fresh_output_directory(
-    snapshot: &BTreeMap<OsString, EntryFingerprint>,
-) -> Result<(), HarnessError> {
+/// The spike keeps a stricter precondition than the library conversion plan: it
+/// refuses any non-empty output directory, not only an existing destination.
+/// The recorded M0B output-conflict evidence depends on that exact behavior.
+fn require_fresh_output_directory(snapshot: &OutputDirectorySnapshot) -> Result<(), HarnessError> {
     if snapshot.is_empty() {
         Ok(())
     } else {
@@ -2226,20 +2183,13 @@ mod tests {
 
     #[test]
     fn nonempty_output_directory_fails_closed_before_backend_execution() {
-        let empty = BTreeMap::new();
+        let controlled = PreviewOutputDirectory::new();
+        let empty = snapshot_output_directory(&controlled.path).expect("empty snapshot");
         require_fresh_output_directory(&empty).expect("empty spike directory is safe");
 
-        let populated = BTreeMap::from([(
-            OsString::from("existing-output.mzML"),
-            EntryFingerprint {
-                length: 17,
-                modified: None,
-                is_file: true,
-                is_directory: false,
-                is_symlink: false,
-                is_reparse_point: false,
-            },
-        )]);
+        fs::write(controlled.path.join("existing-output.mzML"), b"seeded")
+            .expect("controlled sentinel output is written");
+        let populated = snapshot_output_directory(&controlled.path).expect("populated snapshot");
         let error = require_fresh_output_directory(&populated)
             .expect_err("nonempty spike directory must fail closed");
         assert!(error.message.contains("must be empty"));
@@ -2257,7 +2207,8 @@ mod tests {
         );
         fs::write(controlled.path.join("metadata.txt"), metadata)
             .expect("controlled metadata output is written");
-        let snapshot = snapshot_directory(&controlled.path).expect("output snapshot succeeds");
+        let snapshot =
+            snapshot_output_directory(&controlled.path).expect("output snapshot succeeds");
         let manifest = capture_preview_output_manifest(
             &controlled.path,
             &snapshot,
@@ -2296,7 +2247,8 @@ mod tests {
             .expect("controlled initial output length is set");
         drop(file);
 
-        let snapshot = snapshot_directory(&controlled.path).expect("output snapshot succeeds");
+        let snapshot =
+            snapshot_output_directory(&controlled.path).expect("output snapshot succeeds");
         let file = fs::OpenOptions::new()
             .write(true)
             .open(controlled.path.join("oversized.txt"))
@@ -2339,164 +2291,6 @@ mod tests {
     impl Drop for PreviewOutputDirectory {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.path).expect("controlled preview directory is removed");
-        }
-    }
-
-    #[test]
-    fn conversion_output_accepts_one_nonempty_expected_format_with_run_id_name() {
-        let output = BTreeMap::from([(
-            OsString::from("Experiment_x0020_1.mzML"),
-            regular_output(4096),
-        )]);
-        let candidate = validate_conversion_output(
-            &output,
-            OsStr::new("Experiment_x0020_1.mzML"),
-            OpenFormat::MzMl,
-            Path::new("output"),
-            Path::new("tiny.pwiz.1.1.mzML"),
-        )
-        .expect("one valid mzML output");
-
-        assert_eq!(candidate.length, 4096);
-        assert_eq!(candidate.path, Path::new("output/Experiment_x0020_1.mzML"));
-        assert!(!candidate.source_basename_preserved);
-    }
-
-    #[test]
-    fn conversion_output_reports_source_basename_preservation_as_observation() {
-        let output =
-            BTreeMap::from([(OsString::from("tiny.pwiz.1.1.mzXML"), regular_output(2048))]);
-        let candidate = validate_conversion_output(
-            &output,
-            OsStr::new("tiny.pwiz.1.1.mzXML"),
-            OpenFormat::MzXml,
-            Path::new("output"),
-            Path::new("tiny.pwiz.1.1.mzML"),
-        )
-        .expect("one valid mzXML output");
-
-        assert!(candidate.source_basename_preserved);
-    }
-
-    #[test]
-    fn conversion_output_fails_closed_for_missing_empty_partial_and_extra_entries() {
-        assert_eq!(
-            validate_conversion_output(
-                &BTreeMap::new(),
-                OsStr::new("output.mzML"),
-                OpenFormat::MzMl,
-                Path::new("output"),
-                Path::new("input.mzML")
-            ),
-            Err(ConversionOutputIssue::Missing)
-        );
-
-        let empty = BTreeMap::from([(OsString::from("output.mzML"), regular_output(0))]);
-        assert_eq!(
-            validate_conversion_output(
-                &empty,
-                OsStr::new("output.mzML"),
-                OpenFormat::MzMl,
-                Path::new("output"),
-                Path::new("input.mzML")
-            ),
-            Err(ConversionOutputIssue::Empty)
-        );
-
-        let partial = BTreeMap::from([(OsString::from("output.mzML.partial"), regular_output(17))]);
-        assert_eq!(
-            validate_conversion_output(
-                &partial,
-                OsStr::new("output.mzML"),
-                OpenFormat::MzMl,
-                Path::new("output"),
-                Path::new("input.mzML")
-            ),
-            Err(ConversionOutputIssue::Partial)
-        );
-
-        let extra = BTreeMap::from([
-            (OsString::from("output.mzML"), regular_output(17)),
-            (OsString::from("unexpected.txt"), regular_output(9)),
-        ]);
-        assert_eq!(
-            validate_conversion_output(
-                &extra,
-                OsStr::new("output.mzML"),
-                OpenFormat::MzMl,
-                Path::new("output"),
-                Path::new("input.mzML")
-            ),
-            Err(ConversionOutputIssue::Unexpected)
-        );
-    }
-
-    #[test]
-    fn conversion_output_rejects_wrong_format_and_nonregular_entries() {
-        for wrong_name in ["other.mzML", "output.MZML"] {
-            let output = BTreeMap::from([(OsString::from(wrong_name), regular_output(17))]);
-            assert_eq!(
-                validate_conversion_output(
-                    &output,
-                    OsStr::new("output.mzML"),
-                    OpenFormat::MzMl,
-                    Path::new("output"),
-                    Path::new("input.mzML")
-                ),
-                Err(ConversionOutputIssue::Unexpected)
-            );
-        }
-
-        let wrong_format = BTreeMap::from([(OsString::from("output.mzXML"), regular_output(17))]);
-        assert_eq!(
-            validate_conversion_output(
-                &wrong_format,
-                OsStr::new("output.mzML"),
-                OpenFormat::MzMl,
-                Path::new("output"),
-                Path::new("input.mzML")
-            ),
-            Err(ConversionOutputIssue::Unexpected)
-        );
-
-        for fingerprint in [
-            EntryFingerprint {
-                is_file: false,
-                is_directory: true,
-                ..regular_output(17)
-            },
-            EntryFingerprint {
-                is_file: false,
-                is_symlink: true,
-                ..regular_output(17)
-            },
-            EntryFingerprint {
-                is_reparse_point: true,
-                ..regular_output(17)
-            },
-        ] {
-            let output = BTreeMap::from([(OsString::from("output.mzML"), fingerprint)]);
-            assert_eq!(
-                validate_conversion_output(
-                    &output,
-                    OsStr::new("output.mzML"),
-                    OpenFormat::MzMl,
-                    Path::new("output"),
-                    Path::new("input.mzML")
-                ),
-                Err(ConversionOutputIssue::NonRegular)
-            );
-        }
-    }
-
-    fn regular_output(length: u64) -> EntryFingerprint {
-        EntryFingerprint {
-            length,
-            modified: None,
-            is_file: true,
-            is_directory: false,
-            is_symlink: false,
-            is_reparse_point: false,
         }
     }
 

@@ -195,6 +195,14 @@ impl OutputDirectoryEntry {
         })
     }
 
+    /// Opens this entry inside `directory` under the regular-file guard.
+    ///
+    /// Callers read an entry without ever holding its name, so an output name
+    /// derived from a source acquisition cannot leak into a diagnostic.
+    pub fn open_in(&self, directory: &Path) -> Result<(File, u64), RegularFileError> {
+        open_regular_file(&directory.join(&self.name))
+    }
+
     /// Whether the entry name ends with a suffix a backend uses for output it
     /// has not finished writing.
     #[must_use]
