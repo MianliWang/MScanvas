@@ -142,8 +142,13 @@ impl PreviewProvider for ProteoWizardProvider {
                         kind: "capability_evidence_unavailable".to_owned(),
                         summary: "ProteoWizard was found, but it does not describe the commands                                   MSCanvas needs."
                             .to_owned(),
-                        corrective_action: "Install a ProteoWizard release that provides msaccess                                             help, or choose a different installation folder."
-                            .to_owned(),
+                        // Only what this version can actually do. MSCanvas has
+                        // no way to be pointed at a particular installation
+                        // yet, so it does not suggest one.
+                        corrective_action:
+                            "Install a ProteoWizard release that provides msaccess help, then \
+                             check again."
+                                .to_owned(),
                     })
                 },
                 |failure| {

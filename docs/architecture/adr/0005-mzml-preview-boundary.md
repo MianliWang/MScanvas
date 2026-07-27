@@ -139,6 +139,11 @@ index. Every one of them is typed on both sides.
 - Timings recorded in the workspace are descriptive observations on the running
   machine. They are not budgets, and no threshold derives from them; that would
   need repeated measurement on a recorded hardware baseline.
+- Discovery is automatic and MSCanvas cannot yet be pointed at a particular
+  installation, so it does not suggest doing so. The corrective action it does
+  offer is the one this version can carry out. `mscanvas-proteowizard`'s own
+  discovery-failure text still suggests choosing an installation folder, which
+  no UI provides; correcting that belongs with whatever adds the setting.
 - Total ion chromatogram, base peak chromatogram, chromatogram UI, mzXML,
   vendor acquisitions, the conversion workflow, queueing, retry, progress and
   real cancellation remain outside this boundary and separately gated.
