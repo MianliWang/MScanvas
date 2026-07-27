@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use mscanvas_proteowizard::{
-    PreviewOperation, PreviewOutcome, PreviewOutputManifest, ProcessOutput, Termination,
-    interpret_preview,
+    PreviewOperation, PreviewOutcome, PreviewOutputEntry, PreviewOutputManifest, ProcessOutput,
+    Termination, interpret_preview,
 };
 
 use super::backend::{OperationResult, PreviewProvider, interpretation_error};
@@ -155,6 +155,14 @@ enum Response {
     /// Exit zero with no generated output, which the contract reads as the
     /// typed "this index does not exist" answer.
     NoOutput,
+    /// A generated file larger than this boundary reads in one piece. The real
+    /// backend produces this for an acquisition whose spectrum table exceeds
+    /// `MAX_PREVIEW_OUTPUT_BYTES`; a measured 26,431-spectrum run reaches 2.76
+    /// MiB of the 8 MiB ceiling, so about 76,600 spectra is where it starts.
+    OversizedFile {
+        captured_bytes: u64,
+        total_bytes: u64,
+    },
     Error(PreviewErrorDto),
 }
 
@@ -245,6 +253,16 @@ impl PreviewProvider for FakeProvider {
             ),
             Response::Stdout(text) => (completed_process(&text), PreviewOutputManifest::empty()),
             Response::NoOutput => (completed_process(""), PreviewOutputManifest::empty()),
+            Response::OversizedFile {
+                captured_bytes,
+                total_bytes,
+            } => (
+                completed_process(""),
+                PreviewOutputManifest::new(vec![PreviewOutputEntry::incomplete_file(
+                    captured_bytes,
+                    total_bytes,
+                )]),
+            ),
             Response::Error(error) => return Err(error),
         };
         let outcome =
@@ -512,6 +530,19 @@ fn absolute_path_shapes_are_removed_from_displayable_text() {
     assert_eq!(
         redact_absolute_paths("location: file:///D:/MSData/sample.mzML"),
         "location: <path>"
+    );
+
+    // Shapes taken from a real acquisition's metadata, with the values replaced.
+    // A `sourceFile` location is written at acquisition time, so it names the
+    // instrument's own drive rather than anything the session redactor knows,
+    // and a real directory name may contain a space and mix separators.
+    assert_eq!(
+        redact_absolute_paths("      location: file:///E:/Instrument Data/2026/run"),
+        "      location: <path>"
+    );
+    assert_eq!(
+        redact_absolute_paths(r"      location: file:///D:/Some Folder\plate\A01"),
+        "      location: <path>"
     );
     assert_eq!(
         redact_absolute_paths(r"share: \\server\data\sample.mzML"),
@@ -867,6 +898,45 @@ fn metadata_printed_before_the_first_section_is_shown_rather_than_counted() {
         leading.entries[0].contains("<path>"),
         "{}",
         leading.entries[0]
+    );
+}
+
+#[test]
+fn an_acquisition_larger_than_one_read_is_refused_whole_rather_than_shown_in_part() {
+    // No test covered this user-visible state. A run whose spectrum table
+    // exceeds `MAX_PREVIEW_OUTPUT_BYTES` is refused outright: the parser needs
+    // the whole output, and a list cut mid-file would read as a shorter
+    // acquisition than the one on disk.
+    let file = TestFile::new("oversized");
+    let responses = vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::OversizedFile {
+            captured_bytes: 8 * 1024 * 1024,
+            total_bytes: 12 * 1024 * 1024,
+        },
+    ];
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let error = service
+        .open_preview(&selected.handle)
+        .expect_err("a partial spectrum list is never presented as a whole one");
+
+    assert_eq!(error.kind, "incomplete_parser_input");
+    // Not retryable: reading again produces the same output. The limit is a
+    // named limit of this version, not a transient condition.
+    assert!(!error.retryable);
+    // The detail states both sizes, so the reader can see how far over it is.
+    let detail = error.detail.expect("the sizes are part of the message");
+    assert!(detail.contains("8388608"), "{detail}");
+    assert!(detail.contains("12582912"), "{detail}");
+
+    // Metadata and the run summary parsed. Today they are discarded with the
+    // batch: the whole open fails and the user is told nothing about the run.
+    assert!(
+        service.open_preview(&selected.handle).is_err(),
+        "the provider is exhausted, so this documents that nothing was retained"
     );
 }
 

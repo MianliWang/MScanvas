@@ -214,7 +214,8 @@ pub(super) fn lock_against_replacement(path: &Path) -> Result<std::fs::File, Pre
         .map_err(|_| {
             PreviewErrorDto::new(
                 "source_in_use",
-                "Another program is using that file, so MSCanvas did not read it. Try again once                  that program has finished with it.",
+                "Another program is using that file, so MSCanvas did not read it. \
+                 Try again once that program has finished with it.",
                 true,
             )
         })

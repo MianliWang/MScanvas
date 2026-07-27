@@ -140,7 +140,8 @@ impl PreviewProvider for ProteoWizardProvider {
                 || {
                     (!usable).then(|| BackendFailureDto {
                         kind: "capability_evidence_unavailable".to_owned(),
-                        summary: "ProteoWizard was found, but it does not describe the commands                                   MSCanvas needs."
+                        summary: "ProteoWizard was found, but it does not describe the commands \
+                             MSCanvas needs."
                             .to_owned(),
                         // Only what this version can actually do. MSCanvas has
                         // no way to be pointed at a particular installation
@@ -192,6 +193,18 @@ fn required_operations() -> Vec<PreviewOperation> {
     let mut operations = open_operations();
     operations.push(selected_spectrum_operation(0));
     operations
+}
+
+/// Names what a failing operation was reading, so a size message says which
+/// part of the file was too large rather than only that something was.
+const fn describe_operation_subject(operation: &PreviewOperation) -> &'static str {
+    match operation {
+        PreviewOperation::Metadata => "This file's metadata",
+        PreviewOperation::RunSummary => "This run's summary",
+        PreviewOperation::SpectrumTable => "The spectrum list for this run",
+        PreviewOperation::SpectrumByIndex { .. } => "That spectrum",
+        PreviewOperation::Tic { .. } => "That chromatogram",
+    }
 }
 
 /// Bounds and redacts a label lifted from the installed tool's help text.
@@ -265,7 +278,8 @@ pub fn process_error(error: ProcessError) -> PreviewErrorDto {
         ),
         ProcessError::AssignToOwnedJob { .. } => PreviewErrorDto::new(
             "backend_supervision_failed",
-            "MSCanvas could not keep the ProteoWizard program under its own supervision, so it              did not use its output.",
+            "MSCanvas could not keep the ProteoWizard program under its own supervision, \
+             so it did not use its output.",
             true,
         ),
         ProcessError::Wait { .. } => PreviewErrorDto::new(
@@ -305,13 +319,17 @@ pub fn interpretation_error(error: PreviewInterpretError) -> PreviewErrorDto {
         // read as a shorter acquisition. Saying so plainly is the point: the
         // limit is a named limit of this version, not a defect in the file.
         PreviewInterpretError::IncompleteParserInput {
+            operation,
             captured_bytes,
             total_bytes,
             ..
         } => PreviewErrorDto::new(
             identifier,
-            "This run produced more preview output than MSCanvas reads in one piece, \
-             so it was refused rather than shown incomplete.",
+            format!(
+                "{} is larger than MSCanvas reads in one piece, so it was refused \
+                 rather than shown incomplete.",
+                describe_operation_subject(&operation)
+            ),
             false,
         )
         .with_detail(format!(

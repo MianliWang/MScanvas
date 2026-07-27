@@ -209,6 +209,186 @@ def validate_project_contract(errors: list[str]) -> None:
         fail("PROJECT_PROPOSAL.md does not identify the MSCanvas source-of-truth contract", errors)
 
 
+CONTINUATION_RE = re.compile(r"\\\n[ \t]*")
+# The same defect reflowed onto one line. What precedes the run is not
+# restricted to a letter: a digit or a closing bracket ends a cut sentence as
+# surely as a word does. What follows it still must be a letter, and that is
+# what separates a broken message from deliberate column alignment — the
+# simulated help fixtures align with runs of spaces before a `:`, never before
+# a word. Which escapes may precede a run is decided per match, in
+# `_reflowed_gap`, rather than by a lookbehind here.
+#
+# Residual, stated rather than implied: a sentence reflowed onto one line whose
+# next word is a number is not caught. Its two-line form is, by the newline
+# rule above, and that is the form the defect actually takes.
+INLINE_RUN_RE = re.compile(r"[^\s][ ]{2,}[A-Za-z]")
+# Any newline left in an ordinary literal once continuations are applied. Rust
+# spells a deliberate newline `\n`, and content that is genuinely multi-line
+# lives in a raw string, which this does not read. So a newline surviving here
+# is a continuation that went missing, whatever character precedes it: a digit
+# or a closing bracket ends a cut sentence as surely as a letter does.
+EMBEDDED_NEWLINE_RE = re.compile(r"\n")
+
+
+def _rust_string_literals(text: str) -> list[tuple[int, str]]:
+    """Yields (offset, source text) for every ordinary Rust string literal.
+
+    Scanned rather than matched line by line. A string that lost its line
+    continuation is still a valid literal spanning two physical lines, so a
+    per-line regex sees neither a complete literal nor the defect, which is
+    exactly the case this check exists for.
+
+    Raw strings are skipped: they carry no escapes, so whatever is in them is
+    deliberate. Character literals are stepped over because `b'"'` in the path
+    scanner would otherwise open a string that swallows the rest of the file,
+    and a lifetime is stepped over because its quote never closes.
+    """
+    literals: list[tuple[int, str]] = []
+    index = 0
+    length = len(text)
+    while index < length:
+        character = text[index]
+
+        if character == "/" and index + 1 < length:
+            following = text[index + 1]
+            if following == "/":
+                end = text.find("\n", index)
+                index = length if end == -1 else end
+                continue
+            if following == "*":
+                # Rust nests block comments, so the first `*/` need not close
+                # the outer one. Stopping there would read commented-out code as
+                # live source and can fail the gate on text that is not compiled.
+                depth = 1
+                probe = index + 2
+                while probe < length and depth:
+                    if text.startswith("/*", probe):
+                        depth += 1
+                        probe += 2
+                    elif text.startswith("*/", probe):
+                        depth -= 1
+                        probe += 2
+                    else:
+                        probe += 1
+                index = probe
+                continue
+
+        if character == "r" and index + 1 < length:
+            hashes = 0
+            probe = index + 1
+            while probe < length and text[probe] == "#":
+                hashes += 1
+                probe += 1
+            if probe < length and text[probe] == '"':
+                terminator = '"' + "#" * hashes
+                end = text.find(terminator, probe + 1)
+                index = length if end == -1 else end + len(terminator)
+                continue
+
+        if character == "'":
+            if index + 1 < length and text[index + 1] == "\\":
+                closing = text.find("'", index + 2)
+                index = length if closing == -1 else closing + 1
+                continue
+            if index + 2 < length and text[index + 2] == "'":
+                index += 3
+                continue
+            index += 1
+            continue
+
+        if character == '"':
+            start = index + 1
+            probe = start
+            while probe < length:
+                if text[probe] == "\\":
+                    probe += 2
+                    continue
+                if text[probe] == '"':
+                    break
+                probe += 1
+            literals.append((start, text[start:probe]))
+            index = probe + 1
+            continue
+
+        index += 1
+
+    return literals
+
+
+def _reflowed_gap(content: str) -> bool:
+    """Whether a run of spaces is a continuation that went missing.
+
+    Decided per match rather than by a lookbehind in the pattern. Only an
+    escaped newline or tab legitimately precedes indentation, and they do so
+    in the simulated command output the fixtures carry. Excluding every
+    escaped character instead, which a lookbehind on the backslash does, throws
+    away real cases: the quote in `Select \"OK\"    to continue.` is escaped,
+    and the gap after it is exactly the defect.
+    """
+    for match in INLINE_RUN_RE.finditer(content):
+        start = match.start()
+        if start > 0 and content[start - 1] == chr(92) and content[start] in "nt":
+            continue
+        return True
+    return False
+
+
+def validate_user_facing_strings(errors: list[str]) -> None:
+    """Catches a lost line continuation inside a user-facing Rust message.
+
+    A string split across lines ends with a backslash, which removes the newline
+    and the next line's indentation. Lose the backslash and the indentation stays
+    in the message: six shipped strings read "...the commands <35 spaces>
+    MSCanvas needs." Nothing caught them, because the code compiled, passed
+    Clippy and produced no warning.
+
+    Two shapes, because the defect has two. Removing the backslash from a wrapped
+    literal leaves a valid literal that still spans two lines, with the newline
+    and indentation now inside the message. Reflowing that onto one line leaves a
+    run of spaces between two words. The first is the one a per-line check cannot
+    see.
+
+    Rust only, deliberately. TypeScript has the same defect, but finding it needs
+    a scanner that can tell a regular expression from a division, and that is
+    decided by grammar rather than by the preceding character. An attempt here
+    met a new lexical case on each reading — template nesting, a brace inside a
+    pattern, a pattern after a keyword, a backtick inside a pattern — and its
+    failure mode was to lose synchronisation and silently skip a whole file,
+    which is a worse thing for a check to do than to not cover a language. Rust
+    needs none of that: no regular expression literals, no interpolation, no
+    division ambiguity. Covering TypeScript belongs in a linter that parses it;
+    this repository has none today, and adding one is a dependency decision.
+    """
+    root = ROOT / "crates"
+    roots = [root, ROOT / "apps"]
+    for directory in roots:
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.rglob("*.rs")):
+            if not path.is_file() or "target" in path.parts:
+                continue
+            text = path.read_text(encoding="utf-8")
+            relative = path.relative_to(ROOT).as_posix()
+            for offset, source in _rust_string_literals(text):
+                # Apply the continuation the compiler applies before judging what
+                # the message actually contains.
+                content = CONTINUATION_RE.sub("", source)
+                number = text.count("\n", 0, offset) + 1
+                if EMBEDDED_NEWLINE_RE.search(content):
+                    fail(
+                        f"{relative}:{number} has a string literal whose sentence continues "
+                        "on the next line with no continuation, so the newline and the "
+                        "indentation are in the message",
+                        errors,
+                    )
+                elif _reflowed_gap(content):
+                    fail(
+                        f"{relative}:{number} has a run of spaces inside a string literal, "
+                        "which is what a lost line continuation looks like",
+                        errors,
+                    )
+
+
 def main() -> int:
     errors: list[str] = []
     validate_required(errors)
@@ -218,6 +398,7 @@ def main() -> int:
         validate_skill_frontmatter(errors)
         validate_markdown_links(errors)
         validate_project_contract(errors)
+        validate_user_facing_strings(errors)
 
     if errors:
         print("Repository validation failed:")

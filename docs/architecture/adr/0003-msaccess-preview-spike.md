@@ -23,7 +23,7 @@ If the spike fails, compare temporary open-format indexing or a narrow native re
 
 ## Bounded spike result — 2026-07-24
 
-The first bounded Windows pass found no runnable `msconvert.exe` or `msaccess.exe` on `PATH` or in the reviewed normal installation roots. Windows Installer retains a ProteoWizard version record, but its `ProductState` is `ABSENT`; that residual metadata is not an installed version or a usable backend.
+The first bounded Windows pass found no runnable `msconvert.exe` or `msaccess.exe` on `PATH` or in the reviewed normal installation roots, and read the retained Windows Installer version record with `ProductState = ABSENT` as residual metadata rather than an installed version. **Corrected 2026-07-27: the host did have a working ProteoWizard 3.0.26013**, installed where the reviewed roots did not reach, and the retained version record matched it exactly. See the correction section below.
 
 Explicit authorization was later granted to download and install the current official Windows x64 vendor-reader build. The exact official `3.0.26204` / `a09eea9` MSI was downloaded and hashed, with no redirect, but Windows reported Authenticode `NotSigned` and no signer. The mandatory trust gate stopped before execution, installer UI, elevation or installation; no alternate installer or unofficial source was tried. This advertised artifact identity is not an installed or executable-reported version.
 
@@ -165,3 +165,30 @@ Remaining gates are TIC and BPC from representative data, real backend cancellat
 partial-output behavior, alternate-locale parsing, vendor-format coverage, and MS1 and
 chromatogram behavior, which this MS2-only acquisition could not exercise. A preview cache
 remains a separate design decision and is not implied by these measurements.
+
+## Correction: the host backend was present, 2026-07-27
+
+The 2026-07-24 conclusion that this development host had no usable ProteoWizard
+was wrong. ProteoWizard 3.0.26013 was installed under `%LOCALAPPDATA%\Apps`,
+which was not one of the reviewed installation roots, so discovery returned
+`backend_not_found` and every host-scoped conclusion in this ADR followed from
+that.
+
+This does not change any decision recorded here. The typed preview contracts,
+the canonical-identity reconciliation, the disposable-VM evidence and the
+representative-scale measurements were all obtained without relying on a host
+installation, and none of them is weakened by one being present. What changes is
+the confidence attached to discovery itself: a negative host-discovery result
+was treated as evidence that the failure path behaves correctly, and it was
+instead evidence of a defect in discovery.
+
+The defect is fixed on `fix/per-user-proteowizard-discovery`, together with a
+release-ordering defect found while reviewing it. Discovery now finds the
+per-user installation on the affected machine.
+
+One gate this closes and one it does not. Metadata, the run summary, the
+spectrum table and selected spectra have now been exercised against a real
+backend on a real 208.5 MiB acquisition, including the first index past the end,
+which returned the typed no-result the desktop boundary depends on. TIC and BPC
+from representative data, real backend cancellation, alternate-locale parsing
+and vendor coverage remain open exactly as recorded above.

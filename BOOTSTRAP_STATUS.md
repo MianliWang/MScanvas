@@ -92,7 +92,7 @@ Repository-wide validation passed with:
 | `pnpm tauri build --no-bundle` | Passed; produced an ignored Windows release executable |
 | `git diff --check` | Passed |
 
-Bounded local discovery found no runnable host-installed `msconvert.exe` or `msaccess.exe`. Residual Windows Installer metadata reports a ProteoWizard version record with `ProductState = ABSENT`; it is not an installed version. After explicit download and installation authorization, the exact official Windows x64 MSI (`3.0.26204` / `a09eea9`) was downloaded outside the repository and hashed, but Windows reported Authenticode `NotSigned` with no signer. The mandatory host-install trust gate stopped before execution, installer UI, elevation or installation, and no alternate installer or unofficial source was tried.
+Bounded local discovery found no runnable host-installed `msconvert.exe` or `msaccess.exe`. Windows Installer metadata reports a ProteoWizard version record with `ProductState = ABSENT`. **Corrected 2026-07-27: that discovery result was a false negative and that version record was not residual.** ProteoWizard 3.0.26013 was installed on this host the whole time, under `%LOCALAPPDATA%\Apps`, which discovery did not search. See "Host ProteoWizard was installed and not found" below. After explicit download and installation authorization, the exact official Windows x64 MSI (`3.0.26204` / `a09eea9`) was downloaded outside the repository and hashed, but Windows reported Authenticode `NotSigned` with no signer. The mandatory host-install trust gate stopped before execution, installer UI, elevation or installation, and no alternate installer or unofficial source was tried.
 
 A narrower continuation verified the matching official Windows x86_64 portable archive through the ProteoWizard selection page, `bt83` release record and site-owned S3 resolver. The `97,078,806`-byte archive has SHA-256 `A0B92B40456E080B1CB5CBEDAE0B95664F43FE3B723972FE388A60E0341564E2`. All 265 archive members passed path/type checks before extraction, extraction stayed inside a fresh temporary root, and a private inventory covered all 20 executables and 191 DLLs. The target `msconvert.exe` and `msaccess.exe` were both unsigned.
 
@@ -300,11 +300,99 @@ Three layout defects were found and fixed by that check; see the ADR 0005
 slice for what they were.
 
 The check is partial and this record does not claim more than it covers. The
-host has no ProteoWizard installation and no local mzML file, and downloading
-or committing a fixture payload was not authorized for that slice, so the
 loaded-preview, selected-spectrum, empty-spectrum and file-picker states were
-not exercised against a real backend. They are covered by automated rendered
-tests only.
+not exercised against a real backend during that slice; they were covered by
+automated rendered tests only.
+
+**Corrected 2026-07-27.** This record previously gave the reason as "the host
+has no ProteoWizard installation and no local mzML file". Both halves were
+false. ProteoWizard 3.0.26013 was installed and eleven local `.mzML`
+acquisitions were present. What was missing was not a backend but the ability
+to find one: discovery did not search the directory the per-user installer uses.
+The five screenshots taken during that check all show the backend-unavailable
+banner, and every one of them is a picture of that defect rather than of an
+absent installation.
+
+## Host ProteoWizard was installed and not found, 2026-07-27
+
+MSCanvas reported `backend_not_found` on this development host while
+ProteoWizard 3.0.26013 (revision `47b13cf`, built Jan 13 2026) was installed and
+working. Both executables were present and answered `--help`. Discovery reached
+neither.
+
+`DiscoveryEnvironment::from_process` scanned `%ProgramFiles%` for versioned
+`ProteoWizard*` directories but added only two exact literals under
+`%LOCALAPPDATA%`: `Programs\ProteoWizard` and `ProteoWizard`. The per-user
+installer writes to `%LOCALAPPDATA%\Apps\ProteoWizard <version> 64-bit`, which
+no branch reached. The rule that would have found it had already been written
+and was applied to one container only.
+
+The evidence was available and was explained away. Windows Installer metadata
+reported version `3.0.26013` — exactly the installed version — and this record
+and the M0 spike both filed it as residual registration for an absent product.
+It was the installed product.
+
+Corrected by `fix: find a per-user ProteoWizard installation` and
+`fix: search a newer ProteoWizard release before an older one`. The second is a
+separate defect found while reviewing the first: the versioned directories were
+ordered as text, so `3.0.9134` sorted above `3.0.26013` and a machine with both
+would have run the older one. Discovery returns a single candidate with no
+fallback, so that order decides which binaries execute.
+
+After the fix, on the same machine with nothing added to `PATH`:
+`availability=Available`, `source=CommonInstallRoot`, `release=3.0.26013`,
+`same_installation=true`.
+
+## Real-acquisition measurements, 2026-07-27
+
+Eleven local mzML acquisitions were read only, never copied into the repository,
+and no file name, sample identifier, compound identifier or m/z value from them
+appears in this repository. One 208.5 MiB acquisition was measured through the
+spike harness against the host installation.
+
+| Operation | Backend | Peak owned-job memory | Result |
+| --- | --- | --- | --- |
+| Metadata | 233 ms | 35.8 MB | 5 sections |
+| Run summary | 4,148 ms | 141.0 MB | 26,431 spectra |
+| Spectrum table | 5,440 ms | 141.1 MB | 26,431 rows; 2,894,911 generated bytes; 24 ms to parse |
+| Selected spectrum, first index | 281 ms | 35.7 MB | 17 points |
+| Selected spectrum, middle index | 231 ms | 35.8 MB | 214 points |
+| Selected spectrum, last valid index | 261 ms | 35.8 MB | 100 points |
+| Selected spectrum, first index past the end | 211 ms | 35.7 MB | typed no-result, `spectrum_unavailable` |
+
+These are single observations on one machine and one file. They are not a
+latency budget and nothing derives a threshold from them.
+
+Two facts worth keeping. The out-of-range index returned the typed no-result the
+desktop boundary depends on, against a real backend rather than a substituted
+provider. And the spectrum table for 26,431 spectra occupied 2.76 MiB of the
+8 MiB output ceiling — 109.5 bytes per row, so the ceiling is reached at roughly
+76,600 spectra. `MAX_SPECTRUM_TABLE_ROWS` is 100,000, which this backend's row
+format cannot reach: the byte ceiling refuses the whole preview before the row
+bound could disclose a truncated prefix. An acquisition beyond about 76,600
+spectra is refused rather than partially shown.
+
+## Rendered check against a real acquisition, 2026-07-27
+
+The loaded-preview and selected-spectrum states were exercised against the host
+installation and a real 208.5 MiB acquisition at 3048x1523 and at 1280x760.
+Window contents were captured with `PrintWindow` and `PW_RENDERFULLCONTENT`,
+which renders the window itself rather than the screen, so no other application
+can appear in a capture.
+
+The check found one layout defect and it is fixed: the selected-spectrum facts,
+the plot caption and the identifiers heading were painted on top of the stick
+spectrum. It appears only when the panel is shorter than the plot's minimum
+height, which needs a loaded spectrum to reach.
+
+It also confirmed that path redaction works on real input rather than on
+invented cases. The acquisition's metadata carries the absolute path the
+instrument wrote it to, on a drive this machine does not have; the panel shows
+`<path>` for both `sourceFile` locations.
+
+Still not exercised: the empty-spectrum state, and the native file picker as a
+captured state. A file was opened through the picker, so it works; the dialog
+itself was not captured.
 
 ## Validation completed during repository initialization
 
@@ -318,10 +406,11 @@ tests only.
 
 ## Intentionally pending
 
-- Exercise the loaded-preview, selected-spectrum and file-picker states of
+- Exercise the empty-spectrum state and the native file picker of
   `pnpm tauri dev` against a real ProteoWizard installation on Windows. The
-  shell and no-backend states were checked on 2026-07-27; the states that need
-  an installed backend and a local mzML file were not.
+  shell, no-backend, backend-available, loaded-preview and selected-spectrum
+  states were checked on 2026-07-27; see "Host ProteoWizard was installed and
+  not found" for what that check covered and what it did not.
 - Complete the remaining ProteoWizard provider gates: MS1 and chromatogram behavior, TIC
   and BPC from representative data, real cancellation, alternate-locale parsing and
   separately authorized vendor coverage. The typed preview-result/canonical-identity

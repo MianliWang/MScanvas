@@ -9,7 +9,7 @@
 
 ## Executive result
 
-Phase 0 passed on the required Windows-native toolchain. The continuation preflight preserved the validated M0 work on `spike/m0-proteowizard` from required base `595b6885e2550967ab9af5da1449296e04f49117`; no unrelated change, dependency change, license change or prohibited backend artifact was present. Bounded host discovery still found no installed `msconvert.exe` or `msaccess.exe`.
+Phase 0 passed on the required Windows-native toolchain. The continuation preflight preserved the validated M0 work on `spike/m0-proteowizard` from required base `595b6885e2550967ab9af5da1449296e04f49117`; no unrelated change, dependency change, license change or prohibited backend artifact was present. Bounded host discovery still found no installed `msconvert.exe` or `msaccess.exe`. **Corrected 2026-07-27: that was a false negative**; both were installed under `%LOCALAPPDATA%\Apps`, which the search did not cover.
 
 The earlier official Windows x64 MSI remained prohibited after Windows reported it as `NotSigned`; it was not executed or installed. Under the narrower continuation authorization, the official download page's `Windows 64-bit tar.bz2` selection, its `bt83.xml` release record and the site's own JavaScript resolver established the portable artifact URL without URL guessing. The portable archive downloaded with HTTP `200`, zero redirects, a byte length of `97,078,806` and SHA-256 `A0B92B40456E080B1CB5CBEDAE0B95664F43FE3B723972FE388A60E0341564E2`.
 
@@ -17,7 +17,7 @@ All 265 archive members were enumerated before extraction. The archive had no ab
 
 The local Windows Sandbox/VM gate remained unavailable without an unauthorized host change. The bounded continuation therefore used a fresh GitHub-hosted `windows-2025` disposable VM, not the development host. Exact public inputs and the hash-verified harness bundle were downloaded before execution. Three exact-path outbound-block firewall rules were verified in `ActiveStore`; all active profiles were enabled; and the unsigned tools and harness then ran as a temporary, non-elevated standard user with a five-key environment, protected inputs and scoped writable directories. Independent cleanup proved no owned process, rule, profile, user, logon-deny right, runtime root or private cleanup state remained.
 
-Windows Installer metadata contains a residual ProteoWizard version string, `3.0.26013`, but its product state is `ABSENT`. That is evidence of stale installer registration only. It is not an installed version, an executable discovery result, or proof that either command can run.
+Windows Installer metadata contains a ProteoWizard version string, `3.0.26013`, whose product state is `ABSENT`. This report read that as stale registration for an absent product. **Corrected 2026-07-27: it was the installed product.** ProteoWizard 3.0.26013 was installed on this host under `%LOCALAPPDATA%\Apps`, a location bounded discovery did not search. See the correction at the end of this report.
 
 Exact run [`30129182032`](https://github.com/MianliWang/MScanvas/actions/runs/30129182032), attempt 1, executed commit `f0d7957fbbe129263a9a89684b6ce549b1b3a086`. Both jobs and every cleanup/publication gate passed. Its sanitized evidence ZIP, artifact `8610469338`, was independently downloaded and matched GitHub's SHA-256 `8A07BBDBA9C195A311A00658A9FC7F086E83B6DA3943F41B12B90BC2ED23E927`; it contained only `summary.json` (`86,744` bytes, SHA-256 `23F9371378CE2E868C0534E7CA2F8985EA5FC7E12D929509A2096025D483C3B4`) and `summary.md` (`1,525` bytes, SHA-256 `1E8935B074181ADDB92BBC3698EA79060F39E2D7D029D2527458E62CFC59EABF`). Both passed source/run identity and forbidden-content review.
 
@@ -58,7 +58,7 @@ Any explicitly authorized local acquisition belongs under the ignored `local-dat
 | Cargo | `1.97.1` |
 | Python | `3.14.3` |
 | GitHub CLI | Authenticated; account identity omitted from this sanitized report |
-| Development-host ProteoWizard | Unavailable; no portable executable was launched locally |
+| Development-host ProteoWizard | Reported unavailable; **corrected 2026-07-27** — 3.0.26013 was installed and undiscovered. No portable executable was launched locally |
 | Isolated evidence VM | GitHub-hosted `windows-2025`; Windows Server 2025 Datacenter `10.0.26100`, image `win25-vs2026` `20260714.173.1`, AMD64, 2 logical processors, `8,584,425,472` physical-memory bytes, `en-US` |
 | Isolated ProteoWizard | `msconvert` reported `3.0.26204 (a09eea9)`; `msaccess` reported `3.0.26204`; both came from the same hash-verified portable distribution |
 
@@ -81,7 +81,7 @@ Machine names, user-profile paths, environment dumps, acquisition names and samp
 | Bundle/telemetry/install-location review | **NOT REACHED**; the signature stop preceded those installer checks |
 | Post-stop state | No installation, alternate installer or unofficial source was attempted; the unexecuted MSI remains in user temporary storage outside the repository and is not tracked |
 
-The advertised `3.0.26204` artifact identity is download metadata only. It must not be reported as an installed or executable-reported ProteoWizard version. It is separate from the older residual `3.0.26013` Windows Installer record whose `ProductState` is `ABSENT`.
+The advertised `3.0.26204` artifact identity is download metadata only. It must not be reported as an installed or executable-reported ProteoWizard version. It is separate from the `3.0.26013` Windows Installer record whose `ProductState` is `ABSENT`, which this report called residual. **Corrected 2026-07-27: that record was the installed product**, and the two versions are separate for a different reason than the one given here — `3.0.26204` was never installed on this host, while `3.0.26013` was.
 
 ## Official portable artifact and archive safety
 
@@ -169,15 +169,15 @@ Discovery was bounded to installed-program metadata, exact executable resolution
 | Explicit configured location | None supplied for preflight | No configured-home or configured-executable candidate could be tested |
 | `PATH` | Neither exact executable resolved | No `PATH` candidate |
 | Reviewed common installation roots | Neither executable found | No common-root candidate |
-| Windows Installer metadata | Residual version `3.0.26013`; `ProductState = ABSENT` | Stale registration, not an installed backend |
+| Windows Installer metadata | Version `3.0.26013`; `ProductState = ABSENT` | Read as stale registration; **corrected 2026-07-27** — this was the installed version |
 | Official installer candidate | Advertised `3.0.26204`; SHA-256 recorded; Authenticode `NotSigned` | Downloaded but unexecuted and uninstalled; mandatory host-install trust gate failed |
 | Official portable candidate | Advertised `3.0.26204` / `a09eea9`; archive and target executable hashes recorded | Re-verified and executed only in the disposable evidence VM |
-| Host `msconvert.exe` | Not found | No local conversion executable |
-| Host `msaccess.exe` | Not found | No local preview executable |
+| Host `msconvert.exe` | Not found | **False negative**; present under `%LOCALAPPDATA%\Apps`, which was not searched |
+| Host `msaccess.exe` | Not found | **False negative**; present under `%LOCALAPPDATA%\Apps`, which was not searched |
 | Isolated `msconvert.exe` | `3.0.26204 (a09eea9)`; build date `Jul 23 2026 20:22:10` | Complete exit-0 help plus executable-reported identity |
 | Isolated `msaccess.exe` | `3.0.26204`; source revision not emitted; build date `Jul 23 2026 20:17:52` | Complete expected exit-1 help; compatible pair established by one verified distribution and normalized release |
 
-The correct development-host availability state remains `unavailable`; isolated evidence is not a host installation. Runtime identity is derived from the tools' own complete help/probe output, not from the MSI or download filename. `msaccess` did not emit source revision, so the report does not fabricate one.
+This report concluded that the correct development-host availability state was `unavailable`. **Corrected 2026-07-27: that conclusion was wrong.** The host had a working ProteoWizard 3.0.26013; discovery could not see it. The narrower claim the sentence was defending still holds: isolated evidence is not a host installation. Runtime identity is derived from the tools' own complete help/probe output, not from the MSI or download filename. `msaccess` did not emit source revision, so the report does not fabricate one.
 
 ## Installed command surfaces and real operations
 
@@ -287,7 +287,7 @@ The developer-only invocation shape is `cargo run --locked -p mscanvas-proteowiz
 | --- | --- |
 | Portable provenance | Official selection/release/resolver chain, archive hash and static binary/AuthentiCode inventory verified; exact runtime extraction hashes matched |
 | Isolation | Disposable `windows-2025` VM, standard-user token, scoped ACLs/environment, exact-path outbound blocks and complete teardown verified |
-| Discovery/version | Host remained unavailable; isolated same-distribution pair and executable-reported normalized release `3.0.26204` verified |
+| Discovery/version | Host reported unavailable — **corrected 2026-07-27**, this was a false negative and 3.0.26013 was installed; isolated same-distribution pair and executable-reported normalized release `3.0.26204` verified |
 | Developer harness | Real isolated help, metadata, summary, table, TIC, spectrum, conversion and bounded failure cases recorded |
 | Installed command surfaces | Complete, non-truncated help validated every used query/option; literal BPC absent |
 | Open-format smoke | Exact pinned fixture hash/size verified before and after 12 recorded operations |
@@ -385,7 +385,7 @@ The next product slice may use these B capabilities only behind typed parse/outp
 - Raw probe/process output and normalized technical detail are sensitive internal diagnostics; only the explicit redacted projection may be shared. The published pair retained structured counts/ranges/hashes, not raw help, row-level scientific output or backend streams, and passed an independent forbidden-content scan.
 - Installed-help validation must also fail closed if its bounded stdout or stderr capture is truncated; finding required markers in a truncated installed-help capture is insufficient evidence for this validation gate.
 - The harness requires a dedicated fresh empty output directory and never deletes source acquisition data. The isolated sentinel case confirmed its fail-closed conflict preflight.
-- Any production ProteoWizard backend remains separately supplied/licensed by the user unless a later distribution ADR explicitly changes that policy; no current host installation was verified.
+- Any production ProteoWizard backend remains separately supplied/licensed by the user unless a later distribution ADR explicitly changes that policy; no current host installation was verified at the time of this report — **corrected 2026-07-27**, one was present and undiscovered, and has since been probed.
 - The downloaded official installer remains unexecuted outside the repository. The unsigned portable build ran only under the disposable VM controls above. No installer, archive, executable, DLL, SDK, license payload or vendor component is tracked or redistributed.
 - The runtime job performed no source checkout and exposed no development-host repository, profile, credential, browser state or unrelated drive to the temporary standard-user token.
 - A Defender scan was attempted with remediation disabled, but the registered product reported its scanning feature disabled; archive provenance and safe extraction do not imply a malware-clean claim.
@@ -713,3 +713,32 @@ MS1 behavior, chromatogram handling and stored BPC; vendor RAW; mzXML, which is 
 during planning; alternate-locale parsing; real backend cancellation and partial-output behavior;
 any preview cache; and any universal performance claim. One representative file, measured once,
 on one shared two-core hosted runner.
+
+## Correction: the host installation was found and misread, 2026-07-27
+
+This report states in several places that the development host had no installed
+ProteoWizard. It did. ProteoWizard 3.0.26013, revision `47b13cf`, built
+Jan 13 2026, was installed at `%LOCALAPPDATA%\Apps\ProteoWizard 3.0.26013.47b13cf
+64-bit`, and both `msconvert.exe` and `msaccess.exe` answered `--help`.
+
+Discovery was bounded to `PATH` and to reviewed installation roots, and this
+report says so accurately at "Discovery was bounded to installed-program
+metadata, exact executable resolution on `PATH`, and reviewed normal
+installation roots". The per-user installer's directory was never one of those
+roots. The bound was stated honestly; it was simply drawn in the wrong place,
+and every downstream conclusion about the host inherited that.
+
+The part worth recording is not the missing root. It is that the contradicting
+evidence was in this report all along. Windows Installer metadata reported
+version `3.0.26013`, and this report explained it as residual registration
+rather than treating it as a reason to look harder. That version string was an
+exact match for what was installed.
+
+What survives unchanged: everything measured in the disposable evidence VM, the
+portable-artifact verification, the unsigned-binary findings, and every
+statement scoped to the portable `3.0.26204` build, which genuinely was never
+launched on this host.
+
+The discovery defect is fixed on branch `fix/per-user-proteowizard-discovery`.
+The A/B/C/D ratings in this report are not upgraded by this correction; the
+discovery row's evidence is weaker than it was recorded to be, not stronger.

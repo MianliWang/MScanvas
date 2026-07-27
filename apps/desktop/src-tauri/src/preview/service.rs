@@ -270,14 +270,16 @@ impl PreviewService {
                         if expected.identity.reconcile(spectrum.identity()).is_err() {
                             return Err(PreviewErrorDto::new(
                                 "spectrum_identity_conflict",
-                                "The spectrum list and this spectrum disagree about which scan                                  that row is, so MSCanvas did not show one beside the other.",
+                                "The spectrum list and this spectrum disagree about which scan \
+                                 that row is, so MSCanvas did not show one beside the other.",
                                 false,
                             ));
                         }
                         if expected.contradicts(&spectrum) {
                             return Err(PreviewErrorDto::new(
                                 "spectrum_facts_conflict",
-                                "The spectrum list and this spectrum disagree about what that                                  row measures, so MSCanvas did not show one beside the other.",
+                                "The spectrum list and this spectrum disagree about what that \
+                                 row measures, so MSCanvas did not show one beside the other.",
                                 false,
                             ));
                         }
@@ -398,7 +400,8 @@ impl PreviewService {
 fn source_changed_since_preview() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "source_changed_since_preview",
-        "The file has changed since it was opened, so this spectrum was not shown beside          metadata that no longer describes it. Open the file again to continue.",
+        "The file has changed since it was opened, so this spectrum was not shown \
+         beside metadata that no longer describes it. Open the file again to continue.",
         false,
     )
 }

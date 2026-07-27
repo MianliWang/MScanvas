@@ -399,17 +399,25 @@ button:disabled {
 
 .spectrum-figure {
   display: flex;
-  min-height: 0;
-  flex: 1;
+  /* Not `0`. The plot carries its own minimum height, and a parent allowed to
+     collapse below it lets the plot overflow this box: the facts list after it
+     is then placed against a box shorter than what was drawn, and lands on top
+     of the spectrum. The panel scrolls instead. */
+  min-height: min-content;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 4px;
   margin: 0;
 }
 
+/* A definite height rather than a share of leftover space. Inside a panel that
+   scrolls, "leftover" is not well defined: the plot grew until the facts under
+   it were below the fold. A taller drawing of the same points is not a more
+   informative one, so the size is fixed and the panel scrolls for the rest. */
 .plot {
   width: 100%;
-  min-height: 150px;
-  flex: 1;
+  height: 220px;
+  flex: none;
 }
 
 .plot-grid line {
