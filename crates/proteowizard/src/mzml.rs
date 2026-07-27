@@ -203,6 +203,7 @@ pub struct MzmlSpectrumRecord {
     default_array_length: Option<u64>,
     binary_array_count: u32,
     zlib_compressed_array_count: u32,
+    empty_binary_payload_count: u32,
     precursor_count: u32,
     scan_number: Option<u64>,
     native_identifier_recognized: bool,
@@ -241,6 +242,14 @@ impl MzmlSpectrumRecord {
     #[must_use]
     pub const fn zlib_compressed_array_count(&self) -> u32 {
         self.zlib_compressed_array_count
+    }
+
+    /// How many of this record's binary arrays carried no non-whitespace
+    /// payload. Presence is observed without decoding, so an array whose
+    /// scientific data went missing is comparable across a conversion.
+    #[must_use]
+    pub const fn empty_binary_payload_count(&self) -> u32 {
+        self.empty_binary_payload_count
     }
 
     #[must_use]
@@ -289,6 +298,7 @@ pub struct MzmlChromatogramRecord {
     default_array_length: Option<u64>,
     binary_array_count: u32,
     zlib_compressed_array_count: u32,
+    empty_binary_payload_count: u32,
     array_kinds: ArrayKindSet,
     precision: NumericPrecisionSet,
     compression: CompressionSet,
@@ -315,6 +325,14 @@ impl MzmlChromatogramRecord {
     #[must_use]
     pub const fn zlib_compressed_array_count(&self) -> u32 {
         self.zlib_compressed_array_count
+    }
+
+    /// How many of this record's binary arrays carried no non-whitespace
+    /// payload. Presence is observed without decoding, so an array whose
+    /// scientific data went missing is comparable across a conversion.
+    #[must_use]
+    pub const fn empty_binary_payload_count(&self) -> u32 {
+        self.empty_binary_payload_count
     }
 
     #[must_use]
@@ -670,7 +688,9 @@ pub fn inspect_reader<R: BufRead>(
             Ok(event) => state.handle(event)?,
             Err(error) => return Err(map_xml_error(xml.get_mut().tripped, error)),
         }
-        xml.get_mut().mark_event_boundary();
+        if let Some(kind) = xml.get_mut().finish_event() {
+            return Err(MzmlScanError::LimitExceeded(kind));
+        }
     }
 
     state.finish(xml.get_mut().consumed())
@@ -724,8 +744,24 @@ impl<R> BoundedReader<R> {
         self.consumed
     }
 
-    const fn mark_event_boundary(&mut self) {
+    /// Closes one event span and reports a limit the span itself exceeded.
+    ///
+    /// The `fill_buf` guard bounds how much a streaming reader may buffer for a
+    /// single node, but a reader that already holds the whole document hands
+    /// back an oversized node in one refill. Measuring the finished span makes
+    /// the limit hold for every reader shape, not only streaming ones.
+    fn finish_event(&mut self) -> Option<MzmlLimitKind> {
+        let span = self.consumed - self.event_start;
         self.event_start = self.consumed;
+        if span > self.max_text_run_bytes {
+            self.tripped = Some(MzmlLimitKind::TextRunBytes);
+            return Some(MzmlLimitKind::TextRunBytes);
+        }
+        if self.consumed > self.max_document_bytes {
+            self.tripped = Some(MzmlLimitKind::DocumentBytes);
+            return Some(MzmlLimitKind::DocumentBytes);
+        }
+        None
     }
 
     fn trip(&mut self, kind: MzmlLimitKind) -> io::Error {
@@ -768,6 +804,7 @@ enum Scope {
     ChromatogramList,
     Chromatogram,
     BinaryDataArray,
+    Binary,
     PrecursorList,
     Scan,
     Other,
@@ -780,6 +817,7 @@ struct SpectrumBuilder {
     default_array_length: Option<u64>,
     binary_array_count: u32,
     zlib_compressed_array_count: u32,
+    empty_binary_payload_count: u32,
     precursor_count: u32,
     scan_number: Option<u64>,
     native_identifier_recognized: bool,
@@ -795,6 +833,7 @@ struct ChromatogramBuilder {
     default_array_length: Option<u64>,
     binary_array_count: u32,
     zlib_compressed_array_count: u32,
+    empty_binary_payload_count: u32,
     array_kinds: ArrayKindSet,
     precision: NumericPrecisionSet,
     compression: CompressionSet,
@@ -805,6 +844,10 @@ struct ArrayBuilder {
     kinds: ArrayKindSet,
     precision: NumericPrecisionSet,
     compression: CompressionSet,
+    /// Whether the `binary` element carried any non-whitespace content. This is
+    /// presence only: the payload is never decoded, and the scan short-circuits
+    /// on the first non-whitespace byte.
+    has_payload: bool,
 }
 
 struct ScanState {
@@ -882,12 +925,29 @@ impl ScanState {
                 self.end(scope);
                 Ok(())
             }
-            Event::Text(_)
-            | Event::CData(_)
-            | Event::Comment(_)
-            | Event::Decl(_)
-            | Event::PI(_) => Ok(()),
+            Event::Text(text) => {
+                self.observe_payload_bytes(&text);
+                Ok(())
+            }
+            Event::CData(data) => {
+                self.observe_payload_bytes(&data);
+                Ok(())
+            }
+            Event::Comment(_) | Event::Decl(_) | Event::PI(_) => Ok(()),
             Event::Eof => Ok(()),
+        }
+    }
+
+    /// Records that a binary payload exists without decoding or retaining it.
+    fn observe_payload_bytes(&mut self, bytes: &[u8]) {
+        if self.stack.last() != Some(&Scope::Binary) {
+            return;
+        }
+        let Some(array) = self.array.as_mut() else {
+            return;
+        };
+        if !array.has_payload && bytes.iter().any(|byte| !byte.is_ascii_whitespace()) {
+            array.has_payload = true;
         }
     }
 
@@ -950,6 +1010,7 @@ impl ScanState {
                     Ok(Scope::Other)
                 }
             }
+            b"binary" if parent == Some(Scope::BinaryDataArray) => Ok(Scope::Binary),
             b"precursorList" => Ok(Scope::PrecursorList),
             b"precursor" if parent == Some(Scope::PrecursorList) => {
                 if let Some(spectrum) = self.spectrum.as_mut() {
@@ -1081,6 +1142,7 @@ impl ScanState {
             Scope::BinaryDataArray => self.finish_array(),
             Scope::SpectrumList
             | Scope::ChromatogramList
+            | Scope::Binary
             | Scope::PrecursorList
             | Scope::Scan
             | Scope::Other => {}
@@ -1100,10 +1162,14 @@ impl ScanState {
         };
 
         let zlib = u32::from(array.compression.contains(CompressionMarker::Zlib));
+        let empty_payload = u32::from(!array.has_payload);
         if let Some(spectrum) = self.spectrum.as_mut() {
             spectrum.binary_array_count = spectrum.binary_array_count.saturating_add(1);
             spectrum.zlib_compressed_array_count =
                 spectrum.zlib_compressed_array_count.saturating_add(zlib);
+            spectrum.empty_binary_payload_count = spectrum
+                .empty_binary_payload_count
+                .saturating_add(empty_payload);
             spectrum.array_kinds.merge(kinds);
             spectrum.precision.merge(array.precision);
             spectrum.compression.merge(array.compression);
@@ -1112,6 +1178,9 @@ impl ScanState {
             chromatogram.zlib_compressed_array_count = chromatogram
                 .zlib_compressed_array_count
                 .saturating_add(zlib);
+            chromatogram.empty_binary_payload_count = chromatogram
+                .empty_binary_payload_count
+                .saturating_add(empty_payload);
             chromatogram.array_kinds.merge(kinds);
             chromatogram.precision.merge(array.precision);
             chromatogram.compression.merge(array.compression);
@@ -1132,6 +1201,7 @@ impl ScanState {
             default_array_length: spectrum.default_array_length,
             binary_array_count: spectrum.binary_array_count,
             zlib_compressed_array_count: spectrum.zlib_compressed_array_count,
+            empty_binary_payload_count: spectrum.empty_binary_payload_count,
             precursor_count: spectrum.precursor_count,
             scan_number: spectrum.scan_number,
             native_identifier_recognized: spectrum.native_identifier_recognized,
@@ -1151,6 +1221,7 @@ impl ScanState {
             default_array_length: chromatogram.default_array_length,
             binary_array_count: chromatogram.binary_array_count,
             zlib_compressed_array_count: chromatogram.zlib_compressed_array_count,
+            empty_binary_payload_count: chromatogram.empty_binary_payload_count,
             array_kinds: chromatogram.array_kinds,
             precision: chromatogram.precision,
             compression: chromatogram.compression,
@@ -1807,6 +1878,46 @@ mod tests {
 
         let reader = BufReader::with_capacity(64, document.as_bytes());
         assert!(inspect_reader(reader, MzmlScanLimits::default()).is_ok());
+
+        // A reader that already holds the whole document hands the oversized
+        // node back in one refill, so the finished span is what enforces the
+        // limit there. Both reader shapes must fail closed the same way.
+        assert_eq!(
+            inspect_reader(
+                document.as_bytes(),
+                MzmlScanLimits::default().with_max_text_run_bytes(256)
+            ),
+            Err(MzmlScanError::LimitExceeded(MzmlLimitKind::TextRunBytes))
+        );
+        assert!(inspect_reader(document.as_bytes(), MzmlScanLimits::default()).is_ok());
+    }
+
+    #[test]
+    fn binary_payload_presence_is_recorded_without_decoding_it() {
+        let with_payload = minimal(concat!(
+            r#"<spectrum index="0" id="scan=1" defaultArrayLength="3">"#,
+            r#"<binaryDataArrayList count="3">"#,
+            r#"<binaryDataArray><cvParam accession="MS:1000514"/><binary>AA==</binary></binaryDataArray>"#,
+            r#"<binaryDataArray><cvParam accession="MS:1000515"/><binary></binary></binaryDataArray>"#,
+            r#"<binaryDataArray><cvParam accession="MS:1000595"/><binary>   </binary></binaryDataArray>"#,
+            r#"</binaryDataArrayList></spectrum>"#,
+        ));
+        let facts = scan_ok(&with_payload);
+
+        assert_eq!(facts.spectra()[0].binary_array_count(), 3);
+        // Only the first array carries content; whitespace is not a payload.
+        assert_eq!(facts.spectra()[0].empty_binary_payload_count(), 2);
+
+        let self_closing = minimal(concat!(
+            r#"<spectrum index="0" id="scan=1" defaultArrayLength="3">"#,
+            r#"<binaryDataArrayList count="1">"#,
+            r#"<binaryDataArray><cvParam accession="MS:1000514"/><binary/></binaryDataArray>"#,
+            r#"</binaryDataArrayList></spectrum>"#,
+        ));
+        assert_eq!(
+            scan_ok(&self_closing).spectra()[0].empty_binary_payload_count(),
+            1
+        );
     }
 
     #[test]

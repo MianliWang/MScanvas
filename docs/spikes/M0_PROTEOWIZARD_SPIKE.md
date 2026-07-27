@@ -525,10 +525,11 @@ representation; the Rust contract does not.
 ### Required, advisory and unverified properties
 
 Required invariants are the ones a faithful mzML conversion cannot violate: spectrum and
-chromatogram counts, MS-level distribution, per-record binary-array counts, roles and
-declared point counts, precursor counts, consecutive index sequences, recognized
-scan-number agreement, an internally consistent output, and the requested zlib compression
-policy on every output array. Source identity, byte length and SHA-256 are captured before
+chromatogram counts, MS-level distribution, per-record binary-array counts, roles,
+declared point counts and payload presence, precursor counts, consecutive index sequences,
+recognized scan-number agreement, an internally consistent output, and the requested zlib
+compression policy on every output array. Payload presence is observed without decoding, so
+an array whose scientific data went missing while its metadata still matched is caught. Source identity, byte length and SHA-256 are captured before
 the conversion and recaptured afterwards, so a source rewritten in place with the same
 length is detected.
 

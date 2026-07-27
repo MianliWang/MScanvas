@@ -354,6 +354,10 @@ pub enum BinaryArrayMismatchKind {
     Kinds,
     /// The declared point count differs.
     Length,
+    /// One side carries a binary payload the other lost. Presence is observed
+    /// without decoding, so this catches an array whose scientific data went
+    /// missing while its metadata still matched.
+    PayloadPresence,
 }
 
 impl BinaryArrayMismatchKind {
@@ -363,6 +367,7 @@ impl BinaryArrayMismatchKind {
             Self::Count => "binary_array_count",
             Self::Kinds => "binary_array_kinds",
             Self::Length => "binary_array_length",
+            Self::PayloadPresence => "binary_array_payload_presence",
         }
     }
 }
@@ -378,6 +383,7 @@ pub enum IntegrityProperty {
     BinaryArrayCounts,
     BinaryArrayKinds,
     BinaryArrayLengths,
+    BinaryArrayPayloadPresence,
     PrecursorCounts,
     SpectrumNativeIdentity,
     SpectrumRepresentation,
@@ -397,6 +403,7 @@ impl IntegrityProperty {
             Self::BinaryArrayCounts => "binary_array_counts",
             Self::BinaryArrayKinds => "binary_array_kinds",
             Self::BinaryArrayLengths => "binary_array_lengths",
+            Self::BinaryArrayPayloadPresence => "binary_array_payload_presence",
             Self::PrecursorCounts => "precursor_counts",
             Self::SpectrumNativeIdentity => "spectrum_native_identity",
             Self::SpectrumRepresentation => "spectrum_representation",
@@ -716,7 +723,7 @@ fn compare_documents(
     if let Some(outcome) = compare_counts(before, after, &mut report) {
         return outcome;
     }
-    if let Some(outcome) = compare_index_sequences(before, after) {
+    if let Some(outcome) = compare_index_sequences(before, after, &mut report) {
         return outcome;
     }
 
@@ -753,13 +760,26 @@ fn compare_documents(
     ) {
         return outcome;
     }
-    if let Some(outcome) = compare_chromatograms(before, after, lengths_comparable, &mut report) {
+    if let Some(outcome) = compare_chromatograms(
+        before,
+        after,
+        vocabulary_comparable,
+        lengths_comparable,
+        &mut report,
+    ) {
         return outcome;
     }
     insert_property(
         &mut report,
         IntegrityProperty::BinaryArrayLengths,
         lengths_comparable,
+    );
+    // Array roles are vocabulary-derived, and both lists are now compared, so
+    // the property is recorded once for the whole document pair.
+    insert_property(
+        &mut report,
+        IntegrityProperty::BinaryArrayKinds,
+        vocabulary_comparable,
     );
     if let Some(outcome) =
         check_compression_policy(after, policy, vocabulary_comparable, &mut report)
@@ -866,6 +886,7 @@ fn compare_counts(
 fn compare_index_sequences(
     before: &MzmlFacts,
     after: &MzmlFacts,
+    report: &mut IntegrityReport,
 ) -> Option<ConversionIntegrityOutcome> {
     for (side, facts) in [
         (DocumentSide::Source, before),
@@ -884,6 +905,7 @@ fn compare_index_sequences(
             });
         }
     }
+    report.verified.insert(IntegrityProperty::IndexSequences);
     None
 }
 
@@ -910,6 +932,13 @@ fn compare_spectra(
                 part: DocumentPart::Spectrum,
                 first_divergent_index: index,
                 kind: BinaryArrayMismatchKind::Length,
+            });
+        }
+        if source.empty_binary_payload_count() != output.empty_binary_payload_count() {
+            return Some(ConversionIntegrityOutcome::BinaryArrayMismatch {
+                part: DocumentPart::Spectrum,
+                first_divergent_index: index,
+                kind: BinaryArrayMismatchKind::PayloadPresence,
             });
         }
         if vocabulary_comparable && source.array_kinds() != output.array_kinds() {
@@ -947,11 +976,9 @@ fn compare_spectra(
 
     report.verified.insert(IntegrityProperty::BinaryArrayCounts);
     report.verified.insert(IntegrityProperty::PrecursorCounts);
-    insert_property(
-        report,
-        IntegrityProperty::BinaryArrayKinds,
-        vocabulary_comparable,
-    );
+    report
+        .verified
+        .insert(IntegrityProperty::BinaryArrayPayloadPresence);
     insert_property(
         report,
         IntegrityProperty::SpectrumRepresentation,
@@ -1000,6 +1027,7 @@ fn compare_representation(
 fn compare_chromatograms(
     before: &MzmlFacts,
     after: &MzmlFacts,
+    vocabulary_comparable: bool,
     lengths_comparable: bool,
     report: &mut IntegrityReport,
 ) -> Option<ConversionIntegrityOutcome> {
@@ -1022,6 +1050,22 @@ fn compare_chromatograms(
                 part: DocumentPart::Chromatogram,
                 first_divergent_index: index,
                 kind: BinaryArrayMismatchKind::Length,
+            });
+        }
+        if source.empty_binary_payload_count() != output.empty_binary_payload_count() {
+            return Some(ConversionIntegrityOutcome::BinaryArrayMismatch {
+                part: DocumentPart::Chromatogram,
+                first_divergent_index: index,
+                kind: BinaryArrayMismatchKind::PayloadPresence,
+            });
+        }
+        // A chromatogram that keeps its array count and length but swaps a time
+        // array for an m/z array is corrupted, so roles are compared here too.
+        if vocabulary_comparable && source.array_kinds() != output.array_kinds() {
+            return Some(ConversionIntegrityOutcome::BinaryArrayMismatch {
+                part: DocumentPart::Chromatogram,
+                first_divergent_index: index,
+                kind: BinaryArrayMismatchKind::Kinds,
             });
         }
         if source.precision() != output.precision() {
@@ -1588,6 +1632,103 @@ mod tests {
                 kind: BinaryArrayMismatchKind::Count,
             }
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_chromatogram_array_role_change_fails() {
+        // Same array count, same declared length, different role.
+        let output = output_document(&TWO_SPECTRA, 1).replace(
+            r#"<chromatogram index="0" id="TIC0" defaultArrayLength="4"><binaryDataArrayList count="1"><binaryDataArray encodedLength="8"><cvParam accession="MS:1000595"/>"#,
+            r#"<chromatogram index="0" id="TIC0" defaultArrayLength="4"><binaryDataArrayList count="1"><binaryDataArray encodedLength="8"><cvParam accession="MS:1000514"/>"#,
+        );
+
+        assert_eq!(
+            verify(&source_document(&TWO_SPECTRA, 1), &output),
+            ConversionIntegrityOutcome::BinaryArrayMismatch {
+                part: DocumentPart::Chromatogram,
+                first_divergent_index: 0,
+                kind: BinaryArrayMismatchKind::Kinds,
+            }
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_output_array_that_lost_its_payload_fails() {
+        // Metadata is untouched; only the scientific payload is gone.
+        let emptied = output_document(&TWO_SPECTRA, 1).replacen(
+            "<binary>AA==</binary>",
+            "<binary></binary>",
+            1,
+        );
+        assert_eq!(
+            verify(&source_document(&TWO_SPECTRA, 1), &emptied),
+            ConversionIntegrityOutcome::BinaryArrayMismatch {
+                part: DocumentPart::Spectrum,
+                first_divergent_index: 0,
+                kind: BinaryArrayMismatchKind::PayloadPresence,
+            }
+        );
+
+        // Whitespace is not a payload either.
+        let whitespace_only = output_document(&TWO_SPECTRA, 1).replacen(
+            "<binary>AA==</binary>",
+            "<binary>\n   </binary>",
+            1,
+        );
+        assert_eq!(
+            verify(&source_document(&TWO_SPECTRA, 1), &whitespace_only),
+            ConversionIntegrityOutcome::BinaryArrayMismatch {
+                part: DocumentPart::Spectrum,
+                first_divergent_index: 0,
+                kind: BinaryArrayMismatchKind::PayloadPresence,
+            }
+        );
+
+        let chromatogram_loss = output_document(&TWO_SPECTRA, 1)
+            .replace(r#"<cvParam accession="MS:1000595"/><cvParam accession="MS:1000574"/><binary>AA==</binary>"#, r#"<cvParam accession="MS:1000595"/><cvParam accession="MS:1000574"/><binary/>"#);
+        assert_eq!(
+            verify(&source_document(&TWO_SPECTRA, 1), &chromatogram_loss),
+            ConversionIntegrityOutcome::BinaryArrayMismatch {
+                part: DocumentPart::Chromatogram,
+                first_divergent_index: 0,
+                kind: BinaryArrayMismatchKind::PayloadPresence,
+            }
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_valid_conversion_records_every_required_property_it_verified() {
+        let outcome = verify(
+            &source_document(&TWO_SPECTRA, 1),
+            &output_document(&TWO_SPECTRA, 1),
+        );
+        let valid = outcome.valid().expect("the conversion is valid");
+
+        for property in [
+            IntegrityProperty::SourceUnchanged,
+            IntegrityProperty::SpectrumCount,
+            IntegrityProperty::ChromatogramCount,
+            IntegrityProperty::IndexSequences,
+            IntegrityProperty::MsLevelDistribution,
+            IntegrityProperty::BinaryArrayCounts,
+            IntegrityProperty::BinaryArrayKinds,
+            IntegrityProperty::BinaryArrayLengths,
+            IntegrityProperty::BinaryArrayPayloadPresence,
+            IntegrityProperty::PrecursorCounts,
+            IntegrityProperty::SpectrumNativeIdentity,
+            IntegrityProperty::SpectrumRepresentation,
+            IntegrityProperty::CompressionPolicy,
+            IntegrityProperty::RetentionTimeUnitMarkers,
+        ] {
+            assert!(
+                valid.verified().contains(&property),
+                "{property:?} was not recorded as verified"
+            );
+        }
+        assert!(valid.unverified().is_empty());
     }
 
     #[cfg(windows)]

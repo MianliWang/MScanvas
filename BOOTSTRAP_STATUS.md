@@ -150,9 +150,9 @@ mistaken for per-spectrum representation.
 Conversions are compared against source facts captured before the backend ran and
 recaptured afterwards, covering filesystem identity, byte length, content hash and typed
 mzML facts. Required invariants cover spectrum and chromatogram counts, MS-level
-distribution, per-record binary-array counts, roles and declared point counts, precursor
-counts, consecutive index sequences, recognized scan-number agreement, output internal
-consistency and the requested zlib compression policy. Numeric-encoding markers, the
+distribution, per-record binary-array counts, roles, declared point counts and payload
+presence, precursor counts, consecutive index sequences, recognized scan-number agreement,
+output internal consistency and the requested zlib compression policy. Numeric-encoding markers, the
 `indexedmzML` wrapper, byte length, newly emitted representation markers and retention-time
 unit markers stay descriptive, because the recorded evidence already shows a faithful run
 can produce them. Vocabulary-derived facts and native identity degrade to unverified rather

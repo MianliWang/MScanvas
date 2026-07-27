@@ -88,9 +88,9 @@ per-spectrum representation.
 A conversion is compared against source facts captured before it ran and recaptured after,
 covering filesystem identity, byte length and content hash, so a source changed during the
 conversion is observable. Required invariants are spectrum and chromatogram counts,
-MS-level distribution, per-record binary-array counts, roles and declared point counts,
-precursor counts, consecutive index sequences, recognized scan-number agreement, output
-internal consistency and the requested zlib compression policy.
+MS-level distribution, per-record binary-array counts, roles, declared point counts and
+payload presence, precursor counts, consecutive index sequences, recognized scan-number
+agreement, output internal consistency and the requested zlib compression policy.
 
 Numeric-encoding markers, the `indexedmzML` wrapper, byte length, representation markers the
 source never emitted, retention-time unit markers and a source's own inconsistent declared
