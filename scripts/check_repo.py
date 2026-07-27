@@ -211,194 +211,24 @@ def validate_project_contract(errors: list[str]) -> None:
 
 CONTINUATION_RE = re.compile(r"\\\n[ \t]*")
 INLINE_RUN_RE = re.compile(r"(?<!\\)[A-Za-z,.][ ]{2,}[A-Za-z]")
-# A sentence cut across lines. Not merely "contains a newline": a multi-line
-# template holding CSS breaks after `{` and `;`, which is deliberate, while a
-# message that lost its continuation breaks after a word.
+# A sentence cut across lines, not merely a newline. A literal may hold a
+# newline on purpose; a message whose sentence resumes on the next line is a
+# continuation that went missing.
 SENTENCE_BREAK_RE = re.compile(r"[A-Za-z,.]\n")
-BACKTICK = chr(96)
-# Stands in for an excluded `${...}`. Removing an interpolation outright would
-# join the spaces on either side of it and manufacture the very run of spaces
-# this check looks for.
-INTERPOLATION = chr(1)
-# After one of these, or at the start of an interpolation, a slash opens a
-# pattern rather than dividing. A pattern matters because it can hold a brace,
-# and a brace counted as structure closes the interpolation early.
-REGEX_MAY_FOLLOW = "([{,;:?=!&|+-*%~^<>"
-# A slash after a value divides; after a keyword it opens a pattern. Without
-# these, `return /}}/` reads as division and the braces are counted as
-# structure, which closes the interpolation early and lets whatever follows go
-# unexamined.
-REGEX_MAY_FOLLOW_WORD = frozenset(
-    {
-        "return",
-        "typeof",
-        "instanceof",
-        "in",
-        "of",
-        "new",
-        "delete",
-        "void",
-        "throw",
-        "case",
-        "do",
-        "else",
-        "yield",
-        "await",
-    }
-)
 
 
-def _preceding_word(text: str, index: int) -> str:
-    """The identifier ending just before `index`, if any."""
-    end = index
-    while end > 0 and text[end - 1].isspace():
-        end -= 1
-    start = end
-    while start > 0 and (text[start - 1].isalnum() or text[start - 1] == "_"):
-        start -= 1
-    return text[start:end]
-
-
-def _regex_may_start(text: str, index: int, previous: str) -> bool:
-    if previous == "" or previous in REGEX_MAY_FOLLOW:
-        return True
-    return _preceding_word(text, index) in REGEX_MAY_FOLLOW_WORD
-
-
-def _quoted(text: str, start: int, quote: str) -> tuple[str, int]:
-    """Reads a simple quoted string. `start` is just past the opening quote."""
-    index = start
-    length = len(text)
-    while index < length:
-        if text[index] == "\\":
-            index += 2
-            continue
-        if text[index] == quote:
-            break
-        index += 1
-    return text[start:index], index + 1
-
-
-def _skip_regex(text: str, start: int) -> int | None:
-    """Reads a regex literal opened at `start`. None if it does not close."""
-    index = start + 1
-    length = len(text)
-    in_class = False
-    while index < length:
-        character = text[index]
-        if character == "\\":
-            index += 2
-            continue
-        if character == "\n":
-            return None
-        if character == "[":
-            in_class = True
-        elif character == "]":
-            in_class = False
-        elif character == "/" and not in_class:
-            return index + 1
-        index += 1
-    return None
-
-
-def _template(text: str, start: int):
-    """Reads a template literal, skipping `${...}` but scanning inside it.
-
-    The interpolation holds code, not message text, so its contents are excluded
-    from what gets judged; a newline inside `${}` is formatting, not a broken
-    sentence. Literals nested in there are still returned, because a template
-    inside an interpolation is exactly where a broken message can hide.
-
-    Returns None when the literal does not close, or when the scanner meets
-    something it cannot read confidently. A scanner that has lost its place
-    reports nothing rather than reporting confidently about the wrong text.
-    """
-    parts: list[str] = []
-    nested: list[tuple[int, str]] = []
-    index = start
-    length = len(text)
-    while index < length:
-        character = text[index]
-        if character == "\\":
-            parts.append(text[index : index + 2])
-            index += 2
-            continue
-        if character == BACKTICK:
-            return "".join(parts), index + 1, nested
-        if character == "$" and index + 1 < length and text[index + 1] == "{":
-            depth = 1
-            index += 2
-            previous = ""
-            closed = False
-            while index < length:
-                inner = text[index]
-                if inner == "/" and index + 1 < length and text[index + 1] == "/":
-                    end = text.find("\n", index)
-                    index = length if end == -1 else end
-                    continue
-                if inner == "/" and index + 1 < length and text[index + 1] == "*":
-                    end = text.find("*/", index + 2)
-                    if end == -1:
-                        return None
-                    index = end + 2
-                    continue
-                if inner == "/" and _regex_may_start(text, index, previous):
-                    end = _skip_regex(text, index)
-                    if end is None:
-                        return None
-                    index = end
-                    previous = ")"
-                    continue
-                if inner == BACKTICK:
-                    scanned = _template(text, index + 1)
-                    if scanned is None:
-                        return None
-                    content, index, deeper = scanned
-                    nested.append((index, content))
-                    nested.extend(deeper)
-                    previous = ")"
-                    continue
-                if inner in {'"', "'"}:
-                    content, index = _quoted(text, index + 1, inner)
-                    if inner == '"':
-                        nested.append((index, content))
-                    previous = ")"
-                    continue
-                if inner == "{":
-                    depth += 1
-                elif inner == "}":
-                    depth -= 1
-                    if depth == 0:
-                        parts.append(INTERPOLATION)
-                        index += 1
-                        closed = True
-                        break
-                if not inner.isspace():
-                    previous = inner
-                index += 1
-            if not closed:
-                return None
-            continue
-        parts.append(character)
-        index += 1
-    return None
-
-
-def _string_literals(text: str, rust: bool) -> list[tuple[int, str]]:
-    """Yields (offset, source text) for every string literal that can hold prose.
+def _rust_string_literals(text: str) -> list[tuple[int, str]]:
+    """Yields (offset, source text) for every ordinary Rust string literal.
 
     Scanned rather than matched line by line. A string that lost its line
     continuation is still a valid literal spanning two physical lines, so a
     per-line regex sees neither a complete literal nor the defect, which is
     exactly the case this check exists for.
 
-    Raw strings are skipped because their contents are deliberate. Quoting
-    differs by language. In Rust an apostrophe opens a character literal or a
-    lifetime. In TypeScript it would open a string, but it is not treated as one
-    here: prose and JSX text are full of apostrophes, and one of them opens a
-    literal that swallows the rest of the file. Prettier pins this repository to
-    double quotes, so nothing is lost by scanning only those and the template
-    literals TypeScript also has.
+    Raw strings are skipped: they carry no escapes, so whatever is in them is
+    deliberate. Character literals are stepped over because `b'"'` in the path
+    scanner would otherwise open a string that swallows the rest of the file,
+    and a lifetime is stepped over because its quote never closes.
     """
     literals: list[tuple[int, str]] = []
     index = 0
@@ -417,7 +247,7 @@ def _string_literals(text: str, rust: bool) -> list[tuple[int, str]]:
                 index = length if end == -1 else end + 2
                 continue
 
-        if rust and character == "r" and index + 1 < length:
+        if character == "r" and index + 1 < length:
             hashes = 0
             probe = index + 1
             while probe < length and text[probe] == "#":
@@ -429,9 +259,7 @@ def _string_literals(text: str, rust: bool) -> list[tuple[int, str]]:
                 index = length if end == -1 else end + len(terminator)
                 continue
 
-        # `b'"'` in the path scanner would otherwise open a string that swallows
-        # the rest of the file. A lifetime never closes, so it is stepped over.
-        if rust and character == "'":
+        if character == "'":
             if index + 1 < length and text[index + 1] == "\\":
                 closing = text.find("'", index + 2)
                 index = length if closing == -1 else closing + 1
@@ -442,22 +270,18 @@ def _string_literals(text: str, rust: bool) -> list[tuple[int, str]]:
             index += 1
             continue
 
-        if not rust and character == BACKTICK:
-            start = index + 1
-            scanned = _template(text, start)
-            if scanned is None:
-                # Lost the thread. Report nothing about this file rather than
-                # report confidently about text the scanner has misread.
-                return []
-            content, index, nested = scanned
-            literals.append((start, content))
-            literals.extend(nested)
-            continue
-
         if character == '"':
             start = index + 1
-            content, index = _quoted(text, start, '"')
-            literals.append((start, content))
+            probe = start
+            while probe < length:
+                if text[probe] == "\\":
+                    probe += 2
+                    continue
+                if text[probe] == '"':
+                    break
+                probe += 1
+            literals.append((start, text[start:probe]))
+            index = probe + 1
             continue
 
         index += 1
@@ -466,34 +290,44 @@ def _string_literals(text: str, rust: bool) -> list[tuple[int, str]]:
 
 
 def validate_user_facing_strings(errors: list[str]) -> None:
-    """Catches a lost line continuation inside a user-facing message.
+    """Catches a lost line continuation inside a user-facing Rust message.
 
     A string split across lines ends with a backslash, which removes the newline
-    and the next line's indentation. Lose the backslash and the indentation
-    stays in the message: six shipped strings read "...the commands
-    <35 spaces> MSCanvas needs." Nothing caught them, because the code compiled,
-    passed Clippy and produced no warning.
+    and the next line's indentation. Lose the backslash and the indentation stays
+    in the message: six shipped strings read "...the commands <35 spaces>
+    MSCanvas needs." Nothing caught them, because the code compiled, passed
+    Clippy and produced no warning.
 
-    Two shapes, because the defect has two. Removing the backslash from a
-    wrapped literal leaves a valid literal that still spans two lines, with the
-    newline and indentation now inside the message. Reflowing that onto one line
-    leaves a run of spaces between two words. Neither is intentional in a
-    message, and the first is the one a per-line check cannot see.
+    Two shapes, because the defect has two. Removing the backslash from a wrapped
+    literal leaves a valid literal that still spans two lines, with the newline
+    and indentation now inside the message. Reflowing that onto one line leaves a
+    run of spaces between two words. The first is the one a per-line check cannot
+    see.
+
+    Rust only, deliberately. TypeScript has the same defect, but finding it needs
+    a scanner that can tell a regular expression from a division, and that is
+    decided by grammar rather than by the preceding character. An attempt here
+    met a new lexical case on each reading — template nesting, a brace inside a
+    pattern, a pattern after a keyword, a backtick inside a pattern — and its
+    failure mode was to lose synchronisation and silently skip a whole file,
+    which is a worse thing for a check to do than to not cover a language. Rust
+    needs none of that: no regular expression literals, no interpolation, no
+    division ambiguity. Covering TypeScript belongs in a linter that parses it;
+    this repository has none today, and adding one is a dependency decision.
     """
-    for directory in ("crates", "apps"):
-        root = ROOT / directory
-        if not root.is_dir():
+    root = ROOT / "crates"
+    roots = [root, ROOT / "apps"]
+    for directory in roots:
+        if not directory.is_dir():
             continue
-        for path in sorted(root.rglob("*")):
-            if path.suffix not in {".rs", ".ts", ".tsx"} or not path.is_file():
-                continue
-            if "target" in path.parts or "node_modules" in path.parts:
+        for path in sorted(directory.rglob("*.rs")):
+            if not path.is_file() or "target" in path.parts:
                 continue
             text = path.read_text(encoding="utf-8")
             relative = path.relative_to(ROOT).as_posix()
-            for offset, source in _string_literals(text, path.suffix == ".rs"):
-                # Apply the continuation the compiler applies before judging
-                # what the message actually contains.
+            for offset, source in _rust_string_literals(text):
+                # Apply the continuation the compiler applies before judging what
+                # the message actually contains.
                 content = CONTINUATION_RE.sub("", source)
                 number = text.count("\n", 0, offset) + 1
                 if SENTENCE_BREAK_RE.search(content):
