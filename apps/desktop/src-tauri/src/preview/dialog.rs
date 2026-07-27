@@ -7,7 +7,7 @@
 use super::dto::PreviewErrorDto;
 
 #[cfg(windows)]
-pub use windows_dialog::choose_mzml_file;
+pub use windows_dialog::{choose_installation_folder, choose_mzml_file};
 
 #[cfg(not(windows))]
 pub fn choose_mzml_file(
@@ -16,6 +16,17 @@ pub fn choose_mzml_file(
     Err(PreviewErrorDto::new(
         "file_picker_unavailable",
         "The native file picker is available on Windows in this version.",
+        false,
+    ))
+}
+
+#[cfg(not(windows))]
+pub fn choose_installation_folder(
+    _owner: Option<isize>,
+) -> Result<Option<std::path::PathBuf>, PreviewErrorDto> {
+    Err(PreviewErrorDto::new(
+        "folder_picker_unavailable",
+        "The native folder picker is available on Windows in this version.",
         false,
     ))
 }
@@ -145,6 +156,139 @@ mod windows_dialog {
             ));
         }
 
+        let length = buffer.iter().position(|unit| *unit == 0).unwrap_or(0);
+        if length == 0 {
+            return Ok(None);
+        }
+        Ok(Some(PathBuf::from(std::ffi::OsString::from_wide(
+            &buffer[..length],
+        ))))
+    }
+
+    const BIF_RETURNONLYFSDIRS: u32 = 0x0000_0001;
+    const BIF_NEWDIALOGSTYLE: u32 = 0x0000_0040;
+    const BIF_NONEWFOLDERBUTTON: u32 = 0x0000_0200;
+
+    const COINIT_APARTMENTTHREADED: u32 = 0x2;
+    const S_OK: i32 = 0;
+    const S_FALSE: i32 = 1;
+
+    #[repr(C)]
+    struct BrowseInfoW {
+        owner: *mut c_void,
+        root: *const c_void,
+        display_name: *mut u16,
+        title: *const u16,
+        flags: u32,
+        callback: *mut c_void,
+        parameter: isize,
+        image: i32,
+    }
+
+    #[link(name = "shell32")]
+    unsafe extern "system" {
+        #[link_name = "SHBrowseForFolderW"]
+        fn sh_browse_for_folder_w(arguments: *mut BrowseInfoW) -> *mut c_void;
+        #[link_name = "SHGetPathFromIDListEx"]
+        fn sh_get_path_from_id_list_ex(
+            list: *const c_void,
+            path: *mut u16,
+            length: u32,
+            options: u32,
+        ) -> i32;
+    }
+
+    #[link(name = "ole32")]
+    unsafe extern "system" {
+        #[link_name = "CoTaskMemFree"]
+        fn co_task_mem_free(block: *mut c_void);
+        #[link_name = "CoInitializeEx"]
+        fn co_initialize_ex(reserved: *mut c_void, model: u32) -> i32;
+        #[link_name = "CoUninitialize"]
+        fn co_uninitialize();
+    }
+
+    /// Shows the native folder picker and returns the chosen directory, or
+    /// `None` when the user cancelled.
+    ///
+    /// Deliberately a folder rather than an executable. A picker that accepts
+    /// `msconvert.exe` invites pointing MSCanvas at one binary while the other
+    /// comes from somewhere else, and the crate already treats a mismatched pair
+    /// as a failure. Asking for the folder makes the unit of choice the same
+    /// unit discovery works in.
+    ///
+    /// Must be called from a thread that can run a modal message loop; the
+    /// Tauri command dispatches it onto the main thread.
+    pub fn choose_installation_folder(
+        owner: Option<isize>,
+    ) -> Result<Option<PathBuf>, PreviewErrorDto> {
+        // The resizable dialog style needs an initialised apartment. Tauri's
+        // main thread already has one, so this is normally S_FALSE; it is called
+        // anyway because the rule is that whoever needs COM initialises it, and
+        // it is undone only when this call is what established it.
+        // SAFETY: no arguments, and the result decides whether to undo it.
+        let initialised =
+            unsafe { co_initialize_ex(std::ptr::null_mut(), COINIT_APARTMENTTHREADED) };
+        let owns_apartment = initialised == S_OK || initialised == S_FALSE;
+
+        let title = wide("Choose the ProteoWizard installation folder");
+        let mut display_name = vec![0_u16; PATH_BUFFER_LENGTH];
+        let mut arguments = BrowseInfoW {
+            owner: owner.map_or(std::ptr::null_mut(), |handle| handle as *mut c_void),
+            root: std::ptr::null(),
+            display_name: display_name.as_mut_ptr(),
+            title: title.as_ptr(),
+            // Only real filesystem directories, and no way to create one: the
+            // point of this dialog is to name an installation that already
+            // exists, and an empty new folder can only fail.
+            flags: BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_NONEWFOLDERBUTTON,
+            callback: std::ptr::null_mut(),
+            parameter: 0,
+            image: 0,
+        };
+
+        // SAFETY: every pointer field references a live buffer that outlives the
+        // call. The returned item list is owned by the caller.
+        let chosen = unsafe { sh_browse_for_folder_w(&raw mut arguments) };
+        if chosen.is_null() {
+            if owns_apartment {
+                // SAFETY: paired with the successful initialisation above.
+                unsafe { co_uninitialize() };
+            }
+            // This dialog reports cancellation and failure the same way, so
+            // there is nothing to distinguish and cancelling is the reading
+            // that does not invent an error.
+            return Ok(None);
+        }
+
+        let mut buffer = vec![0_u16; PATH_BUFFER_LENGTH];
+        // `Ex` rather than `SHGetPathFromIDListW`, which writes into a caller
+        // buffer it assumes is `MAX_PATH` and cannot express a longer path.
+        // SAFETY: `chosen` is the live list just returned, and the length
+        // describes `buffer` exactly.
+        let resolved = unsafe {
+            sh_get_path_from_id_list_ex(
+                chosen,
+                buffer.as_mut_ptr(),
+                u32::try_from(buffer.len()).expect("path buffer fits in DWORD"),
+                0,
+            )
+        };
+        // SAFETY: the documented way to release what the dialog returned, and
+        // it is released on every path out of here.
+        unsafe { co_task_mem_free(chosen) };
+        if owns_apartment {
+            // SAFETY: paired with the successful initialisation above.
+            unsafe { co_uninitialize() };
+        }
+
+        if resolved == 0 {
+            return Err(PreviewErrorDto::new(
+                "folder_picker_failed",
+                "That choice could not be read as a folder on this computer.",
+                true,
+            ));
+        }
         let length = buffer.iter().position(|unit| *unit == 0).unwrap_or(0);
         if length == 0 {
             return Ok(None);
