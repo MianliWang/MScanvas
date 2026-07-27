@@ -13,7 +13,10 @@ use mscanvas_proteowizard::{
     discover, execute, interpret_preview, snapshot_output_directory,
 };
 
-use super::dto::{BackendAvailabilityDto, BackendFailureDto, PreviewErrorDto};
+use super::dto::{
+    BackendAvailabilityDto, BackendFailureDto, MAX_BACKEND_LABEL_CHARS, PreviewErrorDto,
+    bounded_text, redact_absolute_paths,
+};
 
 /// The largest preview output this boundary will read into memory.
 const MAX_PREVIEW_OUTPUT_BYTES: u64 = 8 * 1024 * 1024;
@@ -122,8 +125,8 @@ impl PreviewProvider for ProteoWizardProvider {
                 "unavailable"
             }
             .to_owned(),
-            release: discovery.release.clone(),
-            build_date: discovery.build_date.clone(),
+            release: discovery.release.as_deref().map(backend_label),
+            build_date: discovery.build_date.as_deref().map(backend_label),
             same_installation: discovery.same_installation,
             failure: discovery.failure.as_ref().map(|failure| BackendFailureDto {
                 kind: failure.kind().to_owned(),
@@ -153,6 +156,15 @@ impl PreviewProvider for ProteoWizardProvider {
             .map(|operation| Self::run_bound(&capabilities, source, operation))
             .collect()
     }
+}
+
+/// Bounds and redacts a label lifted from the installed tool's help text.
+///
+/// The release and build-date lines are whatever that installation prints, so
+/// they can carry an absolute path or an unbounded run of text just as any
+/// other backend output can.
+pub(super) fn backend_label(value: &str) -> String {
+    bounded_text(&redact_absolute_paths(value), MAX_BACKEND_LABEL_CHARS)
 }
 
 /// Maps a typed process failure to a displayable error.

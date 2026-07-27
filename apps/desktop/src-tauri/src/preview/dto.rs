@@ -28,6 +28,12 @@ pub const MAX_METADATA_LINE_CHARS: usize = 400;
 /// inform anyone.
 pub const MAX_METADATA_ENTRIES: usize = 1_000;
 
+/// The longest backend release or build-date label the boundary forwards.
+///
+/// Both come from the installed tool's own help text, so they are backend text
+/// like any other and are bounded and redacted the same way.
+pub const MAX_BACKEND_LABEL_CHARS: usize = 120;
+
 /// The most MS-level buckets one run summary may transfer.
 ///
 /// Real acquisitions report a handful. The ceiling exists because a malformed

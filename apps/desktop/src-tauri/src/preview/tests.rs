@@ -675,6 +675,20 @@ fn a_source_rewritten_between_operations_is_refused_rather_than_combined() {
 }
 
 #[test]
+fn backend_labels_are_redacted_and_bounded_like_any_other_backend_text() {
+    use super::backend::backend_label;
+
+    // Both labels come from the installed tool's own help output.
+    assert_eq!(
+        backend_label("3.0.26204 built from D:/build/private/pwiz"),
+        "3.0.26204 built from <path>"
+    );
+    let long = backend_label(&"9".repeat(4_000));
+    assert!(long.chars().count() <= 121, "{}", long.chars().count());
+    assert_eq!(backend_label("3.0.26204"), "3.0.26204");
+}
+
+#[test]
 fn a_spectrum_that_contradicts_its_table_row_is_refused() {
     let file = TestFile::new("identity-conflict");
     // The table says index 0 is scan 4242; the binary formatter says scan 19.
