@@ -10,6 +10,7 @@ import {
   createFakePreviewApi,
   deferred,
   previewError,
+  selectedFile,
   unavailableBackend,
 } from "../test/previewFixtures";
 import { App } from "./App";
@@ -120,26 +121,6 @@ describe("mzML preview workspace", () => {
 
     cleanup();
 
-    // A failed picker is a different step, and must be retried as a picker.
-    // Retrying it as "open the last file again" would open a file the user was
-    // no longer reaching for.
-    let pickerAttempts = 0;
-    const pickerFails = createFakePreviewApi({
-      file: () => {
-        pickerAttempts += 1;
-        return Promise.reject(previewError({ kind: "file_picker_failed" }));
-      },
-    });
-    await openTheFile(pickerFails);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Try choosing a file again" }));
-    await waitFor(() => {
-      expect(pickerAttempts).toBe(2);
-    });
-    expect(pickerFails.openCount()).toBe(0);
-
-    cleanup();
-
     await openTheFile(
       createFakePreviewApi({
         preview: () =>
@@ -155,6 +136,63 @@ describe("mzML preview workspace", () => {
     // Choosing a different file stays available: it is a new action, not a
     // repeat of one that already failed.
     expect(screen.getByRole("button", { name: "Choose a different file" })).toBeVisible();
+  });
+
+  it("keeps the open file on screen when the picker itself fails", async () => {
+    let pickerAttempts = 0;
+    const api = createFakePreviewApi({
+      file: () => {
+        pickerAttempts += 1;
+        return pickerAttempts === 1
+          ? Promise.resolve(selectedFile)
+          : Promise.reject(previewError({ kind: "file_picker_failed" }));
+      },
+    });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    // The user reaches for another file and the dialog will not open.
+    fireEvent.click(screen.getByRole("button", { name: "Open mzML…" }));
+    expect(await screen.findByText("The file picker could not be opened")).toBeVisible();
+
+    // Failing to choose a new file is no reason to take away the one already
+    // open: it is still open in Rust and still on screen.
+    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Run" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try choosing a file again" }));
+    await waitFor(() => {
+      expect(pickerAttempts).toBe(3);
+    });
+    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+  });
+
+  it("draws a spectrum that carries negative intensity below the zero line", async () => {
+    const api = createFakePreviewApi({
+      spectrum: (index) => {
+        const spectrum = buildSpectrum(index, 4);
+        return Promise.resolve<SelectedSpectrumOutcome>({
+          outcome: "spectrum",
+          // Baseline subtraction produces negative intensities, and the typed
+          // parser accepts them.
+          spectrum: { ...spectrum, intensity: [500, -900, 200, -100] },
+        });
+      },
+    });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+    await screen.findByRole("img");
+
+    expect(
+      screen.getByText(/2 of them carry negative intensity, drawn below the zero line\./),
+    ).toBeVisible();
+    // All four points are drawn; none is dropped for being below zero.
+    expect(screen.getByText(/Drawn as 4 sticks, one per point\./)).toBeVisible();
+    // The furthest-from-zero value sets the scale and is labelled.
+    expect(screen.getByText("-900.00")).toBeInTheDocument();
+    expect(screen.queryByText("no intensity above zero")).not.toBeInTheDocument();
   });
 
   it("loads and draws the spectrum for the row the user selects", async () => {

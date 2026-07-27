@@ -7,10 +7,10 @@
 use std::path::{Path, PathBuf};
 
 use mscanvas_proteowizard::{
-    AvailabilityState, DiscoveryRequest, InstalledHelpCapabilities, OutputEntryKind,
-    PreviewInterpretError, PreviewOperation, PreviewOutcome, PreviewOutputEntry,
-    PreviewOutputManifest, Redactor, build_msaccess_command_with_capabilities, discover, execute,
-    interpret_preview, snapshot_output_directory,
+    AvailabilityState, DiscoveryRequest, InstalledHelpCapabilities, LaunchFailureKind,
+    OutputEntryKind, PreviewInterpretError, PreviewOperation, PreviewOutcome, PreviewOutputEntry,
+    PreviewOutputManifest, ProcessError, Redactor, build_msaccess_command_with_capabilities,
+    discover, execute, interpret_preview, snapshot_output_directory,
 };
 
 use super::dto::{BackendAvailabilityDto, BackendFailureDto, PreviewErrorDto};
@@ -102,13 +102,7 @@ impl ProteoWizardProvider {
             )
         })?;
 
-        let process = execute(&command).map_err(|_| {
-            PreviewErrorDto::new(
-                "backend_launch_failed",
-                "The ProteoWizard preview tool could not be started.",
-                true,
-            )
-        })?;
+        let process = execute(&command).map_err(process_error)?;
 
         let manifest = capture_manifest(output_root.path(), operation)?;
         let outcome =
@@ -158,6 +152,89 @@ impl PreviewProvider for ProteoWizardProvider {
             .iter()
             .map(|operation| Self::run_bound(&capabilities, source, operation))
             .collect()
+    }
+}
+
+/// Maps a typed process failure to a displayable error.
+///
+/// The crate already distinguishes a launch failure from a file that changed
+/// underneath the read, from a backend binary that changed after its probe.
+/// Flattening those into one message would tell the user the wrong thing and
+/// offer a retry that cannot help. Only the variant identity crosses this
+/// boundary; the attached detail strings can name paths and are dropped.
+pub fn process_error(error: ProcessError) -> PreviewErrorDto {
+    match error {
+        ProcessError::SourceIdentityChanged => PreviewErrorDto::new(
+            "source_changed_during_read",
+            "The file changed while MSCanvas was reading it, so the read was abandoned.",
+            true,
+        ),
+        ProcessError::SourceIdentityInspectionFailed { .. } => PreviewErrorDto::new(
+            "source_not_inspectable",
+            "MSCanvas could not confirm the file was still the one it opened, so it did not read it.",
+            true,
+        ),
+        ProcessError::ExecutableIdentityChanged => PreviewErrorDto::new(
+            "backend_changed_after_check",
+            "The ProteoWizard program changed after MSCanvas checked it, so it was not run.",
+            false,
+        ),
+        ProcessError::ExecutableIdentityInspectionFailed { .. } => PreviewErrorDto::new(
+            "backend_not_inspectable",
+            "MSCanvas could not confirm the ProteoWizard program it checked, so it did not run it.",
+            true,
+        ),
+        ProcessError::OutputDestinationExists
+        | ProcessError::OutputDestinationInspectionFailed { .. }
+        | ProcessError::OutputDirectoryNotEmpty
+        | ProcessError::OutputDirectoryInspectionFailed { .. }
+        | ProcessError::OutputDirectoryInsideDirectoryInput => PreviewErrorDto::new(
+            "preview_workspace_unusable",
+            "MSCanvas could not prepare a private place for this preview's output.",
+            true,
+        ),
+        ProcessError::Launch { kind, .. } => match kind {
+            LaunchFailureKind::NotFound => PreviewErrorDto::new(
+                "backend_not_found_at_launch",
+                "The ProteoWizard program was not there when MSCanvas tried to run it.",
+                false,
+            ),
+            LaunchFailureKind::PermissionDenied => PreviewErrorDto::new(
+                "backend_launch_denied",
+                "Windows refused to run the ProteoWizard program.",
+                false,
+            ),
+            LaunchFailureKind::Other => PreviewErrorDto::new(
+                "backend_launch_failed",
+                "The ProteoWizard preview tool could not be started.",
+                true,
+            ),
+        },
+        ProcessError::InvalidEnvironment { .. } => PreviewErrorDto::new(
+            "backend_environment_invalid",
+            "MSCanvas could not build a safe environment for the ProteoWizard program.",
+            false,
+        ),
+        ProcessError::AssignToOwnedJob { .. } => PreviewErrorDto::new(
+            "backend_supervision_failed",
+            "MSCanvas could not keep the ProteoWizard program under its own supervision, so it              did not use its output.",
+            true,
+        ),
+        ProcessError::Wait { .. } => PreviewErrorDto::new(
+            "backend_wait_failed",
+            "MSCanvas lost track of the ProteoWizard program while it was running.",
+            true,
+        ),
+        ProcessError::Capture { .. } => PreviewErrorDto::new(
+            "backend_output_capture_failed",
+            "MSCanvas could not read what the ProteoWizard program produced.",
+            true,
+        ),
+        ProcessError::Terminate { .. } => PreviewErrorDto::new(
+            "backend_termination_failed",
+            "MSCanvas could not stop the ProteoWizard program cleanly.",
+            true,
+        ),
     }
 }
 

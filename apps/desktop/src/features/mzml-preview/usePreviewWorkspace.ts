@@ -20,22 +20,11 @@ export type BackendState =
   | { readonly status: "resolved"; readonly availability: BackendAvailability }
   | { readonly status: "failed"; readonly error: PreviewError };
 
-/**
- * Which step failed, so a retry repeats the step that actually failed. A
- * picker failure retried as "open the last file again" would silently open a
- * different file than the one the user was reaching for.
- */
-export type FailedStage = "choosing" | "opening";
-
 export type PreviewState =
   | { readonly status: "empty" }
   | { readonly status: "opening" }
   | { readonly status: "loaded"; readonly preview: Preview }
-  | {
-      readonly status: "failed";
-      readonly stage: FailedStage;
-      readonly error: PreviewError;
-    };
+  | { readonly status: "failed"; readonly error: PreviewError };
 
 export type SpectrumState =
   | { readonly status: "none" }
@@ -52,8 +41,14 @@ export interface PreviewWorkspace {
   readonly measurements: readonly PreviewMeasurement[];
   readonly checkBackend: () => void;
   readonly openFile: () => void;
-  /** Repeats whichever step failed. Both are idempotent reads. */
-  readonly retryFailedStep: () => void;
+  /**
+   * A picker that failed to open. Kept apart from `preview` because failing to
+   * choose a new file is no reason to take away the file already on screen.
+   */
+  readonly pickerError: PreviewError | null;
+  readonly dismissPickerError: () => void;
+  /** Re-reads the file already open. Reading again is idempotent. */
+  readonly retryOpen: () => void;
   readonly selectSpectrum: (index: number) => void;
   readonly retrySpectrum: () => void;
   /**
@@ -83,6 +78,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
 
   const [backend, setBackend] = useState<BackendState>({ status: "checking" });
   const [preview, setPreview] = useState<PreviewState>({ status: "empty" });
+  const [pickerError, setPickerError] = useState<PreviewError | null>(null);
   const [spectrum, setSpectrum] = useState<SpectrumState>({ status: "none" });
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [measurements, setMeasurements] = useState<readonly PreviewMeasurement[]>([]);
@@ -161,7 +157,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         })
         .catch((cause: unknown) => {
           if (mounted.current && token === previewToken.current) {
-            setPreview({ status: "failed", stage: "opening", error: toPreviewError(cause) });
+            setPreview({ status: "failed", error: toPreviewError(cause) });
           }
         });
     },
@@ -170,6 +166,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
 
   const openFile = useCallback(() => {
     const startedAt = now();
+    setPickerError(null);
     void api
       .chooseFile()
       .then((file) => {
@@ -185,11 +182,17 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         loadPreview(file.handle, startedAt);
       })
       .catch((cause: unknown) => {
+        // The workspace is left exactly as it was. The previously opened file
+        // is still open, in Rust and on screen.
         if (mounted.current) {
-          setPreview({ status: "failed", stage: "choosing", error: toPreviewError(cause) });
+          setPickerError(toPreviewError(cause));
         }
       });
   }, [api, loadPreview]);
+
+  const dismissPickerError = useCallback(() => {
+    setPickerError(null);
+  }, []);
 
   const selectSpectrum = useCallback(
     (index: number) => {
@@ -270,19 +273,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     }
   }, [selectSpectrum, selectedIndex]);
 
-  const retryFailedStep = useCallback(() => {
-    if (preview.status !== "failed") {
-      return;
-    }
+  const retryOpen = useCallback(() => {
     const handle = openHandle.current;
-    // A failed picker is retried by opening the picker again; a failed read is
-    // retried by reading the same file again.
-    if (preview.stage === "choosing" || handle === null) {
-      openFile();
-      return;
+    if (handle !== null) {
+      loadPreview(handle, now());
     }
-    loadPreview(handle, now());
-  }, [loadPreview, openFile, preview]);
+  }, [loadPreview]);
 
   return {
     backend,
@@ -292,7 +288,9 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     measurements,
     checkBackend,
     openFile,
-    retryFailedStep,
+    pickerError,
+    dismissPickerError,
+    retryOpen,
     selectSpectrum,
     retrySpectrum,
     completeRenderMeasurements,

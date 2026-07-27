@@ -44,7 +44,13 @@ index. Every one of them is typed on both sides.
   shape, because an mzML document commonly records the path it was created
   from.
 - **The plot is repository-owned SVG.** A stick spectrum, not a connected line,
-  and no charting library.
+  and no charting library. Intensities are drawn against a zero line rather
+  than a floor, because baseline subtraction produces legitimately negative
+  values and dropping them would erase measured signal.
+- **Typed backend failures stay distinguished.** A launch failure, a file that
+  changed underneath the read and a backend binary that changed after its probe
+  reach the user as different states with different retry offers, because the
+  crate already knows which happened.
 
 ## Consequences
 
