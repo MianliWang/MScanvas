@@ -72,6 +72,30 @@ describe("mzML preview workspace", () => {
     expect(within(grid).getByText("controllerType=0 controllerNumber=1 scan=1")).toBeVisible();
   });
 
+  it("records both timings only once what they name is in the document", async () => {
+    await openTheFile(createFakePreviewApi());
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    // Recorded from a layout effect, so both read as measured rather than
+    // staying "Not measured yet" as they would if the response handler had
+    // been the only thing to run.
+    expect(screen.getByText("Open to first preview").nextElementSibling).not.toHaveTextContent(
+      "Not measured yet",
+    );
+    expect(screen.getByText("Row select to rendered").nextElementSibling).toHaveTextContent(
+      "Not measured yet",
+    );
+
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+    await screen.findByRole("img");
+
+    await waitFor(() => {
+      expect(screen.getByText("Row select to rendered").nextElementSibling).not.toHaveTextContent(
+        "Not measured yet",
+      );
+    });
+  });
+
   it("treats a dismissed file picker as no change rather than as a failure", async () => {
     const api = createFakePreviewApi({ file: null });
     await openTheFile(api);

@@ -10,16 +10,15 @@ import { usePreviewWorkspace } from "./usePreviewWorkspace";
 /** The first user-visible slice: open one mzML file and look inside it. */
 export function PreviewWorkspace() {
   const workspace = usePreviewWorkspace();
-  const { preview, spectrum, recordMeasurement, completeSpectrumRender } = workspace;
+  const { preview, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
 
-  // Runs after the spectrum panel and its plot have been committed, so the
-  // row-select measurement covers the point reduction and the DOM work rather
-  // than stopping when the reply arrived.
+  // Runs after the panels below have been committed, so each measurement
+  // covers the work its name describes rather than stopping when the reply
+  // arrived. Child layout effects run before this one, so the summary, the
+  // first table window and the plot are all in the document by now.
   useLayoutEffect(() => {
-    if (spectrum.status === "loaded") {
-      completeSpectrumRender();
-    }
-  }, [completeSpectrumRender, spectrum]);
+    completeRenderMeasurements();
+  }, [completeRenderMeasurements, preview, spectrum]);
 
   const backendUnavailable =
     workspace.backend.status === "resolved" &&

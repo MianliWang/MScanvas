@@ -31,7 +31,9 @@ index. Every one of them is typed on both sides.
   opaque session handle and a display name.
 - **File acceptance is decided in Rust** — extension, canonical resolution, and
   regular-file posture including symlink and reparse-point rejection — so a
-  frontend defect cannot widen what the backend will open.
+  frontend defect cannot widen what the backend will open. It is decided again
+  on every use of the handle, not remembered from the picker, because a path
+  can be replaced between choosing a file and reading it.
 - **Unknown stays unknown in the transfer objects.** Retention times carry an
   explicit unknown unit, an absent chromatogram count stays absent rather than
   becoming zero, and selected-spectrum representation and array units stay

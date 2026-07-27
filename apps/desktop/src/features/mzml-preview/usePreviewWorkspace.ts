@@ -57,10 +57,11 @@ export interface PreviewWorkspace {
   readonly selectSpectrum: (index: number) => void;
   readonly retrySpectrum: () => void;
   /**
-   * Completes the row-select measurement once the spectrum is actually in the
-   * DOM. Called from a layout effect, not from the response handler.
+   * Completes whichever render measurements are outstanding, once what they
+   * measure is actually in the DOM. Called from a layout effect, never from a
+   * response handler: a response handler only schedules the update.
    */
-  readonly completeSpectrumRender: () => void;
+  readonly completeRenderMeasurements: () => void;
   readonly recordMeasurement: (
     name: PreviewMeasurementName,
     milliseconds: number,
@@ -90,7 +91,8 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const previewToken = useRef(0);
   const spectrumToken = useRef(0);
   const inFlightSpectrum = useRef<{ index: number; token: number } | null>(null);
-  const pendingRender = useRef<{ index: number; startedAt: number } | null>(null);
+  const pendingSpectrumRender = useRef<{ index: number; startedAt: number } | null>(null);
+  const pendingOpenRender = useRef<{ rowCount: number; startedAt: number } | null>(null);
   const openHandle = useRef<string | null>(null);
   const mounted = useRef(true);
 
@@ -138,7 +140,8 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       // until the abandoned read settled.
       spectrumToken.current += 1;
       inFlightSpectrum.current = null;
-      pendingRender.current = null;
+      pendingSpectrumRender.current = null;
+      pendingOpenRender.current = null;
       setPreview({ status: "opening" });
       setSpectrum({ status: "none" });
       setSelectedIndex(null);
@@ -149,11 +152,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
             return;
           }
           setPreview({ status: "loaded", preview: loaded });
-          recordMeasurement(
-            "openToFirstPreview",
-            now() - startedAt,
-            `Choosing the file through loading ${formatRows(loaded.spectrumTable.rows.length)}.`,
-          );
+          // Not finished here: this call only schedules the update, and the
+          // summary and the first table window have not been built yet.
+          pendingOpenRender.current = {
+            rowCount: loaded.spectrumTable.rows.length,
+            startedAt,
+          };
         })
         .catch((cause: unknown) => {
           if (mounted.current && token === previewToken.current) {
@@ -161,7 +165,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           }
         });
     },
-    [api, recordMeasurement],
+    [api],
   );
 
   const openFile = useCallback(() => {
@@ -224,7 +228,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           );
           // The measurement is not finished here. Recording it now would time
           // the reply, not the render, and it is the render this metric names.
-          pendingRender.current =
+          pendingSpectrumRender.current =
             outcome.outcome === "spectrum" ? { index, startedAt } : null;
         })
         .catch((cause: unknown) => {
@@ -239,17 +243,25 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     [api],
   );
 
-  const completeSpectrumRender = useCallback(() => {
-    const pending = pendingRender.current;
-    if (pending === null) {
-      return;
+  const completeRenderMeasurements = useCallback(() => {
+    const openPending = pendingOpenRender.current;
+    if (openPending !== null) {
+      pendingOpenRender.current = null;
+      recordMeasurement(
+        "openToFirstPreview",
+        now() - openPending.startedAt,
+        `Choosing the file through ${formatRows(openPending.rowCount)} being in the document.`,
+      );
     }
-    pendingRender.current = null;
-    recordMeasurement(
-      "rowSelectToRendered",
-      now() - pending.startedAt,
-      `Selecting row ${pending.index} through that spectrum being in the document.`,
-    );
+    const spectrumPending = pendingSpectrumRender.current;
+    if (spectrumPending !== null) {
+      pendingSpectrumRender.current = null;
+      recordMeasurement(
+        "rowSelectToRendered",
+        now() - spectrumPending.startedAt,
+        `Selecting row ${spectrumPending.index} through that spectrum being in the document.`,
+      );
+    }
   }, [recordMeasurement]);
 
   const retrySpectrum = useCallback(() => {
@@ -283,7 +295,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     retryFailedStep,
     selectSpectrum,
     retrySpectrum,
-    completeSpectrumRender,
+    completeRenderMeasurements,
     recordMeasurement,
   };
 }

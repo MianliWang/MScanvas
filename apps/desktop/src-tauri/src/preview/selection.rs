@@ -143,8 +143,15 @@ impl FileRegistry {
         dto
     }
 
+    /// Resolves a handle and revalidates the path before every use.
+    ///
+    /// The checks made when the file was chosen do not stay true. A path can
+    /// be replaced by a link between the picker and the read, and the command
+    /// planning that follows resolves paths again, so the accepted-at-pick
+    /// posture has to be re-established each time rather than remembered.
     pub fn resolve(&self, handle: &str) -> Result<AcceptedFile, PreviewErrorDto> {
-        self.current
+        let remembered = self
+            .current
             .lock()
             .expect("the file registry lock is never poisoned by user code")
             .as_ref()
@@ -156,7 +163,17 @@ impl FileRegistry {
                     "That file is no longer open. Open it again to continue.",
                     false,
                 )
-            })
+            })?;
+
+        let current = accept_mzml_file(remembered.path())?;
+        if current.path() != remembered.path() {
+            return Err(PreviewErrorDto::new(
+                "file_identity_changed",
+                "That name no longer refers to the file that was opened. Open it again to continue.",
+                false,
+            ));
+        }
+        Ok(current)
     }
 }
 
@@ -306,6 +323,33 @@ mod tests {
             Err(PreviewErrorDto::new(
                 "unknown_file_handle",
                 "That file is no longer open. Open it again to continue.",
+                false,
+            ))
+        );
+    }
+
+    #[test]
+    fn a_path_replaced_by_a_link_after_selection_is_refused_on_use() {
+        let directory = TestDirectory::new("relink");
+        let chosen = directory.path().join("chosen.mzML");
+        let elsewhere = directory.path().join("elsewhere.mzML");
+        fs::write(&chosen, b"<mzML/>").expect("write chosen fixture");
+        fs::write(&elsewhere, b"<mzML> another acquisition </mzML>").expect("write other fixture");
+        let registry = FileRegistry::new();
+        let selected = registry.register(accept_mzml_file(&chosen).expect("accepted"));
+        assert!(registry.resolve(&selected.handle).is_ok());
+
+        // The chosen name is swapped for a link to a different acquisition.
+        fs::remove_file(&chosen).expect("remove the chosen file");
+        if !try_symlink(&elsewhere, &chosen) {
+            return;
+        }
+
+        assert_eq!(
+            registry.resolve(&selected.handle).map(|_| ()),
+            Err(PreviewErrorDto::new(
+                "not_a_regular_file",
+                "That path is not a regular file.",
                 false,
             ))
         );
