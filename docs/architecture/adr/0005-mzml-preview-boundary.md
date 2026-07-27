@@ -69,7 +69,10 @@ index. Every one of them is typed on both sides.
   still lists as an open gate.
 - The three operations of one open action read the file separately, so the
   file's length and modification time are compared before and after the batch
-  and a change discards the whole preview. Combining results from two
+  and a change discards the whole preview. The generation that produced a
+  successful open is retained, and a later selected-spectrum load is refused
+  when it no longer matches, so a spectrum is never shown beside metadata that
+  has stopped describing it. Combining results from two
   generations would describe an acquisition that never existed. A digest would
   close the window completely, but hashing 208 MB around every preview would
   cost more than the preview.

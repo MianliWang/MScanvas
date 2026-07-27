@@ -232,6 +232,40 @@ describe("mzML preview workspace", () => {
     expect(api.requestedSpectra).toEqual([1, 1]);
   });
 
+  it("keeps every row selectable after a new file is opened mid-load", async () => {
+    const abandoned = deferred<SelectedSpectrumOutcome>();
+    let requests = 0;
+    const api = createFakePreviewApi({
+      spectrum: (index) => {
+        requests += 1;
+        return requests === 1
+          ? abandoned.promise
+          : Promise.resolve<SelectedSpectrumOutcome>({
+              outcome: "spectrum",
+              spectrum: buildSpectrum(index, 4),
+            });
+      },
+    });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+    // A new file arrives while row 0 is still being read.
+    fireEvent.click(screen.getByRole("button", { name: "Open mzML…" }));
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    // The same row index must still be selectable in the new file, without
+    // waiting for the abandoned read to settle.
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+    await screen.findByText(/Spectrum 0, MS2, 4 points\./);
+    expect(api.requestedSpectra).toEqual([0, 0]);
+
+    abandoned.resolve({ outcome: "spectrum", spectrum: buildSpectrum(0, 77) });
+    await waitFor(() => {
+      expect(screen.queryByText(/77 points/)).not.toBeInTheDocument();
+    });
+  });
+
   it("states the true spectrum count and says plainly when rows were truncated", async () => {
     await openTheFile(createFakePreviewApi({ preview: buildPreview(120, true) }));
 

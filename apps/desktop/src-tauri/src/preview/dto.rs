@@ -23,6 +23,12 @@ pub const MAX_METADATA_LINE_CHARS: usize = 400;
 /// The longest bounded diagnostic detail attached to an error.
 pub const MAX_ERROR_DETAIL_CHARS: usize = 400;
 
+/// The longest spectrum identifier the boundary forwards.
+///
+/// A native identifier is a short controller/scan descriptor in every measured
+/// format, but it is backend text and a file may put anything there.
+pub const MAX_IDENTIFIER_CHARS: usize = 200;
+
 /// Whether a user-installed ProteoWizard backend is usable.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

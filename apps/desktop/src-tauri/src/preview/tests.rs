@@ -621,6 +621,68 @@ fn a_source_rewritten_between_operations_is_refused_rather_than_combined() {
 }
 
 #[test]
+fn a_spectrum_is_refused_when_the_file_changed_after_it_was_opened() {
+    let file = TestFile::new("regeneration");
+    let mut responses = open_responses();
+    responses.push(Response::Stdout(selected_spectrum_output(
+        0,
+        &[(445.12, 9000.0)],
+    )));
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the preview loads");
+
+    fs::write(&file.path, b"<mzML> a different acquisition </mzML>").expect("rewrite the source");
+
+    let error = service
+        .load_spectrum(&selected.handle, 0)
+        .expect_err("a spectrum from another generation is never shown beside stale metadata");
+    assert_eq!(error.kind, "source_changed_since_preview");
+}
+
+#[test]
+fn a_spectrum_identifier_is_redacted_and_bounded_like_any_other_backend_text() {
+    let redactor = super::backend::reporting_redactor(Path::new(r"D:\MSData\private\sample.mzML"));
+
+    // The opened path is removed, as it is everywhere else.
+    assert!(
+        !super::service::displayable_identifier(
+            r"file=D:\MSData\private\sample.mzML scan=19",
+            &redactor,
+        )
+        .contains("MSData")
+    );
+    // So is an unrelated path the document itself recorded, which the session
+    // redactor knows nothing about.
+    assert!(
+        !super::service::displayable_identifier(
+            "source=/home/alice/private/run.raw scan=19",
+            &redactor,
+        )
+        .contains("/home/alice")
+    );
+    // And the value is bounded, because a file may put anything in a native
+    // identifier and this one is rendered in every table row.
+    let long = format!("scan=19 note={}", "a".repeat(4_000));
+    let bounded = super::service::displayable_identifier(&long, &redactor);
+    assert!(
+        bounded.chars().count() <= 201,
+        "{}",
+        bounded.chars().count()
+    );
+    // An ordinary identifier passes through unchanged.
+    assert_eq!(
+        super::service::displayable_identifier(
+            "controllerType=0 controllerNumber=1 scan=19",
+            &redactor,
+        ),
+        "controllerType=0 controllerNumber=1 scan=19"
+    );
+}
+
+#[test]
 fn a_stale_handle_cannot_be_used_after_the_registry_forgets_it() {
     let file = TestFile::new("handle");
     let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));

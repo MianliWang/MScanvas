@@ -4,7 +4,9 @@
 //! place allowed to decide what the webview may see, and it is unit-testable
 //! without a WebView or a local ProteoWizard installation.
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Mutex;
 
 use mscanvas_proteowizard::{
     MetadataResult, MetadataSectionKind, MsLevelBucket, PreviewNoResult, PreviewOutcome,
@@ -15,11 +17,11 @@ use super::backend::{
     PreviewProvider, open_operations, reporting_redactor, selected_spectrum_operation,
 };
 use super::dto::{
-    BackendAvailabilityDto, MAX_METADATA_LINE_CHARS, MAX_SPECTRUM_POINTS, MAX_SPECTRUM_TABLE_ROWS,
-    MetadataDto, MetadataSectionDto, MsLevelCountDto, PrecursorDto, PreviewDto, PreviewErrorDto,
-    RetentionTimeDto, RetentionTimeRangeDto, RunSummaryDto, SelectedFileDto, SelectedSpectrumDto,
-    SelectedSpectrumOutcomeDto, SpectrumRowDto, SpectrumTableDto, bounded_text,
-    redact_absolute_paths, require_finite, require_finite_option,
+    BackendAvailabilityDto, MAX_IDENTIFIER_CHARS, MAX_METADATA_LINE_CHARS, MAX_SPECTRUM_POINTS,
+    MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto, MsLevelCountDto, PrecursorDto,
+    PreviewDto, PreviewErrorDto, RetentionTimeDto, RetentionTimeRangeDto, RunSummaryDto,
+    SelectedFileDto, SelectedSpectrumDto, SelectedSpectrumOutcomeDto, SpectrumRowDto,
+    SpectrumTableDto, bounded_text, redact_absolute_paths, require_finite, require_finite_option,
 };
 use super::selection::{AcceptedFile, FileRegistry, accept_mzml_file};
 
@@ -27,6 +29,9 @@ use super::selection::{AcceptedFile, FileRegistry, accept_mzml_file};
 pub struct PreviewService {
     provider: Box<dyn PreviewProvider>,
     files: FileRegistry,
+    /// The generation each open preview described, so a later spectrum load
+    /// can be refused rather than answered from a different one.
+    generations: Mutex<HashMap<String, SourceGeneration>>,
 }
 
 impl PreviewService {
@@ -35,6 +40,7 @@ impl PreviewService {
         Self {
             provider,
             files: FileRegistry::new(),
+            generations: Mutex::new(HashMap::new()),
         }
     }
 
@@ -111,6 +117,11 @@ impl PreviewService {
             }
         }
 
+        self.generations
+            .lock()
+            .expect("the generation lock is never poisoned by user code")
+            .insert(handle.to_owned(), before);
+
         Ok(PreviewDto {
             file: file_dto(handle, &file),
             metadata: metadata.ok_or_else(|| missing("metadata"))?,
@@ -127,9 +138,29 @@ impl PreviewService {
         index: u64,
     ) -> Result<SelectedSpectrumOutcomeDto, PreviewErrorDto> {
         let file = self.files.resolve(handle)?;
+        // A selected spectrum is shown beside the metadata and the table from
+        // the open action. If the file has changed since then, this spectrum
+        // would belong to a different run than everything around it.
+        let opened_generation = self
+            .generations
+            .lock()
+            .expect("the generation lock is never poisoned by user code")
+            .get(handle)
+            .cloned();
+        if let Some(expected) = opened_generation.as_ref()
+            && SourceGeneration::capture(file.path()) != *expected
+        {
+            return Err(source_changed_since_preview());
+        }
+
         let redactor = reporting_redactor(file.path());
         let operation = selected_spectrum_operation(index);
         let result = self.provider.run(file.path(), &operation)?;
+        if let Some(expected) = opened_generation.as_ref()
+            && SourceGeneration::capture(file.path()) != *expected
+        {
+            return Err(source_changed_since_preview());
+        }
         match result.outcome {
             PreviewOutcome::Value(value) => match *value {
                 PreviewValue::SelectedSpectrum(spectrum) => {
@@ -171,6 +202,22 @@ impl SourceGeneration {
             modified: metadata.and_then(|metadata| metadata.modified().ok()),
         }
     }
+}
+
+/// A spectrum identifier is backend text like every other line the boundary
+/// forwards, so it is redacted and bounded the same way. A file is free to put
+/// an unrelated path, or an arbitrarily long value, in a native identifier.
+pub(super) fn displayable_identifier(raw: &str, redactor: &Redactor) -> String {
+    let redacted = redact_absolute_paths(&redactor.redact(raw));
+    bounded_text(&redacted, MAX_IDENTIFIER_CHARS)
+}
+
+fn source_changed_since_preview() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "source_changed_since_preview",
+        "The file has changed since it was opened, so this spectrum was not shown beside          metadata that no longer describes it. Open the file again to continue.",
+        false,
+    )
 }
 
 fn missing(what: &str) -> PreviewErrorDto {
@@ -278,7 +325,7 @@ fn spectrum_table_dto(
             index: identity.index(),
             identifier: identity.representations().first().map_or_else(
                 || identity.index().to_string(),
-                |representation| redactor.redact(representation.sensitive_raw()),
+                |representation| displayable_identifier(representation.sensitive_raw(), redactor),
             ),
             scan_number: identity.scan_number(),
             ms_level: row.ms_level(),
@@ -329,7 +376,7 @@ fn selected_spectrum_dto(
         identifiers: identity
             .representations()
             .iter()
-            .map(|representation| redactor.redact(representation.sensitive_raw()))
+            .map(|representation| displayable_identifier(representation.sensitive_raw(), redactor))
             .collect(),
         ms_level: spectrum.ms_level(),
         retention_time: retention_time_dto(spectrum.retention_time())?,

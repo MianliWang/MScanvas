@@ -89,7 +89,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const backendToken = useRef(0);
   const previewToken = useRef(0);
   const spectrumToken = useRef(0);
-  const inFlightSpectrum = useRef<number | null>(null);
+  const inFlightSpectrum = useRef<{ index: number; token: number } | null>(null);
   const pendingRender = useRef<{ index: number; startedAt: number } | null>(null);
   const openHandle = useRef<string | null>(null);
   const mounted = useRef(true);
@@ -132,8 +132,13 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     (handle: string, startedAt: number) => {
       previewToken.current += 1;
       const token = previewToken.current;
-      // A new file invalidates any spectrum still in flight for the old one.
+      // A new file invalidates any spectrum still in flight for the old one,
+      // including the guard that stops a row being read twice. Leaving that
+      // guard set would make the same row index unselectable in the new file
+      // until the abandoned read settled.
       spectrumToken.current += 1;
+      inFlightSpectrum.current = null;
+      pendingRender.current = null;
       setPreview({ status: "opening" });
       setSpectrum({ status: "none" });
       setSelectedIndex(null);
@@ -192,19 +197,21 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       // one backend process, and a double click should not be two of them.
       // This is deduplication only: nothing is queued and nothing is
       // cancelled, both of which are separately gated.
-      if (inFlightSpectrum.current === index) {
+      if (inFlightSpectrum.current?.index === index) {
         return;
       }
       const startedAt = now();
-      inFlightSpectrum.current = index;
       spectrumToken.current += 1;
       const token = spectrumToken.current;
+      inFlightSpectrum.current = { index, token };
       setSelectedIndex(index);
       setSpectrum({ status: "loading", index });
       void api
         .loadSpectrum(handle, index)
         .then((outcome) => {
-          if (inFlightSpectrum.current === index) {
+          // Keyed by token, so a stale reply cannot clear the guard belonging
+          // to a newer request for the same index.
+          if (inFlightSpectrum.current?.token === token) {
             inFlightSpectrum.current = null;
           }
           if (!mounted.current || token !== spectrumToken.current) {
@@ -221,7 +228,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
             outcome.outcome === "spectrum" ? { index, startedAt } : null;
         })
         .catch((cause: unknown) => {
-          if (inFlightSpectrum.current === index) {
+          if (inFlightSpectrum.current?.token === token) {
             inFlightSpectrum.current = null;
           }
           if (mounted.current && token === spectrumToken.current) {
