@@ -1734,7 +1734,9 @@ name = "mscanvas-desktop"
 version = "0.1.0"
 dependencies = [
  "mscanvas-core",
+ "mscanvas-proteowizard",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
 ]
