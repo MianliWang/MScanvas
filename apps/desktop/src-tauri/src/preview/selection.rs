@@ -7,8 +7,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mscanvas_proteowizard::is_reparse_point;
-
 use super::dto::{PreviewErrorDto, SelectedFileDto};
 
 /// The only open format this slice accepts. mzXML and vendor acquisitions are
@@ -20,16 +18,12 @@ const ACCEPTED_EXTENSION: &str = "mzML";
 /// Extension and regular-file posture are checked here rather than in the
 /// webview, so a frontend defect cannot widen what the backend will open.
 pub fn accept_mzml_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
-    // The selected path is inspected before it is resolved. Canonicalizing
-    // first would replace a link with its target, and the link test below
-    // would then only ever see a regular file.
-    let selected = std::fs::symlink_metadata(path).map_err(|_| unresolvable())?;
-    if selected.file_type().is_symlink() || is_reparse_point(&selected) {
-        return Err(not_a_regular_file());
-    }
+    // Posture, length and identity all come from one inspection, so they
+    // describe the same file. Establishing them separately would let a
+    // replacement land in between and be accepted as what the user chose.
+    let inspected = inspect_selected_file(path)?;
 
     let canonical = std::fs::canonicalize(path).map_err(|_| unresolvable())?;
-
     let extension_matches = canonical
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case(ACCEPTED_EXTENSION));
@@ -41,19 +35,6 @@ pub fn accept_mzml_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
         ));
     }
 
-    // Repeated on the resolved target, so neither the name the user picked nor
-    // what it resolves to can be anything but a regular file.
-    let metadata = std::fs::symlink_metadata(&canonical).map_err(|_| {
-        PreviewErrorDto::new(
-            "file_not_inspectable",
-            "That file could not be inspected.",
-            true,
-        )
-    })?;
-    if metadata.file_type().is_symlink() || is_reparse_point(&metadata) || !metadata.is_file() {
-        return Err(not_a_regular_file());
-    }
-
     let file_name = canonical
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -61,33 +42,44 @@ pub fn accept_mzml_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
             PreviewErrorDto::new("file_has_no_name", "That path has no file name.", false)
         })?;
 
-    // Captured from an open handle, so it is the identity of this file rather
-    // than of whatever the name refers to later.
-    let identity = file_identity(&canonical).ok_or_else(|| {
-        PreviewErrorDto::new(
-            "file_identity_unavailable",
-            "That file's identity could not be established, so MSCanvas did not open it.",
-            false,
-        )
-    })?;
-
     Ok(AcceptedFile {
         path: canonical,
         file_name,
-        byte_length: metadata.len(),
-        identity,
+        byte_length: inspected.byte_length,
+        identity: inspected.identity,
     })
 }
 
-/// The filesystem's own identity for a file, read through an open handle.
+/// What one inspection of the selected path established about it.
+struct InspectedFile {
+    byte_length: u64,
+    identity: (u64, u64),
+}
+
+/// Inspects the selected path through a single open handle.
 ///
-/// A path is not an identity: another regular file can take the same name
-/// between the picker closing and the first read, and it would canonicalize
-/// identically. This is what tells the two apart.
+/// The handle is opened without following links, so the posture test sees the
+/// name the user picked rather than whatever it points at, and the length and
+/// filesystem identity that come back describe that same object. A path is not
+/// an identity: another regular file can take the same name at any moment, and
+/// two separate inspections would let it be accepted as the chosen one.
 #[cfg(windows)]
-pub(super) fn file_identity(path: &Path) -> Option<(u64, u64)> {
+fn inspect_selected_file(path: &Path) -> Result<InspectedFile, PreviewErrorDto> {
     use std::ffi::c_void;
+    use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
+
+    /// Needed to open a directory at all, so one can be rejected by attribute
+    /// rather than by a failure that reads like a missing file.
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    /// Opens a link itself rather than its target.
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    /// Permissive while inspecting: another program holding the file open is
+    /// not a reason to refuse to look at it. The read window takes a stricter
+    /// handle of its own.
+    const FILE_SHARE_ALL: u32 = 0x0000_0007;
 
     #[repr(C)]
     #[derive(Default)]
@@ -122,7 +114,13 @@ pub(super) fn file_identity(path: &Path) -> Option<(u64, u64)> {
         ) -> i32;
     }
 
-    let file = std::fs::File::open(path).ok()?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_ALL)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|_| unresolvable())?;
+
     let mut information = ByHandleFileInformation::default();
     // SAFETY: the file outlives the call, so its handle stays valid, and the
     // out parameter is a fully initialized value of the layout the API writes.
@@ -130,7 +128,16 @@ pub(super) fn file_identity(path: &Path) -> Option<(u64, u64)> {
         get_file_information_by_handle(file.as_raw_handle().cast(), &raw mut information)
     };
     if succeeded == 0 {
-        return None;
+        return Err(PreviewErrorDto::new(
+            "file_not_inspectable",
+            "That file could not be inspected.",
+            true,
+        ));
+    }
+
+    if information.file_attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT) != 0
+    {
+        return Err(not_a_regular_file());
     }
 
     let index =
@@ -138,17 +145,47 @@ pub(super) fn file_identity(path: &Path) -> Option<(u64, u64)> {
     // A zero index means this filesystem supplies no stable identity, so there
     // is nothing to bind the handle to and the file is refused.
     if index == 0 {
-        return None;
+        return Err(PreviewErrorDto::new(
+            "file_identity_unavailable",
+            "That file's identity could not be established, so MSCanvas did not open it.",
+            false,
+        ));
     }
-    Some((u64::from(information.volume_serial_number), index))
+
+    Ok(InspectedFile {
+        byte_length: (u64::from(information.file_size_high) << 32)
+            | u64::from(information.file_size_low),
+        identity: (u64::from(information.volume_serial_number), index),
+    })
 }
 
 #[cfg(not(windows))]
-pub(super) fn file_identity(path: &Path) -> Option<(u64, u64)> {
+fn inspect_selected_file(path: &Path) -> Result<InspectedFile, PreviewErrorDto> {
+    use mscanvas_proteowizard::is_reparse_point;
     use std::os::unix::fs::MetadataExt;
 
-    let metadata = std::fs::metadata(path).ok()?;
-    Some((metadata.dev(), metadata.ino()))
+    // std offers no O_NOFOLLOW open, so the link test and the identity are
+    // established separately here. The comparison on every use is what closes
+    // the gap that leaves.
+    let selected = std::fs::symlink_metadata(path).map_err(|_| unresolvable())?;
+    if selected.file_type().is_symlink() || is_reparse_point(&selected) || !selected.is_file() {
+        return Err(not_a_regular_file());
+    }
+    Ok(InspectedFile {
+        byte_length: selected.len(),
+        identity: (selected.dev(), selected.ino()),
+    })
+}
+
+/// The filesystem's own identity for a path, for the generation stamp.
+///
+/// The same inspection acceptance uses, so the two can never disagree about
+/// what identity a path has. Anything that is not an acceptable regular file
+/// reports no identity, which a comparison reads as a change.
+pub(super) fn file_identity(path: &Path) -> Option<(u64, u64)> {
+    inspect_selected_file(path)
+        .ok()
+        .map(|inspected| inspected.identity)
 }
 
 /// Holds the accepted file open in a way that blocks its replacement.

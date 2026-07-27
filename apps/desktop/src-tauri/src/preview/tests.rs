@@ -846,13 +846,15 @@ fn only_regular_mzml_files_reach_the_provider() {
         service.accept_file(&wrong).map(|_| ()).unwrap_err().kind,
         "unsupported_extension"
     );
+    // A directory is refused for being a directory, which is more use than
+    // complaining about the extension it does not have.
     assert_eq!(
         service
             .accept_file(&file.directory)
             .map(|_| ())
             .unwrap_err()
             .kind,
-        "unsupported_extension"
+        "not_a_regular_file"
     );
 }
 

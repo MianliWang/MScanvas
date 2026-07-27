@@ -1,6 +1,9 @@
 mod preview;
 
+use std::sync::Arc;
+
 use mscanvas_core::BootstrapStatus;
+use tauri::async_runtime::spawn_blocking;
 use tauri::{Manager, State};
 
 use preview::dto::{
@@ -21,8 +24,11 @@ fn get_bootstrap_status() -> BootstrapStatus {
 /// Reports whether a user-installed ProteoWizard is usable. MSCanvas never
 /// bundles, downloads or installs one.
 #[tauri::command]
-async fn inspect_backend(service: State<'_, PreviewService>) -> Result<BackendAvailabilityDto, ()> {
-    Ok(service.inspect_backend())
+async fn inspect_backend(
+    service: State<'_, SharedService>,
+) -> Result<BackendAvailabilityDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.inspect_backend()).await
 }
 
 /// Shows the native picker and registers the chosen file.
@@ -33,17 +39,24 @@ async fn inspect_backend(service: State<'_, PreviewService>) -> Result<BackendAv
 #[tauri::command]
 async fn choose_mzml_file(
     app: tauri::AppHandle,
-    service: State<'_, PreviewService>,
+    service: State<'_, SharedService>,
 ) -> Result<Option<SelectedFileDto>, PreviewErrorDto> {
     let owner = main_window_handle(&app);
+    let service = Arc::clone(&service);
     let (sender, receiver) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
         let _ = sender.send(preview::dialog::choose_mzml_file(owner));
     })
     .map_err(|_| picker_unavailable())?;
-    let chosen = receiver.recv().map_err(|_| picker_unavailable())??;
 
-    chosen.map(|path| service.accept_file(&path)).transpose()
+    // The wait is blocking and the dialog is modal, so it can last as long as
+    // the user takes to choose. That is not something to hold an async worker
+    // for.
+    off_the_async_runtime(move || {
+        let chosen = receiver.recv().map_err(|_| picker_unavailable())??;
+        chosen.map(|path| service.accept_file(&path)).transpose()
+    })
+    .await?
 }
 
 fn picker_unavailable() -> PreviewErrorDto {
@@ -58,9 +71,10 @@ fn picker_unavailable() -> PreviewErrorDto {
 #[tauri::command]
 async fn open_mzml_preview(
     handle: String,
-    service: State<'_, PreviewService>,
+    service: State<'_, SharedService>,
 ) -> Result<PreviewDto, PreviewErrorDto> {
-    service.open_preview(&handle)
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.open_preview(&handle)).await?
 }
 
 /// Loads exactly one spectrum by zero-based index.
@@ -68,9 +82,33 @@ async fn open_mzml_preview(
 async fn load_selected_spectrum(
     handle: String,
     index: u64,
-    service: State<'_, PreviewService>,
+    service: State<'_, SharedService>,
 ) -> Result<SelectedSpectrumOutcomeDto, PreviewErrorDto> {
-    service.load_spectrum(&handle, index)
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.load_spectrum(&handle, index)).await?
+}
+
+/// The preview service, shared so a command can take it onto a blocking thread.
+type SharedService = Arc<PreviewService>;
+
+/// Runs a blocking preview call away from the async runtime's workers.
+///
+/// Every preview operation launches a process and waits for it. Waiting on an
+/// async worker would let a handful of abandoned selections occupy the runtime
+/// and leave the next selection, and every other command, queued behind
+/// processes whose results nobody wants.
+async fn off_the_async_runtime<T, F>(work: F) -> Result<T, PreviewErrorDto>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    spawn_blocking(work).await.map_err(|_| {
+        PreviewErrorDto::new(
+            "preview_worker_unavailable",
+            "MSCanvas could not run that request. Try again.",
+            true,
+        )
+    })
 }
 
 #[cfg(windows)]
@@ -88,7 +126,9 @@ const fn main_window_handle(_app: &tauri::AppHandle) -> Option<isize> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(PreviewService::new(Box::new(ProteoWizardProvider::new())))
+        .manage(SharedService::new(PreviewService::new(Box::new(
+            ProteoWizardProvider::new(),
+        ))))
         .invoke_handler(tauri::generate_handler![
             get_bootstrap_status,
             inspect_backend,

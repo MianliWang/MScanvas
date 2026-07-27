@@ -31,9 +31,12 @@ index. Every one of them is typed on both sides.
   opaque session handle and a display name.
 - **File acceptance is decided in Rust** — extension, canonical resolution, and
   regular-file posture including symlink and reparse-point rejection — so a
-  frontend defect cannot widen what the backend will open. It is decided again
-  on every use of the handle, not remembered from the picker, because a path
-  can be replaced between choosing a file and reading it.
+  frontend defect cannot widen what the backend will open. On Windows all of it
+  comes from a single handle opened without following links, so posture, length
+  and filesystem identity describe the same object rather than three separate
+  looks at a name. It is decided again on every use of the handle, not
+  remembered from the picker, because a path can be replaced between choosing a
+  file and reading it.
 - **Unknown stays unknown in the transfer objects.** Retention times carry an
   explicit unknown unit, an absent chromatogram count stays absent rather than
   becoming zero, and selected-spectrum representation and array units stay
@@ -128,6 +131,11 @@ index. Every one of them is typed on both sides.
   the line. Where a path ends cannot be decided once it may contain spaces, so
   losing the tail of a line is accepted in exchange for never leaking a
   filesystem path the user did not choose to reveal.
+- Every preview launches a process and waits for it, and that wait happens on a
+  blocking thread rather than on the async runtime — including the wait for the
+  modal file picker, which lasts as long as the user takes. Otherwise a handful
+  of abandoned selections would occupy the runtime and leave every later
+  command queued behind processes whose results nobody wants.
 - Timings recorded in the workspace are descriptive observations on the running
   machine. They are not budgets, and no threshold derives from them; that would
   need repeated measurement on a recorded hardware baseline.
