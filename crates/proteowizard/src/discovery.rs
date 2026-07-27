@@ -1117,23 +1117,51 @@ fn common_install_roots(
 
     let mut roots = Vec::new();
     for tier in [machine_wide.to_vec(), per_user] {
-        let mut group: Vec<(u8, PathBuf)> = Vec::new();
+        let mut group: Vec<Installation> = Vec::new();
         for container in tier {
             group.extend(container_installations(container));
         }
         // Ranked across the whole tier, not one container at a time. The three
         // per-user containers are equally writable, so an older installation
         // left in one must not beat a current one in another.
-        group.sort_by_key(|(is_stable, root)| {
-            let (major, minor, patch, name) = installation_order(root);
-            cmp::Reverse((major, minor, patch, *is_stable, name))
-        });
-        for (_, root) in group {
-            push_unique(&mut roots, root);
+        group.sort_by_key(Installation::rank);
+        for installation in group {
+            push_unique(&mut roots, installation.path);
         }
     }
 
     roots
+}
+
+/// One directory that might hold an installation, and how it ranks.
+struct Installation {
+    release: (u64, u64, u64),
+    /// Whether this is the `ProteoWizard` folder an installer writes, which
+    /// wins against anything ranked equal to it.
+    is_stable: u8,
+    name: String,
+    path: PathBuf,
+}
+
+impl Installation {
+    fn at(path: PathBuf, is_stable: u8) -> Self {
+        let (major, minor, patch, name) = installation_order(&path);
+        Self {
+            release: (major, minor, patch),
+            is_stable,
+            name,
+            path,
+        }
+    }
+
+    fn rank(&self) -> cmp::Reverse<(u64, u64, u64, u8, String)> {
+        let (major, minor, patch) = self.release;
+        cmp::Reverse((major, minor, patch, self.is_stable, self.name.clone()))
+    }
+
+    fn is_complete(&self) -> bool {
+        self.path.join(MSCONVERT_EXE).is_file() && self.path.join(MSACCESS_EXE).is_file()
+    }
 }
 
 /// What one container offers, each paired with whether it is the stable folder.
@@ -1142,7 +1170,7 @@ fn common_install_roots(
 /// children, and a versioned folder placed directly in a generic container such
 /// as `Program Files` or `%LOCALAPPDATA%\Apps`. Both are returned unranked;
 /// the caller ranks them against everything else in the same trust tier.
-fn container_installations(value: Option<OsString>) -> Vec<(u8, PathBuf)> {
+fn container_installations(value: Option<OsString>) -> Vec<Installation> {
     let Some(value) = value else {
         return Vec::new();
     };
@@ -1154,21 +1182,60 @@ fn container_installations(value: Option<OsString>) -> Vec<(u8, PathBuf)> {
     // an installer wrote is the more deliberate one, and a name tie-break would
     // otherwise put `pwiz-bin-...` first because `w` follows `r`.
     let expansion = root_and_direct_children(&stable);
-    let mut installations: Vec<(u8, PathBuf)> = if expansion.is_empty() {
-        vec![(1, stable)]
+    let mut installations: Vec<Installation> = if expansion.is_empty() {
+        vec![Installation::at(stable, 1)]
     } else {
         expansion
             .into_iter()
             .enumerate()
-            .map(|(position, directory)| (u8::from(position == 0), directory))
+            .map(|(position, directory)| Installation::at(directory, u8::from(position == 0)))
             .collect()
     };
     installations.extend(
         versioned_siblings(&container)
             .into_iter()
-            .map(|sibling| (0, sibling)),
+            .map(|sibling| Installation::at(sibling, 0)),
     );
+
+    promote_stable_installation(&mut installations);
     installations
+}
+
+/// Keeps the precedence an unversioned `ProteoWizard` installation used to have.
+///
+/// The folder states no release, so ranked on its name it falls behind every
+/// versioned directory beside it — including older ones. Where an installer
+/// overwrites in place, that folder holds the current build and the versioned
+/// directories are copies left behind, so ranking alone would run the stale one.
+///
+/// It is lifted to its container's highest release, no further. Within the
+/// container it therefore leads again, exactly as it did before releases were
+/// ranked at all; against another container it competes on that release rather
+/// than jumping the queue. Only a folder that holds the binaries is lifted, so
+/// a `ProteoWizard` folder that merely contains versioned children — the layout
+/// the per-machine installer produces — is untouched.
+///
+/// A name cannot say which of two installations is newer when one of them
+/// declines to state a version. Nothing here decides that; reading the release
+/// out of each candidate would, and that means probing every one of them.
+fn promote_stable_installation(installations: &mut [Installation]) {
+    let Some(position) = installations
+        .iter()
+        .position(|installation| installation.is_stable == 1 && installation.is_complete())
+    else {
+        return;
+    };
+    let Some(highest) = installations
+        .iter()
+        .filter(|installation| installation.is_stable == 0)
+        .map(|installation| installation.release)
+        .max()
+    else {
+        return;
+    };
+    if installations[position].release < highest {
+        installations[position].release = highest;
+    }
 }
 
 /// The `ProteoWizard*` directories sitting directly in a generic container.
@@ -2223,11 +2290,10 @@ Analysis commands (used with -x/--exec):
     }
 
     #[test]
-    fn a_newer_sibling_is_searched_before_an_older_stable_folder() {
-        // The stable folder is not automatically the best installation. If it
-        // holds an older complete pair and a newer versioned sibling sits
-        // beside it, the newer one has to be reached first, because discovery
-        // takes one candidate and never falls back.
+    fn a_newer_sibling_is_searched_before_an_empty_stable_folder() {
+        // The stable folder is not automatically the best installation. Holding
+        // no binaries it states nothing at all, so a versioned sibling beside it
+        // is reached first — discovery takes one candidate and never falls back.
         let tree = TempTree::new("stable-versus-sibling");
         let stable = tree.root.join("ProteoWizard");
         let newer = tree.root.join("ProteoWizard 3.0.26013.47b13cf 64-bit");
@@ -2242,6 +2308,58 @@ Analysis commands (used with -x/--exec):
         let stable_position = roots.iter().position(|root| root == &stable);
         assert!(newer_position.is_some() && stable_position.is_some());
         assert!(newer_position < stable_position, "{roots:?}");
+    }
+
+    #[test]
+    fn an_unversioned_installation_keeps_precedence_over_a_versioned_sibling() {
+        // An installer that overwrites in place leaves the current build in the
+        // unversioned folder and an older copy beside it. The unversioned name
+        // states no release, so ranking alone would run the older copy.
+        let tree = TempTree::new("unversioned-precedence");
+        tree.installation("ProteoWizard", &[MSCONVERT_EXE, MSACCESS_EXE]);
+        tree.installation("ProteoWizard 3.0.9134", &[MSCONVERT_EXE, MSACCESS_EXE]);
+        // Not what `installation` returns: that is canonicalised, and these are
+        // the uncanonicalised paths discovery assembles.
+        let current = tree.root.join("ProteoWizard");
+        let older = tree.root.join("ProteoWizard 3.0.9134");
+
+        let roots = common_install_roots(Some(tree.root.as_os_str().to_owned()), None, None);
+
+        let current_position = roots.iter().position(|root| root == &current);
+        let older_position = roots.iter().position(|root| root == &older);
+        assert!(
+            current_position.is_some() && older_position.is_some(),
+            "{roots:?} should hold {current:?} and {older:?}"
+        );
+        assert!(current_position < older_position, "{roots:?}");
+    }
+
+    #[test]
+    fn an_unversioned_installation_does_not_jump_ahead_of_another_container() {
+        // Lifting it to its own container's highest release is the whole of the
+        // exemption. A newer release in a different container of the same tier
+        // still wins, or the per-user ordering fixed earlier would come back.
+        let tree = TempTree::new("unversioned-scope");
+        tree.installation("Local/ProteoWizard", &[MSCONVERT_EXE, MSACCESS_EXE]);
+        tree.installation(
+            "Local/Apps/ProteoWizard 3.0.26013.47b13cf 64-bit",
+            &[MSCONVERT_EXE, MSACCESS_EXE],
+        );
+        let local = tree.root.join("Local");
+        let unversioned = local.join("ProteoWizard");
+        let newer = local
+            .join("Apps")
+            .join("ProteoWizard 3.0.26013.47b13cf 64-bit");
+
+        let roots = common_install_roots(None, None, Some(local.as_os_str().to_owned()));
+
+        let newer_position = roots.iter().position(|root| root == &newer);
+        let unversioned_position = roots.iter().position(|root| root == &unversioned);
+        assert!(
+            newer_position.is_some() && unversioned_position.is_some(),
+            "{roots:?} should hold {newer:?} and {unversioned:?}"
+        );
+        assert!(newer_position < unversioned_position, "{roots:?}");
     }
 
     #[test]
