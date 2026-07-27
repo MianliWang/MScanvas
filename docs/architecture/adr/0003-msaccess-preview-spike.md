@@ -1,7 +1,7 @@
 # ADR 0003 — Spike external ProteoWizard access for initial RAW preview
 
-- Status: Proposed / spike required
-- Date: 2026-07-22
+- Status: Accepted for M1–M2 preview navigation with named limits; remaining capabilities gated
+- Date: 2026-07-22; representative evidence 2026-07-27
 
 ## Context
 
@@ -110,12 +110,58 @@ or add a stable CLI contract. It added one approved production dependency, `quic
 already in the lockfile through `tauri`, so no crate entered the dependency graph. None of
 the bounded runtime observations or A/B/C/D ratings above are upgraded.
 
+## M0C Slice 2B representative evidence — 2026-07-27
+
+One representative public acquisition was measured in isolation: PRIDE `PXD081190`,
+`208,408,454` bytes, CC0, SHA-256 pinned by a separate acquire-and-attest run before any
+measurement. It is `indexedmzML` with `36,319` MS2 spectra, no chromatograms, and declared
+point counts from `10` to `399`.
+
+Selected-spectrum retrieval cost `163`–`198` ms of backend time regardless of index
+position, and twenty-four deterministic indices repeated over three passes held a backend
+p50 of `164` ms with p95 between `186` and `194` ms and a maximum of `199` ms. Access did
+not degrade with position or repetition, and later passes were not faster. One process per
+navigation step is therefore viable for this file without a cache; no cache exists in this
+slice and none of these numbers may be attributed to one. Every timing is a single
+observation on a shared two-core hosted runner and is advisory.
+
+mzML conversion of the representative file returned `ConversionIntegrityOutcome::Valid`
+with thirteen of fourteen properties verified, the exception being the opaque native
+identifier form the canonical identity contract deliberately leaves unverified. An
+independent .NET XmlReader pass agreed on validity and on both counts. The tiny control
+also returned `Valid`, with vocabulary-derived properties correctly degraded to unverified
+because that fixture reaches them through a `referenceableParamGroup`. Numeric precision
+and byte length differing remained advisory. Both converted outputs were re-inspected and
+then navigated successfully.
+
+The 8 MiB preview parser cap was left unchanged and not reached: the complete spectrum
+table for `36,319` spectra was `4,013,391` bytes and parsed in `40 ms`.
+
+Two limits were observed rather than assumed. The `tic` query returned exit 0 with no
+generated output on this acquisition, which the typed contract refused to treat as success;
+that is a capability observation, not a defect. And selecting a legitimately peakless
+spectrum was falsely rejected as malformed, which was corrected so that a spectrum with no
+peaks is a valid result with empty arrays.
+
+### Exit-criteria decision
+
+- **Met:** metadata and one selected spectrum are retrievable from representative data;
+  parsing is testable with lawful fixtures; repeated scan navigation does not spawn an
+  unusable number of expensive processes; failure is diagnosable through typed results.
+- **Partially met:** first useful preview latency is acceptable for selected-spectrum
+  navigation on this file, but whole-run operations cost seconds and only one file was
+  measured.
+- **Not met:** TIC/BPC from representative data — BPC has no installed query and `tic`
+  produced nothing here; cancellation remains undiagnosed against a real backend.
+
+The status therefore moves from proposed to **accepted for M1–M2 preview navigation with
+named limits**: metadata, run summary, spectrum table, selected-spectrum navigation and
+mzML conversion behind the typed integrity contract. TIC, BPC, mzXML, vendor formats,
+alternate locales and cancellation stay outside that acceptance.
+
 ## Next evidence gate
 
-This ADR remains proposed because its representative-data, repeated-navigation,
-large-array and real-cancellation exit criteria are not met. M0C Slice 2A supplied the
-conversion-integrity contract; Slice 2B must still measure repeated navigation and a
-representative lawful open-format file, including post-conversion reinspection at real
-scale, before exposing the provider as a normal viewer workflow. Keep BPC and mzXML
-unavailable initially. Real cancellation, a second locale and vendor-format coverage remain
-separate explicit gates.
+Remaining gates are TIC and BPC from representative data, real backend cancellation and
+partial-output behavior, alternate-locale parsing, vendor-format coverage, and MS1 and
+chromatogram behavior, which this MS2-only acquisition could not exercise. A preview cache
+remains a separate design decision and is not implied by these measurements.

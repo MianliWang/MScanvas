@@ -572,3 +572,141 @@ M0C Slice 2B remains outstanding: representative lawful open-format navigation a
 measurements, including repeated navigation and post-conversion reinspection at real scale.
 BPC strategy, real-backend cancellation and partial-output behavior, alternate-locale
 parsing and vendor-format coverage remain separate explicit gates.
+
+## M0C Slice 2B representative navigation and scale evidence — 2026-07-27
+
+This section records new isolated runtime evidence. It does not restate or alter the 2026-07-24
+bounded matrix above.
+
+### Runs and inputs
+
+| Stage | Run | Exact commit | Result |
+| --- | --- | --- | --- |
+| Run A, acquire and attest | [`30239606441`](https://github.com/MianliWang/MScanvas/actions/runs/30239606441) | `f58461aa48b849399a06d507ccaecf36f249c764` | Provenance gate passed; identity recorded; payload discarded |
+| Run B, pinned measurement | [`30239989762`](https://github.com/MianliWang/MScanvas/actions/runs/30239989762) | `96334600b45fb5910f1372934e430c91435685e8` | Complete matrix; all correctness gates passed |
+
+Run A downloaded no ProteoWizard, executed nothing and reported no timing. It re-queried the
+live PRIDE record, required accession `PXD081190`, license `Creative Commons Public Domain (CC0)`,
+advertised size `208,408,454` bytes and the approved official location, downloaded the fixture
+once with zero redirect allowance, measured SHA-256
+`262D1178303CD934223239D5D93A3B842DCA69DA09CEF58E95A39B950D26B7E8` and deleted the payload. Only
+then was that hash pinned; Run B refuses to start without it and re-verified the acquired bytes
+against it. Two earlier attempts stopped fail-clean on orchestration defects in this repository's
+own script — a controlled-vocabulary location shape and a bundle allowlist name — and neither
+reached backend execution.
+
+Both fixtures were re-hashed after the matrix and were unchanged. The sanitized evidence pair was
+independently downloaded and manually audited: the representative acquisition name, its prefix,
+drive-letter and UNC paths, runner identity, workflow environment variables, credentials and raw
+scientific arrays were all absent. Teardown attested all ten proofs including the acquired
+fixtures and every generated conversion output.
+
+### Measured structure
+
+| Fact | Tiny control | Representative |
+| --- | --- | --- |
+| Bytes | `25,072` | `208,408,454` |
+| Root | `indexedmzML` | `indexedmzML` |
+| Spectra | `4` | `36,319` |
+| MS-level distribution | MS1 `3`, MS2 `1` | MS2 `36,319` |
+| Chromatograms | `2` | `0` |
+| Declared point counts | min `0`, median `15`, max `15` | min `10`, median `41`, max `399` |
+| Retention-time unit markers | second and minute | minute |
+| `referenceableParamGroup` indirection | present | absent |
+| Full library scan | `0 ms` | `844 ms` |
+
+The representative acquisition is MS2-only and carries no chromatogram list, so it exercises
+selected-spectrum navigation and conversion but says nothing about MS1 or chromatogram handling.
+
+### Preview operations
+
+Single observations on one shared two-core hosted runner. `n=1` throughout; advisory only.
+
+| Operation | Tiny backend ms | Representative backend ms | Representative result |
+| --- | ---: | ---: | --- |
+| metadata | `148` | `163` | success |
+| run summary | `133` | `3,160` | success |
+| spectrum table | `123` | `3,921` | success; `4,013,391`-byte output parsed in `40 ms` |
+| TIC | `117` | `265` | exit 0, no generated output, typed `missing_required_output` |
+| TIC, `msLevel 2` | `130` | `3,098` | exit 0, no generated output, typed `missing_required_output` |
+
+Selected spectra were sampled at first, 5%, middle, 95%, final valid index, first MS2, and the
+smallest, median and largest declared point counts. On the representative file every backend
+duration fell between `163 ms` and `198 ms` regardless of index position, with output between
+`819` and `14,444` bytes and peak owned-job memory near `40 MB`. Requesting index `N` and
+`u64::MAX` produced the typed no-result in both fixtures with zero generated files.
+
+The representative TIC result is a capability observation, not a defect: the backend exited 0 and
+produced nothing, and the typed contract refused to call that success. It restates the M0 finding
+that process exit is not an operation result, now on a real acquisition.
+
+### Repeated navigation
+
+Twenty-four deterministic indices, three passes, reported separately and never averaged together.
+
+| Pass | Backend p50 / p95 / max ms | Total p50 / p95 / max ms |
+| --- | --- | --- |
+| 1 | `164` / `186` / `189` | `423` / `439` / `440` |
+| 2 | `164` / `190` / `197` | `420` / `448` / `539` |
+| 3 | `164` / `194` / `199` | `426` / `459` / `520` |
+
+Random access did not degrade with index position or with repetition, and later passes were not
+faster. Total duration includes this harness's discovery and installed-help validation on every
+invocation, which a product would not repeat per navigation step; backend duration is the closer
+estimate of per-step cost. No cache exists in this slice and none of these numbers may be
+attributed to one.
+
+### Conversion integrity against real output
+
+| Fact | Tiny control | Representative |
+| --- | --- | --- |
+| Backend duration | `111 ms` | `16,600 ms` |
+| Peak owned-job memory | `21,299,200` bytes | `138,543,104` bytes |
+| Output bytes | `25,315` | `204,229,639` |
+| Output SHA-256 | `B8BD41A0…02DD` | `B18C8E92…D1B0` |
+| Spectra source → output | `4` → `4` | `36,319` → `36,319` |
+| Chromatograms source → output | `2` → `2` | `0` → `0` |
+| Typed outcome | `Valid` | `Valid` |
+| Properties verified | 9 of 14 | 13 of 14 |
+| Unverified | vocabulary-derived facts and native identity | native identity only |
+| Advisory | precision differs, byte length differs | precision differs, byte length differs |
+| Independent .NET cross-check | `valid`, counts agree | `valid`, counts agree |
+
+The tiny control reaches its controlled-vocabulary facts through a `referenceableParamGroup`, so
+MS-level distribution, array roles, representation and compression policy correctly degraded to
+unverified rather than being asserted. The representative file has no such indirection and left
+only native identity unverified, which is the opaque identifier form the canonical identity
+contract deliberately does not coerce. Numeric precision differing remains advisory, exactly as
+the earlier 64-bit-only to mixed 32/64-bit observation predicted.
+
+Both converted outputs were re-inspected with the same typed scanner and then navigated: run
+summary, complete spectrum table and a selected spectrum all succeeded on the converted result,
+with the representative converted file reporting the same `36,319` MS2 spectra.
+
+### Parser-limit finding
+
+The 8 MiB preview parser cap was deliberately left unchanged and the representative operations
+were run against it. The complete spectrum table for `36,319` spectra was `4,013,391` bytes,
+under half the cap, and parsed in `40 ms`. The predicted limit was therefore not reached and no
+API change is warranted. A larger acquisition, or one with MS1 survey scans, may still reach it;
+the typed `IncompleteParserInput` boundary remains the contract for that case.
+
+### Correction driven by this evidence
+
+Selecting index 2 of the tiny control produced a typed malformed result. The spectrum is
+legitimately peakless and the backend reports it as `binary (0)`; Slice 1 rejected that shape
+because the earlier evidence parser had. That was a false rejection of valid backend output on
+ProteoWizard's own reference fixture, and it is corrected: a peakless spectrum is now a valid
+selected-spectrum result with empty arrays. The contract stays fail-closed — a declared payload
+with no data lines and an empty marker with unexpected data lines both remain count mismatches,
+and an empty payload remains distinct from the no-result state that an absent output file
+signals.
+
+No other code change was made. No threshold was created from any timing or memory value.
+
+### What this evidence still does not establish
+
+MS1 behavior, chromatogram handling and stored BPC; vendor RAW; mzXML, which is still refused
+during planning; alternate-locale parsing; real backend cancellation and partial-output behavior;
+any preview cache; and any universal performance claim. One representative file, measured once,
+on one shared two-core hosted runner.
