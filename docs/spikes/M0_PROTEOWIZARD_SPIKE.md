@@ -81,7 +81,7 @@ Machine names, user-profile paths, environment dumps, acquisition names and samp
 | Bundle/telemetry/install-location review | **NOT REACHED**; the signature stop preceded those installer checks |
 | Post-stop state | No installation, alternate installer or unofficial source was attempted; the unexecuted MSI remains in user temporary storage outside the repository and is not tracked |
 
-The advertised `3.0.26204` artifact identity is download metadata only. It must not be reported as an installed or executable-reported ProteoWizard version. It is separate from the older residual `3.0.26013` Windows Installer record whose `ProductState` is `ABSENT`.
+The advertised `3.0.26204` artifact identity is download metadata only. It must not be reported as an installed or executable-reported ProteoWizard version. It is separate from the `3.0.26013` Windows Installer record whose `ProductState` is `ABSENT`, which this report called residual. **Corrected 2026-07-27: that record was the installed product**, and the two versions are separate for a different reason than the one given here — `3.0.26204` was never installed on this host, while `3.0.26013` was.
 
 ## Official portable artifact and archive safety
 
