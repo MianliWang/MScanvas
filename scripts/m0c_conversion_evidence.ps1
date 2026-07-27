@@ -999,7 +999,7 @@ function Assert-Bundle {
         Stop-Evidence "bundle_identity_invalid"
     }
 
-    $expectedNames = @("bundle-manifest.json", "m0_proteowizard_evidence.ps1", "m0_proteowizard_spike.exe")
+    $expectedNames = @("bundle-manifest.json", "m0c_conversion_evidence.ps1", "m0_proteowizard_spike.exe")
     $actualFiles = @(Get-ChildItem -LiteralPath $Root -Recurse -File -Force)
     $actualNames = @($actualFiles | ForEach-Object {
         [System.IO.Path]::GetRelativePath($Root, $_.FullName).Replace('\', '/')
@@ -1030,7 +1030,7 @@ function Assert-Bundle {
         Stop-Evidence "bundle_manifest_identity_mismatch"
     }
     $payloadNames = @($manifest.files | ForEach-Object { [string]$_.path } | Sort-Object)
-    $expectedPayloadNames = @("m0_proteowizard_evidence.ps1", "m0_proteowizard_spike.exe")
+    $expectedPayloadNames = @("m0c_conversion_evidence.ps1", "m0_proteowizard_spike.exe")
     if (Compare-Object -ReferenceObject $expectedPayloadNames -DifferenceObject $payloadNames) {
         Stop-Evidence "bundle_manifest_allowlist_mismatch"
     }
