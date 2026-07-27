@@ -215,13 +215,13 @@ CONTINUATION_RE = re.compile(r"\\\n[ \t]*")
 # surely as a word does. What follows it still must be a letter, and that is
 # what separates a broken message from deliberate column alignment — the
 # simulated help fixtures align with runs of spaces before a `:`, never before
-# a word. The lookbehind keeps out the `n` of an escaped newline, because
-# `\n  ` is indentation those same fixtures rely on.
+# a word. Which escapes may precede a run is decided per match, in
+# `_reflowed_gap`, rather than by a lookbehind here.
 #
 # Residual, stated rather than implied: a sentence reflowed onto one line whose
 # next word is a number is not caught. Its two-line form is, by the newline
 # rule above, and that is the form the defect actually takes.
-INLINE_RUN_RE = re.compile(r"(?<!\\)[^\s][ ]{2,}[A-Za-z]")
+INLINE_RUN_RE = re.compile(r"[^\s][ ]{2,}[A-Za-z]")
 # Any newline left in an ordinary literal once continuations are applied. Rust
 # spells a deliberate newline `\n`, and content that is genuinely multi-line
 # lives in a raw string, which this does not read. So a newline surviving here
@@ -315,6 +315,24 @@ def _rust_string_literals(text: str) -> list[tuple[int, str]]:
     return literals
 
 
+def _reflowed_gap(content: str) -> bool:
+    """Whether a run of spaces is a continuation that went missing.
+
+    Decided per match rather than by a lookbehind in the pattern. Only an
+    escaped newline or tab legitimately precedes indentation, and they do so
+    in the simulated command output the fixtures carry. Excluding every
+    escaped character instead, which a lookbehind on the backslash does, throws
+    away real cases: the quote in `Select \"OK\"    to continue.` is escaped,
+    and the gap after it is exactly the defect.
+    """
+    for match in INLINE_RUN_RE.finditer(content):
+        start = match.start()
+        if start > 0 and content[start - 1] == chr(92) and content[start] in "nt":
+            continue
+        return True
+    return False
+
+
 def validate_user_facing_strings(errors: list[str]) -> None:
     """Catches a lost line continuation inside a user-facing Rust message.
 
@@ -363,7 +381,7 @@ def validate_user_facing_strings(errors: list[str]) -> None:
                         "indentation are in the message",
                         errors,
                     )
-                elif INLINE_RUN_RE.search(content):
+                elif _reflowed_gap(content):
                     fail(
                         f"{relative}:{number} has a run of spaces inside a string literal, "
                         "which is what a lost line continuation looks like",
