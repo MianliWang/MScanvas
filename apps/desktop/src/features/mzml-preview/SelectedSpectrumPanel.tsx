@@ -119,8 +119,9 @@ function SpectrumDetail({ spectrum }: { readonly spectrum: SelectedSpectrum }) {
 
       {spectrum.truncated ? (
         <p className="notice notice-warning" role="note">
-          This spectrum has more points than one transfer carries. The drawing and the values above
-          cover the first {formatCount(spectrum.mz.length)} points only.
+          This spectrum has more points than one transfer carries. Only the drawing is limited to
+          the first {formatCount(spectrum.mz.length)} points; the point count, m/z range and base
+          peak below are the backend's own values for the whole spectrum.
         </p>
       ) : null}
 

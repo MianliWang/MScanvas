@@ -247,6 +247,30 @@ pub fn redact_absolute_paths(value: &str) -> String {
     value.split_inclusive('\n').map(redact_line).collect()
 }
 
+/// Whether the slash at `index` opens the `//` of a URI authority.
+///
+/// Only that exact shape is exempt, rather than every slash after a colon: an
+/// mzML field written as `source:/home/alice/run.raw` is a path, while
+/// `http://psi.hupo.org/ms/mzml` is a vocabulary reference worth keeping.
+fn starts_uri_authority(bytes: &[u8], index: usize) -> bool {
+    if bytes.get(index) != Some(&b'/') || bytes.get(index + 1) != Some(&b'/') || index == 0 {
+        return false;
+    }
+    if bytes.get(index - 1) != Some(&b':') {
+        return false;
+    }
+    let mut scheme_start = index - 1;
+    while scheme_start > 0
+        && bytes
+            .get(scheme_start - 1)
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
+    {
+        scheme_start -= 1;
+    }
+    // A scheme is at least one character and starts with a letter.
+    scheme_start < index - 1 && bytes.get(scheme_start).is_some_and(u8::is_ascii_alphabetic)
+}
+
 fn redact_line(line: &str) -> String {
     let body = line.strip_suffix('\n').unwrap_or(line);
     let terminator = if body.len() == line.len() { "" } else { "\n" };
@@ -285,20 +309,20 @@ fn find_path_start(line: &str) -> Option<usize> {
         // A UNC root, or a POSIX-absolute root, which carries a single leading
         // slash: an mzML written on Linux or macOS records `/home/...` and is
         // just as revealing when previewed on Windows. The preceding-boundary
-        // test keeps `m/z`, `counts/second` and the `//` inside a URL scheme
-        // such as `http://` readable, and the next character must be able to
-        // start a path segment so a bare `a / b` is not treated as one.
+        // test keeps `m/z`, `counts/second` and a bare `a / b` readable, and
+        // the next character must be able to start a path segment.
         if matches!(bytes.get(index), Some(b'\\' | b'/'))
             && preceding.is_none_or(|byte| {
-                // Backend text brackets and separates values in several ways.
-                // A colon is deliberately absent, so `http://` keeps its
-                // exemption.
+                // Backend text brackets and separates values in several ways,
+                // including `key:value`, so a colon counts as a boundary too.
+                // Only the `://` of a URI authority is exempt, below.
                 byte.is_ascii_whitespace()
                     || matches!(
                         byte,
-                        b'=' | b'"' | b'\'' | b'(' | b'[' | b'{' | b'<' | b',' | b';' | b'|'
+                        b'=' | b'"' | b'\'' | b'(' | b'[' | b'{' | b'<' | b',' | b';' | b'|' | b':'
                     )
             })
+            && !starts_uri_authority(bytes, index)
             && bytes.get(index + 1).is_some_and(|byte| {
                 // A non-ASCII byte starts a segment too: `/用户/王/样本.raw`
                 // is an ordinary POSIX path and just as revealing.

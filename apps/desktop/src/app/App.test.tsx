@@ -260,6 +260,11 @@ describe("mzML preview workspace", () => {
     expect(plot).toHaveAccessibleName(/The drawing covers the first 8 of those points\./);
     // The tallest point in the prefix is never presented as the spectrum's.
     expect(plot).not.toHaveAccessibleName(/359\.00/);
+    // The notice limits itself to the drawing, so it cannot contradict the
+    // whole-spectrum facts stated beside it.
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "Only the drawing is limited to the first 8 points; the point count, m/z range and base peak below are the backend's own values for the whole spectrum.",
+    );
   });
 
   it("shows an index the run does not contain as a typed answer, not an error", async () => {

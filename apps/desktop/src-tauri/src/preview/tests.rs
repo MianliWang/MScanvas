@@ -545,6 +545,16 @@ fn absolute_path_shapes_are_removed_from_displayable_text() {
         redact_absolute_paths("sourceFile: /Volumes/Lab Share/run.raw"),
         "sourceFile: <path>"
     );
+    // A `key:value` colon is a boundary like any other. Only the `://` of a
+    // URI authority is exempt.
+    assert_eq!(
+        redact_absolute_paths("source:/home/alice/run.raw"),
+        "source:<path>"
+    );
+    assert_eq!(
+        redact_absolute_paths(r"path:\\server\share\run.raw"),
+        "path:<path>"
+    );
     // Backend text brackets and separates values in several ways.
     assert_eq!(
         redact_absolute_paths("source=(/home/alice/run.raw)"),
