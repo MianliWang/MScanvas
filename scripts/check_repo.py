@@ -209,6 +209,44 @@ def validate_project_contract(errors: list[str]) -> None:
         fail("PROJECT_PROPOSAL.md does not identify the MSCanvas source-of-truth contract", errors)
 
 
+def validate_user_facing_strings(errors: list[str]) -> None:
+    """Catches a lost line continuation inside a user-facing message.
+
+    A Rust string split across lines ends with a backslash, which removes the
+    newline and the next line's indentation. Lose the backslash and the
+    indentation stays in the message: six shipped strings read "...the commands
+    <35 spaces> MSCanvas needs." Nothing caught them, because the code compiled,
+    passed Clippy and produced no warning. A run of spaces between two words is
+    never intentional in prose, so it is checked here at the source.
+    """
+    # The character before the run must not be the tail of an escape sequence:
+    # `\n  tic` is deliberate indentation in simulated help output, and the `n`
+    # would otherwise read as the end of a word.
+    suspicious = re.compile('"[^"]*(?<![\\\\])[A-Za-z,.][ ]{2,}[A-Za-z][^"]*"')
+    for directory in ("crates", "apps"):
+        root = ROOT / directory
+        if not root.is_dir():
+            continue
+        for path in root.rglob("*"):
+            if path.suffix not in {".rs", ".ts", ".tsx"} or not path.is_file():
+                continue
+            if "target" in path.parts or "node_modules" in path.parts:
+                continue
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                stripped = line.lstrip()
+                if stripped.startswith(("//", "/*", "*")):
+                    continue
+                if suspicious.search(line):
+                    relative = path.relative_to(ROOT).as_posix()
+                    fail(
+                        f"{relative}:{number} has a run of spaces inside a string literal, "
+                        "which is what a lost line continuation looks like",
+                        errors,
+                    )
+
+
 def main() -> int:
     errors: list[str] = []
     validate_required(errors)
@@ -218,6 +256,7 @@ def main() -> int:
         validate_skill_frontmatter(errors)
         validate_markdown_links(errors)
         validate_project_contract(errors)
+        validate_user_facing_strings(errors)
 
     if errors:
         print("Repository validation failed:")
