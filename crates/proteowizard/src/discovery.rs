@@ -716,25 +716,29 @@ fn root_and_direct_children(root: &Path) -> Vec<PathBuf> {
                 .map(|_| entry.path())
         })
         .collect::<Vec<_>>();
-    children.sort_by_key(|child| cmp::Reverse(nested_child_order(child)));
+    children.sort_by_key(|child| cmp::Reverse(installation_order(child)));
     directories.extend(children);
     directories
 }
 
-/// Orders the children of a container that is itself named `ProteoWizard`.
+/// Ranks one installation directory against another.
 ///
-/// A child named `ProteoWizard <version>` is ordered by release, for the same
-/// reason the versioned siblings are: discovery takes one candidate and never
-/// falls back, so a stale installation winning means the wrong binaries run.
+/// A directory named `ProteoWizard <version>` is ordered by release, because
+/// discovery takes one candidate and never falls back, so a stale installation
+/// winning means the wrong binaries run.
 ///
-/// Anything else keeps name order. This enumeration is deliberately unfiltered
-/// so that a portable extraction dropped in beside an installation is still
-/// found, and the portable directory name carries `x86_64` and `vc145` ahead of
-/// its release — reading digit groups out of it would order it worse, not
-/// better. Ordering the recognisable names first is a change: they previously
-/// sorted after `pwiz-bin-...` because `w` follows `r`, which was alphabetical
+/// Anything else keeps name order, and that exception is the whole reason this
+/// exists rather than calling `release_sort_key` directly. The official
+/// portable extraction is named `pwiz-bin-windows-x86_64-vc145-release-...`,
+/// whose first digit groups are `86`, `64` and `145`; ranked as a release it
+/// would outrank every real `3.0.x` installation on the machine. Such a
+/// directory is still reached — a portable build dropped in beside an
+/// installation must be — it is simply ordered by name.
+///
+/// Ordering the recognisable names first is a change: they previously sorted
+/// after `pwiz-bin-...` because `w` follows `r`, which was alphabetical
 /// accident rather than a decision.
-fn nested_child_order(path: &Path) -> (u64, u64, u64, String) {
+fn installation_order(path: &Path) -> (u64, u64, u64, String) {
     let name = path.file_name().map_or_else(String::new, |name| {
         name.to_string_lossy().to_ascii_lowercase()
     });
@@ -1129,7 +1133,7 @@ fn push_container_roots(roots: &mut Vec<PathBuf>, value: Option<OsString>) {
         group.push(stable);
     }
     group.extend(versioned_siblings(&container));
-    group.sort_by_key(|root| cmp::Reverse(release_sort_key(root)));
+    group.sort_by_key(|root| cmp::Reverse(installation_order(root)));
     for root in group {
         push_unique(roots, root);
     }
@@ -2203,6 +2207,31 @@ Analysis commands (used with -x/--exec):
         let stable_position = roots.iter().position(|root| root == &stable);
         assert!(newer_position.is_some() && stable_position.is_some());
         assert!(newer_position < stable_position, "{roots:?}");
+    }
+
+    #[test]
+    fn a_portable_extraction_never_outranks_a_real_release() {
+        // `pwiz-bin-windows-x86_64-vc145-release-...` yields 86, 64 and 145 as
+        // its first digit groups. Ranked as a release it would beat every real
+        // installation on the machine, so it is ordered by name instead. It is
+        // still reached, because a portable build beside an installation is a
+        // legitimate way to have one.
+        let tree = TempTree::new("portable-order");
+        let portable = tree
+            .root
+            .join("ProteoWizard")
+            .join("pwiz-bin-windows-x86_64-vc145-release-3_0_26204_a09eea9");
+        let installed = tree.root.join("ProteoWizard 3.0.26013.47b13cf 64-bit");
+        fs::create_dir_all(&portable).expect("portable extraction should be created");
+        fs::create_dir_all(&installed).expect("installation should be created");
+
+        let mut roots = Vec::new();
+        push_container_roots(&mut roots, Some(tree.root.as_os_str().to_owned()));
+
+        let installed_position = roots.iter().position(|root| root == &installed);
+        let portable_position = roots.iter().position(|root| root == &portable);
+        assert!(installed_position.is_some() && portable_position.is_some());
+        assert!(installed_position < portable_position, "{roots:?}");
     }
 
     #[test]
