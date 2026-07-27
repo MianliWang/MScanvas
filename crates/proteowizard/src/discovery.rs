@@ -1132,13 +1132,30 @@ fn push_container_roots(roots: &mut Vec<PathBuf>, value: Option<OsString>) {
     // this per container and not across all of them is deliberate: containers
     // are visited machine-wide first, and a user-writable location must not be
     // able to shadow an admin-installed one by naming a higher release.
-    let mut group = root_and_direct_children(&stable);
-    if group.is_empty() {
-        group.push(stable);
-    }
-    group.extend(versioned_siblings(&container));
-    group.sort_by_key(|root| cmp::Reverse(installation_order(root)));
-    for root in group {
+    // The stable folder ranks ahead of anything unranked inside it. A portable
+    // extraction dropped into it is a legitimate installation, but the folder
+    // an installer wrote is the more deliberate one, and a name tie-break would
+    // otherwise put `pwiz-bin-...` first because `w` follows `r`.
+    let expansion = root_and_direct_children(&stable);
+    let mut group: Vec<(u8, PathBuf)> = if expansion.is_empty() {
+        vec![(1, stable)]
+    } else {
+        expansion
+            .into_iter()
+            .enumerate()
+            .map(|(position, directory)| (u8::from(position == 0), directory))
+            .collect()
+    };
+    group.extend(
+        versioned_siblings(&container)
+            .into_iter()
+            .map(|sibling| (0, sibling)),
+    );
+    group.sort_by_key(|(is_stable, root)| {
+        let (major, minor, patch, name) = installation_order(root);
+        cmp::Reverse((major, minor, patch, *is_stable, name))
+    });
+    for (_, root) in group {
         push_unique(roots, root);
     }
 }
@@ -2211,6 +2228,25 @@ Analysis commands (used with -x/--exec):
         let stable_position = roots.iter().position(|root| root == &stable);
         assert!(newer_position.is_some() && stable_position.is_some());
         assert!(newer_position < stable_position, "{roots:?}");
+    }
+
+    #[test]
+    fn the_stable_folder_outranks_a_portable_copy_inside_it() {
+        // Neither states a release, so the tie-break decides, and by name alone
+        // `pwiz-bin-...` wins because `w` follows `r`. The folder an installer
+        // wrote is the more deliberate of the two.
+        let tree = TempTree::new("stable-versus-portable-child");
+        let stable = tree.root.join("ProteoWizard");
+        let portable = stable.join("pwiz-bin-windows-x86_64-vc145-release-3_0_26204_a09eea9");
+        fs::create_dir_all(&portable).expect("portable child should be created");
+
+        let mut roots = Vec::new();
+        push_container_roots(&mut roots, Some(tree.root.as_os_str().to_owned()));
+
+        let stable_position = roots.iter().position(|root| root == &stable);
+        let portable_position = roots.iter().position(|root| root == &portable);
+        assert!(stable_position.is_some() && portable_position.is_some());
+        assert!(stable_position < portable_position, "{roots:?}");
     }
 
     #[test]
