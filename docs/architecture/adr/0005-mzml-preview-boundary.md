@@ -68,6 +68,16 @@ index. Every one of them is typed on both sides.
   moved on from. Because Rust holds the path, the frontend also cannot offer
   "recent files", drag-and-drop from Explorer, or multi-file workspaces without
   extending the boundary deliberately. That is the intended cost.
+- The spectrum list and a selected spectrum are separate reads too, and the
+  crate's `SpectrumIdentity::reconcile` decides whether they agree. A selected
+  spectrum whose recognized scan number contradicts the row the user clicked is
+  refused rather than shown beside it. Unrecognized identifier forms stay
+  opaque and do not conflict, so a legitimate file with an unfamiliar native ID
+  is not rejected.
+- Every list the boundary transfers is bounded in count as well as in size —
+  spectrum rows, metadata lines and precursors — and each reports the total it
+  came from. The 8 MiB output ceiling alone permits a very large number of very
+  short records, which would stall a render rather than inform anyone.
 - The run summary and the spectrum list are separate reads. When their spectrum
   counts disagree, both are shown and neither is chosen: MSCanvas has no
   evidence about which reading is right, and refusing the file outright would

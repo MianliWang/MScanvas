@@ -10,7 +10,8 @@ use std::sync::Mutex;
 
 use mscanvas_proteowizard::{
     MetadataResult, MetadataSectionKind, MsLevelBucket, PreviewNoResult, PreviewOutcome,
-    PreviewValue, Redactor, RunSummaryResult, SelectedSpectrumResult, SpectrumTableResult,
+    PreviewValue, Redactor, RunSummaryResult, SelectedSpectrumResult, SpectrumIdentity,
+    SpectrumTableResult,
 };
 
 use super::backend::{
@@ -18,11 +19,11 @@ use super::backend::{
 };
 use super::dto::{
     BackendAvailabilityDto, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES, MAX_METADATA_LINE_CHARS,
-    MAX_SPECTRUM_POINTS, MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto, MsLevelCountDto,
-    PrecursorDto, PreviewDto, PreviewErrorDto, RetentionTimeDto, RetentionTimeRangeDto,
-    RunSummaryDto, SelectedFileDto, SelectedSpectrumDto, SelectedSpectrumOutcomeDto,
-    SpectrumRowDto, SpectrumTableDto, bounded_text, redact_absolute_paths, require_finite,
-    require_finite_option,
+    MAX_PRECURSORS, MAX_SPECTRUM_POINTS, MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto,
+    MsLevelCountDto, PrecursorDto, PreviewDto, PreviewErrorDto, RetentionTimeDto,
+    RetentionTimeRangeDto, RunSummaryDto, SelectedFileDto, SelectedSpectrumDto,
+    SelectedSpectrumOutcomeDto, SpectrumRowDto, SpectrumTableDto, bounded_text,
+    redact_absolute_paths, require_finite, require_finite_option,
 };
 use super::selection::{AcceptedFile, FileRegistry, accept_mzml_file, file_identity};
 
@@ -33,6 +34,9 @@ pub struct PreviewService {
     /// The generation each open preview described, so a later spectrum load
     /// can be refused rather than answered from a different one.
     generations: Mutex<HashMap<String, SourceGeneration>>,
+    /// The identities the opened spectrum table reported, so a later selected
+    /// spectrum can be checked against the row the user actually clicked.
+    table_identities: Mutex<HashMap<String, Vec<SpectrumIdentity>>>,
 }
 
 impl PreviewService {
@@ -42,6 +46,7 @@ impl PreviewService {
             provider,
             files: FileRegistry::new(),
             generations: Mutex::new(HashMap::new()),
+            table_identities: Mutex::new(HashMap::new()),
         }
     }
 
@@ -57,6 +62,10 @@ impl PreviewService {
         self.generations
             .lock()
             .expect("the generation lock is never poisoned by user code")
+            .clear();
+        self.table_identities
+            .lock()
+            .expect("the identity lock is never poisoned by user code")
             .clear();
         Ok(self.files.register(accepted))
     }
@@ -94,6 +103,7 @@ impl PreviewService {
         let mut metadata = None;
         let mut run_summary = None;
         let mut spectrum_table = None;
+        let mut table_identities = Vec::new();
         for result in results {
             match result.outcome {
                 PreviewOutcome::Value(value) => match *value {
@@ -104,6 +114,11 @@ impl PreviewService {
                         run_summary = Some(run_summary_dto(&result)?);
                     }
                     PreviewValue::SpectrumTable(result) => {
+                        table_identities = result
+                            .rows()
+                            .iter()
+                            .map(|row| row.identity().clone())
+                            .collect();
                         spectrum_table = Some(spectrum_table_dto(&result, &redactor)?);
                     }
                     PreviewValue::Tic(_) | PreviewValue::SelectedSpectrum(_) => {
@@ -128,6 +143,10 @@ impl PreviewService {
             .lock()
             .expect("the generation lock is never poisoned by user code")
             .insert(handle.to_owned(), before);
+        self.table_identities
+            .lock()
+            .expect("the identity lock is never poisoned by user code")
+            .insert(handle.to_owned(), table_identities);
 
         Ok(PreviewDto {
             file: file_dto(handle, &file),
@@ -181,6 +200,25 @@ impl PreviewService {
         match result.outcome {
             PreviewOutcome::Value(value) => match *value {
                 PreviewValue::SelectedSpectrum(spectrum) => {
+                    // The table and the binary formatter are separate readings.
+                    // If they disagree about which scan this index is, the row
+                    // the user clicked and the panel beside it would describe
+                    // different spectra, so the result is refused instead.
+                    let expected = self
+                        .table_identities
+                        .lock()
+                        .expect("the identity lock is never poisoned by user code")
+                        .get(handle)
+                        .and_then(|identities| identities.get(index as usize).cloned());
+                    if let Some(expected) = expected
+                        && expected.reconcile(spectrum.identity()).is_err()
+                    {
+                        return Err(PreviewErrorDto::new(
+                            "spectrum_identity_conflict",
+                            "The spectrum list and this spectrum disagree about which scan that                              row is, so MSCanvas did not show one beside the other.",
+                            false,
+                        ));
+                    }
                     Ok(SelectedSpectrumOutcomeDto::Spectrum {
                         spectrum: Box::new(selected_spectrum_dto(&spectrum, &redactor)?),
                     })
@@ -393,8 +431,9 @@ fn selected_spectrum_dto(
         intensity.push(require_finite(*value)?);
     }
 
-    let mut precursors = Vec::with_capacity(spectrum.precursors().len());
-    for precursor in spectrum.precursors() {
+    let total_precursor_count = spectrum.precursors().len();
+    let mut precursors = Vec::with_capacity(total_precursor_count.min(MAX_PRECURSORS));
+    for precursor in spectrum.precursors().iter().take(MAX_PRECURSORS) {
         precursors.push(PrecursorDto {
             index: precursor.index(),
             mz: require_finite(precursor.mz())?,
@@ -422,6 +461,8 @@ fn selected_spectrum_dto(
         base_peak_intensity: require_finite(spectrum.base_peak_intensity())?,
         total_ion_current: require_finite(spectrum.total_ion_current())?,
         precursors,
+        total_precursor_count,
+        precursors_truncated: total_precursor_count > MAX_PRECURSORS,
         // The measured selected-spectrum formatter emits neither a
         // profile/centroid marker nor array units, so both stay unknown.
         representation_known: false,

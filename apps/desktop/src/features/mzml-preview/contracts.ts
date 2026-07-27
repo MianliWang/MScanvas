@@ -114,6 +114,9 @@ export interface SelectedSpectrum {
   readonly basePeakIntensity: number;
   readonly totalIonCurrent: number;
   readonly precursors: readonly Precursor[];
+  /** How many precursors the spectrum really has. */
+  readonly totalPrecursorCount: number;
+  readonly precursorsTruncated: boolean;
   /** No profile/centroid marker was emitted, so none may be displayed. */
   readonly representationKnown: boolean;
   /** No array unit was emitted, so none may be displayed. */

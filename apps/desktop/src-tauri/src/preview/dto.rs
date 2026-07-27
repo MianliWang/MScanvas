@@ -28,6 +28,13 @@ pub const MAX_METADATA_LINE_CHARS: usize = 400;
 /// inform anyone.
 pub const MAX_METADATA_ENTRIES: usize = 1_000;
 
+/// The most precursor records one selected spectrum may transfer.
+///
+/// A precursor list is a handful of entries in every measured file; the ceiling
+/// exists because a malformed one could carry very many short records inside
+/// the same 8 MiB output bound.
+pub const MAX_PRECURSORS: usize = 1_000;
+
 /// The longest bounded diagnostic detail attached to an error.
 pub const MAX_ERROR_DETAIL_CHARS: usize = 400;
 
@@ -182,6 +189,10 @@ pub struct SelectedSpectrumDto {
     pub base_peak_intensity: f64,
     pub total_ion_current: f64,
     pub precursors: Vec<PrecursorDto>,
+    /// How many precursors the spectrum really has, which can exceed
+    /// `precursors`.
+    pub total_precursor_count: usize,
+    pub precursors_truncated: bool,
     /// The backend emitted no profile/centroid marker for a selected spectrum,
     /// so representation stays unknown rather than being guessed.
     pub representation_known: bool,

@@ -655,10 +655,34 @@ fn a_source_rewritten_between_operations_is_refused_rather_than_combined() {
 }
 
 #[test]
+fn a_spectrum_that_contradicts_its_table_row_is_refused() {
+    let file = TestFile::new("identity-conflict");
+    // The table says index 0 is scan 4242; the binary formatter says scan 19.
+    let conflicting_table = SPECTRUM_TABLE_OUTPUT.replace("0	19	1	", "0	4242	1	");
+    let responses = vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(conflicting_table),
+        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+    ];
+
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the preview loads");
+
+    let error = service
+        .load_spectrum(&selected.handle, 0)
+        .expect_err("a row and its detail panel never describe different scans");
+    assert_eq!(error.kind, "spectrum_identity_conflict");
+}
+
+#[test]
 fn a_spectrum_is_refused_when_the_file_changed_after_it_was_opened() {
     let file = TestFile::new("regeneration");
     let mut responses = open_responses();
-    responses.push(Response::Stdout(selected_spectrum_output(
+    responses.push(Response::File(selected_spectrum_output(
         0,
         &[(445.12, 9000.0)],
     )));

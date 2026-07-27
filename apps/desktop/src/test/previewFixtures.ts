@@ -141,6 +141,8 @@ export function buildSpectrum(index: number, pointCount: number): SelectedSpectr
     basePeakIntensity: pointCount === 0 ? 0 : (intensity[basePeakIndex] ?? 0),
     totalIonCurrent: 54_321,
     precursors: pointCount === 0 ? [] : [{ index: 0, mz: 512.25, intensity: 8_400 }],
+    totalPrecursorCount: pointCount === 0 ? 0 : 1,
+    precursorsTruncated: false,
     representationKnown: false,
     valueUnitsKnown: false,
     truncated: false,

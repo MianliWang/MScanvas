@@ -191,6 +191,12 @@ function SpectrumDetail({ spectrum }: { readonly spectrum: SelectedSpectrum }) {
       {spectrum.precursors.length === 0 ? null : (
         <div className="inspector-section">
           <h3>Precursors</h3>
+          {spectrum.precursorsTruncated ? (
+            <p className="notice notice-warning" role="note">
+              Showing the first {formatCount(spectrum.precursors.length)} of{" "}
+              {formatCount(spectrum.totalPrecursorCount)} precursors.
+            </p>
+          ) : null}
           <dl className="metadata-list">
             {spectrum.precursors.map((precursor) => (
               <div key={precursor.index}>
