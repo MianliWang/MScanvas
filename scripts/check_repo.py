@@ -211,10 +211,12 @@ def validate_project_contract(errors: list[str]) -> None:
 
 CONTINUATION_RE = re.compile(r"\\\n[ \t]*")
 INLINE_RUN_RE = re.compile(r"(?<!\\)[A-Za-z,.][ ]{2,}[A-Za-z]")
-# A sentence cut across lines, not merely a newline. A literal may hold a
-# newline on purpose; a message whose sentence resumes on the next line is a
-# continuation that went missing.
-SENTENCE_BREAK_RE = re.compile(r"[A-Za-z,.]\n")
+# Any newline left in an ordinary literal once continuations are applied. Rust
+# spells a deliberate newline `\n`, and content that is genuinely multi-line
+# lives in a raw string, which this does not read. So a newline surviving here
+# is a continuation that went missing, whatever character precedes it: a digit
+# or a closing bracket ends a cut sentence as surely as a letter does.
+EMBEDDED_NEWLINE_RE = re.compile(r"\n")
 
 
 def _rust_string_literals(text: str) -> list[tuple[int, str]]:
@@ -243,8 +245,21 @@ def _rust_string_literals(text: str) -> list[tuple[int, str]]:
                 index = length if end == -1 else end
                 continue
             if following == "*":
-                end = text.find("*/", index + 2)
-                index = length if end == -1 else end + 2
+                # Rust nests block comments, so the first `*/` need not close
+                # the outer one. Stopping there would read commented-out code as
+                # live source and can fail the gate on text that is not compiled.
+                depth = 1
+                probe = index + 2
+                while probe < length and depth:
+                    if text.startswith("/*", probe):
+                        depth += 1
+                        probe += 2
+                    elif text.startswith("*/", probe):
+                        depth -= 1
+                        probe += 2
+                    else:
+                        probe += 1
+                index = probe
                 continue
 
         if character == "r" and index + 1 < length:
@@ -330,7 +345,7 @@ def validate_user_facing_strings(errors: list[str]) -> None:
                 # the message actually contains.
                 content = CONTINUATION_RE.sub("", source)
                 number = text.count("\n", 0, offset) + 1
-                if SENTENCE_BREAK_RE.search(content):
+                if EMBEDDED_NEWLINE_RE.search(content):
                     fail(
                         f"{relative}:{number} has a string literal whose sentence continues "
                         "on the next line with no continuation, so the newline and the "
