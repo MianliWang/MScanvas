@@ -37,10 +37,19 @@ export function BackendStatus({ state, onRecheck }: BackendStatusProps) {
     return (
       <p className="notice notice-success" role="status">
         <span aria-hidden="true">✓ </span>
-        ProteoWizard is available
-        {availability.release === null ? "" : ` · ${availability.release}`}
-        {availability.buildDate === null ? "" : ` · built ${availability.buildDate}`}
-        {availability.sameInstallation ? "" : " · msaccess and msconvert are separate installations"}
+        <span>
+          ProteoWizard is available
+          {availability.release === null ? "" : ` · ${availability.release}`}
+          {availability.buildDate === null ? "" : ` · built ${availability.buildDate}`}
+          {availability.sameInstallation
+            ? ""
+            : " · msaccess and msconvert are separate installations"}
+        </span>
+        {/* An installation can be moved, replaced or removed while MSCanvas is
+            running, and this banner would otherwise keep saying it is there. */}
+        <button className="link-button" onClick={onRecheck} type="button">
+          Check again
+        </button>
       </p>
     );
   }

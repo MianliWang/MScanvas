@@ -117,22 +117,36 @@ impl ProteoWizardProvider {
 impl PreviewProvider for ProteoWizardProvider {
     fn availability(&self) -> BackendAvailabilityDto {
         let discovery = discover(&DiscoveryRequest { configured: None });
-        let available = discovery.availability == AvailabilityState::Available;
+        let discovered = discovery.availability == AvailabilityState::Available;
+        // Availability answers "can this installation produce a preview", not
+        // "does an executable exist". An installation whose help MSCanvas
+        // cannot read fails every file with a non-retryable error, so it is
+        // reported here instead of looking usable until the user opens a file.
+        let usable = discovered
+            && InstalledHelpCapabilities::from_discovered_tool(&discovery.msaccess).is_ok();
         BackendAvailabilityDto {
-            state: if available {
-                "available"
-            } else {
-                "unavailable"
-            }
-            .to_owned(),
+            state: if usable { "available" } else { "unavailable" }.to_owned(),
             release: discovery.release.as_deref().map(backend_label),
             build_date: discovery.build_date.as_deref().map(backend_label),
             same_installation: discovery.same_installation,
-            failure: discovery.failure.as_ref().map(|failure| BackendFailureDto {
-                kind: failure.kind().to_owned(),
-                summary: failure.summary().to_owned(),
-                corrective_action: failure.corrective_action().to_owned(),
-            }),
+            failure: discovery.failure.as_ref().map_or_else(
+                || {
+                    (!usable).then(|| BackendFailureDto {
+                        kind: "capability_evidence_unavailable".to_owned(),
+                        summary: "ProteoWizard was found, but it does not describe the commands                                   MSCanvas needs."
+                            .to_owned(),
+                        corrective_action: "Install a ProteoWizard release that provides msaccess                                             help, or choose a different installation folder."
+                            .to_owned(),
+                    })
+                },
+                |failure| {
+                    Some(BackendFailureDto {
+                        kind: failure.kind().to_owned(),
+                        summary: failure.summary().to_owned(),
+                        corrective_action: failure.corrective_action().to_owned(),
+                    })
+                },
+            ),
         }
     }
 

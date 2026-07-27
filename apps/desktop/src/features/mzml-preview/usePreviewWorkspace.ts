@@ -158,10 +158,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         .catch((cause: unknown) => {
           if (mounted.current && token === previewToken.current) {
             setPreview({ status: "failed", error: toPreviewError(cause) });
+            // The installation may be the reason. Re-checking here keeps the
+            // banner from insisting a backend is present after it has gone,
+            // which would leave the user with no way back except a restart.
+            checkBackend();
           }
         });
     },
-    [api],
+    [api, checkBackend],
   );
 
   const openFile = useCallback(() => {

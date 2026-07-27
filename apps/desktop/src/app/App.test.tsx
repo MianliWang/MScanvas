@@ -5,6 +5,7 @@ import type { PreviewApi } from "../features/mzml-preview/api";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
 import type { SelectedSpectrumOutcome } from "../features/mzml-preview/contracts";
 import {
+  availableBackend,
   buildPreview,
   buildSpectrum,
   createFakePreviewApi,
@@ -56,6 +57,28 @@ describe("mzML preview workspace", () => {
 
     expect(await screen.findByText(/ProteoWizard is available/)).toHaveTextContent("3.0.25000");
     expect(screen.getByRole("button", { name: "Open mzML…" })).toBeEnabled();
+  });
+
+  it("notices a backend that has gone away and can be told to look again", async () => {
+    let installed = true;
+    const api = createFakePreviewApi({
+      availability: () =>
+        Promise.resolve(installed ? availableBackend : unavailableBackend),
+      preview: () => {
+        installed = false;
+        return Promise.reject(previewError({ kind: "backend_not_found", retryable: false }));
+      },
+    });
+    await openTheFile(api);
+
+    // The failed open re-checks: the banner must not keep insisting the
+    // backend is there after it has gone.
+    expect(await screen.findByText("ProteoWizard is not available")).toBeVisible();
+
+    // And once it is back, the user can say so without restarting.
+    installed = true;
+    fireEvent.click(screen.getAllByRole("button", { name: "Check again" })[0] as HTMLElement);
+    expect(await screen.findByText(/ProteoWizard is available/)).toBeVisible();
   });
 
   it("loads metadata, the run summary and the spectrum table from one open action", async () => {
