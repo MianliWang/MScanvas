@@ -96,6 +96,26 @@ describe("mzML preview workspace", () => {
 
     cleanup();
 
+    // A failed picker is a different step, and must be retried as a picker.
+    // Retrying it as "open the last file again" would open a file the user was
+    // no longer reaching for.
+    let pickerAttempts = 0;
+    const pickerFails = createFakePreviewApi({
+      file: () => {
+        pickerAttempts += 1;
+        return Promise.reject(previewError({ kind: "file_picker_failed" }));
+      },
+    });
+    await openTheFile(pickerFails);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Try choosing a file again" }));
+    await waitFor(() => {
+      expect(pickerAttempts).toBe(2);
+    });
+    expect(pickerFails.openCount()).toBe(0);
+
+    cleanup();
+
     await openTheFile(
       createFakePreviewApi({
         preview: () =>
@@ -121,7 +141,7 @@ describe("mzML preview workspace", () => {
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=3");
 
     expect(await screen.findByRole("img")).toHaveAccessibleName(
-      "Spectrum 2, MS2, 12 points. m/z ranges from 300.0000 to 305.5000. The maximum intensity is 507.00.",
+      "Spectrum 2, MS2, 12 points. m/z ranges from 300.0000 to 305.5000. The maximum intensity is 507.00. This file does not report whether these are profile samples or centroided peaks.",
     );
     expect(screen.getByText(/Drawn as 12 sticks, one per point\./)).toBeVisible();
     expect(api.requestedSpectra).toEqual([2]);
@@ -241,6 +261,11 @@ describe("mzML preview workspace", () => {
       "Not reported",
     );
     expect(screen.getByText("Value units").nextElementSibling).toHaveTextContent("Not reported");
+    // The same caveat is stated at the drawing, because a reduced profile
+    // spectrum looks exactly like a centroided one.
+    expect(
+      screen.getByText(/does not report whether these are profile samples or centroided peaks, so read each stick/),
+    ).toBeVisible();
     // No chromatogram count is emitted, so none is shown as zero.
     expect(screen.getByText("Chromatograms").nextElementSibling).toHaveTextContent("Not reported");
   });

@@ -111,6 +111,7 @@ function SpectrumDetail({ spectrum }: { readonly spectrum: SelectedSpectrum }) {
           intensity={spectrum.intensity}
           labelledBy={summaryId}
           mz={spectrum.mz}
+          representationKnown={spectrum.representationKnown}
           reportedMzHigh={spectrum.mzHigh}
           reportedMzLow={spectrum.mzLow}
         />
@@ -219,5 +220,8 @@ function buildAccessibleSummary(spectrum: SelectedSpectrum): string {
     (highest, value) => (value > highest ? value : highest),
     0,
   );
-  return `${opening} m/z ranges from ${formatMz(spectrum.mzLow)} to ${formatMz(spectrum.mzHigh)}. The maximum intensity is ${formatIntensity(maximumIntensity)}.`;
+  const representation = spectrum.representationKnown
+    ? ""
+    : " This file does not report whether these are profile samples or centroided peaks.";
+  return `${opening} m/z ranges from ${formatMz(spectrum.mzLow)} to ${formatMz(spectrum.mzHigh)}. The maximum intensity is ${formatIntensity(maximumIntensity)}.${representation}`;
 }

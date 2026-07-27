@@ -166,16 +166,37 @@ impl PreviewProvider for ProteoWizardProvider {
 /// Only stable identifiers cross this boundary: no English backend text is
 /// inspected and none is forwarded.
 pub fn interpretation_error(error: PreviewInterpretError) -> PreviewErrorDto {
-    let described = PreviewErrorDto::new(
-        error.stable_id(),
-        "That preview result could not be interpreted.",
-        false,
-    );
+    let identifier = error.stable_id();
     match error {
-        PreviewInterpretError::MalformedOutput { kind, .. } => {
-            described.with_detail(kind.stable_id())
-        }
-        _ => described,
+        PreviewInterpretError::MalformedOutput { kind, .. } => PreviewErrorDto::new(
+            identifier,
+            "That preview result could not be interpreted.",
+            false,
+        )
+        .with_detail(kind.stable_id()),
+        // The parser requires the whole output, and this boundary reads at
+        // most `MAX_PREVIEW_OUTPUT_BYTES`. A run above that is refused rather
+        // than shown from a prefix, because a spectrum list cut mid-file would
+        // read as a shorter acquisition. Saying so plainly is the point: the
+        // limit is a named limit of this version, not a defect in the file.
+        PreviewInterpretError::IncompleteParserInput {
+            captured_bytes,
+            total_bytes,
+            ..
+        } => PreviewErrorDto::new(
+            identifier,
+            "This run produced more preview output than MSCanvas reads in one piece, \
+             so it was refused rather than shown incomplete.",
+            false,
+        )
+        .with_detail(format!(
+            "read {captured_bytes} of {total_bytes} bytes; the limit is {MAX_PREVIEW_OUTPUT_BYTES}"
+        )),
+        _ => PreviewErrorDto::new(
+            identifier,
+            "That preview result could not be interpreted.",
+            false,
+        ),
     }
 }
 

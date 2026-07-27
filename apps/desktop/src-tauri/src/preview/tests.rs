@@ -514,12 +514,37 @@ fn absolute_path_shapes_are_removed_from_displayable_text() {
         redact_absolute_paths(r"share: \\server\data\sample.mzML"),
         "share: <path>"
     );
+    // A path containing spaces is removed whole. Stopping at the first space
+    // would leave the rest of the path on screen.
+    assert_eq!(
+        redact_absolute_paths(r"sourceFile: D:\Grant Study\Spec\private.raw"),
+        "sourceFile: <path>"
+    );
+    // The marker is found wherever it appears, not only at a token start.
+    assert_eq!(
+        redact_absolute_paths(r"sourceFile=D:\private\sample.raw"),
+        "sourceFile=<path>"
+    );
+    assert_eq!(
+        redact_absolute_paths(r#"<sourceFile location="file:///D:/private/x.raw"/>"#),
+        "<sourceFile location=\"<path>"
+    );
     // Ordinary scientific text keeps its shape, including trailing whitespace.
     assert_eq!(
         redact_absolute_paths("analyzer: FTMS resolution 70000\n"),
         "analyzer: FTMS resolution 70000\n"
     );
     assert_eq!(redact_absolute_paths("ratio: 3:1"), "ratio: 3:1");
+    // A controlled-vocabulary URL is not a filesystem path and stays readable.
+    assert_eq!(
+        redact_absolute_paths("cv: http://psi.hupo.org/ms/mzml"),
+        "cv: http://psi.hupo.org/ms/mzml"
+    );
+    // Each line is judged on its own, so one path does not blank the rest.
+    assert_eq!(
+        redact_absolute_paths("software: pwiz\nsourceFile: C:/data/a.mzML\nmsLevel: 2"),
+        "software: pwiz\nsourceFile: <path>\nmsLevel: 2"
+    );
 }
 
 #[test]

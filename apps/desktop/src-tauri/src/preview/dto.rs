@@ -231,38 +231,67 @@ pub fn bounded_text(value: &str, maximum_chars: usize) -> String {
 /// that would put a filesystem path the user did not choose in front of them
 /// and into anything they later copy out, so path shapes are removed generally
 /// rather than only where they are already known.
+/// Everything from the first path marker to the end of the line is replaced,
+/// because where a path ends cannot be decided: `D:\Program Files\run.raw`
+/// contains a space, and stopping at the first one would leave `Files\run.raw`
+/// on screen. Losing the tail of a line is the acceptable cost; leaking a
+/// filesystem path the user did not choose to reveal is not.
 #[must_use]
 pub fn redact_absolute_paths(value: &str) -> String {
-    value
-        .split_inclusive(char::is_whitespace)
-        .map(|token| {
-            let trailing = token.len() - token.trim_end().len();
-            let core = &token[..token.len() - trailing];
-            if looks_like_absolute_path(core) {
-                format!("<path>{}", &token[token.len() - trailing..])
-            } else {
-                token.to_owned()
-            }
-        })
-        .collect()
+    value.split_inclusive('\n').map(redact_line).collect()
 }
 
-fn looks_like_absolute_path(token: &str) -> bool {
-    let trimmed = token.trim_matches(|character: char| {
-        character == '"' || character == '\'' || character == '(' || character == ')'
-    });
-    if trimmed.len() < 3 {
-        return false;
+fn redact_line(line: &str) -> String {
+    let body = line.strip_suffix('\n').unwrap_or(line);
+    let terminator = if body.len() == line.len() { "" } else { "\n" };
+    match find_path_start(body) {
+        Some(start) => format!("{}<path>{terminator}", &body[..start]),
+        None => line.to_owned(),
     }
-    let lowered = trimmed.to_ascii_lowercase();
-    if lowered.starts_with("file:") {
-        return true;
+}
+
+/// Finds the first byte offset at which an absolute path begins.
+///
+/// Markers are recognized anywhere in the line, not only at a token start,
+/// because mzML metadata routinely writes them as `key=<path>` or inside
+/// quotes.
+fn find_path_start(line: &str) -> Option<usize> {
+    let bytes = line.as_bytes();
+    for (index, _) in line.char_indices() {
+        let preceding = if index == 0 {
+            None
+        } else {
+            bytes.get(index - 1)
+        };
+        let after_boundary = preceding.is_none_or(|byte| !byte.is_ascii_alphanumeric());
+
+        if after_boundary
+            && line[index..].len() >= 5
+            && line[index..index + 5].eq_ignore_ascii_case("file:")
+        {
+            return Some(index);
+        }
+
+        // A UNC or POSIX-absolute root, but not the `//` inside a URL scheme
+        // such as `http://`, whose useful text is worth keeping.
+        if matches!(
+            (bytes.get(index), bytes.get(index + 1)),
+            (Some(b'\\'), Some(b'\\')) | (Some(b'/'), Some(b'/'))
+        ) && preceding
+            .is_none_or(|byte| byte.is_ascii_whitespace() || matches!(byte, b'=' | b'"' | b'\''))
+        {
+            return Some(index);
+        }
+
+        if after_boundary
+            && bytes.get(index).is_some_and(u8::is_ascii_alphabetic)
+            && bytes.get(index + 1) == Some(&b':')
+            && matches!(bytes.get(index + 2), Some(b'\\' | b'/'))
+        {
+            return Some(index);
+        }
     }
-    if trimmed.starts_with("\\\\") || trimmed.starts_with("//") {
-        return true;
-    }
-    let bytes = trimmed.as_bytes();
-    bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && matches!(bytes[2], b'\\' | b'/')
+    None
 }
 
 /// Rejects any value that cannot round-trip through JSON.

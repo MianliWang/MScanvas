@@ -94,11 +94,18 @@ export function PreviewWorkspace() {
                 <strong>{preview.error.summary}</strong>
                 {preview.error.detail === null ? null : <span>{preview.error.detail}</span>}
                 <div className="empty-state-actions">
-                  {/* Re-reading a file is idempotent, so a retry is offered
-                      only when the backend said the failure was retryable. */}
+                  {/* Both steps are idempotent reads, so a retry is offered
+                      when the backend said the failure was retryable — and it
+                      repeats the step that actually failed. */}
                   {preview.error.retryable ? (
-                    <button className="secondary-button" onClick={workspace.retryOpen} type="button">
-                      Try opening this file again
+                    <button
+                      className="secondary-button"
+                      onClick={workspace.retryFailedStep}
+                      type="button"
+                    >
+                      {preview.stage === "choosing"
+                        ? "Try choosing a file again"
+                        : "Try opening this file again"}
                     </button>
                   ) : null}
                   <button className="secondary-button" onClick={workspace.openFile} type="button">

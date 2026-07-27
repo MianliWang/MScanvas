@@ -56,6 +56,16 @@ index. Every one of them is typed on both sides.
 - Because Rust holds the path, the frontend cannot offer "recent files",
   drag-and-drop from Explorer, or multi-file workspaces without extending the
   boundary deliberately. That is the intended cost.
+- The preview parser requires the backend's whole output, and this boundary
+  reads at most 8 MiB of it — the same named limit M0C accepted for M1–M2. A
+  run above it is refused with a plain statement of why, not shown from a
+  prefix, because a spectrum list cut mid-file would read as a shorter
+  acquisition. Removing that ceiling means a row-bounded or streaming table
+  parser in `mscanvas-proteowizard`, which is a separate change.
+- Path redaction removes everything from the first path marker to the end of
+  the line. Where a path ends cannot be decided once it may contain spaces, so
+  losing the tail of a line is accepted in exchange for never leaking a
+  filesystem path the user did not choose to reveal.
 - Timings recorded in the workspace are descriptive observations on the running
   machine. They are not budgets, and no threshold derives from them; that would
   need repeated measurement on a recorded hardware baseline.

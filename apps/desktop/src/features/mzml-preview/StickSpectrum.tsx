@@ -25,6 +25,13 @@ export interface StickSpectrumProps {
   readonly intensity: readonly number[];
   readonly reportedMzLow: number;
   readonly reportedMzHigh: number;
+  /**
+   * Whether the file said these are profile samples or centroided peaks. When
+   * it did not, the caption says so, because a reduced profile spectrum looks
+   * like a centroid one and the reader must not have to guess which they are
+   * being shown.
+   */
+  readonly representationKnown: boolean;
   readonly labelledBy: string;
 }
 
@@ -114,6 +121,7 @@ export function StickSpectrum({
   intensity,
   reportedMzLow,
   reportedMzHigh,
+  representationKnown,
   labelledBy,
 }: StickSpectrumProps) {
   const reduction = useMemo(
@@ -165,6 +173,9 @@ export function StickSpectrum({
           ? `Drawn as ${reduction.sticks.length} columns from ${mz.length} points, keeping the most intense point in each column.`
           : `Drawn as ${reduction.sticks.length} sticks, one per point.`}
         {" Horizontal axis: m/z. Vertical axis: intensity, scaled to the most intense point."}
+        {representationKnown
+          ? ""
+          : " This file does not report whether these are profile samples or centroided peaks, so read each stick as one measured point rather than as a peak."}
       </figcaption>
     </figure>
   );

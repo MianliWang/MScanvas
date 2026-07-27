@@ -21,13 +21,15 @@ const ACCEPTED_EXTENSION: &str = "mzML";
 /// Extension and regular-file posture are checked here rather than in the
 /// webview, so a frontend defect cannot widen what the backend will open.
 pub fn accept_mzml_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
-    let canonical = std::fs::canonicalize(path).map_err(|_| {
-        PreviewErrorDto::new(
-            "file_not_resolvable",
-            "That file could not be opened. It may have been moved or renamed.",
-            true,
-        )
-    })?;
+    // The selected path is inspected before it is resolved. Canonicalizing
+    // first would replace a link with its target, and the link test below
+    // would then only ever see a regular file.
+    let selected = std::fs::symlink_metadata(path).map_err(|_| unresolvable())?;
+    if selected.file_type().is_symlink() || is_reparse_point(&selected) {
+        return Err(not_a_regular_file());
+    }
+
+    let canonical = std::fs::canonicalize(path).map_err(|_| unresolvable())?;
 
     let extension_matches = canonical
         .extension()
@@ -40,6 +42,8 @@ pub fn accept_mzml_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
         ));
     }
 
+    // Repeated on the resolved target, so neither the name the user picked nor
+    // what it resolves to can be anything but a regular file.
     let metadata = std::fs::symlink_metadata(&canonical).map_err(|_| {
         PreviewErrorDto::new(
             "file_not_inspectable",
@@ -48,11 +52,7 @@ pub fn accept_mzml_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
         )
     })?;
     if metadata.file_type().is_symlink() || is_reparse_point(&metadata) || !metadata.is_file() {
-        return Err(PreviewErrorDto::new(
-            "not_a_regular_file",
-            "That path is not a regular file.",
-            false,
-        ));
+        return Err(not_a_regular_file());
     }
 
     let file_name = canonical
@@ -67,6 +67,22 @@ pub fn accept_mzml_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
         file_name,
         byte_length: metadata.len(),
     })
+}
+
+fn unresolvable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "file_not_resolvable",
+        "That file could not be opened. It may have been moved or renamed.",
+        true,
+    )
+}
+
+fn not_a_regular_file() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "not_a_regular_file",
+        "That path is not a regular file.",
+        false,
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -219,6 +235,44 @@ mod tests {
         fs::write(&path, b"<mzML/>").expect("write fixture");
 
         assert!(accept_mzml_file(&path).is_ok());
+    }
+
+    /// Creating a symlink needs a privilege that an ordinary Windows session
+    /// may not have, so this reports whether the link was actually created
+    /// rather than failing the suite for an environment reason.
+    #[cfg(windows)]
+    fn try_symlink(target: &Path, link: &Path) -> bool {
+        std::os::windows::fs::symlink_file(target, link).is_ok()
+    }
+
+    #[cfg(not(windows))]
+    fn try_symlink(target: &Path, link: &Path) -> bool {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+
+    #[test]
+    fn a_link_to_a_regular_mzml_file_is_still_rejected() {
+        let directory = TestDirectory::new("symlink");
+        let target = directory.path().join("target.mzML");
+        fs::write(&target, b"<mzML/>").expect("write link target");
+        let link = directory.path().join("link.mzML");
+        if !try_symlink(&target, &link) {
+            // No symlink privilege here; the ordering this test guards is
+            // still exercised by the reparse-point branch on Windows hosts
+            // that do grant it.
+            return;
+        }
+
+        assert_eq!(
+            accept_mzml_file(&link).map(|_| ()),
+            Err(PreviewErrorDto::new(
+                "not_a_regular_file",
+                "That path is not a regular file.",
+                false,
+            ))
+        );
+        // The target itself remains perfectly acceptable.
+        assert!(accept_mzml_file(&target).is_ok());
     }
 
     #[test]

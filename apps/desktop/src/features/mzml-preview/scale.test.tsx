@@ -110,6 +110,7 @@ describe("stick spectrum at profile-scale point counts", () => {
         intensity={intensity}
         labelledBy="scale-summary"
         mz={mz}
+        representationKnown={false}
         reportedMzHigh={mz[pointCount - 1] ?? 0}
         reportedMzLow={mz[0] ?? 0}
       />,
