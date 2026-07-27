@@ -2058,6 +2058,7 @@ mod tests {
             termination: Termination::Exited,
             max_active_processes: Some(1),
             final_active_processes: Some(0),
+            peak_job_memory_bytes: None,
         }
     }
 

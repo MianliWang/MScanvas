@@ -1706,6 +1706,13 @@ fn print_process_output(
             .map(|count| count.to_string())
             .unwrap_or_else(|| "unavailable".to_owned())
     );
+    println!(
+        "process.peak_job_memory_bytes={}",
+        output
+            .peak_job_memory_bytes
+            .map(|bytes| bytes.to_string())
+            .unwrap_or_else(|| "unavailable".to_owned())
+    );
     println!("process.output_directory_changed={output_changed}");
     println!("process.partial_output_present={partial_output_present}");
     print_scientific_stdout_summary(output)?;
@@ -1854,6 +1861,7 @@ mod tests {
             termination: mscanvas_proteowizard::Termination::Exited,
             max_active_processes: None,
             final_active_processes: None,
+            peak_job_memory_bytes: None,
         };
 
         let summary = scientific_stdout_summary(&output).expect("digest-only summary");
@@ -1877,6 +1885,7 @@ mod tests {
             termination: mscanvas_proteowizard::Termination::Exited,
             max_active_processes: None,
             final_active_processes: None,
+            peak_job_memory_bytes: None,
         };
 
         let summary = scientific_stdout_summary(&output).expect("incomplete summary");
@@ -1911,6 +1920,7 @@ mod tests {
             termination: mscanvas_proteowizard::Termination::Exited,
             max_active_processes: None,
             final_active_processes: None,
+            peak_job_memory_bytes: None,
         };
         let failure = classify_process_failure(BackendTool::MsAccess, Ok(&output), false)
             .expect("non-zero output produces a normalized failure");
@@ -2226,6 +2236,7 @@ mod tests {
             termination: mscanvas_proteowizard::Termination::Exited,
             max_active_processes: None,
             final_active_processes: None,
+            peak_job_memory_bytes: None,
         };
 
         assert!(matches!(
