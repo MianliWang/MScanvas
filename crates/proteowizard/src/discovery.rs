@@ -721,6 +721,18 @@ fn root_and_direct_children(root: &Path) -> Vec<PathBuf> {
     directories
 }
 
+/// Whether a name opens with something shaped like `3.0`, and so states a
+/// release rather than merely starting with a digit.
+fn opens_with_dotted_number(name: &str) -> bool {
+    let mut parts = name.split('.');
+    let first = parts.next().unwrap_or_default();
+    let second = parts.next().unwrap_or_default();
+    !first.is_empty()
+        && first.bytes().all(|byte| byte.is_ascii_digit())
+        && !second.is_empty()
+        && second.starts_with(|character: char| character.is_ascii_digit())
+}
+
 /// Ranks one installation directory against another.
 ///
 /// A directory named `ProteoWizard <version>` is ordered by release, because
@@ -743,10 +755,10 @@ fn installation_order(path: &Path) -> (u64, u64, u64, String) {
         name.to_string_lossy().to_ascii_lowercase()
     });
     // A bare `3.0.26013` states a release as plainly as `ProteoWizard 3.0.26013`
-    // does, and installers produce both. What must not be read as a release is a
-    // name whose digits mean something else, which is why this asks how the name
-    // begins rather than whether it contains digits.
-    if name.starts_with("proteowizard") || name.starts_with(|c: char| c.is_ascii_digit()) {
+    // does, and installers produce both. Beginning with a digit is not enough to
+    // say so: `64-bit portable` would read as release 64 and outrank every real
+    // installation. The name has to open with a dotted number.
+    if name.starts_with("proteowizard") || opens_with_dotted_number(&name) {
         release_sort_key(path)
     } else {
         (0, 0, 0, name)
@@ -2228,6 +2240,25 @@ Analysis commands (used with -x/--exec):
         let stable_position = roots.iter().position(|root| root == &stable);
         assert!(newer_position.is_some() && stable_position.is_some());
         assert!(newer_position < stable_position, "{roots:?}");
+    }
+
+    #[test]
+    fn a_digit_leading_name_that_is_not_a_version_is_not_read_as_one() {
+        // `64-bit portable` begins with a digit but states no release. Read as
+        // one it would rank 64 and outrank every real installation.
+        let tree = TempTree::new("digit-leading-name");
+        let container = tree.root.join("ProteoWizard");
+        let release = container.join("3.0.26013");
+        let not_a_release = container.join("64-bit portable");
+        fs::create_dir_all(&release).expect("release directory should be created");
+        fs::create_dir_all(&not_a_release).expect("other directory should be created");
+
+        let searched = root_and_direct_children(&container);
+
+        let release_position = searched.iter().position(|root| root == &release);
+        let other_position = searched.iter().position(|root| root == &not_a_release);
+        assert!(release_position.is_some() && other_position.is_some());
+        assert!(release_position < other_position, "{searched:?}");
     }
 
     #[test]
