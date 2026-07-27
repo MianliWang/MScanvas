@@ -493,3 +493,81 @@ precision policy, then measure repeated navigation and representative lawful ope
 scale/large-array behavior. BPC strategy, real-backend cancellation and partial-output
 behavior, alternate-locale parsing and vendor-format coverage remain separate explicit
 gates.
+
+## M0C Slice 2A contract-only update — 2026-07-26
+
+This section records the mzML conversion-integrity library slice. It does not modify or
+extend the runtime evidence, hashes, timings, operation records or A/B/C/D ratings above,
+and no ProteoWizard executable was run for this update.
+
+### Conversion integrity moved into the product
+
+Before this slice, the harness printed
+`conversion_output.xml_validation=deferred_to_evidence_orchestrator`: the only structural
+check of a converted file lived in the temporary PowerShell evidence script, not in
+MSCanvas. The ProteoWizard crate now owns a bounded mzML inspector and a typed
+source-versus-output integrity comparison, and the harness consumes them.
+
+The inspector refuses any document type declaration and any general reference other than
+the five predefined entities and numeric character references, so no external or custom
+entity is resolved. It never base64-decodes and never decompresses a binary array: array
+point counts come from the declarative `defaultArrayLength` attribute, which removes the
+decompression-bomb class by construction instead of bounding it. Documents are read
+through a byte-counting reader that fails closed on document-byte and single-text-run
+limits before the bytes are buffered, and on depth, element, attribute, name, value,
+spectrum and chromatogram limits while scanning.
+
+Controlled-vocabulary facts are recognized by accession only and scoped to their immediate
+parent element. The earlier PowerShell validator counted profile and centroid markers
+document-wide, which conflates the aggregate `fileContent` declaration with per-spectrum
+representation; the Rust contract does not.
+
+### Required, advisory and unverified properties
+
+Required invariants are the ones a faithful mzML conversion cannot violate: spectrum and
+chromatogram counts, MS-level distribution, per-record binary-array counts, roles and
+declared point counts, precursor counts, consecutive index sequences, recognized
+scan-number agreement, an internally consistent output, and the requested zlib compression
+policy on every output array. Source identity, byte length and SHA-256 are captured before
+the conversion and recaptured afterwards, so a source rewritten in place with the same
+length is detected.
+
+Descriptive-only observations never fail a conversion: numeric-encoding markers, the
+`indexedmzML` wrapper, byte length, added or removed representation markers, retention-time
+unit markers, and a source whose own declared list count disagrees with its content. The
+already-recorded 64-bit-only input to mixed 32/64-bit output conversion is exactly why
+numeric precision is not a hard invariant.
+
+Two properties degrade to unverified rather than failing. Vocabulary-derived facts degrade
+when either document reaches them through a `referenceableParamGroup`, and native identity
+degrades when either side uses a form the Slice 1 canonical identity contract leaves
+opaque. The common Thermo `controllerType=... scan=N` form is opaque under that contract,
+so treating unverified-ness as a failure would have rejected every real conversion. A gate
+that needs the stronger statement asserts that no property remained unverified.
+
+The contract does not claim byte-for-byte equivalence, general losslessness or vendor
+fidelity, and it never fails a conversion for a legal serialization difference. A
+deterministic re-serialization test pins that attribute order, `cvParam` order, whitespace,
+self-closing form, comments, processing instructions and the index wrapper all produce
+identical comparable facts.
+
+### Slice 2A scope boundary and remaining work
+
+Source-versus-output comparison applies only when the source is itself mzML. A vendor
+acquisition has no comparable mzML facts, so the harness records that limitation and
+inspects the output alone instead of implying an equivalence it cannot establish.
+
+Supervised runs now also report the peak committed memory charged to the owned Windows Job
+Object. It is an advisory observation for the later scale measurements, not a supervision
+result.
+
+This slice added one approved production dependency, `quick-xml` `=0.41.0` with default
+features disabled, scoped to the bounded mzML scanner. That crate and its only required
+transitive dependency were already present in `Cargo.lock` through `tauri`, so the
+dependency graph gained no crate. No UI, Tauri, workspace, queue or backend-invocation
+behavior changed; mzXML and BPC remain unavailable; no stable CLI contract was added.
+
+M0C Slice 2B remains outstanding: representative lawful open-format navigation and scale
+measurements, including repeated navigation and post-conversion reinspection at real scale.
+BPC strategy, real-backend cancellation and partial-output behavior, alternate-locale
+parsing and vendor-format coverage remain separate explicit gates.

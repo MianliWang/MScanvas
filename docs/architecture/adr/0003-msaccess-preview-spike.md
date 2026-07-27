@@ -75,11 +75,47 @@ This slice did not execute ProteoWizard, change dependencies, add UI or Tauri be
 or change conversion behavior. It adds contract and deterministic fixture evidence only;
 none of the bounded runtime observations or A/B/C/D ratings above are upgraded.
 
+## M0C Slice 2A contract result — 2026-07-26
+
+mzML conversion integrity is now a typed library contract instead of a check deferred to a
+temporary evidence orchestrator. The adapter owns a bounded mzML inspector that refuses
+document type declarations and undeclared entities, never base64-decodes or decompresses a
+binary array, and fails closed on explicit document, text-run, depth, element, attribute
+and record limits. Controlled-vocabulary facts are recognized by accession and scoped to
+their immediate parent, so an aggregate `fileContent` marker is no longer conflated with
+per-spectrum representation.
+
+A conversion is compared against source facts captured before it ran and recaptured after,
+covering filesystem identity, byte length and content hash, so a source changed during the
+conversion is observable. Required invariants are spectrum and chromatogram counts,
+MS-level distribution, per-record binary-array counts, roles and declared point counts,
+precursor counts, consecutive index sequences, recognized scan-number agreement, output
+internal consistency and the requested zlib compression policy.
+
+Numeric-encoding markers, the `indexedmzML` wrapper, byte length, representation markers the
+source never emitted, retention-time unit markers and a source's own inconsistent declared
+count are descriptive observations, never failures. Vocabulary-derived facts and native
+identity degrade to unverified when a `referenceableParamGroup` or an opaque identifier
+form makes them unestablishable; failing on unverified-ness would reject the common Thermo
+native identifier form and therefore every real conversion.
+
+No claim of byte-for-byte equivalence, general losslessness or vendor fidelity is made, and
+no legal serialization difference fails a conversion. Source-versus-output comparison
+applies only to an mzML source; a vendor acquisition is recorded as not comparable rather
+than implied equivalent.
+
+This slice did not execute ProteoWizard, change UI or Tauri behavior, enable mzXML or BPC,
+or add a stable CLI contract. It added one approved production dependency, `quick-xml`
+`=0.41.0` with default features disabled, scoped to the bounded scanner; the crate was
+already in the lockfile through `tauri`, so no crate entered the dependency graph. None of
+the bounded runtime observations or A/B/C/D ratings above are upgraded.
+
 ## Next evidence gate
 
 This ADR remains proposed because its representative-data, repeated-navigation,
-large-array and real-cancellation exit criteria are not met. M0C Slice 2 should add mzML
-conversion semantic integrity and measure repeated navigation and a representative lawful
-open-format file before exposing the provider as a normal viewer workflow. Keep BPC and
-mzXML unavailable initially. Real cancellation, a second locale and vendor-format
-coverage remain separate explicit gates.
+large-array and real-cancellation exit criteria are not met. M0C Slice 2A supplied the
+conversion-integrity contract; Slice 2B must still measure repeated navigation and a
+representative lawful open-format file, including post-conversion reinspection at real
+scale, before exposing the provider as a normal viewer workflow. Keep BPC and mzXML
+unavailable initially. Real cancellation, a second locale and vendor-format coverage remain
+separate explicit gates.
