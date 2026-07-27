@@ -287,7 +287,7 @@ The developer-only invocation shape is `cargo run --locked -p mscanvas-proteowiz
 | --- | --- |
 | Portable provenance | Official selection/release/resolver chain, archive hash and static binary/AuthentiCode inventory verified; exact runtime extraction hashes matched |
 | Isolation | Disposable `windows-2025` VM, standard-user token, scoped ACLs/environment, exact-path outbound blocks and complete teardown verified |
-| Discovery/version | Host remained unavailable; isolated same-distribution pair and executable-reported normalized release `3.0.26204` verified |
+| Discovery/version | Host reported unavailable — **corrected 2026-07-27**, this was a false negative and 3.0.26013 was installed; isolated same-distribution pair and executable-reported normalized release `3.0.26204` verified |
 | Developer harness | Real isolated help, metadata, summary, table, TIC, spectrum, conversion and bounded failure cases recorded |
 | Installed command surfaces | Complete, non-truncated help validated every used query/option; literal BPC absent |
 | Open-format smoke | Exact pinned fixture hash/size verified before and after 12 recorded operations |
