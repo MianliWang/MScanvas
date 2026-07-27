@@ -20,12 +20,15 @@ pub use capability::{
     Sha256DigestParseError, TicCapability,
 };
 pub use command::{
-    BackendTool, CommandSpec, OpenFormat, PlanError, PreviewOperation,
+    BackendTool, CommandSpec, OpenFormat, PlanError, PreviewOperation, SourceIdentity,
     build_msaccess_command_with_capabilities, build_msconvert_command_with_capabilities,
 };
 pub use conversion::{
-    CompressionPolicy, ConversionOutputInspection, ConversionOutputRejection, ConversionPolicy,
-    conversion_output_file_name, inspect_conversion_output,
+    AdvisoryObservation, BinaryArrayMismatchKind, CompressionPolicy, ConversionIntegrityOutcome,
+    ConversionOutputInspection, ConversionOutputRejection, ConversionPolicy, ConversionSourceError,
+    ConversionSourceFacts, DocumentPart, DocumentSide, IntegrityProperty, ValidConversion,
+    capture_conversion_source, conversion_output_file_name, inspect_conversion_output,
+    verify_mzml_conversion,
 };
 pub use diagnostics::{Redactor, ReportableProcessOutput};
 pub use discovery::{

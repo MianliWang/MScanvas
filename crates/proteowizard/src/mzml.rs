@@ -200,6 +200,7 @@ pub struct MzmlSpectrumRecord {
     ms_level: Option<u32>,
     default_array_length: Option<u64>,
     binary_array_count: u32,
+    zlib_compressed_array_count: u32,
     precursor_count: u32,
     scan_number: Option<u64>,
     native_identifier_recognized: bool,
@@ -230,6 +231,14 @@ impl MzmlSpectrumRecord {
     #[must_use]
     pub const fn binary_array_count(&self) -> u32 {
         self.binary_array_count
+    }
+
+    /// How many of this spectrum's binary arrays individually carried a zlib
+    /// compression marker. A union of compression markers cannot answer this,
+    /// because an array that emits no marker contributes nothing to the union.
+    #[must_use]
+    pub const fn zlib_compressed_array_count(&self) -> u32 {
+        self.zlib_compressed_array_count
     }
 
     #[must_use]
@@ -277,6 +286,7 @@ pub struct MzmlChromatogramRecord {
     index: Option<u64>,
     default_array_length: Option<u64>,
     binary_array_count: u32,
+    zlib_compressed_array_count: u32,
     array_kinds: ArrayKindSet,
     precision: NumericPrecisionSet,
     compression: CompressionSet,
@@ -296,6 +306,13 @@ impl MzmlChromatogramRecord {
     #[must_use]
     pub const fn binary_array_count(&self) -> u32 {
         self.binary_array_count
+    }
+
+    /// How many of this chromatogram's binary arrays individually carried a
+    /// zlib compression marker.
+    #[must_use]
+    pub const fn zlib_compressed_array_count(&self) -> u32 {
+        self.zlib_compressed_array_count
     }
 
     #[must_use]
@@ -760,6 +777,7 @@ struct SpectrumBuilder {
     ms_level: Option<u32>,
     default_array_length: Option<u64>,
     binary_array_count: u32,
+    zlib_compressed_array_count: u32,
     precursor_count: u32,
     scan_number: Option<u64>,
     native_identifier_recognized: bool,
@@ -774,6 +792,7 @@ struct ChromatogramBuilder {
     index: Option<u64>,
     default_array_length: Option<u64>,
     binary_array_count: u32,
+    zlib_compressed_array_count: u32,
     array_kinds: ArrayKindSet,
     precision: NumericPrecisionSet,
     compression: CompressionSet,
@@ -1078,13 +1097,19 @@ impl ScanState {
             array.kinds
         };
 
+        let zlib = u32::from(array.compression.contains(CompressionMarker::Zlib));
         if let Some(spectrum) = self.spectrum.as_mut() {
             spectrum.binary_array_count = spectrum.binary_array_count.saturating_add(1);
+            spectrum.zlib_compressed_array_count =
+                spectrum.zlib_compressed_array_count.saturating_add(zlib);
             spectrum.array_kinds.merge(kinds);
             spectrum.precision.merge(array.precision);
             spectrum.compression.merge(array.compression);
         } else if let Some(chromatogram) = self.chromatogram.as_mut() {
             chromatogram.binary_array_count = chromatogram.binary_array_count.saturating_add(1);
+            chromatogram.zlib_compressed_array_count = chromatogram
+                .zlib_compressed_array_count
+                .saturating_add(zlib);
             chromatogram.array_kinds.merge(kinds);
             chromatogram.precision.merge(array.precision);
             chromatogram.compression.merge(array.compression);
@@ -1104,6 +1129,7 @@ impl ScanState {
             ms_level: spectrum.ms_level,
             default_array_length: spectrum.default_array_length,
             binary_array_count: spectrum.binary_array_count,
+            zlib_compressed_array_count: spectrum.zlib_compressed_array_count,
             precursor_count: spectrum.precursor_count,
             scan_number: spectrum.scan_number,
             native_identifier_recognized: spectrum.native_identifier_recognized,
@@ -1122,6 +1148,7 @@ impl ScanState {
             index: chromatogram.index,
             default_array_length: chromatogram.default_array_length,
             binary_array_count: chromatogram.binary_array_count,
+            zlib_compressed_array_count: chromatogram.zlib_compressed_array_count,
             array_kinds: chromatogram.array_kinds,
             precision: chromatogram.precision,
             compression: chromatogram.compression,

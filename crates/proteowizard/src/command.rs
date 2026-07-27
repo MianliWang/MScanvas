@@ -72,8 +72,14 @@ pub(crate) enum OutputSafety {
     },
 }
 
+/// A canonical source path bound to the filesystem identity observed for it.
+///
+/// Comparing a captured identity against the current one is what makes a source
+/// replaced between planning and use observable. Capture and comparison stay
+/// crate-internal so no caller can construct an identity that was never
+/// observed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SourceIdentity {
+pub struct SourceIdentity {
     canonical_path: PathBuf,
     is_directory: bool,
     platform: PlatformSourceIdentity,
@@ -99,7 +105,9 @@ impl SourceIdentity {
         Ok(Self::capture(&self.canonical_path)? == *self)
     }
 
-    pub(crate) fn canonical_path(&self) -> &Path {
+    /// The canonical absolute path the identity was captured from.
+    #[must_use]
+    pub fn canonical_path(&self) -> &Path {
         &self.canonical_path
     }
 
