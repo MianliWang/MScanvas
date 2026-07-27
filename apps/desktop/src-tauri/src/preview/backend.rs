@@ -5,12 +5,14 @@
 //! at this boundary so no test needs a local installation.
 
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 
 use mscanvas_proteowizard::{
-    AvailabilityState, DiscoveryRequest, InstalledHelpCapabilities, LaunchFailureKind,
-    OutputEntryKind, PreviewInterpretError, PreviewOperation, PreviewOutcome, PreviewOutputEntry,
-    PreviewOutputManifest, ProcessError, Redactor, build_msaccess_command_with_capabilities,
-    discover, execute, interpret_preview, snapshot_output_directory,
+    AvailabilityState, ConfiguredLocation, DiscoveryRequest, InstalledHelpCapabilities,
+    LaunchFailureKind, OutputEntryKind, PreviewInterpretError, PreviewOperation, PreviewOutcome,
+    PreviewOutputEntry, PreviewOutputManifest, ProcessError, Redactor,
+    build_msaccess_command_with_capabilities, discover, execute, interpret_preview,
+    snapshot_output_directory,
 };
 
 use super::dto::{
@@ -54,16 +56,48 @@ pub trait PreviewProvider: Send + Sync {
             .map(|operation| self.run(source, operation))
             .collect()
     }
+
+    /// Points this provider at one installation folder, or back at automatic
+    /// discovery when given `None`.
+    ///
+    /// No default implementation. A provider that silently ignored this would
+    /// keep answering from the old installation while the user believes they
+    /// changed it, and that is precisely the state this entry point exists to
+    /// make impossible.
+    fn use_installation(&self, home: Option<PathBuf>);
 }
 
 /// The production provider: a user-installed ProteoWizard `msaccess`.
 #[derive(Debug, Default)]
-pub struct ProteoWizardProvider;
+pub struct ProteoWizardProvider {
+    /// The folder the user chose, for this session only.
+    ///
+    /// Never written to disk. A stored path would go on applying after the
+    /// session that chose it, to a folder whose contents MSCanvas has no way to
+    /// vouch for and every reason not to: automatic discovery only looks in
+    /// locations an installer writes, and this deliberately looks wherever it
+    /// is told. Making the user say so again next time is the cost of that.
+    chosen: RwLock<Option<PathBuf>>,
+}
 
 impl ProteoWizardProvider {
     #[must_use]
     pub const fn new() -> Self {
-        Self
+        Self {
+            chosen: RwLock::new(None),
+        }
+    }
+
+    /// What to hand discovery: the chosen folder, or nothing at all.
+    fn request(&self) -> DiscoveryRequest {
+        DiscoveryRequest {
+            configured: self
+                .chosen
+                .read()
+                .ok()
+                .and_then(|chosen| chosen.clone())
+                .map(ConfiguredLocation::Home),
+        }
     }
 
     /// Resolves the installation and binds its complete installed help once.
@@ -72,7 +106,7 @@ impl ProteoWizardProvider {
     /// rendered component, and the resulting capability evidence is reused for
     /// every operation in that same action.
     fn bind_capabilities(&self) -> Result<InstalledHelpCapabilities, PreviewErrorDto> {
-        let discovery = discover(&DiscoveryRequest { configured: None });
+        let discovery = discover(self.request());
         if discovery.availability != AvailabilityState::Available {
             return Err(unavailable_error(&discovery.failure));
         }
@@ -115,8 +149,16 @@ impl ProteoWizardProvider {
 }
 
 impl PreviewProvider for ProteoWizardProvider {
+    fn use_installation(&self, home: Option<PathBuf>) {
+        if let Ok(mut chosen) = self.chosen.write() {
+            *chosen = home;
+        }
+    }
+
     fn availability(&self) -> BackendAvailabilityDto {
-        let discovery = discover(&DiscoveryRequest { configured: None });
+        let request = self.request();
+        let chosen = request.configured.is_some();
+        let discovery = discover(&request);
         let discovered = discovery.availability == AvailabilityState::Available;
         // Availability answers "can this installation produce a preview", not
         // "does an executable exist" and not "does its help parse". Reading the
@@ -133,6 +175,11 @@ impl PreviewProvider for ProteoWizardProvider {
             );
         BackendAvailabilityDto {
             state: if usable { "available" } else { "unavailable" }.to_owned(),
+            // Which installation this verdict is about, so nothing downstream
+            // has to remember what was asked. A verdict shown beside the wrong
+            // origin is worse than no verdict: it reports on an installation the
+            // user is no longer using.
+            origin: if chosen { "chosen" } else { "automatic" }.to_owned(),
             release: discovery.release.as_deref().map(backend_label),
             build_date: discovery.build_date.as_deref().map(backend_label),
             same_installation: discovery.same_installation,
@@ -143,13 +190,15 @@ impl PreviewProvider for ProteoWizardProvider {
                         summary: "ProteoWizard was found, but it does not describe the commands \
                              MSCanvas needs."
                             .to_owned(),
-                        // Only what this version can actually do. MSCanvas has
-                        // no way to be pointed at a particular installation
-                        // yet, so it does not suggest one.
-                        corrective_action:
+                        corrective_action: if chosen {
+                            "Choose a folder holding a ProteoWizard release that provides \
+                             msaccess help, or go back to searching automatically."
+                        } else {
                             "Install a ProteoWizard release that provides msaccess help, then \
-                             check again."
-                                .to_owned(),
+                             check again. If one is already installed somewhere MSCanvas does \
+                             not search, choose its folder."
+                        }
+                        .to_owned(),
                     })
                 },
                 |failure| {

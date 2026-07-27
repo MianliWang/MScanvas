@@ -5,7 +5,7 @@
 //! without a WebView or a local ProteoWizard installation.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -72,6 +72,20 @@ impl PreviewService {
     /// "at most one at a time" has to mean all of them or it means nothing.
     pub fn inspect_backend(&self) -> BackendAvailabilityDto {
         let _running = self.enter_backend();
+        self.provider.availability()
+    }
+
+    /// Points the backend at one folder, or back at automatic discovery, and
+    /// reports what that installation can actually do.
+    ///
+    /// The change and the reading are one call because they are useless apart.
+    /// Returning without probing would leave the caller holding a verdict about
+    /// the installation it just stopped using, and a caller that then had to ask
+    /// separately could render the old answer in between. There is no interval
+    /// here in which the two can disagree.
+    pub fn use_installation(&self, home: Option<PathBuf>) -> BackendAvailabilityDto {
+        let _running = self.enter_backend();
+        self.provider.use_installation(home);
         self.provider.availability()
     }
 

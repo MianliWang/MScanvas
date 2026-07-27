@@ -63,6 +63,14 @@ pub struct BackendAvailabilityDto {
     /// `available` or `unavailable`. MSCanvas never bundles or installs a
     /// backend, so unavailability is an ordinary user-facing state.
     pub state: String,
+    /// `automatic` or `chosen`: which installation this verdict describes.
+    ///
+    /// Carried with the verdict rather than tracked separately, so a reading
+    /// can never be shown beside the wrong origin. That pairing is the whole
+    /// risk of letting the installation change during a session: a stale
+    /// "available" beside a folder the user just picked says the folder works
+    /// when nothing has looked at it.
+    pub origin: String,
     pub release: Option<String>,
     pub build_date: Option<String>,
     pub same_installation: bool,

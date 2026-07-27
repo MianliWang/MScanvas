@@ -172,6 +172,10 @@ enum Response {
 /// exercise the production parsing contract rather than a parallel one.
 struct FakeProvider {
     availability: BackendAvailabilityDto,
+    /// What a chosen folder reports. `None` means every chosen folder is a
+    /// folder with no usable installation in it.
+    chosen_availability: Option<BackendAvailabilityDto>,
+    chosen: Mutex<Option<PathBuf>>,
     responses: Mutex<Vec<Response>>,
     requested: Mutex<Vec<PreviewOperation>>,
     batches: Mutex<usize>,
@@ -182,11 +186,14 @@ impl FakeProvider {
         Self {
             availability: BackendAvailabilityDto {
                 state: "available".to_owned(),
+                origin: "automatic".to_owned(),
                 release: Some("3.0.26204".to_owned()),
                 build_date: Some("Jul 23 2026".to_owned()),
                 same_installation: true,
                 failure: None,
             },
+            chosen_availability: None,
+            chosen: Mutex::new(None),
             responses: Mutex::new(responses),
             requested: Mutex::new(Vec::new()),
             batches: Mutex::new(0),
@@ -197,6 +204,7 @@ impl FakeProvider {
         Self {
             availability: BackendAvailabilityDto {
                 state: "unavailable".to_owned(),
+                origin: "automatic".to_owned(),
                 release: None,
                 build_date: None,
                 same_installation: false,
@@ -206,6 +214,8 @@ impl FakeProvider {
                     corrective_action: "Install ProteoWizard separately.".to_owned(),
                 }),
             },
+            chosen_availability: None,
+            chosen: Mutex::new(None),
             responses: Mutex::new(vec![Response::Error(PreviewErrorDto::new(
                 "backend_not_found",
                 "ProteoWizard was not found.",
@@ -214,6 +224,20 @@ impl FakeProvider {
             requested: Mutex::new(Vec::new()),
             batches: Mutex::new(0),
         }
+    }
+
+    /// A provider that finds nothing on its own but works in a chosen folder.
+    fn only_when_chosen() -> Self {
+        let mut provider = Self::unavailable();
+        provider.chosen_availability = Some(BackendAvailabilityDto {
+            state: "available".to_owned(),
+            origin: "chosen".to_owned(),
+            release: Some("3.0.26204".to_owned()),
+            build_date: Some("Jul 23 2026".to_owned()),
+            same_installation: true,
+            failure: None,
+        });
+        provider
     }
 
     fn requested_operations(&self) -> Vec<PreviewOperation> {
@@ -226,8 +250,38 @@ impl FakeProvider {
 }
 
 impl PreviewProvider for FakeProvider {
+    fn use_installation(&self, home: Option<PathBuf>) {
+        *self.chosen.lock().expect("test lock") = home;
+    }
+
     fn availability(&self) -> BackendAvailabilityDto {
-        self.availability.clone()
+        // Re-derived on every call from what is currently chosen, exactly as
+        // production does. A fake that returned a fixed verdict would pass the
+        // stale-banner test without the code being able to.
+        let chosen = self.chosen.lock().expect("test lock").clone();
+        let Some(chosen) = chosen else {
+            return self.availability.clone();
+        };
+        match &self.chosen_availability {
+            Some(availability) => availability.clone(),
+            None => BackendAvailabilityDto {
+                state: "unavailable".to_owned(),
+                origin: "chosen".to_owned(),
+                release: None,
+                build_date: None,
+                same_installation: false,
+                failure: Some(BackendFailureDto {
+                    kind: "backend_not_found".to_owned(),
+                    summary: format!(
+                        "No ProteoWizard was found in that folder ({} characters).",
+                        chosen.as_os_str().len()
+                    ),
+                    corrective_action: "Choose another folder, or go back to searching \
+                                        automatically."
+                        .to_owned(),
+                }),
+            },
+        }
     }
 
     fn run(
@@ -334,6 +388,80 @@ fn an_unavailable_backend_is_a_typed_state_not_an_error() {
         .expect("an unavailable backend explains itself");
     assert_eq!(failure.kind, "backend_not_found");
     assert!(!failure.corrective_action.is_empty());
+}
+
+#[test]
+fn choosing_an_installation_reports_that_installation_and_not_the_previous_one() {
+    // The banner may never carry a verdict from before the change. Choosing and
+    // probing are one call for exactly this reason: any gap between them is a
+    // window in which "available" is shown for an installation nobody is using.
+    let service = PreviewService::new(Box::new(FakeProvider::only_when_chosen()));
+    let before = service.inspect_backend();
+    assert_eq!(before.state, "unavailable");
+    assert_eq!(before.origin, "automatic");
+
+    let after = service.use_installation(Some(PathBuf::from("C:\\pwiz")));
+
+    assert_eq!(after.state, "available");
+    assert_eq!(after.origin, "chosen");
+    assert!(after.failure.is_none());
+    // And it stays that way for later readings, not just the one that changed it.
+    assert_eq!(service.inspect_backend().origin, "chosen");
+}
+
+#[test]
+fn a_chosen_folder_with_no_installation_can_be_undone() {
+    // Without this the session is stuck: the chosen folder is the only place
+    // MSCanvas looks, and a working installation it would have found on its own
+    // sits unused with nothing to say so.
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+    let failed = service.use_installation(Some(PathBuf::from("C:\\not-an-installation")));
+    assert_eq!(failed.state, "unavailable");
+    assert_eq!(failed.origin, "chosen");
+    let failure = failed
+        .failure
+        .expect("a folder that holds no installation explains itself");
+    assert!(!failure.corrective_action.is_empty());
+
+    let restored = service.use_installation(None);
+
+    assert_eq!(restored.state, "available");
+    assert_eq!(restored.origin, "automatic");
+    assert!(restored.failure.is_none());
+}
+
+#[test]
+fn a_chosen_folder_never_leaves_a_path_in_what_the_webview_receives() {
+    // The webview is not allowed to learn a filesystem path, and choosing an
+    // installation is a new way for one to reach it: unlike an install root,
+    // this path is somewhere the user navigated to and may say who they are.
+    //
+    // Against the production provider, not a fake, because the fake cannot
+    // answer this -- the text at issue comes from the crate's own discovery
+    // failures. Hermetic all the same: a configured home is used as given and
+    // never falls back, so a folder that does not exist fails before anything
+    // is launched.
+    let provider = super::backend::ProteoWizardProvider::new();
+    let chosen = std::env::temp_dir().join("mscanvas-no-such-installation-9f2c1a");
+    assert!(!chosen.exists(), "the test folder must not exist");
+    provider.use_installation(Some(chosen));
+
+    let availability = provider.availability();
+
+    assert_eq!(availability.state, "unavailable");
+    assert_eq!(availability.origin, "chosen");
+    let rendered = serde_json::to_string(&availability).expect("availability serializes");
+    assert!(
+        !rendered.contains("mscanvas-no-such-installation"),
+        "{rendered}"
+    );
+    // No path shape of any kind: a separator is what carries a path, and the
+    // rendering escapes each backslash, so one escaped pair is one separator.
+    assert!(!rendered.contains("\\\\"), "{rendered}");
+    assert!(
+        !rendered.contains(&std::env::temp_dir().to_string_lossy().to_string()),
+        "{rendered}"
+    );
 }
 
 #[test]
@@ -665,6 +793,8 @@ struct RewritingProvider {
 }
 
 impl PreviewProvider for RewritingProvider {
+    fn use_installation(&self, _home: Option<PathBuf>) {}
+
     fn availability(&self) -> BackendAvailabilityDto {
         self.inner.availability()
     }
@@ -741,6 +871,8 @@ fn only_one_backend_operation_runs_at_a_time() {
     }
 
     impl PreviewProvider for ConcurrencyProbe {
+        fn use_installation(&self, _home: Option<PathBuf>) {}
+
         fn availability(&self) -> BackendAvailabilityDto {
             self.inner.availability()
         }
@@ -804,6 +936,8 @@ fn opening_another_file_supersedes_a_spectrum_still_waiting_for_its_turn() {
     }
 
     impl PreviewProvider for BlockingProvider {
+        fn use_installation(&self, _home: Option<PathBuf>) {}
+
         fn availability(&self) -> BackendAvailabilityDto {
             self.inner.availability()
         }
