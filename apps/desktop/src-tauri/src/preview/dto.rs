@@ -290,7 +290,14 @@ fn find_path_start(line: &str) -> Option<usize> {
         // start a path segment so a bare `a / b` is not treated as one.
         if matches!(bytes.get(index), Some(b'\\' | b'/'))
             && preceding.is_none_or(|byte| {
-                byte.is_ascii_whitespace() || matches!(byte, b'=' | b'"' | b'\'')
+                // Backend text brackets and separates values in several ways.
+                // A colon is deliberately absent, so `http://` keeps its
+                // exemption.
+                byte.is_ascii_whitespace()
+                    || matches!(
+                        byte,
+                        b'=' | b'"' | b'\'' | b'(' | b'[' | b'{' | b'<' | b',' | b';' | b'|'
+                    )
             })
             && bytes.get(index + 1).is_some_and(|byte| {
                 // A non-ASCII byte starts a segment too: `/用户/王/样本.raw`

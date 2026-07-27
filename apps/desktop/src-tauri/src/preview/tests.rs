@@ -545,6 +545,15 @@ fn absolute_path_shapes_are_removed_from_displayable_text() {
         redact_absolute_paths("sourceFile: /Volumes/Lab Share/run.raw"),
         "sourceFile: <path>"
     );
+    // Backend text brackets and separates values in several ways.
+    assert_eq!(
+        redact_absolute_paths("source=(/home/alice/run.raw)"),
+        "source=(<path>"
+    );
+    assert_eq!(
+        redact_absolute_paths(r"source=[\\server\share\run.raw]"),
+        "source=[<path>"
+    );
     // A POSIX path may begin with a non-ASCII directory name.
     assert_eq!(
         redact_absolute_paths("source=/用户/王/样本.raw"),

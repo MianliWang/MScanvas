@@ -61,11 +61,94 @@ pub fn accept_mzml_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
             PreviewErrorDto::new("file_has_no_name", "That path has no file name.", false)
         })?;
 
+    // Captured from an open handle, so it is the identity of this file rather
+    // than of whatever the name refers to later.
+    let identity = file_identity(&canonical).ok_or_else(|| {
+        PreviewErrorDto::new(
+            "file_identity_unavailable",
+            "That file's identity could not be established, so MSCanvas did not open it.",
+            false,
+        )
+    })?;
+
     Ok(AcceptedFile {
         path: canonical,
         file_name,
         byte_length: metadata.len(),
+        identity,
     })
+}
+
+/// The filesystem's own identity for a file, read through an open handle.
+///
+/// A path is not an identity: another regular file can take the same name
+/// between the picker closing and the first read, and it would canonicalize
+/// identically. This is what tells the two apart.
+#[cfg(windows)]
+fn file_identity(path: &Path) -> Option<(u64, u64)> {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct ByHandleFileInformation {
+        file_attributes: u32,
+        creation_time: FileTime,
+        last_access_time: FileTime,
+        last_write_time: FileTime,
+        volume_serial_number: u32,
+        file_size_high: u32,
+        file_size_low: u32,
+        number_of_links: u32,
+        file_index_high: u32,
+        file_index_low: u32,
+    }
+
+    // The equivalent std accessors are still unstable, and this is the same
+    // information the ProteoWizard crate binds a source identity to.
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        #[link_name = "GetFileInformationByHandle"]
+        fn get_file_information_by_handle(
+            file: *mut c_void,
+            information: *mut ByHandleFileInformation,
+        ) -> i32;
+    }
+
+    let file = std::fs::File::open(path).ok()?;
+    let mut information = ByHandleFileInformation::default();
+    // SAFETY: the file outlives the call, so its handle stays valid, and the
+    // out parameter is a fully initialized value of the layout the API writes.
+    let succeeded = unsafe {
+        get_file_information_by_handle(file.as_raw_handle().cast(), &raw mut information)
+    };
+    if succeeded == 0 {
+        return None;
+    }
+
+    let index =
+        (u64::from(information.file_index_high) << 32) | u64::from(information.file_index_low);
+    // A zero index means this filesystem supplies no stable identity, so there
+    // is nothing to bind the handle to and the file is refused.
+    if index == 0 {
+        return None;
+    }
+    Some((u64::from(information.volume_serial_number), index))
+}
+
+#[cfg(not(windows))]
+fn file_identity(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.dev(), metadata.ino()))
 }
 
 fn unresolvable() -> PreviewErrorDto {
@@ -89,6 +172,7 @@ pub struct AcceptedFile {
     path: PathBuf,
     file_name: String,
     byte_length: u64,
+    identity: (u64, u64),
 }
 
 impl AcceptedFile {
@@ -166,7 +250,9 @@ impl FileRegistry {
             })?;
 
         let current = accept_mzml_file(remembered.path())?;
-        if current.path() != remembered.path() {
+        // Both, because a name can come to point elsewhere and a different
+        // file can also take the same name.
+        if current.path() != remembered.path() || current.identity != remembered.identity {
             return Err(PreviewErrorDto::new(
                 "file_identity_changed",
                 "That name no longer refers to the file that was opened. Open it again to continue.",
@@ -350,6 +436,29 @@ mod tests {
             Err(PreviewErrorDto::new(
                 "not_a_regular_file",
                 "That path is not a regular file.",
+                false,
+            ))
+        );
+    }
+
+    #[test]
+    fn a_file_replaced_by_another_regular_file_is_refused_on_use() {
+        let directory = TestDirectory::new("replaced");
+        let chosen = directory.path().join("chosen.mzML");
+        fs::write(&chosen, b"<mzML/>").expect("write chosen fixture");
+        let registry = FileRegistry::new();
+        let selected = registry.register(accept_mzml_file(&chosen).expect("accepted"));
+        assert!(registry.resolve(&selected.handle).is_ok());
+
+        // Same name, same canonical path, different acquisition.
+        fs::remove_file(&chosen).expect("remove the chosen file");
+        fs::write(&chosen, b"<mzML> a different acquisition </mzML>").expect("write replacement");
+
+        assert_eq!(
+            registry.resolve(&selected.handle).map(|_| ()),
+            Err(PreviewErrorDto::new(
+                "file_identity_changed",
+                "That name no longer refers to the file that was opened. Open it again to continue.",
                 false,
             ))
         );
