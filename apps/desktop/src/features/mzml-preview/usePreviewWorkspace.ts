@@ -40,6 +40,15 @@ export interface PreviewWorkspace {
   readonly selectedIndex: number | null;
   readonly measurements: readonly PreviewMeasurement[];
   readonly checkBackend: () => void;
+  /** Shows the folder picker and uses what is chosen, for this session only. */
+  readonly chooseInstallation: () => void;
+  /**
+   * Returns to automatic discovery. Offered whenever a folder is in use and
+   * whenever the backend call itself failed, because a chosen folder that does
+   * not work would otherwise be the only place MSCanvas looks for the rest of
+   * the session, with nothing able to undo it.
+   */
+  readonly useAutomaticDiscovery: () => void;
   readonly openFile: () => void;
   /**
    * A picker that failed to open. Kept apart from `preview` because failing to
@@ -125,6 +134,61 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   }, [api]);
 
   useEffect(checkBackend, [checkBackend]);
+
+  /**
+   * Applies a verdict that comes back from changing which installation is used.
+   *
+   * The token is taken before the request, so a check that was already in
+   * flight cannot land afterwards and reinstate the reading it produced for the
+   * installation that was in use before. That is the one way the banner could
+   * assert a stale verdict, and it is not visible from the response handler
+   * alone: both replies are well-formed, and only their order says which one
+   * describes what the user is now using.
+   */
+  const applyInstallationChange = useCallback(
+    (request: () => Promise<BackendAvailability | null>, announceChecking: boolean) => {
+      backendToken.current += 1;
+      const token = backendToken.current;
+      if (announceChecking) {
+        setBackend({ status: "checking" });
+      }
+      void request()
+        .then((availability) => {
+          if (!mounted.current || token !== backendToken.current) {
+            return;
+          }
+          // `null` is a dismissed picker. Nothing changed, so the verdict
+          // already on screen still describes what is in use, and replacing it
+          // with anything -- including "checking" -- would say otherwise.
+          if (availability !== null) {
+            setBackend({ status: "resolved", availability });
+          }
+        })
+        .catch((cause: unknown) => {
+          if (mounted.current && token === backendToken.current) {
+            setBackend({ status: "failed", error: toPreviewError(cause) });
+          }
+        });
+    },
+    [],
+  );
+
+  /**
+   * Points MSCanvas at a folder the user picks, for this session only.
+   *
+   * Nothing is set to "checking" first: the modal picker is the feedback, and
+   * announcing a check before there is anything to check would discard a
+   * perfectly good verdict the moment the user opens the dialog -- and leave it
+   * discarded if they then cancel.
+   */
+  const chooseInstallation = useCallback(() => {
+    applyInstallationChange(() => api.chooseInstallation(), false);
+  }, [api, applyInstallationChange]);
+
+  /** Returns to automatic discovery. Always offered once a folder was chosen. */
+  const useAutomaticDiscovery = useCallback(() => {
+    applyInstallationChange(() => api.useAutomaticDiscovery(), true);
+  }, [api, applyInstallationChange]);
 
   const loadPreview = useCallback(
     (handle: string, startedAt: number) => {
@@ -291,6 +355,8 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     selectedIndex,
     measurements,
     checkBackend,
+    chooseInstallation,
+    useAutomaticDiscovery,
     openFile,
     pickerError,
     dismissPickerError,

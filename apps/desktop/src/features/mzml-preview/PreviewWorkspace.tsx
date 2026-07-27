@@ -63,7 +63,12 @@ export function PreviewWorkspace() {
       {/* One grid track, however many notices are showing. The shell's rows
           are fixed, so a conditional notice must not become a row of its own. */}
       <div className="shell-notices">
-        <BackendStatus onRecheck={workspace.checkBackend} state={workspace.backend} />
+        <BackendStatus
+          onChooseInstallation={workspace.chooseInstallation}
+          onRecheck={workspace.checkBackend}
+          onUseAutomaticDiscovery={workspace.useAutomaticDiscovery}
+          state={workspace.backend}
+        />
 
         {/* A picker that would not open is its own problem. It never replaces
             the file already on screen, which is still open and still usable. */}

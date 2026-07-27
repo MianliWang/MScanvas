@@ -7,6 +7,7 @@ import type { SelectedSpectrumOutcome } from "../features/mzml-preview/contracts
 import {
   availableBackend,
   buildPreview,
+  chosenBackend,
   buildSpectrum,
   createFakePreviewApi,
   deferred,
@@ -57,6 +58,68 @@ describe("mzML preview workspace", () => {
 
     expect(await screen.findByText(/ProteoWizard is available/)).toHaveTextContent("3.0.25000");
     expect(screen.getByRole("button", { name: "Open mzML…" })).toBeEnabled();
+  });
+
+  it("reports the installation the user chose, never the one it replaced", async () => {
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      chosenInstallation: chosenBackend,
+    });
+    renderApp(api);
+    expect(await screen.findByText("ProteoWizard is not available")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+
+    expect(await screen.findByText(/ProteoWizard is available/)).toHaveTextContent("3.0.26013");
+    expect(screen.getByText(/from the folder you chose/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Open mzML…" })).toBeEnabled();
+  });
+
+  it("keeps the verdict it had when the folder picker is dismissed", async () => {
+    // Dismissing changes nothing, so replacing what is on screen -- with a new
+    // verdict or with "checking" -- would say something happened that did not.
+    const api = createFakePreviewApi({ chosenInstallation: null });
+    renderApp(api);
+    expect(await screen.findByText(/ProteoWizard is available/)).toHaveTextContent("3.0.25000");
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/ProteoWizard is available/)).toHaveTextContent("3.0.25000");
+    });
+    expect(screen.queryByText(/from the folder you chose/)).toBeNull();
+    expect(screen.queryByText(/Checking for an installed/)).toBeNull();
+  });
+
+  it("can go back to searching automatically after choosing a folder", async () => {
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      chosenInstallation: chosenBackend,
+    });
+    renderApp(api);
+    await screen.findByText("ProteoWizard is not available");
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+    await screen.findByText(/from the folder you chose/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Search automatically" }));
+
+    // Back to what automatic discovery finds, and saying so.
+    expect(await screen.findByText("ProteoWizard is not available")).toBeVisible();
+    expect(screen.queryByText(/from the folder you chose/)).toBeNull();
+  });
+
+  it("offers a way out when the backend call itself fails", async () => {
+    // A failed call does not say which installation was in use, so a banner
+    // that only offered "check again" could leave a chosen folder in place
+    // with no way to stop using it.
+    const api = createFakePreviewApi({
+      availability: () => Promise.reject(previewError({ kind: "preview_worker_unavailable" })),
+    });
+    renderApp(api);
+
+    await screen.findByRole("button", { name: "Search automatically" });
+    expect(screen.getByRole("button", { name: "Choose folder…" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Check again" })).toBeVisible();
   });
 
   it("notices a backend that has gone away and can be told to look again", async () => {

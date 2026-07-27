@@ -21,14 +21,26 @@ import type {
 
 export const availableBackend: BackendAvailability = {
   state: "available",
+  origin: "automatic",
   release: "3.0.25000",
   buildDate: "2026-05-04",
   sameInstallation: true,
   failure: null,
 };
 
+/** What a chosen folder holding a usable installation reports. */
+export const chosenBackend: BackendAvailability = {
+  state: "available",
+  origin: "chosen",
+  release: "3.0.26013",
+  buildDate: "2026-07-01",
+  sameInstallation: true,
+  failure: null,
+};
+
 export const unavailableBackend: BackendAvailability = {
   state: "unavailable",
+  origin: "automatic",
   release: null,
   buildDate: null,
   sameInstallation: false,
@@ -179,6 +191,11 @@ export function deferred<T>(): Deferred<T> {
 
 export interface FakePreviewApiOptions {
   readonly availability?: BackendAvailability | (() => Promise<BackendAvailability>);
+  /** What the folder picker resolves to. `null` stands for a dismissed picker. */
+  readonly chosenInstallation?:
+    | BackendAvailability
+    | null
+    | (() => Promise<BackendAvailability | null>);
   readonly file?: SelectedFile | null | (() => Promise<SelectedFile | null>);
   readonly preview?: Preview | (() => Promise<Preview>);
   readonly spectrum?: (index: number) => Promise<SelectedSpectrumOutcome>;
@@ -187,19 +204,44 @@ export interface FakePreviewApiOptions {
 export interface FakePreviewApi extends PreviewApi {
   readonly requestedSpectra: number[];
   readonly openCount: () => number;
+  /** Every verdict this fake has handed back, oldest first. */
+  readonly deliveredVerdicts: BackendAvailability[];
 }
 
 export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakePreviewApi {
   const requestedSpectra: number[] = [];
   let openCount = 0;
 
+  const deliveredVerdicts: BackendAvailability[] = [];
+  const deliver = (verdict: BackendAvailability) => {
+    deliveredVerdicts.push(verdict);
+    return verdict;
+  };
+
   return {
     requestedSpectra,
     openCount: () => openCount,
+    deliveredVerdicts,
     inspectBackend: () =>
-      typeof options.availability === "function"
+      (typeof options.availability === "function"
         ? options.availability()
-        : Promise.resolve(options.availability ?? availableBackend),
+        : Promise.resolve(options.availability ?? availableBackend)
+      ).then(deliver),
+    // `?? chosenBackend` would be wrong here: `null` is a meaningful value --
+    // a dismissed picker -- and nullish coalescing cannot tell it from an
+    // option that was never supplied.
+    chooseInstallation: () =>
+      (typeof options.chosenInstallation === "function"
+        ? options.chosenInstallation()
+        : Promise.resolve(
+            options.chosenInstallation === undefined ? chosenBackend : options.chosenInstallation,
+          )
+      ).then((verdict) => (verdict === null ? null : deliver(verdict))),
+    useAutomaticDiscovery: () =>
+      (typeof options.availability === "function"
+        ? options.availability()
+        : Promise.resolve(options.availability ?? availableBackend)
+      ).then(deliver),
     chooseFile: () =>
       typeof options.file === "function"
         ? options.file()

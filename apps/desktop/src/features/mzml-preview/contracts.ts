@@ -13,6 +13,12 @@ export interface BackendFailure {
 
 export interface BackendAvailability {
   readonly state: "available" | "unavailable";
+  /**
+   * Which installation this verdict describes. Carried with the verdict rather
+   * than tracked separately, so a reading can never be rendered beside the
+   * wrong origin.
+   */
+  readonly origin: "automatic" | "chosen";
   readonly release: string | null;
   readonly buildDate: string | null;
   readonly sameInstallation: boolean;
