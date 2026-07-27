@@ -1,0 +1,338 @@
+name: M0C representative navigation and scale evidence
+
+# Temporary evidence infrastructure for M0C Slice 2B. It is removed from the
+# tree once the measurement run has been recorded, and it only ever runs when a
+# commit on the evidence branch explicitly asks for it.
+
+on:
+  push:
+    branches:
+      - feat/m0c-representative-scale-evidence
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m0c-representative-scale-evidence-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Pinned by the Run A attestation before Run B is allowed to measure anything.
+  M0C_REPRESENTATIVE_SHA256: ""
+
+jobs:
+  build_harness:
+    name: Build and attest evidence harness
+    if: >-
+      github.event.head_commit != null &&
+      (contains(github.event.head_commit.message, '[run-m0c-evidence-a]') ||
+       contains(github.event.head_commit.message, '[run-m0c-evidence-b]'))
+    runs-on: windows-2025
+    timeout-minutes: 30
+    outputs:
+      artifact-id: ${{ steps.upload_bundle.outputs.artifact-id }}
+      artifact-digest: ${{ steps.upload_bundle.outputs.artifact-digest }}
+      source-sha: ${{ steps.bundle.outputs.source-sha }}
+      manifest-sha: ${{ steps.bundle.outputs.manifest-sha }}
+    steps:
+      - name: Checkout exact pushed commit
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify checkout identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $actual = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -ne '${{ github.sha }}') {
+            throw 'The checked-out commit does not match the pushed workflow commit.'
+          }
+
+      - name: Install pinned Rust toolchain
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Targeted tests
+        shell: pwsh
+        run: |
+          cargo +1.97.1 test --locked -p mscanvas-proteowizard --all-targets
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Focused strict Clippy
+        shell: pwsh
+        run: |
+          cargo +1.97.1 clippy --locked -p mscanvas-proteowizard --all-targets --all-features -- -D warnings
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Format check
+        shell: pwsh
+        run: |
+          cargo +1.97.1 fmt --all --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build release evidence harness
+        shell: pwsh
+        run: |
+          cargo +1.97.1 build --locked --release -p mscanvas-proteowizard --example m0_proteowizard_spike
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Deterministic orchestration self-tests
+        shell: pwsh
+        run: |
+          & 'scripts\m0c_conversion_evidence.ps1' -Mode SelfTest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Construct minimal attested bundle
+        id: bundle
+        shell: pwsh
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          $bundle = Join-Path $env:RUNNER_TEMP 'm0c-bundle'
+          [System.IO.Directory]::CreateDirectory($bundle) | Out-Null
+          Copy-Item -LiteralPath 'target\release\examples\m0_proteowizard_spike.exe' -Destination (Join-Path $bundle 'm0_proteowizard_spike.exe')
+          Copy-Item -LiteralPath 'scripts\m0c_conversion_evidence.ps1' -Destination (Join-Path $bundle 'm0c_conversion_evidence.ps1')
+
+          $payloadNames = @('m0_proteowizard_spike.exe', 'm0c_conversion_evidence.ps1')
+          $files = foreach ($name in $payloadNames) {
+            $path = Join-Path $bundle $name
+            $item = Get-Item -LiteralPath $path
+            [ordered]@{
+              path = $name
+              bytes = [int64]$item.Length
+              sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToUpperInvariant()
+            }
+          }
+          $manifest = [ordered]@{
+            schemaVersion = 1
+            sourceSha = $env:SOURCE_SHA
+            files = @($files)
+          }
+          $manifestPath = Join-Path $bundle 'bundle-manifest.json'
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding utf8NoBOM
+          $manifestSha = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToUpperInvariant()
+          "source-sha=$env:SOURCE_SHA" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "manifest-sha=$manifestSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload minimal harness bundle
+        id: upload_bundle
+        # actions/upload-artifact v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: m0c-harness-${{ github.sha }}
+          path: ${{ runner.temp }}\m0c-bundle
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          include-hidden-files: false
+
+  runtime_evidence:
+    name: Run isolated representative evidence
+    if: >-
+      github.event.head_commit != null &&
+      (contains(github.event.head_commit.message, '[run-m0c-evidence-a]') ||
+       contains(github.event.head_commit.message, '[run-m0c-evidence-b]'))
+    needs: build_harness
+    runs-on: windows-2025
+    timeout-minutes: 120
+    permissions: {}
+    steps:
+      - name: Select evidence stage
+        id: stage
+        shell: pwsh
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          PINNED_SHA: ${{ env.M0C_REPRESENTATIVE_SHA256 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          $requestsA = $env:COMMIT_MESSAGE.Contains('[run-m0c-evidence-a]')
+          $requestsB = $env:COMMIT_MESSAGE.Contains('[run-m0c-evidence-b]')
+          if ($requestsA -and $requestsB) {
+            throw 'A commit must request exactly one evidence stage.'
+          }
+          $mode = if ($requestsB) { 'RunB' } else { 'RunA' }
+          if ($mode -eq 'RunB' -and $env:PINNED_SHA -notmatch '^[0-9a-fA-F]{64}$') {
+            throw 'Run B requires the representative SHA-256 pinned by Run A.'
+          }
+          "mode=$mode" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Download exact internal harness artifact
+        # actions/download-artifact v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.build_harness.outputs.artifact-id }}
+          path: ${{ runner.temp }}\m0c-bundle
+
+      - name: Verify artifact allowlist and manifest before execution
+        shell: pwsh
+        env:
+          EXPECTED_SOURCE_SHA: ${{ needs.build_harness.outputs.source-sha }}
+          EXPECTED_MANIFEST_SHA: ${{ needs.build_harness.outputs.manifest-sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          $bundle = Join-Path $env:RUNNER_TEMP 'm0c-bundle'
+          $expectedNames = @('bundle-manifest.json', 'm0c_conversion_evidence.ps1', 'm0_proteowizard_spike.exe')
+          $actualNames = @(Get-ChildItem -LiteralPath $bundle -Recurse -File | ForEach-Object {
+            [System.IO.Path]::GetRelativePath($bundle, $_.FullName).Replace('\', '/')
+          } | Sort-Object)
+          if (Compare-Object -ReferenceObject ($expectedNames | Sort-Object) -DifferenceObject $actualNames) {
+            throw 'The downloaded artifact did not contain the exact reviewed file allowlist.'
+          }
+          if (Get-ChildItem -LiteralPath $bundle -Recurse -Directory | Select-Object -First 1) {
+            throw 'The downloaded artifact unexpectedly contained a subdirectory.'
+          }
+          if (Get-ChildItem -LiteralPath $bundle -Recurse -Force | Where-Object {
+            ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+          } | Select-Object -First 1) {
+            throw 'The downloaded artifact contained a reparse point.'
+          }
+
+          $manifestPath = Join-Path $bundle 'bundle-manifest.json'
+          $manifestSha = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToUpperInvariant()
+          if ($manifestSha -ne $env:EXPECTED_MANIFEST_SHA.ToUpperInvariant()) {
+            throw 'The downloaded bundle manifest hash did not match the build-job output.'
+          }
+          $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+          if ($manifest.schemaVersion -ne 1 -or $manifest.sourceSha -ne $env:EXPECTED_SOURCE_SHA) {
+            throw 'The downloaded bundle manifest identity was invalid.'
+          }
+          $payloadNames = @($manifest.files | ForEach-Object { [string]$_.path } | Sort-Object)
+          $expectedPayloadNames = @('m0_proteowizard_spike.exe', 'm0c_conversion_evidence.ps1')
+          if (Compare-Object -ReferenceObject $expectedPayloadNames -DifferenceObject $payloadNames) {
+            throw 'The downloaded bundle manifest payload allowlist was invalid.'
+          }
+          foreach ($entry in $manifest.files) {
+            $path = Join-Path $bundle ([string]$entry.path)
+            $item = Get-Item -LiteralPath $path
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToUpperInvariant()
+            if ([int64]$entry.bytes -ne [int64]$item.Length -or $hash -ne ([string]$entry.sha256).ToUpperInvariant()) {
+              throw 'A downloaded bundle payload hash or length did not match its manifest.'
+            }
+          }
+          'M0C_SCRIPT_VERIFIED=1' | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Collect isolated evidence
+        shell: pwsh
+        env:
+          EXPECTED_ARTIFACT_ID: ${{ needs.build_harness.outputs.artifact-id }}
+          EXPECTED_ARTIFACT_DIGEST: ${{ needs.build_harness.outputs.artifact-digest }}
+          EXPECTED_SOURCE_SHA: ${{ needs.build_harness.outputs.source-sha }}
+          EXPECTED_MANIFEST_SHA: ${{ needs.build_harness.outputs.manifest-sha }}
+          EVIDENCE_MODE: ${{ steps.stage.outputs.mode }}
+          PINNED_SHA: ${{ env.M0C_REPRESENTATIVE_SHA256 }}
+        run: |
+          & (Join-Path $env:RUNNER_TEMP 'm0c-bundle\m0c_conversion_evidence.ps1') `
+            -Mode $env:EVIDENCE_MODE `
+            -BundleRoot (Join-Path $env:RUNNER_TEMP 'm0c-bundle') `
+            -StatePath (Join-Path $env:RUNNER_TEMP 'm0c-state.json') `
+            -PublishRoot (Join-Path $env:RUNNER_TEMP 'm0c-publish') `
+            -ExpectedArtifactId $env:EXPECTED_ARTIFACT_ID `
+            -ExpectedArtifactDigest $env:EXPECTED_ARTIFACT_DIGEST `
+            -ExpectedSourceSha $env:EXPECTED_SOURCE_SHA `
+            -ExpectedManifestSha $env:EXPECTED_MANIFEST_SHA `
+            -RepresentativeSha256 $env:PINNED_SHA
+          exit $LASTEXITCODE
+
+      - name: Independent isolation cleanup
+        id: cleanup
+        if: ${{ always() && env.M0C_SCRIPT_VERIFIED == '1' }}
+        shell: pwsh
+        run: |
+          & (Join-Path $env:RUNNER_TEMP 'm0c-bundle\m0c_conversion_evidence.ps1') `
+            -Mode Cleanup `
+            -StatePath (Join-Path $env:RUNNER_TEMP 'm0c-state.json') `
+            -PublishRoot (Join-Path $env:RUNNER_TEMP 'm0c-publish')
+          exit $LASTEXITCODE
+
+      - name: Revalidate sanitized evidence allowlist
+        id: validate_evidence
+        if: ${{ always() && env.M0C_SCRIPT_VERIFIED == '1' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $publish = Join-Path $env:RUNNER_TEMP 'm0c-publish'
+          if (-not [System.IO.Directory]::Exists($publish)) {
+            throw 'The sanitized evidence publish directory was unavailable.'
+          }
+          $names = @(Get-ChildItem -LiteralPath $publish -File -Force | Select-Object -ExpandProperty Name | Sort-Object)
+          if (Compare-Object -ReferenceObject @('summary.json', 'summary.md') -DifferenceObject $names) {
+            throw 'The publish directory did not contain exactly the two allowed evidence files.'
+          }
+          if (Get-ChildItem -LiteralPath $publish -Directory -Force | Select-Object -First 1) {
+            throw 'The publish directory contained an unexpected directory.'
+          }
+          $jsonText = Get-Content -Raw -LiteralPath (Join-Path $publish 'summary.json')
+          $summary = $jsonText | ConvertFrom-Json
+          $requiredTeardownProofs = @(
+            'allRuntimeProcessesAbsent',
+            'firewallRulesAbsent',
+            'temporaryProfileAbsent',
+            'temporaryUserAbsent',
+            'remoteInteractiveDenyRightCleaned',
+            'runtimeRootAbsent',
+            'privateStateRemoved',
+            'cleanupComplete'
+          )
+          if ($null -eq $summary.teardown) {
+            throw 'The sanitized evidence did not contain teardown attestation.'
+          }
+          foreach ($name in $requiredTeardownProofs) {
+            if ($summary.teardown.$name -ne $true) {
+              throw 'The sanitized evidence teardown attestation was incomplete.'
+            }
+          }
+          if ($null -ne $summary.teardown.failureCode) {
+            throw 'The sanitized evidence teardown attestation retained a failure code.'
+          }
+          $text = $jsonText + "`n" +
+            (Get-Content -Raw -LiteralPath (Join-Path $publish 'summary.md'))
+          $forbidden = @(
+            '(?i)(?<![A-Za-z0-9])[a-z]:[\\/]',
+            '(?i)file:(?:[\\/]|\\[\\/])+',
+            '(?i)\\\\[^<\s][^\\\s]*\\',
+            '(?i)GITHUB_',
+            '(?i)ACTIONS_',
+            '(?i)(github_pat_|gh[opsu]_|bearer\s+|authorization\s*[:=]|password\s*[:=]|credential\s*[:=])',
+            '(?i)BBM_',
+            '(?i)_calibrated\.mzML'
+          )
+          foreach ($pattern in $forbidden) {
+            if ($text -match $pattern) { throw 'The sanitized evidence failed its final content scan.' }
+          }
+
+      - name: Upload sanitized evidence only
+        if: ${{ always() && steps.cleanup.outcome == 'success' && steps.validate_evidence.outcome == 'success' }}
+        # actions/upload-artifact v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: m0c-evidence-${{ steps.stage.outputs.mode }}-${{ needs.build_harness.outputs.source-sha }}
+          path: |
+            ${{ runner.temp }}\m0c-publish\summary.json
+            ${{ runner.temp }}\m0c-publish\summary.md
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 9
+          include-hidden-files: false
+
+      - name: Remove publish staging
+        if: ${{ always() && env.M0C_SCRIPT_VERIFIED == '1' }}
+        shell: pwsh
+        run: |
+          $publish = [System.IO.Path]::GetFullPath((Join-Path $env:RUNNER_TEMP 'm0c-publish'))
+          $runnerTemp = [System.IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\') + '\'
+          if ($publish.StartsWith($runnerTemp, [System.StringComparison]::OrdinalIgnoreCase) -and
+              [System.IO.Path]::GetFileName($publish) -eq 'm0c-publish' -and
+              [System.IO.Directory]::Exists($publish)) {
+            [System.IO.Directory]::Delete($publish, $true)
+          }
