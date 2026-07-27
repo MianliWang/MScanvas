@@ -716,9 +716,33 @@ fn root_and_direct_children(root: &Path) -> Vec<PathBuf> {
                 .map(|_| entry.path())
         })
         .collect::<Vec<_>>();
-    children.sort_by(|left, right| right.as_os_str().cmp(left.as_os_str()));
+    children.sort_by_key(|child| cmp::Reverse(nested_child_order(child)));
     directories.extend(children);
     directories
+}
+
+/// Orders the children of a container that is itself named `ProteoWizard`.
+///
+/// A child named `ProteoWizard <version>` is ordered by release, for the same
+/// reason the versioned siblings are: discovery takes one candidate and never
+/// falls back, so a stale installation winning means the wrong binaries run.
+///
+/// Anything else keeps name order. This enumeration is deliberately unfiltered
+/// so that a portable extraction dropped in beside an installation is still
+/// found, and the portable directory name carries `x86_64` and `vc145` ahead of
+/// its release — reading digit groups out of it would order it worse, not
+/// better. Ordering the recognisable names first is a change: they previously
+/// sorted after `pwiz-bin-...` because `w` follows `r`, which was alphabetical
+/// accident rather than a decision.
+fn nested_child_order(path: &Path) -> (u64, u64, u64, String) {
+    let name = path.file_name().map_or_else(String::new, |name| {
+        name.to_string_lossy().to_ascii_lowercase()
+    });
+    if name.starts_with("proteowizard") {
+        release_sort_key(path)
+    } else {
+        (0, 0, 0, name)
+    }
 }
 
 fn candidate_from_directory(directory: &Path, source: DiscoverySource) -> Candidate {
@@ -2117,6 +2141,31 @@ Analysis commands (used with -x/--exec):
             newer_position < older_position,
             "3.0.26013 must be searched before 3.0.9134, got {roots:?}"
         );
+    }
+
+    #[test]
+    fn a_newer_release_nested_in_the_stable_folder_is_searched_first() {
+        // The other supported layout: the stable `ProteoWizard` folder holding
+        // versioned children. The release order has to hold here too, for the
+        // same reason — one candidate, no fallback.
+        let tree = TempTree::new("nested-release-order");
+        let container = tree.root.join("ProteoWizard");
+        let older = container.join("ProteoWizard 3.0.9134");
+        let newer = container.join("ProteoWizard 3.0.26013.47b13cf 64-bit");
+        let portable = container.join("pwiz-bin-windows-x86_64-vc145-release-3_0_26204_a09eea9");
+        fs::create_dir_all(&older).expect("older nested install should be created");
+        fs::create_dir_all(&newer).expect("newer nested install should be created");
+        fs::create_dir_all(&portable).expect("portable extraction should be created");
+
+        let searched = root_and_direct_children(&container);
+
+        let newer_position = searched.iter().position(|root| root == &newer);
+        let older_position = searched.iter().position(|root| root == &older);
+        assert!(newer_position < older_position, "{searched:?}");
+        // The portable extraction is still reached; its name carries `x86_64`
+        // and `vc145` before the release, so it is ordered by name, not by
+        // digits pulled out of it.
+        assert!(searched.contains(&portable));
     }
 
     #[test]
