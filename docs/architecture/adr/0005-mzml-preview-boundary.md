@@ -107,9 +107,13 @@ index. Every one of them is typed on both sides.
   prefix, because a spectrum list cut mid-file would read as a shorter
   acquisition. Removing that ceiling means a row-bounded or streaming table
   parser in `mscanvas-proteowizard`, which is a separate change.
-- MSCanvas runs at most one backend process at a time. A selection that is
-  still waiting for its turn when a newer one arrives never starts, because the
-  user has moved on and the answer would not be looked at. Together with
+- MSCanvas runs at most one backend process at a time — availability discovery
+  included, since running the installed tools' help is as much a process as a
+  preview is. A selection that is still waiting for its turn when a newer one
+  arrives, or when another file is opened, never starts: the user has moved on
+  and the answer would not be looked at. Everything a read depends on is
+  established after that wait rather than when the request arrived, so it
+  describes the moment the read actually begins. Together with
   committing on Enter or Space rather than on focus, and dropping repeats of
   the row already being read, that bounds what fast navigation costs. What
   remains is that a read already under way runs to completion; stopping it

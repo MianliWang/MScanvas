@@ -65,13 +65,22 @@ impl PreviewService {
         }
     }
 
+    /// Reports whether a usable backend is installed.
+    ///
+    /// Behind the same gate as every other backend work: discovery runs the
+    /// installed tools' help, which is as much a process as a preview is, and
+    /// "at most one at a time" has to mean all of them or it means nothing.
     pub fn inspect_backend(&self) -> BackendAvailabilityDto {
+        let _running = self.enter_backend();
         self.provider.availability()
     }
 
     /// Accepts one already-chosen path and registers it for later operations.
     pub fn accept_file(&self, path: &Path) -> Result<SelectedFileDto, PreviewErrorDto> {
         let accepted = accept_mzml_file(path)?;
+        // A different file supersedes any spectrum still waiting for its turn
+        // on the old one, which nobody is going to look at now.
+        self.spectrum_ticket.fetch_add(1, Ordering::Relaxed);
         // The previous handle is revoked by the registry, so its recorded
         // generation is dead weight rather than something to keep.
         self.generations
@@ -90,6 +99,10 @@ impl PreviewService {
     /// All three share a single discovery and capability probe, so opening a
     /// file resolves the backend once rather than once per panel.
     pub fn open_preview(&self, handle: &str) -> Result<PreviewDto, PreviewErrorDto> {
+        // Taken before anything is established about the file, so what is
+        // checked describes the moment the read actually begins rather than
+        // the moment the request arrived.
+        let running = self.enter_backend();
         let file = self.files.resolve(handle)?;
         let redactor = reporting_redactor(file.path());
         let operations = open_operations();
@@ -102,10 +115,9 @@ impl PreviewService {
         // swapped back between the two comparisons around it. Required: losing
         // the hold means losing the guarantee.
         let guard = lock_against_replacement(file.path())?;
-        let running = self.enter_backend();
         let results = self.provider.run_batch(file.path(), &operations)?;
-        drop(running);
         drop(guard);
+        drop(running);
         if SourceGeneration::capture(file.path()) != before {
             return Err(PreviewErrorDto::new(
                 "source_changed_during_preview",
@@ -193,6 +205,17 @@ impl PreviewService {
         index: u64,
     ) -> Result<SelectedSpectrumOutcomeDto, PreviewErrorDto> {
         let ticket = self.spectrum_ticket.fetch_add(1, Ordering::Relaxed) + 1;
+        // Waiting first, so everything below describes the moment this read
+        // begins. Checked after the wait, not before it: what matters is
+        // whether the user has moved on by the time it would start.
+        let running = self.enter_backend();
+        if self.spectrum_ticket.load(Ordering::Relaxed) != ticket {
+            return Err(PreviewErrorDto::new(
+                "selection_superseded",
+                "A newer spectrum was selected before this one started, so it was not read.",
+                false,
+            ));
+        }
         let file = self.files.resolve(handle)?;
         // A selected spectrum is shown beside the metadata and the table from
         // the open action. If the file has changed since then, this spectrum
@@ -219,19 +242,9 @@ impl PreviewService {
         let redactor = reporting_redactor(file.path());
         let operation = selected_spectrum_operation(index);
         let guard = lock_against_replacement(file.path())?;
-        let running = self.enter_backend();
-        // Checked after the wait, not before it: what matters is whether the
-        // user has moved on by the time this would actually start.
-        if self.spectrum_ticket.load(Ordering::Relaxed) != ticket {
-            return Err(PreviewErrorDto::new(
-                "selection_superseded",
-                "A newer spectrum was selected before this one started, so it was not read.",
-                false,
-            ));
-        }
         let result = self.provider.run(file.path(), &operation)?;
-        drop(running);
         drop(guard);
+        drop(running);
         if SourceGeneration::capture(file.path()) != SourceGeneration::of(&file) {
             return Err(source_changed_since_preview());
         }

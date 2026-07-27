@@ -760,6 +760,87 @@ fn only_one_backend_operation_runs_at_a_time() {
 }
 
 #[test]
+fn opening_another_file_supersedes_a_spectrum_still_waiting_for_its_turn() {
+    use std::sync::Arc;
+    use std::sync::mpsc;
+
+    /// Blocks inside the gate until released, so a second request can be
+    /// observed waiting rather than raced against.
+    struct BlockingProvider {
+        inner: FakeProvider,
+        started: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl PreviewProvider for BlockingProvider {
+        fn availability(&self) -> BackendAvailabilityDto {
+            self.inner.availability()
+        }
+
+        fn run(
+            &self,
+            source: &Path,
+            operation: &PreviewOperation,
+        ) -> Result<OperationResult, PreviewErrorDto> {
+            let _ = self.started.send(());
+            let _ = self
+                .release
+                .lock()
+                .expect("test lock")
+                .recv_timeout(std::time::Duration::from_secs(5));
+            self.inner.run(source, operation)
+        }
+    }
+
+    let file = TestFile::new("supersede");
+    let (started, observe_start) = mpsc::channel();
+    let (release, wait_for_release) = mpsc::channel();
+    let service = Arc::new(PreviewService::new(Box::new(BlockingProvider {
+        inner: FakeProvider::available(vec![
+            Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+            Response::File(selected_spectrum_output(1, &[(333.33, 5000.0)])),
+        ]),
+        started,
+        release: Mutex::new(wait_for_release),
+    })));
+    let first = service.accept_file(&file.path).expect("accepted");
+
+    // One request occupies the only process slot.
+    let running = {
+        let service = Arc::clone(&service);
+        let handle = first.handle.clone();
+        std::thread::spawn(move || service.load_spectrum(&handle, 0))
+    };
+    observe_start
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the first request reached the provider");
+
+    // A second one queues behind it.
+    let waiting = {
+        let service = Arc::clone(&service);
+        let handle = first.handle.clone();
+        std::thread::spawn(move || service.load_spectrum(&handle, 1))
+    };
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    // The user opens another file while it is still waiting.
+    service.accept_file(&file.path).expect("accepted again");
+    let _ = release.send(());
+
+    assert!(
+        running
+            .join()
+            .expect("the running request finished")
+            .is_ok()
+    );
+    let superseded = waiting
+        .join()
+        .expect("the waiting request finished")
+        .expect_err("a request for a file the user has left never starts");
+    assert_eq!(superseded.kind, "selection_superseded");
+}
+
+#[test]
 fn metadata_printed_before_the_first_section_is_shown_rather_than_counted() {
     let file = TestFile::new("leading");
     let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
