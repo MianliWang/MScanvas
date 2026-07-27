@@ -224,6 +224,45 @@ INTERPOLATION = chr(1)
 # pattern rather than dividing. A pattern matters because it can hold a brace,
 # and a brace counted as structure closes the interpolation early.
 REGEX_MAY_FOLLOW = "([{,;:?=!&|+-*%~^<>"
+# A slash after a value divides; after a keyword it opens a pattern. Without
+# these, `return /}}/` reads as division and the braces are counted as
+# structure, which closes the interpolation early and lets whatever follows go
+# unexamined.
+REGEX_MAY_FOLLOW_WORD = frozenset(
+    {
+        "return",
+        "typeof",
+        "instanceof",
+        "in",
+        "of",
+        "new",
+        "delete",
+        "void",
+        "throw",
+        "case",
+        "do",
+        "else",
+        "yield",
+        "await",
+    }
+)
+
+
+def _preceding_word(text: str, index: int) -> str:
+    """The identifier ending just before `index`, if any."""
+    end = index
+    while end > 0 and text[end - 1].isspace():
+        end -= 1
+    start = end
+    while start > 0 and (text[start - 1].isalnum() or text[start - 1] == "_"):
+        start -= 1
+    return text[start:end]
+
+
+def _regex_may_start(text: str, index: int, previous: str) -> bool:
+    if previous == "" or previous in REGEX_MAY_FOLLOW:
+        return True
+    return _preceding_word(text, index) in REGEX_MAY_FOLLOW_WORD
 
 
 def _quoted(text: str, start: int, quote: str) -> tuple[str, int]:
@@ -303,7 +342,7 @@ def _template(text: str, start: int):
                         return None
                     index = end + 2
                     continue
-                if inner == "/" and (previous == "" or previous in REGEX_MAY_FOLLOW):
+                if inner == "/" and _regex_may_start(text, index, previous):
                     end = _skip_regex(text, index)
                     if end is None:
                         return None
