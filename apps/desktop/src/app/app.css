@@ -1,7 +1,9 @@
+/* Three in-flow rows: the toolbar, the backend notice and the workspace. The
+   live region between them is out of flow and occupies no track. */
 .app-shell {
   display: grid;
-  min-height: 100vh;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  height: 100vh;
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .topbar {
@@ -133,13 +135,17 @@ button:disabled {
 .workspace-layout {
   display: grid;
   min-height: 0;
+  grid-auto-rows: minmax(0, 1fr);
   grid-template-columns: minmax(280px, 0.85fr) minmax(560px, 2.4fr);
   gap: 8px;
   padding: 8px;
 }
 
+/* Spans every track in both axes, so the single-column layout below does not
+   drop it into an auto-sized first row and shrink it to its own text. */
 .workspace-placeholder {
   display: flex;
+  grid-row: 1 / -1;
   grid-column: 1 / -1;
 }
 
@@ -297,7 +303,11 @@ button:disabled {
   display: grid;
   align-items: center;
   gap: 8px;
-  grid-template-columns: 92px minmax(120px, 1.5fr) 74px 104px 116px 132px 132px 108px;
+  /* Every column can give ground, so a narrow window shrinks the table
+     instead of overflowing a panel that clips. */
+  grid-template-columns:
+    minmax(62px, 0.7fr) minmax(96px, 1.6fr) minmax(52px, 0.6fr) minmax(74px, 0.9fr)
+    minmax(84px, 1fr) minmax(92px, 1.1fr) minmax(92px, 1.1fr) minmax(80px, 0.9fr);
   height: 30px;
   padding: 0 10px;
   font-size: 12px;

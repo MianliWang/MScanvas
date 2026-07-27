@@ -6,12 +6,22 @@
   box-sizing: border-box;
 }
 
+/* No document min-width. The window's own minimum is expressed in logical
+   pixels, so on a scaled display a CSS min-width set to the same number is
+   wider than the viewport can ever be and forces a scrollbar the layout does
+   not need. The workspace states its own minimums per column instead. */
 html,
 body,
 #root {
-  min-width: 960px;
-  min-height: 100%;
+  height: 100%;
   margin: 0;
+}
+
+/* The shell itself never scrolls; each panel scrolls inside its own bounds.
+   Without this the document grows a scrollbar of its own and the workspace
+   ends up one scrollbar-width narrower than the window. */
+body {
+  overflow: hidden;
 }
 
 body {
