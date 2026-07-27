@@ -445,9 +445,14 @@ button:disabled {
 }
 
 @media (max-width: 1120px) {
+  /* Both rows are bounded. An `auto` first row would grow to the length of the
+     metadata, and because the shell is exactly the viewport height and the
+     document does not scroll, the table and the spectrum below it would be
+     squeezed to nothing. Each panel scrolls inside its own share instead. */
   .workspace-layout {
+    grid-auto-rows: minmax(0, 1fr);
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: minmax(0, 0.8fr) minmax(0, 1.6fr);
   }
 }
 
