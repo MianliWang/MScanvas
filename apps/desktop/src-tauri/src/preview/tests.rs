@@ -556,6 +556,16 @@ fn absolute_path_shapes_are_removed_from_displayable_text() {
         "scanWindow: 200-2000 m/z at counts/second"
     );
     assert_eq!(redact_absolute_paths("ratio: 3 / 4"), "ratio: 3 / 4");
+    // Non-ASCII is legitimate in an mzML field. Nothing here may slice text at
+    // a byte offset that is not a character boundary.
+    assert_eq!(
+        redact_absolute_paths("sample: 標準サンプル f中文"),
+        "sample: 標準サンプル f中文"
+    );
+    assert_eq!(
+        redact_absolute_paths(r"sample: 標準 D:\データ\run.mzML"),
+        "sample: 標準 <path>"
+    );
     // Each line is judged on its own, so one path does not blank the rest.
     assert_eq!(
         redact_absolute_paths("software: pwiz\nsourceFile: C:/data/a.mzML\nmsLevel: 2"),

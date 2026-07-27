@@ -51,6 +51,12 @@ impl PreviewService {
     /// Accepts one already-chosen path and registers it for later operations.
     pub fn accept_file(&self, path: &Path) -> Result<SelectedFileDto, PreviewErrorDto> {
         let accepted = accept_mzml_file(path)?;
+        // The previous handle is revoked by the registry, so its recorded
+        // generation is dead weight rather than something to keep.
+        self.generations
+            .lock()
+            .expect("the generation lock is never poisoned by user code")
+            .clear();
         Ok(self.files.register(accepted))
     }
 

@@ -53,9 +53,15 @@ index. Every one of them is typed on both sides.
 - A large run is windowed in the table rather than cached or paged, so the
   bounded-preview-cache decision stays open for M2 and is not pre-empted by an
   implementation chosen for a demo.
-- Because Rust holds the path, the frontend cannot offer "recent files",
-  drag-and-drop from Explorer, or multi-file workspaces without extending the
-  boundary deliberately. That is the intended cost.
+- Exactly one file is open at a time and choosing another revokes the previous
+  handle, so the webview never accumulates a capability over paths the user has
+  moved on from. Because Rust holds the path, the frontend also cannot offer
+  "recent files", drag-and-drop from Explorer, or multi-file workspaces without
+  extending the boundary deliberately. That is the intended cost.
+- The run summary and the spectrum list are separate reads. When their spectrum
+  counts disagree, both are shown and neither is chosen: MSCanvas has no
+  evidence about which reading is right, and refusing the file outright would
+  reject an acquisition that may be perfectly valid.
 - The preview parser requires the backend's whole output, and this boundary
   reads at most 8 MiB of it — the same named limit M0C accepted for M1–M2. A
   run above it is refused with a plain statement of why, not shown from a

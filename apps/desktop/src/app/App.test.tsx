@@ -266,6 +266,24 @@ describe("mzML preview workspace", () => {
     });
   });
 
+  it("discloses a run summary and spectrum list that disagree about the size", async () => {
+    const preview = buildPreview(6);
+    await openTheFile(
+      createFakePreviewApi({
+        preview: {
+          ...preview,
+          runSummary: { ...preview.runSummary, totalSpectrumCount: 9 },
+        },
+      }),
+    );
+
+    // Two separate reads of one file. MSCanvas shows both rather than picking
+    // one and presenting a single acquisition with a single size.
+    expect(await screen.findByRole("note")).toHaveTextContent(
+      "The run summary reports 9 spectra and the spectrum list contains 6.",
+    );
+  });
+
   it("states the true spectrum count and says plainly when rows were truncated", async () => {
     await openTheFile(createFakePreviewApi({ preview: buildPreview(120, true) }));
 

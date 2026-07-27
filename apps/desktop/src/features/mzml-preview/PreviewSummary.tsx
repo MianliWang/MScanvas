@@ -7,6 +7,8 @@ export interface PreviewSummaryProps {
   readonly file: SelectedFile;
   readonly runSummary: RunSummary;
   readonly metadata: Metadata;
+  /** The spectrum list's own total, which is produced by a separate read. */
+  readonly spectrumListTotal: number;
   readonly measurements: readonly PreviewMeasurement[];
 }
 
@@ -14,8 +16,13 @@ export function PreviewSummary({
   file,
   runSummary,
   metadata,
+  spectrumListTotal,
   measurements,
 }: PreviewSummaryProps) {
+  // The run summary and the spectrum list are two separate reads of the same
+  // file. When they disagree, showing one number here and a different one over
+  // the table would present a single acquisition with two sizes.
+  const countsDisagree = runSummary.totalSpectrumCount !== spectrumListTotal;
   return (
     <section aria-labelledby="preview-summary-heading" className="panel inspector-panel">
       <header className="panel-header">
@@ -30,6 +37,13 @@ export function PreviewSummary({
 
       <div className="inspector-section">
         <h3>Summary</h3>
+        {countsDisagree ? (
+          <p className="notice notice-warning" role="note">
+            The run summary reports {formatCount(runSummary.totalSpectrumCount)} spectra and the
+            spectrum list contains {formatCount(spectrumListTotal)}. They are separate readings of
+            the same file and MSCanvas does not decide which is right.
+          </p>
+        ) : null}
         <dl className="metadata-list">
           <div>
             <dt>Spectra</dt>

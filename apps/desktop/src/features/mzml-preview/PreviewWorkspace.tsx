@@ -77,6 +77,7 @@ export function PreviewWorkspace() {
               measurements={workspace.measurements}
               metadata={preview.preview.metadata}
               runSummary={preview.preview.runSummary}
+              spectrumListTotal={preview.preview.spectrumTable.totalRowCount}
             />
             <div className="viewer-stack">
               <SpectrumTable

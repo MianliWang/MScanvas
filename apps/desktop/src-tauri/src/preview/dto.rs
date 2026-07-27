@@ -271,9 +271,13 @@ fn find_path_start(line: &str) -> Option<usize> {
         };
         let after_boundary = preceding.is_none_or(|byte| !byte.is_ascii_alphanumeric());
 
+        // Compared as bytes, never sliced as text: `index + 5` is not
+        // necessarily a character boundary, and an mzML field may legitimately
+        // hold non-ASCII. Slicing there would panic on a valid document.
         if after_boundary
-            && line[index..].len() >= 5
-            && line[index..index + 5].eq_ignore_ascii_case("file:")
+            && bytes
+                .get(index..index + 5)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"file:"))
         {
             return Some(index);
         }

@@ -3,7 +3,6 @@
 //! Rust owns the path. The webview receives an opaque handle and a display
 //! name, never an absolute path, and the file itself is only ever read.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -109,14 +108,18 @@ impl AcceptedFile {
     }
 }
 
-/// The files a session has accepted, keyed by opaque handle.
+/// The one file a session currently has open, behind an opaque handle.
 ///
-/// Handles are session-scoped and meaningless outside the running process, so a
-/// frontend value can never name a path the user did not choose.
+/// Exactly one, replaced on each selection. The product opens one file at a
+/// time, so keeping every previously chosen path callable would leave the
+/// webview holding a capability over files the user has moved on from, for the
+/// lifetime of the process. Handles are session-scoped and meaningless outside
+/// the running process, so a frontend value can never name a path the user did
+/// not choose.
 #[derive(Debug, Default)]
 pub struct FileRegistry {
     next_handle: AtomicU64,
-    entries: Mutex<HashMap<String, AcceptedFile>>,
+    current: Mutex<Option<(String, AcceptedFile)>>,
 }
 
 impl FileRegistry {
@@ -125,6 +128,7 @@ impl FileRegistry {
         Self::default()
     }
 
+    /// Registers a newly accepted file and revokes the previous one.
     pub fn register(&self, file: AcceptedFile) -> SelectedFileDto {
         let handle = format!("file-{}", self.next_handle.fetch_add(1, Ordering::Relaxed));
         let dto = SelectedFileDto {
@@ -132,19 +136,20 @@ impl FileRegistry {
             file_name: file.file_name().to_owned(),
             byte_length: file.byte_length(),
         };
-        self.entries
+        *self
+            .current
             .lock()
-            .expect("the file registry lock is never poisoned by user code")
-            .insert(handle, file);
+            .expect("the file registry lock is never poisoned by user code") = Some((handle, file));
         dto
     }
 
     pub fn resolve(&self, handle: &str) -> Result<AcceptedFile, PreviewErrorDto> {
-        self.entries
+        self.current
             .lock()
             .expect("the file registry lock is never poisoned by user code")
-            .get(handle)
-            .cloned()
+            .as_ref()
+            .filter(|(current, _)| current == handle)
+            .map(|(_, file)| file.clone())
             .ok_or_else(|| {
                 PreviewErrorDto::new(
                     "unknown_file_handle",
@@ -283,9 +288,7 @@ mod tests {
         let registry = FileRegistry::new();
 
         let first = registry.register(accept_mzml_file(&path).expect("accepted"));
-        let second = registry.register(accept_mzml_file(&path).expect("accepted"));
 
-        assert_ne!(first.handle, second.handle);
         assert_eq!(first.file_name, "sample.mzML");
         let rendered = serde_json::to_string(&first).expect("the handle serializes");
         assert!(!rendered.contains("mscanvas-selection-registry"));
@@ -300,6 +303,38 @@ mod tests {
         );
         assert_eq!(
             registry.resolve("file-does-not-exist").map(|_| ()),
+            Err(PreviewErrorDto::new(
+                "unknown_file_handle",
+                "That file is no longer open. Open it again to continue.",
+                false,
+            ))
+        );
+    }
+
+    #[test]
+    fn opening_another_file_revokes_the_previous_handle() {
+        let directory = TestDirectory::new("revoke");
+        let first_path = directory.path().join("first.mzML");
+        let second_path = directory.path().join("second.mzML");
+        fs::write(&first_path, b"<mzML/>").expect("write first fixture");
+        fs::write(&second_path, b"<mzML/>").expect("write second fixture");
+        let registry = FileRegistry::new();
+
+        let first = registry.register(accept_mzml_file(&first_path).expect("accepted"));
+        let second = registry.register(accept_mzml_file(&second_path).expect("accepted"));
+
+        assert_ne!(first.handle, second.handle);
+        assert_eq!(
+            registry
+                .resolve(&second.handle)
+                .expect("the current handle resolves")
+                .file_name(),
+            "second.mzML"
+        );
+        // The webview keeps no capability over a file the user has moved on
+        // from, for the rest of the process lifetime or at all.
+        assert_eq!(
+            registry.resolve(&first.handle).map(|_| ()),
             Err(PreviewErrorDto::new(
                 "unknown_file_handle",
                 "That file is no longer open. Open it again to continue.",
