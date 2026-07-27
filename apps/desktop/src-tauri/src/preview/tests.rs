@@ -638,7 +638,10 @@ impl PreviewProvider for RewritingProvider {
         let mut runs = self.runs.lock().expect("test lock");
         *runs += 1;
         if *runs == 1 {
-            fs::write(&self.target, b"<mzML> rewritten </mzML>").expect("rewrite the source");
+            // May fail, and that is a pass: the service holds the file against
+            // replacement for the duration of a read, which is the stronger of
+            // the two defences.
+            let _ = fs::write(&self.target, b"<mzML> rewritten </mzML>");
         }
         result
     }
@@ -647,20 +650,28 @@ impl PreviewProvider for RewritingProvider {
 #[test]
 fn a_source_rewritten_between_operations_is_refused_rather_than_combined() {
     let file = TestFile::new("generation");
-    let service = PreviewService::new(Box::new(RewritingProvider {
+    let provider = Box::new(RewritingProvider {
         inner: FakeProvider::available(open_responses()),
         target: file.path.clone(),
         runs: Mutex::new(0),
-    }));
+    });
+    let service = PreviewService::new(provider);
     let selected = service.accept_file(&file.path).expect("accepted");
 
-    let error = service
-        .open_preview(&selected.handle)
-        .expect_err("results from two generations are never combined");
+    let outcome = service.open_preview(&selected.handle);
 
-    assert_eq!(error.kind, "source_changed_during_preview");
-    // Reading again once the writer has finished is worth offering.
-    assert!(error.retryable);
+    // Two defences, and the file cannot come back describing another run
+    // through either of them. Where the file could not be replaced at all the
+    // preview is simply correct; where it could, the result is refused.
+    let replaced = fs::read(&file.path).expect("read back the source") != b"<mzML/>";
+    if replaced {
+        let error = outcome.expect_err("results from two generations are never combined");
+        assert_eq!(error.kind, "source_changed_during_preview");
+        // Reading again once the writer has finished is worth offering.
+        assert!(error.retryable);
+    } else {
+        outcome.expect("an unreplaceable source previews normally");
+    }
 }
 
 #[test]

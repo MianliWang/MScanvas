@@ -25,7 +25,9 @@ use super::dto::{
     SelectedSpectrumOutcomeDto, SpectrumRowDto, SpectrumTableDto, bounded_text,
     redact_absolute_paths, require_finite, require_finite_option,
 };
-use super::selection::{AcceptedFile, FileRegistry, accept_mzml_file, file_identity};
+use super::selection::{
+    AcceptedFile, FileRegistry, accept_mzml_file, file_identity, lock_against_replacement,
+};
 
 /// The narrow set of operations the desktop application exposes.
 pub struct PreviewService {
@@ -83,7 +85,11 @@ impl PreviewService {
         // run, and combining those into one preview would present an
         // acquisition that never existed.
         let before = SourceGeneration::of(&file);
+        // Held for the whole batch, so the file cannot be swapped away and
+        // swapped back between the two comparisons around it.
+        let guard = lock_against_replacement(file.path());
         let results = self.provider.run_batch(file.path(), &operations)?;
+        drop(guard);
         if SourceGeneration::capture(file.path()) != before {
             return Err(PreviewErrorDto::new(
                 "source_changed_during_preview",
@@ -188,7 +194,9 @@ impl PreviewService {
 
         let redactor = reporting_redactor(file.path());
         let operation = selected_spectrum_operation(index);
+        let guard = lock_against_replacement(file.path());
         let result = self.provider.run(file.path(), &operation)?;
+        drop(guard);
         if SourceGeneration::capture(file.path()) != SourceGeneration::of(&file) {
             return Err(source_changed_since_preview());
         }

@@ -151,6 +151,41 @@ pub(super) fn file_identity(path: &Path) -> Option<(u64, u64)> {
     Some((metadata.dev(), metadata.ino()))
 }
 
+/// Holds the accepted file open in a way that blocks its replacement.
+///
+/// Comparing identity before and after a read cannot see a file that is
+/// swapped away and swapped back while the read is in progress. A handle that
+/// permits other readers but not deletion or rename removes that window
+/// outright for as long as it is held.
+///
+/// Best effort by design: if the handle cannot be taken — another program may
+/// hold the file open for writing — the read still proceeds under the
+/// before-and-after identity comparison, which is what protects it on
+/// platforms that have no equivalent. Refusing here would turn someone else's
+/// open handle into an MSCanvas failure.
+#[cfg(windows)]
+#[must_use]
+pub(super) fn lock_against_replacement(path: &Path) -> Option<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    /// Other readers are welcome; deletion and rename are not.
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(path)
+        .ok()
+}
+
+#[cfg(not(windows))]
+#[must_use]
+pub(super) fn lock_against_replacement(_path: &Path) -> Option<std::fs::File> {
+    // POSIX has no equivalent: a path can always be replaced out from under an
+    // open descriptor. The identity comparison is the guarantee there.
+    None
+}
+
 fn unresolvable() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "file_not_resolvable",
