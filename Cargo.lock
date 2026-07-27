@@ -1751,6 +1751,7 @@ dependencies = [
 name = "mscanvas-proteowizard"
 version = "0.1.0"
 dependencies = [
+ "quick-xml",
  "thiserror 2.0.19",
 ]
 
