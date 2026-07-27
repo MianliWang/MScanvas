@@ -695,6 +695,48 @@ fn backend_labels_are_redacted_and_bounded_like_any_other_backend_text() {
 }
 
 #[test]
+fn a_spectrum_that_measures_something_else_than_its_table_row_is_refused() {
+    let file = TestFile::new("facts-conflict");
+    // The table says row 0 peaks at m/z 445.12; the binary formatter says 512.
+    let conflicting_table = SPECTRUM_TABLE_OUTPUT.replace("	445.12	9000	", "	512.25	9000	");
+    let responses = vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(conflicting_table),
+        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+    ];
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the preview loads");
+
+    let error = service
+        .load_spectrum(&selected.handle, 0)
+        .expect_err("a row and its detail panel never report different measurements");
+    assert_eq!(error.kind, "spectrum_facts_conflict");
+}
+
+#[test]
+fn rounded_table_values_are_not_treated_as_a_contradiction() {
+    let file = TestFile::new("facts-rounding");
+    // The table rounds; the binary formatter does not. That is not a conflict.
+    let responses = vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        Response::File(selected_spectrum_output(0, &[(445.1237, 9000.4)])),
+    ];
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the preview loads");
+
+    assert!(service.load_spectrum(&selected.handle, 0).is_ok());
+}
+
+#[test]
 fn a_spectrum_that_contradicts_its_table_row_is_refused() {
     let file = TestFile::new("identity-conflict");
     // The table says index 0 is scan 4242; the binary formatter says scan 19.

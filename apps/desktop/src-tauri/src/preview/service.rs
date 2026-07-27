@@ -36,9 +36,9 @@ pub struct PreviewService {
     /// The generation each open preview described, so a later spectrum load
     /// can be refused rather than answered from a different one.
     generations: Mutex<HashMap<String, SourceGeneration>>,
-    /// The identities the opened spectrum table reported, so a later selected
+    /// What the opened spectrum table said about each row, so a later selected
     /// spectrum can be checked against the row the user actually clicked.
-    table_identities: Mutex<HashMap<String, Vec<SpectrumIdentity>>>,
+    table_rows: Mutex<HashMap<String, Vec<TableRowFacts>>>,
 }
 
 impl PreviewService {
@@ -48,7 +48,7 @@ impl PreviewService {
             provider,
             files: FileRegistry::new(),
             generations: Mutex::new(HashMap::new()),
-            table_identities: Mutex::new(HashMap::new()),
+            table_rows: Mutex::new(HashMap::new()),
         }
     }
 
@@ -65,9 +65,9 @@ impl PreviewService {
             .lock()
             .expect("the generation lock is never poisoned by user code")
             .clear();
-        self.table_identities
+        self.table_rows
             .lock()
-            .expect("the identity lock is never poisoned by user code")
+            .expect("the table lock is never poisoned by user code")
             .clear();
         Ok(self.files.register(accepted))
     }
@@ -109,7 +109,7 @@ impl PreviewService {
         let mut metadata = None;
         let mut run_summary = None;
         let mut spectrum_table = None;
-        let mut table_identities = Vec::new();
+        let mut table_rows = Vec::new();
         for result in results {
             match result.outcome {
                 PreviewOutcome::Value(value) => match *value {
@@ -120,10 +120,17 @@ impl PreviewService {
                         run_summary = Some(run_summary_dto(&result)?);
                     }
                     PreviewValue::SpectrumTable(result) => {
-                        table_identities = result
+                        table_rows = result
                             .rows()
                             .iter()
-                            .map(|row| row.identity().clone())
+                            .map(|row| TableRowFacts {
+                                identity: row.identity().clone(),
+                                ms_level: row.ms_level(),
+                                retention_time: row.retention_time().value(),
+                                base_peak_mz: row.base_peak_mz(),
+                                base_peak_intensity: row.base_peak_intensity(),
+                                total_ion_current: row.total_ion_current(),
+                            })
                             .collect();
                         spectrum_table = Some(spectrum_table_dto(&result, &redactor)?);
                     }
@@ -149,10 +156,10 @@ impl PreviewService {
             .lock()
             .expect("the generation lock is never poisoned by user code")
             .insert(handle.to_owned(), before);
-        self.table_identities
+        self.table_rows
             .lock()
-            .expect("the identity lock is never poisoned by user code")
-            .insert(handle.to_owned(), table_identities);
+            .expect("the table lock is never poisoned by user code")
+            .insert(handle.to_owned(), table_rows);
 
         Ok(PreviewDto {
             file: file_dto(handle, &file),
@@ -213,19 +220,26 @@ impl PreviewService {
                     // the user clicked and the panel beside it would describe
                     // different spectra, so the result is refused instead.
                     let expected = self
-                        .table_identities
+                        .table_rows
                         .lock()
-                        .expect("the identity lock is never poisoned by user code")
+                        .expect("the table lock is never poisoned by user code")
                         .get(handle)
-                        .and_then(|identities| identities.get(index as usize).cloned());
-                    if let Some(expected) = expected
-                        && expected.reconcile(spectrum.identity()).is_err()
-                    {
-                        return Err(PreviewErrorDto::new(
-                            "spectrum_identity_conflict",
-                            "The spectrum list and this spectrum disagree about which scan that                              row is, so MSCanvas did not show one beside the other.",
-                            false,
-                        ));
+                        .and_then(|rows| rows.get(index as usize).cloned());
+                    if let Some(expected) = expected {
+                        if expected.identity.reconcile(spectrum.identity()).is_err() {
+                            return Err(PreviewErrorDto::new(
+                                "spectrum_identity_conflict",
+                                "The spectrum list and this spectrum disagree about which scan                                  that row is, so MSCanvas did not show one beside the other.",
+                                false,
+                            ));
+                        }
+                        if expected.contradicts(&spectrum) {
+                            return Err(PreviewErrorDto::new(
+                                "spectrum_facts_conflict",
+                                "The spectrum list and this spectrum disagree about what that                                  row measures, so MSCanvas did not show one beside the other.",
+                                false,
+                            ));
+                        }
                     }
                     Ok(SelectedSpectrumOutcomeDto::Spectrum {
                         spectrum: Box::new(selected_spectrum_dto(&spectrum, &redactor)?),
@@ -286,6 +300,47 @@ impl SourceGeneration {
 pub(super) fn displayable_identifier(raw: &str, redactor: &Redactor) -> String {
     let redacted = redact_absolute_paths(&redactor.redact(raw));
     bounded_text(&redacted, MAX_IDENTIFIER_CHARS)
+}
+
+/// What the spectrum table said about one row.
+///
+/// Kept so a selected spectrum can be checked against the row that produced
+/// it: the two come from different formatters, and a highlighted row paired
+/// with a panel describing different measurements is worse than no panel.
+#[derive(Debug, Clone)]
+struct TableRowFacts {
+    identity: SpectrumIdentity,
+    ms_level: u32,
+    retention_time: f64,
+    base_peak_mz: f64,
+    base_peak_intensity: f64,
+    total_ion_current: f64,
+}
+
+impl TableRowFacts {
+    fn contradicts(&self, spectrum: &SelectedSpectrumResult) -> bool {
+        self.ms_level != spectrum.ms_level()
+            || differs(self.retention_time, spectrum.retention_time().value())
+            || differs(self.base_peak_mz, spectrum.base_peak_mz())
+            || differs(self.base_peak_intensity, spectrum.base_peak_intensity())
+            || differs(self.total_ion_current, spectrum.total_ion_current())
+    }
+}
+
+/// Whether two readings of the same quantity contradict each other.
+///
+/// The table prints rounded values and the binary formatter prints full
+/// precision, so exact equality would report a conflict on nearly every real
+/// file. The tolerance is deliberately generous — a percent, with an absolute
+/// floor for values near zero — because its job is to catch a different
+/// spectrum, not to police rounding. MS level is compared exactly instead,
+/// since an integer cannot be a rounding artefact.
+fn differs(left: f64, right: f64) -> bool {
+    const RELATIVE: f64 = 0.01;
+    const ABSOLUTE: f64 = 0.05;
+
+    let tolerance = ABSOLUTE.max(RELATIVE * left.abs().max(right.abs()));
+    (left - right).abs() > tolerance
 }
 
 fn source_changed_since_preview() -> PreviewErrorDto {

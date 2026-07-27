@@ -84,7 +84,12 @@ index. Every one of them is typed on both sides.
   spectrum whose recognized scan number contradicts the row the user clicked is
   refused rather than shown beside it. Unrecognized identifier forms stay
   opaque and do not conflict, so a legitimate file with an unfamiliar native ID
-  is not rejected.
+  is not rejected. The measurements the two readings share — MS level,
+  retention time, base peak and total ion current — are compared as well. MS
+  level exactly, since an integer cannot be a rounding artefact; the rest with
+  a deliberately generous tolerance, because the table prints rounded values
+  and exact equality would report a conflict on nearly every real file. The
+  comparison exists to catch a different spectrum, not to police rounding.
 - Every list the boundary transfers is bounded in count as well as in size —
   spectrum rows, metadata lines and precursors — and each reports the total it
   came from. The 8 MiB output ceiling alone permits a very large number of very
