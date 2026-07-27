@@ -9,9 +9,9 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use mscanvas_proteowizard::{
-    MetadataResult, MetadataSectionKind, MsLevelBucket, PreviewNoResult, PreviewOutcome,
-    PreviewValue, Redactor, RunSummaryResult, SelectedSpectrumResult, SpectrumIdentity,
-    SpectrumTableResult,
+    MetadataEntry, MetadataResult, MetadataSectionKind, MsLevelBucket, PreviewNoResult,
+    PreviewOutcome, PreviewValue, Redactor, RunSummaryResult, SelectedSpectrumResult,
+    SpectrumIdentity, SpectrumTableResult,
 };
 
 use super::backend::{
@@ -86,8 +86,9 @@ impl PreviewService {
         // acquisition that never existed.
         let before = SourceGeneration::of(&file);
         // Held for the whole batch, so the file cannot be swapped away and
-        // swapped back between the two comparisons around it.
-        let guard = lock_against_replacement(file.path());
+        // swapped back between the two comparisons around it. Required: losing
+        // the hold means losing the guarantee.
+        let guard = lock_against_replacement(file.path())?;
         let results = self.provider.run_batch(file.path(), &operations)?;
         drop(guard);
         if SourceGeneration::capture(file.path()) != before {
@@ -201,7 +202,7 @@ impl PreviewService {
 
         let redactor = reporting_redactor(file.path());
         let operation = selected_spectrum_operation(index);
-        let guard = lock_against_replacement(file.path());
+        let guard = lock_against_replacement(file.path())?;
         let result = self.provider.run(file.path(), &operation)?;
         drop(guard);
         if SourceGeneration::capture(file.path()) != SourceGeneration::of(&file) {
@@ -380,30 +381,60 @@ fn section_title(kind: MetadataSectionKind) -> &'static str {
 /// Metadata lines are backend output that can contain the opened path, so every
 /// line is redacted and bounded before it becomes visible.
 fn metadata_dto(result: &MetadataResult, redactor: &Redactor) -> MetadataDto {
-    MetadataDto {
-        sections: result
-            .sections()
+    // Anything the backend printed before its first section is metadata too.
+    // Counting it and dropping it would show an incomplete list with no sign
+    // that anything was missing.
+    let leading = metadata_section_dto(
+        "leading",
+        "Lines before the first section",
+        result
+            .leading_entries()
             .iter()
-            .map(|section| MetadataSectionDto {
-                id: section.kind().stable_id().to_owned(),
-                title: section_title(section.kind()).to_owned(),
-                entries: section
-                    .entries()
-                    .iter()
-                    .take(MAX_METADATA_ENTRIES)
-                    .map(|entry| {
-                        // Session redaction first, then any remaining
-                        // path-shaped token the document itself recorded.
-                        let redacted =
-                            redact_absolute_paths(&redactor.redact(entry.sensitive_text()));
-                        bounded_text(&redacted, MAX_METADATA_LINE_CHARS)
-                    })
-                    .collect(),
-                total_entry_count: section.entries().len(),
-                truncated: section.entries().len() > MAX_METADATA_ENTRIES,
+            .map(MetadataEntry::sensitive_text),
+        result.leading_entries().len(),
+        redactor,
+    );
+
+    let mut sections = Vec::with_capacity(result.sections().len() + 1);
+    if !leading.entries.is_empty() {
+        sections.push(leading);
+    }
+    for section in result.sections() {
+        sections.push(metadata_section_dto(
+            section.kind().stable_id(),
+            section_title(section.kind()),
+            section.entries().iter().map(MetadataEntry::sensitive_text),
+            section.entries().len(),
+            redactor,
+        ));
+    }
+    MetadataDto { sections }
+}
+
+/// Redacts and bounds one section's lines.
+///
+/// Session redaction first, then any remaining path-shaped token the document
+/// itself recorded, then a length bound; and the section reports how many lines
+/// it really had, so a prefix never reads as the whole.
+fn metadata_section_dto<'entries>(
+    id: &str,
+    title: &str,
+    entries: impl Iterator<Item = &'entries str>,
+    total_entry_count: usize,
+    redactor: &Redactor,
+) -> MetadataSectionDto {
+    MetadataSectionDto {
+        id: id.to_owned(),
+        title: title.to_owned(),
+        entries: entries
+            .take(MAX_METADATA_ENTRIES)
+            .map(|entry| {
+                let redacted = redact_absolute_paths(&redactor.redact(entry));
+                bounded_text(&redacted, MAX_METADATA_LINE_CHARS)
             })
             .collect(),
-        leading_entry_count: result.leading_entries().len(),
+        total_entry_count,
+        truncated: total_entry_count > MAX_METADATA_ENTRIES,
     }
 }
 

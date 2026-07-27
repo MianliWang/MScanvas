@@ -102,7 +102,6 @@ pub struct MetadataSectionDto {
 #[serde(rename_all = "camelCase")]
 pub struct MetadataDto {
     pub sections: Vec<MetadataSectionDto>,
-    pub leading_entry_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]

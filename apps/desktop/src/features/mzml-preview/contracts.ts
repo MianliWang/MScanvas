@@ -37,7 +37,6 @@ export interface MetadataSection {
 
 export interface Metadata {
   readonly sections: readonly MetadataSection[];
-  readonly leadingEntryCount: number;
 }
 
 export interface MsLevelCount {

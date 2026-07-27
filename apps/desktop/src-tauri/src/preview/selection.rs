@@ -195,32 +195,39 @@ pub(super) fn file_identity(path: &Path) -> Option<(u64, u64)> {
 /// permits other readers but not deletion or rename removes that window
 /// outright for as long as it is held.
 ///
-/// Best effort by design: if the handle cannot be taken — another program may
-/// hold the file open for writing — the read still proceeds under the
-/// before-and-after identity comparison, which is what protects it on
-/// platforms that have no equivalent. Refusing here would turn someone else's
-/// open handle into an MSCanvas failure.
+/// Required, not best effort. The only way this open fails is that another
+/// program already holds the file with an access this share mode will not
+/// permit — which means the file is in use by a writer, and that is exactly
+/// when a preview of it would be unreliable. Reading on anyway would drop the
+/// guarantee at the moment it matters most.
 #[cfg(windows)]
-#[must_use]
-pub(super) fn lock_against_replacement(path: &Path) -> Option<std::fs::File> {
+pub(super) fn lock_against_replacement(path: &Path) -> Result<std::fs::File, PreviewErrorDto> {
     use std::os::windows::fs::OpenOptionsExt;
 
-    /// Other readers are welcome; deletion and rename are not.
+    /// Other readers are welcome; writers, deletion and rename are not.
     const FILE_SHARE_READ: u32 = 0x0000_0001;
 
     std::fs::OpenOptions::new()
         .read(true)
         .share_mode(FILE_SHARE_READ)
         .open(path)
-        .ok()
+        .map_err(|_| {
+            PreviewErrorDto::new(
+                "source_in_use",
+                "Another program is using that file, so MSCanvas did not read it. Try again once                  that program has finished with it.",
+                true,
+            )
+        })
 }
 
+/// POSIX has no equivalent: a path can always be replaced out from under an
+/// open descriptor, so there is no handle to require. The identity comparison
+/// before and after the read is the guarantee there.
 #[cfg(not(windows))]
-#[must_use]
-pub(super) fn lock_against_replacement(_path: &Path) -> Option<std::fs::File> {
-    // POSIX has no equivalent: a path can always be replaced out from under an
-    // open descriptor. The identity comparison is the guarantee there.
-    None
+pub(super) const fn lock_against_replacement(
+    _path: &Path,
+) -> Result<Option<std::fs::File>, PreviewErrorDto> {
+    Ok(None)
 }
 
 fn unresolvable() -> PreviewErrorDto {

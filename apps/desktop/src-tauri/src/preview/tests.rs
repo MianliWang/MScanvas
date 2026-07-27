@@ -21,6 +21,8 @@ use super::dto::{
 use super::service::PreviewService;
 
 const METADATA_OUTPUT: &str = concat!(
+    // Printed before any section header, which the parser keeps separately.
+    "sourceFile: D:\\MSData\\private\\before-any-section.mzML\n",
     "fileDescription:\n",
     "  sourceFile: D:\\MSData\\private\\sample.mzML\n",
     "sampleList:\n",
@@ -330,7 +332,8 @@ fn opening_a_file_returns_typed_metadata_run_summary_and_rows() {
         .expect("preview loads");
 
     assert_eq!(preview.file.file_name, "sample.mzML");
-    assert_eq!(preview.metadata.sections.len(), 5);
+    // Five named sections plus the lines printed before the first of them.
+    assert_eq!(preview.metadata.sections.len(), 6);
     assert_eq!(preview.run_summary.total_spectrum_count, 3);
     assert_eq!(preview.run_summary.ms_levels.len(), 2);
     // The measured formatter emits no chromatogram count, which is not zero.
@@ -692,6 +695,36 @@ fn backend_labels_are_redacted_and_bounded_like_any_other_backend_text() {
     let long = backend_label(&"9".repeat(4_000));
     assert!(long.chars().count() <= 121, "{}", long.chars().count());
     assert_eq!(backend_label("3.0.26204"), "3.0.26204");
+}
+
+#[test]
+fn metadata_printed_before_the_first_section_is_shown_rather_than_counted() {
+    let file = TestFile::new("leading");
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let preview = service
+        .open_preview(&selected.handle)
+        .expect("the preview loads");
+
+    let leading = preview
+        .metadata
+        .sections
+        .first()
+        .expect("a section for the lines before the first one");
+    assert_eq!(leading.id, "leading");
+    assert_eq!(leading.total_entry_count, 1);
+    // Shown, and redacted like every other metadata line.
+    assert!(
+        !leading.entries[0].contains("MSData"),
+        "{}",
+        leading.entries[0]
+    );
+    assert!(
+        leading.entries[0].contains("<path>"),
+        "{}",
+        leading.entries[0]
+    );
 }
 
 #[test]

@@ -89,7 +89,6 @@ export function buildPreview(rowCount = 6, truncated = false): Preview {
           truncated: false,
         },
       ],
-      leadingEntryCount: 2,
     },
     runSummary: {
       totalSpectrumCount: truncated ? 250_000 : rowCount,
