@@ -69,16 +69,13 @@ export function SpectrumTable({
 
   const rowCount = table.rows.length;
   const visibleCount = Math.ceil(viewportHeight / ROW_HEIGHT) + OVERSCAN * 2;
-  let start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
-  let end = Math.min(rowCount, start + visibleCount);
-  // The focused row must stay in the DOM, otherwise the roving tab stop would
-  // disappear the moment it scrolled out of view.
-  if (rowCount > 0) {
-    const clampedFocus = Math.min(rowCount - 1, Math.max(0, focusRow));
-    start = Math.min(start, clampedFocus);
-    end = Math.max(end, clampedFocus + 1);
-  }
+  const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+  const end = Math.min(rowCount, start + visibleCount);
   const rendered = table.rows.slice(start, end);
+  // Exactly one rendered row carries the tab stop. Extending the window to
+  // reach a focused row that has been scrolled far away would mount every row
+  // in between, so the stop moves to the nearest rendered row instead.
+  const focusStop = Math.min(end - 1, Math.max(start, focusRow));
 
   const renderStartedAt = useRef(0);
   renderStartedAt.current =
@@ -225,11 +222,16 @@ export function SpectrumTable({
             >
               {rendered.map((row, offset) => (
                 <SpectrumTableRow
-                  isFocusStop={start + offset === Math.min(rowCount - 1, Math.max(0, focusRow))}
+                  isFocusStop={start + offset === focusStop}
                   isSelected={selectedIndex === row.index}
                   key={row.index}
+                  onActivate={(position) => {
+                    // Activating a row also makes it the tab stop, so keyboard
+                    // navigation resumes from what the user just chose.
+                    setFocusRow(position);
+                    onSelect(row.index);
+                  }}
                   onKeyDown={handleKeyDown}
-                  onSelect={onSelect}
                   position={start + offset}
                   row={row}
                 />
@@ -247,7 +249,7 @@ interface SpectrumTableRowProps {
   readonly position: number;
   readonly isSelected: boolean;
   readonly isFocusStop: boolean;
-  readonly onSelect: (index: number) => void;
+  readonly onActivate: (position: number) => void;
   readonly onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>, position: number) => void;
 }
 
@@ -256,7 +258,7 @@ function SpectrumTableRow({
   position,
   isSelected,
   isFocusStop,
-  onSelect,
+  onActivate,
   onKeyDown,
 }: SpectrumTableRowProps) {
   const cells = [
@@ -277,7 +279,7 @@ function SpectrumTableRow({
       className={`spectrum-table-row${isSelected ? " is-selected" : ""}`}
       data-row-position={position}
       onClick={() => {
-        onSelect(row.index);
+        onActivate(position);
       }}
       onKeyDown={(event) => {
         onKeyDown(event, position);
