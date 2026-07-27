@@ -216,6 +216,74 @@ INLINE_RUN_RE = re.compile(r"(?<!\\)[A-Za-z,.][ ]{2,}[A-Za-z]")
 # message that lost its continuation breaks after a word.
 SENTENCE_BREAK_RE = re.compile(r"[A-Za-z,.]\n")
 BACKTICK = chr(96)
+# Stands in for an excluded `${...}`. Removing an interpolation outright would
+# join the spaces on either side of it and manufacture the very run of spaces
+# this check looks for.
+INTERPOLATION = chr(1)
+
+
+def _quoted(text: str, start: int, quote: str) -> tuple[str, int]:
+    """Reads a simple quoted string. `start` is just past the opening quote."""
+    index = start
+    length = len(text)
+    while index < length:
+        if text[index] == "\\":
+            index += 2
+            continue
+        if text[index] == quote:
+            break
+        index += 1
+    return text[start:index], index + 1
+
+
+def _template(text: str, start: int) -> tuple[str, int, list[tuple[int, str]]]:
+    """Reads a template literal, skipping `${...}` but scanning inside it.
+
+    The interpolation holds code, not message text, so its contents are excluded
+    from what gets judged; a newline inside `${}` is formatting, not a broken
+    sentence. Literals nested in there are still returned, because a template
+    inside an interpolation is exactly where a broken message can hide.
+    """
+    parts: list[str] = []
+    nested: list[tuple[int, str]] = []
+    index = start
+    length = len(text)
+    while index < length:
+        character = text[index]
+        if character == "\\":
+            parts.append(text[index : index + 2])
+            index += 2
+            continue
+        if character == BACKTICK:
+            return "".join(parts), index + 1, nested
+        if character == "$" and index + 1 < length and text[index + 1] == "{":
+            depth = 1
+            index += 2
+            while index < length and depth:
+                inner = text[index]
+                if inner == "{":
+                    depth += 1
+                    index += 1
+                elif inner == "}":
+                    depth -= 1
+                    index += 1
+                    if depth == 0:
+                        parts.append(INTERPOLATION)
+                elif inner == BACKTICK:
+                    content, index, deeper = _template(text, index + 1)
+                    nested.append((index, content))
+                    nested.extend(deeper)
+                elif inner == '"':
+                    content, index = _quoted(text, index + 1, '"')
+                    nested.append((index, content))
+                elif inner == "'":
+                    _, index = _quoted(text, index + 1, "'")
+                else:
+                    index += 1
+            continue
+        parts.append(character)
+        index += 1
+    return "".join(parts), length, nested
 
 
 def _string_literals(text: str, rust: bool) -> list[tuple[int, str]]:
@@ -235,7 +303,6 @@ def _string_literals(text: str, rust: bool) -> list[tuple[int, str]]:
     literals TypeScript also has.
     """
     literals: list[tuple[int, str]] = []
-    delimiters = {'"'} if rust else {'"', BACKTICK}
     index = 0
     length = len(text)
     while index < length:
@@ -277,18 +344,17 @@ def _string_literals(text: str, rust: bool) -> list[tuple[int, str]]:
             index += 1
             continue
 
-        if character in delimiters:
+        if not rust and character == BACKTICK:
             start = index + 1
-            probe = start
-            while probe < length:
-                if text[probe] == "\\":
-                    probe += 2
-                    continue
-                if text[probe] == character:
-                    break
-                probe += 1
-            literals.append((start, text[start:probe]))
-            index = probe + 1
+            content, index, nested = _template(text, start)
+            literals.append((start, content))
+            literals.extend(nested)
+            continue
+
+        if character == '"':
+            start = index + 1
+            content, index = _quoted(text, start, '"')
+            literals.append((start, content))
             continue
 
         index += 1
