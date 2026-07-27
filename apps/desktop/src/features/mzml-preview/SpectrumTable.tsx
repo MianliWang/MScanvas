@@ -171,6 +171,9 @@ export function SpectrumTable({
               ? ` · showing the first ${formatCount(rowCount)} rows`
               : " · all rows loaded"}
             {" · Enter or Space opens the focused row"}
+            {/* Stated where the values are, not only in the detail panel. A
+                bare number invites being read as minutes. */}
+            {" · retention times have no unit because the file reports none"}
           </p>
         </div>
       </header>

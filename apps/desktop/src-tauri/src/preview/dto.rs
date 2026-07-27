@@ -284,6 +284,17 @@ pub fn redact_absolute_paths(value: &str) -> String {
     value.split_inclusive('\n').map(redact_line).collect()
 }
 
+/// Punctuation that separates a key from its value in backend text.
+///
+/// Distinct from whitespace: after one of these the value begins immediately,
+/// whatever its first character is.
+const fn is_strong_boundary(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'=' | b'"' | b'\'' | b'(' | b'[' | b'{' | b'<' | b',' | b';' | b'|' | b':'
+    )
+}
+
 /// Whether the slash at `index` opens the `//` of a URI authority.
 ///
 /// Only that exact shape is exempt, rather than every slash after a colon: an
@@ -353,22 +364,23 @@ fn find_path_start(line: &str) -> Option<usize> {
                 // Backend text brackets and separates values in several ways,
                 // including `key:value`, so a colon counts as a boundary too.
                 // Only the `://` of a URI authority is exempt, below.
-                byte.is_ascii_whitespace()
-                    || matches!(
-                        byte,
-                        b'=' | b'"' | b'\'' | b'(' | b'[' | b'{' | b'<' | b',' | b';' | b'|' | b':'
-                    )
+                byte.is_ascii_whitespace() || is_strong_boundary(*byte)
             })
             && !starts_uri_authority(bytes, index)
-            // Any non-space character opens a path segment. A whitelist of
-            // filename characters is the wrong shape for this test: `$HOME`,
-            // `@archive` and non-ASCII names are all ordinary segments, and a
-            // list of what is allowed will always be missing something.
-            // Requiring a non-space is what actually separates `/etc/hosts`
-            // from the `a / b` this test exists to leave alone.
-            && bytes
-                .get(index + 1)
-                .is_some_and(|byte| !byte.is_ascii_whitespace())
+            // What may follow depends on what came before. After a strong
+            // boundary the value starts here whatever its first character is,
+            // so a directory whose name begins with a space is still a path.
+            // After whitespace, another space means this is prose — the
+            // `a / b` this test exists to leave alone — and not a root.
+            //
+            // A whitelist of filename characters would be the wrong shape
+            // either way: `$HOME`, `@archive` and non-ASCII names are all
+            // ordinary segments, and a list of what is allowed will always be
+            // missing something.
+            && bytes.get(index + 1).is_some_and(|byte| {
+                !byte.is_ascii_whitespace()
+                    || preceding.is_some_and(|preceding| is_strong_boundary(*preceding))
+            })
         {
             return Some(index);
         }

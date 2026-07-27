@@ -573,6 +573,12 @@ fn absolute_path_shapes_are_removed_from_displayable_text() {
         redact_absolute_paths("source=/@archive/run.raw"),
         "source=<path>"
     );
+    // A directory name may begin with a space. After `=` the value starts
+    // wherever it starts; after a space the same shape would be prose.
+    assert_eq!(
+        redact_absolute_paths("source=/ private/run.raw"),
+        "source=<path>"
+    );
     // A POSIX path may begin with a non-ASCII directory name.
     assert_eq!(
         redact_absolute_paths("source=/用户/王/样本.raw"),

@@ -219,7 +219,7 @@ export function StickSpectrum({
       </svg>
       <figcaption className="spectrum-caption">
         {reduction.sticks.length < mz.length
-          ? `Drawn as ${reduction.sticks.length} sticks from ${mz.length} points, keeping the highest and the lowest value in each column.`
+          ? `Drawn as ${reduction.sticks.length} sticks from ${mz.length} points, keeping the highest and the lowest value in each column, so a peak spread over several points can appear as one stick.`
           : `Drawn as ${reduction.sticks.length} sticks, one per point.`}
         {" Horizontal axis: m/z. Vertical axis: intensity, scaled to the point furthest from zero."}
         {reduction.negativeCount > 0

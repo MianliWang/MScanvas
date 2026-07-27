@@ -447,8 +447,12 @@ describe("mzML preview workspace", () => {
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
     await screen.findByRole("img");
 
-    // Retention time carries no unit, so it says so instead of guessing one.
+    // Retention time carries no unit, so it says so instead of guessing one —
+    // in the detail panel and beside the table's own values.
     expect(screen.getAllByText(/\(unit not reported\)/).length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/retention times have no unit because the file reports none/),
+    ).toBeVisible();
     expect(screen.queryByText(/\d\.\d+ (min|s|seconds|minutes)/)).not.toBeInTheDocument();
     expect(screen.getByText("Peak representation").nextElementSibling).toHaveTextContent(
       "Not reported",
