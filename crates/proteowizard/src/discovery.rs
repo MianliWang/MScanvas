@@ -1115,9 +1115,29 @@ fn push_container_roots(roots: &mut Vec<PathBuf>, value: Option<OsString>) {
         return;
     };
     let container = PathBuf::from(value);
-    push_unique(roots, container.join("ProteoWizard"));
+    let stable = container.join("ProteoWizard");
 
-    let mut direct_versioned_roots = fs::read_dir(&container)
+    // Everything one container offers, gathered before any of it is ordered.
+    // The stable folder, whatever it holds, and the versioned siblings beside
+    // it are all installations of the same product, so they are ranked against
+    // each other by release rather than by which shape they happen to be. Doing
+    // this per container and not across all of them is deliberate: containers
+    // are visited machine-wide first, and a user-writable location must not be
+    // able to shadow an admin-installed one by naming a higher release.
+    let mut group = root_and_direct_children(&stable);
+    if group.is_empty() {
+        group.push(stable);
+    }
+    group.extend(versioned_siblings(&container));
+    group.sort_by_key(|root| cmp::Reverse(release_sort_key(root)));
+    for root in group {
+        push_unique(roots, root);
+    }
+}
+
+/// The `ProteoWizard*` directories sitting directly in a generic container.
+fn versioned_siblings(container: &Path) -> Vec<PathBuf> {
+    fs::read_dir(container)
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
@@ -1135,11 +1155,7 @@ fn push_container_roots(roots: &mut Vec<PathBuf>, value: Option<OsString>) {
                 .filter(|file_type| file_type.is_dir())
                 .map(|_| entry.path())
         })
-        .collect::<Vec<_>>();
-    direct_versioned_roots.sort_by_key(|root| cmp::Reverse(release_sort_key(root)));
-    for root in direct_versioned_roots {
-        push_unique(roots, root);
-    }
+        .collect()
 }
 
 /// Orders installation directories newest release first.
@@ -2166,6 +2182,52 @@ Analysis commands (used with -x/--exec):
         // and `vc145` before the release, so it is ordered by name, not by
         // digits pulled out of it.
         assert!(searched.contains(&portable));
+    }
+
+    #[test]
+    fn a_newer_sibling_is_searched_before_an_older_stable_folder() {
+        // The stable folder is not automatically the best installation. If it
+        // holds an older complete pair and a newer versioned sibling sits
+        // beside it, the newer one has to be reached first, because discovery
+        // takes one candidate and never falls back.
+        let tree = TempTree::new("stable-versus-sibling");
+        let stable = tree.root.join("ProteoWizard");
+        let newer = tree.root.join("ProteoWizard 3.0.26013.47b13cf 64-bit");
+        fs::create_dir_all(&stable).expect("stable folder should be created");
+        fs::create_dir_all(&newer).expect("newer sibling should be created");
+
+        let mut roots = Vec::new();
+        push_container_roots(&mut roots, Some(tree.root.as_os_str().to_owned()));
+
+        let newer_position = roots.iter().position(|root| root == &newer);
+        let stable_position = roots.iter().position(|root| root == &stable);
+        assert!(newer_position.is_some() && stable_position.is_some());
+        assert!(newer_position < stable_position, "{roots:?}");
+    }
+
+    #[test]
+    fn a_machine_wide_root_is_still_searched_before_a_newer_per_user_one() {
+        // Release order never crosses the trust boundary. %LOCALAPPDATA% is
+        // user-writable, so a higher release named there must not shadow an
+        // installation an administrator placed in Program Files.
+        let tree = TempTree::new("trust-over-release");
+        let program_files = tree.root.join("Program Files");
+        let local_app_data = tree.root.join("Local");
+        let machine_wide = program_files.join("ProteoWizard 3.0.9134");
+        let per_user = local_app_data.join("Apps").join("ProteoWizard 3.0.99999");
+        fs::create_dir_all(&machine_wide).expect("machine-wide install should be created");
+        fs::create_dir_all(&per_user).expect("per-user install should be created");
+
+        let roots = common_install_roots(
+            Some(program_files.as_os_str().to_owned()),
+            None,
+            Some(local_app_data.as_os_str().to_owned()),
+        );
+
+        let machine_position = roots.iter().position(|root| root == &machine_wide);
+        let per_user_position = roots.iter().position(|root| root == &per_user);
+        assert!(machine_position.is_some() && per_user_position.is_some());
+        assert!(machine_position < per_user_position, "{roots:?}");
     }
 
     #[test]
