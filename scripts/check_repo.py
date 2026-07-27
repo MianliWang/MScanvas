@@ -210,7 +210,18 @@ def validate_project_contract(errors: list[str]) -> None:
 
 
 CONTINUATION_RE = re.compile(r"\\\n[ \t]*")
-INLINE_RUN_RE = re.compile(r"(?<!\\)[A-Za-z,.][ ]{2,}[A-Za-z]")
+# The same defect reflowed onto one line. What precedes the run is not
+# restricted to a letter: a digit or a closing bracket ends a cut sentence as
+# surely as a word does. What follows it still must be a letter, and that is
+# what separates a broken message from deliberate column alignment — the
+# simulated help fixtures align with runs of spaces before a `:`, never before
+# a word. The lookbehind keeps out the `n` of an escaped newline, because
+# `\n  ` is indentation those same fixtures rely on.
+#
+# Residual, stated rather than implied: a sentence reflowed onto one line whose
+# next word is a number is not caught. Its two-line form is, by the newline
+# rule above, and that is the form the defect actually takes.
+INLINE_RUN_RE = re.compile(r"(?<!\\)[^\s][ ]{2,}[A-Za-z]")
 # Any newline left in an ordinary literal once continuations are applied. Rust
 # spells a deliberate newline `\n`, and content that is genuinely multi-line
 # lives in a raw string, which this does not read. So a newline surviving here
