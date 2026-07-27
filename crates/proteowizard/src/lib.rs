@@ -3,9 +3,12 @@
 
 mod capability;
 mod command;
+mod conversion;
 mod diagnostics;
 mod discovery;
 mod failure;
+mod fs_guard;
+mod mzml;
 mod preview;
 mod process;
 mod sha256;
@@ -17,8 +20,15 @@ pub use capability::{
     Sha256DigestParseError, TicCapability,
 };
 pub use command::{
-    BackendTool, CommandSpec, OpenFormat, PlanError, PreviewOperation,
+    BackendTool, CommandSpec, OpenFormat, PlanError, PreviewOperation, SourceIdentity,
     build_msaccess_command_with_capabilities, build_msconvert_command_with_capabilities,
+};
+pub use conversion::{
+    AdvisoryObservation, BinaryArrayMismatchKind, CompressionPolicy, ConversionIntegrityOutcome,
+    ConversionOutputInspection, ConversionOutputRejection, ConversionPolicy, ConversionSourceError,
+    ConversionSourceFacts, DocumentPart, DocumentSide, IntegrityProperty, ValidConversion,
+    capture_conversion_source, conversion_output_file_name, inspect_conversion_output,
+    verify_mzml_conversion,
 };
 pub use diagnostics::{Redactor, ReportableProcessOutput};
 pub use discovery::{
@@ -27,6 +37,16 @@ pub use discovery::{
 };
 pub use failure::{
     FailureCondition, FailureKind, NormalizedFailure, Retryability, classify_process_failure,
+};
+pub use fs_guard::{
+    OutputDirectoryEntry, OutputDirectorySnapshot, OutputEntryKind, RegularFileError,
+    is_reparse_point, snapshot_output_directory,
+};
+pub use mzml::{
+    ArrayKind, ArrayKindSet, CompressionMarker, CompressionSet, MzmlChromatogramRecord, MzmlFacts,
+    MzmlLimitKind, MzmlMalformedKind, MzmlRoot, MzmlScanError, MzmlScanLimits, MzmlSpectrumRecord,
+    NumericPrecisionMarker, NumericPrecisionSet, RepresentationMarker, RetentionTimeUnitMarker,
+    UnsafeXmlKind, inspect_file, inspect_reader,
 };
 pub use preview::{
     MetadataEntry, MetadataResult, MetadataSection, MetadataSectionKind, MsLevelBucket,

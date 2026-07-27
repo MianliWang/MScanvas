@@ -357,6 +357,17 @@ impl SpectrumIdentity {
         })
     }
 
+    /// Builds a canonical identity from one raw native identifier.
+    ///
+    /// Only exact recognized forms contribute a scan number; any other form is
+    /// preserved as opaque raw text instead of being coerced or rejected. No
+    /// independently reported scan number exists here, so this cannot conflict.
+    #[must_use]
+    pub fn from_native_identifier(index: u64, raw: impl Into<String>) -> Self {
+        Self::from_raw(index, SpectrumIdentifierKind::Native, raw.into(), None)
+            .expect("an identity without a reported scan number cannot conflict")
+    }
+
     fn from_raw(
         index: u64,
         kind: SpectrumIdentifierKind,
@@ -2047,6 +2058,7 @@ mod tests {
             termination: Termination::Exited,
             max_active_processes: Some(1),
             final_active_processes: Some(0),
+            peak_job_memory_bytes: None,
         }
     }
 

@@ -62,6 +62,11 @@ pub struct ProcessOutput {
     /// Active processes observed after the root process and its owned tree were
     /// fully reaped. A successful supervised Windows execution reports `Some(0)`.
     pub final_active_processes: Option<u32>,
+    /// Peak committed memory charged to the owned Windows Job Object across the
+    /// whole supervised process tree. `None` means the platform exposed no
+    /// equivalent bounded accounting or the query itself failed; this is an
+    /// advisory observation, never a supervision result.
+    pub peak_job_memory_bytes: Option<u64>,
 }
 
 impl ProcessOutput {
@@ -166,6 +171,7 @@ pub fn execute_cancellable(
             termination: Termination::Cancelled,
             max_active_processes: empty_count,
             final_active_processes: empty_count,
+            peak_job_memory_bytes: None,
         });
     }
 
@@ -246,6 +252,12 @@ fn execute_command_after_assignment(
         Err(error) => Err(error),
     };
 
+    // Read the owned Job's peak accounting while the Job still exists. A failed
+    // query only removes an advisory number; it never changes the outcome.
+    let peak_job_memory_bytes = owned_job
+        .as_ref()
+        .and_then(|job| ProcessJob::peak_memory_bytes(job).ok())
+        .flatten();
     let cleanup = if execution.is_err() {
         force_owned_cleanup(&mut child, &mut owned_job)
     } else {
@@ -272,6 +284,7 @@ fn execute_command_after_assignment(
         termination,
         max_active_processes,
         final_active_processes,
+        peak_job_memory_bytes,
     })
 }
 
@@ -755,6 +768,7 @@ use windows_job::OwnedProcessJob;
 trait ProcessJob {
     fn terminate(&self) -> io::Result<()>;
     fn active_process_count(&self) -> io::Result<Option<u32>>;
+    fn peak_memory_bytes(&self) -> io::Result<Option<u64>>;
 }
 
 impl ProcessJob for OwnedProcessJob {
@@ -764,6 +778,10 @@ impl ProcessJob for OwnedProcessJob {
 
     fn active_process_count(&self) -> io::Result<Option<u32>> {
         Self::active_process_count(self)
+    }
+
+    fn peak_memory_bytes(&self) -> io::Result<Option<u64>> {
+        Self::peak_memory_bytes(self)
     }
 }
 
@@ -784,6 +802,10 @@ impl OwnedProcessJob {
     }
 
     fn active_process_count(&self) -> io::Result<Option<u32>> {
+        Ok(None)
+    }
+
+    fn peak_memory_bytes(&self) -> io::Result<Option<u64>> {
         Ok(None)
     }
 }
@@ -960,6 +982,31 @@ mod windows_job {
             }
             Ok(Some(information.active_processes))
         }
+
+        /// Peak committed memory charged to every process this Job has owned.
+        ///
+        /// The Job is the only bounded accounting scope that covers descendants
+        /// the root process created, so a per-process working-set query would
+        /// under-report a backend that spawns children.
+        pub(super) fn peak_memory_bytes(&self) -> io::Result<Option<u64>> {
+            let mut information = ExtendedLimitInformation::default();
+            let information_length = structure_size::<ExtendedLimitInformation>()?;
+            // SAFETY: The handle is live and the mutable repr(C) buffer and byte
+            // size match JobObjectExtendedLimitInformation for this call.
+            let queried = unsafe {
+                query_information_job_object(
+                    self.handle.as_raw_handle(),
+                    JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS,
+                    ptr::from_mut(&mut information).cast(),
+                    information_length,
+                    ptr::null_mut(),
+                )
+            };
+            if queried == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(Some(information.peak_job_memory_used as u64))
+        }
     }
 
     fn structure_size<T>() -> io::Result<u32> {
@@ -1066,6 +1113,42 @@ mod tests {
             marker.is_file(),
             "the validated controlled child did not launch"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn peak_job_memory_is_reported_for_a_supervised_controlled_child() {
+        let test_directory = TestDirectory::new();
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        );
+
+        let output = execute(&spec).expect("the controlled child is supervised");
+
+        assert!(output.success());
+        // The owned Job is the only accounting scope that also covers
+        // descendants, so a real supervised run must expose a nonzero peak.
+        let peak = output
+            .peak_job_memory_bytes
+            .expect("Windows exposes owned-job peak memory accounting");
+        assert!(peak > 0, "peak job memory was {peak}");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn peak_job_memory_is_explicitly_unavailable_without_an_owned_job() {
+        let job = OwnedProcessJob;
+
+        assert_eq!(ProcessJob::peak_memory_bytes(&job).expect("query"), None);
     }
 
     #[cfg(windows)]
@@ -1931,6 +2014,10 @@ mod tests {
                 1 => Ok(Some(1)),
                 _ => Ok(Some(0)),
             }
+        }
+
+        fn peak_memory_bytes(&self) -> io::Result<Option<u64>> {
+            Ok(None)
         }
     }
 

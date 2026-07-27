@@ -131,6 +131,47 @@ incomplete: Slice 2 must add mzML conversion semantic integrity and representati
 open-format navigation/scale measurements. BPC, real-backend cancellation, alternate
 locale and vendor-format coverage remain separate gates.
 
+## M0C Slice 2A mzML conversion integrity on 2026-07-26
+
+mzML conversion integrity is now a typed library contract. The developer harness
+previously printed `conversion_output.xml_validation=deferred_to_evidence_orchestrator`,
+which meant the only structural check of a converted file lived in a temporary PowerShell
+evidence script rather than in MSCanvas.
+
+The ProteoWizard crate owns a bounded mzML inspector that refuses document type
+declarations and undeclared entities, resolves no external reference, never base64-decodes
+or decompresses a binary array, and fails closed on explicit document-byte, single-text-run,
+depth, element, attribute, name, value, spectrum and chromatogram limits. Array point
+counts come from the declarative `defaultArrayLength` attribute, so the decompression-bomb
+class is removed by construction. Controlled-vocabulary facts are recognized by accession
+and scoped to their immediate parent element, so an aggregate `fileContent` marker is never
+mistaken for per-spectrum representation.
+
+Conversions are compared against source facts captured before the backend ran and
+recaptured afterwards, covering filesystem identity, byte length, content hash and typed
+mzML facts. Required invariants cover spectrum and chromatogram counts, MS-level
+distribution, per-record binary-array counts, roles, declared point counts and payload
+presence, precursor counts, consecutive index sequences, recognized scan-number agreement,
+output internal consistency and the requested zlib compression policy. Numeric-encoding markers, the
+`indexedmzML` wrapper, byte length, newly emitted representation markers and retention-time
+unit markers stay descriptive, because the recorded evidence already shows a faithful run
+can produce them. Vocabulary-derived facts and native identity degrade to unverified rather
+than failing when an indirect parameter group or an opaque identifier form makes them
+unestablishable.
+
+The harness now consumes those contracts and no longer owns entry fingerprinting, output
+validation or a duplicated format-to-extension mapping. Supervised runs additionally report
+the peak committed memory charged to the owned Windows Job Object as an advisory
+observation for the later scale measurements.
+
+This slice did not execute ProteoWizard, change UI or Tauri behavior, enable mzXML or BPC,
+implement a cache, or add a stable CLI contract. It added one explicitly approved
+production dependency, `quick-xml` `=0.41.0` with default features disabled, scoped to the
+bounded mzML scanner; that crate and its only required transitive dependency were already
+resolved in `Cargo.lock` through `tauri`, so the dependency graph gained no crate. No
+A/B/C/D rating is upgraded. M0C Slice 2B still owes representative open-format navigation
+and scale measurements.
+
 ## Windows validation completed on 2026-07-23
 
 | Command | Result |
@@ -164,11 +205,11 @@ claim a rendered Windows runtime smoke test.
 
 - Launch and interact with `pnpm tauri dev` on Windows; a build alone is not a
   rendered runtime check.
-- Complete the remaining ProteoWizard provider gates: M0C Slice 2 conversion semantic
-  integrity, representative/repeated-navigation and large-array measurements, BPC
-  strategy, real cancellation, alternate-locale parsing and separately authorized vendor
-  coverage. The typed preview-result/canonical-identity boundary and the bounded
-  open-format disposable-VM matrix are complete.
+- Complete the remaining ProteoWizard provider gates: M0C Slice 2B representative and
+  repeated-navigation and large-array measurements, BPC strategy, real cancellation,
+  alternate-locale parsing and separately authorized vendor coverage. The typed
+  preview-result/canonical-identity boundary, the mzML conversion-integrity contract and
+  the bounded open-format disposable-VM matrix are complete.
 - Enable branch protection after the first green remote CI run.
 
 ## First verified-bootstrap checklist
@@ -182,7 +223,7 @@ claim a rendered Windows runtime smoke test.
 - [ ] Run `pnpm tauri dev` on Windows.
 - [x] Confirm Tauri capability configuration remains minimal.
 - [ ] Complete the M0 ProteoWizard provider decision; portable/open-format evidence is
-  complete and the M0C Slice 1 preview contracts are implemented, while conversion
-  integrity, representative scale/navigation, cancellation, locale, BPC and vendor gates
-  remain.
+  complete and the M0C Slice 1 preview contracts and Slice 2A conversion-integrity
+  contract are implemented, while representative scale/navigation, cancellation, locale,
+  BPC and vendor gates remain.
 - [ ] Enable branch protection after the first green CI run.
