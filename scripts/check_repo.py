@@ -220,6 +220,10 @@ BACKTICK = chr(96)
 # join the spaces on either side of it and manufacture the very run of spaces
 # this check looks for.
 INTERPOLATION = chr(1)
+# After one of these, or at the start of an interpolation, a slash opens a
+# pattern rather than dividing. A pattern matters because it can hold a brace,
+# and a brace counted as structure closes the interpolation early.
+REGEX_MAY_FOLLOW = "([{,;:?=!&|+-*%~^<>"
 
 
 def _quoted(text: str, start: int, quote: str) -> tuple[str, int]:
@@ -236,13 +240,39 @@ def _quoted(text: str, start: int, quote: str) -> tuple[str, int]:
     return text[start:index], index + 1
 
 
-def _template(text: str, start: int) -> tuple[str, int, list[tuple[int, str]]]:
+def _skip_regex(text: str, start: int) -> int | None:
+    """Reads a regex literal opened at `start`. None if it does not close."""
+    index = start + 1
+    length = len(text)
+    in_class = False
+    while index < length:
+        character = text[index]
+        if character == "\\":
+            index += 2
+            continue
+        if character == "\n":
+            return None
+        if character == "[":
+            in_class = True
+        elif character == "]":
+            in_class = False
+        elif character == "/" and not in_class:
+            return index + 1
+        index += 1
+    return None
+
+
+def _template(text: str, start: int):
     """Reads a template literal, skipping `${...}` but scanning inside it.
 
     The interpolation holds code, not message text, so its contents are excluded
     from what gets judged; a newline inside `${}` is formatting, not a broken
     sentence. Literals nested in there are still returned, because a template
     inside an interpolation is exactly where a broken message can hide.
+
+    Returns None when the literal does not close, or when the scanner meets
+    something it cannot read confidently. A scanner that has lost its place
+    reports nothing rather than reporting confidently about the wrong text.
     """
     parts: list[str] = []
     nested: list[tuple[int, str]] = []
@@ -259,31 +289,60 @@ def _template(text: str, start: int) -> tuple[str, int, list[tuple[int, str]]]:
         if character == "$" and index + 1 < length and text[index + 1] == "{":
             depth = 1
             index += 2
-            while index < length and depth:
+            previous = ""
+            closed = False
+            while index < length:
                 inner = text[index]
-                if inner == "{":
-                    depth += 1
-                    index += 1
-                elif inner == "}":
-                    depth -= 1
-                    index += 1
-                    if depth == 0:
-                        parts.append(INTERPOLATION)
-                elif inner == BACKTICK:
-                    content, index, deeper = _template(text, index + 1)
+                if inner == "/" and index + 1 < length and text[index + 1] == "/":
+                    end = text.find("\n", index)
+                    index = length if end == -1 else end
+                    continue
+                if inner == "/" and index + 1 < length and text[index + 1] == "*":
+                    end = text.find("*/", index + 2)
+                    if end == -1:
+                        return None
+                    index = end + 2
+                    continue
+                if inner == "/" and (previous == "" or previous in REGEX_MAY_FOLLOW):
+                    end = _skip_regex(text, index)
+                    if end is None:
+                        return None
+                    index = end
+                    previous = ")"
+                    continue
+                if inner == BACKTICK:
+                    scanned = _template(text, index + 1)
+                    if scanned is None:
+                        return None
+                    content, index, deeper = scanned
                     nested.append((index, content))
                     nested.extend(deeper)
-                elif inner == '"':
-                    content, index = _quoted(text, index + 1, '"')
-                    nested.append((index, content))
-                elif inner == "'":
-                    _, index = _quoted(text, index + 1, "'")
-                else:
-                    index += 1
+                    previous = ")"
+                    continue
+                if inner in {'"', "'"}:
+                    content, index = _quoted(text, index + 1, inner)
+                    if inner == '"':
+                        nested.append((index, content))
+                    previous = ")"
+                    continue
+                if inner == "{":
+                    depth += 1
+                elif inner == "}":
+                    depth -= 1
+                    if depth == 0:
+                        parts.append(INTERPOLATION)
+                        index += 1
+                        closed = True
+                        break
+                if not inner.isspace():
+                    previous = inner
+                index += 1
+            if not closed:
+                return None
             continue
         parts.append(character)
         index += 1
-    return "".join(parts), length, nested
+    return None
 
 
 def _string_literals(text: str, rust: bool) -> list[tuple[int, str]]:
@@ -346,7 +405,12 @@ def _string_literals(text: str, rust: bool) -> list[tuple[int, str]]:
 
         if not rust and character == BACKTICK:
             start = index + 1
-            content, index, nested = _template(text, start)
+            scanned = _template(text, start)
+            if scanned is None:
+                # Lost the thread. Report nothing about this file rather than
+                # report confidently about text the scanner has misread.
+                return []
+            content, index, nested = scanned
             literals.append((start, content))
             literals.extend(nested)
             continue
