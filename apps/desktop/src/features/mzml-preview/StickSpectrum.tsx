@@ -11,7 +11,12 @@ const PLOT_HEIGHT = 260;
 const PLOT_PADDING_LEFT = 8;
 const PLOT_PADDING_RIGHT = 8;
 const PLOT_PADDING_TOP = 10;
-const BASELINE_Y = PLOT_HEIGHT - 22;
+/**
+ * The bottom of the drawing area. The gutter below it is deep enough for the
+ * lowest-intensity label to sit clear of the m/z labels, which a spectrum
+ * carrying negative intensity shows at the same time.
+ */
+const BASELINE_Y = PLOT_HEIGHT - 34;
 
 /**
  * The columns the plot reduces to. A spectrum can carry far more points than a

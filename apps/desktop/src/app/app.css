@@ -314,8 +314,9 @@ button:disabled {
   /* Every column can give ground, so a narrow window shrinks the table
      instead of overflowing a panel that clips. */
   grid-template-columns:
-    minmax(62px, 0.7fr) minmax(96px, 1.6fr) minmax(52px, 0.6fr) minmax(74px, 0.9fr)
-    minmax(84px, 1fr) minmax(92px, 1.1fr) minmax(92px, 1.1fr) minmax(80px, 0.9fr);
+    minmax(58px, 0.6fr) minmax(58px, 0.6fr) minmax(96px, 1.5fr) minmax(52px, 0.6fr)
+    minmax(74px, 0.9fr) minmax(84px, 1fr) minmax(92px, 1.1fr) minmax(92px, 1.1fr)
+    minmax(80px, 0.9fr);
   height: 30px;
   padding: 0 10px;
   font-size: 12px;
@@ -338,7 +339,7 @@ button:disabled {
 }
 
 .spectrum-table-cell:first-child,
-.spectrum-table-cell:nth-child(2) {
+.spectrum-table-cell:nth-child(3) {
   text-align: left;
 }
 

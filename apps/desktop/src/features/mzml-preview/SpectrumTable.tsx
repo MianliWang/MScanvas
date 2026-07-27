@@ -20,6 +20,9 @@ const FALLBACK_VIEWPORT_HEIGHT = 600;
 
 const COLUMNS = [
   "Index",
+  // Its own column, because the native identifier carries the scan number at
+  // the end and a truncated identifier is what every row would look like.
+  "Scan",
   "Identifier",
   "MS level",
   "Retention time",
@@ -266,6 +269,7 @@ function SpectrumTableRow({
 }: SpectrumTableRowProps) {
   const cells = [
     formatCount(row.index),
+    row.scanNumber === null ? "—" : formatCount(row.scanNumber),
     row.identifier,
     `MS${row.msLevel}`,
     formatRetentionTimeValue(row.retentionTime),

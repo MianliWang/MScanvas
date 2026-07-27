@@ -94,6 +94,9 @@ describe("mzML preview workspace", () => {
     expect(grid).toHaveAttribute("aria-rowcount", "7");
     expect(within(grid).getAllByRole("row")).toHaveLength(7);
     expect(within(grid).getByText("controllerType=0 controllerNumber=1 scan=1")).toBeVisible();
+    // The scan number has a column of its own: the identifier that carries it
+    // is truncated from the right, where the scan number is.
+    expect(within(grid).getByRole("columnheader", { name: "Scan" })).toBeVisible();
   });
 
   it("records both timings only once what they name is in the document", async () => {
