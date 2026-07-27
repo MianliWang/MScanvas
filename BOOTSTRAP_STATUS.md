@@ -222,6 +222,55 @@ ADR 0003 moves from proposed to accepted for M1–M2 preview navigation with nam
 MS1 and chromatogram behavior, TIC and BPC from representative data, vendor RAW, mzXML,
 alternate locales, real cancellation and any preview cache remain outside that acceptance.
 
+## M1-M2 first mzML preview workspace on 2026-07-27
+
+The desktop application now has one real path through the product instead of a
+mock shell. A local `.mzML` file can be opened, its metadata, run summary and
+spectrum list read, one spectrum selected, and that spectrum drawn. Everything
+displayed comes from the file through the merged M0C preview contracts.
+
+The webview may ask exactly four things and parses no backend output. Rust owns
+the absolute path, invokes the native picker through `comdlg32` rather than a
+dialog plugin so the main-window capability set stays empty, and decides file
+acceptance including symlink and reparse-point rejection. The frontend receives
+an opaque session handle and a display name.
+
+The transfer objects preserve what the backend actually reported. Retention
+times carry an explicit unknown unit, an absent chromatogram count stays absent
+rather than becoming zero, selected-spectrum representation and array units stay
+unreported, and a spectrum with no peaks is a spectrum rather than a missing
+result. Error detail is a stable structural identifier, not backend prose, and
+metadata lines are redacted both for the opened path and for any remaining
+absolute-path shape the document itself recorded.
+
+The mock acquisition list, mock conversion inspector, mock run queue and mock
+total ion chromatogram were deleted rather than migrated. The spectrum plot is
+repository-owned SVG drawn as sticks, with no charting library and no new
+dependency; the only lockfile change in this slice is two intra-workspace
+dependency edges.
+
+Validation passed with:
+
+| Command | Result |
+| --- | --- |
+| `cargo fmt --all --check` | Passed |
+| `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | Passed |
+| `cargo test --locked --workspace --all-targets` | Passed; 19 desktop preview tests among them |
+| `python -B scripts/check_repo.py` | Passed |
+| `pnpm install --frozen-lockfile --strict-peer-dependencies` | Passed |
+| `pnpm lint` | Passed |
+| `pnpm typecheck` | Passed |
+| `pnpm test` | Passed: 19 frontend tests |
+| `pnpm build` | Passed |
+| `git diff --check` | Passed |
+
+Timings recorded in the workspace are descriptive observations on the running
+machine. They are not budgets, no threshold derives from them, and no cache was
+added to improve them. Total ion chromatogram, base peak chromatogram,
+chromatogram UI, mzXML, vendor acquisitions, the conversion workflow, queueing,
+retry, progress, real cancellation and any preview cache remain outside this
+slice. See [ADR 0005](docs/architecture/adr/0005-mzml-preview-boundary.md).
+
 ## Windows validation completed on 2026-07-23
 
 | Command | Result |
@@ -241,6 +290,22 @@ alternate locales, real cancellation and any preview cache remain outside that a
 The desktop executable was built but not launched. This record therefore does not
 claim a rendered Windows runtime smoke test.
 
+### Rendered Windows runtime check, 2026-07-27
+
+`pnpm tauri dev` was launched and the window was inspected on Windows 11 at
+2100×1300 physical pixels on a 3840×2160 display at 150% scaling, during the
+first mzML preview slice. The shell, the backend-availability banner and the
+no-file state render correctly and the window carries no document scrollbars.
+Three layout defects were found and fixed by that check; see the ADR 0005
+slice for what they were.
+
+The check is partial and this record does not claim more than it covers. The
+host has no ProteoWizard installation and no local mzML file, and downloading
+or committing a fixture payload was not authorized for that slice, so the
+loaded-preview, selected-spectrum, empty-spectrum and file-picker states were
+not exercised against a real backend. They are covered by automated rendered
+tests only.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.
@@ -253,8 +318,10 @@ claim a rendered Windows runtime smoke test.
 
 ## Intentionally pending
 
-- Launch and interact with `pnpm tauri dev` on Windows; a build alone is not a
-  rendered runtime check.
+- Exercise the loaded-preview, selected-spectrum and file-picker states of
+  `pnpm tauri dev` against a real ProteoWizard installation on Windows. The
+  shell and no-backend states were checked on 2026-07-27; the states that need
+  an installed backend and a local mzML file were not.
 - Complete the remaining ProteoWizard provider gates: MS1 and chromatogram behavior, TIC
   and BPC from representative data, real cancellation, alternate-locale parsing and
   separately authorized vendor coverage. The typed preview-result/canonical-identity
@@ -270,7 +337,7 @@ claim a rendered Windows runtime smoke test.
 - [x] Run `pnpm install` and commit `pnpm-lock.yaml`.
 - [x] Run `cargo generate-lockfile` and commit `Cargo.lock`.
 - [x] Run all frontend and Rust checks.
-- [ ] Run `pnpm tauri dev` on Windows.
+- [x] Run `pnpm tauri dev` on Windows; the states needing an installed backend remain unchecked.
 - [x] Confirm Tauri capability configuration remains minimal.
 - [x] Complete the M0 ProteoWizard provider decision for preview navigation; ADR 0003 is
   accepted for M1–M2 with named limits. MS1/chromatogram behavior, TIC and BPC from

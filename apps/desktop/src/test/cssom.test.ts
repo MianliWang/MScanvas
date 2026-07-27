@@ -31,11 +31,11 @@ afterEach(() => {
 });
 
 describe("jsdom CSSOM compatibility", () => {
-  it("observes the class-driven workspace-row style used by MSCanvas", () => {
+  it("observes the class-driven spectrum-table-row style used by MSCanvas", () => {
     mountStyles(appStyles);
     const row = document.createElement("div");
-    row.className = "workspace-row";
-    row.textContent = "QC_pool_01.raw";
+    row.className = "spectrum-table-row";
+    row.textContent = "controllerType=0 controllerNumber=1 scan=1";
     document.body.append(row);
 
     expect(getComputedStyle(row).display).toBe("grid");

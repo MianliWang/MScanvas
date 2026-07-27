@@ -15,5 +15,9 @@ tauri-build.workspace = true
 
 [dependencies]
 mscanvas-core = { path = "../../../crates/core" }
+mscanvas-proteowizard = { path = "../../../crates/proteowizard" }
 serde.workspace = true
 tauri.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
