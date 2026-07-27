@@ -564,6 +564,15 @@ fn absolute_path_shapes_are_removed_from_displayable_text() {
         redact_absolute_paths(r"source=[\\server\share\run.raw]"),
         "source=[<path>"
     );
+    // A path segment is not restricted to filename-looking characters.
+    assert_eq!(
+        redact_absolute_paths("source=/$HOME/private.raw"),
+        "source=<path>"
+    );
+    assert_eq!(
+        redact_absolute_paths("source=/@archive/run.raw"),
+        "source=<path>"
+    );
     // A POSIX path may begin with a non-ASCII directory name.
     assert_eq!(
         redact_absolute_paths("source=/用户/王/样本.raw"),

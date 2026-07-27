@@ -97,6 +97,8 @@ export function buildPreview(rowCount = 6, truncated = false): Preview {
         { msLevel: 1, spectrumCount: Math.ceil(rowCount / 4) },
         { msLevel: 2, spectrumCount: rowCount - Math.ceil(rowCount / 4) },
       ],
+      totalMsLevelCount: 2,
+      msLevelsTruncated: false,
       chromatogramCount: null,
       retentionTimeRange: {
         minimum: { value: 0, unitKnown: false },

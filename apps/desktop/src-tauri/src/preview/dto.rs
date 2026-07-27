@@ -28,6 +28,12 @@ pub const MAX_METADATA_LINE_CHARS: usize = 400;
 /// inform anyone.
 pub const MAX_METADATA_ENTRIES: usize = 1_000;
 
+/// The most MS-level buckets one run summary may transfer.
+///
+/// Real acquisitions report a handful. The ceiling exists because a malformed
+/// summary could name a great many inside the same 8 MiB output bound.
+pub const MAX_MS_LEVELS: usize = 64;
+
 /// The most precursor records one selected spectrum may transfer.
 ///
 /// A precursor list is a handful of entries in every measured file; the ceiling
@@ -124,6 +130,9 @@ pub struct RetentionTimeRangeDto {
 pub struct RunSummaryDto {
     pub total_spectrum_count: u64,
     pub ms_levels: Vec<MsLevelCountDto>,
+    /// How many buckets the summary really reported.
+    pub total_ms_level_count: usize,
+    pub ms_levels_truncated: bool,
     /// `None` because the measured run-summary format emits no chromatogram
     /// count. It is not a count of zero.
     pub chromatogram_count: Option<u64>,
@@ -345,13 +354,15 @@ fn find_path_start(line: &str) -> Option<usize> {
                     )
             })
             && !starts_uri_authority(bytes, index)
-            && bytes.get(index + 1).is_some_and(|byte| {
-                // A non-ASCII byte starts a segment too: `/用户/王/样本.raw`
-                // is an ordinary POSIX path and just as revealing.
-                !byte.is_ascii()
-                    || byte.is_ascii_alphanumeric()
-                    || matches!(byte, b'\\' | b'/' | b'_' | b'.' | b'-')
-            })
+            // Any non-space character opens a path segment. A whitelist of
+            // filename characters is the wrong shape for this test: `$HOME`,
+            // `@archive` and non-ASCII names are all ordinary segments, and a
+            // list of what is allowed will always be missing something.
+            // Requiring a non-space is what actually separates `/etc/hosts`
+            // from the `a / b` this test exists to leave alone.
+            && bytes
+                .get(index + 1)
+                .is_some_and(|byte| !byte.is_ascii_whitespace())
         {
             return Some(index);
         }

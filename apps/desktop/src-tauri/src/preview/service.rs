@@ -19,9 +19,9 @@ use super::backend::{
 };
 use super::dto::{
     BackendAvailabilityDto, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES, MAX_METADATA_LINE_CHARS,
-    MAX_PRECURSORS, MAX_SPECTRUM_POINTS, MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto,
-    MsLevelCountDto, PrecursorDto, PreviewDto, PreviewErrorDto, RetentionTimeDto,
-    RetentionTimeRangeDto, RunSummaryDto, SelectedFileDto, SelectedSpectrumDto,
+    MAX_MS_LEVELS, MAX_PRECURSORS, MAX_SPECTRUM_POINTS, MAX_SPECTRUM_TABLE_ROWS, MetadataDto,
+    MetadataSectionDto, MsLevelCountDto, PrecursorDto, PreviewDto, PreviewErrorDto,
+    RetentionTimeDto, RetentionTimeRangeDto, RunSummaryDto, SelectedFileDto, SelectedSpectrumDto,
     SelectedSpectrumOutcomeDto, SpectrumRowDto, SpectrumTableDto, bounded_text,
     redact_absolute_paths, require_finite, require_finite_option,
 };
@@ -365,11 +365,13 @@ fn run_summary_dto(result: &RunSummaryResult) -> Result<RunSummaryDto, PreviewEr
         })
         .transpose()?;
 
+    let total_ms_level_count = result.counts_by_ms_level().len();
     Ok(RunSummaryDto {
         total_spectrum_count: result.total_spectrum_count(),
         ms_levels: result
             .counts_by_ms_level()
             .iter()
+            .take(MAX_MS_LEVELS)
             .map(|count| MsLevelCountDto {
                 ms_level: match count.bucket() {
                     MsLevelBucket::Level(level) => Some(level),
@@ -378,6 +380,8 @@ fn run_summary_dto(result: &RunSummaryResult) -> Result<RunSummaryDto, PreviewEr
                 spectrum_count: count.spectrum_count(),
             })
             .collect(),
+        total_ms_level_count,
+        ms_levels_truncated: total_ms_level_count > MAX_MS_LEVELS,
         chromatogram_count: result.chromatogram_count(),
         retention_time_range,
     })

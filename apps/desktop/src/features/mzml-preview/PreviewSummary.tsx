@@ -71,6 +71,12 @@ export function PreviewSummary({
 
       <div className="inspector-section">
         <h3>MS levels</h3>
+        {runSummary.msLevelsTruncated ? (
+          <p className="notice notice-warning" role="note">
+            Showing the first {formatCount(runSummary.msLevels.length)} of{" "}
+            {formatCount(runSummary.totalMsLevelCount)} MS levels the summary reported.
+          </p>
+        ) : null}
         {runSummary.msLevels.length === 0 ? (
           <p className="quiet-text">No MS level breakdown was reported.</p>
         ) : (

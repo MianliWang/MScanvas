@@ -63,6 +63,9 @@ export interface RetentionTimeRange {
 export interface RunSummary {
   readonly totalSpectrumCount: number;
   readonly msLevels: readonly MsLevelCount[];
+  /** How many buckets the summary really reported. */
+  readonly totalMsLevelCount: number;
+  readonly msLevelsTruncated: boolean;
   /** `null` because no chromatogram count is emitted. It is not zero. */
   readonly chromatogramCount: number | null;
   readonly retentionTimeRange: RetentionTimeRange | null;
