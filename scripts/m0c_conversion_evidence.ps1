@@ -2379,6 +2379,22 @@ function Invoke-JsonApi {
     catch { Stop-Evidence "${FailurePrefix}_json_invalid" }
 }
 
+# Extracts location URLs from PRIDE's controlled-vocabulary location records.
+# Each entry is an object carrying its URL in `value`; a plain string is also
+# accepted so a future shape change degrades to a comparison rather than a crash.
+function Get-PublicFileLocationValues {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Locations)
+    $values = @()
+    foreach ($location in $Locations) {
+        if ($location -is [string]) { $values += [string]$location; continue }
+        $value = $location.PSObject.Properties['value']
+        if ($null -ne $value -and -not [string]::IsNullOrWhiteSpace([string]$value.Value)) {
+            $values += [string]$value.Value
+        }
+    }
+    return @($values)
+}
+
 # Re-queries the live PRIDE record and refuses to proceed unless the accession,
 # public license and advertised size still match the approved gate. The file
 # name itself is compared but never recorded.
@@ -2401,7 +2417,8 @@ function Assert-RepresentativeProvenance {
 
     $approvedUri = [uri]$RepresentativeUrl
     Assert-ApprovedFixtureHost -Uri $approvedUri -FailureCode "representative_host_not_approved"
-    $locations = @($entry.publicFileLocations | ForEach-Object { [string]$_ })
+    # publicFileLocations entries are CvParam objects whose URL lives in `value`.
+    $locations = @(Get-PublicFileLocationValues $entry.publicFileLocations)
     $ftpMatch = @($locations | Where-Object {
         $_ -cmatch '^ftp://ftp\.pride\.ebi\.ac\.uk(/.+)$' -and
         $Matches[1] -ceq $approvedUri.AbsolutePath
@@ -2757,6 +2774,23 @@ msLevel <mslevels>
         Stop-Evidence "sampled_index_selftest_failed"
     }
 
+    # PRIDE returns controlled-vocabulary location objects, not plain strings.
+    $cvLocations = @(
+        [pscustomobject]@{ '@type' = 'CvParam'; name = 'Aspera Protocol'; value = 'prd_ascp@fasp.ebi.ac.uk:pride/x' },
+        [pscustomobject]@{ '@type' = 'CvParam'; name = 'FTP Protocol'; value = 'ftp://ftp.pride.ebi.ac.uk/pride/x' }
+    )
+    $locationValues = @(Get-PublicFileLocationValues $cvLocations)
+    if ($locationValues.Count -ne 2 -or
+        $locationValues -notcontains 'ftp://ftp.pride.ebi.ac.uk/pride/x') {
+        Stop-Evidence "location_shape_selftest_failed"
+    }
+    if (@(Get-PublicFileLocationValues @('ftp://ftp.pride.ebi.ac.uk/pride/x')).Count -ne 1) {
+        Stop-Evidence "location_shape_selftest_failed"
+    }
+    if (@(Get-PublicFileLocationValues @()).Count -ne 0) {
+        Stop-Evidence "location_shape_selftest_failed"
+    }
+
     # The representative file name must never survive sanitization.
     $sanitizerProbe = @("mscanvas-sanitizer-selftest-sentinel")
     Assert-SelfTestRejects {
@@ -2781,6 +2815,7 @@ msLevel <mslevels>
         latencyStatistics = [ordered]@{ passed = $true }
         sampledIndices = [ordered]@{ passed = $true }
         representativeNameRedaction = [ordered]@{ passed = $true }
+        publicLocationShapes = [ordered]@{ passed = $true; cvParamAccepted = $true; stringAccepted = $true }
         archiveMembers = Invoke-ArchiveMemberSelfTest -TempRoot $TempRoot
         firewallRuleProjection = Invoke-FirewallRuleProjectionSelfTest
         cleanupState = Invoke-CleanupStateSelfTest -TempRoot $TempRoot
@@ -3599,7 +3634,8 @@ function Invoke-IsolationCleanup {
         cleanupComplete = $false
         failureCode = "cleanup_in_progress"
     }
-    $sensitiveValues = @($env:COMPUTERNAME, $env:USERNAME, [string]$state.username)
+    $sensitiveValues = @(@($env:COMPUTERNAME, $env:USERNAME, [string]$state.username) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     $writeFailure = {
         param([string]$Code)
         $attestation.failureCode = $Code
@@ -4369,6 +4405,9 @@ if (-not [string]::IsNullOrWhiteSpace($StatePath) -and [System.IO.File]::Exists(
     }
     catch { $runExitCode = 1 }
 }
+# A stage that creates no temporary account leaves an empty user name, which is
+# not a value to redact and cannot be bound to the scanner.
+$sensitiveValues = @($sensitiveValues | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 try {
     $publication = Publish-SanitizedEvidence -Summary $script:Summary -SensitiveValues $sensitiveValues
     if (-not $publication.fullSummaryPublished) { $runExitCode = 1 }
