@@ -568,15 +568,18 @@ transitive dependency were already present in `Cargo.lock` through `tauri`, so t
 dependency graph gained no crate. No UI, Tauri, workspace, queue or backend-invocation
 behavior changed; mzXML and BPC remain unavailable; no stable CLI contract was added.
 
-M0C Slice 2B remains outstanding: representative lawful open-format navigation and scale
-measurements, including repeated navigation and post-conversion reinspection at real scale.
-BPC strategy, real-backend cancellation and partial-output behavior, alternate-locale
+At the time this Slice 2A section was written, Slice 2B still owed the representative
+navigation and scale measurements. Those were completed on 2026-07-27 and are recorded
+below. BPC strategy, real-backend cancellation and partial-output behavior, alternate-locale
 parsing and vendor-format coverage remain separate explicit gates.
 
 ## M0C Slice 2B representative navigation and scale evidence — 2026-07-27
 
-This section records new isolated runtime evidence. It does not restate or alter the 2026-07-24
-bounded matrix above.
+This section records new isolated runtime evidence. It leaves every 2026-07-24 measurement,
+hash and timing above unchanged, and it changes exactly two things in the per-capability
+table: repeated interactive navigation moves from D to B, and the large-array row keeps its
+D while stating why the representative file could not settle it. Every other rating in that
+table is still the 2026-07-24 result.
 
 ### Runs and inputs
 
