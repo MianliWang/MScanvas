@@ -293,7 +293,11 @@ fn find_path_start(line: &str) -> Option<usize> {
                 byte.is_ascii_whitespace() || matches!(byte, b'=' | b'"' | b'\'')
             })
             && bytes.get(index + 1).is_some_and(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'\\' | b'/' | b'_' | b'.' | b'-')
+                // A non-ASCII byte starts a segment too: `/用户/王/样本.raw`
+                // is an ordinary POSIX path and just as revealing.
+                !byte.is_ascii()
+                    || byte.is_ascii_alphanumeric()
+                    || matches!(byte, b'\\' | b'/' | b'_' | b'.' | b'-')
             })
         {
             return Some(index);

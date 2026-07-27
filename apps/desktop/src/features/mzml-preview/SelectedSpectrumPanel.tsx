@@ -208,20 +208,23 @@ function SpectrumDetail({ spectrum }: { readonly spectrum: SelectedSpectrum }) {
  * The plot's accessible description.
  *
  * Everything the drawing conveys is stated in words: how many points there
- * are, the m/z range and the largest intensity. Range and maximum are omitted
+ * are, the m/z range and the most intense peak. Range and peak are omitted
  * when there are no points, because there is nothing to take a range of.
+ *
+ * The peak comes from the backend's own whole-spectrum value, not from the
+ * transferred array. A spectrum above the transfer bound arrives as a prefix,
+ * and the tallest point in a prefix is not the tallest point in the spectrum.
  */
 function buildAccessibleSummary(spectrum: SelectedSpectrum): string {
   const opening = `Spectrum ${formatCount(spectrum.index)}, MS${spectrum.msLevel}, ${formatCount(spectrum.pointCount)} ${spectrum.pointCount === 1 ? "point" : "points"}.`;
   if (spectrum.pointCount === 0) {
-    return `${opening} This spectrum contains no peaks, so it has no m/z range and no maximum intensity.`;
+    return `${opening} This spectrum contains no peaks, so it has no m/z range and no most intense peak.`;
   }
-  const maximumIntensity = spectrum.intensity.reduce(
-    (highest, value) => (value > highest ? value : highest),
-    0,
-  );
+  const truncation = spectrum.truncated
+    ? ` The drawing covers the first ${formatCount(spectrum.mz.length)} of those points.`
+    : "";
   const representation = spectrum.representationKnown
     ? ""
     : " This file does not report whether these are profile samples or centroided peaks.";
-  return `${opening} m/z ranges from ${formatMz(spectrum.mzLow)} to ${formatMz(spectrum.mzHigh)}. The maximum intensity is ${formatIntensity(maximumIntensity)}.${representation}`;
+  return `${opening} m/z ranges from ${formatMz(spectrum.mzLow)} to ${formatMz(spectrum.mzHigh)}. The most intense peak reported for this spectrum is ${formatIntensity(spectrum.basePeakIntensity)} at m/z ${formatMz(spectrum.basePeakMz)}.${truncation}${representation}`;
 }

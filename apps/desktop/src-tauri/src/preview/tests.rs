@@ -545,6 +545,11 @@ fn absolute_path_shapes_are_removed_from_displayable_text() {
         redact_absolute_paths("sourceFile: /Volumes/Lab Share/run.raw"),
         "sourceFile: <path>"
     );
+    // A POSIX path may begin with a non-ASCII directory name.
+    assert_eq!(
+        redact_absolute_paths("source=/用户/王/样本.raw"),
+        "source=<path>"
+    );
     // A controlled-vocabulary URL is not a filesystem path and stays readable,
     // and neither is a unit or an m/z label.
     assert_eq!(

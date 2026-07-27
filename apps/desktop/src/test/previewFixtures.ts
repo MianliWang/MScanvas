@@ -114,6 +114,14 @@ export function buildSpectrum(index: number, pointCount: number): SelectedSpectr
     mz.push(300 + point * 0.5);
     intensity.push(100 + ((point * 37) % 900));
   }
+  // Derived, so the reported base peak is a point the spectrum actually has.
+  let basePeakIndex = 0;
+  for (let point = 1; point < pointCount; point += 1) {
+    if ((intensity[point] ?? 0) > (intensity[basePeakIndex] ?? 0)) {
+      basePeakIndex = point;
+    }
+  }
+
   return {
     index,
     scanNumber: index + 1,
@@ -125,8 +133,8 @@ export function buildSpectrum(index: number, pointCount: number): SelectedSpectr
     intensity,
     mzLow: pointCount === 0 ? 0 : 300,
     mzHigh: pointCount === 0 ? 0 : 300 + (pointCount - 1) * 0.5,
-    basePeakMz: pointCount === 0 ? 0 : 312.5,
-    basePeakIntensity: pointCount === 0 ? 0 : 999,
+    basePeakMz: pointCount === 0 ? 0 : (mz[basePeakIndex] ?? 0),
+    basePeakIntensity: pointCount === 0 ? 0 : (intensity[basePeakIndex] ?? 0),
     totalIonCurrent: 54_321,
     precursors: pointCount === 0 ? [] : [{ index: 0, mz: 512.25, intensity: 8_400 }],
     representationKnown: false,

@@ -141,7 +141,7 @@ describe("mzML preview workspace", () => {
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=3");
 
     expect(await screen.findByRole("img")).toHaveAccessibleName(
-      "Spectrum 2, MS2, 12 points. m/z ranges from 300.0000 to 305.5000. The maximum intensity is 507.00. This file does not report whether these are profile samples or centroided peaks.",
+      "Spectrum 2, MS2, 12 points. m/z ranges from 300.0000 to 305.5000. The most intense peak reported for this spectrum is 507.00 at m/z 305.5000. This file does not report whether these are profile samples or centroided peaks.",
     );
     expect(screen.getByText(/Drawn as 12 sticks, one per point\./)).toBeVisible();
     expect(api.requestedSpectra).toEqual([2]);
@@ -166,6 +166,36 @@ describe("mzML preview workspace", () => {
     expect(screen.queryByText("Base peak")).not.toBeInTheDocument();
     expect(screen.queryByText("m/z range")).not.toBeInTheDocument();
     expect(screen.getByText("Points").nextElementSibling).toHaveTextContent("0");
+  });
+
+  it("describes a truncated spectrum by its whole-spectrum peak, not the prefix", async () => {
+    const api = createFakePreviewApi({
+      spectrum: (index) => {
+        const spectrum = buildSpectrum(index, 8);
+        return Promise.resolve<SelectedSpectrumOutcome>({
+          outcome: "spectrum",
+          spectrum: {
+            ...spectrum,
+            // The whole spectrum is larger than what was transferred, and its
+            // tallest peak is not in the transferred prefix.
+            pointCount: 900_000,
+            truncated: true,
+            basePeakMz: 812.5,
+            basePeakIntensity: 4_200_000,
+          },
+        });
+      },
+    });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+
+    const plot = await screen.findByRole("img");
+    expect(plot).toHaveAccessibleName(/most intense peak reported for this spectrum is 4\.200e\+6/);
+    expect(plot).toHaveAccessibleName(/The drawing covers the first 8 of those points\./);
+    // The tallest point in the prefix is never presented as the spectrum's.
+    expect(plot).not.toHaveAccessibleName(/359\.00/);
   });
 
   it("shows an index the run does not contain as a typed answer, not an error", async () => {
