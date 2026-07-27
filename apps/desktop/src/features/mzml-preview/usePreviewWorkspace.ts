@@ -56,6 +56,11 @@ export interface PreviewWorkspace {
   readonly retryFailedStep: () => void;
   readonly selectSpectrum: (index: number) => void;
   readonly retrySpectrum: () => void;
+  /**
+   * Completes the row-select measurement once the spectrum is actually in the
+   * DOM. Called from a layout effect, not from the response handler.
+   */
+  readonly completeSpectrumRender: () => void;
   readonly recordMeasurement: (
     name: PreviewMeasurementName,
     milliseconds: number,
@@ -84,6 +89,8 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const backendToken = useRef(0);
   const previewToken = useRef(0);
   const spectrumToken = useRef(0);
+  const inFlightSpectrum = useRef<number | null>(null);
+  const pendingRender = useRef<{ index: number; startedAt: number } | null>(null);
   const openHandle = useRef<string | null>(null);
   const mounted = useRef(true);
 
@@ -181,7 +188,15 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       if (handle === null) {
         return;
       }
+      // A repeat of the row already being read is dropped. Every selection is
+      // one backend process, and a double click should not be two of them.
+      // This is deduplication only: nothing is queued and nothing is
+      // cancelled, both of which are separately gated.
+      if (inFlightSpectrum.current === index) {
+        return;
+      }
       const startedAt = now();
+      inFlightSpectrum.current = index;
       spectrumToken.current += 1;
       const token = spectrumToken.current;
       setSelectedIndex(index);
@@ -189,6 +204,9 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       void api
         .loadSpectrum(handle, index)
         .then((outcome) => {
+          if (inFlightSpectrum.current === index) {
+            inFlightSpectrum.current = null;
+          }
           if (!mounted.current || token !== spectrumToken.current) {
             return;
           }
@@ -197,20 +215,35 @@ export function usePreviewWorkspace(): PreviewWorkspace {
               ? { status: "loaded", spectrum: outcome.spectrum }
               : { status: "unavailable", requestedIndex: outcome.requestedIndex },
           );
-          recordMeasurement(
-            "rowSelectToRendered",
-            now() - startedAt,
-            `Selecting row ${index} through receiving its spectrum.`,
-          );
+          // The measurement is not finished here. Recording it now would time
+          // the reply, not the render, and it is the render this metric names.
+          pendingRender.current =
+            outcome.outcome === "spectrum" ? { index, startedAt } : null;
         })
         .catch((cause: unknown) => {
+          if (inFlightSpectrum.current === index) {
+            inFlightSpectrum.current = null;
+          }
           if (mounted.current && token === spectrumToken.current) {
             setSpectrum({ status: "failed", index, error: toPreviewError(cause) });
           }
         });
     },
-    [api, recordMeasurement],
+    [api],
   );
+
+  const completeSpectrumRender = useCallback(() => {
+    const pending = pendingRender.current;
+    if (pending === null) {
+      return;
+    }
+    pendingRender.current = null;
+    recordMeasurement(
+      "rowSelectToRendered",
+      now() - pending.startedAt,
+      `Selecting row ${pending.index} through that spectrum being in the document.`,
+    );
+  }, [recordMeasurement]);
 
   const retrySpectrum = useCallback(() => {
     if (selectedIndex !== null) {
@@ -243,6 +276,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     retryFailedStep,
     selectSpectrum,
     retrySpectrum,
+    completeSpectrumRender,
     recordMeasurement,
   };
 }

@@ -62,6 +62,17 @@ index. Every one of them is typed on both sides.
   prefix, because a spectrum list cut mid-file would read as a shorter
   acquisition. Removing that ceiling means a row-bounded or streaming table
   parser in `mscanvas-proteowizard`, which is a separate change.
+- Rapid row selection still launches one process per committed selection.
+  Repeats of the row already being read are dropped, and the table commits on
+  Enter or Space rather than on focus, but an abandoned read runs to
+  completion: cancelling it needs real backend cancellation, which ADR 0003
+  still lists as an open gate.
+- The three operations of one open action read the file separately, so the
+  file's length and modification time are compared before and after the batch
+  and a change discards the whole preview. Combining results from two
+  generations would describe an acquisition that never existed. A digest would
+  close the window completely, but hashing 208 MB around every preview would
+  cost more than the preview.
 - Path redaction removes everything from the first path marker to the end of
   the line. Where a path ends cannot be decided once it may contain spaces, so
   losing the tail of a line is accepted in exchange for never leaking a

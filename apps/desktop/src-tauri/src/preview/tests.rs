@@ -535,11 +535,27 @@ fn absolute_path_shapes_are_removed_from_displayable_text() {
         "analyzer: FTMS resolution 70000\n"
     );
     assert_eq!(redact_absolute_paths("ratio: 3:1"), "ratio: 3:1");
-    // A controlled-vocabulary URL is not a filesystem path and stays readable.
+    // A POSIX absolute path has one leading slash, and an mzML written on
+    // Linux or macOS is just as revealing when previewed on Windows.
+    assert_eq!(
+        redact_absolute_paths("sourceFile=/home/alice/private/run.raw"),
+        "sourceFile=<path>"
+    );
+    assert_eq!(
+        redact_absolute_paths("sourceFile: /Volumes/Lab Share/run.raw"),
+        "sourceFile: <path>"
+    );
+    // A controlled-vocabulary URL is not a filesystem path and stays readable,
+    // and neither is a unit or an m/z label.
     assert_eq!(
         redact_absolute_paths("cv: http://psi.hupo.org/ms/mzml"),
         "cv: http://psi.hupo.org/ms/mzml"
     );
+    assert_eq!(
+        redact_absolute_paths("scanWindow: 200-2000 m/z at counts/second"),
+        "scanWindow: 200-2000 m/z at counts/second"
+    );
+    assert_eq!(redact_absolute_paths("ratio: 3 / 4"), "ratio: 3 / 4");
     // Each line is judged on its own, so one path does not blank the rest.
     assert_eq!(
         redact_absolute_paths("software: pwiz\nsourceFile: C:/data/a.mzML\nmsLevel: 2"),
@@ -555,6 +571,53 @@ fn a_non_finite_value_is_refused_rather_than_serialized() {
     assert!(super::dto::require_finite(f64::INFINITY).is_err());
     assert!(super::dto::require_finite_option(None).is_ok());
     assert!(super::dto::require_finite_option(Some(f64::NEG_INFINITY)).is_err());
+}
+
+/// Rewrites the source part-way through a batch, standing in for another
+/// program replacing the acquisition while MSCanvas is reading it.
+struct RewritingProvider {
+    inner: FakeProvider,
+    target: PathBuf,
+    runs: Mutex<usize>,
+}
+
+impl PreviewProvider for RewritingProvider {
+    fn availability(&self) -> BackendAvailabilityDto {
+        self.inner.availability()
+    }
+
+    fn run(
+        &self,
+        source: &Path,
+        operation: &PreviewOperation,
+    ) -> Result<OperationResult, PreviewErrorDto> {
+        let result = self.inner.run(source, operation);
+        let mut runs = self.runs.lock().expect("test lock");
+        *runs += 1;
+        if *runs == 1 {
+            fs::write(&self.target, b"<mzML> rewritten </mzML>").expect("rewrite the source");
+        }
+        result
+    }
+}
+
+#[test]
+fn a_source_rewritten_between_operations_is_refused_rather_than_combined() {
+    let file = TestFile::new("generation");
+    let service = PreviewService::new(Box::new(RewritingProvider {
+        inner: FakeProvider::available(open_responses()),
+        target: file.path.clone(),
+        runs: Mutex::new(0),
+    }));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let error = service
+        .open_preview(&selected.handle)
+        .expect_err("results from two generations are never combined");
+
+    assert_eq!(error.kind, "source_changed_during_preview");
+    // Reading again once the writer has finished is worth offering.
+    assert!(error.retryable);
 }
 
 #[test]

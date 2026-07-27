@@ -272,13 +272,19 @@ fn find_path_start(line: &str) -> Option<usize> {
             return Some(index);
         }
 
-        // A UNC or POSIX-absolute root, but not the `//` inside a URL scheme
-        // such as `http://`, whose useful text is worth keeping.
-        if matches!(
-            (bytes.get(index), bytes.get(index + 1)),
-            (Some(b'\\'), Some(b'\\')) | (Some(b'/'), Some(b'/'))
-        ) && preceding
-            .is_none_or(|byte| byte.is_ascii_whitespace() || matches!(byte, b'=' | b'"' | b'\''))
+        // A UNC root, or a POSIX-absolute root, which carries a single leading
+        // slash: an mzML written on Linux or macOS records `/home/...` and is
+        // just as revealing when previewed on Windows. The preceding-boundary
+        // test keeps `m/z`, `counts/second` and the `//` inside a URL scheme
+        // such as `http://` readable, and the next character must be able to
+        // start a path segment so a bare `a / b` is not treated as one.
+        if matches!(bytes.get(index), Some(b'\\' | b'/'))
+            && preceding.is_none_or(|byte| {
+                byte.is_ascii_whitespace() || matches!(byte, b'=' | b'"' | b'\'')
+            })
+            && bytes.get(index + 1).is_some_and(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'\\' | b'/' | b'_' | b'.' | b'-')
+            })
         {
             return Some(index);
         }

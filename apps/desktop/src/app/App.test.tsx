@@ -213,6 +213,25 @@ describe("mzML preview workspace", () => {
     expect(api.requestedSpectra).toEqual([1, 3]);
   });
 
+  it("does not launch a second process for the row it is already reading", async () => {
+    const slow = deferred<SelectedSpectrumOutcome>();
+    const api = createFakePreviewApi({ spectrum: () => slow.promise });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=2");
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=2");
+    // Every selection is one backend process, so a double click is one read.
+    expect(api.requestedSpectra).toEqual([1]);
+
+    slow.resolve({ outcome: "spectrum", spectrum: buildSpectrum(1, 4) });
+    await screen.findByText(/Spectrum 1, MS2, 4 points\./);
+
+    // Once it has finished, the same row can be asked for again.
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=2");
+    expect(api.requestedSpectra).toEqual([1, 1]);
+  });
+
   it("states the true spectrum count and says plainly when rows were truncated", async () => {
     await openTheFile(createFakePreviewApi({ preview: buildPreview(120, true) }));
 

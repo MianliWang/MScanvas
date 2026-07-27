@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useLayoutEffect } from "react";
 
 import { BackendStatus } from "./BackendStatus";
 import { PreviewSummary } from "./PreviewSummary";
@@ -10,7 +10,16 @@ import { usePreviewWorkspace } from "./usePreviewWorkspace";
 /** The first user-visible slice: open one mzML file and look inside it. */
 export function PreviewWorkspace() {
   const workspace = usePreviewWorkspace();
-  const { preview, spectrum, recordMeasurement } = workspace;
+  const { preview, spectrum, recordMeasurement, completeSpectrumRender } = workspace;
+
+  // Runs after the spectrum panel and its plot have been committed, so the
+  // row-select measurement covers the point reduction and the DOM work rather
+  // than stopping when the reply arrived.
+  useLayoutEffect(() => {
+    if (spectrum.status === "loaded") {
+      completeSpectrumRender();
+    }
+  }, [completeSpectrumRender, spectrum]);
 
   const backendUnavailable =
     workspace.backend.status === "resolved" &&

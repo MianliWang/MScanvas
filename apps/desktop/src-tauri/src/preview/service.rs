@@ -56,7 +56,20 @@ impl PreviewService {
         let file = self.files.resolve(handle)?;
         let redactor = reporting_redactor(file.path());
         let operations = open_operations();
+        // The three operations read the file separately. If it is rewritten
+        // between them, their results describe different generations of the
+        // run, and combining those into one preview would present an
+        // acquisition that never existed.
+        let before = SourceGeneration::capture(file.path());
         let results = self.provider.run_batch(file.path(), &operations)?;
+        if SourceGeneration::capture(file.path()) != before {
+            return Err(PreviewErrorDto::new(
+                "source_changed_during_preview",
+                "The file changed while it was being read, so the preview was discarded rather \
+                 than combining results from before and after the change.",
+                true,
+            ));
+        }
         if results.len() != operations.len() {
             return Err(PreviewErrorDto::new(
                 "incomplete_preview_result",
@@ -133,6 +146,29 @@ impl PreviewService {
             PreviewOutcome::NoResult(PreviewNoResult::SpectrumUnavailable { requested_index }) => {
                 Ok(SelectedSpectrumOutcomeDto::Unavailable { requested_index })
             }
+        }
+    }
+}
+
+/// A cheap stamp of which generation of a file was read.
+///
+/// Length and modification time, not a digest: the representative acquisition
+/// is 208 MB and hashing it around every preview would cost more than the
+/// preview. `None` on either field means the platform did not report it, and
+/// two `None`s compare equal, so this narrows the window rather than closing
+/// it. The crate revalidates filesystem identity at each spawn independently.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourceGeneration {
+    byte_length: Option<u64>,
+    modified: Option<std::time::SystemTime>,
+}
+
+impl SourceGeneration {
+    fn capture(path: &Path) -> Self {
+        let metadata = std::fs::symlink_metadata(path).ok();
+        Self {
+            byte_length: metadata.as_ref().map(std::fs::Metadata::len),
+            modified: metadata.and_then(|metadata| metadata.modified().ok()),
         }
     }
 }
