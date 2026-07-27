@@ -99,6 +99,8 @@ pub enum ConversionOutputRejection {
     Empty,
     #[error("the conversion output is not a regular file")]
     NonRegularOutput,
+    #[error("the conversion output changed while it was being inspected")]
+    ChangedDuringInspection,
     #[error("the conversion produced an unexpected output set")]
     UnexpectedExtraOutput { observed: usize },
     #[error("the conversion output does not carry the planned name")]
@@ -122,6 +124,7 @@ impl ConversionOutputRejection {
             Self::Missing => "missing_output",
             Self::Empty => "zero_byte_output",
             Self::NonRegularOutput => "non_regular_output",
+            Self::ChangedDuringInspection => "output_changed_during_inspection",
             Self::UnexpectedExtraOutput { .. } => "unexpected_output",
             Self::UnexpectedOutputName => "unexpected_output_name",
             Self::ExtensionMismatch => "output_extension_mismatch",
@@ -138,8 +141,10 @@ impl From<RegularFileError> for ConversionOutputRejection {
         match error {
             RegularFileError::NotRegularFile
             | RegularFileError::Symlink
-            | RegularFileError::ReparsePoint
-            | RegularFileError::ChangedDuringOpen => Self::NonRegularOutput,
+            | RegularFileError::ReparsePoint => Self::NonRegularOutput,
+            // A file replaced or resized between the snapshot and the read is a
+            // concurrency observation, not a claim that the entry is unusable.
+            RegularFileError::ChangedDuringOpen => Self::ChangedDuringInspection,
             RegularFileError::Io { kind } => Self::DirectoryInspectionFailed { kind },
         }
     }
@@ -490,6 +495,7 @@ pub enum ConversionIntegrityOutcome {
     MissingOutput,
     EmptyOutput,
     NonRegularOutput,
+    OutputChangedDuringInspection,
     PartialOutput,
     UnexpectedExtraOutput {
         observed: usize,
@@ -561,6 +567,7 @@ impl ConversionIntegrityOutcome {
             Self::MissingOutput => "missing_output",
             Self::EmptyOutput => "zero_byte_output",
             Self::NonRegularOutput => "non_regular_output",
+            Self::OutputChangedDuringInspection => "output_changed_during_inspection",
             Self::PartialOutput => "partial_output",
             Self::UnexpectedExtraOutput { .. } => "unexpected_output",
             Self::UnexpectedOutputName => "unexpected_output_name",
@@ -608,6 +615,9 @@ impl From<ConversionOutputRejection> for ConversionIntegrityOutcome {
             ConversionOutputRejection::Missing => Self::MissingOutput,
             ConversionOutputRejection::Empty => Self::EmptyOutput,
             ConversionOutputRejection::NonRegularOutput => Self::NonRegularOutput,
+            ConversionOutputRejection::ChangedDuringInspection => {
+                Self::OutputChangedDuringInspection
+            }
             ConversionOutputRejection::UnexpectedExtraOutput { observed } => {
                 Self::UnexpectedExtraOutput { observed }
             }
@@ -625,6 +635,12 @@ impl From<ConversionOutputRejection> for ConversionIntegrityOutcome {
                 }
                 MzmlScanError::Malformed(kind) => Self::MalformedXml { kind },
                 MzmlScanError::LimitExceeded(kind) => Self::LimitExceeded { kind },
+                MzmlScanError::Source(RegularFileError::ChangedDuringOpen) => {
+                    Self::OutputChangedDuringInspection
+                }
+                MzmlScanError::Source(RegularFileError::Io { kind }) => {
+                    Self::OutputNotInspected { kind }
+                }
                 MzmlScanError::Source(_) => Self::NonRegularOutput,
                 MzmlScanError::Io { kind } => Self::OutputNotInspected { kind },
             },
@@ -1033,9 +1049,19 @@ fn check_compression_policy(
     let uncompressed = after
         .spectra()
         .iter()
-        .map(|record| u64::from(record.binary_array_count() - record.zlib_compressed_array_count()))
+        .map(|record| {
+            u64::from(
+                record
+                    .binary_array_count()
+                    .saturating_sub(record.zlib_compressed_array_count()),
+            )
+        })
         .chain(after.chromatograms().iter().map(|record| {
-            u64::from(record.binary_array_count() - record.zlib_compressed_array_count())
+            u64::from(
+                record
+                    .binary_array_count()
+                    .saturating_sub(record.zlib_compressed_array_count()),
+            )
         }))
         .sum::<u64>();
     if uncompressed > 0 {
@@ -1269,6 +1295,7 @@ mod tests {
             ConversionOutputRejection::Missing.stable_id(),
             ConversionOutputRejection::Empty.stable_id(),
             ConversionOutputRejection::NonRegularOutput.stable_id(),
+            ConversionOutputRejection::ChangedDuringInspection.stable_id(),
             ConversionOutputRejection::UnexpectedExtraOutput { observed: 2 }.stable_id(),
             ConversionOutputRejection::UnexpectedOutputName.stable_id(),
             ConversionOutputRejection::ExtensionMismatch.stable_id(),
@@ -1809,6 +1836,7 @@ mod tests {
             ConversionIntegrityOutcome::MissingOutput,
             ConversionIntegrityOutcome::EmptyOutput,
             ConversionIntegrityOutcome::NonRegularOutput,
+            ConversionIntegrityOutcome::OutputChangedDuringInspection,
             ConversionIntegrityOutcome::PartialOutput,
             ConversionIntegrityOutcome::UnexpectedExtraOutput { observed: 2 },
             ConversionIntegrityOutcome::UnexpectedOutputName,

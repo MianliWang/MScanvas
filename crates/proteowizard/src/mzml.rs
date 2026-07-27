@@ -5,9 +5,11 @@
 //!
 //! - no document type declaration and no undeclared entity is accepted;
 //! - no external reference of any kind is resolved;
-//! - no binary array is ever base64-decoded or decompressed, so array lengths
-//!   come from the declarative `defaultArrayLength` and `encodedLength`
-//!   attributes and the decompression-bomb class is removed by construction;
+//! - no binary array is ever base64-decoded or decompressed, so array point
+//!   counts come from the declarative `defaultArrayLength` attribute and the
+//!   decompression-bomb class is removed by construction. `encodedLength` is
+//!   deliberately not read: it changes legitimately with encoding and
+//!   compression, so it is not a comparable fact;
 //! - every document is read through a byte-counting reader, so one text node
 //!   and the whole document both stay inside explicit limits;
 //! - controlled-vocabulary facts are recognized by accession only and are

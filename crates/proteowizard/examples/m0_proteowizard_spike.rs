@@ -1510,6 +1510,8 @@ fn evaluate_conversion_integrity(
     output_directory: &Path,
     expected_file_name: &OsStr,
 ) -> ConversionIntegrityReport {
+    // mzXML planning is gated behind its own integrity requirement, so a
+    // conversion that reaches this point always produced mzML.
     let limits = MzmlScanLimits::default();
     match source {
         Some(source) => ConversionIntegrityReport::Compared(verify_mzml_conversion(
