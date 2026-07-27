@@ -13,7 +13,21 @@ use thiserror::Error;
 
 use crate::{PreviewOperation, ProcessOutput, Termination};
 
-const MAX_COMPLETE_TEXT_BYTES: u64 = 8 * 1024 * 1024;
+/// The largest preview output this crate will interpret.
+///
+/// Public because it is not only this module's business. A caller that reads
+/// backend output into memory has to stop somewhere, and stopping anywhere
+/// other than here is a defect in one of two directions: read less and a run
+/// this crate would have interpreted is refused; read more and the extra bytes
+/// are carried only to be rejected. Both were live -- the same 8 MiB appeared
+/// as three separate constants, one per caller, with nothing tying them
+/// together.
+///
+/// Output above this is refused whole rather than interpreted in part, as
+/// `PreviewInterpretError::IncompleteParserInput`. A truncated spectrum table
+/// is not a smaller spectrum table; it is a table that silently omits the runs
+/// an analyst is most likely to be looking for.
+pub const MAX_PREVIEW_TEXT_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Whether a unit was explicitly emitted by the preview formatter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1120,7 +1134,7 @@ pub fn interpret_preview(
             let captured_bytes = u64::try_from(process.stdout.len()).unwrap_or(u64::MAX);
             if process.stdout_truncated
                 || process.stdout_total_bytes != captured_bytes
-                || process.stdout_total_bytes > MAX_COMPLETE_TEXT_BYTES
+                || process.stdout_total_bytes > MAX_PREVIEW_TEXT_BYTES
             {
                 return Err(PreviewInterpretError::IncompleteParserInput {
                     operation: operation.clone(),
@@ -1211,7 +1225,7 @@ fn required_file<'a>(
                 return Err(malformed(operation, PreviewMalformedKind::Empty));
             }
             let total_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
-            if total_bytes > MAX_COMPLETE_TEXT_BYTES {
+            if total_bytes > MAX_PREVIEW_TEXT_BYTES {
                 return Err(PreviewInterpretError::IncompleteParserInput {
                     operation: operation.clone(),
                     input_source: PreviewInputSource::OutputFile,

@@ -18,6 +18,14 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const JOB_EMPTY_TIMEOUT: Duration = Duration::from_secs(5);
 const CAPTURE_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 
+// Capturing less than the preview module will interpret would refuse runs on
+// the strength of this limit rather than that one: output between the two would
+// arrive flagged as truncated, and be rejected, though it is within what
+// `interpret_preview` accepts. This is a floor, not an equality -- capture is
+// about how much output is held in memory, interpretation about how much is
+// meaningful, and conversion captures output that preview never sees.
+const _: () = assert!(CAPTURE_LIMIT_BYTES as u64 >= crate::MAX_PREVIEW_TEXT_BYTES);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Termination {
     Exited,

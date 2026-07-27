@@ -118,7 +118,13 @@ index. Every one of them is typed on both sides.
   evidence about which reading is right, and refusing the file outright would
   reject an acquisition that may be perfectly valid.
 - The preview parser requires the backend's whole output, and this boundary
-  reads at most 8 MiB of it — the same named limit M0C accepted for M1–M2. A
+  reads at most 8 MiB of it — the same named limit M0C accepted for M1–M2, and
+  now literally the same constant: `mscanvas_proteowizard::MAX_PREVIEW_TEXT_BYTES`.
+  It had been written out three times, once per caller, with nothing tying them
+  together; a caller reading less than the parser accepts refuses runs the
+  parser would have interpreted, and one reading more carries bytes only to have
+  them rejected. Process capture is a separate concern and keeps its own limit,
+  held above this one by a compile-time assertion rather than by coincidence. A
   run above it is refused with a plain statement of why, not shown from a
   prefix, because a spectrum list cut mid-file would read as a shorter
   acquisition. Removing that ceiling means a row-bounded or streaming table

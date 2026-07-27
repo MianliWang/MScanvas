@@ -9,9 +9,9 @@ use std::sync::RwLock;
 
 use mscanvas_proteowizard::{
     AvailabilityState, ConfiguredLocation, DiscoveryRequest, InstalledHelpCapabilities,
-    LaunchFailureKind, OutputEntryKind, PreviewInterpretError, PreviewOperation, PreviewOutcome,
-    PreviewOutputEntry, PreviewOutputManifest, ProcessError, Redactor,
-    build_msaccess_command_with_capabilities, discover, execute, interpret_preview,
+    LaunchFailureKind, MAX_PREVIEW_TEXT_BYTES, OutputEntryKind, PreviewInterpretError,
+    PreviewOperation, PreviewOutcome, PreviewOutputEntry, PreviewOutputManifest, ProcessError,
+    Redactor, build_msaccess_command_with_capabilities, discover, execute, interpret_preview,
     snapshot_output_directory,
 };
 
@@ -19,9 +19,6 @@ use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, MAX_BACKEND_LABEL_CHARS, PreviewErrorDto,
     bounded_text, redact_absolute_paths,
 };
-
-/// The largest preview output this boundary will read into memory.
-const MAX_PREVIEW_OUTPUT_BYTES: u64 = 8 * 1024 * 1024;
 
 /// One preview operation's typed result plus the redactor that produced it.
 pub struct OperationResult {
@@ -375,7 +372,7 @@ pub fn interpretation_error(error: PreviewInterpretError) -> PreviewErrorDto {
         )
         .with_detail(kind.stable_id()),
         // The parser requires the whole output, and this boundary reads at
-        // most `MAX_PREVIEW_OUTPUT_BYTES`. A run above that is refused rather
+        // most `MAX_PREVIEW_TEXT_BYTES`. A run above that is refused rather
         // than shown from a prefix, because a spectrum list cut mid-file would
         // read as a shorter acquisition. Saying so plainly is the point: the
         // limit is a named limit of this version, not a defect in the file.
@@ -394,7 +391,7 @@ pub fn interpretation_error(error: PreviewInterpretError) -> PreviewErrorDto {
             false,
         )
         .with_detail(format!(
-            "read {captured_bytes} of {total_bytes} bytes; the limit is {MAX_PREVIEW_OUTPUT_BYTES}"
+            "read {captured_bytes} of {total_bytes} bytes; the limit is {MAX_PREVIEW_TEXT_BYTES}"
         )),
         _ => PreviewErrorDto::new(
             identifier,
@@ -480,7 +477,7 @@ fn capture_manifest(
             }
         }
         let observed = entry.byte_length();
-        if !needs_bytes || observed > MAX_PREVIEW_OUTPUT_BYTES {
+        if !needs_bytes || observed > MAX_PREVIEW_TEXT_BYTES {
             entries.push(PreviewOutputEntry::incomplete_file(0, observed));
             continue;
         }
@@ -488,7 +485,7 @@ fn capture_manifest(
             entries.push(PreviewOutputEntry::incomplete_file(0, observed));
             continue;
         };
-        if opened_length > MAX_PREVIEW_OUTPUT_BYTES {
+        if opened_length > MAX_PREVIEW_TEXT_BYTES {
             entries.push(PreviewOutputEntry::incomplete_file(
                 0,
                 opened_length.max(observed),
@@ -496,7 +493,7 @@ fn capture_manifest(
             continue;
         }
         let mut bytes = Vec::new();
-        let mut reader = std::io::Read::take(file, MAX_PREVIEW_OUTPUT_BYTES + 1);
+        let mut reader = std::io::Read::take(file, MAX_PREVIEW_TEXT_BYTES + 1);
         if std::io::Read::read_to_end(&mut reader, &mut bytes).is_err() {
             entries.push(PreviewOutputEntry::incomplete_file(0, observed));
             continue;
@@ -504,7 +501,7 @@ fn capture_manifest(
         let captured = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
         if captured != observed || captured != opened_length {
             entries.push(PreviewOutputEntry::incomplete_file(
-                captured.min(MAX_PREVIEW_OUTPUT_BYTES),
+                captured.min(MAX_PREVIEW_TEXT_BYTES),
                 observed.max(opened_length).max(captured),
             ));
             continue;
