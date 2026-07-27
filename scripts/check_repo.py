@@ -209,37 +209,119 @@ def validate_project_contract(errors: list[str]) -> None:
         fail("PROJECT_PROPOSAL.md does not identify the MSCanvas source-of-truth contract", errors)
 
 
+CONTINUATION_RE = re.compile(r"\\\n[ \t]*")
+INLINE_RUN_RE = re.compile(r"(?<!\\)[A-Za-z,.][ ]{2,}[A-Za-z]")
+
+
+def _string_literals(text: str) -> list[tuple[int, str]]:
+    """Yields (offset, source text) for every non-raw string literal.
+
+    Scanned rather than matched line by line. A string that lost its line
+    continuation is still a valid literal spanning two physical lines, so a
+    per-line regex sees neither a complete literal nor the defect, which is
+    exactly the case this check exists for.
+    """
+    literals: list[tuple[int, str]] = []
+    index = 0
+    length = len(text)
+    while index < length:
+        character = text[index]
+
+        if character == "/" and index + 1 < length:
+            following = text[index + 1]
+            if following == "/":
+                end = text.find("\n", index)
+                index = length if end == -1 else end
+                continue
+            if following == "*":
+                end = text.find("*/", index + 2)
+                index = length if end == -1 else end + 2
+                continue
+
+        # A raw string carries no escapes, so everything in it is deliberate.
+        if character == "r" and index + 1 < length:
+            hashes = 0
+            probe = index + 1
+            while probe < length and text[probe] == "#":
+                hashes += 1
+                probe += 1
+            if probe < length and text[probe] == '"':
+                terminator = '"' + "#" * hashes
+                end = text.find(terminator, probe + 1)
+                index = length if end == -1 else end + len(terminator)
+                continue
+
+        # A character literal may hold a quote, as `b'"'` does in the path
+        # scanner. Distinguish it from a lifetime, where the quote opens an
+        # identifier and never closes.
+        if character == "'":
+            if index + 1 < length and text[index + 1] == "\\":
+                closing = text.find("'", index + 2)
+                index = length if closing == -1 else closing + 1
+                continue
+            if index + 2 < length and text[index + 2] == "'":
+                index += 3
+                continue
+            index += 1
+            continue
+
+        if character == '"':
+            start = index + 1
+            probe = start
+            while probe < length:
+                if text[probe] == "\\":
+                    probe += 2
+                    continue
+                if text[probe] == '"':
+                    break
+                probe += 1
+            literals.append((start, text[start:probe]))
+            index = probe + 1
+            continue
+
+        index += 1
+
+    return literals
+
+
 def validate_user_facing_strings(errors: list[str]) -> None:
     """Catches a lost line continuation inside a user-facing message.
 
-    A Rust string split across lines ends with a backslash, which removes the
-    newline and the next line's indentation. Lose the backslash and the
-    indentation stays in the message: six shipped strings read "...the commands
+    A string split across lines ends with a backslash, which removes the newline
+    and the next line's indentation. Lose the backslash and the indentation
+    stays in the message: six shipped strings read "...the commands
     <35 spaces> MSCanvas needs." Nothing caught them, because the code compiled,
-    passed Clippy and produced no warning. A run of spaces between two words is
-    never intentional in prose, so it is checked here at the source.
+    passed Clippy and produced no warning.
+
+    Two shapes, because the defect has two. Removing the backslash from a
+    wrapped literal leaves a valid literal that still spans two lines, with the
+    newline and indentation now inside the message. Reflowing that onto one line
+    leaves a run of spaces between two words. Neither is intentional in a
+    message, and the first is the one a per-line check cannot see.
     """
-    # The character before the run must not be the tail of an escape sequence:
-    # `\n  tic` is deliberate indentation in simulated help output, and the `n`
-    # would otherwise read as the end of a word.
-    suspicious = re.compile('"[^"]*(?<![\\\\])[A-Za-z,.][ ]{2,}[A-Za-z][^"]*"')
     for directory in ("crates", "apps"):
         root = ROOT / directory
         if not root.is_dir():
             continue
-        for path in root.rglob("*"):
+        for path in sorted(root.rglob("*")):
             if path.suffix not in {".rs", ".ts", ".tsx"} or not path.is_file():
                 continue
             if "target" in path.parts or "node_modules" in path.parts:
                 continue
-            for number, line in enumerate(
-                path.read_text(encoding="utf-8").splitlines(), start=1
-            ):
-                stripped = line.lstrip()
-                if stripped.startswith(("//", "/*", "*")):
-                    continue
-                if suspicious.search(line):
-                    relative = path.relative_to(ROOT).as_posix()
+            text = path.read_text(encoding="utf-8")
+            relative = path.relative_to(ROOT).as_posix()
+            for offset, source in _string_literals(text):
+                # Apply the continuation the compiler applies before judging
+                # what the message actually contains.
+                content = CONTINUATION_RE.sub("", source)
+                number = text.count("\n", 0, offset) + 1
+                if "\n" in content:
+                    fail(
+                        f"{relative}:{number} has a string literal spanning lines with no "
+                        "continuation, so the newline and indentation are in the message",
+                        errors,
+                    )
+                elif INLINE_RUN_RE.search(content):
                     fail(
                         f"{relative}:{number} has a run of spaces inside a string literal, "
                         "which is what a lost line continuation looks like",
