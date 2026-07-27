@@ -205,7 +205,19 @@ impl PreviewProvider for ProteoWizardProvider {
                     Some(BackendFailureDto {
                         kind: failure.kind().to_owned(),
                         summary: failure.summary().to_owned(),
-                        corrective_action: failure.corrective_action().to_owned(),
+                        // The crate speaks to every caller, and offers naming an
+                        // exact msconvert.exe/msaccess.exe path. This
+                        // application has no such command and no such picker, so
+                        // repeating that advice here asks the user for something
+                        // they cannot do. When a folder is in use, the two
+                        // recoveries this application has are the only ones
+                        // worth naming, whatever the failure was.
+                        corrective_action: if chosen {
+                            "Choose a different folder, or go back to searching automatically."
+                                .to_owned()
+                        } else {
+                            failure.corrective_action().to_owned()
+                        },
                     })
                 },
             ),
