@@ -19,7 +19,8 @@ from Rust.
 
 ## Decision
 
-The webview may ask exactly four things: whether a backend is installed, to
+The webview may ask exactly six things: whether a backend is installed, to
+choose which installation is used, to go back to finding one automatically, to
 choose one file, to open that file's preview, and to load one spectrum by
 index. Every one of them is typed on both sides.
 
@@ -29,6 +30,21 @@ index. Every one of them is typed on both sides.
   rather than a Tauri dialog plugin, so the webview keeps an empty capability
   set. The chosen path stays in a process-local registry; the frontend holds an
   opaque session handle and a display name.
+- **Which installation is used can be changed, for the session only.** A user
+  whose ProteoWizard sits somewhere no installer would put it had no way to say
+  so, and the alternative — widening automatic discovery — would mean executing
+  whatever is found in more places. Choosing is narrower: it runs only what the
+  user pointed at, and only until the application closes. It is never written
+  to disk, because a stored path would go on applying to a folder MSCanvas has
+  no way to vouch for, in later sessions, without being asked again.
+
+  The webview names no path in either direction. It asks for a picker, Rust
+  shows it, and what comes back is a verdict that states which installation it
+  describes. Changing the installation and probing it are a single call, so
+  there is no interval in which a verdict about the previous one can be shown
+  beside the new one, and every banner state offers the way back — including
+  the state where the call itself failed, which is precisely the state that
+  cannot say which installation was in use.
 - **File acceptance is decided in Rust** — extension, canonical resolution, and
   regular-file posture including symlink and reparse-point rejection — so a
   frontend defect cannot widen what the backend will open. On Windows all of it
