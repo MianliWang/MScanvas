@@ -6,6 +6,8 @@ mod command;
 mod diagnostics;
 mod discovery;
 mod failure;
+mod fs_guard;
+mod mzml;
 mod preview;
 mod process;
 mod sha256;
@@ -27,6 +29,13 @@ pub use discovery::{
 };
 pub use failure::{
     FailureCondition, FailureKind, NormalizedFailure, Retryability, classify_process_failure,
+};
+pub use fs_guard::{RegularFileError, is_reparse_point};
+pub use mzml::{
+    ArrayKind, ArrayKindSet, CompressionMarker, CompressionSet, MzmlChromatogramRecord, MzmlFacts,
+    MzmlLimitKind, MzmlMalformedKind, MzmlRoot, MzmlScanError, MzmlScanLimits, MzmlSpectrumRecord,
+    NumericPrecisionMarker, NumericPrecisionSet, RepresentationMarker, RetentionTimeUnitMarker,
+    UnsafeXmlKind, inspect_file, inspect_reader,
 };
 pub use preview::{
     MetadataEntry, MetadataResult, MetadataSection, MetadataSectionKind, MsLevelBucket,
