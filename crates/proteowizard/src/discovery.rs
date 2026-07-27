@@ -1100,56 +1100,61 @@ fn common_install_roots(
     program_files_x86: Option<OsString>,
     local_app_data: Option<OsString>,
 ) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    // Machine-wide installations first. A user who has both should get the one
-    // that was installed deliberately for the machine.
-    push_container_roots(&mut roots, program_files);
-    push_container_roots(&mut roots, program_files_x86);
+    // Two tiers, ordered by who can write them. Program Files needs an
+    // administrator; %LOCALAPPDATA% does not. Release order operates inside a
+    // tier and never across one, so a user-writable location cannot shadow an
+    // administrator's installation by naming a higher release.
+    let machine_wide = [program_files, program_files_x86];
+    let per_user = local_app_data
+        .map(PathBuf::from)
+        .map_or_else(Vec::new, |local| {
+            vec![
+                Some(local.clone().into_os_string()),
+                Some(local.join("Programs").into_os_string()),
+                Some(local.join("Apps").into_os_string()),
+            ]
+        });
 
-    if let Some(local_app_data) = local_app_data {
-        let local_app_data = PathBuf::from(local_app_data);
-        // A per-user install lands under one of these three. `Apps` is where
-        // the per-user MSI actually puts it, which is the case this function
-        // exists to stop missing.
-        for container in [
-            local_app_data.clone(),
-            local_app_data.join("Programs"),
-            local_app_data.join("Apps"),
-        ] {
-            push_container_roots(&mut roots, Some(container.into_os_string()));
+    let mut roots = Vec::new();
+    for tier in [machine_wide.to_vec(), per_user] {
+        let mut group: Vec<(u8, PathBuf)> = Vec::new();
+        for container in tier {
+            group.extend(container_installations(container));
+        }
+        // Ranked across the whole tier, not one container at a time. The three
+        // per-user containers are equally writable, so an older installation
+        // left in one must not beat a current one in another.
+        group.sort_by_key(|(is_stable, root)| {
+            let (major, minor, patch, name) = installation_order(root);
+            cmp::Reverse((major, minor, patch, *is_stable, name))
+        });
+        for (_, root) in group {
+            push_unique(&mut roots, root);
         }
     }
 
     roots
 }
 
-/// Adds a container directory's own `ProteoWizard` subdirectory and any
-/// versioned `ProteoWizard*` directories sitting directly inside it.
+/// What one container offers, each paired with whether it is the stable folder.
 ///
 /// Installers use both shapes: a stable `ProteoWizard` folder holding versioned
 /// children, and a versioned folder placed directly in a generic container such
-/// as `Program Files` or `%LOCALAPPDATA%\Apps`. The stable folder is searched
-/// first, then the versioned siblings newest first.
-fn push_container_roots(roots: &mut Vec<PathBuf>, value: Option<OsString>) {
+/// as `Program Files` or `%LOCALAPPDATA%\Apps`. Both are returned unranked;
+/// the caller ranks them against everything else in the same trust tier.
+fn container_installations(value: Option<OsString>) -> Vec<(u8, PathBuf)> {
     let Some(value) = value else {
-        return;
+        return Vec::new();
     };
     let container = PathBuf::from(value);
     let stable = container.join("ProteoWizard");
 
-    // Everything one container offers, gathered before any of it is ordered.
-    // The stable folder, whatever it holds, and the versioned siblings beside
-    // it are all installations of the same product, so they are ranked against
-    // each other by release rather than by which shape they happen to be. Doing
-    // this per container and not across all of them is deliberate: containers
-    // are visited machine-wide first, and a user-writable location must not be
-    // able to shadow an admin-installed one by naming a higher release.
     // The stable folder ranks ahead of anything unranked inside it. A portable
     // extraction dropped into it is a legitimate installation, but the folder
     // an installer wrote is the more deliberate one, and a name tie-break would
     // otherwise put `pwiz-bin-...` first because `w` follows `r`.
     let expansion = root_and_direct_children(&stable);
-    let mut group: Vec<(u8, PathBuf)> = if expansion.is_empty() {
+    let mut installations: Vec<(u8, PathBuf)> = if expansion.is_empty() {
         vec![(1, stable)]
     } else {
         expansion
@@ -1158,18 +1163,12 @@ fn push_container_roots(roots: &mut Vec<PathBuf>, value: Option<OsString>) {
             .map(|(position, directory)| (u8::from(position == 0), directory))
             .collect()
     };
-    group.extend(
+    installations.extend(
         versioned_siblings(&container)
             .into_iter()
             .map(|sibling| (0, sibling)),
     );
-    group.sort_by_key(|(is_stable, root)| {
-        let (major, minor, patch, name) = installation_order(root);
-        cmp::Reverse((major, minor, patch, *is_stable, name))
-    });
-    for (_, root) in group {
-        push_unique(roots, root);
-    }
+    installations
 }
 
 /// The `ProteoWizard*` directories sitting directly in a generic container.
@@ -2103,8 +2102,9 @@ Analysis commands (used with -x/--exec):
         fs::create_dir_all(tree.root.join("Unrelated Application"))
             .expect("unrelated directory should be created");
 
-        let mut roots = Vec::new();
-        push_container_roots(&mut roots, Some(tree.root.as_os_str().to_owned()));
+        // Through the real assembly, so the ranking under test is the one
+        // discovery actually applies.
+        let roots = common_install_roots(Some(tree.root.as_os_str().to_owned()), None, None);
 
         assert!(roots.contains(&tree.root.join("ProteoWizard")));
         assert!(roots.contains(&tree.root.join("ProteoWizard 3.0.26013.abcdef")));
@@ -2184,8 +2184,9 @@ Analysis commands (used with -x/--exec):
         fs::create_dir_all(&older).expect("older install should be created");
         fs::create_dir_all(&newer).expect("newer install should be created");
 
-        let mut roots = Vec::new();
-        push_container_roots(&mut roots, Some(tree.root.as_os_str().to_owned()));
+        // Through the real assembly, so the ranking under test is the one
+        // discovery actually applies.
+        let roots = common_install_roots(Some(tree.root.as_os_str().to_owned()), None, None);
 
         let newer_position = roots.iter().position(|root| root == &newer);
         let older_position = roots.iter().position(|root| root == &older);
@@ -2233,8 +2234,9 @@ Analysis commands (used with -x/--exec):
         fs::create_dir_all(&stable).expect("stable folder should be created");
         fs::create_dir_all(&newer).expect("newer sibling should be created");
 
-        let mut roots = Vec::new();
-        push_container_roots(&mut roots, Some(tree.root.as_os_str().to_owned()));
+        // Through the real assembly, so the ranking under test is the one
+        // discovery actually applies.
+        let roots = common_install_roots(Some(tree.root.as_os_str().to_owned()), None, None);
 
         let newer_position = roots.iter().position(|root| root == &newer);
         let stable_position = roots.iter().position(|root| root == &stable);
@@ -2271,8 +2273,9 @@ Analysis commands (used with -x/--exec):
         let portable = stable.join("pwiz-bin-windows-x86_64-vc145-release-3_0_26204_a09eea9");
         fs::create_dir_all(&portable).expect("portable child should be created");
 
-        let mut roots = Vec::new();
-        push_container_roots(&mut roots, Some(tree.root.as_os_str().to_owned()));
+        // Through the real assembly, so the ranking under test is the one
+        // discovery actually applies.
+        let roots = common_install_roots(Some(tree.root.as_os_str().to_owned()), None, None);
 
         let stable_position = roots.iter().position(|root| root == &stable);
         let portable_position = roots.iter().position(|root| root == &portable);
@@ -2316,13 +2319,36 @@ Analysis commands (used with -x/--exec):
         fs::create_dir_all(&portable).expect("portable extraction should be created");
         fs::create_dir_all(&installed).expect("installation should be created");
 
-        let mut roots = Vec::new();
-        push_container_roots(&mut roots, Some(tree.root.as_os_str().to_owned()));
+        // Through the real assembly, so the ranking under test is the one
+        // discovery actually applies.
+        let roots = common_install_roots(Some(tree.root.as_os_str().to_owned()), None, None);
 
         let installed_position = roots.iter().position(|root| root == &installed);
         let portable_position = roots.iter().position(|root| root == &portable);
         assert!(installed_position.is_some() && portable_position.is_some());
         assert!(installed_position < portable_position, "{roots:?}");
+    }
+
+    #[test]
+    fn per_user_containers_are_ranked_against_each_other() {
+        // The three per-user containers are equally writable, so ordering them
+        // by a fixed list lets an installation left behind in one beat the
+        // current one in another.
+        let tree = TempTree::new("per-user-tier");
+        let local = tree.root.join("Local");
+        let stale = local.join("ProteoWizard 3.0.9134");
+        let current = local
+            .join("Apps")
+            .join("ProteoWizard 3.0.26013.47b13cf 64-bit");
+        fs::create_dir_all(&stale).expect("stale per-user install should be created");
+        fs::create_dir_all(&current).expect("current per-user install should be created");
+
+        let roots = common_install_roots(None, None, Some(local.as_os_str().to_owned()));
+
+        let current_position = roots.iter().position(|root| root == &current);
+        let stale_position = roots.iter().position(|root| root == &stale);
+        assert!(current_position.is_some() && stale_position.is_some());
+        assert!(current_position < stale_position, "{roots:?}");
     }
 
     #[test]
