@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use mscanvas_proteowizard::{
     MetadataEntry, MetadataResult, MetadataSectionKind, MsLevelBucket, PreviewNoResult,
@@ -39,6 +40,16 @@ pub struct PreviewService {
     /// What the opened spectrum table said about each row, so a later selected
     /// spectrum can be checked against the row the user actually clicked.
     table_rows: Mutex<HashMap<String, Vec<TableRowFacts>>>,
+    /// Held for the length of one backend operation, so this application runs
+    /// at most one process at a time. Moving the wait to a blocking thread
+    /// stopped it starving the async runtime; it did nothing to stop several
+    /// reads of the same large file competing for the machine.
+    backend_gate: Mutex<()>,
+    /// The newest spectrum request. A request that is still waiting for the
+    /// gate when a newer one arrives never starts: the user has moved on, and
+    /// launching a process for a row they left is spending the machine on an
+    /// answer nobody will see.
+    spectrum_ticket: AtomicU64,
 }
 
 impl PreviewService {
@@ -49,6 +60,8 @@ impl PreviewService {
             files: FileRegistry::new(),
             generations: Mutex::new(HashMap::new()),
             table_rows: Mutex::new(HashMap::new()),
+            backend_gate: Mutex::new(()),
+            spectrum_ticket: AtomicU64::new(0),
         }
     }
 
@@ -89,7 +102,9 @@ impl PreviewService {
         // swapped back between the two comparisons around it. Required: losing
         // the hold means losing the guarantee.
         let guard = lock_against_replacement(file.path())?;
+        let running = self.enter_backend();
         let results = self.provider.run_batch(file.path(), &operations)?;
+        drop(running);
         drop(guard);
         if SourceGeneration::capture(file.path()) != before {
             return Err(PreviewErrorDto::new(
@@ -177,6 +192,7 @@ impl PreviewService {
         handle: &str,
         index: u64,
     ) -> Result<SelectedSpectrumOutcomeDto, PreviewErrorDto> {
+        let ticket = self.spectrum_ticket.fetch_add(1, Ordering::Relaxed) + 1;
         let file = self.files.resolve(handle)?;
         // A selected spectrum is shown beside the metadata and the table from
         // the open action. If the file has changed since then, this spectrum
@@ -203,7 +219,18 @@ impl PreviewService {
         let redactor = reporting_redactor(file.path());
         let operation = selected_spectrum_operation(index);
         let guard = lock_against_replacement(file.path())?;
+        let running = self.enter_backend();
+        // Checked after the wait, not before it: what matters is whether the
+        // user has moved on by the time this would actually start.
+        if self.spectrum_ticket.load(Ordering::Relaxed) != ticket {
+            return Err(PreviewErrorDto::new(
+                "selection_superseded",
+                "A newer spectrum was selected before this one started, so it was not read.",
+                false,
+            ));
+        }
         let result = self.provider.run(file.path(), &operation)?;
+        drop(running);
         drop(guard);
         if SourceGeneration::capture(file.path()) != SourceGeneration::of(&file) {
             return Err(source_changed_since_preview());
@@ -342,6 +369,17 @@ fn differs(left: f64, right: f64) -> bool {
 
     let tolerance = ABSOLUTE.max(RELATIVE * left.abs().max(right.abs()));
     (left - right).abs() > tolerance
+}
+
+impl PreviewService {
+    /// Waits for the right to run a backend operation.
+    ///
+    /// The guard is the permission; dropping it releases the next caller.
+    fn enter_backend(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.backend_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }
 
 fn source_changed_since_preview() -> PreviewErrorDto {

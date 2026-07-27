@@ -107,11 +107,13 @@ index. Every one of them is typed on both sides.
   prefix, because a spectrum list cut mid-file would read as a shorter
   acquisition. Removing that ceiling means a row-bounded or streaming table
   parser in `mscanvas-proteowizard`, which is a separate change.
-- Rapid row selection still launches one process per committed selection.
-  Repeats of the row already being read are dropped, and the table commits on
-  Enter or Space rather than on focus, but an abandoned read runs to
-  completion: cancelling it needs real backend cancellation, which ADR 0003
-  still lists as an open gate.
+- MSCanvas runs at most one backend process at a time. A selection that is
+  still waiting for its turn when a newer one arrives never starts, because the
+  user has moved on and the answer would not be looked at. Together with
+  committing on Enter or Space rather than on focus, and dropping repeats of
+  the row already being read, that bounds what fast navigation costs. What
+  remains is that a read already under way runs to completion; stopping it
+  needs real backend cancellation, which ADR 0003 still lists as an open gate.
 - The three operations of one open action read the file separately, and
   combining results from two generations of it would describe an acquisition
   that never existed. The file's length and modification time are therefore
@@ -133,9 +135,9 @@ index. Every one of them is typed on both sides.
   filesystem path the user did not choose to reveal.
 - Every preview launches a process and waits for it, and that wait happens on a
   blocking thread rather than on the async runtime — including the wait for the
-  modal file picker, which lasts as long as the user takes. Otherwise a handful
-  of abandoned selections would occupy the runtime and leave every later
-  command queued behind processes whose results nobody wants.
+  modal file picker, which lasts as long as the user takes. Moving the wait is
+  not the same as bounding the work, which is why the single-process gate above
+  exists as well.
 - Timings recorded in the workspace are descriptive observations on the running
   machine. They are not budgets, and no threshold derives from them; that would
   need repeated measurement on a recorded hardware baseline.

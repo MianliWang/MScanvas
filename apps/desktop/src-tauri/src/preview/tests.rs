@@ -698,6 +698,68 @@ fn backend_labels_are_redacted_and_bounded_like_any_other_backend_text() {
 }
 
 #[test]
+fn only_one_backend_operation_runs_at_a_time() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Records the highest number of operations ever in flight together.
+    struct ConcurrencyProbe {
+        inner: FakeProvider,
+        active: AtomicUsize,
+        peak: Arc<AtomicUsize>,
+    }
+
+    impl PreviewProvider for ConcurrencyProbe {
+        fn availability(&self) -> BackendAvailabilityDto {
+            self.inner.availability()
+        }
+
+        fn run(
+            &self,
+            source: &Path,
+            operation: &PreviewOperation,
+        ) -> Result<OperationResult, PreviewErrorDto> {
+            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(active, Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let result = self.inner.run(source, operation);
+            self.active.fetch_sub(1, Ordering::SeqCst);
+            result
+        }
+    }
+
+    let file = TestFile::new("concurrency");
+    let peak = Arc::new(AtomicUsize::new(0));
+    let mut responses = Vec::new();
+    for _ in 0..4 {
+        responses.push(Response::File(selected_spectrum_output(
+            0,
+            &[(445.12, 9000.0)],
+        )));
+    }
+    let service = Arc::new(PreviewService::new(Box::new(ConcurrencyProbe {
+        inner: FakeProvider::available(responses),
+        active: AtomicUsize::new(0),
+        peak: Arc::clone(&peak),
+    })));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let workers: Vec<_> = (0..4)
+        .map(|_| {
+            let service = Arc::clone(&service);
+            let handle = selected.handle.clone();
+            std::thread::spawn(move || service.load_spectrum(&handle, 0))
+        })
+        .collect();
+    for worker in workers {
+        let _ = worker.join().expect("worker finished");
+    }
+
+    // Four selections, never two processes at once.
+    assert_eq!(peak.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn metadata_printed_before_the_first_section_is_shown_rather_than_counted() {
     let file = TestFile::new("leading");
     let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
