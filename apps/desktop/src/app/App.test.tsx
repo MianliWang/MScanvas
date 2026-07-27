@@ -75,6 +75,27 @@ describe("mzML preview workspace", () => {
     expect(screen.getByRole("button", { name: "Open mzML…" })).toBeEnabled();
   });
 
+  it("drops what the previous installation read when the installation changes", async () => {
+    // The table's rows are what a later selected spectrum is reconciled
+    // against. Keeping them across a change would compare a spectrum read by
+    // the new installation with rows read by the old one, and both honest
+    // outcomes of that -- a wrong result or an invented conflict -- are worse
+    // than asking the user to open the file again.
+    const api = createFakePreviewApi({ chosenInstallation: chosenBackend });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+    const readsBefore = api.openCount();
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    });
+    // And nothing was re-read on the user's behalf: changing the installation
+    // is not a request to run the new one against the open file.
+    expect(api.openCount()).toBe(readsBefore);
+  });
+
   it("keeps the verdict it had when the folder picker is dismissed", async () => {
     // Dismissing changes nothing, so replacing what is on screen -- with a new
     // verdict or with "checking" -- would say something happened that did not.

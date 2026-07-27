@@ -136,6 +136,32 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   useEffect(checkBackend, [checkBackend]);
 
   /**
+   * Drops everything on screen that a backend produced.
+   *
+   * Changing the installation makes every one of those readings the work of an
+   * installation no longer in use. Leaving them would not merely show something
+   * stale: the table's rows are what a later selected spectrum is reconciled
+   * against, so a spectrum read by the new installation would be compared with
+   * rows read by the old one, and the honest answers to that comparison are a
+   * wrong result or an invented conflict.
+   *
+   * The file itself stays chosen -- it is a path Rust holds, and no backend
+   * decided it -- so opening it again is one click and reads nothing until the
+   * user asks. Re-reading it here would launch processes nobody asked for, and
+   * against an installation that may have just been reported unusable.
+   */
+  const discardBackendDerivedState = useCallback(() => {
+    previewToken.current += 1;
+    spectrumToken.current += 1;
+    inFlightSpectrum.current = null;
+    pendingSpectrumRender.current = null;
+    pendingOpenRender.current = null;
+    setPreview({ status: "empty" });
+    setSpectrum({ status: "none" });
+    setSelectedIndex(null);
+  }, []);
+
+  /**
    * Applies a verdict that comes back from changing which installation is used.
    *
    * The token is taken before the request, so a check that was already in
@@ -161,6 +187,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           // already on screen still describes what is in use, and replacing it
           // with anything -- including "checking" -- would say otherwise.
           if (availability !== null) {
+            discardBackendDerivedState();
             setBackend({ status: "resolved", availability });
           }
         })
@@ -170,7 +197,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           }
         });
     },
-    [],
+    [discardBackendDerivedState],
   );
 
   /**
