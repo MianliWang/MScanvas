@@ -1,6 +1,6 @@
 # Bootstrap status
 
-**Updated:** 2026-07-26
+**Updated:** 2026-07-27
 
 **Canonical repository:** [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas)
 
@@ -172,6 +172,56 @@ resolved in `Cargo.lock` through `tauri`, so the dependency graph gained no crat
 A/B/C/D rating is upgraded. M0C Slice 2B still owes representative open-format navigation
 and scale measurements.
 
+## M0C Slice 2B representative navigation and scale evidence on 2026-07-27
+
+One representative public acquisition was measured in isolation on an ephemeral
+GitHub-hosted `windows-2025` VM: PRIDE `PXD081190`, `208,408,454` bytes, license
+`Creative Commons Public Domain (CC0)`. A separate acquire-and-attest run
+([`30239606441`](https://github.com/MianliWang/MScanvas/actions/runs/30239606441)) re-queried
+the live PRIDE record, downloaded the file once with no redirect allowance, recorded SHA-256
+`262D1178303CD934223239D5D93A3B842DCA69DA09CEF58E95A39B950D26B7E8` and discarded the payload
+without executing anything. Only then was that hash pinned, and the measurement run
+([`30239989762`](https://github.com/MianliWang/MScanvas/actions/runs/30239989762), commit
+`96334600b45fb5910f1372934e430c91435685e8`) refused to start without it.
+
+The file is `indexedmzML` with `36,319` MS2 spectra, no chromatograms and declared point
+counts from `10` to `399`. The library scanner read all `208 MB` in `844 ms`.
+Selected-spectrum retrieval cost `163`–`198` ms of backend time regardless of index
+position, and twenty-four deterministic indices repeated over three passes held a backend
+p50 of `164` ms, p95 between `186` and `194` ms and a maximum of `199` ms. Access did not
+degrade with position or repetition and later passes were not faster. Every timing and
+memory figure is a single observation on a shared two-core runner and is advisory; no
+threshold was created and no cache exists in this slice.
+
+mzML conversion of the representative file returned `ConversionIntegrityOutcome::Valid`
+with thirteen of fourteen properties verified, the exception being the opaque native
+identifier form the canonical identity contract deliberately leaves unverified. An
+independent .NET XmlReader pass agreed on validity and on both counts. The tiny control also
+returned `Valid` with vocabulary-derived properties correctly degraded to unverified,
+because that fixture reaches them through a `referenceableParamGroup`. Both converted
+outputs were re-inspected and then navigated successfully.
+
+The 8 MiB preview parser cap was deliberately left unchanged and was not reached: the
+complete spectrum table for `36,319` spectra was `4,013,391` bytes and parsed in `40 ms`.
+No API change was warranted.
+
+One correction came out of the evidence. Selecting a legitimately peakless spectrum on
+ProteoWizard's own reference fixture was falsely rejected as malformed; a spectrum with no
+peaks is now a valid result with empty arrays, while declared-count disagreements remain
+count mismatches and the no-result state remains distinct. The `tic` query returned exit 0
+with no generated output on the representative acquisition, which the typed contract refused
+to treat as success; that is a recorded capability limit, not a defect.
+
+Sanitized evidence was independently downloaded and manually audited: the representative
+acquisition name, its prefix, drive-letter and UNC paths, runner identity, workflow
+environment variables, credentials and raw scientific arrays were all absent, and teardown
+attested all ten proofs including acquired fixtures and generated conversion outputs. The
+temporary evidence workflow and orchestration script were removed from the tree afterwards.
+
+ADR 0003 moves from proposed to accepted for M1–M2 preview navigation with named limits.
+MS1 and chromatogram behavior, TIC and BPC from representative data, vendor RAW, mzXML,
+alternate locales, real cancellation and any preview cache remain outside that acceptance.
+
 ## Windows validation completed on 2026-07-23
 
 | Command | Result |
@@ -205,11 +255,11 @@ claim a rendered Windows runtime smoke test.
 
 - Launch and interact with `pnpm tauri dev` on Windows; a build alone is not a
   rendered runtime check.
-- Complete the remaining ProteoWizard provider gates: M0C Slice 2B representative and
-  repeated-navigation and large-array measurements, BPC strategy, real cancellation,
-  alternate-locale parsing and separately authorized vendor coverage. The typed
-  preview-result/canonical-identity boundary, the mzML conversion-integrity contract and
-  the bounded open-format disposable-VM matrix are complete.
+- Complete the remaining ProteoWizard provider gates: MS1 and chromatogram behavior, TIC
+  and BPC from representative data, real cancellation, alternate-locale parsing and
+  separately authorized vendor coverage. The typed preview-result/canonical-identity
+  boundary, the mzML conversion-integrity contract, the bounded open-format disposable-VM
+  matrix and the representative navigation and scale measurements are complete.
 - Enable branch protection after the first green remote CI run.
 
 ## First verified-bootstrap checklist
@@ -222,8 +272,7 @@ claim a rendered Windows runtime smoke test.
 - [x] Run all frontend and Rust checks.
 - [ ] Run `pnpm tauri dev` on Windows.
 - [x] Confirm Tauri capability configuration remains minimal.
-- [ ] Complete the M0 ProteoWizard provider decision; portable/open-format evidence is
-  complete and the M0C Slice 1 preview contracts and Slice 2A conversion-integrity
-  contract are implemented, while representative scale/navigation, cancellation, locale,
-  BPC and vendor gates remain.
+- [x] Complete the M0 ProteoWizard provider decision for preview navigation; ADR 0003 is
+  accepted for M1–M2 with named limits. MS1/chromatogram behavior, TIC and BPC from
+  representative data, cancellation, locale and vendor gates remain separately open.
 - [ ] Enable branch protection after the first green CI run.

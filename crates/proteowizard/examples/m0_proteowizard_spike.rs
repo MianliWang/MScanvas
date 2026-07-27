@@ -68,6 +68,7 @@ impl HarnessError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     RuntimeProof,
+    Inspect,
     Probe,
     Metadata,
     RunSummary,
@@ -81,6 +82,7 @@ impl Mode {
     fn parse(value: &OsStr) -> Result<Self, HarnessError> {
         match value.to_str() {
             Some("runtime-proof") => Ok(Self::RuntimeProof),
+            Some("inspect") => Ok(Self::Inspect),
             Some("probe") => Ok(Self::Probe),
             Some("metadata") => Ok(Self::Metadata),
             Some("run-summary") => Ok(Self::RunSummary),
@@ -89,7 +91,7 @@ impl Mode {
             Some("spectrum") => Ok(Self::Spectrum),
             Some("convert") => Ok(Self::Convert),
             _ => Err(HarnessError::usage(
-                "--mode must be runtime-proof, probe, metadata, run-summary, spectrum-table, tic, spectrum, or convert",
+                "--mode must be runtime-proof, inspect, probe, metadata, run-summary, spectrum-table, tic, spectrum, or convert",
             )),
         }
     }
@@ -97,6 +99,7 @@ impl Mode {
     const fn label(self) -> &'static str {
         match self {
             Self::RuntimeProof => "runtime-proof",
+            Self::Inspect => "inspect",
             Self::Probe => "probe",
             Self::Metadata => "metadata",
             Self::RunSummary => "run-summary",
@@ -303,6 +306,21 @@ fn validate_mode_arguments(mut cli: Cli) -> Result<Cli, HarnessError> {
             reject_present(&cli.format, "--format", "runtime-proof")?;
             reject_present(&cli.cancel_after_ms, "--cancel-after-ms", "runtime-proof")?;
         }
+        Mode::Inspect => {
+            reject_present(&cli.runtime_root, "--runtime-root", "inspect")?;
+            reject_present(&cli.proteowizard_home, "--proteowizard-home", "inspect")?;
+            reject_present(
+                &cli.proteowizard_executable,
+                "--proteowizard-executable",
+                "inspect",
+            )?;
+            require_present(&cli.input, "--input", "inspect")?;
+            reject_present(&cli.output_dir, "--output-dir", "inspect")?;
+            reject_present(&cli.spectrum_index, "--spectrum-index", "inspect")?;
+            reject_present(&cli.ms_level, "--ms-level", "inspect")?;
+            reject_present(&cli.format, "--format", "inspect")?;
+            reject_present(&cli.cancel_after_ms, "--cancel-after-ms", "inspect")?;
+        }
         Mode::Probe => {
             reject_present(&cli.runtime_root, "--runtime-root", "probe")?;
             reject_present(&cli.input, "--input", "probe")?;
@@ -438,6 +456,9 @@ fn run(cli: Cli) -> Result<(), HarnessError> {
     if cli.mode == Mode::RuntimeProof {
         return run_runtime_proof(&cli);
     }
+    if cli.mode == Mode::Inspect {
+        return run_inspect(&cli);
+    }
 
     println!("warning=unstable developer-only M0 spike harness; no stable CLI contract");
     println!("mode={}", cli.mode.label());
@@ -504,13 +525,19 @@ fn run(cli: Cli) -> Result<(), HarnessError> {
     match process_result {
         Ok(output) => {
             let output_changed = before != after;
+            // Capture and interpretation are timed together: both are the cost
+            // of turning backend output into a typed result.
+            let mut parser_elapsed = None;
             let preview_interpretation = if let Some(operation) = &preview_operation {
+                let started = std::time::Instant::now();
                 let manifest = if output.success() {
                     capture_preview_output_manifest(output_dir, &after, operation)
                 } else {
                     PreviewOutputManifest::empty()
                 };
-                Some(interpret_preview(operation, &output, &manifest))
+                let interpretation = interpret_preview(operation, &output, &manifest);
+                parser_elapsed = Some(started.elapsed());
+                Some(interpretation)
             } else {
                 None
             };
@@ -534,6 +561,13 @@ fn run(cli: Cli) -> Result<(), HarnessError> {
                     .as_ref()
                     .is_some_and(ConversionIntegrityReport::reports_partial_output);
             print_process_output(&output, output_changed, partial_output_present, &redactor)?;
+            println!(
+                "process.parser_elapsed_ms={}",
+                parser_elapsed.map_or_else(
+                    || "unavailable".to_owned(),
+                    |elapsed| elapsed.as_millis().to_string()
+                )
+            );
             if let Some(report) = &conversion_integrity {
                 report.print();
                 if !report.is_acceptable() {
@@ -578,6 +612,159 @@ fn run(cli: Cli) -> Result<(), HarnessError> {
                 "the backend process could not be supervised",
             ))
         }
+    }
+}
+
+/// Inspects one open-format source with the library scanner and prints the
+/// structural facts a measurement matrix needs to plan its sampling.
+///
+/// This mode never launches a backend. Only structural counts, declared point
+/// counts and indices are printed; no scientific value is emitted.
+fn run_inspect(cli: &Cli) -> Result<(), HarnessError> {
+    let input = cli
+        .input
+        .as_deref()
+        .ok_or_else(|| HarnessError::operation("validated input is unavailable"))?;
+
+    println!("warning=unstable developer-only M0 spike harness; no stable CLI contract");
+    println!("mode={}", cli.mode.label());
+
+    let started = std::time::Instant::now();
+    let facts =
+        mscanvas_proteowizard::inspect_file(input, MzmlScanLimits::default()).map_err(|error| {
+            println!("inspect.result=error");
+            println!("inspect.error_kind={}", error.stable_id());
+            HarnessError::operation("the source could not be inspected as mzML")
+        })?;
+    let parser_elapsed = started.elapsed();
+
+    println!("inspect.result=ok");
+    println!("inspect.root={}", facts.root().stable_id());
+    println!(
+        "inspect.declared_spectrum_count={}",
+        optional_count(facts.declared_spectrum_count())
+    );
+    println!(
+        "inspect.observed_spectrum_count={}",
+        facts.observed_spectrum_count()
+    );
+    println!(
+        "inspect.declared_chromatogram_count={}",
+        optional_count(facts.declared_chromatogram_count())
+    );
+    println!(
+        "inspect.observed_chromatogram_count={}",
+        facts.observed_chromatogram_count()
+    );
+    println!(
+        "inspect.ms_level_distribution={}",
+        format_ms_level_distribution(&facts)
+    );
+    println!(
+        "inspect.spectrum_index_sequence_consecutive={}",
+        facts.spectrum_index_sequence_is_consecutive()
+    );
+    println!(
+        "inspect.chromatogram_index_sequence_consecutive={}",
+        facts.chromatogram_index_sequence_is_consecutive()
+    );
+    println!(
+        "inspect.parameter_group_reference_observed={}",
+        facts.parameter_group_reference_observed()
+    );
+    println!(
+        "inspect.retention_time_units={}",
+        format_retention_time_units(&facts)
+    );
+    println!("inspect.scanned_bytes={}", facts.scanned_bytes());
+    println!(
+        "inspect.first_ms2_index={}",
+        optional_count(first_index_with_ms_level(&facts, 2))
+    );
+    print_array_length_samples(&facts);
+    println!(
+        "inspect.parser_elapsed_ms={}",
+        parser_elapsed.as_millis().min(u128::from(u64::MAX))
+    );
+    Ok(())
+}
+
+fn optional_count(value: Option<u64>) -> String {
+    value.map_or_else(|| "unavailable".to_owned(), |value| value.to_string())
+}
+
+fn format_ms_level_distribution(facts: &mscanvas_proteowizard::MzmlFacts) -> String {
+    let rendered = facts
+        .ms_level_distribution()
+        .iter()
+        .map(|(level, count)| match level {
+            Some(level) => format!("ms{level}:{count}"),
+            None => format!("unknown:{count}"),
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    if rendered.is_empty() {
+        "<none>".to_owned()
+    } else {
+        rendered
+    }
+}
+
+fn format_retention_time_units(facts: &mscanvas_proteowizard::MzmlFacts) -> String {
+    let rendered = facts
+        .retention_time_units()
+        .iter()
+        .map(|unit| format!("{unit:?}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    if rendered.is_empty() {
+        "<none>".to_owned()
+    } else {
+        rendered
+    }
+}
+
+fn first_index_with_ms_level(
+    facts: &mscanvas_proteowizard::MzmlFacts,
+    ms_level: u32,
+) -> Option<u64> {
+    facts
+        .spectra()
+        .iter()
+        .position(|record| record.ms_level() == Some(ms_level))
+        .map(|position| position as u64)
+}
+
+/// Prints the minimum, median and maximum declared point counts together with a
+/// representative spectrum index for each, so a matrix can sample small, median
+/// and large arrays deterministically.
+fn print_array_length_samples(facts: &mscanvas_proteowizard::MzmlFacts) {
+    let mut lengths = facts
+        .spectra()
+        .iter()
+        .filter_map(|record| record.default_array_length())
+        .collect::<Vec<_>>();
+    if lengths.is_empty() {
+        for name in ["minimum", "median", "maximum"] {
+            println!("inspect.array_length.{name}=unavailable");
+            println!("inspect.array_length.{name}_index=unavailable");
+        }
+        return;
+    }
+    lengths.sort_unstable();
+    let samples = [
+        ("minimum", lengths[0]),
+        ("median", lengths[lengths.len() / 2]),
+        ("maximum", lengths[lengths.len() - 1]),
+    ];
+    for (name, length) in samples {
+        let index = facts
+            .spectra()
+            .iter()
+            .position(|record| record.default_array_length() == Some(length))
+            .map_or_else(|| "unavailable".to_owned(), |position| position.to_string());
+        println!("inspect.array_length.{name}={length}");
+        println!("inspect.array_length.{name}_index={index}");
     }
 }
 
@@ -1166,9 +1353,9 @@ fn build_command(
                 "runtime-proof mode does not create an operation command",
             ));
         }
-        Mode::Probe => {
+        Mode::Inspect | Mode::Probe => {
             return Err(HarnessError::operation(
-                "probe mode does not create an operation command",
+                "this mode does not create an operation command",
             ));
         }
         Mode::Metadata => build_msaccess_command_with_capabilities(
@@ -1247,7 +1434,7 @@ fn requested_preview_operation(cli: &Cli) -> Result<Option<PreviewOperation>, Ha
             })?,
             precision: SPECTRUM_PRECISION,
         }),
-        Mode::RuntimeProof | Mode::Probe | Mode::Convert => None,
+        Mode::RuntimeProof | Mode::Inspect | Mode::Probe | Mode::Convert => None,
     };
     Ok(operation)
 }
@@ -1257,7 +1444,7 @@ fn validate_installed_command_surface(
     discovery: &mscanvas_proteowizard::DiscoveryResult,
 ) -> Result<InstalledHelpCapabilities, HarnessError> {
     let (label, tool) = match cli.mode {
-        Mode::RuntimeProof | Mode::Probe => {
+        Mode::RuntimeProof | Mode::Inspect | Mode::Probe => {
             return Err(HarnessError::operation(
                 "this mode does not create an operation capability model",
             ));
@@ -1278,7 +1465,9 @@ fn validate_installed_command_surface(
     })?;
 
     match cli.mode {
-        Mode::RuntimeProof | Mode::Probe => unreachable!("non-operation modes returned above"),
+        Mode::RuntimeProof | Mode::Inspect | Mode::Probe => {
+            unreachable!("non-operation modes returned above")
+        }
         Mode::Metadata => capabilities.require_preview_operation(&PreviewOperation::Metadata),
         Mode::RunSummary => capabilities.require_preview_operation(&PreviewOperation::RunSummary),
         Mode::SpectrumTable => {
@@ -1836,7 +2025,7 @@ cargo run -p mscanvas-proteowizard --example m0_proteowizard_spike -- \
   --mode runtime-proof --runtime-root PATH --proteowizard-home PATH
 
 cargo run -p mscanvas-proteowizard --example m0_proteowizard_spike -- \
-  --mode probe|metadata|run-summary|spectrum-table|tic|spectrum|convert \
+  --mode inspect|probe|metadata|run-summary|spectrum-table|tic|spectrum|convert \
   [--proteowizard-home PATH | --proteowizard-executable EXE] \
   [--input PATH --output-dir PATH] [--spectrum-index N] [--ms-level N] \
   [--format mzML|mzXML] [--cancel-after-ms N]"#
@@ -2305,6 +2494,65 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.path).expect("controlled preview directory is removed");
         }
+    }
+
+    #[test]
+    fn inspect_mode_needs_only_an_input_and_never_plans_a_backend_operation() {
+        let cli = parse_args(
+            ["--mode", "inspect", "--input", "Cargo.toml"]
+                .into_iter()
+                .map(OsString::from),
+        )
+        .expect("inspect accepts an existing input alone");
+        assert_eq!(cli.mode, Mode::Inspect);
+
+        for rejected in [
+            vec!["--mode", "inspect"],
+            vec![
+                "--mode",
+                "inspect",
+                "--input",
+                "Cargo.toml",
+                "--output-dir",
+                ".",
+            ],
+            vec![
+                "--mode",
+                "inspect",
+                "--input",
+                "Cargo.toml",
+                "--spectrum-index",
+                "0",
+            ],
+        ] {
+            assert!(
+                parse_args(rejected.into_iter().map(OsString::from)).is_err(),
+                "inspect must not accept backend or output arguments"
+            );
+        }
+    }
+
+    #[test]
+    fn inspect_sampling_helpers_choose_deterministic_representatives() {
+        let document = concat!(
+            r#"<mzML><run><spectrumList count="3">"#,
+            r#"<spectrum index="0" id="scan=1" defaultArrayLength="15">"#,
+            r#"<cvParam accession="MS:1000511" name="ms level" value="1"/></spectrum>"#,
+            r#"<spectrum index="1" id="scan=2" defaultArrayLength="4">"#,
+            r#"<cvParam accession="MS:1000511" name="ms level" value="2"/></spectrum>"#,
+            r#"<spectrum index="2" id="scan=3" defaultArrayLength="40">"#,
+            r#"<cvParam accession="MS:1000511" name="ms level" value="1"/></spectrum>"#,
+            r#"</spectrumList></run></mzML>"#,
+        );
+        let facts =
+            mscanvas_proteowizard::inspect_reader(document.as_bytes(), MzmlScanLimits::default())
+                .expect("the fixture inspects cleanly");
+
+        assert_eq!(first_index_with_ms_level(&facts, 2), Some(1));
+        assert_eq!(first_index_with_ms_level(&facts, 3), None);
+        assert_eq!(format_ms_level_distribution(&facts), "ms1:2,ms2:1");
+        assert_eq!(optional_count(facts.declared_spectrum_count()), "3");
+        assert_eq!(optional_count(None), "unavailable");
     }
 
     #[test]
