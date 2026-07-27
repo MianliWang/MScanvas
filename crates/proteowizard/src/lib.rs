@@ -49,14 +49,14 @@ pub use mzml::{
     UnsafeXmlKind, inspect_file, inspect_reader,
 };
 pub use preview::{
-    MetadataEntry, MetadataResult, MetadataSection, MetadataSectionKind, MsLevelBucket,
-    MsLevelCount, NumericPrecisionEvidence, PreviewInputSource, PreviewInterpretError,
-    PreviewMalformedKind, PreviewNoResult, PreviewOutcome, PreviewOutputEntry,
-    PreviewOutputManifest, PreviewValue, RetentionTime, RunRetentionTimeRange, RunSummaryResult,
-    SelectedSpectrumResult, SpectrumIdentifier, SpectrumIdentifierKind, SpectrumIdentity,
-    SpectrumIdentityConflict, SpectrumPrecursor, SpectrumRepresentationState, SpectrumTableResult,
-    SpectrumTableRow, TicIntensityOrigin, TicPoint, TicResult, TicSourceOrder, UnitState,
-    interpret_preview,
+    MAX_PREVIEW_TEXT_BYTES, MetadataEntry, MetadataResult, MetadataSection, MetadataSectionKind,
+    MsLevelBucket, MsLevelCount, NumericPrecisionEvidence, PreviewInputSource,
+    PreviewInterpretError, PreviewMalformedKind, PreviewNoResult, PreviewOutcome,
+    PreviewOutputEntry, PreviewOutputManifest, PreviewValue, RetentionTime, RunRetentionTimeRange,
+    RunSummaryResult, SelectedSpectrumResult, SpectrumIdentifier, SpectrumIdentifierKind,
+    SpectrumIdentity, SpectrumIdentityConflict, SpectrumPrecursor, SpectrumRepresentationState,
+    SpectrumTableResult, SpectrumTableRow, TicIntensityOrigin, TicPoint, TicResult, TicSourceOrder,
+    UnitState, interpret_preview,
 };
 pub use process::{
     CancellationToken, LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner,
