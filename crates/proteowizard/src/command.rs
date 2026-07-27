@@ -26,7 +26,9 @@ impl OpenFormat {
         }
     }
 
-    const fn extension(self) -> &'static str {
+    /// The exact output file extension this format requires.
+    #[must_use]
+    pub const fn extension(self) -> &'static str {
         match self {
             Self::MzMl => "mzML",
             Self::MzXml => "mzXML",

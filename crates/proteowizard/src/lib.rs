@@ -3,6 +3,7 @@
 
 mod capability;
 mod command;
+mod conversion;
 mod diagnostics;
 mod discovery;
 mod failure;
@@ -22,6 +23,10 @@ pub use command::{
     BackendTool, CommandSpec, OpenFormat, PlanError, PreviewOperation,
     build_msaccess_command_with_capabilities, build_msconvert_command_with_capabilities,
 };
+pub use conversion::{
+    CompressionPolicy, ConversionOutputInspection, ConversionOutputRejection, ConversionPolicy,
+    conversion_output_file_name, inspect_conversion_output,
+};
 pub use diagnostics::{Redactor, ReportableProcessOutput};
 pub use discovery::{
     AvailabilityState, ConfiguredLocation, DiscoveredTool, DiscoveryEnvironment, DiscoveryFailure,
@@ -30,7 +35,10 @@ pub use discovery::{
 pub use failure::{
     FailureCondition, FailureKind, NormalizedFailure, Retryability, classify_process_failure,
 };
-pub use fs_guard::{RegularFileError, is_reparse_point};
+pub use fs_guard::{
+    OutputDirectoryEntry, OutputDirectorySnapshot, OutputEntryKind, RegularFileError,
+    is_reparse_point, snapshot_output_directory,
+};
 pub use mzml::{
     ArrayKind, ArrayKindSet, CompressionMarker, CompressionSet, MzmlChromatogramRecord, MzmlFacts,
     MzmlLimitKind, MzmlMalformedKind, MzmlRoot, MzmlScanError, MzmlScanLimits, MzmlSpectrumRecord,
