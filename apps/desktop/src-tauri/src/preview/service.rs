@@ -23,7 +23,7 @@ use super::dto::{
     SelectedFileDto, SelectedSpectrumDto, SelectedSpectrumOutcomeDto, SpectrumRowDto,
     SpectrumTableDto, bounded_text, redact_absolute_paths, require_finite, require_finite_option,
 };
-use super::selection::{AcceptedFile, FileRegistry, accept_mzml_file};
+use super::selection::{AcceptedFile, FileRegistry, accept_mzml_file, file_identity};
 
 /// The narrow set of operations the desktop application exposes.
 pub struct PreviewService {
@@ -72,7 +72,7 @@ impl PreviewService {
         // between them, their results describe different generations of the
         // run, and combining those into one preview would present an
         // acquisition that never existed.
-        let before = SourceGeneration::capture(file.path());
+        let before = SourceGeneration::of(&file);
         let results = self.provider.run_batch(file.path(), &operations)?;
         if SourceGeneration::capture(file.path()) != before {
             return Err(PreviewErrorDto::new(
@@ -159,9 +159,19 @@ impl PreviewService {
             return Err(source_changed_since_preview());
         }
 
+        // Also compared against the handle's own accepted identity, so a file
+        // replaced between validation and spawn is caught even when no preview
+        // generation has been recorded yet.
+        if SourceGeneration::capture(file.path()) != SourceGeneration::of(&file) {
+            return Err(source_changed_since_preview());
+        }
+
         let redactor = reporting_redactor(file.path());
         let operation = selected_spectrum_operation(index);
         let result = self.provider.run(file.path(), &operation)?;
+        if SourceGeneration::capture(file.path()) != SourceGeneration::of(&file) {
+            return Err(source_changed_since_preview());
+        }
         if let Some(expected) = opened_generation.as_ref()
             && SourceGeneration::capture(file.path()) != *expected
         {
@@ -189,13 +199,13 @@ impl PreviewService {
 
 /// A cheap stamp of which generation of a file was read.
 ///
-/// Length and modification time, not a digest: the representative acquisition
-/// is 208 MB and hashing it around every preview would cost more than the
-/// preview. `None` on either field means the platform did not report it, and
-/// two `None`s compare equal, so this narrows the window rather than closing
-/// it. The crate revalidates filesystem identity at each spawn independently.
+/// Filesystem identity, length and modification time, not a digest: the
+/// representative acquisition is 208 MB and hashing it around every preview
+/// would cost more than the preview. The identity is what catches a file
+/// replaced by another one of the same size at the same recorded time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SourceGeneration {
+    identity: Option<(u64, u64)>,
     byte_length: Option<u64>,
     modified: Option<std::time::SystemTime>,
 }
@@ -204,8 +214,21 @@ impl SourceGeneration {
     fn capture(path: &Path) -> Self {
         let metadata = std::fs::symlink_metadata(path).ok();
         Self {
+            identity: file_identity(path),
             byte_length: metadata.as_ref().map(std::fs::Metadata::len),
             modified: metadata.and_then(|metadata| metadata.modified().ok()),
+        }
+    }
+
+    /// The generation the handle was accepted with, so a read can be checked
+    /// against what the user chose rather than only against itself.
+    fn of(file: &AcceptedFile) -> Self {
+        Self {
+            identity: Some(file.identity()),
+            byte_length: Some(file.byte_length()),
+            modified: std::fs::symlink_metadata(file.path())
+                .ok()
+                .and_then(|metadata| metadata.modified().ok()),
         }
     }
 }

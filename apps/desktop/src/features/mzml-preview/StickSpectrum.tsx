@@ -14,11 +14,11 @@ const PLOT_PADDING_TOP = 10;
 const BASELINE_Y = PLOT_HEIGHT - 22;
 
 /**
- * The most sticks the plot draws. A spectrum can carry far more points than a
- * screen has columns, so points are reduced to at most one stick per column
- * rather than emitting a node per point.
+ * The columns the plot reduces to. A spectrum can carry far more points than a
+ * screen has columns, so points are reduced per column rather than emitting a
+ * node per point. Each column can draw two sticks, one per sign.
  */
-const MAX_STICKS = 900;
+const MAX_COLUMNS = 900;
 
 export interface StickSpectrumProps {
   readonly mz: readonly number[];
@@ -51,14 +51,15 @@ interface Reduction {
 }
 
 /**
- * Reduces the transferred points to at most one stick per column, keeping the
- * point furthest from zero in each column.
+ * Reduces the transferred points to the highest and the lowest value in each
+ * column.
  *
- * Furthest from zero rather than largest: intensities can legitimately be
- * negative after baseline subtraction, and dropping them — or keeping only the
- * positive maximum — would erase measured signal. Keeping the extreme is also
- * what makes the reduction safe to look at: a tall peak can never be replaced
- * by a shorter neighbour, and no value is drawn that the spectrum lacks.
+ * Both extremes, because intensities can legitimately be negative after
+ * baseline subtraction: dropping them, or keeping only whichever magnitude is
+ * larger, would erase measured signal of the other sign. Keeping extremes is
+ * also what makes the reduction safe to look at — a tall peak can never be
+ * replaced by a shorter neighbour, and no value is drawn that the spectrum
+ * does not contain.
  */
 function reduce(
   mz: readonly number[],
@@ -84,19 +85,32 @@ function reduce(
   }
 
   const span = domainHigh - domainLow;
-  const columnCount = Math.min(MAX_STICKS, Math.max(1, mz.length));
-  const columns = new Array<number | null>(columnCount).fill(null);
-  const columnMz = new Array<number>(columnCount).fill(0);
+  const columnCount = Math.min(MAX_COLUMNS, Math.max(1, mz.length));
+  // Two extremes per column, not one. A column holding +100 and -90 must draw
+  // both: keeping only the larger magnitude would erase a measured signal of
+  // the other sign, which is the same defect as dropping negatives outright.
+  const highest = new Array<number | null>(columnCount).fill(null);
+  const highestMz = new Array<number>(columnCount).fill(0);
+  const lowest = new Array<number | null>(columnCount).fill(null);
+  const lowestMz = new Array<number>(columnCount).fill(0);
 
   for (let index = 0; index < mz.length; index += 1) {
     const value = mz[index] ?? 0;
     const height = intensity[index] ?? 0;
     const fraction = span > 0 ? (value - domainLow) / span : 0.5;
     const column = Math.min(columnCount - 1, Math.max(0, Math.floor(fraction * columnCount)));
-    const kept = columns[column];
-    if (kept === null || kept === undefined || Math.abs(height) > Math.abs(kept)) {
-      columns[column] = height;
-      columnMz[column] = value;
+    if (height >= 0) {
+      const kept = highest[column];
+      if (kept === null || kept === undefined || height > kept) {
+        highest[column] = height;
+        highestMz[column] = value;
+      }
+    } else {
+      const kept = lowest[column];
+      if (kept === null || kept === undefined || height < kept) {
+        lowest[column] = height;
+        lowestMz[column] = value;
+      }
     }
   }
 
@@ -111,18 +125,20 @@ function reduce(
       : BASELINE_Y;
 
   const sticks: Stick[] = [];
-  for (let column = 0; column < columnCount; column += 1) {
-    const height = columns[column];
+  const place = (height: number | null | undefined, value: number) => {
     if (height === null || height === undefined) {
-      continue;
+      return;
     }
-    const value = columnMz[column] ?? domainLow;
     const fraction = span > 0 ? (value - domainLow) / span : 0.5;
     const scaled = valueSpan > 0 ? (intensityHigh - height) / valueSpan : 1;
     sticks.push({
       x: PLOT_PADDING_LEFT + fraction * usableWidth,
       y: PLOT_PADDING_TOP + scaled * usableHeight,
     });
+  };
+  for (let column = 0; column < columnCount; column += 1) {
+    place(highest[column], highestMz[column] ?? domainLow);
+    place(lowest[column], lowestMz[column] ?? domainLow);
   }
 
   return {
@@ -203,11 +219,11 @@ export function StickSpectrum({
       </svg>
       <figcaption className="spectrum-caption">
         {reduction.sticks.length < mz.length
-          ? `Drawn as ${reduction.sticks.length} columns from ${mz.length} points, keeping the point furthest from zero in each column.`
+          ? `Drawn as ${reduction.sticks.length} sticks from ${mz.length} points, keeping the highest and the lowest value in each column.`
           : `Drawn as ${reduction.sticks.length} sticks, one per point.`}
         {" Horizontal axis: m/z. Vertical axis: intensity, scaled to the point furthest from zero."}
         {reduction.negativeCount > 0
-          ? ` ${reduction.negativeCount} of them ${reduction.negativeCount === 1 ? "carries" : "carry"} negative intensity, drawn below the zero line.`
+          ? ` ${reduction.negativeCount} of the points ${reduction.negativeCount === 1 ? "carries" : "carry"} negative intensity; the lowest in each column is drawn below the zero line.`
           : ""}
         {representationKnown
           ? ""

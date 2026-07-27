@@ -186,7 +186,9 @@ describe("mzML preview workspace", () => {
     await screen.findByRole("img");
 
     expect(
-      screen.getByText(/2 of them carry negative intensity, drawn below the zero line\./),
+      screen.getByText(
+        /2 of the points carry negative intensity; the lowest in each column is drawn below the zero line\./,
+      ),
     ).toBeVisible();
     // All four points are drawn; none is dropped for being below zero.
     expect(screen.getByText(/Drawn as 4 sticks, one per point\./)).toBeVisible();

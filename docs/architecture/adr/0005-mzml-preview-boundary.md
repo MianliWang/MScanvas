@@ -46,7 +46,9 @@ index. Every one of them is typed on both sides.
 - **The plot is repository-owned SVG.** A stick spectrum, not a connected line,
   and no charting library. Intensities are drawn against a zero line rather
   than a floor, because baseline subtraction produces legitimately negative
-  values and dropping them would erase measured signal.
+  values and dropping them would erase measured signal. Column reduction keeps
+  the highest and the lowest value in each column, so a signal of either sign
+  survives it.
 - **Typed backend failures stay distinguished.** A launch failure, a file that
   changed underneath the read and a backend binary that changed after its probe
   reach the user as different states with different retry offers, because the
@@ -85,9 +87,15 @@ index. Every one of them is typed on both sides.
   combining results from two generations of it would describe an acquisition
   that never existed. The file's length and modification time are therefore
   compared before and after the batch, and a change discards the whole preview.
-  The generation that produced a successful open is retained, so a later
+  The generation includes the filesystem's own identity for the file, so a
+  replacement of the same size at the same recorded time is caught too, and
+  every read is compared against the identity the handle was accepted with. The
+  generation that produced a successful open is retained as well, so a later
   selected-spectrum load is refused when it no longer matches and a spectrum is
-  never shown beside metadata that has stopped describing it. A digest would
+  never shown beside metadata that has stopped describing it. The crate's
+  planner captures its own identity at spawn, so a file replaced in the moment
+  between validation and launch can still be read; what it cannot do is reach
+  the user, because the check after the read rejects it. A digest would
   close the window completely, but hashing 208 MB around every preview would
   cost more than the preview.
 - Path redaction removes everything from the first path marker to the end of

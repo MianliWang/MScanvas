@@ -120,9 +120,10 @@ describe("stick spectrum at profile-scale point counts", () => {
     const paths = container.querySelectorAll("path");
     expect(paths).toHaveLength(1);
     const commands = (paths[0]?.getAttribute("d") ?? "").split("M").length - 1;
-    expect(commands).toBeLessThanOrEqual(900);
+    // 900 columns, and at most one stick per sign in each.
+    expect(commands).toBeLessThanOrEqual(1_800);
 
-    expect(screen.getByText(/Drawn as \d+ columns from 200000 points/)).toBeVisible();
+    expect(screen.getByText(/Drawn as \d+ sticks from 200000 points/)).toBeVisible();
     // The spike survives the reduction: it is the axis maximum.
     expect(screen.getByText("5.000e+6")).toBeInTheDocument();
   });

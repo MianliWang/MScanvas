@@ -85,7 +85,7 @@ pub fn accept_mzml_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
 /// between the picker closing and the first read, and it would canonicalize
 /// identically. This is what tells the two apart.
 #[cfg(windows)]
-fn file_identity(path: &Path) -> Option<(u64, u64)> {
+pub(super) fn file_identity(path: &Path) -> Option<(u64, u64)> {
     use std::ffi::c_void;
     use std::os::windows::io::AsRawHandle;
 
@@ -144,7 +144,7 @@ fn file_identity(path: &Path) -> Option<(u64, u64)> {
 }
 
 #[cfg(not(windows))]
-fn file_identity(path: &Path) -> Option<(u64, u64)> {
+pub(super) fn file_identity(path: &Path) -> Option<(u64, u64)> {
     use std::os::unix::fs::MetadataExt;
 
     let metadata = std::fs::metadata(path).ok()?;
@@ -189,6 +189,12 @@ impl AcceptedFile {
     #[must_use]
     pub const fn byte_length(&self) -> u64 {
         self.byte_length
+    }
+
+    /// The filesystem identity this file was accepted with.
+    #[must_use]
+    pub(super) const fn identity(&self) -> (u64, u64) {
+        self.identity
     }
 }
 
