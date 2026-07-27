@@ -211,17 +211,31 @@ def validate_project_contract(errors: list[str]) -> None:
 
 CONTINUATION_RE = re.compile(r"\\\n[ \t]*")
 INLINE_RUN_RE = re.compile(r"(?<!\\)[A-Za-z,.][ ]{2,}[A-Za-z]")
+# A sentence cut across lines. Not merely "contains a newline": a multi-line
+# template holding CSS breaks after `{` and `;`, which is deliberate, while a
+# message that lost its continuation breaks after a word.
+SENTENCE_BREAK_RE = re.compile(r"[A-Za-z,.]\n")
+BACKTICK = chr(96)
 
 
-def _string_literals(text: str) -> list[tuple[int, str]]:
-    """Yields (offset, source text) for every non-raw string literal.
+def _string_literals(text: str, rust: bool) -> list[tuple[int, str]]:
+    """Yields (offset, source text) for every string literal that can hold prose.
 
     Scanned rather than matched line by line. A string that lost its line
     continuation is still a valid literal spanning two physical lines, so a
     per-line regex sees neither a complete literal nor the defect, which is
     exactly the case this check exists for.
+
+    Raw strings are skipped because their contents are deliberate. Quoting
+    differs by language. In Rust an apostrophe opens a character literal or a
+    lifetime. In TypeScript it would open a string, but it is not treated as one
+    here: prose and JSX text are full of apostrophes, and one of them opens a
+    literal that swallows the rest of the file. Prettier pins this repository to
+    double quotes, so nothing is lost by scanning only those and the template
+    literals TypeScript also has.
     """
     literals: list[tuple[int, str]] = []
+    delimiters = {'"'} if rust else {'"', BACKTICK}
     index = 0
     length = len(text)
     while index < length:
@@ -238,8 +252,7 @@ def _string_literals(text: str) -> list[tuple[int, str]]:
                 index = length if end == -1 else end + 2
                 continue
 
-        # A raw string carries no escapes, so everything in it is deliberate.
-        if character == "r" and index + 1 < length:
+        if rust and character == "r" and index + 1 < length:
             hashes = 0
             probe = index + 1
             while probe < length and text[probe] == "#":
@@ -251,10 +264,9 @@ def _string_literals(text: str) -> list[tuple[int, str]]:
                 index = length if end == -1 else end + len(terminator)
                 continue
 
-        # A character literal may hold a quote, as `b'"'` does in the path
-        # scanner. Distinguish it from a lifetime, where the quote opens an
-        # identifier and never closes.
-        if character == "'":
+        # `b'"'` in the path scanner would otherwise open a string that swallows
+        # the rest of the file. A lifetime never closes, so it is stepped over.
+        if rust and character == "'":
             if index + 1 < length and text[index + 1] == "\\":
                 closing = text.find("'", index + 2)
                 index = length if closing == -1 else closing + 1
@@ -265,14 +277,14 @@ def _string_literals(text: str) -> list[tuple[int, str]]:
             index += 1
             continue
 
-        if character == '"':
+        if character in delimiters:
             start = index + 1
             probe = start
             while probe < length:
                 if text[probe] == "\\":
                     probe += 2
                     continue
-                if text[probe] == '"':
+                if text[probe] == character:
                     break
                 probe += 1
             literals.append((start, text[start:probe]))
@@ -310,15 +322,16 @@ def validate_user_facing_strings(errors: list[str]) -> None:
                 continue
             text = path.read_text(encoding="utf-8")
             relative = path.relative_to(ROOT).as_posix()
-            for offset, source in _string_literals(text):
+            for offset, source in _string_literals(text, path.suffix == ".rs"):
                 # Apply the continuation the compiler applies before judging
                 # what the message actually contains.
                 content = CONTINUATION_RE.sub("", source)
                 number = text.count("\n", 0, offset) + 1
-                if "\n" in content:
+                if SENTENCE_BREAK_RE.search(content):
                     fail(
-                        f"{relative}:{number} has a string literal spanning lines with no "
-                        "continuation, so the newline and indentation are in the message",
+                        f"{relative}:{number} has a string literal whose sentence continues "
+                        "on the next line with no continuation, so the newline and the "
+                        "indentation are in the message",
                         errors,
                     )
                 elif INLINE_RUN_RE.search(content):
