@@ -19,10 +19,10 @@ use mscanvas_proteowizard::{
     AvailabilityState, BackendTool, CancellationToken, ConfiguredLocation,
     ConversionIntegrityOutcome, ConversionOutputInspection, ConversionOutputRejection,
     ConversionPolicy, ConversionSourceFacts, DiscoveredTool, DiscoveryRequest, FailureCondition,
-    FailureKind, InstalledHelpCapabilities, MzmlScanLimits, OpenFormat, OutputDirectorySnapshot,
-    OutputEntryKind, PreviewInterpretError, PreviewOperation, PreviewOutcome, PreviewOutputEntry,
-    PreviewOutputManifest, PreviewValue, Redactor, ReportableProcessOutput, Retryability,
-    Sha256Digest, build_msaccess_command_with_capabilities,
+    FailureKind, InstalledHelpCapabilities, MAX_PREVIEW_TEXT_BYTES, MzmlScanLimits, OpenFormat,
+    OutputDirectorySnapshot, OutputEntryKind, PreviewInterpretError, PreviewOperation,
+    PreviewOutcome, PreviewOutputEntry, PreviewOutputManifest, PreviewValue, Redactor,
+    ReportableProcessOutput, Retryability, Sha256Digest, build_msaccess_command_with_capabilities,
     build_msconvert_command_with_capabilities, capture_conversion_source, classify_process_failure,
     conversion_output_file_name, discover, execute_cancellable, inspect_conversion_output,
     interpret_preview, is_reparse_point, snapshot_output_directory, verify_mzml_conversion,
@@ -30,7 +30,6 @@ use mscanvas_proteowizard::{
 
 const DIAGNOSTIC_PREVIEW_CHARS: usize = 4_096;
 const SPECTRUM_PRECISION: u8 = 8;
-const MAX_PREVIEW_TEXT_BYTES: u64 = 8 * 1024 * 1024;
 
 fn main() -> ExitCode {
     match parse_args(env::args_os().skip(1)).and_then(run) {

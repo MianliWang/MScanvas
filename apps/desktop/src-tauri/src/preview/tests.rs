@@ -904,16 +904,18 @@ fn metadata_printed_before_the_first_section_is_shown_rather_than_counted() {
 #[test]
 fn an_acquisition_larger_than_one_read_is_refused_whole_rather_than_shown_in_part() {
     // No test covered this user-visible state. A run whose spectrum table
-    // exceeds `MAX_PREVIEW_OUTPUT_BYTES` is refused outright: the parser needs
+    // exceeds `MAX_PREVIEW_TEXT_BYTES` is refused outright: the parser needs
     // the whole output, and a list cut mid-file would read as a shorter
     // acquisition than the one on disk.
     let file = TestFile::new("oversized");
     let responses = vec![
         Response::File(METADATA_OUTPUT.to_owned()),
         Response::Stdout(run_summary_output()),
+        // Taken from the limit rather than restated, so raising the limit moves
+        // the case instead of leaving it testing a number nothing enforces.
         Response::OversizedFile {
-            captured_bytes: 8 * 1024 * 1024,
-            total_bytes: 12 * 1024 * 1024,
+            captured_bytes: mscanvas_proteowizard::MAX_PREVIEW_TEXT_BYTES,
+            total_bytes: mscanvas_proteowizard::MAX_PREVIEW_TEXT_BYTES + 4 * 1024 * 1024,
         },
     ];
     let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
