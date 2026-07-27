@@ -1600,8 +1600,11 @@ fn parse_selected_spectrum(
         "precursorCount",
     ];
 
+    // Source comment, the bare `#` separator, fourteen headers and the binary
+    // marker are the structural minimum. Data lines are counted separately,
+    // because a spectrum may legitimately carry no peaks at all.
     let lines = nonempty_scientific_lines(text);
-    if lines.len() < 18 || !is_source_comment(lines[0]) || lines[1] != "#" {
+    if lines.len() < 17 || !is_source_comment(lines[0]) || lines[1] != "#" {
         return Err(PreviewMalformedKind::InvalidShape);
     }
 
@@ -1629,12 +1632,13 @@ fn parse_selected_spectrum(
     }
 
     let binary_marker = binary_marker.ok_or(PreviewMalformedKind::InvalidShape)?;
+    // `binary (0)` describes a spectrum that exists and has no peaks. The M0C
+    // representative measurement observed exactly that on index 2 of
+    // ProteoWizard's own reference fixture, so rejecting it as malformed was a
+    // false rejection of valid backend output. It stays distinct from the
+    // selected-spectrum no-result, which is signalled by no output file at all,
+    // and the data-line count is still required to agree with the marker.
     let binary_count = binary_count.ok_or(PreviewMalformedKind::InvalidShape)?;
-    if binary_count == 0 {
-        // The exercised evidence parser rejected `binary (0)`. A present empty
-        // payload is therefore malformed, never the selected-only no-result.
-        return Err(PreviewMalformedKind::Empty);
-    }
     if header_order.as_slice() != HEADERS {
         return Err(PreviewMalformedKind::InvalidHeader);
     }
@@ -1997,6 +2001,28 @@ mod tests {
         "200.12345678 20.00000000\n",
     );
 
+    /// A spectrum that exists and carries no peaks, as ProteoWizard emits for
+    /// index 2 of its own reference fixture.
+    const EMPTY_BINARY_FIXTURE: &str = concat!(
+        "# tiny.mzML\n",
+        "#\n",
+        "# index: 2\n",
+        "# id: scan=3\n",
+        "# scanNumber: 3\n",
+        "# massAnalyzerType: \n",
+        "# scanEvent: \n",
+        "# msLevel: 1\n",
+        "# retentionTime: 5.9\n",
+        "# filterString: \n",
+        "# mzLow: 0\n",
+        "# mzHigh: 0\n",
+        "# basePeakMZ: 0\n",
+        "# basePeakIntensity: 0\n",
+        "# totalIonCurrent: 0\n",
+        "# precursorCount: 0\n",
+        "# binary (0):\n",
+    );
+
     fn run_summary_fixture() -> String {
         let mut headers = vec![
             "Filename".to_owned(),
@@ -2326,6 +2352,49 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_selected_spectrum_is_a_valid_result_not_malformed() {
+        // Observed on index 2 of ProteoWizard's own reference fixture during the
+        // M0C representative measurement. Rejecting it was a false rejection of
+        // valid backend output.
+        let spectrum = parse_selected_spectrum(EMPTY_BINARY_FIXTURE, 2, 8)
+            .expect("an empty spectrum is a valid selected-spectrum result");
+
+        assert_eq!(spectrum.identity().index(), 2);
+        assert_eq!(spectrum.identity().scan_number(), Some(3));
+        assert_eq!(spectrum.ms_level(), 1);
+        assert!(spectrum.mz_values().is_empty());
+        assert!(spectrum.intensity_values().is_empty());
+        assert!(spectrum.precursors().is_empty());
+        assert_eq!(spectrum.precision().observed_maximum_fraction_digits(), 0);
+        // Absent optional text stays absent rather than becoming empty content.
+        assert_eq!(spectrum.mass_analyzer_type(), None);
+        assert_eq!(spectrum.filter_string(), None);
+    }
+
+    #[test]
+    fn an_empty_binary_marker_still_requires_an_agreeing_data_line_count() {
+        let with_unexpected_data = format!("{EMPTY_BINARY_FIXTURE}100.5 10.0\n");
+        assert_eq!(
+            parse_selected_spectrum(&with_unexpected_data, 2, 8),
+            Err(PreviewMalformedKind::CountMismatch)
+        );
+
+        let missing_data = EMPTY_BINARY_FIXTURE.replace("# binary (0):", "# binary (2):");
+        assert_eq!(
+            parse_selected_spectrum(&missing_data, 2, 8),
+            Err(PreviewMalformedKind::CountMismatch)
+        );
+
+        // An empty payload is still not the no-result state, which is signalled
+        // by no generated output file at all.
+        let truncated = EMPTY_BINARY_FIXTURE.replace("# binary (0):\n", "");
+        assert_eq!(
+            parse_selected_spectrum(&truncated, 2, 8),
+            Err(PreviewMalformedKind::InvalidShape)
+        );
+    }
+
+    #[test]
     fn selected_spectrum_rejects_header_count_array_number_and_precision_failures() {
         assert_eq!(
             parse_selected_spectrum(&BINARY_FIXTURE.replace("# msLevel", "# mslevel"), 0, 8),
@@ -2355,16 +2424,15 @@ mod tests {
             parse_selected_spectrum(BINARY_FIXTURE, 0, 7),
             Err(PreviewMalformedKind::PrecisionExceeded)
         );
+        // A declared payload with no data lines stays a count mismatch. The
+        // empty-payload case itself is valid and is covered separately.
         assert_eq!(
             parse_selected_spectrum(
-                &BINARY_FIXTURE.replace(
-                    "# binary (2):\n100.12345678 10.00000000\n200.12345678 20.00000000",
-                    "# binary (0):"
-                ),
+                &BINARY_FIXTURE.replace("100.12345678 10.00000000\n200.12345678 20.00000000\n", ""),
                 0,
                 8
             ),
-            Err(PreviewMalformedKind::Empty)
+            Err(PreviewMalformedKind::CountMismatch)
         );
     }
 
@@ -2515,19 +2583,18 @@ mod tests {
                 }
             ))
         );
-        let present_empty_arrays = BINARY_FIXTURE.replace(
-            "# binary (2):\n100.12345678 10.00000000\n200.12345678 20.00000000",
-            "# binary (0):",
-        );
+        // Present but structurally unusable output is a malformed result, never
+        // the no-result state that an absent output file signals.
+        let present_but_unusable = BINARY_FIXTURE.replace("# binary (2):", "# binary (two):");
         assert_eq!(
             interpret_preview(
                 &selected,
                 &process,
-                &PreviewOutputManifest::single_complete_file(present_empty_arrays)
+                &PreviewOutputManifest::single_complete_file(present_but_unusable)
             ),
             Err(PreviewInterpretError::MalformedOutput {
                 operation: selected.clone(),
-                kind: PreviewMalformedKind::Empty
+                kind: PreviewMalformedKind::InvalidField
             })
         );
 
