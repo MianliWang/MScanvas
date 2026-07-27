@@ -742,7 +742,11 @@ fn installation_order(path: &Path) -> (u64, u64, u64, String) {
     let name = path.file_name().map_or_else(String::new, |name| {
         name.to_string_lossy().to_ascii_lowercase()
     });
-    if name.starts_with("proteowizard") {
+    // A bare `3.0.26013` states a release as plainly as `ProteoWizard 3.0.26013`
+    // does, and installers produce both. What must not be read as a release is a
+    // name whose digits mean something else, which is why this asks how the name
+    // begins rather than whether it contains digits.
+    if name.starts_with("proteowizard") || name.starts_with(|c: char| c.is_ascii_digit()) {
         release_sort_key(path)
     } else {
         (0, 0, 0, name)
@@ -2207,6 +2211,26 @@ Analysis commands (used with -x/--exec):
         let stable_position = roots.iter().position(|root| root == &stable);
         assert!(newer_position.is_some() && stable_position.is_some());
         assert!(newer_position < stable_position, "{roots:?}");
+    }
+
+    #[test]
+    fn bare_version_directories_are_ordered_by_release() {
+        // Some installations name the child with the version alone. That states
+        // a release as plainly as `ProteoWizard 3.0.26013` does, so it has to be
+        // read as one; ordered as text, `3.0.9134` wins because '9' beats '2'.
+        let tree = TempTree::new("bare-version-order");
+        let container = tree.root.join("ProteoWizard");
+        let older = container.join("3.0.9134");
+        let newer = container.join("3.0.26013");
+        fs::create_dir_all(&older).expect("older bare-version child should be created");
+        fs::create_dir_all(&newer).expect("newer bare-version child should be created");
+
+        let searched = root_and_direct_children(&container);
+
+        let newer_position = searched.iter().position(|root| root == &newer);
+        let older_position = searched.iter().position(|root| root == &older);
+        assert!(newer_position.is_some() && older_position.is_some());
+        assert!(newer_position < older_position, "{searched:?}");
     }
 
     #[test]
