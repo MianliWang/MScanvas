@@ -17,8 +17,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Pinned by the Run A attestation before Run B is allowed to measure anything.
-  M0C_REPRESENTATIVE_SHA256: ""
+  # Pinned by the Run A attestation (run 30239606441) before Run B is allowed to
+  # measure anything. Run B refuses to start unless the acquired bytes hash to
+  # exactly this value.
+  M0C_REPRESENTATIVE_SHA256: "262D1178303CD934223239D5D93A3B842DCA69DA09CEF58E95A39B950D26B7E8"
 
 jobs:
   build_harness:
