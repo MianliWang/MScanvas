@@ -412,24 +412,13 @@ impl DiscoveryEnvironment {
             .map(|value| env::split_paths(&value).collect())
             .unwrap_or_default();
 
-        let mut common_install_roots = Vec::new();
-        push_program_files_roots(&mut common_install_roots, env::var_os("ProgramFiles"));
-        push_program_files_roots(&mut common_install_roots, env::var_os("ProgramFiles(x86)"));
-        if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
-            let local_app_data = PathBuf::from(local_app_data);
-            push_unique(
-                &mut common_install_roots,
-                local_app_data.join("Programs").join("ProteoWizard"),
-            );
-            push_unique(
-                &mut common_install_roots,
-                local_app_data.join("ProteoWizard"),
-            );
-        }
-
         Self {
             path_entries,
-            common_install_roots,
+            common_install_roots: common_install_roots(
+                env::var_os("ProgramFiles"),
+                env::var_os("ProgramFiles(x86)"),
+                env::var_os("LOCALAPPDATA"),
+            ),
         }
     }
 }
@@ -1055,14 +1044,55 @@ fn concise_detail(primary: &[u8], fallback: &[u8]) -> String {
         .to_owned()
 }
 
-fn push_program_files_roots(roots: &mut Vec<PathBuf>, value: Option<OsString>) {
+/// Assembles the directories worth searching for an installed ProteoWizard.
+///
+/// Kept separate from the process environment so the assembly itself can be
+/// tested. It could not be before, and that is exactly where the per-user
+/// installation was being missed: the container rule below was written once and
+/// then applied only to Program Files.
+fn common_install_roots(
+    program_files: Option<OsString>,
+    program_files_x86: Option<OsString>,
+    local_app_data: Option<OsString>,
+) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    // Machine-wide installations first. A user who has both should get the one
+    // that was installed deliberately for the machine.
+    push_container_roots(&mut roots, program_files);
+    push_container_roots(&mut roots, program_files_x86);
+
+    if let Some(local_app_data) = local_app_data {
+        let local_app_data = PathBuf::from(local_app_data);
+        // A per-user install lands under one of these three. `Apps` is where
+        // the per-user MSI actually puts it, which is the case this function
+        // exists to stop missing.
+        for container in [
+            local_app_data.clone(),
+            local_app_data.join("Programs"),
+            local_app_data.join("Apps"),
+        ] {
+            push_container_roots(&mut roots, Some(container.into_os_string()));
+        }
+    }
+
+    roots
+}
+
+/// Adds a container directory's own `ProteoWizard` subdirectory and any
+/// versioned `ProteoWizard*` directories sitting directly inside it.
+///
+/// Installers use both shapes: a stable `ProteoWizard` folder holding versioned
+/// children, and a versioned folder placed directly in a generic container such
+/// as `Program Files` or `%LOCALAPPDATA%\Apps`. Newer versions are searched
+/// first so a stale installation does not shadow a current one.
+fn push_container_roots(roots: &mut Vec<PathBuf>, value: Option<OsString>) {
     let Some(value) = value else {
         return;
     };
-    let program_files = PathBuf::from(value);
-    push_unique(roots, program_files.join("ProteoWizard"));
+    let container = PathBuf::from(value);
+    push_unique(roots, container.join("ProteoWizard"));
 
-    let mut direct_versioned_roots = fs::read_dir(&program_files)
+    let mut direct_versioned_roots = fs::read_dir(&container)
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
@@ -1953,7 +1983,7 @@ Analysis commands (used with -x/--exec):
     }
 
     #[test]
-    fn reviewed_program_files_roots_cover_nested_and_direct_versioned_layouts_only() {
+    fn reviewed_container_roots_cover_nested_and_direct_versioned_layouts_only() {
         let tree = TempTree::new("program-files-layouts");
         fs::create_dir_all(tree.root.join("ProteoWizard"))
             .expect("nested ProteoWizard root should be created");
@@ -1963,10 +1993,75 @@ Analysis commands (used with -x/--exec):
             .expect("unrelated directory should be created");
 
         let mut roots = Vec::new();
-        push_program_files_roots(&mut roots, Some(tree.root.as_os_str().to_owned()));
+        push_container_roots(&mut roots, Some(tree.root.as_os_str().to_owned()));
 
         assert!(roots.contains(&tree.root.join("ProteoWizard")));
         assert!(roots.contains(&tree.root.join("ProteoWizard 3.0.26013.abcdef")));
         assert!(!roots.contains(&tree.root.join("Unrelated Application")));
+    }
+
+    #[test]
+    fn a_per_user_installation_under_local_app_data_apps_is_searched() {
+        // The layout a per-user ProteoWizard MSI actually produces. Before this
+        // was searched, MSCanvas reported backend_not_found on a machine with a
+        // working installation, and told the user to install it or to choose an
+        // installation folder the product does not offer.
+        let tree = TempTree::new("per-user-apps");
+        let apps = tree.root.join("Apps");
+        fs::create_dir_all(apps.join("ProteoWizard 3.0.26013.47b13cf 64-bit"))
+            .expect("per-user installation should be created");
+        fs::create_dir_all(apps.join("Unrelated Vendor Tool"))
+            .expect("unrelated neighbour should be created");
+
+        let roots = common_install_roots(None, None, Some(tree.root.as_os_str().to_owned()));
+
+        assert!(roots.contains(&apps.join("ProteoWizard 3.0.26013.47b13cf 64-bit")));
+        assert!(!roots.contains(&apps.join("Unrelated Vendor Tool")));
+    }
+
+    #[test]
+    fn the_previously_searched_local_app_data_shapes_are_still_searched() {
+        // The fix must be a superset: nothing that resolved before may stop
+        // resolving now.
+        let tree = TempTree::new("local-app-data-shapes");
+        fs::create_dir_all(tree.root.join("ProteoWizard"))
+            .expect("direct container should be created");
+        fs::create_dir_all(tree.root.join("Programs").join("ProteoWizard"))
+            .expect("Programs container should be created");
+
+        let roots = common_install_roots(None, None, Some(tree.root.as_os_str().to_owned()));
+
+        assert!(roots.contains(&tree.root.join("ProteoWizard")));
+        assert!(roots.contains(&tree.root.join("Programs").join("ProteoWizard")));
+    }
+
+    #[test]
+    fn a_machine_wide_installation_is_searched_before_a_per_user_one() {
+        // Someone with both installed gets the one installed for the machine.
+        let tree = TempTree::new("install-precedence");
+        let program_files = tree.root.join("Program Files");
+        let local_app_data = tree.root.join("Local");
+        let machine_wide = program_files.join("ProteoWizard 3.0.26013 64-bit");
+        let per_user = local_app_data
+            .join("Apps")
+            .join("ProteoWizard 3.0.26013 64-bit");
+        fs::create_dir_all(&machine_wide).expect("machine-wide install should be created");
+        fs::create_dir_all(&per_user).expect("per-user install should be created");
+
+        let roots = common_install_roots(
+            Some(program_files.as_os_str().to_owned()),
+            None,
+            Some(local_app_data.as_os_str().to_owned()),
+        );
+
+        let machine_position = roots.iter().position(|root| root == &machine_wide);
+        let per_user_position = roots.iter().position(|root| root == &per_user);
+        assert!(machine_position.is_some() && per_user_position.is_some());
+        assert!(machine_position < per_user_position);
+    }
+
+    #[test]
+    fn absent_environment_variables_contribute_no_roots() {
+        assert!(common_install_roots(None, None, None).is_empty());
     }
 }

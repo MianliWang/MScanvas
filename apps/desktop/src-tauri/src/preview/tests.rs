@@ -513,6 +513,19 @@ fn absolute_path_shapes_are_removed_from_displayable_text() {
         redact_absolute_paths("location: file:///D:/MSData/sample.mzML"),
         "location: <path>"
     );
+
+    // Shapes taken from a real acquisition's metadata, with the values replaced.
+    // A `sourceFile` location is written at acquisition time, so it names the
+    // instrument's own drive rather than anything the session redactor knows,
+    // and a real directory name may contain a space and mix separators.
+    assert_eq!(
+        redact_absolute_paths("      location: file:///E:/Instrument Data/2026/run"),
+        "      location: <path>"
+    );
+    assert_eq!(
+        redact_absolute_paths(r"      location: file:///D:/Some Folder\plate\A01"),
+        "      location: <path>"
+    );
     assert_eq!(
         redact_absolute_paths(r"share: \\server\data\sample.mzML"),
         "share: <path>"
