@@ -30,6 +30,9 @@ export interface MetadataSection {
   readonly id: string;
   readonly title: string;
   readonly entries: readonly string[];
+  /** How many lines the section really has, which can exceed `entries`. */
+  readonly totalEntryCount: number;
+  readonly truncated: boolean;
 }
 
 export interface Metadata {

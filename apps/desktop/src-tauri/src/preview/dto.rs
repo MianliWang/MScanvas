@@ -20,6 +20,14 @@ pub const MAX_SPECTRUM_POINTS: usize = 500_000;
 /// The longest metadata line the boundary forwards.
 pub const MAX_METADATA_LINE_CHARS: usize = 400;
 
+/// The most metadata lines one section may transfer.
+///
+/// A section runs to tens of lines in every measured file, so this is headroom.
+/// It exists because the 8 MiB output bound alone permits hundreds of thousands
+/// of very short lines, and a list that long would stall the render rather than
+/// inform anyone.
+pub const MAX_METADATA_ENTRIES: usize = 1_000;
+
 /// The longest bounded diagnostic detail attached to an error.
 pub const MAX_ERROR_DETAIL_CHARS: usize = 400;
 
@@ -66,6 +74,9 @@ pub struct MetadataSectionDto {
     pub id: String,
     pub title: String,
     pub entries: Vec<String>,
+    /// How many lines the section really has, which can exceed `entries`.
+    pub total_entry_count: usize,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

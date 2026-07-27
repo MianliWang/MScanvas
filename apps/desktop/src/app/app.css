@@ -95,6 +95,14 @@ button:disabled {
   opacity: 0.48;
 }
 
+/* All shell notices share one grid track, so showing or hiding one never
+   changes how many rows the shell has. */
+.shell-notices {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
 /* Every notice carries a heading or a glyph as well as a colour, so none of
    them depends on hue alone to be understood. */
 .notice {

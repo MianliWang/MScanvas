@@ -60,22 +60,26 @@ export function PreviewWorkspace() {
         </div>
       </header>
 
-      <BackendStatus onRecheck={workspace.checkBackend} state={workspace.backend} />
+      {/* One grid track, however many notices are showing. The shell's rows
+          are fixed, so a conditional notice must not become a row of its own. */}
+      <div className="shell-notices">
+        <BackendStatus onRecheck={workspace.checkBackend} state={workspace.backend} />
 
-      {/* A picker that would not open is its own problem. It never replaces
-          the file already on screen, which is still open and still usable. */}
-      {workspace.pickerError === null ? null : (
-        <div className="notice notice-danger" role="status">
-          <strong>The file picker could not be opened</strong>
-          <span>{workspace.pickerError.summary}</span>
-          <button className="link-button" onClick={workspace.openFile} type="button">
-            Try choosing a file again
-          </button>
-          <button className="link-button" onClick={workspace.dismissPickerError} type="button">
-            Dismiss
-          </button>
-        </div>
-      )}
+        {/* A picker that would not open is its own problem. It never replaces
+            the file already on screen, which is still open and still usable. */}
+        {workspace.pickerError === null ? null : (
+          <div className="notice notice-danger" role="status">
+            <strong>The file picker could not be opened</strong>
+            <span>{workspace.pickerError.summary}</span>
+            <button className="link-button" onClick={workspace.openFile} type="button">
+              Try choosing a file again
+            </button>
+            <button className="link-button" onClick={workspace.dismissPickerError} type="button">
+              Dismiss
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* One polite region so a screen reader hears state changes that happen
           away from the keyboard focus. */}

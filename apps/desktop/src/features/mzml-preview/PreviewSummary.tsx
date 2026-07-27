@@ -88,6 +88,12 @@ export function PreviewSummary({
       {metadata.sections.map((section) => (
         <div className="inspector-section" key={section.id}>
           <h3>{section.title}</h3>
+          {section.truncated ? (
+            <p className="notice notice-warning" role="note">
+              Showing the first {formatCount(section.entries.length)} of{" "}
+              {formatCount(section.totalEntryCount)} lines in this section.
+            </p>
+          ) : null}
           {section.entries.length === 0 ? (
             <p className="quiet-text">This section is empty in the file.</p>
           ) : (

@@ -17,11 +17,12 @@ use super::backend::{
     PreviewProvider, open_operations, reporting_redactor, selected_spectrum_operation,
 };
 use super::dto::{
-    BackendAvailabilityDto, MAX_IDENTIFIER_CHARS, MAX_METADATA_LINE_CHARS, MAX_SPECTRUM_POINTS,
-    MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto, MsLevelCountDto, PrecursorDto,
-    PreviewDto, PreviewErrorDto, RetentionTimeDto, RetentionTimeRangeDto, RunSummaryDto,
-    SelectedFileDto, SelectedSpectrumDto, SelectedSpectrumOutcomeDto, SpectrumRowDto,
-    SpectrumTableDto, bounded_text, redact_absolute_paths, require_finite, require_finite_option,
+    BackendAvailabilityDto, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES, MAX_METADATA_LINE_CHARS,
+    MAX_SPECTRUM_POINTS, MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto, MsLevelCountDto,
+    PrecursorDto, PreviewDto, PreviewErrorDto, RetentionTimeDto, RetentionTimeRangeDto,
+    RunSummaryDto, SelectedFileDto, SelectedSpectrumDto, SelectedSpectrumOutcomeDto,
+    SpectrumRowDto, SpectrumTableDto, bounded_text, redact_absolute_paths, require_finite,
+    require_finite_option,
 };
 use super::selection::{AcceptedFile, FileRegistry, accept_mzml_file, file_identity};
 
@@ -288,6 +289,7 @@ fn metadata_dto(result: &MetadataResult, redactor: &Redactor) -> MetadataDto {
                 entries: section
                     .entries()
                     .iter()
+                    .take(MAX_METADATA_ENTRIES)
                     .map(|entry| {
                         // Session redaction first, then any remaining
                         // path-shaped token the document itself recorded.
@@ -296,6 +298,8 @@ fn metadata_dto(result: &MetadataResult, redactor: &Redactor) -> MetadataDto {
                         bounded_text(&redacted, MAX_METADATA_LINE_CHARS)
                     })
                     .collect(),
+                total_entry_count: section.entries().len(),
+                truncated: section.entries().len() > MAX_METADATA_ENTRIES,
             })
             .collect(),
         leading_entry_count: result.leading_entries().len(),
