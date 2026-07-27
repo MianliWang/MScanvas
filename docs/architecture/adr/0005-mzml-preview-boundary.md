@@ -49,6 +49,17 @@ index. Every one of them is typed on both sides.
   values and dropping them would erase measured signal. Column reduction keeps
   the highest and the lowest value in each column, so a signal of either sign
   survives it.
+
+  The file never says whether its points are profile samples or centroided
+  peaks, because the measured formatter emits no such marker. Withholding the
+  plot until it does would withhold it always, which is not a viewer. Sticks
+  are drawn instead because they are the least-committal rendering available:
+  every mark is a measured point and nothing is asserted between points, where
+  a connected line would assert exactly that. What the drawing cannot say for
+  itself is written beside it — that the representation is unreported, and that
+  under reduction a peak spread over several points can appear as one stick.
+  Obtaining the marker would need a different backend route, which ADR 0003
+  still lists as an open gate.
 - **Typed backend failures stay distinguished.** A launch failure, a file that
   changed underneath the read and a backend binary that changed after its probe
   reach the user as different states with different retry offers, because the
