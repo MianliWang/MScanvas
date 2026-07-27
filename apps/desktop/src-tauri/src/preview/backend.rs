@@ -119,11 +119,18 @@ impl PreviewProvider for ProteoWizardProvider {
         let discovery = discover(&DiscoveryRequest { configured: None });
         let discovered = discovery.availability == AvailabilityState::Available;
         // Availability answers "can this installation produce a preview", not
-        // "does an executable exist". An installation whose help MSCanvas
-        // cannot read fails every file with a non-retryable error, so it is
-        // reported here instead of looking usable until the user opens a file.
+        // "does an executable exist" and not "does its help parse". Reading the
+        // help is not enough: the exact query grammars MSCanvas plans against
+        // are what a file actually needs, so every operation it will ask for is
+        // required here rather than failing one file at a time later.
         let usable = discovered
-            && InstalledHelpCapabilities::from_discovered_tool(&discovery.msaccess).is_ok();
+            && InstalledHelpCapabilities::from_discovered_tool(&discovery.msaccess).is_ok_and(
+                |capabilities| {
+                    required_operations()
+                        .iter()
+                        .all(|operation| capabilities.require_preview_operation(operation).is_ok())
+                },
+            );
         BackendAvailabilityDto {
             state: if usable { "available" } else { "unavailable" }.to_owned(),
             release: discovery.release.as_deref().map(backend_label),
@@ -170,6 +177,16 @@ impl PreviewProvider for ProteoWizardProvider {
             .map(|operation| Self::run_bound(&capabilities, source, operation))
             .collect()
     }
+}
+
+/// Every operation this boundary will ever ask an installation to perform.
+///
+/// Availability is judged against exactly this list, so a backend reported as
+/// available can serve both an open action and a spectrum selection.
+fn required_operations() -> Vec<PreviewOperation> {
+    let mut operations = open_operations();
+    operations.push(selected_spectrum_operation(0));
+    operations
 }
 
 /// Bounds and redacts a label lifted from the installed tool's help text.
