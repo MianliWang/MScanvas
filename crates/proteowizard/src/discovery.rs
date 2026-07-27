@@ -1,6 +1,7 @@
 //! Deterministic discovery and `--help` probing for user-installed ProteoWizard tools.
 
 use std::borrow::Borrow;
+use std::cmp;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -1083,8 +1084,8 @@ fn common_install_roots(
 ///
 /// Installers use both shapes: a stable `ProteoWizard` folder holding versioned
 /// children, and a versioned folder placed directly in a generic container such
-/// as `Program Files` or `%LOCALAPPDATA%\Apps`. Newer versions are searched
-/// first so a stale installation does not shadow a current one.
+/// as `Program Files` or `%LOCALAPPDATA%\Apps`. The stable folder is searched
+/// first, then the versioned siblings newest first.
 fn push_container_roots(roots: &mut Vec<PathBuf>, value: Option<OsString>) {
     let Some(value) = value else {
         return;
@@ -1111,16 +1112,49 @@ fn push_container_roots(roots: &mut Vec<PathBuf>, value: Option<OsString>) {
                 .map(|_| entry.path())
         })
         .collect::<Vec<_>>();
-    direct_versioned_roots.sort_by(|left, right| {
-        right
-            .as_os_str()
-            .to_string_lossy()
-            .to_ascii_lowercase()
-            .cmp(&left.as_os_str().to_string_lossy().to_ascii_lowercase())
-    });
+    direct_versioned_roots.sort_by_key(|root| cmp::Reverse(release_sort_key(root)));
     for root in direct_versioned_roots {
         push_unique(roots, root);
     }
+}
+
+/// Orders installation directories newest release first.
+///
+/// Comparing the names as text gets this wrong in the one way that matters:
+/// `3.0.9134` sorts above `3.0.26013` because `'9'` is above `'2'`, so someone
+/// who upgraded would keep being handed the installation they replaced. That is
+/// not a cosmetic ordering question. `automatic_candidate` returns exactly one
+/// candidate and never falls back to a later root, so whichever directory comes
+/// first here is the one whose binaries run.
+///
+/// Only names that already begin with `proteowizard` reach this, so the first
+/// three digit groups are the release. A directory carrying no digits sorts
+/// last rather than first.
+fn release_sort_key(path: &Path) -> (u64, u64, u64, String) {
+    let name = path.file_name().map_or_else(String::new, |name| {
+        name.to_string_lossy().to_ascii_lowercase()
+    });
+
+    let mut groups = [0_u64; 3];
+    let mut filled = 0;
+    let mut digits = String::new();
+    // The trailing space flushes a group that runs to the end of the name.
+    for character in name.chars().chain(std::iter::once(' ')) {
+        if character.is_ascii_digit() {
+            digits.push(character);
+            continue;
+        }
+        if !digits.is_empty() {
+            if filled < groups.len() {
+                // A group too large to be a real release sorts last, not first.
+                groups[filled] = digits.parse().unwrap_or(0);
+                filled += 1;
+            }
+            digits.clear();
+        }
+    }
+
+    (groups[0], groups[1], groups[2], name)
 }
 
 fn push_unique(paths: &mut Vec<PathBuf>, path: PathBuf) {
@@ -2058,6 +2092,31 @@ Analysis commands (used with -x/--exec):
         let per_user_position = roots.iter().position(|root| root == &per_user);
         assert!(machine_position.is_some() && per_user_position.is_some());
         assert!(machine_position < per_user_position);
+    }
+
+    #[test]
+    fn a_newer_release_is_searched_before_an_older_one() {
+        // Discovery has no fallback: `automatic_candidate` returns one
+        // candidate and a later root is never tried, so this order decides
+        // which binaries run. Lexicographic order gets it wrong in the way
+        // that matters, because '9' sorts above '2' and 3.0.9134 is older
+        // than 3.0.26013.
+        let tree = TempTree::new("release-order");
+        let older = tree.root.join("ProteoWizard 3.0.9134");
+        let newer = tree.root.join("ProteoWizard 3.0.26013.47b13cf 64-bit");
+        fs::create_dir_all(&older).expect("older install should be created");
+        fs::create_dir_all(&newer).expect("newer install should be created");
+
+        let mut roots = Vec::new();
+        push_container_roots(&mut roots, Some(tree.root.as_os_str().to_owned()));
+
+        let newer_position = roots.iter().position(|root| root == &newer);
+        let older_position = roots.iter().position(|root| root == &older);
+        assert!(newer_position.is_some() && older_position.is_some());
+        assert!(
+            newer_position < older_position,
+            "3.0.26013 must be searched before 3.0.9134, got {roots:?}"
+        );
     }
 
     #[test]
