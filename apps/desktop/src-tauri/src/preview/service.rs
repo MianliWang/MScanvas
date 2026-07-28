@@ -59,6 +59,9 @@ pub struct PreviewService {
     /// ordering could show the installation a choice replaced while every
     /// later operation used the chosen one.
     installation_generation: AtomicU64,
+    /// The installation location currently in use, so a request for the one
+    /// already in use can be recognised as no change at all.
+    current_home: Mutex<Option<PathBuf>>,
 }
 
 impl PreviewService {
@@ -72,6 +75,7 @@ impl PreviewService {
             backend_gate: Mutex::new(()),
             spectrum_ticket: AtomicU64::new(0),
             installation_generation: AtomicU64::new(0),
+            current_home: Mutex::new(None),
         }
     }
 
@@ -95,8 +99,29 @@ impl PreviewService {
     /// here in which the two can disagree.
     pub fn use_installation(&self, home: Option<PathBuf>) -> BackendAvailabilityDto {
         let _running = self.enter_backend();
-        self.installation_generation.fetch_add(1, Ordering::Relaxed);
-        self.provider.use_installation(home);
+        let mut current = self
+            .current_home
+            .lock()
+            .expect("the installation lock is never poisoned by user code");
+        // Only a real switch advances the sequence. Asking for the location
+        // already in use is not a change, and treating it as one would tell
+        // every caller to throw away readings that are still perfectly good --
+        // which is what "Search automatically" while already automatic, or
+        // re-picking the same folder, would otherwise cost the user.
+        //
+        // Compared as paths, so two spellings of one directory read as a
+        // change. That errs towards discarding readings that were still valid,
+        // never towards keeping ones that are not, which is the direction this
+        // has to fail in.
+        if *current != home {
+            self.installation_generation.fetch_add(1, Ordering::Relaxed);
+            current.clone_from(&home);
+            self.provider.use_installation(home);
+        }
+        drop(current);
+        // Read either way. The user asked for a reading, and an installation
+        // that has not changed can still have been removed since it was last
+        // looked at.
         self.stamped_availability()
     }
 

@@ -552,6 +552,47 @@ fn a_spectrum_is_refused_rather_than_reconciled_across_an_installation_change() 
 }
 
 #[test]
+fn asking_for_the_installation_already_in_use_is_not_a_change() {
+    // Every caller reads a higher generation as "the installation changed" and
+    // throws away what the previous one read. Advancing it for a request that
+    // switches nothing would make "Search automatically" while already
+    // automatic, or re-picking the same folder, cost the user their open file
+    // and a fresh read of it for no reason.
+    let file = TestFile::new("no-op-change");
+    let responses = vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+    ];
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens");
+
+    // Already on automatic discovery, so this switches nothing.
+    let again = service.use_installation(None);
+    assert_eq!(again.installation_generation, 0);
+    assert_eq!(again.origin, "automatic");
+
+    // And what the previous reading produced is still usable, rather than
+    // refused as another installation's work.
+    service
+        .load_spectrum(&selected.handle, 0)
+        .expect("a spectrum still belongs to the installation that read the table");
+
+    // A real switch still advances it, and asking for that same folder again
+    // does not.
+    let chosen = service.use_installation(Some(PathBuf::from(r"C:\pwiz")));
+    assert_eq!(chosen.installation_generation, 1);
+    let same = service.use_installation(Some(PathBuf::from(r"C:\pwiz")));
+    assert_eq!(same.installation_generation, 1);
+    // Switching back is a change again.
+    assert_eq!(service.use_installation(None).installation_generation, 2);
+}
+
+#[test]
 fn a_verdict_says_where_it_belongs_in_the_sequence_of_installation_changes() {
     // Request order is not service order: the two commands contend for one
     // gate, and it does not grant in the order they were called. A caller that
