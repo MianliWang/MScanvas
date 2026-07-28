@@ -51,7 +51,7 @@ export function PreviewWorkspace() {
         <div className="toolbar-actions">
           <button
             className="primary-button"
-            disabled={backendUnavailable || preview.status === "opening"}
+            disabled={backendUnavailable || preview.status === "opening" || workspace.backendBusy}
             onClick={workspace.openFile}
             type="button"
           >
@@ -64,6 +64,7 @@ export function PreviewWorkspace() {
           are fixed, so a conditional notice must not become a row of its own. */}
       <div className="shell-notices">
         <BackendStatus
+          busy={workspace.backendBusy}
           onChooseInstallation={workspace.chooseInstallation}
           onRecheck={workspace.checkBackend}
           onUseAutomaticDiscovery={workspace.useAutomaticDiscovery}
@@ -154,9 +155,32 @@ export function PreviewWorkspace() {
                 {backendUnavailable ? (
                   <span>Install ProteoWizard first, then check again above.</span>
                 ) : (
-                  <button className="primary-button" onClick={workspace.openFile} type="button">
-                    Choose an mzML file
-                  </button>
+                  <>
+                    {/* Rust is still holding the file, so reopening it is one
+                        click and not a trip back through the picker. This is
+                        what changing the installation costs: the readings go,
+                        the selection does not. */}
+                    {workspace.selectedFileName === null ? null : (
+                      <button
+                        className="primary-button"
+                        disabled={workspace.backendBusy}
+                        onClick={workspace.reopenSelectedFile}
+                        type="button"
+                      >
+                        Reopen {workspace.selectedFileName}
+                      </button>
+                    )}
+                    <button
+                      className={
+                        workspace.selectedFileName === null ? "primary-button" : "secondary-button"
+                      }
+                      disabled={workspace.backendBusy}
+                      onClick={workspace.openFile}
+                      type="button"
+                    >
+                      Choose an mzML file
+                    </button>
+                  </>
                 )}
               </div>
             )}

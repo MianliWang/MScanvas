@@ -22,6 +22,7 @@ import type {
 export const availableBackend: BackendAvailability = {
   state: "available",
   origin: "automatic",
+  installationGeneration: 0,
   release: "3.0.25000",
   buildDate: "2026-05-04",
   sameInstallation: true,
@@ -32,6 +33,7 @@ export const availableBackend: BackendAvailability = {
 export const chosenBackend: BackendAvailability = {
   state: "available",
   origin: "chosen",
+  installationGeneration: 1,
   release: "3.0.26013",
   buildDate: "2026-07-01",
   sameInstallation: true,
@@ -41,6 +43,7 @@ export const chosenBackend: BackendAvailability = {
 export const unavailableBackend: BackendAvailability = {
   state: "unavailable",
   origin: "automatic",
+  installationGeneration: 0,
   release: null,
   buildDate: null,
   sameInstallation: false,
@@ -213,9 +216,19 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   let openCount = 0;
 
   const deliveredVerdicts: BackendAvailability[] = [];
+  // Counted here as the service counts it: a change advances it, a plain
+  // reading does not. A fake that returned a fixed number would make the
+  // ordering rule untestable, and one that never advanced would make every
+  // change look older than what is already on screen.
+  let generation = 0;
   const deliver = (verdict: BackendAvailability) => {
-    deliveredVerdicts.push(verdict);
-    return verdict;
+    const stamped = { ...verdict, installationGeneration: generation };
+    deliveredVerdicts.push(stamped);
+    return stamped;
+  };
+  const deliverChange = (verdict: BackendAvailability): BackendAvailability => {
+    generation += 1;
+    return deliver(verdict);
   };
 
   return {
@@ -236,12 +249,12 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         : Promise.resolve(
             options.chosenInstallation === undefined ? chosenBackend : options.chosenInstallation,
           )
-      ).then((verdict) => (verdict === null ? null : deliver(verdict))),
+      ).then((verdict) => (verdict === null ? null : deliverChange(verdict))),
     useAutomaticDiscovery: () =>
       (typeof options.availability === "function"
         ? options.availability()
         : Promise.resolve(options.availability ?? availableBackend)
-      ).then(deliver),
+      ).then(deliverChange),
     chooseFile: () =>
       typeof options.file === "function"
         ? options.file()

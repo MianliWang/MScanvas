@@ -39,7 +39,20 @@ export interface PreviewWorkspace {
   readonly spectrum: SpectrumState;
   readonly selectedIndex: number | null;
   readonly measurements: readonly PreviewMeasurement[];
+  /**
+   * Whether a backend request is outstanding, including while the folder picker
+   * is open.
+   *
+   * Actions that would start another are disabled while it is set. The two
+   * installation commands contend for one lock in Rust, and letting a second
+   * start means acting on a verdict that is already being replaced.
+   */
+  readonly backendBusy: boolean;
   readonly checkBackend: () => void;
+  /** The file Rust still holds, whether or not a preview is on screen. */
+  readonly selectedFileName: string | null;
+  /** Reads the retained selection again, without going back to the picker. */
+  readonly reopenSelectedFile: () => void;
   /** Shows the folder picker and uses what is chosen, for this session only. */
   readonly chooseInstallation: () => void;
   /**
@@ -91,8 +104,28 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const [spectrum, setSpectrum] = useState<SpectrumState>({ status: "none" });
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [measurements, setMeasurements] = useState<readonly PreviewMeasurement[]>([]);
+  /**
+   * The name of the file Rust is still holding, kept apart from `preview`.
+   *
+   * Changing the installation discards everything a backend read, but not the
+   * selection: Rust still holds that path and no backend decided it. Without
+   * the name there is nothing to offer reopening, and the user would have to
+   * find the same acquisition again -- which is exactly the workspace loss
+   * WF-001 says changing the backend must not cause.
+   */
+  const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
 
+  const [backendBusy, setBackendBusy] = useState(true);
   const backendToken = useRef(0);
+  /**
+   * The highest installation generation applied to the banner.
+   *
+   * Rust decides which verdict is current, because it is where the two commands
+   * are actually ordered. This only refuses anything older than what is already
+   * shown, which is what stops a recheck begun before a change from describing
+   * the installation that change replaced.
+   */
+  const appliedGeneration = useRef(-1);
   const previewToken = useRef(0);
   const spectrumToken = useRef(0);
   const inFlightSpectrum = useRef<{ index: number; token: number } | null>(null);
@@ -115,23 +148,44 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     [],
   );
 
+  /**
+   * Applies a verdict unless the banner already shows a later one.
+   *
+   * Returns whether it was applied, so a caller can decide what else its reply
+   * still licenses it to do.
+   */
+  const applyVerdict = useCallback((availability: BackendAvailability): boolean => {
+    if (availability.installationGeneration < appliedGeneration.current) {
+      return false;
+    }
+    appliedGeneration.current = availability.installationGeneration;
+    setBackend({ status: "resolved", availability });
+    return true;
+  }, []);
+
   const checkBackend = useCallback(() => {
     backendToken.current += 1;
     const token = backendToken.current;
+    setBackendBusy(true);
     setBackend({ status: "checking" });
     void api
       .inspectBackend()
       .then((availability) => {
         if (mounted.current && token === backendToken.current) {
-          setBackend({ status: "resolved", availability });
+          applyVerdict(availability);
         }
       })
       .catch((cause: unknown) => {
         if (mounted.current && token === backendToken.current) {
           setBackend({ status: "failed", error: toPreviewError(cause) });
         }
+      })
+      .finally(() => {
+        if (mounted.current && token === backendToken.current) {
+          setBackendBusy(false);
+        }
       });
-  }, [api]);
+  }, [api, applyVerdict]);
 
   useEffect(checkBackend, [checkBackend]);
 
@@ -175,6 +229,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     (request: () => Promise<BackendAvailability | null>, announceChecking: boolean) => {
       backendToken.current += 1;
       const token = backendToken.current;
+      setBackendBusy(true);
       if (announceChecking) {
         setBackend({ status: "checking" });
       }
@@ -186,18 +241,22 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           // `null` is a dismissed picker. Nothing changed, so the verdict
           // already on screen still describes what is in use, and replacing it
           // with anything -- including "checking" -- would say otherwise.
-          if (availability !== null) {
+          if (availability !== null && applyVerdict(availability)) {
             discardBackendDerivedState();
-            setBackend({ status: "resolved", availability });
           }
         })
         .catch((cause: unknown) => {
           if (mounted.current && token === backendToken.current) {
             setBackend({ status: "failed", error: toPreviewError(cause) });
           }
+        })
+        .finally(() => {
+          if (mounted.current && token === backendToken.current) {
+            setBackendBusy(false);
+          }
         });
     },
-    [discardBackendDerivedState],
+    [applyVerdict, discardBackendDerivedState],
   );
 
   /**
@@ -274,6 +333,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           return;
         }
         openHandle.current = file.handle;
+        setSelectedFileName(file.fileName);
         loadPreview(file.handle, startedAt);
       })
       .catch((cause: unknown) => {
@@ -368,6 +428,18 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     }
   }, [selectSpectrum, selectedIndex]);
 
+  /**
+   * Reads the retained selection again. Same work as a retry, offered for a
+   * different reason: nothing failed, the reading simply belongs to an
+   * installation no longer in use.
+   */
+  const reopenSelectedFile = useCallback(() => {
+    const handle = openHandle.current;
+    if (handle !== null) {
+      loadPreview(handle, now());
+    }
+  }, [loadPreview]);
+
   const retryOpen = useCallback(() => {
     const handle = openHandle.current;
     if (handle !== null) {
@@ -381,9 +453,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     spectrum,
     selectedIndex,
     measurements,
+    backendBusy,
     checkBackend,
     chooseInstallation,
     useAutomaticDiscovery,
+    selectedFileName,
+    reopenSelectedFile,
     openFile,
     pickerError,
     dismissPickerError,

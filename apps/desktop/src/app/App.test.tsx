@@ -96,6 +96,57 @@ describe("mzML preview workspace", () => {
     expect(api.openCount()).toBe(readsBefore);
   });
 
+  it("offers the retained file back after an installation change", async () => {
+    // WF-001: changing the backend must not discard the workspace. The
+    // readings do go -- they belong to an installation no longer in use -- but
+    // Rust still holds the file, so reopening it must not mean finding it
+    // again in the picker.
+    const api = createFakePreviewApi({ chosenInstallation: chosenBackend });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+    const picksBefore = api.requestedSpectra.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+    const reopen = await screen.findByRole("button", { name: /^Reopen / });
+
+    expect(reopen).toHaveTextContent("QC_pool_01.mzML");
+    fireEvent.click(reopen);
+
+    // Read again from the handle Rust kept, with no second trip to the picker.
+    expect(await screen.findByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(api.requestedSpectra.length).toBe(picksBefore);
+  });
+
+  it("starts no second backend request while one is outstanding", async () => {
+    // The two installation commands contend for a single lock in Rust, and it
+    // does not grant in call order. Letting a second start means acting on a
+    // verdict already being replaced, so the actions that would start one are
+    // closed for as long as one is running -- the folder picker's own dialog
+    // included, which closes well before the probes it triggers finish.
+    const recheck = deferred<typeof availableBackend>();
+    let first = true;
+    const api = createFakePreviewApi({
+      availability: () => {
+        if (!first) {
+          return Promise.resolve(availableBackend);
+        }
+        first = false;
+        return recheck.promise;
+      },
+    });
+    renderApp(api);
+
+    // Nothing to act on and nothing to act with while the first check runs.
+    expect(screen.queryByRole("button", { name: "Choose folder…" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Open mzML…" })).toBeDisabled();
+
+    recheck.resolve(availableBackend);
+
+    const choose = await screen.findByRole("button", { name: "Choose folder…" });
+    expect(choose).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
+  });
+
   it("keeps the verdict it had when the folder picker is dismissed", async () => {
     // Dismissing changes nothing, so replacing what is on screen -- with a new
     // verdict or with "checking" -- would say something happened that did not.

@@ -19,6 +19,16 @@ export interface BackendAvailability {
    * wrong origin.
    */
   readonly origin: "automatic" | "chosen";
+  /**
+   * How many times the installation in use has changed, counted in Rust.
+   *
+   * Which verdict is current is decided there, not here. The two commands
+   * contend for one lock that does not grant in call order, so a recheck begun
+   * after a folder choice can be served before it and describe the installation
+   * the choice replaced. Apply a verdict only when this is at least the highest
+   * already applied.
+   */
+  readonly installationGeneration: number;
   readonly release: string | null;
   readonly buildDate: string | null;
   readonly sameInstallation: boolean;
