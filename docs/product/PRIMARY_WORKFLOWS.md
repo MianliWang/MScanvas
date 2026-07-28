@@ -6,9 +6,12 @@ Each workflow is a testable product contract, not a screen description.
 
 **Goal:** reach a usable workspace without opening a terminal.
 
-1. Application checks the locations an installer writes. Nothing is read from
-   saved configuration: a stored path would go on applying, in later sessions
-   and without being asked again, to a folder MSCanvas has no way to vouch for.
+1. Application checks `PATH` and the locations an installer writes, in that
+   order. Nothing is read from saved configuration: a stored path would go on
+   applying, in later sessions and without being asked again, to a folder
+   MSCanvas has no way to vouch for. `PATH` is searched because a user who put
+   ProteoWizard there meant it to be found; a folder chosen through the picker
+   is narrower than that, not wider, because it applies to one session only.
 2. If available, it reports the ProteoWizard release and build and enters the
    workspace. The report states which installation it describes.
 3. If unavailable, it offers installation guidance, retry, and `Choose folder…`

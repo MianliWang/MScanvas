@@ -160,7 +160,8 @@ After domain schemas stabilize:
 
 P0 behavior:
 
-- detect a user-installed ProteoWizard, in the locations an installer writes;
+- detect a user-installed ProteoWizard on `PATH` and in the locations an
+  installer writes;
 - report the release and build it found, and which installation that verdict
   describes;
 - allow an installation *folder* to be chosen for the session, never an
