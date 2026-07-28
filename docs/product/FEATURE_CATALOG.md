@@ -6,7 +6,7 @@ This catalog is the concise feature index. Detailed semantics remain in [`PROJEC
 
 | ID | Feature | Priority | Acceptance summary |
 |---|---|---:|---|
-| ENV-001 | Detect ProteoWizard | P0 | Report executable path and version or an actionable missing state. |
+| ENV-001 | Detect ProteoWizard | P0 | Report the release, the build and which installation the verdict describes, or an actionable missing state. No backend path reaches the interface. |
 | ENV-002 | Choose the backend installation | P0 | User can choose the installation folder for the session only; it is never stored, invalid choices explain why in terms of the actions the application has, and returning to automatic discovery is always offered. |
 | ENV-003 | Backend self-test | P0 | A read-only test distinguishes launch failure from format support. |
 | ENV-004 | Copy diagnostics | P1 | Produces a redacted, shareable environment summary. |
