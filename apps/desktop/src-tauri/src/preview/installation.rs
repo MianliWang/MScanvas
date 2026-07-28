@@ -54,15 +54,31 @@ impl ToolIdentity {
         Some(Self::of(path, tool.executable_sha256()))
     }
 
-    /// Whether the path still holds the file this identity saw, by metadata.
+    /// Whether the path still holds the file this identity saw.
     ///
-    /// The digest is deliberately not re-read: it is what makes the comparison
-    /// exact, and re-reading it means hashing an executable on every check.
+    /// Metadata is the fast path, not the answer. Matching metadata means the
+    /// file is untouched and nothing more needs reading -- which is the case
+    /// on every check that is not about a change. Differing metadata is only a
+    /// question, because a backup restore or a timestamp normalisation rewrites
+    /// the modification time of bytes that did not change, and answering
+    /// "replaced" there would discard a preview the very same backend produced.
+    ///
+    /// So the digest is read only when the metadata disagrees, which keeps the
+    /// content-first rule `ToolIdentity::eq` states without paying for it on
+    /// the common path. With no digest recorded there is nothing to appeal to
+    /// and the metadata stands.
     fn same_file_now(&self) -> bool {
-        let now = Self::of(&self.path, self.content);
-        now.filesystem == self.filesystem
+        let now = Self::of(&self.path, None);
+        if now.filesystem == self.filesystem
             && now.byte_length == self.byte_length
             && now.modified == self.modified
+        {
+            return true;
+        }
+        let Some(recorded) = self.content else {
+            return false;
+        };
+        Sha256Digest::calculate_file(&self.path).is_ok_and(|digest| digest == recorded)
     }
 }
 
@@ -474,6 +490,39 @@ mod tests {
             "the test needs a new mtime"
         );
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn a_touched_file_with_unchanged_bytes_is_still_the_same_file() {
+        // The pre-flight must keep the rule the equality states. A backup
+        // restore or a timestamp normalisation rewrites the modification time
+        // of bytes that did not change, and calling that a replacement would
+        // discard a preview the very same backend produced.
+        let tree = TempDir::new("touched");
+        let path = tree.file(MSCONVERT_EXE, b"one build");
+        let digest = Sha256Digest::calculate(b"one build").expect("digest");
+        let recorded = ToolIdentity::of(&path, Some(digest));
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&path, b"one build").expect("rewrite with the same bytes");
+
+        assert!(recorded.same_file_now());
+    }
+
+    #[test]
+    fn a_replaced_file_is_not_the_same_file() {
+        let tree = TempDir::new("replaced");
+        let path = tree.file(MSCONVERT_EXE, b"one build");
+        let digest = Sha256Digest::calculate(b"one build").expect("digest");
+        let recorded = ToolIdentity::of(&path, Some(digest));
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&path, b"a different build entirely").expect("replace");
+
+        assert!(!recorded.same_file_now());
+        // And a file that is gone is not it either.
+        std::fs::remove_file(&path).expect("remove");
+        assert!(!recorded.same_file_now());
     }
 
     #[test]
