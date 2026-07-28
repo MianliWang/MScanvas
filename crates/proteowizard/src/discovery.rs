@@ -337,6 +337,25 @@ pub struct DiscoveredTool {
 }
 
 impl DiscoveredTool {
+    /// The SHA-256 of the executable this tool resolved to, as it stood when
+    /// its help was probed.
+    ///
+    /// Already calculated: discovery hashes the file either side of the probe
+    /// so it can tell whether it changed underneath, and this hands back the
+    /// digest it kept. A caller comparing installations needs it because file
+    /// metadata is not content -- an installer repairing in place can preserve
+    /// the filesystem identity, the length, the timestamp and the reported
+    /// version while replacing the bytes.
+    ///
+    /// `None` when no help was bound, which is every case where the tool did
+    /// not probe successfully.
+    #[must_use]
+    pub fn executable_sha256(&self) -> Option<Sha256Digest> {
+        self.bound_help_probe
+            .as_ref()
+            .map(|probe| probe.executable_sha256)
+    }
+
     fn at(path: PathBuf) -> Self {
         let (path, exists) = match fs::canonicalize(&path) {
             Ok(canonical_path) => {

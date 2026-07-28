@@ -19,7 +19,8 @@ from Rust.
 
 ## Decision
 
-The webview may ask exactly four things: whether a backend is installed, to
+The webview may ask exactly six things: whether a backend is installed, to
+choose which installation is used, to go back to finding one automatically, to
 choose one file, to open that file's preview, and to load one spectrum by
 index. Every one of them is typed on both sides.
 
@@ -29,6 +30,21 @@ index. Every one of them is typed on both sides.
   rather than a Tauri dialog plugin, so the webview keeps an empty capability
   set. The chosen path stays in a process-local registry; the frontend holds an
   opaque session handle and a display name.
+- **Which installation is used can be changed, for the session only.** A user
+  whose ProteoWizard sits somewhere no installer would put it had no way to say
+  so, and the alternative — widening automatic discovery — would mean executing
+  whatever is found in more places. Choosing is narrower: it runs only what the
+  user pointed at, and only until the application closes. It is never written
+  to disk, because a stored path would go on applying to a folder MSCanvas has
+  no way to vouch for, in later sessions, without being asked again.
+
+  The webview names no path in either direction. It asks for a picker, Rust
+  shows it, and what comes back is a verdict that states which installation it
+  describes. Changing the installation and probing it are a single call, so
+  there is no interval in which a verdict about the previous one can be shown
+  beside the new one, and every banner state offers the way back — including
+  the state where the call itself failed, which is precisely the state that
+  cannot say which installation was in use.
 - **File acceptance is decided in Rust** — extension, canonical resolution, and
   regular-file posture including symlink and reparse-point rejection — so a
   frontend defect cannot widen what the backend will open. On Windows all of it
@@ -151,11 +167,36 @@ index. Every one of them is typed on both sides.
 - Timings recorded in the workspace are descriptive observations on the running
   machine. They are not budgets, and no threshold derives from them; that would
   need repeated measurement on a recorded hardware baseline.
-- Discovery is automatic and MSCanvas cannot yet be pointed at a particular
-  installation, so it does not suggest doing so. The corrective action it does
-  offer is the one this version can carry out. `mscanvas-proteowizard`'s own
-  discovery-failure text still suggests choosing an installation folder, which
-  no UI provides; correcting that belongs with whatever adds the setting.
+- Discovery is automatic by default and can be pointed at one folder for the
+  session. Every corrective action the boundary offers is one this version can
+  carry out: `mscanvas-proteowizard`'s own discovery-failure text suggests
+  naming an exact `msconvert.exe`/`msaccess.exe` path, which there is still no
+  command or picker for, so a chosen folder's failure is reported from a cause
+  established here instead — missing, not a directory, unreadable, missing
+  either tool or both, a probe failure, or a mismatched pair — and never by
+  forwarding the crate's advice.
+- Which installation is in use is decided by what actually resolved, not by
+  what was requested. The two come apart in both directions: automatic
+  discovery falls back to another release when the one in use is removed, and a
+  chosen folder's binaries can be upgraded in place. So the identity of the
+  resolved `msconvert`/`msaccess` pair is what a preview is stamped with and
+  what a later spectrum is checked against.
+
+  That identity is content first. Discovery already hashes each executable
+  either side of its help probe, so the digest is free, and it is the only fact
+  that cannot survive a replacement: an installer repairing in place can keep
+  the path, the filesystem identity, the length, the timestamp and the reported
+  version and still write different bytes. Where both sides carry a digest, the
+  path and the digest decide alone — a modification time rewritten over
+  unchanged bytes, by a backup restore or a timestamp normalisation, is not a
+  different backend. The filesystem identity, length and modification time
+  decide only where no digest was bound, which is every case where a tool did
+  not probe successfully; there nothing better exists, and calling two unprobed
+  tools equal on their paths would be the more dangerous mistake.
+
+  It is compared and never displayed: it is not serialisable, its `Debug` is
+  opaque, and it is returned beside the transfer objects rather than inside one,
+  so no path reaches the webview by being logged or serialised.
 - Total ion chromatogram, base peak chromatogram, chromatogram UI, mzXML,
   vendor acquisitions, the conversion workflow, queueing, retry, progress and
   real cancellation remain outside this boundary and separately gated.

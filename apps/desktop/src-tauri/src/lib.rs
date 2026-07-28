@@ -67,6 +67,61 @@ fn picker_unavailable() -> PreviewErrorDto {
     )
 }
 
+/// Shows the native folder picker and uses the chosen ProteoWizard for this
+/// session, returning what that installation can actually do.
+///
+/// For this session only, and never written to disk. Automatic discovery
+/// searches `PATH` and the locations an installer writes; this looks wherever
+/// it is told, and what keeps it the narrower of the two is that the user says
+/// so again next time rather than having a past choice apply silently.
+///
+/// Cancelling returns `None`, which means nothing changed — the caller keeps the
+/// verdict it already had rather than being handed one about a folder nobody
+/// chose.
+#[tauri::command]
+async fn choose_backend_installation(
+    app: tauri::AppHandle,
+    service: State<'_, SharedService>,
+) -> Result<Option<BackendAvailabilityDto>, PreviewErrorDto> {
+    let owner = main_window_handle(&app);
+    let service = Arc::clone(&service);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = sender.send(preview::dialog::choose_installation_folder(owner));
+    })
+    .map_err(|_| folder_picker_unavailable())?;
+
+    off_the_async_runtime(move || {
+        let chosen = receiver.recv().map_err(|_| folder_picker_unavailable())??;
+        Ok(chosen.map(|home| service.use_installation(Some(home))))
+    })
+    .await?
+}
+
+/// Goes back to searching for ProteoWizard automatically, and reports what that
+/// finds.
+///
+/// Separate from choosing, and always available, because the state a chosen
+/// folder can leave behind is one nothing else undoes: a folder that turns out
+/// to hold no usable installation would otherwise be the only thing MSCanvas
+/// looks at for the rest of the session, with an installation it would have
+/// found on its own sitting unused.
+#[tauri::command]
+async fn use_automatic_backend_discovery(
+    service: State<'_, SharedService>,
+) -> Result<BackendAvailabilityDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.use_installation(None)).await
+}
+
+fn folder_picker_unavailable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "folder_picker_unavailable",
+        "The folder picker could not be opened.",
+        true,
+    )
+}
+
 /// Loads metadata, run summary and the spectrum table for one open action.
 #[tauri::command]
 async fn open_mzml_preview(
@@ -132,6 +187,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_bootstrap_status,
             inspect_backend,
+            choose_backend_installation,
+            use_automatic_backend_discovery,
             choose_mzml_file,
             open_mzml_preview,
             load_selected_spectrum

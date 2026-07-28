@@ -7,6 +7,8 @@ import type { SelectedSpectrumOutcome } from "../features/mzml-preview/contracts
 import {
   availableBackend,
   buildPreview,
+  chosenBackend,
+  chosenFolderWithoutTools,
   buildSpectrum,
   createFakePreviewApi,
   deferred,
@@ -57,6 +59,274 @@ describe("mzML preview workspace", () => {
 
     expect(await screen.findByText(/ProteoWizard is available/)).toHaveTextContent("3.0.25000");
     expect(screen.getByRole("button", { name: "Open mzML…" })).toBeEnabled();
+  });
+
+  it("reports the installation the user chose, never the one it replaced", async () => {
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      chosenInstallation: chosenBackend,
+    });
+    renderApp(api);
+    expect(await screen.findByText("ProteoWizard is not available")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+
+    expect(await screen.findByText(/ProteoWizard is available/)).toHaveTextContent("3.0.26013");
+    expect(screen.getByText(/from the folder you chose/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Open mzML…" })).toBeEnabled();
+  });
+
+  it("drops what the previous installation read when the installation changes", async () => {
+    // The table's rows are what a later selected spectrum is reconciled
+    // against. Keeping them across a change would compare a spectrum read by
+    // the new installation with rows read by the old one, and both honest
+    // outcomes of that -- a wrong result or an invented conflict -- are worse
+    // than asking the user to open the file again.
+    const api = createFakePreviewApi({ chosenInstallation: chosenBackend });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+    const readsBefore = api.openCount();
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    });
+    // And nothing was re-read on the user's behalf: changing the installation
+    // is not a request to run the new one against the open file.
+    expect(api.openCount()).toBe(readsBefore);
+  });
+
+  it("offers the retained file back after an installation change", async () => {
+    // WF-001: changing the backend must not discard the workspace. The
+    // readings do go -- they belong to an installation no longer in use -- but
+    // Rust still holds the file, so reopening it must not mean finding it
+    // again in the picker.
+    const api = createFakePreviewApi({ chosenInstallation: chosenBackend });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+    const picksBefore = api.requestedSpectra.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+    const reopen = await screen.findByRole("button", { name: /^Reopen / });
+
+    expect(reopen).toHaveTextContent("QC_pool_01.mzML");
+    fireEvent.click(reopen);
+
+    // Read again from the handle Rust kept, with no second trip to the picker.
+    expect(await screen.findByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(api.requestedSpectra.length).toBe(picksBefore);
+  });
+
+  it("clears a stale workspace when a spectrum load is what notices the backend changed", async () => {
+    // The failure is not retryable, so nothing else would say anything: the
+    // table stays on screen looking current and every further row fails the
+    // same way until the user happens to press Check again.
+    const api = createFakePreviewApi({
+      spectrum: () =>
+        Promise.reject(
+          previewError({ kind: "installation_changed_since_preview", retryable: false }),
+        ),
+    });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+
+    // The readings go, and the retained file is offered back rather than left
+    // looking like it still describes what is installed.
+    expect(await screen.findByRole("button", { name: /^Reopen / })).toBeVisible();
+    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+  });
+
+  it("clears a stale workspace when the backend changed between the check and the spawn", async () => {
+    // A different route to the same truth: the crate notices the executable
+    // changed after its check and before the spawn. It reaches the interface as
+    // its own typed kind, and it is just as non-retryable, so it needs the same
+    // recovery rather than leaving the workspace looking current.
+    const api = createFakePreviewApi({
+      spectrum: () =>
+        Promise.reject(previewError({ kind: "backend_changed_after_check", retryable: false })),
+    });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+
+    // The readings go, and the retained file is offered back rather than left
+    // looking like it still describes what is installed.
+    expect(await screen.findByRole("button", { name: /^Reopen / })).toBeVisible();
+    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+  });
+
+  it("clears a stale workspace when the backend is gone by the time it is run", async () => {
+    // A third route to the same truth: the executable was there when it was
+    // checked and gone when it was launched. Just as non-retryable, and just as
+    // much a reason not to leave the table looking current.
+    const api = createFakePreviewApi({
+      spectrum: () =>
+        Promise.reject(previewError({ kind: "backend_not_found_at_launch", retryable: false })),
+    });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+
+    expect(await screen.findByRole("button", { name: /^Reopen / })).toBeVisible();
+    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+  });
+
+  it("re-checks the backend when a row fails in a way that cannot be retried", async () => {
+    // A backend replaced in place can keep its file metadata and still stop
+    // answering its help probe. That fails inside the provider's own
+    // resolution, so it never reaches the comparison that would name it a
+    // change -- and without asking, the table would stay on screen with every
+    // row failing the same way.
+    let installed = true;
+    const api = createFakePreviewApi({
+      availability: () => Promise.resolve(installed ? availableBackend : unavailableBackend),
+      spectrum: () => {
+        installed = false;
+        return Promise.reject(
+          previewError({ kind: "capability_evidence_unavailable", retryable: false }),
+        );
+      },
+    });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+
+    // The banner stops claiming a backend that no longer answers.
+    expect(await screen.findByText("ProteoWizard is not available")).toBeVisible();
+  });
+
+  it("does not start a row read while a backend request is outstanding", async () => {
+    // Reading a row is backend work, so the one-at-a-time rule has to cover it.
+    // Started while an installation is being probed it either reads the backend
+    // being replaced or queues behind the change and then fails on it -- one
+    // process launch either way, for a result nobody will see.
+    const api = createFakePreviewApi({ chosenInstallation: () => new Promise(() => undefined) });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+    const readsBefore = api.requestedSpectra.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+
+    expect(api.requestedSpectra.length).toBe(readsBefore);
+  });
+
+  it("closes the open actions when the backend state is not positively available", async () => {
+    // A failed call cannot say whether an installation is present. Gating on
+    // "explicitly unavailable" left every open action live in that state, so
+    // the only thing it could lead to was another failure -- including after a
+    // folder choice that failed before ever reaching the backend.
+    const api = createFakePreviewApi({
+      availability: () => Promise.reject(previewError({ kind: "preview_worker_unavailable" })),
+    });
+    renderApp(api);
+
+    await screen.findByRole("button", { name: "Search automatically" });
+
+    expect(screen.getByRole("button", { name: "Open mzML…" })).toBeDisabled();
+    // The recovery actions the banner offers stay live -- they are the way out.
+    expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Choose folder…" })).toBeEnabled();
+  });
+
+  it("starts no second backend request while one is outstanding", async () => {
+    // The two installation commands contend for a single lock in Rust, and it
+    // does not grant in call order. Letting a second start means acting on a
+    // verdict already being replaced, so the actions that would start one are
+    // closed for as long as one is running -- the folder picker's own dialog
+    // included, which closes well before the probes it triggers finish.
+    const recheck = deferred<typeof availableBackend>();
+    let first = true;
+    const api = createFakePreviewApi({
+      availability: () => {
+        if (!first) {
+          return Promise.resolve(availableBackend);
+        }
+        first = false;
+        return recheck.promise;
+      },
+    });
+    renderApp(api);
+
+    // Nothing to act on and nothing to act with while the first check runs.
+    expect(screen.queryByRole("button", { name: "Choose folder…" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Open mzML…" })).toBeDisabled();
+
+    recheck.resolve(availableBackend);
+
+    const choose = await screen.findByRole("button", { name: "Choose folder…" });
+    expect(choose).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
+  });
+
+  it("says why a chosen folder is unusable, and offers only what it can do", async () => {
+    // ENV-002 requires an invalid choice to explain itself. "The configured
+    // location is not usable" is a category, not a reason, and the advice that
+    // came with it named an exact executable path -- something this
+    // application has neither a command nor a picker for.
+    const api = createFakePreviewApi({ chosenInstallation: chosenFolderWithoutTools });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("button", { name: "Choose folder…" }));
+
+    expect(await screen.findByText(/holds neither msconvert.exe nor msaccess.exe/)).toBeVisible();
+    expect(screen.getByText(/Choose a different folder, or go back to searching/)).toBeVisible();
+    // Both ways out, and nothing that asks for an executable path.
+    expect(screen.getByRole("button", { name: "Search automatically" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Choose a different folder…" })).toBeEnabled();
+    expect(screen.queryByText(/msconvert.exe\/msaccess.exe/)).toBeNull();
+  });
+
+  it("keeps the verdict it had when the folder picker is dismissed", async () => {
+    // Dismissing changes nothing, so replacing what is on screen -- with a new
+    // verdict or with "checking" -- would say something happened that did not.
+    const api = createFakePreviewApi({ chosenInstallation: null });
+    renderApp(api);
+    expect(await screen.findByText(/ProteoWizard is available/)).toHaveTextContent("3.0.25000");
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/ProteoWizard is available/)).toHaveTextContent("3.0.25000");
+    });
+    expect(screen.queryByText(/from the folder you chose/)).toBeNull();
+    expect(screen.queryByText(/Checking for an installed/)).toBeNull();
+  });
+
+  it("can go back to searching automatically after choosing a folder", async () => {
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      chosenInstallation: chosenBackend,
+    });
+    renderApp(api);
+    await screen.findByText("ProteoWizard is not available");
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+    await screen.findByText(/from the folder you chose/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Search automatically" }));
+
+    // Back to what automatic discovery finds, and saying so.
+    expect(await screen.findByText("ProteoWizard is not available")).toBeVisible();
+    expect(screen.queryByText(/from the folder you chose/)).toBeNull();
+  });
+
+  it("offers a way out when the backend call itself fails", async () => {
+    // A failed call does not say which installation was in use, so a banner
+    // that only offered "check again" could leave a chosen folder in place
+    // with no way to stop using it.
+    const api = createFakePreviewApi({
+      availability: () => Promise.reject(previewError({ kind: "preview_worker_unavailable" })),
+    });
+    renderApp(api);
+
+    await screen.findByRole("button", { name: "Search automatically" });
+    expect(screen.getByRole("button", { name: "Choose folder…" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Check again" })).toBeVisible();
   });
 
   it("notices a backend that has gone away and can be told to look again", async () => {

@@ -7,17 +7,18 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use mscanvas_proteowizard::{
     PreviewOperation, PreviewOutcome, PreviewOutputEntry, PreviewOutputManifest, ProcessOutput,
     Termination, interpret_preview,
 };
 
-use super::backend::{OperationResult, PreviewProvider, interpretation_error};
+use super::backend::{OperationAttempt, PreviewProvider, interpretation_error};
 use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, PreviewErrorDto, SelectedSpectrumOutcomeDto,
 };
+use super::installation::InstallationIdentity;
 use super::service::PreviewService;
 
 const METADATA_OUTPUT: &str = concat!(
@@ -166,14 +167,119 @@ enum Response {
     Error(PreviewErrorDto),
 }
 
+/// One named backend, distinguishable from any other by name alone.
+///
+/// The paths need not exist: what a test needs is two identities that differ,
+/// and two that do not.
+fn backend(label: &str, release: &str) -> InstallationIdentity {
+    let home = PathBuf::from(format!(r"C:\fake\{label}"));
+    InstallationIdentity::for_test(&home.join(MSCONVERT), &home.join(MSACCESS), release)
+}
+
+const MSCONVERT: &str = "msconvert.exe";
+const MSACCESS: &str = "msaccess.exe";
+
+/// A backend whose tools are real files, so the pre-flight -- which asks the
+/// filesystem and launches nothing -- has something to look at.
+struct InstalledFiles {
+    home: PathBuf,
+}
+
+impl InstalledFiles {
+    fn new(label: &str) -> Self {
+        let home =
+            std::env::temp_dir().join(format!("mscanvas-tools-{label}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&home).expect("tool directory");
+        fs::write(home.join(MSCONVERT), b"msconvert").expect("msconvert");
+        fs::write(home.join(MSACCESS), b"msaccess").expect("msaccess");
+        Self { home }
+    }
+
+    fn identity(&self) -> InstallationIdentity {
+        InstallationIdentity::for_test(
+            &self.home.join(MSCONVERT),
+            &self.home.join(MSACCESS),
+            "3.0.26013",
+        )
+    }
+
+    /// Replaces one executable, as an installer repairing in place would.
+    fn replace_msaccess(&self) {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(self.home.join(MSACCESS), b"a different msaccess entirely").expect("replace");
+    }
+}
+
+impl Drop for InstalledFiles {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.home);
+    }
+}
+
+/// The part of a fake's world a test can still reach after the provider has
+/// been handed to the service.
+///
+/// Needed because the interesting changes happen to the machine while the
+/// application is running: an installation is upgraded, removed, or replaced,
+/// and nothing asked for that.
+#[derive(Clone)]
+struct FakeWorld {
+    resolved: Arc<Mutex<Option<InstallationIdentity>>>,
+    requested: Arc<Mutex<Vec<PreviewOperation>>>,
+    looks: Arc<Mutex<usize>>,
+}
+
+impl FakeWorld {
+    fn new(resolved: Option<InstallationIdentity>) -> Self {
+        Self {
+            resolved: Arc::new(Mutex::new(resolved)),
+            requested: Arc::new(Mutex::new(Vec::new())),
+            looks: Arc::new(Mutex::new(0)),
+        }
+    }
+
+    /// Points this world at a different backend, or at none. Models the machine
+    /// changing underneath a running application.
+    fn resolves_to(&self, identity: Option<InstallationIdentity>) {
+        *self.resolved.lock().expect("test lock") = identity;
+    }
+
+    fn resolved_backend(&self) -> Option<InstallationIdentity> {
+        self.resolved.lock().expect("test lock").clone()
+    }
+
+    /// How many backend operations have actually been run, so a test can say
+    /// that something was refused *before* one was spent on it.
+    fn requested_count(&self) -> usize {
+        self.requested.lock().expect("test lock").len()
+    }
+
+    /// How many times the backend has been resolved. Resolving is two help
+    /// probes and two executable hashes in production, so a test can say that
+    /// a cheap check stayed cheap.
+    fn availability_count(&self) -> usize {
+        *self.looks.lock().expect("test lock")
+    }
+}
+
 /// A deterministic stand-in for a user-installed ProteoWizard.
 ///
 /// It still runs every payload through the real typed interpreter, so tests
 /// exercise the production parsing contract rather than a parallel one.
 struct FakeProvider {
     availability: BackendAvailabilityDto,
+    /// What a chosen folder reports. `None` means every chosen folder is a
+    /// folder with no usable installation in it.
+    chosen_availability: Option<BackendAvailabilityDto>,
+    chosen: Mutex<Option<PathBuf>>,
+    /// Which backend this fake's world resolves to, whatever was requested.
+    ///
+    /// Separate from `chosen` on purpose: that is the configuration, this is
+    /// what it resolves to, and the whole point of the model under test is that
+    /// the two move independently.
+    world: FakeWorld,
     responses: Mutex<Vec<Response>>,
-    requested: Mutex<Vec<PreviewOperation>>,
     batches: Mutex<usize>,
 }
 
@@ -182,13 +288,17 @@ impl FakeProvider {
         Self {
             availability: BackendAvailabilityDto {
                 state: "available".to_owned(),
+                origin: "automatic".to_owned(),
+                installation_generation: 0,
                 release: Some("3.0.26204".to_owned()),
                 build_date: Some("Jul 23 2026".to_owned()),
                 same_installation: true,
                 failure: None,
             },
+            chosen_availability: None,
+            chosen: Mutex::new(None),
+            world: FakeWorld::new(Some(backend("installed", "3.0.26013"))),
             responses: Mutex::new(responses),
-            requested: Mutex::new(Vec::new()),
             batches: Mutex::new(0),
         }
     }
@@ -197,6 +307,8 @@ impl FakeProvider {
         Self {
             availability: BackendAvailabilityDto {
                 state: "unavailable".to_owned(),
+                origin: "automatic".to_owned(),
+                installation_generation: 0,
                 release: None,
                 build_date: None,
                 same_installation: false,
@@ -206,18 +318,79 @@ impl FakeProvider {
                     corrective_action: "Install ProteoWizard separately.".to_owned(),
                 }),
             },
+            chosen_availability: None,
+            chosen: Mutex::new(None),
+            world: FakeWorld::new(None),
             responses: Mutex::new(vec![Response::Error(PreviewErrorDto::new(
                 "backend_not_found",
                 "ProteoWizard was not found.",
                 false,
             ))]),
-            requested: Mutex::new(Vec::new()),
             batches: Mutex::new(0),
         }
     }
 
+    /// A provider that finds nothing on its own but works in a chosen folder.
+    fn only_when_chosen() -> Self {
+        let mut provider = Self::unavailable();
+        // A world that resolves to a real backend once a folder is chosen. It
+        // stays masked while the verdict is unavailable, exactly as production
+        // masks it, so "nothing found" and "found this" remain distinguishable.
+        provider.world = FakeWorld::new(Some(backend("chosen", "3.0.26204")));
+        provider.chosen_availability = Some(BackendAvailabilityDto {
+            state: "available".to_owned(),
+            origin: "chosen".to_owned(),
+            installation_generation: 0,
+            release: Some("3.0.26204".to_owned()),
+            build_date: Some("Jul 23 2026".to_owned()),
+            same_installation: true,
+            failure: None,
+        });
+        provider
+    }
+
+    /// A handle onto this fake's world that survives being boxed.
+    fn clone_world(&self) -> FakeWorld {
+        self.world.clone()
+    }
+
+    fn resolved_backend(&self) -> Option<InstallationIdentity> {
+        self.world.resolved_backend()
+    }
+
+    /// Re-derived on every call from what is currently chosen, exactly as
+    /// production does. A fake that returned a fixed verdict would pass the
+    /// stale-banner test without the code being able to.
+    fn verdict(&self) -> BackendAvailabilityDto {
+        let chosen = self.chosen.lock().expect("test lock").clone();
+        let Some(chosen) = chosen else {
+            return self.availability.clone();
+        };
+        match &self.chosen_availability {
+            Some(availability) => availability.clone(),
+            None => BackendAvailabilityDto {
+                state: "unavailable".to_owned(),
+                origin: "chosen".to_owned(),
+                installation_generation: 0,
+                release: None,
+                build_date: None,
+                same_installation: false,
+                failure: Some(BackendFailureDto {
+                    kind: "backend_not_found".to_owned(),
+                    summary: format!(
+                        "No ProteoWizard was found in that folder ({} characters).",
+                        chosen.as_os_str().len()
+                    ),
+                    corrective_action: "Choose another folder, or go back to searching \
+                                        automatically."
+                        .to_owned(),
+                }),
+            },
+        }
+    }
+
     fn requested_operations(&self) -> Vec<PreviewOperation> {
-        self.requested.lock().expect("test lock").clone()
+        self.world.requested.lock().expect("test lock").clone()
     }
 
     fn batch_count(&self) -> usize {
@@ -226,16 +399,29 @@ impl FakeProvider {
 }
 
 impl PreviewProvider for FakeProvider {
-    fn availability(&self) -> BackendAvailabilityDto {
-        self.availability.clone()
+    fn use_installation(&self, home: Option<PathBuf>) {
+        *self.chosen.lock().expect("test lock") = home;
+    }
+
+    fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
+        *self.world.looks.lock().expect("test lock") += 1;
+        let verdict = self.verdict();
+        // Only a usable backend has an identity, exactly as production does:
+        // an installation that cannot be used is not one a preview could have
+        // come from.
+        let identity = (verdict.state == "available")
+            .then(|| self.world.resolved_backend())
+            .flatten();
+        (verdict, identity)
     }
 
     fn run(
         &self,
         _source: &Path,
         operation: &PreviewOperation,
-    ) -> Result<OperationResult, PreviewErrorDto> {
-        self.requested
+    ) -> Result<OperationAttempt, PreviewErrorDto> {
+        self.world
+            .requested
             .lock()
             .expect("test lock")
             .push(operation.clone());
@@ -263,23 +449,39 @@ impl PreviewProvider for FakeProvider {
                     total_bytes,
                 )]),
             ),
-            Response::Error(error) => return Err(error),
+            Response::Error(error) => {
+                return Ok(OperationAttempt {
+                    installation: self.resolved_backend(),
+                    outcome: Err(error),
+                });
+            }
         };
         let outcome =
             interpret_preview(operation, &process, &manifest).map_err(interpretation_error)?;
-        Ok(OperationResult { outcome })
+        Ok(OperationAttempt {
+            installation: self.resolved_backend(),
+            outcome: Ok(outcome),
+        })
     }
 
     fn run_batch(
         &self,
         source: &Path,
         operations: &[PreviewOperation],
-    ) -> Result<Vec<OperationResult>, PreviewErrorDto> {
+    ) -> Result<Vec<OperationAttempt>, PreviewErrorDto> {
         *self.batches.lock().expect("test lock") += 1;
-        operations
-            .iter()
-            .map(|operation| self.run(source, operation))
-            .collect()
+        // Stops at the first failure, as the production batch does. A fake that
+        // ran on would let a test claim the batch stopped when it had not.
+        let mut attempts = Vec::with_capacity(operations.len());
+        for operation in operations {
+            let attempt = self.run(source, operation)?;
+            let failed = attempt.outcome.is_err();
+            attempts.push(attempt);
+            if failed {
+                break;
+            }
+        }
+        Ok(attempts)
     }
 }
 
@@ -334,6 +536,270 @@ fn an_unavailable_backend_is_a_typed_state_not_an_error() {
         .expect("an unavailable backend explains itself");
     assert_eq!(failure.kind, "backend_not_found");
     assert!(!failure.corrective_action.is_empty());
+}
+
+#[test]
+fn choosing_an_installation_reports_that_installation_and_not_the_previous_one() {
+    // The banner may never carry a verdict from before the change. Choosing and
+    // probing are one call for exactly this reason: any gap between them is a
+    // window in which "available" is shown for an installation nobody is using.
+    let service = PreviewService::new(Box::new(FakeProvider::only_when_chosen()));
+    let before = service.inspect_backend();
+    assert_eq!(before.state, "unavailable");
+    assert_eq!(before.origin, "automatic");
+
+    let after = service.use_installation(Some(PathBuf::from("C:\\pwiz")));
+
+    assert_eq!(after.state, "available");
+    assert_eq!(after.origin, "chosen");
+    assert!(after.failure.is_none());
+    // And it stays that way for later readings, not just the one that changed it.
+    assert_eq!(service.inspect_backend().origin, "chosen");
+}
+
+#[test]
+fn a_chosen_folder_with_no_installation_can_be_undone() {
+    // Without this the session is stuck: the chosen folder is the only place
+    // MSCanvas looks, and a working installation it would have found on its own
+    // sits unused with nothing to say so.
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+    let failed = service.use_installation(Some(PathBuf::from("C:\\not-an-installation")));
+    assert_eq!(failed.state, "unavailable");
+    assert_eq!(failed.origin, "chosen");
+    let failure = failed
+        .failure
+        .expect("a folder that holds no installation explains itself");
+    assert!(!failure.corrective_action.is_empty());
+
+    let restored = service.use_installation(None);
+
+    assert_eq!(restored.state, "available");
+    assert_eq!(restored.origin, "automatic");
+    assert!(restored.failure.is_none());
+}
+
+/// A provider that says when its batch has finished, so a test can queue an
+/// installation change directly behind one open.
+struct SignallingProvider {
+    inner: FakeProvider,
+    finished: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+}
+
+impl PreviewProvider for SignallingProvider {
+    fn use_installation(&self, home: Option<PathBuf>) {
+        self.inner.use_installation(home);
+    }
+
+    fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
+        self.inner.availability()
+    }
+
+    fn run(
+        &self,
+        source: &Path,
+        operation: &PreviewOperation,
+    ) -> Result<OperationAttempt, PreviewErrorDto> {
+        self.inner.run(source, operation)
+    }
+
+    fn run_batch(
+        &self,
+        source: &Path,
+        operations: &[PreviewOperation],
+    ) -> Result<Vec<OperationAttempt>, PreviewErrorDto> {
+        let results = self.inner.run_batch(source, operations);
+        // Sent while the gate is still held, so the waiting change queues
+        // behind this open rather than racing it.
+        if let Some(sender) = self.finished.lock().expect("test lock").take() {
+            let _ = sender.send(());
+        }
+        results
+    }
+}
+
+#[test]
+fn a_change_queued_behind_an_open_is_not_absorbed_into_what_that_open_recorded() {
+    // The rows an open records are the work of the installation in use for its
+    // batch. A change waiting on the gate takes effect the moment that open
+    // releases it, so anything read after that point describes the installation
+    // which replaced the one that did the reading -- and a preview stamped that
+    // way passes the very check that exists to refuse it.
+    let file = TestFile::new("queued-change");
+    let responses = vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+    ];
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let service = std::sync::Arc::new(PreviewService::new(Box::new(SignallingProvider {
+        inner: FakeProvider::available(responses),
+        finished: Mutex::new(Some(sender)),
+    })));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let change = {
+        let service = std::sync::Arc::clone(&service);
+        std::thread::spawn(move || {
+            receiver
+                .recv()
+                .expect("the open reports its batch finished");
+            // Blocks on the backend gate until the open releases it.
+            service.use_installation(Some(PathBuf::from(r"C:\pwiz")));
+        })
+    };
+
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens");
+    change.join().expect("the queued change completes");
+
+    let error = service
+        .load_spectrum(&selected.handle, 0)
+        .expect_err("a spectrum is not reconciled against another installation's table");
+
+    assert_eq!(error.kind, "installation_changed_since_preview");
+}
+
+#[test]
+fn a_spectrum_is_refused_rather_than_reconciled_across_an_installation_change() {
+    // The table's rows are what a selected spectrum is reconciled against, and
+    // they were read by whichever installation was in use then. Comparing
+    // across a change would call the difference between two installations a
+    // finding about the file. Dropping the comparison is not the alternative:
+    // it is what keeps the row the user clicked and the panel beside it
+    // describing the same spectrum.
+    let file = TestFile::new("installation-change");
+    let responses = vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+    ];
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens");
+
+    service.use_installation(Some(PathBuf::from(r"C:\pwiz")));
+
+    let error = service
+        .load_spectrum(&selected.handle, 0)
+        .expect_err("a spectrum is not reconciled against another installation's table");
+
+    assert_eq!(error.kind, "installation_changed_since_preview");
+    // Not retryable: reading again changes nothing. Opening the file again is
+    // the action, and the message says so.
+    assert!(!error.retryable);
+    assert!(error.summary.contains("Open the file again"));
+}
+
+#[test]
+fn asking_for_the_installation_already_in_use_is_not_a_change() {
+    // Every caller reads a higher generation as "the installation changed" and
+    // throws away what the previous one read. Advancing it for a request that
+    // switches nothing would make "Search automatically" while already
+    // automatic, or re-picking the same folder, cost the user their open file
+    // and a fresh read of it for no reason.
+    let file = TestFile::new("no-op-change");
+    let responses = vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+    ];
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens");
+
+    // Already on automatic discovery, so this switches nothing.
+    let again = service.use_installation(None);
+    assert_eq!(again.installation_generation, 0);
+    assert_eq!(again.origin, "automatic");
+
+    // And what the previous reading produced is still usable, rather than
+    // refused as another installation's work.
+    service
+        .load_spectrum(&selected.handle, 0)
+        .expect("a spectrum still belongs to the installation that read the table");
+
+    // A real switch still advances it, and asking for that same folder again
+    // does not.
+    let chosen = service.use_installation(Some(PathBuf::from(r"C:\pwiz")));
+    assert_eq!(chosen.installation_generation, 1);
+    let same = service.use_installation(Some(PathBuf::from(r"C:\pwiz")));
+    assert_eq!(same.installation_generation, 1);
+    // Switching back is a change again.
+    assert_eq!(service.use_installation(None).installation_generation, 2);
+}
+
+#[test]
+fn a_verdict_says_where_it_belongs_in_the_sequence_of_installation_changes() {
+    // Request order is not service order: the two commands contend for one
+    // gate, and it does not grant in the order they were called. A caller that
+    // trusted its own ordering could show the installation a choice replaced
+    // while every later operation used the chosen one. The number is what lets
+    // it tell, and it is read under the gate that served the verdict.
+    let service = PreviewService::new(Box::new(FakeProvider::only_when_chosen()));
+    assert_eq!(service.inspect_backend().installation_generation, 0);
+
+    let chosen = service.use_installation(Some(PathBuf::from("C:\\pwiz")));
+    assert_eq!(chosen.installation_generation, 1);
+    // A plain reading does not advance it -- only a change does.
+    assert_eq!(service.inspect_backend().installation_generation, 1);
+
+    let restored = service.use_installation(None);
+    assert_eq!(restored.installation_generation, 2);
+    assert_eq!(restored.origin, "automatic");
+}
+
+#[test]
+fn a_chosen_folder_never_leaves_a_path_in_what_the_webview_receives() {
+    // The webview is not allowed to learn a filesystem path, and choosing an
+    // installation is a new way for one to reach it: unlike an install root,
+    // this path is somewhere the user navigated to and may say who they are.
+    //
+    // Against the production provider, not a fake, because the fake cannot
+    // answer this -- the text at issue comes from the crate's own discovery
+    // failures. Hermetic all the same: a configured home is used as given and
+    // never falls back, so a folder that does not exist fails before anything
+    // is launched.
+    let provider = super::backend::ProteoWizardProvider::new();
+    let chosen = std::env::temp_dir().join("mscanvas-no-such-installation-9f2c1a");
+    assert!(!chosen.exists(), "the test folder must not exist");
+    provider.use_installation(Some(chosen));
+
+    let (availability, identity) = provider.availability();
+
+    assert_eq!(availability.state, "unavailable");
+    assert_eq!(availability.origin, "chosen");
+    // Nothing resolved, so there is no identity. It must not be `Some` of
+    // anything: an unusable installation compares equal to no preview's.
+    assert!(identity.is_none());
+    // And the reason names what is actually wrong with the folder rather than
+    // repeating the crate's one sentence for every configured location.
+    let failure = availability
+        .failure
+        .as_ref()
+        .expect("a chosen folder that does not work explains itself");
+    assert_eq!(failure.kind, "chosen_folder_missing");
+    // The identity itself is unserialisable by construction, so the only thing
+    // that can carry a path out of here is the transfer object.
+    let rendered = serde_json::to_string(&availability).expect("availability serializes");
+    assert!(
+        !rendered.contains("mscanvas-no-such-installation"),
+        "{rendered}"
+    );
+    // No path shape of any kind: a separator is what carries a path, and the
+    // rendering escapes each backslash, so one escaped pair is one separator.
+    assert!(!rendered.contains("\\\\"), "{rendered}");
+    assert!(
+        !rendered.contains(&std::env::temp_dir().to_string_lossy().to_string()),
+        "{rendered}"
+    );
 }
 
 #[test]
@@ -665,7 +1131,9 @@ struct RewritingProvider {
 }
 
 impl PreviewProvider for RewritingProvider {
-    fn availability(&self) -> BackendAvailabilityDto {
+    fn use_installation(&self, _home: Option<PathBuf>) {}
+
+    fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
         self.inner.availability()
     }
 
@@ -673,7 +1141,7 @@ impl PreviewProvider for RewritingProvider {
         &self,
         source: &Path,
         operation: &PreviewOperation,
-    ) -> Result<OperationResult, PreviewErrorDto> {
+    ) -> Result<OperationAttempt, PreviewErrorDto> {
         let result = self.inner.run(source, operation);
         let mut runs = self.runs.lock().expect("test lock");
         *runs += 1;
@@ -741,7 +1209,9 @@ fn only_one_backend_operation_runs_at_a_time() {
     }
 
     impl PreviewProvider for ConcurrencyProbe {
-        fn availability(&self) -> BackendAvailabilityDto {
+        fn use_installation(&self, _home: Option<PathBuf>) {}
+
+        fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
             self.inner.availability()
         }
 
@@ -749,7 +1219,7 @@ fn only_one_backend_operation_runs_at_a_time() {
             &self,
             source: &Path,
             operation: &PreviewOperation,
-        ) -> Result<OperationResult, PreviewErrorDto> {
+        ) -> Result<OperationAttempt, PreviewErrorDto> {
             let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
             self.peak.fetch_max(active, Ordering::SeqCst);
             std::thread::sleep(std::time::Duration::from_millis(20));
@@ -804,7 +1274,9 @@ fn opening_another_file_supersedes_a_spectrum_still_waiting_for_its_turn() {
     }
 
     impl PreviewProvider for BlockingProvider {
-        fn availability(&self) -> BackendAvailabilityDto {
+        fn use_installation(&self, _home: Option<PathBuf>) {}
+
+        fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
             self.inner.availability()
         }
 
@@ -812,7 +1284,7 @@ fn opening_another_file_supersedes_a_spectrum_still_waiting_for_its_turn() {
             &self,
             source: &Path,
             operation: &PreviewOperation,
-        ) -> Result<OperationResult, PreviewErrorDto> {
+        ) -> Result<OperationAttempt, PreviewErrorDto> {
             let _ = self.started.send(());
             let _ = self
                 .release
@@ -1148,4 +1620,339 @@ fn a_preview_outcome_is_never_constructed_outside_the_typed_interpreter() {
     )
     .expect("the fixture parses through the production interpreter");
     assert!(matches!(outcome, PreviewOutcome::Value(_)));
+}
+
+/// A provider that works whether or not a folder is chosen.
+///
+/// Needed to model the case where choosing a folder resolves to the very tools
+/// automatic discovery was already using, which is a change of configuration
+/// and no change of backend at all.
+fn usable_either_way(responses: Vec<Response>) -> FakeProvider {
+    let mut provider = FakeProvider::available(responses);
+    provider.chosen_availability = Some(BackendAvailabilityDto {
+        state: "available".to_owned(),
+        origin: "chosen".to_owned(),
+        installation_generation: 0,
+        release: Some("3.0.26013".to_owned()),
+        build_date: None,
+        same_installation: true,
+        failure: None,
+    });
+    provider
+}
+
+fn opened_preview_responses() -> Vec<Response> {
+    vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+    ]
+}
+
+#[test]
+fn automatic_discovery_resolving_to_a_different_installation_is_a_change() {
+    // Nothing was requested and nothing was configured: the installation in use
+    // was removed and discovery fell back to another one. A request can never
+    // show that, and only the resolved pair can.
+    let provider = Box::new(FakeProvider::available(Vec::new()));
+    let world = provider.clone_world();
+    let service = PreviewService::new(provider);
+    assert_eq!(service.inspect_backend().installation_generation, 0);
+
+    world.resolves_to(Some(backend("elsewhere", "3.0.25000")));
+
+    assert_eq!(service.inspect_backend().installation_generation, 1);
+    // Still automatic: what changed is which backend that resolves to, which is
+    // a different question from what was asked for.
+    assert_eq!(service.inspect_backend().origin, "automatic");
+}
+
+#[test]
+fn a_chosen_folder_that_resolves_to_the_tools_already_in_use_is_not_a_change() {
+    // The configuration changed and the backend did not. Counting the request
+    // would discard a perfectly good preview for a switch that switched nothing.
+    let file = TestFile::new("same-tools");
+    let service = PreviewService::new(Box::new(usable_either_way(opened_preview_responses())));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens");
+    let before = service.inspect_backend().installation_generation;
+
+    let chosen = service.use_installation(Some(PathBuf::from(r"C:\fake\installed")));
+
+    assert_eq!(chosen.origin, "chosen");
+    // Origin is about the request; the generation is about the backend. This is
+    // the case that shows they are not the same question.
+    assert_eq!(chosen.installation_generation, before);
+    service
+        .load_spectrum(&selected.handle, 0)
+        .expect("the preview is still the work of the backend still in use");
+}
+
+#[test]
+fn an_old_preview_is_refused_before_a_spectrum_is_launched_for_it() {
+    // Both halves matter: refused, and refused without spending a process on a
+    // reading that was never going to be shown. The pre-flight asks the
+    // filesystem and launches nothing, so this is the shape it catches -- the
+    // tools it recorded are not the files that are there now.
+    let file = TestFile::new("refused-early");
+    let tools = InstalledFiles::new("refused-early");
+    let provider = Box::new(FakeProvider::available(opened_preview_responses()));
+    let world = provider.clone_world();
+    world.resolves_to(Some(tools.identity()));
+    let service = PreviewService::new(provider);
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens");
+    let operations_after_open = world.requested_count();
+
+    // Replaced in place: the path did not move and nothing was requested, so
+    // only the file itself can show it.
+    tools.replace_msaccess();
+
+    let error = service
+        .load_spectrum(&selected.handle, 0)
+        .expect_err("a spectrum is not reconciled against another backend's table");
+
+    assert_eq!(error.kind, "installation_changed_since_preview");
+    assert!(!error.retryable);
+    assert_eq!(
+        world.requested_count(),
+        operations_after_open,
+        "the spectrum must be refused before its operation is run"
+    );
+}
+
+#[test]
+fn a_spectrum_selection_does_not_re_resolve_the_backend() {
+    // The pre-flight must not cost what it saves. Resolving again would mean
+    // two help probes and two executable hashes on every row a user clicks, to
+    // avoid one launch in the rare case the backend changed underneath.
+    let file = TestFile::new("no-extra-discovery");
+    let tools = InstalledFiles::new("no-extra-discovery");
+    let provider = Box::new(FakeProvider::available(opened_preview_responses()));
+    let world = provider.clone_world();
+    world.resolves_to(Some(tools.identity()));
+    let service = PreviewService::new(provider);
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens");
+    let looks_after_open = world.availability_count();
+
+    service
+        .load_spectrum(&selected.handle, 0)
+        .expect("the spectrum is read");
+
+    assert_eq!(
+        world.availability_count(),
+        looks_after_open,
+        "reading a row must not resolve the backend again"
+    );
+}
+
+#[test]
+fn an_in_place_upgrade_advances_the_sequence_even_though_nothing_was_requested() {
+    let provider = Box::new(FakeProvider::available(Vec::new()));
+    let world = provider.clone_world();
+    let service = PreviewService::new(provider);
+    assert_eq!(service.inspect_backend().installation_generation, 0);
+
+    // Same paths, different build. This is what an installer that upgrades in
+    // place leaves behind, and it is invisible to anything comparing requests.
+    world.resolves_to(Some(backend("installed", "3.0.99999")));
+
+    assert_eq!(service.inspect_backend().installation_generation, 1);
+    // And looking again at an unchanged backend is not another change.
+    assert_eq!(service.inspect_backend().installation_generation, 1);
+}
+
+#[test]
+fn a_backend_that_disappears_and_returns_unchanged_is_one_change_each_way() {
+    let provider = Box::new(FakeProvider::available(Vec::new()));
+    let world = provider.clone_world();
+    let service = PreviewService::new(provider);
+    let original = world.resolved_backend();
+    assert_eq!(service.inspect_backend().installation_generation, 0);
+
+    world.resolves_to(None);
+    assert_eq!(service.inspect_backend().installation_generation, 1);
+
+    world.resolves_to(original);
+    assert_eq!(service.inspect_backend().installation_generation, 2);
+}
+
+#[test]
+fn no_backend_identity_reaches_the_webview_through_any_transfer_object() {
+    // The identity is unserialisable by construction, so what is left to check
+    // is that nothing derived from it is copied into something that is.
+    let file = TestFile::new("no-identity-leak");
+    let service = PreviewService::new(Box::new(
+        FakeProvider::available(opened_preview_responses()),
+    ));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let preview = service
+        .open_preview(&selected.handle)
+        .expect("the file opens");
+    let availability = service.inspect_backend();
+
+    for rendered in [
+        serde_json::to_string(&preview).expect("preview serializes"),
+        serde_json::to_string(&availability).expect("availability serializes"),
+        serde_json::to_string(&selected).expect("selection serializes"),
+    ] {
+        assert!(!rendered.contains("msconvert"), "{rendered}");
+        assert!(!rendered.contains("msaccess"), "{rendered}");
+        assert!(!rendered.contains(r"C:\fake"), "{rendered}");
+    }
+}
+
+#[test]
+fn every_spectrum_after_an_open_that_noticed_a_change_still_works() {
+    // An open is a look at the backend, and one that keeps what it saw to
+    // itself leaves the sequence naming the installation before it. The first
+    // spectrum load would then notice, advance the sequence, and match on
+    // identity -- and every load after it would be refused by a sequence check
+    // for a change that had already been accounted for.
+    let file = TestFile::new("open-observes");
+    let provider = Box::new(FakeProvider::available(vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+    ]));
+    let world = provider.clone_world();
+    let service = PreviewService::new(provider);
+    let selected = service.accept_file(&file.path).expect("accepted");
+    // Looked at once, so there is a previous observation to differ from.
+    service.inspect_backend();
+
+    // The machine changes with nothing looking at it, and the open is the first
+    // thing to see the new backend.
+    world.resolves_to(Some(backend("replacement", "3.0.26999")));
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens against whatever is installed now");
+
+    service
+        .load_spectrum(&selected.handle, 0)
+        .expect("the first spectrum comes from the backend that read the table");
+    service
+        .load_spectrum(&selected.handle, 0)
+        .expect("and so does every one after it");
+}
+
+/// What the spectrum step is given when execution itself fails after the
+/// backend was resolved -- a launch refused, a wait interrupted, output that
+/// could not be captured. Retryable, because retrying is the right advice when
+/// the installation has not changed.
+fn retryable_launch_failure() -> Response {
+    Response::Error(PreviewErrorDto::new(
+        "backend_launch_failed",
+        "The backend could not be started for that request.",
+        true,
+    ))
+}
+
+#[test]
+fn a_retryable_failure_under_a_replaced_backend_is_reported_as_the_change_it_is() {
+    // The pre-flight passes because the recorded tools are untouched, discovery
+    // then resolves a different installation, and execution under it fails for
+    // a reason that says nothing about which backend ran. Propagating that
+    // error would leave the banner and the table describing the installation
+    // that read them while every retry ran the new one.
+    let file = TestFile::new("failure-under-replacement");
+    let tools = InstalledFiles::new("failure-under-replacement");
+    let provider = Box::new(FakeProvider::available(vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        retryable_launch_failure(),
+    ]));
+    let world = provider.clone_world();
+    world.resolves_to(Some(tools.identity()));
+    let service = PreviewService::new(provider);
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens under the installation it found");
+    let before = service.inspect_backend().installation_generation;
+
+    world.resolves_to(Some(backend("replacement", "3.0.26999")));
+
+    let error = service
+        .load_spectrum(&selected.handle, 0)
+        .expect_err("a spectrum read by another backend is not shown beside this table");
+
+    // The recovery the user can act on, not the launch error underneath it.
+    assert_eq!(error.kind, "installation_changed_since_preview");
+    assert!(!error.retryable);
+    assert!(error.summary.contains("Open the file again"));
+    // And the change was observed rather than lost with the failure, so the
+    // banner cannot stay on the installation that is no longer running.
+    assert!(service.inspect_backend().installation_generation > before);
+}
+
+#[test]
+fn a_retryable_failure_under_the_same_backend_keeps_its_own_error() {
+    // Nothing changed, so the operation's own failure is the truth about this
+    // read -- including that retrying it is worth offering.
+    let file = TestFile::new("failure-same-backend");
+    let tools = InstalledFiles::new("failure-same-backend");
+    let provider = Box::new(FakeProvider::available(vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        retryable_launch_failure(),
+    ]));
+    let world = provider.clone_world();
+    world.resolves_to(Some(tools.identity()));
+    let service = PreviewService::new(provider);
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens");
+    let before = service.inspect_backend().installation_generation;
+
+    let error = service
+        .load_spectrum(&selected.handle, 0)
+        .expect_err("the read failed");
+
+    assert_eq!(error.kind, "backend_launch_failed");
+    assert!(error.retryable);
+    assert_eq!(service.inspect_backend().installation_generation, before);
+}
+
+#[test]
+fn an_open_stops_at_its_first_failed_operation() {
+    // Every operation in the batch is a ProteoWizard process, and the failures
+    // that stop the first are the ones that would stop the rest. Running them
+    // anyway spends two more launches to learn the same thing and delays the
+    // error the user is waiting for.
+    let file = TestFile::new("stop-at-first-failure");
+    let provider = Box::new(FakeProvider::available(vec![
+        retryable_launch_failure(),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+    ]));
+    let world = provider.clone_world();
+    let service = PreviewService::new(provider);
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let error = service
+        .open_preview(&selected.handle)
+        .expect_err("the first operation failed");
+
+    // The failure the user is waiting for, not one invented for a short batch.
+    assert_eq!(error.kind, "backend_launch_failed");
+    assert!(error.retryable);
+    assert_eq!(
+        world.requested_count(),
+        1,
+        "nothing after the failed operation should have been run"
+    );
 }

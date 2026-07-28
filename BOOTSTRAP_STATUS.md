@@ -229,11 +229,19 @@ mock shell. A local `.mzML` file can be opened, its metadata, run summary and
 spectrum list read, one spectrum selected, and that spectrum drawn. Everything
 displayed comes from the file through the merged M0C preview contracts.
 
-The webview may ask exactly four things and parses no backend output. Rust owns
-the absolute path, invokes the native picker through `comdlg32` rather than a
-dialog plugin so the main-window capability set stays empty, and decides file
-acceptance including symlink and reparse-point rejection. The frontend receives
-an opaque session handle and a display name.
+The webview may ask exactly six things and parses no backend output. Rust owns
+the absolute path, invokes the native pickers through `comdlg32` and `shell32`
+rather than a dialog plugin so the main-window capability set stays empty, and
+decides file acceptance including symlink and reparse-point rejection. The
+frontend receives an opaque session handle and a display name.
+
+Two of the six choose which ProteoWizard is used: a folder picker, and a way
+back to automatic discovery. The choice lasts for the session and is never
+written to disk. Automatic discovery searches `PATH` and the locations an
+installer writes; a chosen folder looks wherever it is told, which is narrower
+than either only because it applies to one session and is never stored. The webview names no path in either
+direction — it asks for a picker, and receives a verdict that states which
+installation it describes.
 
 The transfer objects preserve what the backend actually reported. Retention
 times carry an explicit unknown unit, an absent chromatogram count stays absent

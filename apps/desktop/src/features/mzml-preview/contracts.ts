@@ -13,6 +13,22 @@ export interface BackendFailure {
 
 export interface BackendAvailability {
   readonly state: "available" | "unavailable";
+  /**
+   * Which installation this verdict describes. Carried with the verdict rather
+   * than tracked separately, so a reading can never be rendered beside the
+   * wrong origin.
+   */
+  readonly origin: "automatic" | "chosen";
+  /**
+   * How many times the installation in use has changed, counted in Rust.
+   *
+   * Which verdict is current is decided there, not here. The two commands
+   * contend for one lock that does not grant in call order, so a recheck begun
+   * after a folder choice can be served before it and describe the installation
+   * the choice replaced. Apply a verdict only when this is at least the highest
+   * already applied.
+   */
+  readonly installationGeneration: number;
   readonly release: string | null;
   readonly buildDate: string | null;
   readonly sameInstallation: boolean;
@@ -89,6 +105,15 @@ export interface SpectrumTable {
 }
 
 export interface Preview {
+  /**
+   * Where the sequence of backend changes stood when this preview was read.
+   *
+   * An open is a look at the backend and can be the first thing to notice a
+   * change, so it can advance the sequence itself. Adopting it is what stops a
+   * later verdict's higher number reading as a change that happened after this
+   * preview — which would discard the very reading that caused it.
+   */
+  readonly installationGeneration: number;
   readonly file: SelectedFile;
   readonly metadata: Metadata;
   readonly runSummary: RunSummary;

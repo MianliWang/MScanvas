@@ -63,6 +63,23 @@ pub struct BackendAvailabilityDto {
     /// `available` or `unavailable`. MSCanvas never bundles or installs a
     /// backend, so unavailability is an ordinary user-facing state.
     pub state: String,
+    /// How many times the installation in use has changed, counted in Rust.
+    ///
+    /// Which verdict is current is decided by the order the service granted,
+    /// not the order the caller asked. Two commands contend for the same lock
+    /// and it does not grant in request order, so a recheck started after a
+    /// folder choice can be served before it and describe the installation the
+    /// choice replaced. A caller applies a verdict only when this is at least
+    /// the highest it has applied.
+    pub installation_generation: u64,
+    /// `automatic` or `chosen`: which installation this verdict describes.
+    ///
+    /// Carried with the verdict rather than tracked separately, so a reading
+    /// can never be shown beside the wrong origin. That pairing is the whole
+    /// risk of letting the installation change during a session: a stale
+    /// "available" beside a folder the user just picked says the folder works
+    /// when nothing has looked at it.
+    pub origin: String,
     pub release: Option<String>,
     pub build_date: Option<String>,
     pub same_installation: bool,
@@ -172,6 +189,14 @@ pub struct SpectrumTableDto {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewDto {
+    /// Where the sequence of backend changes stood when this was read.
+    ///
+    /// An open is a look at the backend, so it can be the first thing to see a
+    /// change and can advance the sequence itself. Without carrying that, a
+    /// caller comparing a later verdict against what it last applied would read
+    /// this open's own advance as a change that happened after it, and discard
+    /// the very preview that produced it.
+    pub installation_generation: u64,
     pub file: SelectedFileDto,
     pub metadata: MetadataDto,
     pub run_summary: RunSummaryDto,

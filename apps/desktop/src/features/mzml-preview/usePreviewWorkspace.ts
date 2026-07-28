@@ -15,6 +15,23 @@ import {
   type PreviewMeasurementName,
 } from "./instrumentation";
 
+/**
+ * Every typed failure that means the backend is not the one that read what is
+ * on screen.
+ *
+ * `installation_changed_since_preview` is the service noticing before it
+ * launches; `backend_changed_after_check` is the crate noticing between the
+ * check and the spawn; `backend_not_found_at_launch` is the executable being
+ * gone by the time it was run. Three routes, one meaning to a reader -- what is
+ * on screen was read by something that is no longer there -- and all three are
+ * non-retryable, so all three get the same recovery.
+ */
+const BACKEND_CHANGED_KINDS = new Set([
+  "installation_changed_since_preview",
+  "backend_changed_after_check",
+  "backend_not_found_at_launch",
+]);
+
 export type BackendState =
   | { readonly status: "checking" }
   | { readonly status: "resolved"; readonly availability: BackendAvailability }
@@ -39,7 +56,29 @@ export interface PreviewWorkspace {
   readonly spectrum: SpectrumState;
   readonly selectedIndex: number | null;
   readonly measurements: readonly PreviewMeasurement[];
+  /**
+   * Whether a backend request is outstanding, including while the folder picker
+   * is open.
+   *
+   * Actions that would start another are disabled while it is set. The two
+   * installation commands contend for one lock in Rust, and letting a second
+   * start means acting on a verdict that is already being replaced.
+   */
+  readonly backendBusy: boolean;
   readonly checkBackend: () => void;
+  /** The file Rust still holds, whether or not a preview is on screen. */
+  readonly selectedFileName: string | null;
+  /** Reads the retained selection again, without going back to the picker. */
+  readonly reopenSelectedFile: () => void;
+  /** Shows the folder picker and uses what is chosen, for this session only. */
+  readonly chooseInstallation: () => void;
+  /**
+   * Returns to automatic discovery. Offered whenever a folder is in use and
+   * whenever the backend call itself failed, because a chosen folder that does
+   * not work would otherwise be the only place MSCanvas looks for the rest of
+   * the session, with nothing able to undo it.
+   */
+  readonly useAutomaticDiscovery: () => void;
   readonly openFile: () => void;
   /**
    * A picker that failed to open. Kept apart from `preview` because failing to
@@ -82,8 +121,59 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const [spectrum, setSpectrum] = useState<SpectrumState>({ status: "none" });
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [measurements, setMeasurements] = useState<readonly PreviewMeasurement[]>([]);
+  /**
+   * The name of the file Rust is still holding, kept apart from `preview`.
+   *
+   * Changing the installation discards everything a backend read, but not the
+   * selection: Rust still holds that path and no backend decided it. Without
+   * the name there is nothing to offer reopening, and the user would have to
+   * find the same acquisition again -- which is exactly the workspace loss
+   * WF-001 says changing the backend must not cause.
+   */
+  const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
 
+  const [backendBusy, setBackendBusy] = useState(true);
+  /**
+   * The same flag where a promise handler can read it.
+   *
+   * `backendBusy` renders; this decides. A callback closing over the state
+   * value would see whatever it was when the closure was made, which for a
+   * request spanning a modal dialog is exactly the wrong answer.
+   */
+  const backendBusyRef = useRef(true);
+  const markBackendBusy = useCallback((busy: boolean) => {
+    backendBusyRef.current = busy;
+    setBackendBusy(busy);
+  }, []);
   const backendToken = useRef(0);
+  /**
+   * The highest installation generation applied to the banner.
+   *
+   * Rust decides which verdict is current, because it is where the two commands
+   * are actually ordered. This only refuses anything older than what is already
+   * shown, which is what stops a recheck begun before a change from describing
+   * the installation that change replaced.
+   */
+  const appliedGeneration = useRef(-1);
+  /**
+   * How many installation changes are outstanding.
+   *
+   * A ref rather than state because it is read inside promise handlers, where
+   * a state value would be whatever it was when the closure was created —
+   * which for a change that spans a modal dialog is exactly the wrong answer.
+   */
+  const installationChanges = useRef(0);
+  /** A recovery check an installation change asked to wait its turn. */
+  const deferredRecheck = useRef(false);
+  /**
+   * Whether an open is between its request and its reply.
+   *
+   * A verdict that arrives meanwhile must not discard for it: the open has
+   * already cleared the screen and is about to fill it, and bumping the preview
+   * token would reject its reply and leave the workspace empty for a change the
+   * open itself may have been the one to notice.
+   */
+  const openInFlight = useRef(false);
   const previewToken = useRef(0);
   const spectrumToken = useRef(0);
   const inFlightSpectrum = useRef<{ index: number; token: number } | null>(null);
@@ -106,25 +196,202 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     [],
   );
 
+  /**
+   * Drops everything on screen that a backend produced.
+   *
+   * Changing the installation makes every one of those readings the work of an
+   * installation no longer in use. Leaving them would not merely show something
+   * stale: the table's rows are what a later selected spectrum is reconciled
+   * against, so a spectrum read by the new installation would be compared with
+   * rows read by the old one, and the honest answers to that comparison are a
+   * wrong result or an invented conflict.
+   *
+   * The file itself stays chosen -- it is a path Rust holds, and no backend
+   * decided it -- so opening it again is one click and reads nothing until the
+   * user asks. Re-reading it here would launch processes nobody asked for, and
+   * against an installation that may have just been reported unusable.
+   */
+  const discardBackendDerivedState = useCallback(() => {
+    previewToken.current += 1;
+    spectrumToken.current += 1;
+    inFlightSpectrum.current = null;
+    pendingSpectrumRender.current = null;
+    pendingOpenRender.current = null;
+    setPreview({ status: "empty" });
+    setSpectrum({ status: "none" });
+    setSelectedIndex(null);
+  }, []);
+
+  /**
+   * The one rule for whether a reply may be shown. Every verdict goes through
+   * here; no caller compares anything itself.
+   *
+   * Rust decides which installation is current, because it is where the
+   * commands are actually ordered — each verdict is stamped under the same gate
+   * that served it. So the generation is compared first and the request token
+   * second, and never the other way round:
+   *
+   * - a **newer** generation is accepted whatever this caller's token says. It
+   *   describes an installation Rust has already switched to, and a token is
+   *   only a record of what this window asked for first.
+   * - an **older** generation is refused. It describes an installation that has
+   *   since been replaced.
+   * - an **equal** generation means two readings of the same installation, which
+   *   differ only in age, so the token decides and the superseded one is
+   *   dropped.
+   *
+   * Getting that precedence backwards is what this replaces: a reply was
+   * discarded on token order before its generation was ever looked at, so a
+   * recovery check begun mid-dialog could leave the banner reporting the
+   * installation the user had just replaced while every later operation used
+   * the new one.
+   *
+   * Discarding what the previous installation read happens here too, keyed on
+   * the generation advancing rather than on which call happened to carry the
+   * news. Whichever reply first shows a higher generation is the one that has
+   * learned the installation changed, and that is a property of the verdict,
+   * not of the caller: hanging the discard off the change request alone left
+   * the table and the selected spectrum of a replaced installation on screen
+   * whenever an inspection observed the change first.
+   */
+  const applyVerdict = useCallback(
+    (availability: BackendAvailability, token: number): boolean => {
+      const generation = availability.installationGeneration;
+      if (generation < appliedGeneration.current) {
+        return false;
+      }
+      if (generation === appliedGeneration.current && token !== backendToken.current) {
+        return false;
+      }
+      const changed = generation > appliedGeneration.current && appliedGeneration.current >= 0;
+      appliedGeneration.current = generation;
+      setBackend({ status: "resolved", availability });
+      // Not while an open is in flight. That open has already emptied the
+      // screen and is about to fill it, and its reply is judged on its own
+      // generation when it lands -- so discarding here would only reject a
+      // reading that may well be the one that caused this verdict.
+      if (changed && !openInFlight.current) {
+        discardBackendDerivedState();
+      }
+      return true;
+    },
+    [discardBackendDerivedState],
+  );
+
   const checkBackend = useCallback(() => {
     backendToken.current += 1;
     const token = backendToken.current;
+    markBackendBusy(true);
     setBackend({ status: "checking" });
     void api
       .inspectBackend()
       .then((availability) => {
-        if (mounted.current && token === backendToken.current) {
-          setBackend({ status: "resolved", availability });
+        if (mounted.current) {
+          // No token check of its own: `applyVerdict` weighs the generation
+          // first and only falls back to the token, and a check that returns
+          // after an installation change reports the installation Rust served
+          // it under, not the one this call was started for.
+          applyVerdict(availability, token);
         }
       })
       .catch((cause: unknown) => {
         if (mounted.current && token === backendToken.current) {
           setBackend({ status: "failed", error: toPreviewError(cause) });
         }
+      })
+      .finally(() => {
+        if (mounted.current && token === backendToken.current) {
+          markBackendBusy(false);
+        }
       });
-  }, [api]);
+  }, [api, applyVerdict]);
 
   useEffect(checkBackend, [checkBackend]);
+
+
+  /**
+   * Applies a verdict that comes back from changing which installation is used.
+   *
+   * The reply is never dropped on token order alone. A change can span a modal
+   * dialog, and anything the application starts meanwhile — a recovery check
+   * after a failed open, say — advances the token behind it. Ordering by that
+   * would throw away the one reply that describes what Rust is now using, which
+   * is why `applyVerdict` weighs the generation first.
+   */
+  const applyInstallationChange = useCallback(
+    (request: () => Promise<BackendAvailability | null>, announceChecking: boolean) => {
+      backendToken.current += 1;
+      const token = backendToken.current;
+      installationChanges.current += 1;
+      // What had been applied when this was asked for. A failed change means the
+      // installation did not change, so it is still worth reporting -- but only
+      // while nothing newer has been shown, which this failure cannot speak for.
+      const generationAtRequest = appliedGeneration.current;
+      markBackendBusy(true);
+      if (announceChecking) {
+        setBackend({ status: "checking" });
+      }
+      // Whether this change left the banner as it found it, which is what
+      // decides a deferred recovery check below. A dismissed picker does;
+      // so does a failure whose reply arrived too late to be shown.
+      let refreshed = false;
+      void request()
+        .then((availability) => {
+          if (!mounted.current) {
+            return;
+          }
+          // `null` is a dismissed picker: nothing changed, so nothing on screen
+          // may change either.
+          if (availability !== null && applyVerdict(availability, token)) {
+            refreshed = true;
+          }
+        })
+        .catch((cause: unknown) => {
+          if (mounted.current && appliedGeneration.current <= generationAtRequest) {
+            setBackend({ status: "failed", error: toPreviewError(cause) });
+            refreshed = true;
+          }
+        })
+        .finally(() => {
+          installationChanges.current -= 1;
+          if (!mounted.current) {
+            return;
+          }
+          if (token === backendToken.current) {
+            markBackendBusy(false);
+          }
+          // A recovery check that stood aside for this change runs unless the
+          // change refreshed the banner itself. Re-checking after it did would
+          // launch a process to learn what is already on screen; not checking
+          // after it did not would leave the failed open's banner unexamined,
+          // which is the whole reason that check exists.
+          if (installationChanges.current === 0 && deferredRecheck.current) {
+            deferredRecheck.current = false;
+            if (!refreshed) {
+              checkBackend();
+            }
+          }
+        });
+    },
+    [applyVerdict, checkBackend],
+  );
+
+  /**
+   * Points MSCanvas at a folder the user picks, for this session only.
+   *
+   * Nothing is set to "checking" first: the modal picker is the feedback, and
+   * announcing a check before there is anything to check would discard a
+   * perfectly good verdict the moment the user opens the dialog -- and leave it
+   * discarded if they then cancel.
+   */
+  const chooseInstallation = useCallback(() => {
+    applyInstallationChange(() => api.chooseInstallation(), false);
+  }, [api, applyInstallationChange]);
+
+  /** Returns to automatic discovery. Always offered once a folder was chosen. */
+  const useAutomaticDiscovery = useCallback(() => {
+    applyInstallationChange(() => api.useAutomaticDiscovery(), true);
+  }, [api, applyInstallationChange]);
 
   const loadPreview = useCallback(
     (handle: string, startedAt: number) => {
@@ -141,27 +408,103 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       setPreview({ status: "opening" });
       setSpectrum({ status: "none" });
       setSelectedIndex(null);
+      openInFlight.current = true;
+      // Where the sequence stood when this read began. A failure carries no
+      // generation of its own, so this is the only way to tell an answer about
+      // the backend in use from an answer about one that has been replaced.
+      const generationAtRequest = appliedGeneration.current;
       void api
         .openPreview(handle)
         .then((loaded) => {
           if (!mounted.current || token !== previewToken.current) {
             return;
           }
+          // An open is a look at the backend too, and it can be the first thing
+          // to see a change — in which case the service advances the sequence
+          // while producing this very preview. Adopting that number here is
+          // what stops the next verdict's higher number reading as a change
+          // that happened afterwards and discarding a reading that is current.
+          // Produced by a backend that has since been replaced. The gate is
+          // released before a table of this size is converted and transferred,
+          // so a folder switch can complete while this is still in flight, and
+          // showing it would put the old backend's rows under the new one's
+          // banner.
+          //
+          // Discarded rather than merely dropped. Returning here left the
+          // workspace in `opening` with nothing else coming -- the switch
+          // deliberately does not discard while an open is in flight -- so it
+          // read "Reading the file…" for the rest of the session, with the open
+          // actions disabled and no way back. This ends the read and offers the
+          // retained file, which is a state the user can act on.
+          if (loaded.installationGeneration < appliedGeneration.current) {
+            discardBackendDerivedState();
+            return;
+          }
+          const noticedAChange = loaded.installationGeneration > appliedGeneration.current;
+          if (noticedAChange) {
+            appliedGeneration.current = loaded.installationGeneration;
+          }
           setPreview({ status: "loaded", preview: loaded });
+          if (noticedAChange) {
+            // This open was the first thing to see the change, so the banner
+            // still names the installation it replaced -- and would go on doing
+            // so beside a preview that came from a different one. Reading it
+            // again is the only way to say what is on screen, and it cannot
+            // take this preview away: the verdict will carry the generation
+            // just adopted, which is not a change after it.
+            //
+            // Behind an outstanding installation change, like every other
+            // recovery here. Racing one would clear the busy guard while a
+            // picker is still open, and a chooser reply arriving after this
+            // check would be refused on token order -- leaving Rust on the
+            // chosen folder and the banner saying automatic.
+            if (installationChanges.current > 0) {
+              deferredRecheck.current = true;
+            } else {
+              checkBackend();
+            }
+          }
           // Not finished here: this call only schedules the update, and the
           // summary and the first table window have not been built yet.
           pendingOpenRender.current = {
             rowCount: loaded.spectrumTable.rows.length,
             startedAt,
           };
+          // Landed, so it is no longer a reply to protect. Cleared here rather
+          // than in a `finally`, which runs a microtask later: a verdict
+          // applied in that gap would skip the discard for a preview already on
+          // screen, and nothing would come back to it.
+          openInFlight.current = false;
         })
         .catch((cause: unknown) => {
           if (mounted.current && token === previewToken.current) {
+            // A failure from a backend that has since been replaced says
+            // nothing about the one in use, and showing it under the new
+            // banner strands the user: if it is not retryable, the loaded
+            // layout offers no way back to the retained file either.
+            if (appliedGeneration.current > generationAtRequest) {
+              discardBackendDerivedState();
+              openInFlight.current = false;
+              return;
+            }
             setPreview({ status: "failed", error: toPreviewError(cause) });
             // The installation may be the reason. Re-checking here keeps the
             // banner from insisting a backend is present after it has gone,
             // which would leave the user with no way back except a restart.
-            checkBackend();
+            //
+            // Except while the user is changing the installation. This check is
+            // not a user action and so passes straight through `backendBusy`,
+            // which makes it the one thing that can race a change; and a change
+            // is already going to produce a fresh verdict, so racing it buys
+            // nothing. It waits, and runs only if the change turns out to leave
+            // the banner as stale as it found it.
+            if (installationChanges.current > 0) {
+              deferredRecheck.current = true;
+            } else {
+              checkBackend();
+            }
+            // Landed as a failure, which is still landed.
+            openInFlight.current = false;
           }
         });
     },
@@ -183,6 +526,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           return;
         }
         openHandle.current = file.handle;
+        setSelectedFileName(file.fileName);
         loadPreview(file.handle, startedAt);
       })
       .catch((cause: unknown) => {
@@ -202,6 +546,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     (index: number) => {
       const handle = openHandle.current;
       if (handle === null) {
+        return;
+      }
+      // Reading a row is backend work, so "one outstanding backend request"
+      // has to cover it or it means nothing. Started while an installation is
+      // being probed, this either reads the backend being replaced or queues
+      // behind the change and then fails on it -- one process launch either
+      // way, for a result that was never going to be shown.
+      if (backendBusyRef.current) {
         return;
       }
       // A repeat of the row already being read is dropped. Every selection is
@@ -243,7 +595,39 @@ export function usePreviewWorkspace(): PreviewWorkspace {
             inFlightSpectrum.current = null;
           }
           if (mounted.current && token === spectrumToken.current) {
-            setSpectrum({ status: "failed", index, error: toPreviewError(cause) });
+            const failure = toPreviewError(cause);
+            setSpectrum({ status: "failed", index, error: failure });
+            // The backend turned out to have changed since this file was
+            // opened, and a spectrum load is where that was noticed. Nothing
+            // else is going to say so: the failure is not retryable, so the
+            // table stays on screen looking current and every further row fails
+            // the same way until the user happens to press Check again. The
+            // readings go, the selection stays, and the banner is refreshed to
+            // describe what is installed now.
+            // Any failure that cannot be retried is a reason to ask whether
+            // the backend is still what the banner says. A replacement that
+            // keeps a file's metadata but no longer answers its help probe
+            // fails inside the provider's own resolution, so it never reaches
+            // the comparison that would name it a change -- and without this
+            // the table would stay on screen with every row failing the same
+            // way. Re-checking is cheap next to a launch, and discards nothing
+            // unless the backend really did change.
+            const definitelyChanged = BACKEND_CHANGED_KINDS.has(failure.kind);
+            if (definitelyChanged || !failure.retryable) {
+              if (definitelyChanged) {
+                discardBackendDerivedState();
+              }
+              // Deferred behind an outstanding installation change for the same
+              // reason the open recovery is: this check is not a user action,
+              // so it passes straight through the busy guard, and clearing that
+              // guard early would re-enable Open and the switch actions while a
+              // folder picker is still open.
+              if (installationChanges.current > 0) {
+                deferredRecheck.current = true;
+              } else {
+                checkBackend();
+              }
+            }
           }
         });
     },
@@ -277,6 +661,18 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     }
   }, [selectSpectrum, selectedIndex]);
 
+  /**
+   * Reads the retained selection again. Same work as a retry, offered for a
+   * different reason: nothing failed, the reading simply belongs to an
+   * installation no longer in use.
+   */
+  const reopenSelectedFile = useCallback(() => {
+    const handle = openHandle.current;
+    if (handle !== null) {
+      loadPreview(handle, now());
+    }
+  }, [loadPreview]);
+
   const retryOpen = useCallback(() => {
     const handle = openHandle.current;
     if (handle !== null) {
@@ -290,7 +686,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     spectrum,
     selectedIndex,
     measurements,
+    backendBusy,
     checkBackend,
+    chooseInstallation,
+    useAutomaticDiscovery,
+    selectedFileName,
+    reopenSelectedFile,
     openFile,
     pickerError,
     dismissPickerError,

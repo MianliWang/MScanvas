@@ -21,14 +21,47 @@ import type {
 
 export const availableBackend: BackendAvailability = {
   state: "available",
+  origin: "automatic",
+  installationGeneration: 0,
   release: "3.0.25000",
   buildDate: "2026-05-04",
   sameInstallation: true,
   failure: null,
 };
 
+/** What a chosen folder holding a usable installation reports. */
+export const chosenBackend: BackendAvailability = {
+  state: "available",
+  origin: "chosen",
+  installationGeneration: 1,
+  release: "3.0.26013",
+  buildDate: "2026-07-01",
+  sameInstallation: true,
+  failure: null,
+};
+
+/// A chosen folder that holds no installation, reported by cause rather than by
+/// category. The application classifies this itself so the reason can be
+/// specific without a path reaching the webview.
+export const chosenFolderWithoutTools: BackendAvailability = {
+  state: "unavailable",
+  origin: "chosen",
+  installationGeneration: 1,
+  release: null,
+  buildDate: null,
+  sameInstallation: false,
+  failure: {
+    kind: "chosen_folder_missing_both_tools",
+    summary:
+      "That folder holds neither msconvert.exe nor msaccess.exe, so it is not a ProteoWizard installation.",
+    correctiveAction: "Choose a different folder, or go back to searching automatically.",
+  },
+};
+
 export const unavailableBackend: BackendAvailability = {
   state: "unavailable",
+  origin: "automatic",
+  installationGeneration: 0,
   release: null,
   buildDate: null,
   sameInstallation: false,
@@ -68,9 +101,10 @@ export function buildRows(count: number): SpectrumRow[] {
   return rows;
 }
 
-export function buildPreview(rowCount = 6, truncated = false): Preview {
+export function buildPreview(rowCount = 6, truncated = false, installationGeneration = 0): Preview {
   const rows = buildRows(rowCount);
   return {
+    installationGeneration,
     file: selectedFile,
     metadata: {
       sections: [
@@ -179,6 +213,11 @@ export function deferred<T>(): Deferred<T> {
 
 export interface FakePreviewApiOptions {
   readonly availability?: BackendAvailability | (() => Promise<BackendAvailability>);
+  /** What the folder picker resolves to. `null` stands for a dismissed picker. */
+  readonly chosenInstallation?:
+    | BackendAvailability
+    | null
+    | (() => Promise<BackendAvailability | null>);
   readonly file?: SelectedFile | null | (() => Promise<SelectedFile | null>);
   readonly preview?: Preview | (() => Promise<Preview>);
   readonly spectrum?: (index: number) => Promise<SelectedSpectrumOutcome>;
@@ -187,28 +226,69 @@ export interface FakePreviewApiOptions {
 export interface FakePreviewApi extends PreviewApi {
   readonly requestedSpectra: number[];
   readonly openCount: () => number;
+  /** Every verdict this fake has handed back, oldest first. */
+  readonly deliveredVerdicts: BackendAvailability[];
 }
 
 export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakePreviewApi {
   const requestedSpectra: number[] = [];
   let openCount = 0;
 
+  const deliveredVerdicts: BackendAvailability[] = [];
+  // Counted here as the service counts it: a change advances it, a plain
+  // reading does not. A fake that returned a fixed number would make the
+  // ordering rule untestable, and one that never advanced would make every
+  // change look older than what is already on screen.
+  let generation = 0;
+  const deliver = (verdict: BackendAvailability) => {
+    const stamped = { ...verdict, installationGeneration: generation };
+    deliveredVerdicts.push(stamped);
+    return stamped;
+  };
+  const deliverChange = (verdict: BackendAvailability): BackendAvailability => {
+    generation += 1;
+    return deliver(verdict);
+  };
+
   return {
     requestedSpectra,
     openCount: () => openCount,
+    deliveredVerdicts,
     inspectBackend: () =>
-      typeof options.availability === "function"
+      (typeof options.availability === "function"
         ? options.availability()
-        : Promise.resolve(options.availability ?? availableBackend),
+        : Promise.resolve(options.availability ?? availableBackend)
+      ).then(deliver),
+    // `?? chosenBackend` would be wrong here: `null` is a meaningful value --
+    // a dismissed picker -- and nullish coalescing cannot tell it from an
+    // option that was never supplied.
+    chooseInstallation: () =>
+      (typeof options.chosenInstallation === "function"
+        ? options.chosenInstallation()
+        : Promise.resolve(
+            options.chosenInstallation === undefined ? chosenBackend : options.chosenInstallation,
+          )
+      ).then((verdict) => (verdict === null ? null : deliverChange(verdict))),
+    useAutomaticDiscovery: () =>
+      (typeof options.availability === "function"
+        ? options.availability()
+        : Promise.resolve(options.availability ?? availableBackend)
+      ).then(deliverChange),
     chooseFile: () =>
       typeof options.file === "function"
         ? options.file()
         : Promise.resolve(options.file === undefined ? selectedFile : options.file),
     openPreview: () => {
       openCount += 1;
-      return typeof options.preview === "function"
-        ? options.preview()
-        : Promise.resolve(options.preview ?? buildPreview());
+      // Stamped with the generation this fake's service is currently at, as the
+      // real one does. A preview that always claimed generation zero would be
+      // rejected as stale by anything that had switched installation since --
+      // and would let a genuinely stale preview through unnoticed.
+      return (
+        typeof options.preview === "function"
+          ? options.preview()
+          : Promise.resolve(options.preview ?? buildPreview())
+      ).then((preview) => ({ ...preview, installationGeneration: generation }));
     },
     loadSpectrum: (_handle, index) => {
       requestedSpectra.push(index);
