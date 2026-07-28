@@ -179,6 +179,44 @@ fn backend(label: &str, release: &str) -> InstallationIdentity {
 const MSCONVERT: &str = "msconvert.exe";
 const MSACCESS: &str = "msaccess.exe";
 
+/// A backend whose tools are real files, so the pre-flight -- which asks the
+/// filesystem and launches nothing -- has something to look at.
+struct InstalledFiles {
+    home: PathBuf,
+}
+
+impl InstalledFiles {
+    fn new(label: &str) -> Self {
+        let home =
+            std::env::temp_dir().join(format!("mscanvas-tools-{label}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&home).expect("tool directory");
+        fs::write(home.join(MSCONVERT), b"msconvert").expect("msconvert");
+        fs::write(home.join(MSACCESS), b"msaccess").expect("msaccess");
+        Self { home }
+    }
+
+    fn identity(&self) -> InstallationIdentity {
+        InstallationIdentity::for_test(
+            &self.home.join(MSCONVERT),
+            &self.home.join(MSACCESS),
+            "3.0.26013",
+        )
+    }
+
+    /// Replaces one executable, as an installer repairing in place would.
+    fn replace_msaccess(&self) {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(self.home.join(MSACCESS), b"a different msaccess entirely").expect("replace");
+    }
+}
+
+impl Drop for InstalledFiles {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.home);
+    }
+}
+
 /// The part of a fake's world a test can still reach after the provider has
 /// been handed to the service.
 ///
@@ -189,6 +227,7 @@ const MSACCESS: &str = "msaccess.exe";
 struct FakeWorld {
     resolved: Arc<Mutex<Option<InstallationIdentity>>>,
     requested: Arc<Mutex<Vec<PreviewOperation>>>,
+    looks: Arc<Mutex<usize>>,
 }
 
 impl FakeWorld {
@@ -196,6 +235,7 @@ impl FakeWorld {
         Self {
             resolved: Arc::new(Mutex::new(resolved)),
             requested: Arc::new(Mutex::new(Vec::new())),
+            looks: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -213,6 +253,13 @@ impl FakeWorld {
     /// that something was refused *before* one was spent on it.
     fn requested_count(&self) -> usize {
         self.requested.lock().expect("test lock").len()
+    }
+
+    /// How many times the backend has been resolved. Resolving is two help
+    /// probes and two executable hashes in production, so a test can say that
+    /// a cheap check stayed cheap.
+    fn availability_count(&self) -> usize {
+        *self.looks.lock().expect("test lock")
     }
 }
 
@@ -357,6 +404,7 @@ impl PreviewProvider for FakeProvider {
     }
 
     fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
+        *self.world.looks.lock().expect("test lock") += 1;
         let verdict = self.verdict();
         // Only a usable backend has an identity, exactly as production does:
         // an installation that cannot be used is not one a preview could have
@@ -1633,10 +1681,14 @@ fn a_chosen_folder_that_resolves_to_the_tools_already_in_use_is_not_a_change() {
 #[test]
 fn an_old_preview_is_refused_before_a_spectrum_is_launched_for_it() {
     // Both halves matter: refused, and refused without spending a process on a
-    // reading that was never going to be shown.
+    // reading that was never going to be shown. The pre-flight asks the
+    // filesystem and launches nothing, so this is the shape it catches -- the
+    // tools it recorded are not the files that are there now.
     let file = TestFile::new("refused-early");
+    let tools = InstalledFiles::new("refused-early");
     let provider = Box::new(FakeProvider::available(opened_preview_responses()));
     let world = provider.clone_world();
+    world.resolves_to(Some(tools.identity()));
     let service = PreviewService::new(provider);
     let selected = service.accept_file(&file.path).expect("accepted");
     service
@@ -1644,9 +1696,9 @@ fn an_old_preview_is_refused_before_a_spectrum_is_launched_for_it() {
         .expect("the file opens");
     let operations_after_open = world.requested_count();
 
-    // The binaries in that same folder were replaced: the paths did not move,
-    // and nothing was requested, so only the identity can show it.
-    world.resolves_to(Some(backend("installed", "3.0.99999")));
+    // Replaced in place: the path did not move and nothing was requested, so
+    // only the file itself can show it.
+    tools.replace_msaccess();
 
     let error = service
         .load_spectrum(&selected.handle, 0)
@@ -1658,6 +1710,34 @@ fn an_old_preview_is_refused_before_a_spectrum_is_launched_for_it() {
         world.requested_count(),
         operations_after_open,
         "the spectrum must be refused before its operation is run"
+    );
+}
+
+#[test]
+fn a_spectrum_selection_does_not_re_resolve_the_backend() {
+    // The pre-flight must not cost what it saves. Resolving again would mean
+    // two help probes and two executable hashes on every row a user clicks, to
+    // avoid one launch in the rare case the backend changed underneath.
+    let file = TestFile::new("no-extra-discovery");
+    let tools = InstalledFiles::new("no-extra-discovery");
+    let provider = Box::new(FakeProvider::available(opened_preview_responses()));
+    let world = provider.clone_world();
+    world.resolves_to(Some(tools.identity()));
+    let service = PreviewService::new(provider);
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens");
+    let looks_after_open = world.availability_count();
+
+    service
+        .load_spectrum(&selected.handle, 0)
+        .expect("the spectrum is read");
+
+    assert_eq!(
+        world.availability_count(),
+        looks_after_open,
+        "reading a row must not resolve the backend again"
     );
 }
 

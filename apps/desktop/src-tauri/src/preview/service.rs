@@ -353,17 +353,19 @@ impl PreviewService {
         {
             return Err(installation_changed_since_preview());
         }
-        // The sequence only counts changes something looked at. A backend
-        // replaced on disk since the last look advances nothing, so the
-        // installation is resolved again here and compared for what it is. This
-        // costs a discovery before the read, which is the price of not showing
-        // one backend's spectrum beside another's rows.
-        if let Some(opened) = opened.as_ref() {
-            let (_, resolved) = self.provider.availability();
-            self.note_resolved(resolved.clone());
-            if opened.installation != resolved {
-                return Err(installation_changed_since_preview());
-            }
+        // The sequence only counts changes something looked at, so a backend
+        // replaced on disk since the last look advances nothing. This asks the
+        // filesystem directly -- and only the filesystem: resolving again would
+        // mean two help probes and two executable hashes on every row a user
+        // clicks, for a check whose whole purpose is to refuse cheaply. It
+        // catches the tools being deleted, replaced or rewritten, which is what
+        // a stale preview looks like from here, and the operation below reports
+        // the identity it actually ran with for everything else.
+        if let Some(opened) = opened.as_ref()
+            && let Some(installation) = opened.installation.as_ref()
+            && !installation.still_the_same_files()
+        {
+            return Err(installation_changed_since_preview());
         }
         let opened_generation = opened.as_ref().map(|opened| opened.source.clone());
         if let Some(expected) = opened_generation.as_ref()

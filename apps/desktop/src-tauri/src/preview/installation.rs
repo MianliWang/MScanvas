@@ -53,6 +53,17 @@ impl ToolIdentity {
         let path = tool.path.as_deref()?;
         Some(Self::of(path, tool.executable_sha256()))
     }
+
+    /// Whether the path still holds the file this identity saw, by metadata.
+    ///
+    /// The digest is deliberately not re-read: it is what makes the comparison
+    /// exact, and re-reading it means hashing an executable on every check.
+    fn same_file_now(&self) -> bool {
+        let now = Self::of(&self.path, self.content);
+        now.filesystem == self.filesystem
+            && now.byte_length == self.byte_length
+            && now.modified == self.modified
+    }
 }
 
 impl PartialEq for ToolIdentity {
@@ -142,6 +153,22 @@ impl InstallationIdentity {
             release: Some(release.to_owned()),
             build_date: None,
         }
+    }
+}
+
+impl InstallationIdentity {
+    /// Whether the tools this identity names are still the files it saw, judged
+    /// without launching anything.
+    ///
+    /// The filesystem facts only. Re-reading the digests would mean hashing two
+    /// executables, and re-resolving would mean two help probes, on every row a
+    /// user clicks -- for a check whose job is to refuse cheaply. This catches
+    /// the executables being deleted, replaced or rewritten, which is what a
+    /// stale preview looks like from here; the operation that follows reports
+    /// the identity it actually ran with, and that comparison catches the rest,
+    /// before anything is shown.
+    pub(crate) fn still_the_same_files(&self) -> bool {
+        self.msconvert.same_file_now() && self.msaccess.same_file_now()
     }
 }
 
