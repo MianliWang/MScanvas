@@ -470,10 +470,18 @@ impl PreviewProvider for FakeProvider {
         operations: &[PreviewOperation],
     ) -> Result<Vec<OperationAttempt>, PreviewErrorDto> {
         *self.batches.lock().expect("test lock") += 1;
-        operations
-            .iter()
-            .map(|operation| self.run(source, operation))
-            .collect()
+        // Stops at the first failure, as the production batch does. A fake that
+        // ran on would let a test claim the batch stopped when it had not.
+        let mut attempts = Vec::with_capacity(operations.len());
+        for operation in operations {
+            let attempt = self.run(source, operation)?;
+            let failed = attempt.outcome.is_err();
+            attempts.push(attempt);
+            if failed {
+                break;
+            }
+        }
+        Ok(attempts)
     }
 }
 
@@ -1917,4 +1925,34 @@ fn a_retryable_failure_under_the_same_backend_keeps_its_own_error() {
     assert_eq!(error.kind, "backend_launch_failed");
     assert!(error.retryable);
     assert_eq!(service.inspect_backend().installation_generation, before);
+}
+
+#[test]
+fn an_open_stops_at_its_first_failed_operation() {
+    // Every operation in the batch is a ProteoWizard process, and the failures
+    // that stop the first are the ones that would stop the rest. Running them
+    // anyway spends two more launches to learn the same thing and delays the
+    // error the user is waiting for.
+    let file = TestFile::new("stop-at-first-failure");
+    let provider = Box::new(FakeProvider::available(vec![
+        retryable_launch_failure(),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+    ]));
+    let world = provider.clone_world();
+    let service = PreviewService::new(provider);
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let error = service
+        .open_preview(&selected.handle)
+        .expect_err("the first operation failed");
+
+    // The failure the user is waiting for, not one invented for a short batch.
+    assert_eq!(error.kind, "backend_launch_failed");
+    assert!(error.retryable);
+    assert_eq!(
+        world.requested_count(),
+        1,
+        "nothing after the failed operation should have been run"
+    );
 }

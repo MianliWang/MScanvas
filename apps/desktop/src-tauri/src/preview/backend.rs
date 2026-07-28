@@ -282,12 +282,23 @@ impl PreviewProvider for ProteoWizardProvider {
         operations: &[PreviewOperation],
     ) -> Result<Vec<OperationAttempt>, PreviewErrorDto> {
         let (capabilities, installation) = self.bind_capabilities()?;
-        Ok(operations
-            .iter()
-            .map(|operation| {
-                Self::run_bound(&capabilities, installation.as_ref(), source, operation)
-            })
-            .collect())
+        let mut attempts = Vec::with_capacity(operations.len());
+        for operation in operations {
+            let attempt = Self::run_bound(&capabilities, installation.as_ref(), source, operation);
+            let failed = attempt.outcome.is_err();
+            // The failed attempt is kept, because it still names the backend
+            // that ran -- but nothing after it is started. Every operation here
+            // is a ProteoWizard process, and the failures that stop the first
+            // one are the ones that would stop the rest as well: a launch that
+            // was refused, a workspace that could not be made. Running them
+            // anyway spends two more launches to learn the same thing and
+            // delays the error the user is waiting for.
+            attempts.push(attempt);
+            if failed {
+                break;
+            }
+        }
+        Ok(attempts)
     }
 }
 

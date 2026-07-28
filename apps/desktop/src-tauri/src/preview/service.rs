@@ -232,19 +232,13 @@ impl PreviewService {
                 true,
             ));
         }
-        if attempts.len() != operations.len() {
-            return Err(PreviewErrorDto::new(
-                "incomplete_preview_result",
-                "The preview did not return every requested result.",
-                true,
-            ));
-        }
-
         let mut metadata = None;
         let mut run_summary = None;
         let mut spectrum_table = None;
         let mut table_rows = Vec::new();
+        let mut handled = 0_usize;
         for attempt in attempts {
+            handled += 1;
             // The identity of this batch was already noted above, so an
             // operation that failed no longer takes it with it.
             match attempt.outcome? {
@@ -286,6 +280,17 @@ impl PreviewService {
                     ));
                 }
             }
+        }
+
+        // Checked after the outcomes, not before: a batch that stopped at its
+        // first failure is short on purpose, and reporting it as incomplete
+        // would hide the error that stopped it.
+        if handled != operations.len() {
+            return Err(PreviewErrorDto::new(
+                "incomplete_preview_result",
+                "The preview did not return every requested result.",
+                true,
+            ));
         }
 
         self.generations
