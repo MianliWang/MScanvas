@@ -1716,3 +1716,39 @@ fn no_backend_identity_reaches_the_webview_through_any_transfer_object() {
         assert!(!rendered.contains(r"C:\fake"), "{rendered}");
     }
 }
+
+#[test]
+fn every_spectrum_after_an_open_that_noticed_a_change_still_works() {
+    // An open is a look at the backend, and one that keeps what it saw to
+    // itself leaves the sequence naming the installation before it. The first
+    // spectrum load would then notice, advance the sequence, and match on
+    // identity -- and every load after it would be refused by a sequence check
+    // for a change that had already been accounted for.
+    let file = TestFile::new("open-observes");
+    let provider = Box::new(FakeProvider::available(vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+    ]));
+    let world = provider.clone_world();
+    let service = PreviewService::new(provider);
+    let selected = service.accept_file(&file.path).expect("accepted");
+    // Looked at once, so there is a previous observation to differ from.
+    service.inspect_backend();
+
+    // The machine changes with nothing looking at it, and the open is the first
+    // thing to see the new backend.
+    world.resolves_to(Some(backend("replacement", "3.0.26999")));
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens against whatever is installed now");
+
+    service
+        .load_spectrum(&selected.handle, 0)
+        .expect("the first spectrum comes from the backend that read the table");
+    service
+        .load_spectrum(&selected.handle, 0)
+        .expect("and so does every one after it");
+}

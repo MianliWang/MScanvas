@@ -146,7 +146,10 @@ impl PreviewService {
     /// that resolves to the very tools automatic discovery was already using is
     /// not either. Only comparing what resolved gets all three right.
     ///
-    fn note_resolved(&self, identity: Option<InstallationIdentity>) {
+    /// Returns where the sequence stands afterwards, so a caller that records
+    /// it records the value its own observation produced rather than the one it
+    /// found on the way in.
+    fn note_resolved(&self, identity: Option<InstallationIdentity>) -> u64 {
         let mut observed = self
             .resolved
             .lock()
@@ -156,6 +159,7 @@ impl PreviewService {
         }
         observed.looked = true;
         observed.identity = identity;
+        self.installation_generation.load(Ordering::Relaxed)
     }
 
     /// Accepts one already-chosen path and registers it for later operations.
@@ -194,10 +198,6 @@ impl PreviewService {
         // run, and combining those into one preview would present an
         // acquisition that never existed.
         let before = SourceGeneration::of(&file);
-        // Read out while the gate is still held, and recorded below. Only a
-        // holder of this gate can advance it, so this is where the sequence
-        // stood for the whole batch.
-        let generation = running.installation;
         // Held for the whole batch, so the file cannot be swapped away and
         // swapped back between the two comparisons around it. Required: losing
         // the hold means losing the guarantee.
@@ -209,6 +209,17 @@ impl PreviewService {
         let installation = results
             .first()
             .and_then(|result| result.installation.clone());
+        // An open is a look at the backend like any other, and it is recorded
+        // as one -- still under the gate. An open that resolved a backend
+        // nothing had seen yet and kept it to itself left the sequence naming
+        // the installation before it: the first spectrum load would then notice
+        // the change, advance the sequence, and match on identity, and every
+        // load after that would be refused by a sequence check for a change
+        // that had already been accounted for.
+        //
+        // The value recorded is the one this observation leaves behind, not the
+        // one this run found on the way in.
+        let generation = self.note_resolved(installation.clone());
         drop(guard);
         drop(running);
         if SourceGeneration::capture(file.path()) != before {
