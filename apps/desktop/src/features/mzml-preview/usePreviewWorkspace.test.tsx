@@ -454,6 +454,34 @@ describe("discarding what a replaced installation read", () => {
     expect(h.service.inspections).toBe(inspectionsBefore);
   });
 
+  it("discards a landed preview when the installation changes after it", async () => {
+    // The in-flight guard must stop protecting a reply the moment it lands.
+    // Held a microtask longer -- until a `finally` -- a verdict applied in that
+    // gap would skip the discard for a preview already on screen, and nothing
+    // would come back to it.
+    const h = harness();
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(h.api) });
+    await h.deliver(0);
+
+    act(() => {
+      result.current.openFile();
+    });
+    await waitFor(() => {
+      expect(result.current.preview.status).toBe("loaded");
+    });
+
+    act(() => {
+      result.current.chooseInstallation();
+    });
+    await h.deliver(1);
+
+    await waitFor(() => {
+      expect(resolvedOrigin(result.current.backend)).toBe("chosen");
+    });
+    expect(result.current.preview.status).toBe("empty");
+    expect(result.current.selectedFileName).not.toBeNull();
+  });
+
   it("does not tear down an open that is still in flight", async () => {
     // The open has already emptied the screen and is about to fill it. A
     // verdict discarding for it would bump the preview token, so the open's own

@@ -466,6 +466,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
             rowCount: loaded.spectrumTable.rows.length,
             startedAt,
           };
+          // Landed, so it is no longer a reply to protect. Cleared here rather
+          // than in a `finally`, which runs a microtask later: a verdict
+          // applied in that gap would skip the discard for a preview already on
+          // screen, and nothing would come back to it.
+          openInFlight.current = false;
         })
         .catch((cause: unknown) => {
           if (mounted.current && token === previewToken.current) {
@@ -485,10 +490,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
             } else {
               checkBackend();
             }
-          }
-        })
-        .finally(() => {
-          if (token === previewToken.current) {
+            // Landed as a failure, which is still landed.
             openInFlight.current = false;
           }
         });
