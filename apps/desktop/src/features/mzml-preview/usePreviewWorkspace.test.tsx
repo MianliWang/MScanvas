@@ -154,6 +154,7 @@ function harness(
     /// What the service had advanced the sequence to by the time this open was
     /// served -- which an open that noticed a change itself would have done.
     openGeneration?: number;
+    spectrum?: () => Promise<SelectedSpectrumOutcome>;
   } = {},
 ): Harness {
   const service = new ServiceModel();
@@ -165,6 +166,7 @@ function harness(
     openPreview:
       options.preview ?? (() => Promise.resolve(buildPreview(3, false, options.openGeneration ?? 0))),
     loadSpectrum: () =>
+      options.spectrum?.() ??
       Promise.resolve<SelectedSpectrumOutcome>({ outcome: "unavailable", requestedIndex: 0 }),
   };
   return {
@@ -376,6 +378,118 @@ describe("backend installation generations", () => {
 });
 
 describe("discarding what a replaced installation read", () => {
+  it("does not let a spectrum recovery race an installation change either", async () => {
+    // The recovery a failed spectrum starts is not a user action, so it passes
+    // straight through the busy guard exactly as the one after a failed open
+    // does -- and clearing that guard early would re-enable Open and the switch
+    // actions while a folder picker is still on screen.
+    const h = harness({
+      spectrum: () =>
+        Promise.reject(
+          previewError({ kind: "installation_changed_since_preview", retryable: false }),
+        ),
+    });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(h.api) });
+    await h.deliver(0);
+
+    act(() => {
+      result.current.openFile();
+    });
+    await waitFor(() => {
+      expect(result.current.preview.status).toBe("loaded");
+    });
+    const inspectionsBefore = h.service.inspections;
+
+    act(() => {
+      result.current.chooseInstallation();
+    });
+    await act(async () => {
+      result.current.selectSpectrum(0);
+      await Promise.resolve();
+    });
+    // The recovery discards what the replaced backend read, which is the
+    // observable effect to wait on -- it also resets the spectrum, so the
+    // failure state it passes through is not where to look.
+    await waitFor(() => {
+      expect(result.current.preview.status).toBe("empty");
+    });
+
+    // Deferred, not started.
+    expect(h.service.inspections).toBe(inspectionsBefore);
+  });
+
+  it("does not tear down an open that is still in flight", async () => {
+    // The open has already emptied the screen and is about to fill it. A
+    // verdict discarding for it would bump the preview token, so the open's own
+    // reply would be rejected and the workspace left empty -- for a change that
+    // open may itself have been produced under.
+    const open = deferred<Preview>();
+    const h = harness({ preview: () => open.promise });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(h.api) });
+    await h.deliver(0);
+
+    act(() => {
+      result.current.openFile();
+    });
+    await waitFor(() => {
+      expect(result.current.preview.status).toBe("opening");
+    });
+
+    act(() => {
+      result.current.chooseInstallation();
+    });
+    await h.deliver(1);
+    await waitFor(() => {
+      expect(resolvedOrigin(result.current.backend)).toBe("chosen");
+    });
+
+    // The open was served by the installation now in use, so its reply is
+    // current and must survive.
+    await act(async () => {
+      open.resolve(buildPreview(3, false, 1));
+      await Promise.resolve();
+    });
+
+    expect(result.current.preview.status).toBe("loaded");
+  });
+
+  it("refuses a preview produced by a backend that has since been replaced", async () => {
+    // The gate is released before a table of any size is converted and
+    // transferred, so a folder switch can complete while an open is still in
+    // flight. Showing it anyway would put the replaced backend's rows under the
+    // new one's banner.
+    const open = deferred<Preview>();
+    const h = harness({ preview: () => open.promise });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(h.api) });
+    await h.deliver(0);
+
+    act(() => {
+      result.current.openFile();
+    });
+    await waitFor(() => {
+      expect(result.current.preview.status).toBe("opening");
+    });
+
+    // The switch completes first and is applied.
+    act(() => {
+      result.current.chooseInstallation();
+    });
+    await h.deliver(1);
+    await waitFor(() => {
+      expect(resolvedOrigin(result.current.backend)).toBe("chosen");
+    });
+
+    // Now the older open finally arrives, carrying the generation it was read
+    // under.
+    await act(async () => {
+      open.resolve(buildPreview(3, false, 0));
+      await Promise.resolve();
+    });
+
+    expect(result.current.preview.status).not.toBe("loaded");
+    expect(resolvedGeneration(result.current.backend)).toBe(1);
+  });
+
   it("keeps a preview whose own open advanced the sequence", async () => {
     // An open can be the first thing to see a backend change, in which case the
     // service advances the sequence while producing that very preview. Reading

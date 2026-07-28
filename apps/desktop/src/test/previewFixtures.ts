@@ -280,9 +280,15 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         : Promise.resolve(options.file === undefined ? selectedFile : options.file),
     openPreview: () => {
       openCount += 1;
-      return typeof options.preview === "function"
-        ? options.preview()
-        : Promise.resolve(options.preview ?? buildPreview());
+      // Stamped with the generation this fake's service is currently at, as the
+      // real one does. A preview that always claimed generation zero would be
+      // rejected as stale by anything that had switched installation since --
+      // and would let a genuinely stale preview through unnoticed.
+      return (
+        typeof options.preview === "function"
+          ? options.preview()
+          : Promise.resolve(options.preview ?? buildPreview())
+      ).then((preview) => ({ ...preview, installationGeneration: generation }));
     },
     loadSpectrum: (_handle, index) => {
       requestedSpectra.push(index);

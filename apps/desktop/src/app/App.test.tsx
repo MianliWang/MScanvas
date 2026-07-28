@@ -139,6 +139,26 @@ describe("mzML preview workspace", () => {
     expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
   });
 
+  it("clears a stale workspace when the backend changed between the check and the spawn", async () => {
+    // A different route to the same truth: the crate notices the executable
+    // changed after its check and before the spawn. It reaches the interface as
+    // its own typed kind, and it is just as non-retryable, so it needs the same
+    // recovery rather than leaving the workspace looking current.
+    const api = createFakePreviewApi({
+      spectrum: () =>
+        Promise.reject(previewError({ kind: "backend_changed_after_check", retryable: false })),
+    });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+
+    // The readings go, and the retained file is offered back rather than left
+    // looking like it still describes what is installed.
+    expect(await screen.findByRole("button", { name: /^Reopen / })).toBeVisible();
+    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+  });
+
   it("closes the open actions when the backend state is not positively available", async () => {
     // A failed call cannot say whether an installation is present. Gating on
     // "explicitly unavailable" left every open action live in that state, so

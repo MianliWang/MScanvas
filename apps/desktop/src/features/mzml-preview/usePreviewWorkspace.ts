@@ -15,6 +15,20 @@ import {
   type PreviewMeasurementName,
 } from "./instrumentation";
 
+/**
+ * Every typed failure that means the backend is not the one that read what is
+ * on screen.
+ *
+ * `installation_changed_since_preview` is the service noticing before it
+ * launches; `backend_changed_after_check` is the crate noticing between the
+ * check and the spawn. They arrive by different routes and mean the same thing
+ * to a reader, so they get the same recovery.
+ */
+const BACKEND_CHANGED_KINDS = new Set([
+  "installation_changed_since_preview",
+  "backend_changed_after_check",
+]);
+
 export type BackendState =
   | { readonly status: "checking" }
   | { readonly status: "resolved"; readonly availability: BackendAvailability }
@@ -136,6 +150,15 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const installationChanges = useRef(0);
   /** A recovery check an installation change asked to wait its turn. */
   const deferredRecheck = useRef(false);
+  /**
+   * Whether an open is between its request and its reply.
+   *
+   * A verdict that arrives meanwhile must not discard for it: the open has
+   * already cleared the screen and is about to fill it, and bumping the preview
+   * token would reject its reply and leave the workspace empty for a change the
+   * open itself may have been the one to notice.
+   */
+  const openInFlight = useRef(false);
   const previewToken = useRef(0);
   const spectrumToken = useRef(0);
   const inFlightSpectrum = useRef<{ index: number; token: number } | null>(null);
@@ -228,7 +251,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       const changed = generation > appliedGeneration.current && appliedGeneration.current >= 0;
       appliedGeneration.current = generation;
       setBackend({ status: "resolved", availability });
-      if (changed) {
+      // Not while an open is in flight. That open has already emptied the
+      // screen and is about to fill it, and its reply is judged on its own
+      // generation when it lands -- so discarding here would only reject a
+      // reading that may well be the one that caused this verdict.
+      if (changed && !openInFlight.current) {
         discardBackendDerivedState();
       }
       return true;
@@ -366,6 +393,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       setPreview({ status: "opening" });
       setSpectrum({ status: "none" });
       setSelectedIndex(null);
+      openInFlight.current = true;
       void api
         .openPreview(handle)
         .then((loaded) => {
@@ -377,6 +405,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           // while producing this very preview. Adopting that number here is
           // what stops the next verdict's higher number reading as a change
           // that happened afterwards and discarding a reading that is current.
+          // Produced by a backend that has since been replaced. The gate is
+          // released before a table of this size is converted and transferred,
+          // so a folder switch can complete while this is still in flight, and
+          // showing it would put the old backend's rows under the new one's
+          // banner.
+          if (loaded.installationGeneration < appliedGeneration.current) {
+            return;
+          }
           const noticedAChange = loaded.installationGeneration > appliedGeneration.current;
           if (noticedAChange) {
             appliedGeneration.current = loaded.installationGeneration;
@@ -416,6 +452,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
             } else {
               checkBackend();
             }
+          }
+        })
+        .finally(() => {
+          if (token === previewToken.current) {
+            openInFlight.current = false;
           }
         });
     },
@@ -507,9 +548,18 @@ export function usePreviewWorkspace(): PreviewWorkspace {
             // the same way until the user happens to press Check again. The
             // readings go, the selection stays, and the banner is refreshed to
             // describe what is installed now.
-            if (failure.kind === "installation_changed_since_preview") {
+            if (BACKEND_CHANGED_KINDS.has(failure.kind)) {
               discardBackendDerivedState();
-              checkBackend();
+              // Deferred behind an outstanding installation change for the same
+              // reason the open recovery is: this check is not a user action,
+              // so it passes straight through the busy guard, and clearing that
+              // guard early would re-enable Open and the switch actions while a
+              // folder picker is still open.
+              if (installationChanges.current > 0) {
+                deferredRecheck.current = true;
+              } else {
+                checkBackend();
+              }
             }
           }
         });
