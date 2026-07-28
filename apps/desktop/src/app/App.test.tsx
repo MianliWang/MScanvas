@@ -159,6 +159,39 @@ describe("mzML preview workspace", () => {
     expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
   });
 
+  it("clears a stale workspace when the backend is gone by the time it is run", async () => {
+    // A third route to the same truth: the executable was there when it was
+    // checked and gone when it was launched. Just as non-retryable, and just as
+    // much a reason not to leave the table looking current.
+    const api = createFakePreviewApi({
+      spectrum: () =>
+        Promise.reject(previewError({ kind: "backend_not_found_at_launch", retryable: false })),
+    });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+
+    expect(await screen.findByRole("button", { name: /^Reopen / })).toBeVisible();
+    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+  });
+
+  it("does not start a row read while a backend request is outstanding", async () => {
+    // Reading a row is backend work, so the one-at-a-time rule has to cover it.
+    // Started while an installation is being probed it either reads the backend
+    // being replaced or queues behind the change and then fails on it -- one
+    // process launch either way, for a result nobody will see.
+    const api = createFakePreviewApi({ chosenInstallation: () => new Promise(() => undefined) });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+    const readsBefore = api.requestedSpectra.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+
+    expect(api.requestedSpectra.length).toBe(readsBefore);
+  });
+
   it("closes the open actions when the backend state is not positively available", async () => {
     // A failed call cannot say whether an installation is present. Gating on
     // "explicitly unavailable" left every open action live in that state, so

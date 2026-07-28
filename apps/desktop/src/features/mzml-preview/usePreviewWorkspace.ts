@@ -21,12 +21,15 @@ import {
  *
  * `installation_changed_since_preview` is the service noticing before it
  * launches; `backend_changed_after_check` is the crate noticing between the
- * check and the spawn. They arrive by different routes and mean the same thing
- * to a reader, so they get the same recovery.
+ * check and the spawn; `backend_not_found_at_launch` is the executable being
+ * gone by the time it was run. Three routes, one meaning to a reader -- what is
+ * on screen was read by something that is no longer there -- and all three are
+ * non-retryable, so all three get the same recovery.
  */
 const BACKEND_CHANGED_KINDS = new Set([
   "installation_changed_since_preview",
   "backend_changed_after_check",
+  "backend_not_found_at_launch",
 ]);
 
 export type BackendState =
@@ -130,6 +133,18 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
 
   const [backendBusy, setBackendBusy] = useState(true);
+  /**
+   * The same flag where a promise handler can read it.
+   *
+   * `backendBusy` renders; this decides. A callback closing over the state
+   * value would see whatever it was when the closure was made, which for a
+   * request spanning a modal dialog is exactly the wrong answer.
+   */
+  const backendBusyRef = useRef(true);
+  const markBackendBusy = useCallback((busy: boolean) => {
+    backendBusyRef.current = busy;
+    setBackendBusy(busy);
+  }, []);
   const backendToken = useRef(0);
   /**
    * The highest installation generation applied to the banner.
@@ -266,7 +281,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const checkBackend = useCallback(() => {
     backendToken.current += 1;
     const token = backendToken.current;
-    setBackendBusy(true);
+    markBackendBusy(true);
     setBackend({ status: "checking" });
     void api
       .inspectBackend()
@@ -286,7 +301,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       })
       .finally(() => {
         if (mounted.current && token === backendToken.current) {
-          setBackendBusy(false);
+          markBackendBusy(false);
         }
       });
   }, [api, applyVerdict]);
@@ -312,7 +327,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       // installation did not change, so it is still worth reporting -- but only
       // while nothing newer has been shown, which this failure cannot speak for.
       const generationAtRequest = appliedGeneration.current;
-      setBackendBusy(true);
+      markBackendBusy(true);
       if (announceChecking) {
         setBackend({ status: "checking" });
       }
@@ -343,7 +358,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
             return;
           }
           if (token === backendToken.current) {
-            setBackendBusy(false);
+            markBackendBusy(false);
           }
           // A recovery check that stood aside for this change runs unless the
           // change refreshed the banner itself. Re-checking after it did would
@@ -433,7 +448,17 @@ export function usePreviewWorkspace(): PreviewWorkspace {
             // again is the only way to say what is on screen, and it cannot
             // take this preview away: the verdict will carry the generation
             // just adopted, which is not a change after it.
-            checkBackend();
+            //
+            // Behind an outstanding installation change, like every other
+            // recovery here. Racing one would clear the busy guard while a
+            // picker is still open, and a chooser reply arriving after this
+            // check would be refused on token order -- leaving Rust on the
+            // chosen folder and the banner saying automatic.
+            if (installationChanges.current > 0) {
+              deferredRecheck.current = true;
+            } else {
+              checkBackend();
+            }
           }
           // Not finished here: this call only schedules the update, and the
           // summary and the first table window have not been built yet.
@@ -506,6 +531,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     (index: number) => {
       const handle = openHandle.current;
       if (handle === null) {
+        return;
+      }
+      // Reading a row is backend work, so "one outstanding backend request"
+      // has to cover it or it means nothing. Started while an installation is
+      // being probed, this either reads the backend being replaced or queues
+      // behind the change and then fails on it -- one process launch either
+      // way, for a result that was never going to be shown.
+      if (backendBusyRef.current) {
         return;
       }
       // A repeat of the row already being read is dropped. Every selection is

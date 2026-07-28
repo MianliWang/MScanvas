@@ -383,12 +383,11 @@ describe("discarding what a replaced installation read", () => {
     // straight through the busy guard exactly as the one after a failed open
     // does -- and clearing that guard early would re-enable Open and the switch
     // actions while a folder picker is still on screen.
-    const h = harness({
-      spectrum: () =>
-        Promise.reject(
-          previewError({ kind: "installation_changed_since_preview", retryable: false }),
-        ),
-    });
+    // The selection is started first and fails later, which is the order that
+    // is reachable: a row cannot be started once a change is outstanding,
+    // because selection is backend work and the busy guard covers it.
+    const spectrum = deferred<SelectedSpectrumOutcome>();
+    const h = harness({ spectrum: () => spectrum.promise });
     const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(h.api) });
     await h.deliver(0);
 
@@ -401,10 +400,15 @@ describe("discarding what a replaced installation read", () => {
     const inspectionsBefore = h.service.inspections;
 
     act(() => {
+      result.current.selectSpectrum(0);
+    });
+    act(() => {
       result.current.chooseInstallation();
     });
     await act(async () => {
-      result.current.selectSpectrum(0);
+      spectrum.reject(
+        previewError({ kind: "installation_changed_since_preview", retryable: false }),
+      );
       await Promise.resolve();
     });
     // The recovery discards what the replaced backend read, which is the
@@ -415,6 +419,38 @@ describe("discarding what a replaced installation read", () => {
     });
 
     // Deferred, not started.
+    expect(h.service.inspections).toBe(inspectionsBefore);
+  });
+
+  it("does not let a successful open's refresh race an installation change", async () => {
+    // An open that is the first to see a change refreshes the banner. Started
+    // while a picker is still open, that refresh can clear the busy guard from
+    // under it -- and a chooser reply arriving afterwards would be refused on
+    // token order, leaving Rust on the chosen folder and the banner saying
+    // automatic.
+    const open = deferred<Preview>();
+    const h = harness({ preview: () => open.promise });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(h.api) });
+    await h.deliver(0);
+    const inspectionsBefore = h.service.inspections;
+
+    act(() => {
+      result.current.openFile();
+    });
+    await waitFor(() => {
+      expect(result.current.preview.status).toBe("opening");
+    });
+    act(() => {
+      result.current.chooseInstallation();
+    });
+
+    // The open lands first, carrying a generation nothing has seen yet.
+    await act(async () => {
+      open.resolve(buildPreview(3, false, 1));
+      await Promise.resolve();
+    });
+
+    expect(result.current.preview.status).toBe("loaded");
     expect(h.service.inspections).toBe(inspectionsBefore);
   });
 
