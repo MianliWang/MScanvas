@@ -486,7 +486,11 @@ describe("discarding what a replaced installation read", () => {
       await Promise.resolve();
     });
 
-    expect(result.current.preview.status).not.toBe("loaded");
+    // Ended, not left reading: the switch deliberately does not discard while
+    // an open is in flight, so if this open did not end itself the workspace
+    // would say "Reading the file…" for the rest of the session.
+    expect(result.current.preview.status).toBe("empty");
+    expect(result.current.selectedFileName).not.toBeNull();
     expect(resolvedGeneration(result.current.backend)).toBe(1);
   });
 

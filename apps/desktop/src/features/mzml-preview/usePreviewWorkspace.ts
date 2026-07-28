@@ -410,7 +410,15 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           // so a folder switch can complete while this is still in flight, and
           // showing it would put the old backend's rows under the new one's
           // banner.
+          //
+          // Discarded rather than merely dropped. Returning here left the
+          // workspace in `opening` with nothing else coming -- the switch
+          // deliberately does not discard while an open is in flight -- so it
+          // read "Reading the file…" for the rest of the session, with the open
+          // actions disabled and no way back. This ends the read and offers the
+          // retained file, which is a state the user can act on.
           if (loaded.installationGeneration < appliedGeneration.current) {
+            discardBackendDerivedState();
             return;
           }
           const noticedAChange = loaded.installationGeneration > appliedGeneration.current;
