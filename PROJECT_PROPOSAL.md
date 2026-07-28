@@ -160,11 +160,16 @@ After domain schemas stabilize:
 
 P0 behavior:
 
-- detect a user-installed ProteoWizard `msconvert`;
-- display path and version;
-- allow the executable to be located manually;
+- detect a user-installed ProteoWizard, in the locations an installer writes;
+- report the release and build it found, and which installation that verdict
+  describes;
+- allow an installation *folder* to be chosen for the session, never an
+  executable and never stored: a folder is the unit discovery works in, and a
+  stored path would go on applying to a folder MSCanvas cannot vouch for;
+- offer a way back to automatic discovery from every state;
 - provide an actionable self-test and installation guidance;
-- distinguish missing executable, launch failure and unsupported input.
+- distinguish missing executable, launch failure and unsupported input, and say
+  why a chosen folder is unusable rather than only that it is.
 
 A user should not need a terminal to understand readiness.
 
