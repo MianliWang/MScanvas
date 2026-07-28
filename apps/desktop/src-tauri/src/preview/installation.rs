@@ -24,7 +24,7 @@ use super::selection::file_identity;
 /// two installations when no digest was bound -- every case where a tool did
 /// not probe successfully -- and a comparison that had only the path then would
 /// call two different backends the same one.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Eq)]
 pub(crate) struct ToolIdentity {
     path: PathBuf,
     /// `None` when no help was bound for this tool, which a comparison reads
@@ -52,6 +52,37 @@ impl ToolIdentity {
     fn resolved(tool: &DiscoveredTool) -> Option<Self> {
         let path = tool.path.as_deref()?;
         Some(Self::of(path, tool.executable_sha256()))
+    }
+}
+
+impl PartialEq for ToolIdentity {
+    /// Content decides when there is content to decide by.
+    ///
+    /// Written out rather than derived, because deriving it compares every
+    /// field and the metadata is not evidence of a different tool. A backup
+    /// restore, a timestamp normalisation or a copy that preserves nothing but
+    /// the bytes all rewrite the modification time of a file that is byte for
+    /// byte the one that was there before — and a derived comparison would call
+    /// that a new installation, advance the sequence, and throw away a preview
+    /// the very same backend produced.
+    ///
+    /// The metadata still decides when no digest was bound, which is every case
+    /// where a tool did not probe successfully. There a comparison has nothing
+    /// better, and calling two unprobed tools equal on their paths alone would
+    /// be the more dangerous mistake.
+    fn eq(&self, other: &Self) -> bool {
+        if self.path != other.path {
+            return false;
+        }
+        match (self.content, other.content) {
+            (Some(mine), Some(theirs)) => mine == theirs,
+            _ => {
+                self.content == other.content
+                    && self.filesystem == other.filesystem
+                    && self.byte_length == other.byte_length
+                    && self.modified == other.modified
+            }
+        }
     }
 }
 
@@ -367,6 +398,42 @@ mod tests {
             classify_chosen_folder(&tree.path, Some(&failure)),
             ChosenFolderProblem::IncompatibleToolPair
         );
+    }
+
+    #[test]
+    fn a_timestamp_rewritten_over_unchanged_bytes_is_the_same_tool() {
+        // A backup restore, a timestamp normalisation, or a copy that preserves
+        // only the bytes all rewrite the modification time of a file that is
+        // byte for byte the one that was there. Calling that a new installation
+        // would throw away a preview the very same backend produced.
+        let tree = TempDir::new("timestamp-rewrite");
+        let path = tree.file(MSCONVERT_EXE, b"one build");
+        let digest = Sha256Digest::calculate(b"one build").expect("digest");
+        let before = ToolIdentity::of(&path, Some(digest));
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&path, b"one build").expect("rewrite with the same bytes");
+        let after = ToolIdentity::of(&path, Some(digest));
+
+        assert_ne!(
+            before.modified, after.modified,
+            "the test needs a new mtime"
+        );
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn without_a_digest_the_metadata_still_decides() {
+        // No help bound means no digest, and two unprobed tools sharing a path
+        // must not be called the same one on the path alone.
+        let tree = TempDir::new("no-digest");
+        let path = tree.file(MSCONVERT_EXE, b"first");
+        let before = ToolIdentity::of(&path, None);
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&path, b"a different build").expect("rewrite");
+
+        assert_ne!(before, ToolIdentity::of(&path, None));
     }
 
     #[test]
