@@ -454,6 +454,39 @@ describe("discarding what a replaced installation read", () => {
     expect(h.service.inspections).toBe(inspectionsBefore);
   });
 
+  it("drops an open failure that belongs to a replaced backend", async () => {
+    // The failure says nothing about the installation now in use, and showing
+    // it under the new banner strands the user: a non-retryable failure leaves
+    // the loaded layout with no way back to the retained file.
+    const open = deferred<Preview>();
+    const h = harness({ preview: () => open.promise });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(h.api) });
+    await h.deliver(0);
+
+    act(() => {
+      result.current.openFile();
+    });
+    await waitFor(() => {
+      expect(result.current.preview.status).toBe("opening");
+    });
+
+    act(() => {
+      result.current.chooseInstallation();
+    });
+    await h.deliver(1);
+    await waitFor(() => {
+      expect(resolvedOrigin(result.current.backend)).toBe("chosen");
+    });
+
+    await act(async () => {
+      open.reject(previewError({ kind: "backend_failed", retryable: false }));
+      await Promise.resolve();
+    });
+
+    expect(result.current.preview.status).toBe("empty");
+    expect(result.current.selectedFileName).not.toBeNull();
+  });
+
   it("discards a landed preview when the installation changes after it", async () => {
     // The in-flight guard must stop protecting a reply the moment it lands.
     // Held a microtask longer -- until a `finally` -- a verdict applied in that

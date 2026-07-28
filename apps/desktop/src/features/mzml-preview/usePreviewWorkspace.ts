@@ -409,6 +409,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       setSpectrum({ status: "none" });
       setSelectedIndex(null);
       openInFlight.current = true;
+      // Where the sequence stood when this read began. A failure carries no
+      // generation of its own, so this is the only way to tell an answer about
+      // the backend in use from an answer about one that has been replaced.
+      const generationAtRequest = appliedGeneration.current;
       void api
         .openPreview(handle)
         .then((loaded) => {
@@ -474,6 +478,15 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         })
         .catch((cause: unknown) => {
           if (mounted.current && token === previewToken.current) {
+            // A failure from a backend that has since been replaced says
+            // nothing about the one in use, and showing it under the new
+            // banner strands the user: if it is not retryable, the loaded
+            // layout offers no way back to the retained file either.
+            if (appliedGeneration.current > generationAtRequest) {
+              discardBackendDerivedState();
+              openInFlight.current = false;
+              return;
+            }
             setPreview({ status: "failed", error: toPreviewError(cause) });
             // The installation may be the reason. Re-checking here keeps the
             // banner from insisting a backend is present after it has gone,
