@@ -126,6 +126,16 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * the installation that change replaced.
    */
   const appliedGeneration = useRef(-1);
+  /**
+   * How many installation changes are outstanding.
+   *
+   * A ref rather than state because it is read inside promise handlers, where
+   * a state value would be whatever it was when the closure was created —
+   * which for a change that spans a modal dialog is exactly the wrong answer.
+   */
+  const installationChanges = useRef(0);
+  /** A recovery check an installation change asked to wait its turn. */
+  const deferredRecheck = useRef(false);
   const previewToken = useRef(0);
   const spectrumToken = useRef(0);
   const inFlightSpectrum = useRef<{ index: number; token: number } | null>(null);
@@ -147,47 +157,6 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     },
     [],
   );
-
-  /**
-   * Applies a verdict unless the banner already shows a later one.
-   *
-   * Returns whether it was applied, so a caller can decide what else its reply
-   * still licenses it to do.
-   */
-  const applyVerdict = useCallback((availability: BackendAvailability): boolean => {
-    if (availability.installationGeneration < appliedGeneration.current) {
-      return false;
-    }
-    appliedGeneration.current = availability.installationGeneration;
-    setBackend({ status: "resolved", availability });
-    return true;
-  }, []);
-
-  const checkBackend = useCallback(() => {
-    backendToken.current += 1;
-    const token = backendToken.current;
-    setBackendBusy(true);
-    setBackend({ status: "checking" });
-    void api
-      .inspectBackend()
-      .then((availability) => {
-        if (mounted.current && token === backendToken.current) {
-          applyVerdict(availability);
-        }
-      })
-      .catch((cause: unknown) => {
-        if (mounted.current && token === backendToken.current) {
-          setBackend({ status: "failed", error: toPreviewError(cause) });
-        }
-      })
-      .finally(() => {
-        if (mounted.current && token === backendToken.current) {
-          setBackendBusy(false);
-        }
-      });
-  }, [api, applyVerdict]);
-
-  useEffect(checkBackend, [checkBackend]);
 
   /**
    * Drops everything on screen that a backend produced.
@@ -216,47 +185,153 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   }, []);
 
   /**
+   * The one rule for whether a reply may be shown. Every verdict goes through
+   * here; no caller compares anything itself.
+   *
+   * Rust decides which installation is current, because it is where the
+   * commands are actually ordered — each verdict is stamped under the same gate
+   * that served it. So the generation is compared first and the request token
+   * second, and never the other way round:
+   *
+   * - a **newer** generation is accepted whatever this caller's token says. It
+   *   describes an installation Rust has already switched to, and a token is
+   *   only a record of what this window asked for first.
+   * - an **older** generation is refused. It describes an installation that has
+   *   since been replaced.
+   * - an **equal** generation means two readings of the same installation, which
+   *   differ only in age, so the token decides and the superseded one is
+   *   dropped.
+   *
+   * Getting that precedence backwards is what this replaces: a reply was
+   * discarded on token order before its generation was ever looked at, so a
+   * recovery check begun mid-dialog could leave the banner reporting the
+   * installation the user had just replaced while every later operation used
+   * the new one.
+   *
+   * Discarding what the previous installation read happens here too, keyed on
+   * the generation advancing rather than on which call happened to carry the
+   * news. Whichever reply first shows a higher generation is the one that has
+   * learned the installation changed, and that is a property of the verdict,
+   * not of the caller: hanging the discard off the change request alone left
+   * the table and the selected spectrum of a replaced installation on screen
+   * whenever an inspection observed the change first.
+   */
+  const applyVerdict = useCallback(
+    (availability: BackendAvailability, token: number): boolean => {
+      const generation = availability.installationGeneration;
+      if (generation < appliedGeneration.current) {
+        return false;
+      }
+      if (generation === appliedGeneration.current && token !== backendToken.current) {
+        return false;
+      }
+      const changed = generation > appliedGeneration.current && appliedGeneration.current >= 0;
+      appliedGeneration.current = generation;
+      setBackend({ status: "resolved", availability });
+      if (changed) {
+        discardBackendDerivedState();
+      }
+      return true;
+    },
+    [discardBackendDerivedState],
+  );
+
+  const checkBackend = useCallback(() => {
+    backendToken.current += 1;
+    const token = backendToken.current;
+    setBackendBusy(true);
+    setBackend({ status: "checking" });
+    void api
+      .inspectBackend()
+      .then((availability) => {
+        if (mounted.current) {
+          // No token check of its own: `applyVerdict` weighs the generation
+          // first and only falls back to the token, and a check that returns
+          // after an installation change reports the installation Rust served
+          // it under, not the one this call was started for.
+          applyVerdict(availability, token);
+        }
+      })
+      .catch((cause: unknown) => {
+        if (mounted.current && token === backendToken.current) {
+          setBackend({ status: "failed", error: toPreviewError(cause) });
+        }
+      })
+      .finally(() => {
+        if (mounted.current && token === backendToken.current) {
+          setBackendBusy(false);
+        }
+      });
+  }, [api, applyVerdict]);
+
+  useEffect(checkBackend, [checkBackend]);
+
+
+  /**
    * Applies a verdict that comes back from changing which installation is used.
    *
-   * The token is taken before the request, so a check that was already in
-   * flight cannot land afterwards and reinstate the reading it produced for the
-   * installation that was in use before. That is the one way the banner could
-   * assert a stale verdict, and it is not visible from the response handler
-   * alone: both replies are well-formed, and only their order says which one
-   * describes what the user is now using.
+   * The reply is never dropped on token order alone. A change can span a modal
+   * dialog, and anything the application starts meanwhile — a recovery check
+   * after a failed open, say — advances the token behind it. Ordering by that
+   * would throw away the one reply that describes what Rust is now using, which
+   * is why `applyVerdict` weighs the generation first.
    */
   const applyInstallationChange = useCallback(
     (request: () => Promise<BackendAvailability | null>, announceChecking: boolean) => {
       backendToken.current += 1;
       const token = backendToken.current;
+      installationChanges.current += 1;
+      // What had been applied when this was asked for. A failed change means the
+      // installation did not change, so it is still worth reporting -- but only
+      // while nothing newer has been shown, which this failure cannot speak for.
+      const generationAtRequest = appliedGeneration.current;
       setBackendBusy(true);
       if (announceChecking) {
         setBackend({ status: "checking" });
       }
+      // Whether this change left the banner as it found it, which is what
+      // decides a deferred recovery check below. A dismissed picker does;
+      // so does a failure whose reply arrived too late to be shown.
+      let refreshed = false;
       void request()
         .then((availability) => {
-          if (!mounted.current || token !== backendToken.current) {
+          if (!mounted.current) {
             return;
           }
-          // `null` is a dismissed picker. Nothing changed, so the verdict
-          // already on screen still describes what is in use, and replacing it
-          // with anything -- including "checking" -- would say otherwise.
-          if (availability !== null && applyVerdict(availability)) {
-            discardBackendDerivedState();
+          // `null` is a dismissed picker: nothing changed, so nothing on screen
+          // may change either.
+          if (availability !== null && applyVerdict(availability, token)) {
+            refreshed = true;
           }
         })
         .catch((cause: unknown) => {
-          if (mounted.current && token === backendToken.current) {
+          if (mounted.current && appliedGeneration.current <= generationAtRequest) {
             setBackend({ status: "failed", error: toPreviewError(cause) });
+            refreshed = true;
           }
         })
         .finally(() => {
-          if (mounted.current && token === backendToken.current) {
+          installationChanges.current -= 1;
+          if (!mounted.current) {
+            return;
+          }
+          if (token === backendToken.current) {
             setBackendBusy(false);
+          }
+          // A recovery check that stood aside for this change runs unless the
+          // change refreshed the banner itself. Re-checking after it did would
+          // launch a process to learn what is already on screen; not checking
+          // after it did not would leave the failed open's banner unexamined,
+          // which is the whole reason that check exists.
+          if (installationChanges.current === 0 && deferredRecheck.current) {
+            deferredRecheck.current = false;
+            if (!refreshed) {
+              checkBackend();
+            }
           }
         });
     },
-    [applyVerdict, discardBackendDerivedState],
+    [applyVerdict, checkBackend],
   );
 
   /**
@@ -311,7 +386,18 @@ export function usePreviewWorkspace(): PreviewWorkspace {
             // The installation may be the reason. Re-checking here keeps the
             // banner from insisting a backend is present after it has gone,
             // which would leave the user with no way back except a restart.
-            checkBackend();
+            //
+            // Except while the user is changing the installation. This check is
+            // not a user action and so passes straight through `backendBusy`,
+            // which makes it the one thing that can race a change; and a change
+            // is already going to produce a fresh verdict, so racing it buys
+            // nothing. It waits, and runs only if the change turns out to leave
+            // the banner as stale as it found it.
+            if (installationChanges.current > 0) {
+              deferredRecheck.current = true;
+            } else {
+              checkBackend();
+            }
           }
         });
     },
