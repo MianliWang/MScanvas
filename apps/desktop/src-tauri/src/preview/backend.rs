@@ -19,17 +19,33 @@ use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, MAX_BACKEND_LABEL_CHARS, PreviewErrorDto,
     bounded_text, redact_absolute_paths,
 };
+use super::installation::{InstallationIdentity, classify_chosen_folder};
 
-/// One preview operation's typed result plus the redactor that produced it.
+/// One preview operation's typed result, and which installation produced it.
+///
+/// The identity travels with the result because that is the only thing that
+/// can say which backend did this particular work. Asking again afterwards
+/// answers a different question.
 pub struct OperationResult {
     pub outcome: PreviewOutcome,
+    pub installation: Option<InstallationIdentity>,
 }
 
 /// What a provider must be able to do for this slice. Nothing here accepts a
 /// command string or returns raw process output.
 pub trait PreviewProvider: Send + Sync {
-    /// Reports whether a usable backend pair is installed.
-    fn availability(&self) -> BackendAvailabilityDto;
+    /// Reports whether a usable backend pair is installed, and which one that
+    /// resolved to.
+    ///
+    /// The identity is returned beside the transfer object rather than inside
+    /// it, because it is made of absolute paths and filesystem identities that
+    /// must not reach the webview. It is `None` when nothing resolved, which a
+    /// comparison must read as different from any installation rather than as
+    /// a match.
+    ///
+    /// Both come from one resolution on purpose: asking twice would let the
+    /// verdict describe one installation and the identity another.
+    fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>);
 
     /// Runs one preview operation against one already-validated source file.
     ///
@@ -102,22 +118,33 @@ impl ProteoWizardProvider {
     /// Discovery is deliberately per explicit user operation rather than per
     /// rendered component, and the resulting capability evidence is reused for
     /// every operation in that same action.
-    fn bind_capabilities(&self) -> Result<InstalledHelpCapabilities, PreviewErrorDto> {
-        let discovery = discover(self.request());
+    /// Also reports which installation this resolution found, so the work done
+    /// with these capabilities can be attributed to it rather than to whatever
+    /// a later look happens to resolve.
+    fn bind_capabilities(
+        &self,
+    ) -> Result<(InstalledHelpCapabilities, Option<InstallationIdentity>), PreviewErrorDto> {
+        let request = self.request();
+        let configured = configured_home(&request);
+        let discovery = discover(&request);
         if discovery.availability != AvailabilityState::Available {
-            return Err(unavailable_error(&discovery.failure));
+            return Err(unavailable_error(configured.as_deref(), &discovery.failure));
         }
-        InstalledHelpCapabilities::from_discovered_tool(&discovery.msaccess).map_err(|_| {
-            PreviewErrorDto::new(
-                "capability_evidence_unavailable",
-                "The installed ProteoWizard did not describe the commands MSCanvas needs.",
-                false,
-            )
-        })
+        let identity = InstallationIdentity::of(&discovery);
+        let capabilities = InstalledHelpCapabilities::from_discovered_tool(&discovery.msaccess)
+            .map_err(|_| {
+                PreviewErrorDto::new(
+                    "capability_evidence_unavailable",
+                    "The installed ProteoWizard did not describe the commands MSCanvas needs.",
+                    false,
+                )
+            })?;
+        Ok((capabilities, identity))
     }
 
     fn run_bound(
         capabilities: &InstalledHelpCapabilities,
+        installation: Option<&InstallationIdentity>,
         source: &Path,
         operation: &PreviewOperation,
     ) -> Result<OperationResult, PreviewErrorDto> {
@@ -141,7 +168,10 @@ impl ProteoWizardProvider {
         let manifest = capture_manifest(output_root.path(), operation)?;
         let outcome =
             interpret_preview(operation, &process, &manifest).map_err(interpretation_error)?;
-        Ok(OperationResult { outcome })
+        Ok(OperationResult {
+            outcome,
+            installation: installation.cloned(),
+        })
     }
 }
 
@@ -152,9 +182,10 @@ impl PreviewProvider for ProteoWizardProvider {
         }
     }
 
-    fn availability(&self) -> BackendAvailabilityDto {
+    fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
         let request = self.request();
-        let chosen = request.configured.is_some();
+        let configured = configured_home(&request);
+        let chosen = configured.is_some();
         let discovery = discover(&request);
         let discovered = discovery.availability == AvailabilityState::Available;
         // Availability answers "can this installation produce a preview", not
@@ -170,7 +201,13 @@ impl PreviewProvider for ProteoWizardProvider {
                         .all(|operation| capabilities.require_preview_operation(operation).is_ok())
                 },
             );
-        BackendAvailabilityDto {
+        // Only what actually resolved counts as an identity. An unusable
+        // installation is not one this preview could have come from, so it must
+        // not compare equal to anything.
+        let identity = usable
+            .then(|| InstallationIdentity::of(&discovery))
+            .flatten();
+        let availability = BackendAvailabilityDto {
             state: if usable { "available" } else { "unavailable" }.to_owned(),
             // Which installation this verdict is about, so nothing downstream
             // has to remember what was asked. A verdict shown beside the wrong
@@ -201,27 +238,10 @@ impl PreviewProvider for ProteoWizardProvider {
                         .to_owned(),
                     })
                 },
-                |failure| {
-                    Some(BackendFailureDto {
-                        kind: failure.kind().to_owned(),
-                        summary: failure.summary().to_owned(),
-                        // The crate speaks to every caller, and offers naming an
-                        // exact msconvert.exe/msaccess.exe path. This
-                        // application has no such command and no such picker, so
-                        // repeating that advice here asks the user for something
-                        // they cannot do. When a folder is in use, the two
-                        // recoveries this application has are the only ones
-                        // worth naming, whatever the failure was.
-                        corrective_action: if chosen {
-                            "Choose a different folder, or go back to searching automatically."
-                                .to_owned()
-                        } else {
-                            failure.corrective_action().to_owned()
-                        },
-                    })
-                },
+                |failure| Some(failure_dto(configured.as_deref(), failure)),
             ),
-        }
+        };
+        (availability, identity)
     }
 
     fn run(
@@ -229,8 +249,8 @@ impl PreviewProvider for ProteoWizardProvider {
         source: &Path,
         operation: &PreviewOperation,
     ) -> Result<OperationResult, PreviewErrorDto> {
-        let capabilities = self.bind_capabilities()?;
-        Self::run_bound(&capabilities, source, operation)
+        let (capabilities, installation) = self.bind_capabilities()?;
+        Self::run_bound(&capabilities, installation.as_ref(), source, operation)
     }
 
     fn run_batch(
@@ -238,10 +258,12 @@ impl PreviewProvider for ProteoWizardProvider {
         source: &Path,
         operations: &[PreviewOperation],
     ) -> Result<Vec<OperationResult>, PreviewErrorDto> {
-        let capabilities = self.bind_capabilities()?;
+        let (capabilities, installation) = self.bind_capabilities()?;
         operations
             .iter()
-            .map(|operation| Self::run_bound(&capabilities, source, operation))
+            .map(|operation| {
+                Self::run_bound(&capabilities, installation.as_ref(), source, operation)
+            })
             .collect()
     }
 }
@@ -404,10 +426,57 @@ pub fn interpretation_error(error: PreviewInterpretError) -> PreviewErrorDto {
     }
 }
 
-fn unavailable_error(failure: &Option<mscanvas_proteowizard::DiscoveryFailure>) -> PreviewErrorDto {
+/// The folder the request names, if it names one.
+///
+/// Only a home is a folder the user chose through the picker. A configured
+/// executable is not something this application can produce, so it is not
+/// something whose folder it should explain.
+fn configured_home(request: &DiscoveryRequest) -> Option<PathBuf> {
+    match request.configured.as_ref() {
+        Some(ConfiguredLocation::Home(home)) => Some(home.clone()),
+        Some(ConfiguredLocation::Executable(_)) | None => None,
+    }
+}
+
+/// What to tell the user about a discovery failure.
+///
+/// A chosen folder is explained by the folder rather than by the crate. The
+/// crate speaks to every caller: its summary for a configured location is the
+/// single sentence "not usable" whatever the cause, and its advice offers
+/// naming an exact `msconvert.exe`/`msaccess.exe` path, which this application
+/// has neither a command nor a picker for. Both are replaced here with the
+/// cause established from the folder and the recoveries this application
+/// actually has.
+fn failure_dto(
+    configured: Option<&Path>,
+    failure: &mscanvas_proteowizard::DiscoveryFailure,
+) -> BackendFailureDto {
+    if let Some(home) = configured {
+        let problem = classify_chosen_folder(home, Some(failure));
+        return BackendFailureDto {
+            kind: problem.kind().to_owned(),
+            summary: problem.summary().to_owned(),
+            corrective_action: "Choose a different folder, or go back to searching automatically."
+                .to_owned(),
+        };
+    }
+    BackendFailureDto {
+        kind: failure.kind().to_owned(),
+        summary: failure.summary().to_owned(),
+        corrective_action: failure.corrective_action().to_owned(),
+    }
+}
+
+fn unavailable_error(
+    configured: Option<&Path>,
+    failure: &Option<mscanvas_proteowizard::DiscoveryFailure>,
+) -> PreviewErrorDto {
     failure.as_ref().map_or_else(
         || PreviewErrorDto::new("backend_not_found", "ProteoWizard was not found.", false),
-        |failure| PreviewErrorDto::new(failure.kind(), failure.summary(), false),
+        |failure| {
+            let reported = failure_dto(configured, failure);
+            PreviewErrorDto::new(&reported.kind, &reported.summary, false)
+        },
     )
 }
 

@@ -26,6 +26,7 @@ use super::dto::{
     SelectedSpectrumOutcomeDto, SpectrumRowDto, SpectrumTableDto, bounded_text,
     redact_absolute_paths, require_finite, require_finite_option,
 };
+use super::installation::InstallationIdentity;
 use super::selection::{
     AcceptedFile, FileRegistry, accept_mzml_file, file_identity, lock_against_replacement,
 };
@@ -59,9 +60,27 @@ pub struct PreviewService {
     /// ordering could show the installation a choice replaced while every
     /// later operation used the chosen one.
     installation_generation: AtomicU64,
-    /// The installation location currently in use, so a request for the one
-    /// already in use can be recognised as no change at all.
-    current_home: Mutex<Option<PathBuf>>,
+    /// Which backend the last look actually resolved to.
+    ///
+    /// Not the folder that was requested. A request names a configuration; what
+    /// matters is the tool pair that configuration resolves to, and the two come
+    /// apart in both directions -- automatic discovery falling back to another
+    /// release after one is removed, and a folder whose binaries are upgraded in
+    /// place. Comparing requests would miss both.
+    resolved: Mutex<ObservedBackend>,
+}
+
+/// What the service has observed about which backend resolves.
+#[derive(Default)]
+struct ObservedBackend {
+    /// False until something has actually looked. The first look is not a
+    /// change: there is nothing before it to differ from, and counting it would
+    /// make every session open by telling its callers to discard readings that
+    /// do not exist yet.
+    looked: bool,
+    /// What the last look resolved. `None` means nothing usable resolved, which
+    /// is a state a later look can differ from like any other.
+    identity: Option<InstallationIdentity>,
 }
 
 impl PreviewService {
@@ -75,7 +94,7 @@ impl PreviewService {
             backend_gate: Mutex::new(()),
             spectrum_ticket: AtomicU64::new(0),
             installation_generation: AtomicU64::new(0),
-            current_home: Mutex::new(None),
+            resolved: Mutex::new(ObservedBackend::default()),
         }
     }
 
@@ -99,39 +118,44 @@ impl PreviewService {
     /// here in which the two can disagree.
     pub fn use_installation(&self, home: Option<PathBuf>) -> BackendAvailabilityDto {
         let _running = self.enter_backend();
-        let mut current = self
-            .current_home
-            .lock()
-            .expect("the installation lock is never poisoned by user code");
-        // Only a real switch advances the sequence. Asking for the location
-        // already in use is not a change, and treating it as one would tell
-        // every caller to throw away readings that are still perfectly good --
-        // which is what "Search automatically" while already automatic, or
-        // re-picking the same folder, would otherwise cost the user.
-        //
-        // Compared as paths, so two spellings of one directory read as a
-        // change. That errs towards discarding readings that were still valid,
-        // never towards keeping ones that are not, which is the direction this
-        // has to fail in.
-        if *current != home {
-            self.installation_generation.fetch_add(1, Ordering::Relaxed);
-            current.clone_from(&home);
-            self.provider.use_installation(home);
-        }
-        drop(current);
-        // Read either way. The user asked for a reading, and an installation
-        // that has not changed can still have been removed since it was last
-        // looked at.
+        // Told unconditionally. Whether this is a change is not decided by what
+        // was asked for -- the same request can resolve to a different backend
+        // and a different request to the same one -- so it is decided below, by
+        // what the reading that follows actually resolves to.
+        self.provider.use_installation(home);
         self.stamped_availability()
     }
 
-    /// Reads the backend and stamps the verdict with where it belongs in the
-    /// sequence of installation changes. Both are done holding the gate, so the
-    /// number describes the installation the verdict actually came from.
+    /// Reads the backend, notes which one that turned out to be, and stamps the
+    /// verdict with where it belongs in the sequence of changes.
+    ///
+    /// All of it under the gate, so the number describes the installation the
+    /// verdict actually came from.
     fn stamped_availability(&self) -> BackendAvailabilityDto {
-        let mut availability = self.provider.availability();
+        let (mut availability, identity) = self.provider.availability();
+        self.note_resolved(identity);
         availability.installation_generation = self.installation_generation.load(Ordering::Relaxed);
         availability
+    }
+
+    /// Advances the sequence when the backend that resolves is a different one.
+    ///
+    /// The sequence counts changes of *backend*, not of configuration. A folder
+    /// re-picked while its binaries were upgraded in place is a change; asking
+    /// for automatic discovery while already on it is not; and a chosen folder
+    /// that resolves to the very tools automatic discovery was already using is
+    /// not either. Only comparing what resolved gets all three right.
+    ///
+    fn note_resolved(&self, identity: Option<InstallationIdentity>) {
+        let mut observed = self
+            .resolved
+            .lock()
+            .expect("the installation lock is never poisoned by user code");
+        if observed.looked && observed.identity != identity {
+            self.installation_generation.fetch_add(1, Ordering::Relaxed);
+        }
+        observed.looked = true;
+        observed.identity = identity;
     }
 
     /// Accepts one already-chosen path and registers it for later operations.
@@ -170,15 +194,21 @@ impl PreviewService {
         // run, and combining those into one preview would present an
         // acquisition that never existed.
         let before = SourceGeneration::of(&file);
-        // Read out while the gate is still held, and recorded below. The rows
-        // this open produces are the work of whichever installation is in use
-        // for the batch, and only a holder of this gate can change that.
-        let installation = running.installation;
+        // Read out while the gate is still held, and recorded below. Only a
+        // holder of this gate can advance it, so this is where the sequence
+        // stood for the whole batch.
+        let generation = running.installation;
         // Held for the whole batch, so the file cannot be swapped away and
         // swapped back between the two comparisons around it. Required: losing
         // the hold means losing the guarantee.
         let guard = lock_against_replacement(file.path())?;
         let results = self.provider.run_batch(file.path(), &operations)?;
+        // Which backend actually did this work, taken from the results rather
+        // than from a later look. The batch shares one resolution, so they all
+        // report the same one; taking the first is taking that resolution.
+        let installation = results
+            .first()
+            .and_then(|result| result.installation.clone());
         drop(guard);
         drop(running);
         if SourceGeneration::capture(file.path()) != before {
@@ -250,6 +280,7 @@ impl PreviewService {
                 handle.to_owned(),
                 OpenedPreview {
                     source: before,
+                    generation,
                     installation,
                 },
             );
@@ -295,19 +326,34 @@ impl PreviewService {
             .expect("the generation lock is never poisoned by user code")
             .get(handle)
             .cloned();
-        // Refused before anything is launched. The table's rows are what this
-        // spectrum is reconciled against, and they were read by whichever
-        // installation was in use then. Reconciling across a change would
-        // compare two installations' readings and call the difference a finding
-        // about the file. Nor is dropping the comparison an option: this is the
-        // check that keeps the row the user clicked and the panel beside it
-        // describing the same spectrum.
+        // Two refusals, before anything is launched, and neither replaces the
+        // other. The table's rows are what this spectrum is reconciled against,
+        // and they were read by whichever backend was in use then; reconciling
+        // across a change would compare two backends' readings and call the
+        // difference a finding about the file. Dropping the comparison is not
+        // the alternative -- it is the check that keeps the row the user
+        // clicked and the panel beside it describing the same spectrum.
+        //
+        // The sequence number is cheap and known already, so a deliberate
+        // change costs nothing to catch.
         if let Some(opened) = opened.as_ref()
-            && opened.installation != running.installation
+            && opened.generation != running.installation
         {
             return Err(installation_changed_since_preview());
         }
-        let opened_generation = opened.map(|opened| opened.source);
+        // The sequence only counts changes something looked at. A backend
+        // replaced on disk since the last look advances nothing, so the
+        // installation is resolved again here and compared for what it is. This
+        // costs a discovery before the read, which is the price of not showing
+        // one backend's spectrum beside another's rows.
+        if let Some(opened) = opened.as_ref() {
+            let (_, resolved) = self.provider.availability();
+            self.note_resolved(resolved.clone());
+            if opened.installation != resolved {
+                return Err(installation_changed_since_preview());
+            }
+        }
+        let opened_generation = opened.as_ref().map(|opened| opened.source.clone());
         if let Some(expected) = opened_generation.as_ref()
             && SourceGeneration::capture(file.path()) != *expected
         {
@@ -325,6 +371,15 @@ impl PreviewService {
         let operation = selected_spectrum_operation(index);
         let guard = lock_against_replacement(file.path())?;
         let result = self.provider.run(file.path(), &operation)?;
+        // And once more on what actually ran. The check above resolved the
+        // backend a moment before this launched, which leaves a window the size
+        // of that moment; this closes it with the identity the operation itself
+        // reports, which is the only one that describes this spectrum.
+        if let Some(opened) = opened.as_ref()
+            && opened.installation != result.installation
+        {
+            return Err(installation_changed_since_preview());
+        }
         drop(guard);
         drop(running);
         if SourceGeneration::capture(file.path()) != SourceGeneration::of(&file) {
@@ -501,11 +556,17 @@ struct BackendRun<'a> {
     installation: u64,
 }
 
-/// What one open action read, and which installation read it.
+/// What one open action read, and which backend read it.
 #[derive(Debug, Clone)]
 struct OpenedPreview {
     source: SourceGeneration,
-    installation: u64,
+    /// Where the sequence stood. Cheap, and known before anything is launched,
+    /// so a deliberate change is refused without spending a process.
+    generation: u64,
+    /// Which backend actually produced the rows. `None` when the batch reported
+    /// none, which compares equal to nothing and so refuses rather than
+    /// assumes.
+    installation: Option<InstallationIdentity>,
 }
 
 fn installation_changed_since_preview() -> PreviewErrorDto {

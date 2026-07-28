@@ -10,6 +10,7 @@
 pub mod backend;
 pub mod dialog;
 pub mod dto;
+mod installation;
 pub mod selection;
 pub mod service;
 
