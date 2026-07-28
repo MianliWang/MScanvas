@@ -8,6 +8,7 @@ import {
   availableBackend,
   buildPreview,
   chosenBackend,
+  chosenFolderWithoutTools,
   buildSpectrum,
   createFakePreviewApi,
   deferred,
@@ -163,6 +164,23 @@ describe("mzML preview workspace", () => {
     const choose = await screen.findByRole("button", { name: "Choose folder…" });
     expect(choose).toBeEnabled();
     expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
+  });
+
+  it("says why a chosen folder is unusable, and offers only what it can do", async () => {
+    // ENV-002 requires an invalid choice to explain itself. "The configured
+    // location is not usable" is a category, not a reason, and the advice that
+    // came with it named an exact executable path -- something this
+    // application has neither a command nor a picker for.
+    const api = createFakePreviewApi({ chosenInstallation: chosenFolderWithoutTools });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("button", { name: "Choose folder…" }));
+
+    expect(await screen.findByText(/holds neither msconvert.exe nor msaccess.exe/)).toBeVisible();
+    expect(screen.getByText(/Choose a different folder, or go back to searching/)).toBeVisible();
+    // Both ways out, and nothing that asks for an executable path.
+    expect(screen.getByRole("button", { name: "Search automatically" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Choose a different folder…" })).toBeEnabled();
+    expect(screen.queryByText(/msconvert.exe\/msaccess.exe/)).toBeNull();
   });
 
   it("keeps the verdict it had when the folder picker is dismissed", async () => {

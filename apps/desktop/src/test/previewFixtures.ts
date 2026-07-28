@@ -40,6 +40,24 @@ export const chosenBackend: BackendAvailability = {
   failure: null,
 };
 
+/// A chosen folder that holds no installation, reported by cause rather than by
+/// category. The application classifies this itself so the reason can be
+/// specific without a path reaching the webview.
+export const chosenFolderWithoutTools: BackendAvailability = {
+  state: "unavailable",
+  origin: "chosen",
+  installationGeneration: 1,
+  release: null,
+  buildDate: null,
+  sameInstallation: false,
+  failure: {
+    kind: "chosen_folder_missing_both_tools",
+    summary:
+      "That folder holds neither msconvert.exe nor msaccess.exe, so it is not a ProteoWizard installation.",
+    correctiveAction: "Choose a different folder, or go back to searching automatically.",
+  },
+};
+
 export const unavailableBackend: BackendAvailability = {
   state: "unavailable",
   origin: "automatic",
