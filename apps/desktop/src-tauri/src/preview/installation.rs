@@ -187,11 +187,23 @@ pub(crate) fn classify_chosen_folder(
     home: &Path,
     failure: Option<&DiscoveryFailure>,
 ) -> ChosenFolderProblem {
+    // Matched as variants, not as `kind()` strings. A string here compiles
+    // whatever it says, so a name that does not exist -- or stops existing --
+    // silently makes its branch unreachable and sends the case to whatever the
+    // fallback happens to be. The variants are checked by the compiler.
     if let Some(failure) = failure {
-        match failure.kind() {
-            "msconvert_missing" => return ChosenFolderProblem::MissingMsconvert,
-            "msaccess_missing" => return ChosenFolderProblem::MissingMsaccess,
-            "tools_from_different_installations" => {
+        match failure {
+            DiscoveryFailure::MissingTool { executable, .. }
+                if executable.eq_ignore_ascii_case(MSCONVERT_EXE) =>
+            {
+                return ChosenFolderProblem::MissingMsconvert;
+            }
+            DiscoveryFailure::MissingTool { executable, .. }
+                if executable.eq_ignore_ascii_case(MSACCESS_EXE) =>
+            {
+                return ChosenFolderProblem::MissingMsaccess;
+            }
+            DiscoveryFailure::ToolsFromDifferentInstallations { .. } => {
                 return ChosenFolderProblem::IncompatibleToolPair;
             }
             _ => {}
@@ -293,6 +305,49 @@ mod tests {
             classify_chosen_folder(&only_msaccess.path, None),
             ChosenFolderProblem::MissingMsconvert
         );
+    }
+
+    #[test]
+    fn a_mismatched_tool_pair_is_reported_as_one() {
+        // The crate calls this `different_installations`; an earlier draft here
+        // matched on a longer name that does not exist, so the branch was
+        // unreachable and such a folder was reported as a probe failure -- the
+        // wrong cause, with the wrong thing to do about it. Matching the
+        // variant is what makes that a compile error rather than a silent
+        // fallthrough.
+        let tree = TempDir::new("mismatched-pair");
+        tree.file(MSCONVERT_EXE, b"x");
+        tree.file(MSACCESS_EXE, b"x");
+        let failure = DiscoveryFailure::ToolsFromDifferentInstallations {
+            msconvert_path: tree.path.join(MSCONVERT_EXE),
+            msaccess_path: PathBuf::from("elsewhere").join(MSACCESS_EXE),
+        };
+
+        assert_eq!(
+            classify_chosen_folder(&tree.path, Some(&failure)),
+            ChosenFolderProblem::IncompatibleToolPair
+        );
+    }
+
+    #[test]
+    fn a_missing_tool_is_named_from_the_typed_failure_rather_than_the_folder() {
+        // Both files are present here, so the folder alone would say the pair
+        // is complete. Only the typed failure knows which one discovery could
+        // not use.
+        let tree = TempDir::new("typed-missing-tool");
+        tree.file(MSCONVERT_EXE, b"x");
+        tree.file(MSACCESS_EXE, b"x");
+
+        for (executable, expected) in [
+            (MSCONVERT_EXE, ChosenFolderProblem::MissingMsconvert),
+            (MSACCESS_EXE, ChosenFolderProblem::MissingMsaccess),
+        ] {
+            let failure = DiscoveryFailure::MissingTool {
+                executable: executable.to_owned(),
+                expected_path: tree.path.join(executable),
+            };
+            assert_eq!(classify_chosen_folder(&tree.path, Some(&failure)), expected);
+        }
     }
 
     #[test]
