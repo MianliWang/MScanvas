@@ -6,13 +6,24 @@ Each workflow is a testable product contract, not a screen description.
 
 **Goal:** reach a usable workspace without opening a terminal.
 
-1. Application checks known locations and saved configuration.
-2. If available, it reports ProteoWizard path/version and enters the workspace.
-3. If unavailable, it offers `Locate msconvert`, installation guidance and retry.
+1. Application checks the locations an installer writes. Nothing is read from
+   saved configuration: a stored path would go on applying, in later sessions
+   and without being asked again, to a folder MSCanvas has no way to vouch for.
+2. If available, it reports the ProteoWizard release and build and enters the
+   workspace. The report states which installation it describes.
+3. If unavailable, it offers installation guidance, retry, and `Choose folder…`
+   for an installation somewhere it does not search. That choice lasts for the
+   session only and names a folder, never an executable: naming one binary
+   invites the other coming from somewhere else, which is already a failure.
 4. A self-test produces a specific launch/configuration result.
 
 **Success:** the user knows whether conversion is ready and what remains to fix.
-**Recovery:** changing the executable does not discard the current workspace.
+**Recovery:** returning to automatic discovery is offered from every state,
+including the one where the check itself failed — that state is precisely the
+one that cannot say which installation is in use, so it must not strand a
+chosen folder in place. Changing the installation discards what the replaced
+one read, because those readings are not comparable with the new one's, but not
+the selected file: it stays one click from being reopened.
 
 ## WF-002 — Add and curate a batch
 
