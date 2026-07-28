@@ -20,6 +20,17 @@ export function PreviewWorkspace() {
     completeRenderMeasurements();
   }, [completeRenderMeasurements, preview, spectrum]);
 
+  // Opening a file needs a backend positively known to work. "Checking" and
+  // "failed" are not that: a failed check cannot say whether an installation is
+  // present, and a folder choice that failed before reaching the backend says
+  // nothing about it either. Offering an action whose only outcome is another
+  // failure is worse than not offering it.
+  const backendUsable =
+    workspace.backend.status === "resolved" &&
+    workspace.backend.availability.state === "available";
+  // Deliberately not the negation of the above. This is the one state that has
+  // something specific to tell the user about installing ProteoWizard, and
+  // saying it while a check is still running would be a guess.
   const backendUnavailable =
     workspace.backend.status === "resolved" &&
     workspace.backend.availability.state === "unavailable";
@@ -51,7 +62,7 @@ export function PreviewWorkspace() {
         <div className="toolbar-actions">
           <button
             className="primary-button"
-            disabled={backendUnavailable || preview.status === "opening" || workspace.backendBusy}
+            disabled={!backendUsable || preview.status === "opening" || workspace.backendBusy}
             onClick={workspace.openFile}
             type="button"
           >
@@ -134,13 +145,19 @@ export function PreviewWorkspace() {
                   {preview.error.retryable ? (
                     <button
                       className="secondary-button"
+                      disabled={!backendUsable || workspace.backendBusy}
                       onClick={workspace.retryOpen}
                       type="button"
                     >
                       Try opening this file again
                     </button>
                   ) : null}
-                  <button className="secondary-button" onClick={workspace.openFile} type="button">
+                  <button
+                    className="secondary-button"
+                    disabled={!backendUsable || workspace.backendBusy}
+                    onClick={workspace.openFile}
+                    type="button"
+                  >
                     Choose a different file
                   </button>
                 </div>
@@ -163,7 +180,7 @@ export function PreviewWorkspace() {
                     {workspace.selectedFileName === null ? null : (
                       <button
                         className="primary-button"
-                        disabled={workspace.backendBusy}
+                        disabled={!backendUsable || workspace.backendBusy}
                         onClick={workspace.reopenSelectedFile}
                         type="button"
                       >
@@ -174,7 +191,7 @@ export function PreviewWorkspace() {
                       className={
                         workspace.selectedFileName === null ? "primary-button" : "secondary-button"
                       }
-                      disabled={workspace.backendBusy}
+                      disabled={!backendUsable || workspace.backendBusy}
                       onClick={workspace.openFile}
                       type="button"
                     >

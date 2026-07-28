@@ -117,6 +117,24 @@ describe("mzML preview workspace", () => {
     expect(api.requestedSpectra.length).toBe(picksBefore);
   });
 
+  it("closes the open actions when the backend state is not positively available", async () => {
+    // A failed call cannot say whether an installation is present. Gating on
+    // "explicitly unavailable" left every open action live in that state, so
+    // the only thing it could lead to was another failure -- including after a
+    // folder choice that failed before ever reaching the backend.
+    const api = createFakePreviewApi({
+      availability: () => Promise.reject(previewError({ kind: "preview_worker_unavailable" })),
+    });
+    renderApp(api);
+
+    await screen.findByRole("button", { name: "Search automatically" });
+
+    expect(screen.getByRole("button", { name: "Open mzML…" })).toBeDisabled();
+    // The recovery actions the banner offers stay live -- they are the way out.
+    expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Choose folder…" })).toBeEnabled();
+  });
+
   it("starts no second backend request while one is outstanding", async () => {
     // The two installation commands contend for a single lock in Rust, and it
     // does not grant in call order. Letting a second start means acting on a
