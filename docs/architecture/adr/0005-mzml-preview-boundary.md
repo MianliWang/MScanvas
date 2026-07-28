@@ -167,11 +167,24 @@ index. Every one of them is typed on both sides.
 - Timings recorded in the workspace are descriptive observations on the running
   machine. They are not budgets, and no threshold derives from them; that would
   need repeated measurement on a recorded hardware baseline.
-- Discovery is automatic and MSCanvas cannot yet be pointed at a particular
-  installation, so it does not suggest doing so. The corrective action it does
-  offer is the one this version can carry out. `mscanvas-proteowizard`'s own
-  discovery-failure text still suggests choosing an installation folder, which
-  no UI provides; correcting that belongs with whatever adds the setting.
+- Discovery is automatic by default and can be pointed at one folder for the
+  session. Every corrective action the boundary offers is one this version can
+  carry out: `mscanvas-proteowizard`'s own discovery-failure text suggests
+  naming an exact `msconvert.exe`/`msaccess.exe` path, which there is still no
+  command or picker for, so a chosen folder's failure is reported from a cause
+  established here instead — missing, not a directory, unreadable, missing
+  either tool or both, a probe failure, or a mismatched pair — and never by
+  forwarding the crate's advice.
+- Which installation is in use is decided by what actually resolved, not by
+  what was requested. The two come apart in both directions: automatic
+  discovery falls back to another release when the one in use is removed, and a
+  chosen folder's binaries can be upgraded in place. So the identity of the
+  resolved `msconvert`/`msaccess` pair — canonical paths, filesystem identities,
+  lengths, modification times, and the release and build the binaries report —
+  is what a preview is stamped with and what a later spectrum is checked
+  against. It is compared and never displayed: it is not serialisable, its
+  `Debug` is opaque, and it is returned beside the transfer objects rather than
+  inside one, so no path reaches the webview by being logged or serialised.
 - Total ion chromatogram, base peak chromatogram, chromatogram UI, mzXML,
   vendor acquisitions, the conversion workflow, queueing, retry, progress and
   real cancellation remain outside this boundary and separately gated.
