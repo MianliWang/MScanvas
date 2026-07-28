@@ -589,8 +589,19 @@ export function usePreviewWorkspace(): PreviewWorkspace {
             // the same way until the user happens to press Check again. The
             // readings go, the selection stays, and the banner is refreshed to
             // describe what is installed now.
-            if (BACKEND_CHANGED_KINDS.has(failure.kind)) {
-              discardBackendDerivedState();
+            // Any failure that cannot be retried is a reason to ask whether
+            // the backend is still what the banner says. A replacement that
+            // keeps a file's metadata but no longer answers its help probe
+            // fails inside the provider's own resolution, so it never reaches
+            // the comparison that would name it a change -- and without this
+            // the table would stay on screen with every row failing the same
+            // way. Re-checking is cheap next to a launch, and discards nothing
+            // unless the backend really did change.
+            const definitelyChanged = BACKEND_CHANGED_KINDS.has(failure.kind);
+            if (definitelyChanged || !failure.retryable) {
+              if (definitelyChanged) {
+                discardBackendDerivedState();
+              }
               // Deferred behind an outstanding installation change for the same
               // reason the open recovery is: this check is not a user action,
               // so it passes straight through the busy guard, and clearing that

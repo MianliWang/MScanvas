@@ -176,6 +176,31 @@ describe("mzML preview workspace", () => {
     expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
   });
 
+  it("re-checks the backend when a row fails in a way that cannot be retried", async () => {
+    // A backend replaced in place can keep its file metadata and still stop
+    // answering its help probe. That fails inside the provider's own
+    // resolution, so it never reaches the comparison that would name it a
+    // change -- and without asking, the table would stay on screen with every
+    // row failing the same way.
+    let installed = true;
+    const api = createFakePreviewApi({
+      availability: () => Promise.resolve(installed ? availableBackend : unavailableBackend),
+      spectrum: () => {
+        installed = false;
+        return Promise.reject(
+          previewError({ kind: "capability_evidence_unavailable", retryable: false }),
+        );
+      },
+    });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+
+    // The banner stops claiming a backend that no longer answers.
+    expect(await screen.findByText("ProteoWizard is not available")).toBeVisible();
+  });
+
   it("does not start a row read while a backend request is outstanding", async () => {
     // Reading a row is backend work, so the one-at-a-time rule has to cover it.
     // Started while an installation is being probed it either reads the backend
