@@ -179,12 +179,24 @@ index. Every one of them is typed on both sides.
   what was requested. The two come apart in both directions: automatic
   discovery falls back to another release when the one in use is removed, and a
   chosen folder's binaries can be upgraded in place. So the identity of the
-  resolved `msconvert`/`msaccess` pair — canonical paths, filesystem identities,
-  lengths, modification times, and the release and build the binaries report —
-  is what a preview is stamped with and what a later spectrum is checked
-  against. It is compared and never displayed: it is not serialisable, its
-  `Debug` is opaque, and it is returned beside the transfer objects rather than
-  inside one, so no path reaches the webview by being logged or serialised.
+  resolved `msconvert`/`msaccess` pair is what a preview is stamped with and
+  what a later spectrum is checked against.
+
+  That identity is content first. Discovery already hashes each executable
+  either side of its help probe, so the digest is free, and it is the only fact
+  that cannot survive a replacement: an installer repairing in place can keep
+  the path, the filesystem identity, the length, the timestamp and the reported
+  version and still write different bytes. Where both sides carry a digest, the
+  path and the digest decide alone — a modification time rewritten over
+  unchanged bytes, by a backup restore or a timestamp normalisation, is not a
+  different backend. The filesystem identity, length and modification time
+  decide only where no digest was bound, which is every case where a tool did
+  not probe successfully; there nothing better exists, and calling two unprobed
+  tools equal on their paths would be the more dangerous mistake.
+
+  It is compared and never displayed: it is not serialisable, its `Debug` is
+  opaque, and it is returned beside the transfer objects rather than inside one,
+  so no path reaches the webview by being logged or serialised.
 - Total ion chromatogram, base peak chromatogram, chromatogram UI, mzXML,
   vendor acquisitions, the conversion workflow, queueing, retry, progress and
   real cancellation remain outside this boundary and separately gated.
