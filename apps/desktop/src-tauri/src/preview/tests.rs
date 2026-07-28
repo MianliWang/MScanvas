@@ -434,6 +434,89 @@ fn a_chosen_folder_with_no_installation_can_be_undone() {
     assert!(restored.failure.is_none());
 }
 
+/// A provider that says when its batch has finished, so a test can queue an
+/// installation change directly behind one open.
+struct SignallingProvider {
+    inner: FakeProvider,
+    finished: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+}
+
+impl PreviewProvider for SignallingProvider {
+    fn use_installation(&self, home: Option<PathBuf>) {
+        self.inner.use_installation(home);
+    }
+
+    fn availability(&self) -> BackendAvailabilityDto {
+        self.inner.availability()
+    }
+
+    fn run(
+        &self,
+        source: &Path,
+        operation: &PreviewOperation,
+    ) -> Result<OperationResult, PreviewErrorDto> {
+        self.inner.run(source, operation)
+    }
+
+    fn run_batch(
+        &self,
+        source: &Path,
+        operations: &[PreviewOperation],
+    ) -> Result<Vec<OperationResult>, PreviewErrorDto> {
+        let results = self.inner.run_batch(source, operations);
+        // Sent while the gate is still held, so the waiting change queues
+        // behind this open rather than racing it.
+        if let Some(sender) = self.finished.lock().expect("test lock").take() {
+            let _ = sender.send(());
+        }
+        results
+    }
+}
+
+#[test]
+fn a_change_queued_behind_an_open_is_not_absorbed_into_what_that_open_recorded() {
+    // The rows an open records are the work of the installation in use for its
+    // batch. A change waiting on the gate takes effect the moment that open
+    // releases it, so anything read after that point describes the installation
+    // which replaced the one that did the reading -- and a preview stamped that
+    // way passes the very check that exists to refuse it.
+    let file = TestFile::new("queued-change");
+    let responses = vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+    ];
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let service = std::sync::Arc::new(PreviewService::new(Box::new(SignallingProvider {
+        inner: FakeProvider::available(responses),
+        finished: Mutex::new(Some(sender)),
+    })));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let change = {
+        let service = std::sync::Arc::clone(&service);
+        std::thread::spawn(move || {
+            receiver
+                .recv()
+                .expect("the open reports its batch finished");
+            // Blocks on the backend gate until the open releases it.
+            service.use_installation(Some(PathBuf::from(r"C:\pwiz")));
+        })
+    };
+
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens");
+    change.join().expect("the queued change completes");
+
+    let error = service
+        .load_spectrum(&selected.handle, 0)
+        .expect_err("a spectrum is not reconciled against another installation's table");
+
+    assert_eq!(error.kind, "installation_changed_since_preview");
+}
+
 #[test]
 fn a_spectrum_is_refused_rather_than_reconciled_across_an_installation_change() {
     // The table's rows are what a selected spectrum is reconciled against, and

@@ -145,6 +145,10 @@ impl PreviewService {
         // run, and combining those into one preview would present an
         // acquisition that never existed.
         let before = SourceGeneration::of(&file);
+        // Read out while the gate is still held, and recorded below. The rows
+        // this open produces are the work of whichever installation is in use
+        // for the batch, and only a holder of this gate can change that.
+        let installation = running.installation;
         // Held for the whole batch, so the file cannot be swapped away and
         // swapped back between the two comparisons around it. Required: losing
         // the hold means losing the guarantee.
@@ -221,7 +225,7 @@ impl PreviewService {
                 handle.to_owned(),
                 OpenedPreview {
                     source: before,
-                    installation: self.installation_generation.load(Ordering::Relaxed),
+                    installation,
                 },
             );
         self.table_rows
@@ -274,7 +278,7 @@ impl PreviewService {
         // check that keeps the row the user clicked and the panel beside it
         // describing the same spectrum.
         if let Some(opened) = opened.as_ref()
-            && opened.installation != self.installation_generation.load(Ordering::Relaxed)
+            && opened.installation != running.installation
         {
             return Err(installation_changed_since_preview());
         }
@@ -443,11 +447,33 @@ impl PreviewService {
     /// Waits for the right to run a backend operation.
     ///
     /// The guard is the permission; dropping it releases the next caller.
-    fn enter_backend(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.backend_gate
+    fn enter_backend(&self) -> BackendRun<'_> {
+        let guard = self
+            .backend_gate
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        BackendRun {
+            installation: self.installation_generation.load(Ordering::Relaxed),
+            _guard: guard,
+        }
     }
+}
+
+/// The backend gate, held, and what was true when it was taken.
+///
+/// The installation generation travels with the guard so that reading it after
+/// the gate is released stops compiling. An installation change queued behind
+/// this run acquires the gate the instant it is dropped, so a value read after
+/// that can name the installation which *replaced* the one whose work is being
+/// recorded -- and a preview stamped that way passes the check that exists to
+/// refuse it, putting one installation's spectrum beside another's rows.
+///
+/// `use_installation` deliberately does not use this field: it advances the
+/// generation after taking the gate, so the value it must report is the one
+/// after its own change, not the one it found.
+struct BackendRun<'a> {
+    _guard: std::sync::MutexGuard<'a, ()>,
+    installation: u64,
 }
 
 /// What one open action read, and which installation read it.
