@@ -259,8 +259,16 @@ pub(crate) fn classify_chosen_folder(
         }
     }
 
-    let Ok(metadata) = std::fs::symlink_metadata(home) else {
-        return ChosenFolderProblem::Missing;
+    // Only "not there" is missing. An ACL change, a network share that has gone
+    // away, or any other refusal leaves a folder that exists and cannot be
+    // looked at -- and telling the user it no longer exists sends them to
+    // recreate something that is still there.
+    let metadata = match std::fs::symlink_metadata(home) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return ChosenFolderProblem::Missing;
+        }
+        Err(_) => return ChosenFolderProblem::Unreadable,
     };
     if !metadata.is_dir() {
         return ChosenFolderProblem::NotADirectory;
@@ -325,6 +333,25 @@ mod tests {
         assert_eq!(
             classify_chosen_folder(&tree.path, None),
             ChosenFolderProblem::MissingBothTools
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_that_cannot_be_inspected_is_not_reported_as_gone() {
+        // Anything other than "not there" leaves a folder that may well exist
+        // and cannot be looked at -- an ACL change, a share that has gone away.
+        // Reporting those as "no longer exists" sends the user to recreate
+        // something that is still there.
+        //
+        // An illegal name is the one such error a test can provoke without
+        // touching ACLs or the network: Windows answers `InvalidFilename`,
+        // which is exactly the class that used to be read as absence.
+        let illegal = PathBuf::from(r"C:\bad<name\installation");
+
+        assert_eq!(
+            classify_chosen_folder(&illegal, None),
+            ChosenFolderProblem::Unreadable
         );
     }
 
