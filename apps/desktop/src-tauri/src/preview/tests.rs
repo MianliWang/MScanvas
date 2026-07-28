@@ -435,6 +435,40 @@ fn a_chosen_folder_with_no_installation_can_be_undone() {
 }
 
 #[test]
+fn a_spectrum_is_refused_rather_than_reconciled_across_an_installation_change() {
+    // The table's rows are what a selected spectrum is reconciled against, and
+    // they were read by whichever installation was in use then. Comparing
+    // across a change would call the difference between two installations a
+    // finding about the file. Dropping the comparison is not the alternative:
+    // it is what keeps the row the user clicked and the panel beside it
+    // describing the same spectrum.
+    let file = TestFile::new("installation-change");
+    let responses = vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+    ];
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens");
+
+    service.use_installation(Some(PathBuf::from(r"C:\pwiz")));
+
+    let error = service
+        .load_spectrum(&selected.handle, 0)
+        .expect_err("a spectrum is not reconciled against another installation's table");
+
+    assert_eq!(error.kind, "installation_changed_since_preview");
+    // Not retryable: reading again changes nothing. Opening the file again is
+    // the action, and the message says so.
+    assert!(!error.retryable);
+    assert!(error.summary.contains("Open the file again"));
+}
+
+#[test]
 fn a_verdict_says_where_it_belongs_in_the_sequence_of_installation_changes() {
     // Request order is not service order: the two commands contend for one
     // gate, and it does not grant in the order they were called. A caller that

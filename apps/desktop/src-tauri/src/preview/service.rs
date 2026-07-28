@@ -34,9 +34,9 @@ use super::selection::{
 pub struct PreviewService {
     provider: Box<dyn PreviewProvider>,
     files: FileRegistry,
-    /// The generation each open preview described, so a later spectrum load
-    /// can be refused rather than answered from a different one.
-    generations: Mutex<HashMap<String, SourceGeneration>>,
+    /// What each open preview described, so a later spectrum load can be
+    /// refused rather than answered from a different one.
+    generations: Mutex<HashMap<String, OpenedPreview>>,
     /// What the opened spectrum table said about each row, so a later selected
     /// spectrum can be checked against the row the user actually clicked.
     table_rows: Mutex<HashMap<String, Vec<TableRowFacts>>>,
@@ -217,7 +217,13 @@ impl PreviewService {
         self.generations
             .lock()
             .expect("the generation lock is never poisoned by user code")
-            .insert(handle.to_owned(), before);
+            .insert(
+                handle.to_owned(),
+                OpenedPreview {
+                    source: before,
+                    installation: self.installation_generation.load(Ordering::Relaxed),
+                },
+            );
         self.table_rows
             .lock()
             .expect("the table lock is never poisoned by user code")
@@ -254,12 +260,25 @@ impl PreviewService {
         // A selected spectrum is shown beside the metadata and the table from
         // the open action. If the file has changed since then, this spectrum
         // would belong to a different run than everything around it.
-        let opened_generation = self
+        let opened = self
             .generations
             .lock()
             .expect("the generation lock is never poisoned by user code")
             .get(handle)
             .cloned();
+        // Refused before anything is launched. The table's rows are what this
+        // spectrum is reconciled against, and they were read by whichever
+        // installation was in use then. Reconciling across a change would
+        // compare two installations' readings and call the difference a finding
+        // about the file. Nor is dropping the comparison an option: this is the
+        // check that keeps the row the user clicked and the panel beside it
+        // describing the same spectrum.
+        if let Some(opened) = opened.as_ref()
+            && opened.installation != self.installation_generation.load(Ordering::Relaxed)
+        {
+            return Err(installation_changed_since_preview());
+        }
+        let opened_generation = opened.map(|opened| opened.source);
         if let Some(expected) = opened_generation.as_ref()
             && SourceGeneration::capture(file.path()) != *expected
         {
@@ -429,6 +448,23 @@ impl PreviewService {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
+}
+
+/// What one open action read, and which installation read it.
+#[derive(Debug, Clone)]
+struct OpenedPreview {
+    source: SourceGeneration,
+    installation: u64,
+}
+
+fn installation_changed_since_preview() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "installation_changed_since_preview",
+        "The ProteoWizard installation changed after this file was opened, so this spectrum \
+         was not compared against a table that a different installation produced. Open the \
+         file again to continue.",
+        false,
+    )
 }
 
 fn source_changed_since_preview() -> PreviewErrorDto {
