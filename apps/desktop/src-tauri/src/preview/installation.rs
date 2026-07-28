@@ -8,20 +8,28 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use mscanvas_proteowizard::{DiscoveryFailure, DiscoveryResult};
+use mscanvas_proteowizard::{DiscoveredTool, DiscoveryFailure, DiscoveryResult, Sha256Digest};
 
 use super::selection::file_identity;
 
 /// One resolved tool, identified well enough to notice it being replaced.
 ///
-/// The path alone is not an identity: an installer that upgrades in place
-/// leaves the path exactly as it was. The filesystem identity alone is not one
-/// either, because writing over a file can keep it. Together with the length
-/// and the modification time they cover replacement, upgrade in place, and a
-/// different installation resolving under the same name.
+/// Content first. Discovery already hashes each executable either side of its
+/// help probe, so the digest costs nothing here and is the only fact that
+/// cannot be preserved through a replacement: an installer repairing in place
+/// can keep the path, the filesystem identity, the length, the timestamp and
+/// even the reported version, and still put different bytes on disk.
+///
+/// The metadata is kept beside it rather than dropped. It is what distinguishes
+/// two installations when no digest was bound -- every case where a tool did
+/// not probe successfully -- and a comparison that had only the path then would
+/// call two different backends the same one.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct ToolIdentity {
     path: PathBuf,
+    /// `None` when no help was bound for this tool, which a comparison reads
+    /// as "unknown content" and so falls back to the facts beside it.
+    content: Option<Sha256Digest>,
     /// `None` when the path is not an acceptable regular file, which a
     /// comparison reads as a change rather than as a match.
     filesystem: Option<(u64, u64)>,
@@ -30,14 +38,20 @@ pub(crate) struct ToolIdentity {
 }
 
 impl ToolIdentity {
-    fn of(path: &Path) -> Self {
+    fn of(path: &Path, content: Option<Sha256Digest>) -> Self {
         let metadata = std::fs::symlink_metadata(path).ok();
         Self {
             path: path.to_path_buf(),
+            content,
             filesystem: file_identity(path),
             byte_length: metadata.as_ref().map(std::fs::Metadata::len),
             modified: metadata.and_then(|metadata| metadata.modified().ok()),
         }
+    }
+
+    fn resolved(tool: &DiscoveredTool) -> Option<Self> {
+        let path = tool.path.as_deref()?;
+        Some(Self::of(path, tool.executable_sha256()))
     }
 }
 
@@ -73,11 +87,9 @@ impl InstallationIdentity {
     /// `None` when discovery resolved no tool pair at all, which is not an
     /// identity and must not compare equal to one.
     pub(crate) fn of(discovery: &DiscoveryResult) -> Option<Self> {
-        let msconvert = discovery.msconvert.path.as_deref()?;
-        let msaccess = discovery.msaccess.path.as_deref()?;
         Some(Self {
-            msconvert: ToolIdentity::of(msconvert),
-            msaccess: ToolIdentity::of(msaccess),
+            msconvert: ToolIdentity::resolved(&discovery.msconvert)?,
+            msaccess: ToolIdentity::resolved(&discovery.msaccess)?,
             release: discovery.release.clone(),
             build_date: discovery.build_date.clone(),
         })
@@ -94,8 +106,8 @@ impl InstallationIdentity {
     /// compares, and two different paths still differ.
     pub(crate) fn for_test(msconvert: &Path, msaccess: &Path, release: &str) -> Self {
         Self {
-            msconvert: ToolIdentity::of(msconvert),
-            msaccess: ToolIdentity::of(msaccess),
+            msconvert: ToolIdentity::of(msconvert, None),
+            msaccess: ToolIdentity::of(msaccess, None),
             release: Some(release.to_owned()),
             build_date: None,
         }
@@ -203,7 +215,13 @@ pub(crate) fn classify_chosen_folder(
             {
                 return ChosenFolderProblem::MissingMsaccess;
             }
-            DiscoveryFailure::ToolsFromDifferentInstallations { .. } => {
+            // Two ways for a pair to be incompatible, and the user needs the
+            // same thing to happen about both: the tools resolving to different
+            // directories, and two tools in one directory that start but report
+            // different builds. The second is the one a folder inspection can
+            // never see, because both files are exactly where they should be.
+            DiscoveryFailure::ToolsFromDifferentInstallations { .. }
+            | DiscoveryFailure::ProbeIdentityMismatch { .. } => {
                 return ChosenFolderProblem::IncompatibleToolPair;
             }
             _ => {}
@@ -330,6 +348,46 @@ mod tests {
     }
 
     #[test]
+    fn two_tools_reporting_different_builds_are_an_incompatible_pair() {
+        // Both files are present and both start, so nothing the folder can be
+        // asked will show this. Only the typed failure knows, and left
+        // unmapped it fell through to "could not be started" -- which is not
+        // what happened and not what the user should do about it.
+        let tree = TempDir::new("build-mismatch");
+        tree.file(MSCONVERT_EXE, b"x");
+        tree.file(MSACCESS_EXE, b"x");
+        let failure = DiscoveryFailure::ProbeIdentityMismatch {
+            msconvert_release: "3.0.26013".to_owned(),
+            msconvert_build_date: "Jan 13 2026".to_owned(),
+            msaccess_release: "3.0.25000".to_owned(),
+            msaccess_build_date: "May 4 2025".to_owned(),
+        };
+
+        assert_eq!(
+            classify_chosen_folder(&tree.path, Some(&failure)),
+            ChosenFolderProblem::IncompatibleToolPair
+        );
+    }
+
+    #[test]
+    fn identical_metadata_with_different_content_is_a_different_tool() {
+        // An installer repairing in place can preserve the path, the filesystem
+        // identity, the length and the timestamp. The digest is the only fact
+        // that cannot survive the bytes changing, which is why it is carried.
+        let tree = TempDir::new("same-metadata");
+        let path = tree.file(MSCONVERT_EXE, b"x");
+        let first = Sha256Digest::calculate(b"the build that was installed").expect("digest");
+        let second = Sha256Digest::calculate(b"the build that replaced it").expect("digest");
+
+        let before = ToolIdentity::of(&path, Some(first));
+        let after = ToolIdentity::of(&path, Some(second));
+
+        assert_ne!(before, after);
+        // And the same content at the same path is the same tool.
+        assert_eq!(before, ToolIdentity::of(&path, Some(first)));
+    }
+
+    #[test]
     fn a_missing_tool_is_named_from_the_typed_failure_rather_than_the_folder() {
         // Both files are present here, so the folder alone would say the pair
         // is complete. Only the typed failure knows which one discovery could
@@ -394,7 +452,7 @@ mod tests {
         // prints one -- a log line, a panic message, an assertion -- would
         // otherwise carry them out of Rust.
         let tree = TempDir::new("opaque");
-        let tool = ToolIdentity::of(&tree.file(MSCONVERT_EXE, b"x"));
+        let tool = ToolIdentity::of(&tree.file(MSCONVERT_EXE, b"x"), None);
 
         assert_eq!(format!("{tool:?}"), "<opaque-installation-tool>");
     }
@@ -405,14 +463,14 @@ mod tests {
         // looks like, so the path alone could not tell these apart.
         let tree = TempDir::new("in-place");
         let path = tree.file(MSCONVERT_EXE, b"first build");
-        let before = ToolIdentity::of(&path);
+        let before = ToolIdentity::of(&path, None);
 
         std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(&path, b"a different build entirely").expect("rewrite");
-        let after = ToolIdentity::of(&path);
+        let after = ToolIdentity::of(&path, None);
 
         assert_ne!(before, after);
         // And re-reading the same unchanged file is not a change.
-        assert_eq!(after, ToolIdentity::of(&path));
+        assert_eq!(after, ToolIdentity::of(&path, None));
     }
 }
