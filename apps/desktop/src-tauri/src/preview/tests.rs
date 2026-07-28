@@ -14,7 +14,7 @@ use mscanvas_proteowizard::{
     Termination, interpret_preview,
 };
 
-use super::backend::{OperationResult, PreviewProvider, interpretation_error};
+use super::backend::{OperationAttempt, PreviewProvider, interpretation_error};
 use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, PreviewErrorDto, SelectedSpectrumOutcomeDto,
 };
@@ -419,7 +419,7 @@ impl PreviewProvider for FakeProvider {
         &self,
         _source: &Path,
         operation: &PreviewOperation,
-    ) -> Result<OperationResult, PreviewErrorDto> {
+    ) -> Result<OperationAttempt, PreviewErrorDto> {
         self.world
             .requested
             .lock()
@@ -449,13 +449,18 @@ impl PreviewProvider for FakeProvider {
                     total_bytes,
                 )]),
             ),
-            Response::Error(error) => return Err(error),
+            Response::Error(error) => {
+                return Ok(OperationAttempt {
+                    installation: self.resolved_backend(),
+                    outcome: Err(error),
+                });
+            }
         };
         let outcome =
             interpret_preview(operation, &process, &manifest).map_err(interpretation_error)?;
-        Ok(OperationResult {
-            outcome,
+        Ok(OperationAttempt {
             installation: self.resolved_backend(),
+            outcome: Ok(outcome),
         })
     }
 
@@ -463,7 +468,7 @@ impl PreviewProvider for FakeProvider {
         &self,
         source: &Path,
         operations: &[PreviewOperation],
-    ) -> Result<Vec<OperationResult>, PreviewErrorDto> {
+    ) -> Result<Vec<OperationAttempt>, PreviewErrorDto> {
         *self.batches.lock().expect("test lock") += 1;
         operations
             .iter()
@@ -585,7 +590,7 @@ impl PreviewProvider for SignallingProvider {
         &self,
         source: &Path,
         operation: &PreviewOperation,
-    ) -> Result<OperationResult, PreviewErrorDto> {
+    ) -> Result<OperationAttempt, PreviewErrorDto> {
         self.inner.run(source, operation)
     }
 
@@ -593,7 +598,7 @@ impl PreviewProvider for SignallingProvider {
         &self,
         source: &Path,
         operations: &[PreviewOperation],
-    ) -> Result<Vec<OperationResult>, PreviewErrorDto> {
+    ) -> Result<Vec<OperationAttempt>, PreviewErrorDto> {
         let results = self.inner.run_batch(source, operations);
         // Sent while the gate is still held, so the waiting change queues
         // behind this open rather than racing it.
@@ -1128,7 +1133,7 @@ impl PreviewProvider for RewritingProvider {
         &self,
         source: &Path,
         operation: &PreviewOperation,
-    ) -> Result<OperationResult, PreviewErrorDto> {
+    ) -> Result<OperationAttempt, PreviewErrorDto> {
         let result = self.inner.run(source, operation);
         let mut runs = self.runs.lock().expect("test lock");
         *runs += 1;
@@ -1206,7 +1211,7 @@ fn only_one_backend_operation_runs_at_a_time() {
             &self,
             source: &Path,
             operation: &PreviewOperation,
-        ) -> Result<OperationResult, PreviewErrorDto> {
+        ) -> Result<OperationAttempt, PreviewErrorDto> {
             let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
             self.peak.fetch_max(active, Ordering::SeqCst);
             std::thread::sleep(std::time::Duration::from_millis(20));
@@ -1271,7 +1276,7 @@ fn opening_another_file_supersedes_a_spectrum_still_waiting_for_its_turn() {
             &self,
             source: &Path,
             operation: &PreviewOperation,
-        ) -> Result<OperationResult, PreviewErrorDto> {
+        ) -> Result<OperationAttempt, PreviewErrorDto> {
             let _ = self.started.send(());
             let _ = self
                 .release
@@ -1831,4 +1836,85 @@ fn every_spectrum_after_an_open_that_noticed_a_change_still_works() {
     service
         .load_spectrum(&selected.handle, 0)
         .expect("and so does every one after it");
+}
+
+/// What the spectrum step is given when execution itself fails after the
+/// backend was resolved -- a launch refused, a wait interrupted, output that
+/// could not be captured. Retryable, because retrying is the right advice when
+/// the installation has not changed.
+fn retryable_launch_failure() -> Response {
+    Response::Error(PreviewErrorDto::new(
+        "backend_launch_failed",
+        "The backend could not be started for that request.",
+        true,
+    ))
+}
+
+#[test]
+fn a_retryable_failure_under_a_replaced_backend_is_reported_as_the_change_it_is() {
+    // The pre-flight passes because the recorded tools are untouched, discovery
+    // then resolves a different installation, and execution under it fails for
+    // a reason that says nothing about which backend ran. Propagating that
+    // error would leave the banner and the table describing the installation
+    // that read them while every retry ran the new one.
+    let file = TestFile::new("failure-under-replacement");
+    let tools = InstalledFiles::new("failure-under-replacement");
+    let provider = Box::new(FakeProvider::available(vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        retryable_launch_failure(),
+    ]));
+    let world = provider.clone_world();
+    world.resolves_to(Some(tools.identity()));
+    let service = PreviewService::new(provider);
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens under the installation it found");
+    let before = service.inspect_backend().installation_generation;
+
+    world.resolves_to(Some(backend("replacement", "3.0.26999")));
+
+    let error = service
+        .load_spectrum(&selected.handle, 0)
+        .expect_err("a spectrum read by another backend is not shown beside this table");
+
+    // The recovery the user can act on, not the launch error underneath it.
+    assert_eq!(error.kind, "installation_changed_since_preview");
+    assert!(!error.retryable);
+    assert!(error.summary.contains("Open the file again"));
+    // And the change was observed rather than lost with the failure, so the
+    // banner cannot stay on the installation that is no longer running.
+    assert!(service.inspect_backend().installation_generation > before);
+}
+
+#[test]
+fn a_retryable_failure_under_the_same_backend_keeps_its_own_error() {
+    // Nothing changed, so the operation's own failure is the truth about this
+    // read -- including that retrying it is worth offering.
+    let file = TestFile::new("failure-same-backend");
+    let tools = InstalledFiles::new("failure-same-backend");
+    let provider = Box::new(FakeProvider::available(vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        retryable_launch_failure(),
+    ]));
+    let world = provider.clone_world();
+    world.resolves_to(Some(tools.identity()));
+    let service = PreviewService::new(provider);
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens");
+    let before = service.inspect_backend().installation_generation;
+
+    let error = service
+        .load_spectrum(&selected.handle, 0)
+        .expect_err("the read failed");
+
+    assert_eq!(error.kind, "backend_launch_failed");
+    assert!(error.retryable);
+    assert_eq!(service.inspect_backend().installation_generation, before);
 }

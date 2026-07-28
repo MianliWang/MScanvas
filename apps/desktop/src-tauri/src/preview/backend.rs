@@ -21,14 +21,20 @@ use super::dto::{
 };
 use super::installation::{InstallationIdentity, classify_chosen_folder};
 
-/// One preview operation's typed result, and which installation produced it.
+/// One attempt at an operation: which installation ran it, and how it went.
 ///
-/// The identity travels with the result because that is the only thing that
-/// can say which backend did this particular work. Asking again afterwards
-/// answers a different question.
-pub struct OperationResult {
-    pub outcome: PreviewOutcome,
+/// The two are kept together because they answer different questions and only
+/// one of them survives a `?`. An operation can fail for reasons that say
+/// nothing about which backend ran it -- a launch that was refused, a wait that
+/// was interrupted, output that could not be captured -- and a caller that
+/// propagated the error would lose the one fact that says whether the failure
+/// even came from the installation it thinks it is using.
+///
+/// `installation` is `None` only where resolution itself never got far enough
+/// to name one.
+pub struct OperationAttempt {
     pub installation: Option<InstallationIdentity>,
+    pub outcome: Result<PreviewOutcome, PreviewErrorDto>,
 }
 
 /// What a provider must be able to do for this slice. Nothing here accepts a
@@ -51,11 +57,15 @@ pub trait PreviewProvider: Send + Sync {
     ///
     /// Implementations perform their own discovery, so an operation is always
     /// self-contained; callers must not assume state carries between calls.
+    ///
+    /// `Err` is reserved for a failure that happened before any installation
+    /// could be named. Everything after that is an attempt: it says which
+    /// backend ran, and separately how the run went.
     fn run(
         &self,
         source: &Path,
         operation: &PreviewOperation,
-    ) -> Result<OperationResult, PreviewErrorDto>;
+    ) -> Result<OperationAttempt, PreviewErrorDto>;
 
     /// Runs several operations for one explicit user action, reusing a single
     /// discovery and capability probe across all of them.
@@ -63,7 +73,7 @@ pub trait PreviewProvider: Send + Sync {
         &self,
         source: &Path,
         operations: &[PreviewOperation],
-    ) -> Result<Vec<OperationResult>, PreviewErrorDto> {
+    ) -> Result<Vec<OperationAttempt>, PreviewErrorDto> {
         operations
             .iter()
             .map(|operation| self.run(source, operation))
@@ -143,12 +153,24 @@ impl ProteoWizardProvider {
         Ok((capabilities, identity))
     }
 
+    /// The operation as an attempt, so a failure still names what ran it.
     fn run_bound(
         capabilities: &InstalledHelpCapabilities,
         installation: Option<&InstallationIdentity>,
         source: &Path,
         operation: &PreviewOperation,
-    ) -> Result<OperationResult, PreviewErrorDto> {
+    ) -> OperationAttempt {
+        OperationAttempt {
+            installation: installation.cloned(),
+            outcome: Self::execute_bound(capabilities, source, operation),
+        }
+    }
+
+    fn execute_bound(
+        capabilities: &InstalledHelpCapabilities,
+        source: &Path,
+        operation: &PreviewOperation,
+    ) -> Result<PreviewOutcome, PreviewErrorDto> {
         let output_root = TemporaryOutputDirectory::create()?;
         let command = build_msaccess_command_with_capabilities(
             capabilities,
@@ -167,12 +189,7 @@ impl ProteoWizardProvider {
         let process = execute(&command).map_err(process_error)?;
 
         let manifest = capture_manifest(output_root.path(), operation)?;
-        let outcome =
-            interpret_preview(operation, &process, &manifest).map_err(interpretation_error)?;
-        Ok(OperationResult {
-            outcome,
-            installation: installation.cloned(),
-        })
+        interpret_preview(operation, &process, &manifest).map_err(interpretation_error)
     }
 }
 
@@ -249,23 +266,28 @@ impl PreviewProvider for ProteoWizardProvider {
         &self,
         source: &Path,
         operation: &PreviewOperation,
-    ) -> Result<OperationResult, PreviewErrorDto> {
+    ) -> Result<OperationAttempt, PreviewErrorDto> {
         let (capabilities, installation) = self.bind_capabilities()?;
-        Self::run_bound(&capabilities, installation.as_ref(), source, operation)
+        Ok(Self::run_bound(
+            &capabilities,
+            installation.as_ref(),
+            source,
+            operation,
+        ))
     }
 
     fn run_batch(
         &self,
         source: &Path,
         operations: &[PreviewOperation],
-    ) -> Result<Vec<OperationResult>, PreviewErrorDto> {
+    ) -> Result<Vec<OperationAttempt>, PreviewErrorDto> {
         let (capabilities, installation) = self.bind_capabilities()?;
-        operations
+        Ok(operations
             .iter()
             .map(|operation| {
                 Self::run_bound(&capabilities, installation.as_ref(), source, operation)
             })
-            .collect()
+            .collect())
     }
 }
 

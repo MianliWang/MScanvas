@@ -202,13 +202,15 @@ impl PreviewService {
         // swapped back between the two comparisons around it. Required: losing
         // the hold means losing the guarantee.
         let guard = lock_against_replacement(file.path())?;
-        let results = self.provider.run_batch(file.path(), &operations)?;
-        // Which backend actually did this work, taken from the results rather
+        let attempts = self.provider.run_batch(file.path(), &operations)?;
+        // Which backend actually did this work, taken from the attempts rather
         // than from a later look. The batch shares one resolution, so they all
-        // report the same one; taking the first is taking that resolution.
-        let installation = results
+        // report the same one; taking the first is taking that resolution. Read
+        // before any of the outcomes, so a failed operation does not take the
+        // answer with it.
+        let installation = attempts
             .first()
-            .and_then(|result| result.installation.clone());
+            .and_then(|attempt| attempt.installation.clone());
         // An open is a look at the backend like any other, and it is recorded
         // as one -- still under the gate. An open that resolved a backend
         // nothing had seen yet and kept it to itself left the sequence naming
@@ -230,7 +232,7 @@ impl PreviewService {
                 true,
             ));
         }
-        if results.len() != operations.len() {
+        if attempts.len() != operations.len() {
             return Err(PreviewErrorDto::new(
                 "incomplete_preview_result",
                 "The preview did not return every requested result.",
@@ -242,8 +244,10 @@ impl PreviewService {
         let mut run_summary = None;
         let mut spectrum_table = None;
         let mut table_rows = Vec::new();
-        for result in results {
-            match result.outcome {
+        for attempt in attempts {
+            // The identity of this batch was already noted above, so an
+            // operation that failed no longer takes it with it.
+            match attempt.outcome? {
                 PreviewOutcome::Value(value) => match *value {
                     PreviewValue::Metadata(result) => {
                         metadata = Some(metadata_dto(&result, &redactor));
@@ -384,16 +388,28 @@ impl PreviewService {
         let redactor = reporting_redactor(file.path());
         let operation = selected_spectrum_operation(index);
         let guard = lock_against_replacement(file.path())?;
-        let result = self.provider.run(file.path(), &operation)?;
-        // And once more on what actually ran. The check above resolved the
-        // backend a moment before this launched, which leaves a window the size
-        // of that moment; this closes it with the identity the operation itself
-        // reports, which is the only one that describes this spectrum.
+        let attempt = self.provider.run(file.path(), &operation)?;
+        // What ran, recorded before how it went. An operation can fail for
+        // reasons that say nothing about which backend ran it -- a launch that
+        // was refused, a wait that was interrupted, output that could not be
+        // captured -- and propagating that error first would throw away the one
+        // fact that says whether it even came from the installation this
+        // preview belongs to. The banner would then keep describing the old
+        // installation while every retry ran the new one.
+        self.note_resolved(attempt.installation.clone());
+        // And once more on what actually ran. The pre-flight above looked at
+        // the recorded tools a moment before this launched, which leaves a
+        // window the size of that moment; this closes it with the identity the
+        // operation itself reports, which is the only one that describes this
+        // spectrum.
         if let Some(opened) = opened.as_ref()
-            && opened.installation != result.installation
+            && opened.installation != attempt.installation
         {
             return Err(installation_changed_since_preview());
         }
+        // Same installation, so the operation's own failure is the truth about
+        // this read -- kept as it is, retryability and all.
+        let outcome = attempt.outcome?;
         drop(guard);
         drop(running);
         if SourceGeneration::capture(file.path()) != SourceGeneration::of(&file) {
@@ -404,7 +420,7 @@ impl PreviewService {
         {
             return Err(source_changed_since_preview());
         }
-        match result.outcome {
+        match outcome {
             PreviewOutcome::Value(value) => match *value {
                 PreviewValue::SelectedSpectrum(spectrum) => {
                     // The table and the binary formatter are separate readings.
