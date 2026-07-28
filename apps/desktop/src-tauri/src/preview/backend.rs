@@ -87,9 +87,10 @@ pub struct ProteoWizardProvider {
     ///
     /// Never written to disk. A stored path would go on applying after the
     /// session that chose it, to a folder whose contents MSCanvas has no way to
-    /// vouch for and every reason not to: automatic discovery only looks in
-    /// locations an installer writes, and this deliberately looks wherever it
-    /// is told. Making the user say so again next time is the cost of that.
+    /// vouch for: automatic discovery searches `PATH` and the locations an
+    /// installer writes, and this deliberately looks wherever it is told.
+    /// Making the user say so again next time is what keeps it narrower than
+    /// either, and is the cost of that.
     chosen: RwLock<Option<PathBuf>>,
 }
 

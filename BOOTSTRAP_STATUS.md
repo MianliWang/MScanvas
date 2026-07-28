@@ -237,8 +237,9 @@ frontend receives an opaque session handle and a display name.
 
 Two of the six choose which ProteoWizard is used: a folder picker, and a way
 back to automatic discovery. The choice lasts for the session and is never
-written to disk, because automatic discovery looks only where an installer
-writes and this looks wherever it is told. The webview names no path in either
+written to disk. Automatic discovery searches `PATH` and the locations an
+installer writes; a chosen folder looks wherever it is told, which is narrower
+than either only because it applies to one session and is never stored. The webview names no path in either
 direction — it asks for a picker, and receives a verdict that states which
 installation it describes.
 
