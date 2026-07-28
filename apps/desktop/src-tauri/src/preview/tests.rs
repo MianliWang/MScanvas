@@ -187,6 +187,7 @@ impl FakeProvider {
             availability: BackendAvailabilityDto {
                 state: "available".to_owned(),
                 origin: "automatic".to_owned(),
+                installation_generation: 0,
                 release: Some("3.0.26204".to_owned()),
                 build_date: Some("Jul 23 2026".to_owned()),
                 same_installation: true,
@@ -205,6 +206,7 @@ impl FakeProvider {
             availability: BackendAvailabilityDto {
                 state: "unavailable".to_owned(),
                 origin: "automatic".to_owned(),
+                installation_generation: 0,
                 release: None,
                 build_date: None,
                 same_installation: false,
@@ -232,6 +234,7 @@ impl FakeProvider {
         provider.chosen_availability = Some(BackendAvailabilityDto {
             state: "available".to_owned(),
             origin: "chosen".to_owned(),
+            installation_generation: 0,
             release: Some("3.0.26204".to_owned()),
             build_date: Some("Jul 23 2026".to_owned()),
             same_installation: true,
@@ -267,6 +270,7 @@ impl PreviewProvider for FakeProvider {
             None => BackendAvailabilityDto {
                 state: "unavailable".to_owned(),
                 origin: "chosen".to_owned(),
+                installation_generation: 0,
                 release: None,
                 build_date: None,
                 same_installation: false,
@@ -428,6 +432,26 @@ fn a_chosen_folder_with_no_installation_can_be_undone() {
     assert_eq!(restored.state, "available");
     assert_eq!(restored.origin, "automatic");
     assert!(restored.failure.is_none());
+}
+
+#[test]
+fn a_verdict_says_where_it_belongs_in_the_sequence_of_installation_changes() {
+    // Request order is not service order: the two commands contend for one
+    // gate, and it does not grant in the order they were called. A caller that
+    // trusted its own ordering could show the installation a choice replaced
+    // while every later operation used the chosen one. The number is what lets
+    // it tell, and it is read under the gate that served the verdict.
+    let service = PreviewService::new(Box::new(FakeProvider::only_when_chosen()));
+    assert_eq!(service.inspect_backend().installation_generation, 0);
+
+    let chosen = service.use_installation(Some(PathBuf::from("C:\\pwiz")));
+    assert_eq!(chosen.installation_generation, 1);
+    // A plain reading does not advance it -- only a change does.
+    assert_eq!(service.inspect_backend().installation_generation, 1);
+
+    let restored = service.use_installation(None);
+    assert_eq!(restored.installation_generation, 2);
+    assert_eq!(restored.origin, "automatic");
 }
 
 #[test]

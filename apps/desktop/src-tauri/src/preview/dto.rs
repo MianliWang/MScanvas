@@ -63,6 +63,15 @@ pub struct BackendAvailabilityDto {
     /// `available` or `unavailable`. MSCanvas never bundles or installs a
     /// backend, so unavailability is an ordinary user-facing state.
     pub state: String,
+    /// How many times the installation in use has changed, counted in Rust.
+    ///
+    /// Which verdict is current is decided by the order the service granted,
+    /// not the order the caller asked. Two commands contend for the same lock
+    /// and it does not grant in request order, so a recheck started after a
+    /// folder choice can be served before it and describe the installation the
+    /// choice replaced. A caller applies a verdict only when this is at least
+    /// the highest it has applied.
+    pub installation_generation: u64,
     /// `automatic` or `chosen`: which installation this verdict describes.
     ///
     /// Carried with the verdict rather than tracked separately, so a reading

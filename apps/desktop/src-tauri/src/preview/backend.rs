@@ -177,6 +177,9 @@ impl PreviewProvider for ProteoWizardProvider {
             // origin is worse than no verdict: it reports on an installation the
             // user is no longer using.
             origin: if chosen { "chosen" } else { "automatic" }.to_owned(),
+            // Stamped by the service, which owns the gate this was served
+            // under and so is the only place that knows the sequence.
+            installation_generation: 0,
             release: discovery.release.as_deref().map(backend_label),
             build_date: discovery.build_date.as_deref().map(backend_label),
             same_installation: discovery.same_installation,

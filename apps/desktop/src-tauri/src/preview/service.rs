@@ -50,6 +50,15 @@ pub struct PreviewService {
     /// launching a process for a row they left is spending the machine on an
     /// answer nobody will see.
     spectrum_ticket: AtomicU64,
+    /// How many times the installation in use has changed.
+    ///
+    /// Stamped onto every verdict under the same gate that serves it, so the
+    /// verdict says where in that sequence it belongs. Request order is not
+    /// service order -- two commands contend for this gate and it does not
+    /// grant in the order they were called -- so a caller that trusted its own
+    /// ordering could show the installation a choice replaced while every
+    /// later operation used the chosen one.
+    installation_generation: AtomicU64,
 }
 
 impl PreviewService {
@@ -62,6 +71,7 @@ impl PreviewService {
             table_rows: Mutex::new(HashMap::new()),
             backend_gate: Mutex::new(()),
             spectrum_ticket: AtomicU64::new(0),
+            installation_generation: AtomicU64::new(0),
         }
     }
 
@@ -72,7 +82,7 @@ impl PreviewService {
     /// "at most one at a time" has to mean all of them or it means nothing.
     pub fn inspect_backend(&self) -> BackendAvailabilityDto {
         let _running = self.enter_backend();
-        self.provider.availability()
+        self.stamped_availability()
     }
 
     /// Points the backend at one folder, or back at automatic discovery, and
@@ -85,8 +95,18 @@ impl PreviewService {
     /// here in which the two can disagree.
     pub fn use_installation(&self, home: Option<PathBuf>) -> BackendAvailabilityDto {
         let _running = self.enter_backend();
+        self.installation_generation.fetch_add(1, Ordering::Relaxed);
         self.provider.use_installation(home);
-        self.provider.availability()
+        self.stamped_availability()
+    }
+
+    /// Reads the backend and stamps the verdict with where it belongs in the
+    /// sequence of installation changes. Both are done holding the gate, so the
+    /// number describes the installation the verdict actually came from.
+    fn stamped_availability(&self) -> BackendAvailabilityDto {
+        let mut availability = self.provider.availability();
+        availability.installation_generation = self.installation_generation.load(Ordering::Relaxed);
+        availability
     }
 
     /// Accepts one already-chosen path and registers it for later operations.
