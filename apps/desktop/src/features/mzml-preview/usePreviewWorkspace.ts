@@ -377,10 +377,20 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           // while producing this very preview. Adopting that number here is
           // what stops the next verdict's higher number reading as a change
           // that happened afterwards and discarding a reading that is current.
-          if (loaded.installationGeneration > appliedGeneration.current) {
+          const noticedAChange = loaded.installationGeneration > appliedGeneration.current;
+          if (noticedAChange) {
             appliedGeneration.current = loaded.installationGeneration;
           }
           setPreview({ status: "loaded", preview: loaded });
+          if (noticedAChange) {
+            // This open was the first thing to see the change, so the banner
+            // still names the installation it replaced -- and would go on doing
+            // so beside a preview that came from a different one. Reading it
+            // again is the only way to say what is on screen, and it cannot
+            // take this preview away: the verdict will carry the generation
+            // just adopted, which is not a change after it.
+            checkBackend();
+          }
           // Not finished here: this call only schedules the update, and the
           // summary and the first table window have not been built yet.
           pendingOpenRender.current = {
@@ -488,7 +498,19 @@ export function usePreviewWorkspace(): PreviewWorkspace {
             inFlightSpectrum.current = null;
           }
           if (mounted.current && token === spectrumToken.current) {
-            setSpectrum({ status: "failed", index, error: toPreviewError(cause) });
+            const failure = toPreviewError(cause);
+            setSpectrum({ status: "failed", index, error: failure });
+            // The backend turned out to have changed since this file was
+            // opened, and a spectrum load is where that was noticed. Nothing
+            // else is going to say so: the failure is not retryable, so the
+            // table stays on screen looking current and every further row fails
+            // the same way until the user happens to press Check again. The
+            // readings go, the selection stays, and the banner is refreshed to
+            // describe what is installed now.
+            if (failure.kind === "installation_changed_since_preview") {
+              discardBackendDerivedState();
+              checkBackend();
+            }
           }
         });
     },

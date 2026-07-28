@@ -394,17 +394,17 @@ describe("discarding what a replaced installation read", () => {
       expect(result.current.preview.status).toBe("loaded");
     });
 
-    // A later check reports the generation the open already observed. Read as a
-    // change after it, this would discard a reading that is perfectly current.
-    act(() => {
-      result.current.checkBackend();
-    });
+    // Noticing the change also refreshes the banner, which still names the
+    // installation this open replaced. That refresh reports the generation the
+    // open already adopted -- so it is not a change after it, and the reading
+    // on screen survives.
     h.service.advanceTo(1);
     await h.deliver(1);
 
     await waitFor(() => {
       expect(result.current.backend.status).toBe("resolved");
     });
+    expect(resolvedGeneration(result.current.backend)).toBe(1);
     expect(result.current.preview.status).toBe("loaded");
   });
 

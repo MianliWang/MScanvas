@@ -118,6 +118,27 @@ describe("mzML preview workspace", () => {
     expect(api.requestedSpectra.length).toBe(picksBefore);
   });
 
+  it("clears a stale workspace when a spectrum load is what notices the backend changed", async () => {
+    // The failure is not retryable, so nothing else would say anything: the
+    // table stays on screen looking current and every further row fails the
+    // same way until the user happens to press Check again.
+    const api = createFakePreviewApi({
+      spectrum: () =>
+        Promise.reject(
+          previewError({ kind: "installation_changed_since_preview", retryable: false }),
+        ),
+    });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+
+    // The readings go, and the retained file is offered back rather than left
+    // looking like it still describes what is installed.
+    expect(await screen.findByRole("button", { name: /^Reopen / })).toBeVisible();
+    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+  });
+
   it("closes the open actions when the backend state is not positively available", async () => {
     // A failed call cannot say whether an installation is present. Gating on
     // "explicitly unavailable" left every open action live in that state, so
