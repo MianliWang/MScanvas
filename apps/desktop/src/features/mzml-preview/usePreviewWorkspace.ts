@@ -372,6 +372,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           if (!mounted.current || token !== previewToken.current) {
             return;
           }
+          // An open is a look at the backend too, and it can be the first thing
+          // to see a change — in which case the service advances the sequence
+          // while producing this very preview. Adopting that number here is
+          // what stops the next verdict's higher number reading as a change
+          // that happened afterwards and discarding a reading that is current.
+          if (loaded.installationGeneration > appliedGeneration.current) {
+            appliedGeneration.current = loaded.installationGeneration;
+          }
           setPreview({ status: "loaded", preview: loaded });
           // Not finished here: this call only schedules the update, and the
           // summary and the first table window have not been built yet.

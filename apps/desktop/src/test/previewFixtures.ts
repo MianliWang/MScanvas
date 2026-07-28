@@ -101,9 +101,10 @@ export function buildRows(count: number): SpectrumRow[] {
   return rows;
 }
 
-export function buildPreview(rowCount = 6, truncated = false): Preview {
+export function buildPreview(rowCount = 6, truncated = false, installationGeneration = 0): Preview {
   const rows = buildRows(rowCount);
   return {
+    installationGeneration,
     file: selectedFile,
     metadata: {
       sections: [

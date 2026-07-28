@@ -189,6 +189,14 @@ pub struct SpectrumTableDto {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewDto {
+    /// Where the sequence of backend changes stood when this was read.
+    ///
+    /// An open is a look at the backend, so it can be the first thing to see a
+    /// change and can advance the sequence itself. Without carrying that, a
+    /// caller comparing a later verdict against what it last applied would read
+    /// this open's own advance as a change that happened after it, and discard
+    /// the very preview that produced it.
+    pub installation_generation: u64,
     pub file: SelectedFileDto,
     pub metadata: MetadataDto,
     pub run_summary: RunSummaryDto,

@@ -301,6 +301,7 @@ impl PreviewService {
             .insert(handle.to_owned(), table_rows);
 
         Ok(PreviewDto {
+            installation_generation: generation,
             file: file_dto(handle, &file),
             metadata: metadata.ok_or_else(|| missing("metadata"))?,
             run_summary: run_summary.ok_or_else(|| missing("run summary"))?,

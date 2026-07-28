@@ -105,6 +105,15 @@ export interface SpectrumTable {
 }
 
 export interface Preview {
+  /**
+   * Where the sequence of backend changes stood when this preview was read.
+   *
+   * An open is a look at the backend and can be the first thing to notice a
+   * change, so it can advance the sequence itself. Adopting it is what stops a
+   * later verdict's higher number reading as a change that happened after this
+   * preview — which would discard the very reading that caused it.
+   */
+  readonly installationGeneration: number;
   readonly file: SelectedFile;
   readonly metadata: Metadata;
   readonly runSummary: RunSummary;

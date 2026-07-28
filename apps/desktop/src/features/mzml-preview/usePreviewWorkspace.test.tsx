@@ -102,6 +102,13 @@ class ServiceModel {
     }) as Promise<BackendAvailability>;
   }
 
+  /// Moves the sequence on without switching what resolves, for the case where
+  /// something other than a verdict -- an open -- was the observation that
+  /// advanced it.
+  advanceTo(generation: number): void {
+    this.generation = generation;
+  }
+
   /** What the service would report if asked now, with nothing in flight. */
   currentOrigin(): "automatic" | "chosen" {
     return this.chosen ? "chosen" : "automatic";
@@ -140,14 +147,23 @@ interface Harness {
   rejectAt(index: number, cause: unknown): Promise<void>;
 }
 
-function harness(options: { dismissPicker?: boolean; preview?: () => Promise<Preview> } = {}): Harness {
+function harness(
+  options: {
+    dismissPicker?: boolean;
+    preview?: () => Promise<Preview>;
+    /// What the service had advanced the sequence to by the time this open was
+    /// served -- which an open that noticed a change itself would have done.
+    openGeneration?: number;
+  } = {},
+): Harness {
   const service = new ServiceModel();
   const api: PreviewApi = {
     inspectBackend: () => service.inspectBackend(),
     chooseInstallation: () => service.chooseInstallation(options.dismissPicker ?? false),
     useAutomaticDiscovery: () => service.useAutomaticDiscovery(),
     chooseFile: () => Promise.resolve<SelectedFile | null>(selectedFile),
-    openPreview: options.preview ?? (() => Promise.resolve(buildPreview(3))),
+    openPreview:
+      options.preview ?? (() => Promise.resolve(buildPreview(3, false, options.openGeneration ?? 0))),
     loadSpectrum: () =>
       Promise.resolve<SelectedSpectrumOutcome>({ outcome: "unavailable", requestedIndex: 0 }),
   };
@@ -360,6 +376,38 @@ describe("backend installation generations", () => {
 });
 
 describe("discarding what a replaced installation read", () => {
+  it("keeps a preview whose own open advanced the sequence", async () => {
+    // An open can be the first thing to see a backend change, in which case the
+    // service advances the sequence while producing that very preview. Reading
+    // the next verdict's higher number as a later change would throw away the
+    // reading that caused it.
+    // The mount check sees generation 0; the open is served after the backend
+    // changed, so the service advances to 1 while producing this preview.
+    const h = harness({ openGeneration: 1 });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(h.api) });
+    await h.deliver(0);
+
+    act(() => {
+      result.current.openFile();
+    });
+    await waitFor(() => {
+      expect(result.current.preview.status).toBe("loaded");
+    });
+
+    // A later check reports the generation the open already observed. Read as a
+    // change after it, this would discard a reading that is perfectly current.
+    act(() => {
+      result.current.checkBackend();
+    });
+    h.service.advanceTo(1);
+    await h.deliver(1);
+
+    await waitFor(() => {
+      expect(result.current.backend.status).toBe("resolved");
+    });
+    expect(result.current.preview.status).toBe("loaded");
+  });
+
   it("discards when an inspection is the reply that first sees the change", async () => {
     // The discard belongs to the generation advancing, not to the change
     // request: if an inspection is served after the change and replies first,
