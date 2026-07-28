@@ -70,9 +70,10 @@ fn picker_unavailable() -> PreviewErrorDto {
 /// Shows the native folder picker and uses the chosen ProteoWizard for this
 /// session, returning what that installation can actually do.
 ///
-/// For this session only, and never written to disk: automatic discovery looks
-/// only where an installer writes, and this looks wherever it is told, so the
-/// user says so again next time rather than having a past choice apply silently.
+/// For this session only, and never written to disk. Automatic discovery
+/// searches `PATH` and the locations an installer writes; this looks wherever
+/// it is told, and what keeps it the narrower of the two is that the user says
+/// so again next time rather than having a past choice apply silently.
 ///
 /// Cancelling returns `None`, which means nothing changed — the caller keeps the
 /// verdict it already had rather than being handed one about a folder nobody
