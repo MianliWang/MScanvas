@@ -452,9 +452,9 @@ across installations.
 Issue #25 was implemented and checked interactively on Windows against the
 ProteoWizard installation the application found through its own discovery path.
 The check was run first on the application code introduced by `fix: restore
-focus after the native picker closes` (`a49831887c07d0f11074ec5d7a6b61e2c888a8c0`)
-and then again in full, after review, on
-`9c9585144c030422c077160cd769200c5d95ffce`, which is the last commit in this
+focus after the native picker closes` (`a49831887c07d0f11074ec5d7a6b61e2c888a8c0`),
+and then again in full after each of the two review repairs, last on
+`989470a5ac87e97c2165a695e68109a0a23dc53b`, which is the final commit in this
 change to touch application code. The documentation commits change none of it.
 
 Covered at `1366×768`: `Tab` reaching `Choose folder…` with a visible focus
@@ -482,6 +482,13 @@ returned to it with its ring. Choosing an unusable folder from the automatic
 state renames that same button node to `Search automatically`, and nothing was
 focused — which is the point, since `Search automatically` is one `Enter` away
 from undoing the choice that had just landed.
+
+The last rerun covered the first interaction after startup deliberately. Review
+found that an effect queued by an earlier commit could consume the remembered
+trigger between the press and the dialog, because it carries the `busy` of the
+render that queued it; the automated tests showed it as a flake rather than as a
+failure, at four failures in twenty-four runs. That is fixed, and the rendered
+path was rerun from a fresh application start to exercise exactly that timing.
 
 Smoke checks: `1920×1080` repeated the whole cancel-and-restore path with the
 same result; `900×700` reached the chooser by keyboard and restored focus after
