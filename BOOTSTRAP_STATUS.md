@@ -435,8 +435,9 @@ change, each tracked as its own issue:
   and the primary action is pushed outside the visible viewport. It reproduced
   after the affected interface files were restored to their `origin/main`
   versions, so it predates the installation-selection work. Tracked as issue
-  #24, and closed on 2026-07-29; see the record below for what remeasurement
-  found and what was repaired.
+  #24. Remeasured on 2026-07-29: of the three observations here, only the
+  clipped text still reproduced, and the record below says what was found and
+  what was repaired.
 - disabling the focused banner control for the picker's lifetime removes DOM
   focus, and re-enabling it does not restore focus, so a keyboard user loses
   their place after cancelling. The stick-plot caption also reads `1 sticks`
@@ -508,9 +509,9 @@ the singular `1 stick` caption is covered by automated tests instead.
 
 Issue #24 was measured, repaired and rechecked interactively on Windows at 150%
 display scaling (`AppliedDPI` 144, `devicePixelRatio` 1.5). Baseline on
-`7e0a6390ba2c930378456e1eb476f7ab4d051922`, final application code on
-`650de82cbbf783ec84297b385caee2fcecb5701e`; the documentation commit after it
-changes none of that code.
+`7e0a6390ba2c930378456e1eb476f7ab4d051922`; the application code was checked
+first on `650de82cbbf783ec84297b385caee2fcecb5701e` and again after the review
+repair described below. Documentation commits change none of that code.
 
 The issue names a `900×700` window. That is the native outer size, and at this
 scaling it is a CSS viewport of `586×430`, which is the number the layout
@@ -523,8 +524,8 @@ Two of the three reported symptoms did not reproduce on the baseline. With no
 file open, `documentElement.scrollWidth` equalled `clientWidth` at every width
 tested down to a CSS viewport of 360, `body` likewise, and `Open mzML…` stayed
 inside the viewport. The document min-width had already gone on 2026-07-27 and
-the single-column rule below `1120px` keeps the two-column track minimums from
-forcing the document wider.
+the single-column rule at `1120px` and narrower keeps the two-column track
+minimums from forcing the document wider.
 
 What did reproduce is the clipped text. With a file open, the spectrum table's
 panel header was 667 CSS pixels of content in a 569-pixel panel and its
@@ -533,15 +534,26 @@ never got one: the block holding the heading and that line is a flex child,
 which does not shrink below its own content, so the line was never given a width
 to truncate to. The block may now give ground.
 
+A second narrow-width clip was found in review and repaired with it. The action
+that offers the retained file says that file's name, and a name with nothing in
+it a line may break at made that action wider than its panel: measured at this
+viewport, a 118-character name produced a button 982 pixels wide against a
+570-pixel panel, clipped at both ends because the empty state centres it. Such
+a label may now break, and the same measurement gives 513 pixels and no
+clipping, while an ordinary label is untouched.
+
 After the fix, at CSS viewports `586×430`, `1366×768` and `1920×1080`, in the
 empty state and with an acquisition open: `documentElement.scrollWidth` equals
-`clientWidth`, `body.scrollWidth` equals `body.clientWidth`, every panel header
-fits its panel and stays inside the viewport, and the header ellipsis engages
-where truncation is needed. The spectrum table keeps its own horizontal scroller
-inside its panel, which is containment rather than document overflow. `Tab`
-reaches `Open mzML…`, `Check again` and `Choose folder…` in that order with a
-visible focus ring at the narrow viewport, a pointer click lands in the window,
-and the issue #25 picker focus restoration still works there.
+`clientWidth`, `body.scrollWidth` equals `body.clientWidth`, each panel's own
+header fits its panel and stays inside the viewport, and the header ellipsis
+engages where truncation is needed. The spectrum table keeps its own horizontal
+scroller inside its panel, which is containment rather than document overflow;
+its column header row is not part of that scroller, so at this width the
+right-hand column labels stay out of view while their values scroll. That is a
+separate defect, tracked on its own and not repaired here. `Tab` reaches
+`Open mzML…`, `Check again` and `Choose folder…` in that order with a visible
+focus ring at the narrow viewport, a pointer click lands in the window, and the
+issue #25 picker focus restoration still works there.
 
 The WebView2 console held the same four development artefacts and nothing else;
 the Rust/Tauri and Vite output added nothing during the session. The acquisition

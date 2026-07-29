@@ -89,6 +89,18 @@ describe("narrow desktop layout rules", () => {
     expect(header.getPropertyValue("text-overflow")).toBe("ellipsis");
   });
 
+  it("lets an empty-state action break a file name it cannot fit", () => {
+    // The action that offers the retained file says its name, and a name can
+    // arrive with nothing in it a line may break at. Centred in a panel that
+    // clips, an action wider than its box loses both ends -- including the part
+    // the user is meant to press.
+    const app = mountStyles(appStyles);
+
+    expect(
+      requireStyleRule(app, ".empty-state button").style.getPropertyValue("overflow-wrap"),
+    ).toBe("anywhere");
+  });
+
   it("drops the workspace to one column before the two-column minimums bite", () => {
     // The two-column track minimums add up to more than a narrow viewport has.
     // This is what keeps them from forcing the document wider than the window,
