@@ -435,7 +435,8 @@ change, each tracked as its own issue:
   and the primary action is pushed outside the visible viewport. It reproduced
   after the affected interface files were restored to their `origin/main`
   versions, so it predates the installation-selection work. Tracked as issue
-  #24.
+  #24, and closed on 2026-07-29; see the record below for what remeasurement
+  found and what was repaired.
 - disabling the focused banner control for the picker's lifetime removes DOM
   focus, and re-enabling it does not restore focus, so a keyboard user loses
   their place after cancelling. The stick-plot caption also reads `1 sticks`
@@ -503,6 +504,53 @@ and the Rust/Tauri and Vite process output added nothing during the session. No
 acquisition was opened, so no fixture, path or scientific value was involved;
 the singular `1 stick` caption is covered by automated tests instead.
 
+## Rendered check of the narrow desktop layout, 2026-07-29
+
+Issue #24 was measured, repaired and rechecked interactively on Windows at 150%
+display scaling (`AppliedDPI` 144, `devicePixelRatio` 1.5). Baseline on
+`7e0a6390ba2c930378456e1eb476f7ab4d051922`, final application code on
+`650de82cbbf783ec84297b385caee2fcecb5701e`; the documentation commit after it
+changes none of that code.
+
+The issue names a `900×700` window. That is the native outer size, and at this
+scaling it is a CSS viewport of `586×430`, which is the number the layout
+actually answers to. The application's own minimum window is 960 logical pixels
+wide, so this viewport is narrower than a user can reach by dragging; it was
+produced deliberately, and `tauri.conf.json` was left alone because at the real
+minimum nothing overflowed or clipped either.
+
+Two of the three reported symptoms did not reproduce on the baseline. With no
+file open, `documentElement.scrollWidth` equalled `clientWidth` at every width
+tested down to a CSS viewport of 360, `body` likewise, and `Open mzML…` stayed
+inside the viewport. The document min-width had already gone on 2026-07-27 and
+the single-column rule below `1120px` keeps the two-column track minimums from
+forcing the document wider.
+
+What did reproduce is the clipped text. With a file open, the spectrum table's
+panel header was 667 CSS pixels of content in a 569-pixel panel and its
+sentence was cut mid-word at the panel edge. The header asks for an ellipsis and
+never got one: the block holding the heading and that line is a flex child,
+which does not shrink below its own content, so the line was never given a width
+to truncate to. The block may now give ground.
+
+After the fix, at CSS viewports `586×430`, `1366×768` and `1920×1080`, in the
+empty state and with an acquisition open: `documentElement.scrollWidth` equals
+`clientWidth`, `body.scrollWidth` equals `body.clientWidth`, every panel header
+fits its panel and stays inside the viewport, and the header ellipsis engages
+where truncation is needed. The spectrum table keeps its own horizontal scroller
+inside its panel, which is containment rather than document overflow. `Tab`
+reaches `Open mzML…`, `Check again` and `Choose folder…` in that order with a
+visible focus ring at the narrow viewport, a pointer click lands in the window,
+and the issue #25 picker focus restoration still works there.
+
+The WebView2 console held the same four development artefacts and nothing else;
+the Rust/Tauri and Vite output added nothing during the session. The acquisition
+used for the loaded-state check was read through a neutral working copy outside
+the repository, which was deleted afterwards, so no fixture name, path or
+scientific value appears here. Window captures were not used as evidence in this
+session: the measuring process ran without per-monitor DPI awareness, which
+crops them, so every claim above is a measurement.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.
@@ -522,8 +570,6 @@ the singular `1 stick` caption is covered by automated tests instead.
   workflow including the native folder picker on 2026-07-28; see "Rendered check
   against a real acquisition" and "Rendered check of backend installation
   selection" for what those checks covered and what they did not.
-- Fix the horizontal overflow at the `900×700` viewport, which predates the
-  installation-selection work. Tracked as issue #24.
 - Complete the remaining ProteoWizard provider gates: MS1 and chromatogram behavior, TIC
   and BPC from representative data, real cancellation, alternate-locale parsing and
   separately authorized vendor coverage. The typed preview-result/canonical-identity
