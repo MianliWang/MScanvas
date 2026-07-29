@@ -428,8 +428,8 @@ rather than rereading on its own. No product error, warning or panic appeared;
 the development favicon `404` is a Vite development artifact rather than a
 product error.
 
-Two defects were found during this check, deliberately left out of that change,
-and both remain open:
+Two defects were found during this check and deliberately left out of that
+change, each tracked as its own issue:
 
 - the workspace overflows horizontally at `900×700`, empty-state text is clipped
   and the primary action is pushed outside the visible viewport. It reproduced
@@ -439,12 +439,69 @@ and both remain open:
 - disabling the focused banner control for the picker's lifetime removes DOM
   focus, and re-enabling it does not restore focus, so a keyboard user loses
   their place after cancelling. The stick-plot caption also reads `1 sticks`
-  when the column reduction yields a single stick. Tracked as issue #25.
+  when the column reduction yields a single stick. Tracked as issue #25, and
+  repaired on 2026-07-29; see the record below.
 
 Neither follow-up invalidates the resolved-backend-identity or
 session-only-selection outcome. Every control remains reachable by Tab, the
 window keeps the foreground, no path is disclosed, and no reading is mixed
 across installations.
+
+## Rendered check of picker focus restoration, 2026-07-29
+
+Issue #25 was implemented and checked interactively on Windows against the
+ProteoWizard installation the application found through its own discovery path.
+The check was run first on the application code introduced by `fix: restore
+focus after the native picker closes` (`a49831887c07d0f11074ec5d7a6b61e2c888a8c0`),
+and then again in full after each of the two review repairs, last on
+`989470a5ac87e97c2165a695e68109a0a23dc53b`, which is the final commit in this
+change to touch application code. The documentation commits change none of it.
+
+Covered at `1366×768`: `Tab` reaching `Choose folder…` with a visible focus
+ring; `Enter` opening the native folder dialog, which owned the foreground;
+`Escape` cancelling it; the application window regaining the foreground;
+`document.activeElement` being that same control again; the focus ring being
+present again; a following `Enter` reopening the dialog immediately; and a
+second `Escape` restoring focus again. The same path was exercised for
+`Choose a different folder…` in the chosen-folder-unavailable state, reached by
+choosing a folder that holds no installation.
+
+Observed: while a request was outstanding, `document.activeElement` was the
+document body and the banner said the installation was being checked, so
+nothing was restored early. Cancelling left the verdict, its release, its build
+and its origin exactly as they were. Neither `Search automatically` nor
+`Check again` claimed the keyboard after it finished, and a successful folder
+choice that removed the control it started from focused nothing and raised no
+error. The pre-existing `Open mzML…` file-picker focus behaviour is unchanged.
+
+Two outcomes that are not cancellations were checked as well, because they
+decide whether the trigger the picker was opened from is still that trigger.
+Choosing a second folder that also holds no installation replaces the verdict
+but leaves `Choose a different folder…` exactly where it was, and the keyboard
+returned to it with its ring. Choosing an unusable folder from the automatic
+state renames that same button node to `Search automatically`, and nothing was
+focused — which is the point, since `Search automatically` is one `Enter` away
+from undoing the choice that had just landed.
+
+The last rerun covered the first interaction after startup deliberately. Review
+found that an effect queued by an earlier commit could consume the remembered
+trigger between the press and the dialog, because it carries the `busy` of the
+render that queued it; the automated tests showed it as a flake rather than as a
+failure, at four failures in twenty-four runs. That is fixed, and the rendered
+path was rerun from a fresh application start to exercise exactly that timing.
+
+Smoke checks: `1920×1080` repeated the whole cancel-and-restore path with the
+same result; `900×700` reached the chooser by keyboard and restored focus after
+cancellation with no new focus or control-state problem. Issue #24 is not
+repaired by this change, was not investigated further, and this record claims no
+layout correctness at `900×700`.
+
+The WebView2 console held four entries, every one a development artefact: the
+Vite favicon `404`, two Vite client connection messages and the React DevTools
+notice. No product error, warning, exception or unhandled rejection appeared,
+and the Rust/Tauri and Vite process output added nothing during the session. No
+acquisition was opened, so no fixture, path or scientific value was involved;
+the singular `1 stick` caption is covered by automated tests instead.
 
 ## Validation completed during repository initialization
 
@@ -467,8 +524,6 @@ across installations.
   selection" for what those checks covered and what they did not.
 - Fix the horizontal overflow at the `900×700` viewport, which predates the
   installation-selection work. Tracked as issue #24.
-- Restore keyboard focus to the trigger after the native picker closes, and
-  correct the `1 sticks` plural in the plot caption. Tracked as issue #25.
 - Complete the remaining ProteoWizard provider gates: MS1 and chromatogram behavior, TIC
   and BPC from representative data, real cancellation, alternate-locale parsing and
   separately authorized vendor coverage. The typed preview-result/canonical-identity
