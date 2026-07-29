@@ -122,11 +122,6 @@ export function BackendStatus({
     // that node is a different control however unchanged the DOM looks -- while
     // a folder that is chosen and turns out to be unusable leaves the same
     // chooser exactly where it was, which is a place worth giving back.
-    // Only a control that is still there, still usable and still the action the
-    // user pressed. A verdict can leave the button in place and rename it, and
-    // that node is a different control however unchanged the DOM looks -- while
-    // a folder that is chosen and turns out to be unusable leaves the same
-    // chooser exactly where it was, which is a place worth giving back.
     //
     // `isConnected` is redundant today, because React leaves a control it
     // unmounts with the `disabled` this request gave it. It is stated anyway:
