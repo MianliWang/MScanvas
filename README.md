@@ -24,9 +24,10 @@ Open one local `.mzML` file and inspect it:
 - One open action reads acquisition metadata, a run summary and a spectrum
   table. Selecting a row loads that one spectrum.
 - The spectrum is drawn as a repository-owned SVG stick plot with no charting
-  dependency. What the file does not report — the retention-time unit, the
-  profile/centroid representation, array units — is shown as unreported rather
-  than guessed.
+  dependency. The retention-time unit, the profile/centroid representation and
+  array units are shown as unreported rather than guessed, because the backend
+  output this preview reads does not carry them. That says nothing about whether
+  the acquisition itself records them.
 
 Not implemented yet: vendor RAW preview; TIC, BPC and chromatogram views; a
 multi-file workspace; the conversion workflow with its queue, progress and
