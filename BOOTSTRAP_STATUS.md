@@ -450,10 +450,12 @@ across installations.
 ## Rendered check of picker focus restoration, 2026-07-29
 
 Issue #25 was implemented and checked interactively on Windows against the
-ProteoWizard installation the application found through its own discovery path,
-on the application code introduced by `fix: restore focus after the native
-picker closes` (`a49831887c07d0f11074ec5d7a6b61e2c888a8c0`). The documentation
-commit that follows it changes no application code.
+ProteoWizard installation the application found through its own discovery path.
+The check was run first on the application code introduced by `fix: restore
+focus after the native picker closes` (`a49831887c07d0f11074ec5d7a6b61e2c888a8c0`)
+and then again in full, after review, on
+`9c9585144c030422c077160cd769200c5d95ffce`, which is the last commit in this
+change to touch application code. The documentation commits change none of it.
 
 Covered at `1366×768`: `Tab` reaching `Choose folder…` with a visible focus
 ring; `Enter` opening the native folder dialog, which owned the foreground;
@@ -471,6 +473,15 @@ and its origin exactly as they were. Neither `Search automatically` nor
 `Check again` claimed the keyboard after it finished, and a successful folder
 choice that removed the control it started from focused nothing and raised no
 error. The pre-existing `Open mzML…` file-picker focus behaviour is unchanged.
+
+Two outcomes that are not cancellations were checked as well, because they
+decide whether the trigger the picker was opened from is still that trigger.
+Choosing a second folder that also holds no installation replaces the verdict
+but leaves `Choose a different folder…` exactly where it was, and the keyboard
+returned to it with its ring. Choosing an unusable folder from the automatic
+state renames that same button node to `Search automatically`, and nothing was
+focused — which is the point, since `Search automatically` is one `Enter` away
+from undoing the choice that had just landed.
 
 Smoke checks: `1920×1080` repeated the whole cancel-and-restore path with the
 same result; `900×700` reached the chooser by keyboard and restored focus after
