@@ -1,6 +1,6 @@
 # Bootstrap status
 
-**Updated:** 2026-07-27
+**Updated:** 2026-07-29
 
 **Canonical repository:** [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas)
 
@@ -402,6 +402,50 @@ Still not exercised: the empty-spectrum state, and the native file picker as a
 captured state. A file was opened through the picker, so it works; the dialog
 itself was not captured.
 
+## Rendered check of backend installation selection, 2026-07-28
+
+The installation-selection workflow was exercised interactively on Windows
+against a real ProteoWizard installation, on the exact feature head
+`01389e91b4ae178c4f9b625f8599c7831130a0e6`, which merged to canonical `main` as
+`a225835213d6286a3fc7b6803283da758d5e0104`.
+
+Covered: choosing a valid installation folder; cancelling the picker from the
+automatic state and from the chosen state; an invalid folder; returning to
+automatic discovery from the chosen-available and chosen-unavailable states;
+switching installation with a file open; the selected file being retained and
+explicitly reopened without the picker reappearing; busy feedback while the
+probes run; keyboard activation of `Choose folder…` and Escape cancellation; the
+application window returning to the foreground; `1366×768`, `2560×1600` and
+`900×700`; the WebView2 console; and the Rust and Vite process logs.
+
+Observed: a chosen folder reports an available verdict carrying its release and
+build, and states that the verdict describes a chosen installation. No backend
+path appears anywhere in the interface. Cancelling the picker leaves the
+rendered state unchanged. An invalid folder gives a specific reason with no path
+and no operating-system message. Switching installation discards the
+backend-derived facts, keeps the selected file, and offers an explicit reopen
+rather than rereading on its own. No product error, warning or panic appeared;
+the development favicon `404` is a Vite development artifact rather than a
+product error.
+
+Two defects were found during this check, deliberately left out of that change,
+and both remain open:
+
+- the workspace overflows horizontally at `900×700`, empty-state text is clipped
+  and the primary action is pushed outside the visible viewport. It reproduced
+  after the affected interface files were restored to their `origin/main`
+  versions, so it predates the installation-selection work. Tracked as issue
+  #24.
+- disabling the focused banner control for the picker's lifetime removes DOM
+  focus, and re-enabling it does not restore focus, so a keyboard user loses
+  their place after cancelling. The stick-plot caption also reads `1 sticks`
+  when the column reduction yields a single stick. Tracked as issue #25.
+
+Neither follow-up invalidates the resolved-backend-identity or
+session-only-selection outcome. Every control remains reachable by Tab, the
+window keeps the foreground, no path is disclosed, and no reading is mixed
+across installations.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.
@@ -414,17 +458,22 @@ itself was not captured.
 
 ## Intentionally pending
 
-- Exercise the empty-spectrum state and the native file picker of
-  `pnpm tauri dev` against a real ProteoWizard installation on Windows. The
+- Exercise the empty-spectrum state, and capture the native file picker as a
+  rendered state, against a real ProteoWizard installation on Windows. The
   shell, no-backend, backend-available, loaded-preview and selected-spectrum
-  states were checked on 2026-07-27; see "Host ProteoWizard was installed and
-  not found" for what that check covered and what it did not.
+  states were checked on 2026-07-27, and the backend installation-selection
+  workflow including the native folder picker on 2026-07-28; see "Rendered check
+  against a real acquisition" and "Rendered check of backend installation
+  selection" for what those checks covered and what they did not.
+- Fix the horizontal overflow at the `900×700` viewport, which predates the
+  installation-selection work. Tracked as issue #24.
+- Restore keyboard focus to the trigger after the native picker closes, and
+  correct the `1 sticks` plural in the plot caption. Tracked as issue #25.
 - Complete the remaining ProteoWizard provider gates: MS1 and chromatogram behavior, TIC
   and BPC from representative data, real cancellation, alternate-locale parsing and
   separately authorized vendor coverage. The typed preview-result/canonical-identity
   boundary, the mzML conversion-integrity contract, the bounded open-format disposable-VM
   matrix and the representative navigation and scale measurements are complete.
-- Enable branch protection after the first green remote CI run.
 
 ## First verified-bootstrap checklist
 
@@ -434,9 +483,13 @@ itself was not captured.
 - [x] Run `pnpm install` and commit `pnpm-lock.yaml`.
 - [x] Run `cargo generate-lockfile` and commit `Cargo.lock`.
 - [x] Run all frontend and Rust checks.
-- [x] Run `pnpm tauri dev` on Windows; the states needing an installed backend remain unchecked.
+- [x] Run `pnpm tauri dev` on Windows against a real ProteoWizard installation; the
+  empty-spectrum state and a captured native file picker remain unchecked.
 - [x] Confirm Tauri capability configuration remains minimal.
 - [x] Complete the M0 ProteoWizard provider decision for preview navigation; ADR 0003 is
   accepted for M1–M2 with named limits. MS1/chromatogram behavior, TIC and BPC from
   representative data, cancellation, locale and vendor gates remain separately open.
-- [ ] Enable branch protection after the first green CI run.
+- [x] Protect `main` after the first green CI run. The `Protect main` repository
+  ruleset requires the Frontend, Rust and Repository quality checks, requires the
+  branch to be up to date, requires review threads to be resolved, and forbids
+  force-pushes and branch deletion.
