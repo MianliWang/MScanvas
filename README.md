@@ -2,20 +2,51 @@
 
 **A modern open-source workspace for mass spectrometry data.**
 
-MSCanvas is a Windows-first, local-first desktop application for importing mass-spectrometry acquisitions, exploring linked chromatograms and spectra, converting vendor data to mzML/mzXML, and exporting clean scientific figures. Later releases may orchestrate established analysis packages through typed modules and isolated workers.
+MSCanvas aims to be a Windows-first, local-first desktop application for importing mass-spectrometry acquisitions, exploring linked chromatograms and spectra, converting vendor data to open formats, and exporting clean scientific figures. Later releases may orchestrate established analysis packages through typed modules and isolated workers.
 
-> Status: **pre-alpha / repository bootstrap**. The current application is a functional UI shell backed by mock data. ProteoWizard integration and real RAW preview are M0 technical spikes.
+> Status: **pre-alpha**. The application has one real end-to-end path: open a local
+> `.mzML` file and inspect it against a user-installed ProteoWizard. It is not yet
+> the batch workspace described under [Product scope](#product-scope).
 
 Canonical repository: [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas) (currently private).
 
+## What works today
+
+Open one local `.mzML` file and inspect it:
+
+- ProteoWizard is discovered automatically on `PATH` and in the locations an
+  installer writes. If it is installed somewhere else, you can choose its
+  installation folder for the current session; that choice is never written to
+  disk, and returning to automatic discovery is offered from every state.
+- Rust owns the file path and decides what may be opened. The interface holds an
+  opaque session handle and a display name, never a path, and never parses
+  backend output.
+- One open action reads acquisition metadata, a run summary and a spectrum
+  table. Selecting a row loads that one spectrum.
+- The spectrum is drawn as a repository-owned SVG stick plot with no charting
+  dependency. What the file does not report — the retention-time unit, the
+  profile/centroid representation, array units — is shown as unreported rather
+  than guessed.
+
+Not implemented yet: vendor RAW preview; TIC, BPC and chromatogram views; a
+multi-file workspace; the conversion workflow with its queue, progress and
+cancellation; and figure export. mzXML output stays disabled and fail-closed
+until representative multi-source integrity checks pass. Typed mzML conversion
+planning and conversion-integrity verification exist in Rust and are covered by
+tests, but no user-facing conversion workflow is built on them yet.
+
 ## Product scope
 
-The first usable product focuses on:
+The first usable product is the target below, not a description of today. Of the
+second item, metadata, spectrum and scan-table exploration are built and TIC/BPC
+are not; nothing else in this list is built yet. See
+[What works today](#what-works-today).
 
 - drag-and-drop file and folder workspaces;
 - metadata, TIC/BPC, spectrum and scan-table exploration;
 - linked selection across views;
-- RAW to mzML/mzXML conversion through user-installed ProteoWizard;
+- conversion to mzML through user-installed ProteoWizard, with mzXML gated behind
+  representative multi-source integrity checks;
 - queue, cancellation, retry and actionable errors;
 - PNG/SVG figure export and underlying-data export.
 
@@ -23,17 +54,23 @@ Analysis is deferred rather than prohibited. MSCanvas should reuse mature algori
 
 ## Repository status
 
-This bootstrap includes:
+The repository contains:
 
-- a React + TypeScript + Vite desktop UI shell;
-- a minimal Tauri 2 native host;
-- Rust domain, ProteoWizard-command and plot-spec crates;
+- a React + TypeScript + Vite desktop interface built around the mzML preview
+  workspace;
+- a Tauri 2 native host whose main window is granted no Tauri core API
+  permissions, so the interface reaches the backend only through this
+  application's own typed commands;
+- Rust domain, ProteoWizard-adapter and plot-spec crates, where the adapter owns
+  discovery, typed argv planning, process supervision, preview parsing and mzML
+  conversion-integrity checking;
 - product, UX and architecture source documents;
 - repo-local Codex guidance and skills;
 - frontend, Rust and repository-quality CI workflows.
 
-The first Windows bootstrap now has committed pnpm and Cargo lockfiles, frozen/locked
-CI installs and a deterministic desktop build prerequisite. See
+Committed pnpm and Cargo lockfiles, frozen/locked CI installs and a deterministic
+desktop build prerequisite are in place, and `main` is protected by a repository
+ruleset requiring the three CI checks and resolved review threads. See
 [`BOOTSTRAP_STATUS.md`](BOOTSTRAP_STATUS.md) for the commands actually verified and
 the remaining runtime/backend work.
 
@@ -44,7 +81,8 @@ the remaining runtime/backend work.
 - pnpm 11.15.1 installed through npm;
 - Rust 1.97.1 through rustup;
 - Windows 10/11 for the supported desktop target;
-- ProteoWizard installed separately for real vendor-data conversion.
+- ProteoWizard installed separately. MSCanvas never bundles, downloads or installs
+  it, and the mzML preview path does not work without it.
 
 ## Getting started
 
