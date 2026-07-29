@@ -20,6 +20,7 @@ import {
   chosenFolderWithoutTools,
   createFakePreviewApi,
   deferred,
+  previewError,
   unavailableBackend,
 } from "../../test/previewFixtures";
 
@@ -266,6 +267,31 @@ describe("keyboard focus across the native folder picker", () => {
     expect(focusing).not.toHaveBeenCalled();
     expect(document.body).toHaveFocus();
     expect(screen.getByRole("button", { name: "Search automatically" })).toBeEnabled();
+  });
+
+  it("focuses nothing when the picker fails and takes the banner with it", async () => {
+    // A call that fails replaces the banner with the failed one, which offers
+    // the same recovery actions in new nodes. What is restored is the trigger,
+    // not something that reads like it: focusing a button in a banner the user
+    // has not seen yet would be a move of its own, and the failure is announced
+    // where they are rather than by taking the keyboard to it.
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      chosenInstallation: () => Promise.reject(previewError({ kind: "folder_picker_failed" })),
+    });
+    renderWorkspace(api);
+    await screen.findByText("ProteoWizard is not available");
+    const choose = screen.getByRole("button", { name: "Choose folder…" });
+
+    activate(choose);
+    const focusing = vi.spyOn(choose, "focus");
+    blurAsABrowserWould(choose);
+
+    expect(await screen.findByRole("button", { name: "Search automatically" })).toBeEnabled();
+    expect(choose.isConnected).toBe(false);
+    expect(screen.getByRole("button", { name: "Choose folder…" })).not.toBe(choose);
+    expect(focusing).not.toHaveBeenCalled();
+    expect(document.body).toHaveFocus();
   });
 
   it("leaves the keyboard where the user moved it during the request", async () => {
