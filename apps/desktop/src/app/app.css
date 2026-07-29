@@ -181,6 +181,16 @@ button:disabled {
   padding-block: 8px;
 }
 
+/* The header's text block, and the one thing in this header that may give
+   ground. A flex child does not shrink below its own content, so the line
+   below never reached the width its ellipsis was written for: it simply grew,
+   the panel clipped it, and a sentence about the spectra was cut mid-word at a
+   narrow window. Owned here rather than left to the components, because it is
+   this header that decides its heading and its line share one row. */
+.panel-header > div {
+  min-width: 0;
+}
+
 .panel-header h2,
 .panel-header p,
 .inspector-section h3 {
@@ -286,6 +296,15 @@ button:disabled {
   color: var(--color-text-tertiary);
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* One of these offers to reopen the retained file, and says its name. A file
+   name can run past the panel with nothing in it a line may break at, and a
+   centred item that outgrows its box is clipped at both ends -- so the action
+   the user is meant to take is the part that disappears. Broken only where
+   nothing else will do: a label with spaces in it still wraps at them. */
+.empty-state button {
+  overflow-wrap: anywhere;
 }
 
 .empty-state-actions {
