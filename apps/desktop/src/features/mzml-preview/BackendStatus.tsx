@@ -16,6 +16,15 @@ import type { BackendState } from "./usePreviewWorkspace";
 interface PickerTrigger {
   readonly control: HTMLButtonElement;
   readonly action: string;
+  /**
+   * Whether the request this trigger belongs to has been seen outstanding.
+   *
+   * An effect carries the `busy` of the render that queued it, and React does
+   * not promise to have run it before the next event. One queued before the
+   * picker opened therefore says `false` about a request that has not started,
+   * which reads exactly like the request having finished.
+   */
+  outstanding: boolean;
 }
 
 export interface BackendStatusProps {
@@ -67,7 +76,7 @@ export function BackendStatus({
     const control = event.currentTarget;
     pendingRestore.current =
       document.activeElement === control
-        ? { control, action: control.textContent ?? "" }
+        ? { control, action: control.textContent ?? "", outstanding: false }
         : null;
     onChooseInstallation();
   };
@@ -83,12 +92,26 @@ export function BackendStatus({
    *
    * Deliberately not keyed on `busy`: a request begins and ends with it false,
    * so an effect comparing that value alone would not run again if the two
-   * renders were ever batched into one. Reading the pending trigger after every
-   * commit costs a null check and cannot miss the settle.
+   * renders were ever batched into one. Running after every commit costs a null
+   * check, and what makes a settle a settle is stated below rather than left to
+   * a dependency list.
    */
   useEffect(() => {
     const pending = pendingRestore.current;
-    if (pending === null || busy) {
+    if (pending === null) {
+      return;
+    }
+    if (busy) {
+      // Outstanding, so nothing is restored yet -- and having seen it is what
+      // tells the end of this request from an effect that was queued before it
+      // began. That effect carries the `busy` of an older render, which says
+      // `false` about a request that has not started and reads exactly like one
+      // that has finished; acting on it would consume the trigger between the
+      // press and the dialog, and nothing would ever give the keyboard back.
+      pending.outstanding = true;
+      return;
+    }
+    if (!pending.outstanding) {
       return;
     }
     // Settled, whatever the outcome. Held any longer it could fire on a later
@@ -99,6 +122,16 @@ export function BackendStatus({
     // that node is a different control however unchanged the DOM looks -- while
     // a folder that is chosen and turns out to be unusable leaves the same
     // chooser exactly where it was, which is a place worth giving back.
+    // Only a control that is still there, still usable and still the action the
+    // user pressed. A verdict can leave the button in place and rename it, and
+    // that node is a different control however unchanged the DOM looks -- while
+    // a folder that is chosen and turns out to be unusable leaves the same
+    // chooser exactly where it was, which is a place worth giving back.
+    //
+    // `isConnected` is redundant today, because React leaves a control it
+    // unmounts with the `disabled` this request gave it. It is stated anyway:
+    // what must never happen is reaching for a node that is gone, and that is
+    // not a thing to infer from how an unmount happens to leave an attribute.
     if (
       !pending.control.isConnected ||
       pending.control.disabled ||

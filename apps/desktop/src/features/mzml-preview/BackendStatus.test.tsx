@@ -9,7 +9,7 @@
  */
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { PreviewApi } from "./api";
 import { PreviewApiProvider } from "./api";
@@ -57,6 +57,25 @@ function activate(control: HTMLElement): void {
   fireEvent.click(control);
 }
 
+/**
+ * Something else focusable, outside the banner.
+ *
+ * Every banner action is disabled while a request runs, so a control the user
+ * could move to during one has to be brought in from outside. What it stands
+ * for is real enough: focus that went somewhere deliberately must not be taken
+ * back.
+ */
+function focusableElsewhere(): HTMLButtonElement {
+  const other = document.createElement("button");
+  other.textContent = "somewhere else";
+  document.body.append(other);
+  return other;
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("keyboard focus across the native folder picker", () => {
   it("gives the keyboard back to Choose folder… when the picker is cancelled", async () => {
     const picker = deferred<BackendAvailability | null>();
@@ -71,6 +90,9 @@ describe("keyboard focus across the native folder picker", () => {
     const choose = await screen.findByRole("button", { name: "Choose folder…" });
 
     activate(choose);
+    // Watched from here, so the test's own way of reaching the control is not
+    // mistaken for the component giving it back.
+    const focusing = vi.spyOn(choose, "focus");
 
     // The request is outstanding: the action is closed and the keyboard has
     // gone with it.
@@ -94,6 +116,9 @@ describe("keyboard focus across the native folder picker", () => {
       expect(choose).toHaveFocus();
     });
     expect(choose).toBeEnabled();
+    // Without `preventScroll`, giving the keyboard back could also move the
+    // workspace under the user.
+    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
     // Cancelling changed nothing else: the verdict it had is the verdict it has.
     expect(screen.getByText(/ProteoWizard is available/)).toHaveTextContent("3.0.25000");
     expect(screen.queryByText(/from the folder you chose/)).toBeNull();
@@ -230,15 +255,44 @@ describe("keyboard focus across the native folder picker", () => {
     const choose = screen.getByRole("button", { name: "Choose folder…" });
 
     activate(choose);
+    const focusing = vi.spyOn(choose, "focus");
     blurAsABrowserWould(choose);
 
     // The verdict changed, so the banner did too, and the button that opened
-    // the picker is no longer in the document. Focusing it would either throw
-    // or move the keyboard to a node nobody can see.
+    // the picker is no longer in the document. It is not focused, and it is not
+    // even asked: focusing a detached node is not a no-op worth relying on.
     expect(await screen.findByText(/ProteoWizard is available/)).toBeVisible();
     expect(choose.isConnected).toBe(false);
+    expect(focusing).not.toHaveBeenCalled();
     expect(document.body).toHaveFocus();
     expect(screen.getByRole("button", { name: "Search automatically" })).toBeEnabled();
+  });
+
+  it("leaves the keyboard where the user moved it during the request", async () => {
+    const picker = deferred<BackendAvailability | null>();
+    const api = createFakePreviewApi({ chosenInstallation: () => picker.promise });
+    renderWorkspace(api);
+    const choose = await screen.findByRole("button", { name: "Choose folder…" });
+
+    activate(choose);
+    blurAsABrowserWould(choose);
+
+    // The keyboard is somewhere the user put it. Restoring over that would be a
+    // move of its own, not a restoration.
+    const elsewhere = focusableElsewhere();
+    elsewhere.focus();
+    expect(elsewhere).toHaveFocus();
+
+    await act(async () => {
+      picker.resolve(null);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(choose).toBeEnabled();
+    });
+    expect(elsewhere).toHaveFocus();
+    elsewhere.remove();
   });
 
   it("restores nothing when the control that opened the picker never held the keyboard", async () => {
