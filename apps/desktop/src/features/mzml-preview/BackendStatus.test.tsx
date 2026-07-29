@@ -149,6 +149,59 @@ describe("keyboard focus across the native folder picker", () => {
     });
   });
 
+  it("gives the keyboard back when the folder chosen turns out to be unusable too", async () => {
+    // Cancelling is not the only outcome that leaves the chooser where it was.
+    // A folder that is chosen and holds no installation re-renders this banner
+    // in place: same control, same action, same reason to be there -- and the
+    // keyboard user who reached it is owed their place back.
+    let requests = 0;
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      chosenInstallation: () => {
+        requests += 1;
+        return Promise.resolve(chosenFolderWithoutTools);
+      },
+    });
+    renderWorkspace(api);
+    fireEvent.click(await screen.findByRole("button", { name: "Choose folder…" }));
+    const chooseAnother = await screen.findByRole("button", {
+      name: "Choose a different folder…",
+    });
+
+    activate(chooseAnother);
+    expect(chooseAnother).toBeDisabled();
+    blurAsABrowserWould(chooseAnother);
+
+    await waitFor(() => {
+      expect(chooseAnother).toHaveFocus();
+    });
+    expect(requests).toBe(2);
+    expect(chooseAnother).toBeEnabled();
+    expect(screen.getByText(/holds neither msconvert.exe nor msaccess.exe/)).toBeVisible();
+  });
+
+  it("does not move the keyboard onto the action that replaced the trigger", async () => {
+    // The banner keeps its shape when an automatic verdict becomes a chosen
+    // one, so React keeps the button the picker was opened from and renames it.
+    // `Search automatically` is one Enter away from undoing the choice that
+    // just landed, and it is not what the user reached for.
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      chosenInstallation: chosenFolderWithoutTools,
+    });
+    renderWorkspace(api);
+    await screen.findByText("ProteoWizard is not available");
+    const choose = screen.getByRole("button", { name: "Choose folder…" });
+
+    activate(choose);
+    blurAsABrowserWould(choose);
+
+    await screen.findByRole("button", { name: "Choose a different folder…" });
+    expect(choose).toHaveTextContent("Search automatically");
+    expect(screen.getByRole("button", { name: "Search automatically" })).not.toHaveFocus();
+    expect(document.body).toHaveFocus();
+  });
+
   it("does not take the keyboard after a backend check the picker did not start", async () => {
     const api = createFakePreviewApi();
     renderWorkspace(api);

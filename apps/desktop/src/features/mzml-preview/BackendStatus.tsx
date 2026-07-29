@@ -4,17 +4,18 @@ import type { MouseEvent } from "react";
 import type { BackendState } from "./usePreviewWorkspace";
 
 /**
- * The control that opened the native folder picker, with the banner it was
- * pressed from.
+ * The control that opened the native folder picker, and the action it named.
  *
- * The banner is kept because a cancelled picker is the one outcome that applies
- * no verdict, so the state is still the very object it was. Anything else
- * replaced it, and the button in that position may since have become a
- * different action.
+ * The name is kept because surviving the request is not the same as still being
+ * the same control. A new verdict re-renders the banner in place, and React
+ * keeps the button node and relabels it -- `Search automatically` takes over
+ * the slot `Choose folder…` was in. Focusing that node would hand the keyboard
+ * to an action the user never reached for, one Enter away from undoing the
+ * choice they just made.
  */
 interface PickerTrigger {
   readonly control: HTMLButtonElement;
-  readonly bannerAtRequest: BackendState;
+  readonly action: string;
 }
 
 export interface BackendStatusProps {
@@ -65,7 +66,9 @@ export function BackendStatus({
   const startChoosing = (event: MouseEvent<HTMLButtonElement>) => {
     const control = event.currentTarget;
     pendingRestore.current =
-      document.activeElement === control ? { control, bannerAtRequest: state } : null;
+      document.activeElement === control
+        ? { control, action: control.textContent ?? "" }
+        : null;
     onChooseInstallation();
   };
 
@@ -91,17 +94,16 @@ export function BackendStatus({
     // Settled, whatever the outcome. Held any longer it could fire on a later
     // request it says nothing about.
     pendingRestore.current = null;
-    // Cancelling changes nothing, which is exactly how it is recognised here:
-    // no verdict was applied, so the banner is still the object it was and the
-    // control still means what the user pressed. Any other outcome replaced the
-    // verdict, and the button in that position may now be a different action --
-    // `Search automatically` sits where `Choose folder…` was -- so the focus
-    // stays where the new render put it.
-    if (pending.bannerAtRequest !== state) {
-      return;
-    }
-    // Never a node this render has removed, and never one still disabled.
-    if (!pending.control.isConnected || pending.control.disabled) {
+    // Only a control that is still there, still usable and still the action the
+    // user pressed. A verdict can leave the button in place and rename it, and
+    // that node is a different control however unchanged the DOM looks -- while
+    // a folder that is chosen and turns out to be unusable leaves the same
+    // chooser exactly where it was, which is a place worth giving back.
+    if (
+      !pending.control.isConnected ||
+      pending.control.disabled ||
+      pending.control.textContent !== pending.action
+    ) {
       return;
     }
     // Never over a control the user has since chosen for themselves. Blurred by
