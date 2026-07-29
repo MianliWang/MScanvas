@@ -15,9 +15,11 @@ All notable changes will be documented here once versioned releases begin.
   discovery on `PATH` and in the locations an installer writes. The chosen
   folder applies to the current session only, is never written to disk, and
   returning to automatic discovery is offered from every state.
-- Typed mzML conversion-integrity contracts in the ProteoWizard adapter, which
-  compare acquisition facts captured before and after a conversion. These are
-  library contracts; no user-facing conversion workflow is built on them yet.
+- Typed mzML conversion-integrity contracts in the ProteoWizard adapter. When the
+  source is itself mzML, they compare acquisition facts captured before and after
+  a conversion; a source in any other format cannot be captured that way, so no
+  source-to-output fidelity claim is made for it. These are library contracts; no
+  user-facing conversion workflow is built on them yet.
 - Recorded navigation and scale evidence from a representative public
   open-format acquisition, used to accept the preview boundary with named
   limits.
