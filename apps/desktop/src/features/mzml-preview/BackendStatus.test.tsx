@@ -1,0 +1,205 @@
+/**
+ * Where the keyboard is after the native folder picker closes.
+ *
+ * The banner disables every action for the whole request, the picker's modal
+ * lifetime included, and disabling the focused button is what takes the
+ * keyboard away from it. These tests drive the real workspace through the same
+ * fake `PreviewApi` the rest of the suite uses, so the busy guard and the
+ * one-request-at-a-time rule are the real ones rather than a stand-in.
+ */
+
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+
+import type { PreviewApi } from "./api";
+import { PreviewApiProvider } from "./api";
+import type { BackendAvailability } from "./contracts";
+import { PreviewWorkspace } from "./PreviewWorkspace";
+import {
+  chosenBackend,
+  chosenFolderWithoutTools,
+  createFakePreviewApi,
+  deferred,
+  unavailableBackend,
+} from "../../test/previewFixtures";
+
+function renderWorkspace(api: PreviewApi): void {
+  render(
+    <PreviewApiProvider value={api}>
+      <PreviewWorkspace />
+    </PreviewApiProvider>,
+  );
+}
+
+/**
+ * The blur a browser performs when the focused control becomes disabled.
+ *
+ * That blur is the whole defect, so a test that did not reproduce it would
+ * assert against a focus the real application has already lost. jsdom keeps a
+ * disabled control focused and then refuses to blur it -- an unfocusable
+ * element cannot be blurred -- so the control is briefly enabled to move the
+ * keyboard off it and set back exactly as it was. React owns the attribute from
+ * `busy` and is not consulted in between.
+ */
+function blurAsABrowserWould(control: HTMLElement): void {
+  const button = control as HTMLButtonElement;
+  const disabled = button.disabled;
+  button.disabled = false;
+  button.blur();
+  button.disabled = disabled;
+  expect(document.body).toHaveFocus();
+}
+
+/** Presses a control the way a keyboard user reaches it: focused, then activated. */
+function activate(control: HTMLElement): void {
+  control.focus();
+  expect(control).toHaveFocus();
+  fireEvent.click(control);
+}
+
+describe("keyboard focus across the native folder picker", () => {
+  it("gives the keyboard back to Choose folder… when the picker is cancelled", async () => {
+    const picker = deferred<BackendAvailability | null>();
+    let requests = 0;
+    const api = createFakePreviewApi({
+      chosenInstallation: () => {
+        requests += 1;
+        return requests === 1 ? picker.promise : Promise.resolve(null);
+      },
+    });
+    renderWorkspace(api);
+    const choose = await screen.findByRole("button", { name: "Choose folder…" });
+
+    activate(choose);
+
+    // The request is outstanding: the action is closed and the keyboard has
+    // gone with it.
+    expect(choose).toBeDisabled();
+    blurAsABrowserWould(choose);
+
+    // Nothing is restored while the request is still running. Doing so would
+    // put the keyboard on a control that cannot be used and would say the
+    // installation work had finished when it had not.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(document.body).toHaveFocus();
+
+    await act(async () => {
+      picker.resolve(null);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(choose).toHaveFocus();
+    });
+    expect(choose).toBeEnabled();
+    // Cancelling changed nothing else: the verdict it had is the verdict it has.
+    expect(screen.getByText(/ProteoWizard is available/)).toHaveTextContent("3.0.25000");
+    expect(screen.queryByText(/from the folder you chose/)).toBeNull();
+
+    // And the restored control works: activating it again opens the picker
+    // again, with no trip back through the tab order.
+    fireEvent.click(choose);
+    await waitFor(() => {
+      expect(requests).toBe(2);
+    });
+  });
+
+  it("gives the keyboard back to Choose a different folder… when the picker is cancelled", async () => {
+    const cancelled = deferred<BackendAvailability | null>();
+    let requests = 0;
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      chosenInstallation: () => {
+        requests += 1;
+        if (requests === 1) {
+          return Promise.resolve(chosenFolderWithoutTools);
+        }
+        return requests === 2 ? cancelled.promise : Promise.resolve(null);
+      },
+    });
+    renderWorkspace(api);
+    fireEvent.click(await screen.findByRole("button", { name: "Choose folder…" }));
+
+    // The chosen folder holds no installation, which is the state that offers a
+    // different folder rather than a first one.
+    const chooseAnother = await screen.findByRole("button", {
+      name: "Choose a different folder…",
+    });
+    activate(chooseAnother);
+    expect(chooseAnother).toBeDisabled();
+    blurAsABrowserWould(chooseAnother);
+
+    await act(async () => {
+      cancelled.resolve(null);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(chooseAnother).toHaveFocus();
+    });
+    // The chosen folder is still the chosen folder, and still unusable for the
+    // same stated reason.
+    expect(screen.getByText(/holds neither msconvert.exe nor msaccess.exe/)).toBeVisible();
+
+    fireEvent.click(chooseAnother);
+    await waitFor(() => {
+      expect(requests).toBe(3);
+    });
+  });
+
+  it("does not take the keyboard after a backend check the picker did not start", async () => {
+    const api = createFakePreviewApi();
+    renderWorkspace(api);
+    await screen.findByText(/ProteoWizard is available/);
+
+    // Checking replaces the banner with the neutral one, so this control leaves
+    // the document and the keyboard is on the body with or without a browser's
+    // blur-on-disable.
+    activate(screen.getByRole("button", { name: "Check again" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
+    });
+    // A recheck is not a folder choice. Nothing here asked for the keyboard, so
+    // nothing here may claim it.
+    expect(document.body).toHaveFocus();
+  });
+
+  it("does not reach for a trigger the successful choice removed", async () => {
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      chosenInstallation: chosenBackend,
+    });
+    renderWorkspace(api);
+    await screen.findByText("ProteoWizard is not available");
+    const choose = screen.getByRole("button", { name: "Choose folder…" });
+
+    activate(choose);
+    blurAsABrowserWould(choose);
+
+    // The verdict changed, so the banner did too, and the button that opened
+    // the picker is no longer in the document. Focusing it would either throw
+    // or move the keyboard to a node nobody can see.
+    expect(await screen.findByText(/ProteoWizard is available/)).toBeVisible();
+    expect(choose.isConnected).toBe(false);
+    expect(document.body).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Search automatically" })).toBeEnabled();
+  });
+
+  it("restores nothing when the control that opened the picker never held the keyboard", async () => {
+    const api = createFakePreviewApi({ chosenInstallation: null });
+    renderWorkspace(api);
+    const choose = await screen.findByRole("button", { name: "Choose folder…" });
+
+    // Activated without ever being focused. There is no place to give back, and
+    // taking focus here would be a move of its own.
+    fireEvent.click(choose);
+
+    await waitFor(() => {
+      expect(choose).toBeEnabled();
+    });
+    expect(document.body).toHaveFocus();
+  });
+});

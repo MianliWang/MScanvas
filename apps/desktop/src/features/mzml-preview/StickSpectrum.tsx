@@ -158,6 +158,14 @@ function reduce(
 }
 
 /**
+ * The drawn count, in agreement with itself. A reduction that yields one column
+ * drew one stick, and saying `1 sticks` reads as a defect in the number.
+ */
+function formatSticks(count: number): string {
+  return count === 1 ? "1 stick" : `${count} sticks`;
+}
+
+/**
  * A stick spectrum drawn as one SVG path.
  *
  * Sticks, not a connected line: a mass spectrum is a set of discrete m/z
@@ -224,8 +232,8 @@ export function StickSpectrum({
       </svg>
       <figcaption className="spectrum-caption">
         {reduction.sticks.length < mz.length
-          ? `Drawn as ${reduction.sticks.length} sticks from ${mz.length} points, keeping the highest and the lowest value in each column, so a peak spread over several points can appear as one stick.`
-          : `Drawn as ${reduction.sticks.length} sticks, one per point.`}
+          ? `Drawn as ${formatSticks(reduction.sticks.length)} from ${mz.length} points, keeping the highest and the lowest value in each column, so a peak spread over several points can appear as one stick.`
+          : `Drawn as ${formatSticks(reduction.sticks.length)}, one per point.`}
         {" Horizontal axis: m/z. Vertical axis: intensity, scaled to the point furthest from zero."}
         {reduction.negativeCount > 0
           ? ` ${reduction.negativeCount} of the points ${reduction.negativeCount === 1 ? "carries" : "carry"} negative intensity; the lowest in each column is drawn below the zero line.`
