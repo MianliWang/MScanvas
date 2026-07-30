@@ -488,8 +488,8 @@ pub(super) enum RevocationReason {
 /// both.
 #[derive(Default)]
 pub(super) struct DatasetRegistry {
-    /// Only ever counts up, including across `clear`, so an identifier is never
-    /// handed out twice in one process.
+    /// Only ever counts up, including across an emptied workspace, so an
+    /// identifier is never handed out twice in one process.
     next_id: u64,
     order: Vec<DatasetId>,
     datasets: HashMap<DatasetId, RegisteredDataset>,
