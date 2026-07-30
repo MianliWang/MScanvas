@@ -3,6 +3,10 @@
 - Status: Accepted for the M1 workspace foundation; the roster interface and
   everything after it separately gated
 - Date: 2026-07-30
+- Amended: 2026-07-30 (M1.1.5) — identity lifetime. Every registered dataset now
+  holds a live handle on its file, so a filesystem identity cannot be recycled
+  while a row still names it. See *Identity lifetime* below; the paragraphs this
+  replaces recorded the gap as an open M1.2 decision.
 
 ## Context
 
@@ -71,24 +75,99 @@ identity — the volume serial and the whole 128-bit file ID that M1.0 introduce
   case the one that decides whether two acquisitions are the same.
 
 An identity names an object only while that object exists. A filesystem is free
-to hand a deleted file's ID to the next one it creates, and the registry holds
-the value rather than a live handle — so a file added after a registered one was
-deleted could match an identity that is no longer its owner's, and be reported
-as a duplicate of a row that names something else.
+to hand a deleted file's ID to the next one it creates, so an index of
+identities that nothing keeps alive would eventually answer for a file the user
+never added. *Identity lifetime* below is how that is closed.
 
-Rechecking the recorded file at that moment does not close it: a hard link that
-outlived one of its names is the same object under a path that no longer
-resolves, and from here that is indistinguishable from a recycled ID. Splitting
-on the doubt would put one acquisition on two rows, which is the failure the
-roster exists to prevent.
+## Identity lifetime
 
-What closes it is holding an open handle per registered dataset, so the ID
-cannot be recycled while the row exists. That is an M1.2 decision, because it
-brings its own costs — a handle per dataset, and a file the user cannot delete
-from Explorer while MSCanvas has it listed — and those are visible to the user
-in a way this slice is not. Until then the gap is unreachable in the product:
-the picker empties the workspace before it registers, so no duplicate check ever
-runs against a stale row.
+Every registered dataset owns an identity lease: a live handle on the filesystem
+object it names, taken when the file is accepted and held for exactly as long as
+the registry row exists.
+
+The lease keeps the object alive. An identity cannot be recycled while its
+object is alive, so every key in the identity index is still its own row's, and
+a file that arrives later necessarily has an identity of its own. The failure it
+removes is precise: without it, a dataset that was added and then deleted could
+have its identity handed to an unrelated acquisition, and the registry would
+report that acquisition as a duplicate of a row naming something else — two
+distinct acquisitions merged into one workspace row.
+
+- On Windows the lease is the very handle the inspection read the identity
+  through, so there is no interval between establishing an identity and holding
+  the object that owns it. It is opened sharing read, write and delete, the
+  posture accepted files already used. Renaming, deleting and replacing the path
+  all remain permitted while MSCanvas lists the file. Listing a file is not a
+  claim on it: a workspace row is a row, and removing one is the only thing that
+  removes one.
+- Because deletion is permitted, a replacement object at the same path is
+  necessarily alive at the same moment as the object it replaced, and two
+  objects alive at once cannot share an identity. The replacement is therefore
+  added as a distinct dataset rather than matched to the row it displaced, which
+  is what *Source mutation and replacement* already required and what the lease
+  now makes true rather than likely.
+- Revocation releases the lease with the row it removes, and clearing the
+  workspace releases every one of them. The removed value must not be kept in an
+  error, a snapshot or a reply: holding it would pin a file the workspace no
+  longer lists, with no row left for the user to remove.
+- A request that is already running is the one thing revocation cannot end
+  early, and that is the existing rule rather than a new one: running work is
+  not cancelled, and while it runs it holds the file itself, because it is
+  reading it. The object is therefore let go when that request finishes rather
+  than when the row goes. Nothing outlives the request, which is the property
+  that matters — the file is never held by a session that has forgotten it.
+- A duplicate addition was accepted like any other file and arrived holding a
+  lease of its own — nothing can know it is a duplicate before it is inspected.
+  The duplicate outcome drops it, so an object is held once, by the row that
+  already named it, rather than once per time the user happened to add it.
+- The lease is a lifetime and not a decision. It is not a cache, not the handle
+  a read goes through, not a permanent lock, and not a reason to trust the
+  remembered path: every use still canonicalises the path, reopens it, reruns
+  acceptance and compares the canonical path, the identity and the source
+  generation. A path that now names another object is refused exactly as before,
+  and the dataset stays pinned to the object it was given until it is revoked.
+- The picker takes the replacement's lease before it lets the previous
+  selection's go. Revoking first would leave a window in which the old identity
+  is free, and the file being accepted in that window could be given it.
+- The lease is not persistence. It holds nothing across processes, is not
+  written anywhere, and every handle is gone when the session ends.
+
+The cost is a handle per registered dataset, which is what *Consequences* below
+records. The cost the earlier draft feared — a file the user cannot delete from
+Explorer while MSCanvas lists it — is not paid, because the share mode is the
+permissive one.
+
+One narrower cost is paid, and is named here rather than discovered later. The
+lease asks for read access, and Windows will not grant a later open whose own
+share mode refuses to share that read. Renaming, deleting, replacing, reading
+and writing the file all still work — a writer that shares reads, which is what
+an in-place edit does, is unaffected — but a program that opens the file
+offering no sharing at all is refused for as long as a row names it, and the
+user's remedy is to remove the row. That is the same rule the release coverage
+uses to ask the operating system whether a lease is still held, so it is a
+property this decision knows it has. Narrowing the lease to an access mask the
+sharing rules exempt would remove it, at the price of no longer being the handle
+the identity was read through; that is a separate decision with its own evidence
+to gather, and M1.2 is where a roster of several held files makes it worth
+gathering.
+
+On Windows this is the whole guarantee: `FILE_ID_INFO` names an object, and an
+open handle keeps that object alive.
+
+Elsewhere no hold is taken, and the decision is deliberate rather than pending.
+That platform's inspection establishes posture and identity from the name rather
+than through a handle, so it has none to hand over; opening the path a second
+time to make one would be a second resolution — recording an identity a rename
+could leave nothing keeping alive — and, worse, std offers no non-blocking open,
+so a path replaced by a FIFO between the posture check and that open would leave
+the selection blocked for as long as no writer arrives. Introducing a way to
+hang, in order to pin an identity this decision does not claim to pin, is the
+wrong trade. The lease type stays uniform so the registry never has to know
+which platform it is on, and the guarantee, the coverage and the claim are all
+Windows — which is the platform this application ships on and the only one its
+CI builds. A non-Windows lease would need a non-blocking no-following open,
+which needs a dependency this project has not taken, and it belongs with that
+decision rather than with this one.
 
 ## Duplicate outcome
 
@@ -113,10 +192,11 @@ The registry has one order.
 
 Removing a dataset is an explicit operation with a reason, and it is atomic
 across everything the session knows about that dataset: the row, the identity
-index, its request epoch and its preview facts all go together.
+index, its identity lease, its request epoch and its preview facts all go
+together.
 
 - The source acquisition is never deleted or modified. Removing a row removes a
-  row.
+  row, and releases the handle that row was holding.
 - Work that is waiting for its turn on a revoked dataset never starts.
 - Work already running is not cancelled. It may finish, and nothing it produces
   is recorded: a late reply cannot recreate registry or preview state, and
@@ -234,16 +314,25 @@ concurrent opens something a user can actually cause.
   like;
 - duplicates are decided by filesystem identity, proven with a hard link;
 - a byte-identical copy is not a duplicate;
-- duplicate addition changes nothing;
+- duplicate addition changes nothing, and keeps no handle of its own;
 - order survives removal, clear and re-addition;
-- revocation reaches the row, the identity index, the epoch and the preview;
+- a registered dataset holds its file open and a revoked one does not, proven
+  against the operating system's own sharing rules rather than by timing;
+- emptying the workspace releases every lease, not the first row's;
+- a file created where a registered one used to be is a second dataset, and the
+  row it did not join reports the change on its next use;
+- a file MSCanvas lists can still be renamed and deleted by its owner;
+- a path the picker refuses leaves the selection, and its lease, exactly as they
+  were;
+- revocation reaches the row, the identity index, the lease, the epoch and the
+  preview;
 - a revoked dataset's waiting work never starts;
 - a revoked dataset's running reply recreates nothing and attaches to nothing;
 - work on one dataset never supersedes work on another;
 - preview facts commit together or not at all;
 - a backend change rereads nothing;
 - registry operations never reach the provider, proven with one that panics;
-- no path, filename or raw identity appears in any debug output.
+- no path, filename, raw identity or raw handle appears in any debug output.
 
 ## Consequences
 
@@ -252,6 +341,11 @@ a roster would otherwise have shipped with — cross-dataset state mixing, a
 global ticket cancelling unrelated work, late replies resurrecting removed rows
 — are refused by construction and by test rather than found later in a rendered
 check.
+
+The session also holds one open file handle per registered dataset, for as long
+as the row exists. That is the price of the identity being the file's own rather
+than a number that used to be, and it is a small one: the handle is read-only,
+shares deletion, and goes when the row does.
 
 The deliberate cost is that none of it is reachable yet. Until the roster
 interface lands, production still registers one dataset at a time, and the
@@ -270,6 +364,17 @@ worse than no workspace.
 - **Registering datasets in production before the roster exists.** It would give
   the webview capabilities over files the user cannot see or withdraw, which is
   exactly what ADR 0005 refused.
+- **Rechecking a registered file instead of holding it open.** Asking again
+  whether the recorded path still resolves to the recorded identity cannot tell
+  a recycled ID from a hard link that outlived one of its names: both are a row
+  whose path no longer resolves to it. Splitting on that doubt would put one
+  acquisition on two rows, which is the duplicate the roster exists to prevent.
+  A live handle answers the question by making it unaskable.
+- **A lease that forbids deletion.** Sharing less would stop the user removing
+  or replacing a file MSCanvas has listed, which is a claim on their data that
+  nothing here has earned. It would also be a worse guarantee, not a better one:
+  a replacement that cannot happen teaches nothing about a replacement that
+  does.
 - **An ADR without a compiling implementation.** The identity gap M1.0 repaired
   was found by reading the code, not the documents.
 - **A format-neutral dataset kind.** A constructible variant for a vendor or

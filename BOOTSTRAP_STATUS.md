@@ -763,6 +763,121 @@ identity it decides on is. No scientific acquisition is used as a fixture.
 Rendered QA was not required and not performed: nothing the user can see
 changed. ProteoWizard was not executed.
 
+## Registered dataset identities pinned, 2026-07-30
+
+Every registered dataset now holds a live handle on the file it names, for
+exactly as long as its registry row exists. The previous slice recorded the gap
+this closes: a filesystem identity names an object only while that object is
+alive, so a dataset that was added and then deleted could have its identity
+handed to an unrelated acquisition, and the registry — which decides duplicates
+by identity — would report that acquisition as a duplicate of a row naming
+something else. Two distinct acquisitions on one workspace row is a
+scientific-correctness failure, and it becomes reachable the moment the M1.2
+roster lets a session hold several datasets. This is the prerequisite, not the
+roster.
+
+The handle is the one the accepted-file inspection already opened, kept rather
+than dropped, so the identity and the hold that keeps it the file's own come
+from the same inspection of the same object. Its share mode is unchanged and
+deliberately permissive — read, write and delete — so renaming, deleting and
+replacing a file MSCanvas lists all remain the user's to do. That is also what
+makes the guarantee work rather than what weakens it: because the old object
+stays alive, a replacement at the same path is alive at the same moment, and two
+objects alive at once cannot share an identity, so the replacement is added as a
+dataset of its own instead of matched to the row it displaced. The lease is a
+lifetime and nothing else: every use still canonicalises the path, reopens it,
+reruns acceptance and compares the canonical path, the identity and the source
+generation, and a name that now points elsewhere is refused exactly as before.
+
+Revocation and clearing release the lease with the row, a duplicate addition
+drops the handle it arrived with rather than keeping a second one, and the
+picker accepts and leases the replacement before it lets the previous selection
+go — so a path the picker refuses leaves the selection and its hold exactly as
+they were, and there is no window in which a released identity is free for the
+file being accepted to be given.
+
+One cost is paid and is recorded rather than left to be found, after automated
+review raised it and it was measured. The lease asks for read access, and
+Windows will not grant a later open whose own share mode refuses to share that
+read, so a program that opens the file offering no sharing at all is refused
+while a row names it. Measured against this head: an ordinary reader, a writer
+that shares reads — which is what an in-place edit does — a rename and a delete
+all still succeed while the lease is held; only the no-sharing open is refused,
+with `ERROR_SHARING_VIOLATION`. The suggested repair, narrowing the lease to an
+access mask the sharing rules exempt, was not taken here: it would stop the
+lease being the handle the identity was read through, which is the property that
+leaves no interval between establishing an identity and holding the object that
+owns it, and it would remove the rule the release proofs use to ask the
+operating system whether a handle is still open. ADR 0006 records it as a
+separate decision for M1.2, where a roster of several held files is what makes
+it worth the evidence.
+
+Nothing the user can reach changed. No Tauri command was added or changed, no
+transfer object, capability or frontend file was touched, no dependency moved,
+the `file-N` handle spelling is unchanged, and the session still holds exactly
+one dataset. The lease is private, is not serialisable, exposes no raw handle
+and prints as `<opaque-identity-lease>`. ADR 0006 is amended rather than
+superseded: the paragraphs deferring this to M1.2 are replaced by an *Identity
+lifetime* decision, and the two alternatives that were weighed and refused —
+rechecking the recorded file instead of holding it, and a lease that forbids
+deletion — are recorded with it.
+
+Validation on the exact head: `cargo fmt --all --check`,
+`cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --locked --workspace --all-targets` (100 desktop tests, up from 90),
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build`.
+
+Nine mutations were introduced one at a time against this exact head, and each
+was caught by the test written for it: an accepted file holding something other
+than the object it names; registration letting the hold go the moment it stores
+the row; a duplicate keeping the handle it arrived with; a revoked row's hold
+outliving the row (twice, once for the row itself and once for a row revoked
+while a read of it was still running); the picker emptying the workspace before
+accepting the replacement; emptying the workspace reaching only its first row; a
+lease whose debug output prints its raw handle; and a lease opened without
+sharing deletion, which four existing tests caught because it stops the user
+replacing their own file.
+
+Three further findings came out of automated review, and all three were real.
+Two were about the non-Windows path and are settled together, by that path
+taking no hold at all. The first attempt gave it an owned descriptor, opened by
+a second resolution of the name; review pointed out that a rename between the
+two would record an identity no descriptor was keeping alive — the failure this
+slice removes, moved rather than closed — and then that reading identity from
+the descriptor instead still left a worse hazard, because std offers no
+non-blocking open and a path replaced by a FIFO between the posture check and
+the open would block the selection for as long as no writer arrives. Introducing
+a way to hang in order to pin an identity nothing claims to pin is the wrong
+trade, so that platform is back to exactly what it did before this slice, the
+lease type stays uniform so the registry never branches on platform, and the
+guarantee, the coverage and the claim are all Windows. A non-Windows lease needs
+a non-blocking no-following open, which needs a dependency this project has not
+taken; ADR 0006 records it there.
+
+The third is about when a lease is released. A revoked row lets its own hold go
+immediately, but a read that was already under way holds the file itself for as
+long as it runs — it is reading it, and ADR 0006 has always said running work is
+not cancelled. So the object is released when that request finishes rather than
+when the row goes, and nothing outlives the request. That is now stated in the
+ADR, in the code, and asserted at both ends by the late-reply test: held while
+the read runs, released once it returns.
+
+The release proofs are of two kinds and both are deterministic. One asks this
+process, through a weak reference that holds nothing open itself, whether every
+holder of a lease has let go. The other asks Windows, by requesting the file
+while offering no sharing at all — a request the system grants only when nothing
+else has the object open, decided by the share rules rather than by timing. The
+identity-recycling scenario is exercised against the real filesystem: a
+registered file is renamed away, a different acquisition is written at its former
+name, and the original's last name is then removed, so nothing but the registry's
+lease keeps it alive. Windows-specific coverage is gated on `#[cfg(windows)]`,
+and there is nothing to gate elsewhere: only Windows holds a file handle, so
+only Windows has the guarantee to prove, and CI builds no other target anyway.
+No scientific acquisition is used as a fixture. Rendered QA was not
+required and not performed: nothing the user can see changed. ProteoWizard was
+not executed and the desktop application was not launched.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.

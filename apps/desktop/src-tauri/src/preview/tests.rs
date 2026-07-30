@@ -19,6 +19,11 @@ use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, PreviewErrorDto, SelectedSpectrumOutcomeDto,
 };
 use super::installation::InstallationIdentity;
+/// The share-mode probe that answers whether a file is still held open. It
+/// lives beside the flags the lease is opened with, because that is what makes
+/// its answer exact rather than a guess.
+#[cfg(windows)]
+use super::selection::nothing_else_holds_open;
 use super::service::PreviewService;
 
 const METADATA_OUTPUT: &str = concat!(
@@ -2121,6 +2126,212 @@ fn adding_one_file_under_two_names_is_one_dataset() {
     // Described as it was registered. The second name is another way to reach
     // the same acquisition, not a rename of the row the user already has.
     assert_eq!(again.file_name, "sample.mzML");
+    // One row, one hold. The duplicate was accepted before anything could know
+    // it was one, so it arrived with a handle of its own; letting the single
+    // row go has to be enough to release the object.
+    assert!(!nothing_else_holds_open(&file.path));
+    service
+        .accept_file(&file.sibling("other.mzML"))
+        .expect("the picker replaces the selection");
+    assert!(
+        nothing_else_holds_open(&file.path),
+        "a duplicate that had kept its handle would still be holding this"
+    );
+}
+
+#[test]
+fn a_file_the_picker_cannot_accept_leaves_the_selection_it_has() {
+    // The order inside `accept_file` is the point: the replacement is accepted
+    // -- and leased -- before the selection it replaces is let go. Reversed,
+    // this pick would empty the workspace on its way to failing, closing the
+    // lease on a file the session still lists and leaving the user with
+    // nothing selected because they chose the wrong file once.
+    let file = TestFile::new("rejected-pick");
+    let unsupported = file.directory.join("acquisition.mzXML");
+    fs::write(&unsupported, b"<mzXML/>").expect("write an unsupported fixture");
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let held = service
+        .lease_witness(&selected.handle)
+        .expect("the selection is registered");
+
+    let error = service
+        .accept_file(&unsupported)
+        .expect_err("that is not an mzML file");
+
+    assert_eq!(error.kind, "unsupported_extension");
+    assert_eq!(
+        service.dataset_count(),
+        1,
+        "the selection survives the pick"
+    );
+    assert!(!held.is_released(), "and so does its hold on its file");
+    assert!(
+        service.lease_witness(&selected.handle).is_some(),
+        "the same dataset, not a re-registered one"
+    );
+}
+
+#[test]
+fn emptying_the_workspace_releases_every_file_it_was_holding() {
+    let file = TestFile::new("clear-leases");
+    let second_source = file.sibling("second.mzML");
+    let third_source = file.sibling("third.mzML");
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+    let first = service.add_dataset(&file.path).expect("added");
+    let second = service.add_dataset(&second_source).expect("added");
+    assert_eq!(service.dataset_count(), 2);
+    let held = [
+        service.lease_witness(&first.handle).expect("registered"),
+        service.lease_witness(&second.handle).expect("registered"),
+    ];
+    assert!(held.iter().all(|witness| !witness.is_released()));
+
+    // The picker empties the workspace before it registers, which is the only
+    // production route into `clear`.
+    service.accept_file(&third_source).expect("accepted");
+
+    assert_eq!(service.dataset_count(), 1);
+    // Every row, not the first one. A loop that reached only the head of the
+    // registry would leave the rest of the user's files pinned by a session
+    // that no longer lists them, with no row left to remove to get them back.
+    for (position, witness) in held.iter().enumerate() {
+        assert!(
+            witness.is_released(),
+            "dataset {position} was still being held after the workspace was emptied"
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn replacing_the_selection_holds_the_new_file_and_lets_the_old_one_go() {
+    let file = TestFile::new("replacement-lease");
+    let other = file.sibling("other.mzML");
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
+    let first = service.accept_file(&file.path).expect("accepted");
+    let held = service.lease_witness(&first.handle).expect("registered");
+    assert!(
+        !nothing_else_holds_open(&file.path),
+        "the current selection is held"
+    );
+
+    let second = service.accept_file(&other).expect("accepted again");
+
+    assert_eq!(service.dataset_count(), 1, "no hidden accumulation");
+    assert!(held.is_released(), "the replaced dataset let its file go");
+    assert!(
+        nothing_else_holds_open(&file.path),
+        "and the operating system agrees, so nothing is left pinning it"
+    );
+    assert!(
+        !nothing_else_holds_open(&other),
+        "while the file that replaced it is now the one being held"
+    );
+    assert_eq!(
+        service
+            .open_preview(&first.handle)
+            .expect_err("the previous handle is revoked")
+            .kind,
+        "unknown_file_handle"
+    );
+    service
+        .open_preview(&second.handle)
+        .expect("and the new one works");
+}
+
+/// The recycled-identity failure, through the entry point the roster will use.
+///
+/// Windows-only because the identity this defends is the Windows file ID, and
+/// because the sharing that lets a listed file still be renamed and deleted is
+/// a Windows rule.
+#[cfg(windows)]
+#[test]
+fn a_file_that_takes_a_registered_ones_name_is_added_rather_than_matched() {
+    let file = TestFile::new("recycled-identity");
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+    let first = service.accept_file(&file.path).expect("accepted");
+    let held = service.lease_witness(&first.handle).expect("registered");
+
+    // Everything the user is still allowed to do to a file MSCanvas lists.
+    let moved = file.directory.join("moved-away.mzML");
+    fs::rename(&file.path, &moved).expect("a listed file can still be renamed");
+    fs::write(&file.path, b"<mzML> a different acquisition </mzML>")
+        .expect("write the replacement");
+    // After this the first object has no name at all, and nothing but the
+    // registry's lease keeps it alive. Without that hold, this is the moment
+    // its identity becomes free for the filesystem to give to something else.
+    fs::remove_file(&moved).expect("a listed file can still be deleted");
+
+    let second = service
+        .add_dataset(&file.path)
+        .expect("the replacement is accepted");
+
+    assert_ne!(
+        second.handle, first.handle,
+        "a file that arrives under a familiar name is not the file that left"
+    );
+    assert_eq!(
+        service.dataset_count(),
+        2,
+        "two acquisitions, neither absorbed into the other"
+    );
+    assert!(
+        !held.is_released(),
+        "the row that named the file the user removed still holds it"
+    );
+    // And the row it did not join reports the change on its next use rather
+    // than quietly adopting measurements the user never chose.
+    assert_eq!(
+        service
+            .open_preview(&first.handle)
+            .expect_err("that name names something else now")
+            .kind,
+        "file_identity_changed"
+    );
+}
+
+#[test]
+fn a_dataset_whose_name_now_points_elsewhere_is_refused_and_still_held() {
+    // The lease is a lifetime, not a decision. It keeps the object the user
+    // chose from being confused with another one; it says nothing about
+    // whether the remembered path still leads there, and every use still asks.
+    let file = TestFile::new("leased-but-replaced");
+    let provider = Box::new(FakeProvider::available(open_responses()));
+    let world = provider.clone_world();
+    let service = PreviewService::new(provider);
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let held = service.lease_witness(&selected.handle).expect("registered");
+    let before = world.requested_count();
+
+    let moved = file.directory.join("moved-away.mzML");
+    fs::rename(&file.path, &moved).expect("a listed file can still be renamed");
+    fs::write(&file.path, b"<mzML> a different acquisition </mzML>")
+        .expect("write the replacement");
+
+    let error = service
+        .open_preview(&selected.handle)
+        .expect_err("that name no longer names the file that was opened");
+
+    assert_eq!(error.kind, "file_identity_changed");
+    assert_eq!(
+        world.requested_count(),
+        before,
+        "nothing was launched against the file that arrived"
+    );
+    assert!(
+        !held.is_released(),
+        "the dataset still holds the file it was given"
+    );
+    assert!(
+        !service.holds_preview_state(&selected.handle),
+        "and derived nothing from the one that arrived"
+    );
+    assert_eq!(
+        service.dataset_count(),
+        1,
+        "the row is neither rebound nor removed"
+    );
 }
 
 #[test]
@@ -2285,6 +2496,14 @@ fn a_preview_that_finishes_after_its_dataset_is_gone_records_nothing() {
     // returns at all is the proof that the workspace stays answerable while a
     // backend process holds the gate.
     let second = service.accept_file(&other).expect("accepted again");
+    // Revocation cannot end a read that is already under way, and while that
+    // read runs it holds the file itself -- so the object is let go when the
+    // request finishes rather than when the row goes.
+    #[cfg(windows)]
+    assert!(
+        !nothing_else_holds_open(&file.path),
+        "a read already under way still holds the file it is reading"
+    );
     release.send(()).expect("the provider is still waiting");
 
     // The work had already started, so it is not cancelled and its caller is
@@ -2293,6 +2512,13 @@ fn a_preview_that_finishes_after_its_dataset_is_gone_records_nothing() {
         .join()
         .expect("the open finished")
         .expect("a read that had already started still completes");
+    // And nothing outlives it. The file is not left held by a session that has
+    // forgotten it, which is the property revocation actually owes.
+    #[cfg(windows)]
+    assert!(
+        nothing_else_holds_open(&file.path),
+        "the revoked dataset's file is let go once the request that was reading it finishes"
+    );
     // What it must not do is record anything. Preview facts under a dataset the
     // session has let go of would sit under an identifier nothing can reach and
     // nothing will ever clear.

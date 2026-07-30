@@ -51,19 +51,34 @@ impl Workspace {
     /// without reaching the runtime state would leave a request epoch and a
     /// preview under an identifier nothing can name.
     fn revoke(&mut self, id: DatasetId, reason: RevocationReason) {
-        self.registry.revoke(id, reason);
+        // Dropped here rather than returned or kept. The removed row owns the
+        // dataset's identity lease, and letting it go is what closes the
+        // handle: a session that held on to it would go on pinning a file the
+        // workspace no longer lists, and the user would have no row to remove
+        // to get it back.
+        //
+        // What this cannot end early is a request that is already running. It
+        // took its own hold on the file when it revalidated, because it is
+        // reading it, and revocation does not cancel running work -- so the
+        // object is let go when that request finishes rather than when the row
+        // goes. Nothing outlives the request, which is the property that
+        // matters: the file is not held by a session that has forgotten it.
+        drop(self.registry.revoke(id, reason));
         // Dropping the runtime state is what makes a request still waiting for
         // its turn fail to find its epoch, and a reply that arrives afterwards
         // fail to find its dataset.
         self.runtime.remove(&id);
     }
 
-    /// Removes every dataset and everything the session derived from them.
+    /// Removes every dataset and everything the session derived from them,
+    /// including the identity lease each one holds.
     fn clear(&mut self, reason: RevocationReason) {
         // One at a time through the atomic path, so emptying the workspace
         // cannot come to mean something different from removing every dataset
-        // in it. Nothing is asserted here: one lock now covers the registry and
-        // everything derived from it, and a panic under it would take every
+        // in it -- including the handles: a loop that reached only the first
+        // row would leave every other file pinned by a session that no longer
+        // lists it. Nothing is asserted here: one lock now covers the registry
+        // and everything derived from it, and a panic under it would take every
         // later command with it. What this leaves behind is checked from
         // outside instead.
         for id in self.registry.ids().to_vec() {
@@ -268,12 +283,22 @@ impl PreviewService {
     /// withdraw, which is what ADR 0005 refused and ADR 0006 keeps refusing
     /// until the roster interface exists to make them visible.
     pub fn accept_file(&self, path: &Path) -> Result<SelectedFileDto, PreviewErrorDto> {
+        // The replacement is accepted -- and leased -- before the selection it
+        // replaces is let go, and the order is the point rather than an
+        // accident of where the line sits. Revoking first would close the old
+        // dataset's lease while the new file was still being inspected, and in
+        // that window the old identity is free for the filesystem to hand to
+        // whatever is created next; if that is the very file being accepted,
+        // the session would register a new dataset under the identity of the
+        // one it just dropped. It also means a path the picker cannot accept
+        // leaves the workspace exactly as it was, because this line returns
+        // before anything below it runs.
         let accepted = accept_mzml_file(path)?;
         let mut workspace = self.workspace();
         // Everything the previous selection owned goes at once: its row, its
-        // preview facts, and the request epoch that lets a spectrum still
-        // waiting for its turn on it find out that nobody will look at the
-        // answer.
+        // preview facts, the identity lease that kept its file's identity its
+        // own, and the request epoch that lets a spectrum still waiting for its
+        // turn on it find out that nobody will look at the answer.
         workspace.clear(RevocationReason::ReplacedBySelection);
         let id = workspace.registry.add(accepted).id();
         let held = workspace.registry.len();
@@ -328,6 +353,19 @@ impl PreviewService {
     /// How many datasets the session holds.
     pub(super) fn dataset_count(&self) -> usize {
         self.workspace().registry.len()
+    }
+
+    /// A view of whether this dataset's identity lease is still open.
+    ///
+    /// Weak, so asking does not keep the answer alive, and taken while the
+    /// dataset is still registered because afterwards there is nothing to ask.
+    /// `None` for a handle the session does not hold.
+    pub(super) fn lease_witness(&self, handle: &str) -> Option<super::selection::LeaseWitness> {
+        let id = DatasetId::parse(handle)?;
+        self.workspace()
+            .registry
+            .get(id)
+            .map(|dataset| dataset.file().lease_witness())
     }
 
     /// Whether the session is holding preview facts under this handle.
