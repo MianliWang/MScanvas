@@ -569,8 +569,9 @@ Issue #29 — the table's column header row sitting outside the element that
 scrolls it — was measured, repaired and rechecked interactively on Windows at
 150% display scaling (`AppliedDPI` 144, `devicePixelRatio` 1.5). Baseline on
 `3429bd49fa7da6b3452c965065155103e46f5e02`, final application code on
-`49acfdccac5c1aeb8422f48ea2364526db39c568`; the documentation commit after it
-changes none of that code. Native outer `900×700` is a CSS viewport of
+`2e16fe543181059aff540166b3fc316829cd24ea`, which is the last commit here to
+touch application code; the check was run on `49acfdc…` first and again after
+the review repair described below. Documentation commits change none of it. Native outer `900×700` is a CSS viewport of
 `586×430` at this scaling, and the CSS viewport is what the layout answers to.
 
 Baseline, with an acquisition open at that viewport: the scrolling viewport
@@ -593,11 +594,20 @@ Only one element in the table now scrolls, and the header is not it. The header
 is sticky with an opaque background and wins the paint order against the rows
 passing under it. Keyboard: `Tab` reaches a row in five stops with a visible
 focus ring, the arrows move focus without selecting, `Enter` selects, and a row
-reached by keyboard is never left behind the sticky header or below the
+reached with the arrows is never left behind the sticky header or below the
 viewport — checked at the right-hand scroll position as well as the left. The
 nine columns, their order, their labels and their values are unchanged;
 `aria-rowcount`, `aria-colcount`, the single header row, the row roles and the
 single roving tab stop are unchanged.
+
+Review found the one thing moving the header inside the scroller cost, and it
+is repaired in `2e16fe543181059aff540166b3fc316829cd24ea`. Bringing a focused
+row into view is the browser's to do, and it treats a row that is already half
+behind the header as near enough: at a scroll position where the roving tab
+stop was partly covered, focusing it moved nothing and left 20 pixels of the
+row, and of its focus ring, beneath the labels. With the header's row reserved
+through `scroll-padding-top`, the same measurement lands the row on the
+header's bottom edge — measured at seven scroll positions, none behind it.
 
 Issue #24 containment did not regress: `documentElement.scrollWidth` equals
 `clientWidth` and `body.scrollWidth` equals `body.clientWidth` at all three
@@ -607,13 +617,15 @@ control with its focus ring, leaving the verdict as it was.
 
 The WebView2 console held the same four development artefacts and nothing else,
 and the Rust/Tauri and Vite output added nothing during the session. The
-selected-spectrum panel refused to draw for this acquisition, saying the
-spectrum list and the spectrum disagree about which scan the row is; it says
-the same for every row of it, it is the backend's identity reconciliation
-declining a synthetic file rather than an error, and no console entry
-accompanied it. The acquisition was read through a neutral working copy outside
-the repository, deleted afterwards, so no fixture name, path or scientific value
-appears here.
+selected-spectrum panel did not draw for the acquisition used here: it reported
+that the spectrum list and the spectrum disagree about which scan the row is,
+which is the reconciliation this application performs in Rust declining to show
+one beside the other. It reported the same for every row tried, no console entry
+accompanied it, and nothing in this change touches that path. Whether the file
+itself is at fault was not investigated; it is recorded because it was seen, not
+as a finding about the backend. The acquisition was read through a neutral
+working copy outside the repository, deleted afterwards, so no fixture name,
+path or scientific value appears here.
 
 ## Validation completed during repository initialization
 
