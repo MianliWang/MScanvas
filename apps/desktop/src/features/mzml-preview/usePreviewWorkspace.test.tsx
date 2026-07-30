@@ -695,6 +695,94 @@ describe("discarding what a replaced installation read", () => {
     expect(resolvedGeneration(result.current.backend)).toBe(1);
   });
 
+  it("starts no second read while one is still running, whoever asks", async () => {
+    // The disabled action is the visible half of this rule. The other half is
+    // here, because a caller that reaches past the button -- Enter arriving
+    // between two renders, a dispatch from somewhere else -- must not queue a
+    // second process behind the single backend gate either.
+    const open = deferred<Preview>();
+    let reads = 0;
+    const h = harness({
+      preview: () => {
+        reads += 1;
+        return open.promise;
+      },
+    });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(h.api) });
+    await h.deliver(0);
+
+    act(() => {
+      result.current.addFiles();
+    });
+    await waitFor(() => {
+      expect(result.current.preview.status).toBe("opening");
+    });
+    expect(reads).toBe(1);
+    expect(result.current.previewBackendBusy).toBe(true);
+
+    act(() => {
+      result.current.activateDataset(selectedFile.handle);
+    });
+
+    expect(reads).toBe(1);
+
+    await act(async () => {
+      open.resolve(buildPreview(3));
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(result.current.previewBackendBusy).toBe(false);
+    });
+  });
+
+  it("keeps the viewer lane busy until every request it started has settled", async () => {
+    // Two spectrum reads can be outstanding at once: a newer selection
+    // supersedes the older one in Rust but does not cancel it. A flag would let
+    // the stale one report the lane idle and re-open activation while a process
+    // is still running; a count cannot.
+    const replies = [deferred<SelectedSpectrumOutcome>(), deferred<SelectedSpectrumOutcome>()];
+    let asked = 0;
+    const h = harness({
+      spectrum: () => {
+        const reply = replies[asked];
+        asked += 1;
+        return reply?.promise ?? Promise.reject(new Error("one reply per selection"));
+      },
+    });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(h.api) });
+    await h.deliver(0);
+    act(() => {
+      result.current.addFiles();
+    });
+    await waitFor(() => {
+      expect(result.current.preview.status).toBe("loaded");
+    });
+
+    act(() => {
+      result.current.selectSpectrum(0);
+    });
+    act(() => {
+      result.current.selectSpectrum(1);
+    });
+    expect(asked).toBe(2);
+    expect(result.current.previewBackendBusy).toBe(true);
+
+    // The abandoned read answers first. It owns one request and no more.
+    await act(async () => {
+      replies[0]?.resolve({ outcome: "unavailable", requestedIndex: 0 });
+      await Promise.resolve();
+    });
+    expect(result.current.previewBackendBusy).toBe(true);
+
+    await act(async () => {
+      replies[1]?.resolve({ outcome: "unavailable", requestedIndex: 1 });
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(result.current.previewBackendBusy).toBe(false);
+    });
+  });
+
   it("reports a failed installation change that a later request superseded", async () => {
     // A change that failed means the installation did not change, so the
     // failure is still the truth about what the user just asked for. Dropping

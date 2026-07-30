@@ -3044,7 +3044,10 @@ fn one_picker_operation_adds_every_file_it_chose_in_the_order_it_chose_them() {
             .collect::<Vec<_>>(),
         ["file-0", "file-1", "file-2"]
     );
-    assert_eq!(roster_handles(&result.roster), ["file-0", "file-1", "file-2"]);
+    assert_eq!(
+        roster_handles(&result.roster),
+        ["file-0", "file-1", "file-2"]
+    );
     assert_eq!(
         result.roster.datasets[1].file_name, "second.mzML",
         "each row is described as the file it is"
@@ -3058,9 +3061,12 @@ fn one_picker_operation_adds_every_file_it_chose_in_the_order_it_chose_them() {
 fn adding_one_file_is_one_row_and_reading_the_roster_is_no_work() {
     let file = TestFile::new("add-one");
     let service = PreviewService::new(Box::new(NoProcess));
-    assert!(service.roster().datasets.is_empty(), "a session starts empty");
+    assert!(
+        service.roster().datasets.is_empty(),
+        "a session starts empty"
+    );
 
-    let result = service.add_files(&[file.path.clone()]);
+    let result = service.add_files(std::slice::from_ref(&file.path));
 
     assert_eq!(roster_handles(&result.roster), ["file-0"]);
     assert_eq!(result.roster.datasets[0].file_name, "sample.mzML");
@@ -3077,7 +3083,7 @@ fn a_batch_that_chose_nothing_leaves_the_workspace_exactly_as_it_was() {
     // that removed anything either.
     let file = TestFile::new("add-nothing");
     let service = PreviewService::new(Box::new(NoProcess));
-    service.add_files(&[file.path.clone()]);
+    service.add_files(std::slice::from_ref(&file.path));
     let before = service.roster();
 
     let result = service.add_files(&[]);
@@ -3095,14 +3101,21 @@ fn one_file_under_two_names_in_one_batch_is_one_row_and_one_duplicate() {
 
     let result = service.add_files(&[file.path.clone(), alias, file.path.clone()]);
 
-    assert_eq!(roster_handles(&result.roster), ["file-0"], "one file, one row");
+    assert_eq!(
+        roster_handles(&result.roster),
+        ["file-0"],
+        "one file, one row"
+    );
     let WorkspaceAddOutcomeDto::Added { dataset } = &result.outcomes[0] else {
         panic!("the first name registers the dataset");
     };
     assert_eq!(dataset.handle, "file-0");
     for (position, outcome) in result.outcomes[1..].iter().enumerate() {
         let WorkspaceAddOutcomeDto::Duplicate { existing } = outcome else {
-            panic!("outcome {} is a duplicate of a row the user already has", position + 1);
+            panic!(
+                "outcome {} is a duplicate of a row the user already has",
+                position + 1
+            );
         };
         assert_eq!(existing.handle, "file-0");
         // Described as it was registered. The second name is another way to
@@ -3145,7 +3158,11 @@ fn one_file_that_cannot_be_read_does_not_roll_back_the_ones_that_arrived() {
     let result = service.add_files(&[file.path.clone(), unsupported, absent, last]);
 
     assert_eq!(roster_handles(&result.roster), ["file-0", "file-1"]);
-    assert_eq!(result.outcomes.len(), 4, "one outcome per file the user chose");
+    assert_eq!(
+        result.outcomes.len(),
+        4,
+        "one outcome per file the user chose"
+    );
     assert!(matches!(
         result.outcomes[0],
         WorkspaceAddOutcomeDto::Added { .. }
@@ -3205,7 +3222,10 @@ fn a_full_workspace_refuses_new_files_and_still_answers_for_the_ones_it_holds() 
     };
     assert_eq!(candidate_name, "sample.mzML");
     assert_eq!(error.kind, "workspace_full");
-    assert!(!error.retryable, "retrying without removing a row cannot help");
+    assert!(
+        !error.retryable,
+        "retrying without removing a row cannot help"
+    );
     assert_eq!(
         outcome_handle(&again.outcomes[2]),
         "file-7",
@@ -3217,7 +3237,7 @@ fn a_full_workspace_refuses_new_files_and_still_answers_for_the_ones_it_holds() 
     // one file admits exactly one, under the identifier after the last one
     // actually registered.
     service.remove_datasets(&["file-3".to_owned()]);
-    let admitted = service.add_files(&[file.path.clone()]);
+    let admitted = service.add_files(std::slice::from_ref(&file.path));
     assert_eq!(
         outcome_handle(&admitted.outcomes[0]),
         &format!("file-{MAX_WORKSPACE_DATASETS}")
@@ -3302,11 +3322,7 @@ fn removing_a_row_releases_its_hold_and_leaves_its_file_where_it_was() {
         .roster
         .datasets
         .iter()
-        .map(|dataset| {
-            service
-                .lease_witness(&dataset.handle)
-                .expect("registered")
-        })
+        .map(|dataset| service.lease_witness(&dataset.handle).expect("registered"))
         .collect();
 
     service.remove_datasets(&["file-0".to_owned()]);
@@ -3334,7 +3350,9 @@ fn removing_the_row_a_preview_belongs_to_takes_its_facts_with_it() {
     let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
     service.add_files(&[file.path.clone(), other]);
     service.open_preview("file-0").expect("the preview loads");
-    service.load_spectrum("file-0", 0).expect("the spectrum loads");
+    service
+        .load_spectrum("file-0", 0)
+        .expect("the spectrum loads");
     assert!(service.holds_preview_state("file-0"));
 
     let result = service.remove_datasets(&["file-0".to_owned()]);
@@ -3371,7 +3389,7 @@ fn a_workspace_emptied_while_a_read_runs_answers_at_once_and_keeps_nothing() {
         started,
         release: Mutex::new(Some(wait_for_release)),
     })));
-    service.add_files(&[file.path.clone()]);
+    service.add_files(std::slice::from_ref(&file.path));
 
     let opening = {
         let service = Arc::clone(&service);
