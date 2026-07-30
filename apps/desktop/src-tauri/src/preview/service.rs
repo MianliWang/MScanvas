@@ -28,7 +28,8 @@ use super::dto::{
 };
 use super::installation::InstallationIdentity;
 use super::selection::{
-    AcceptedFile, FileRegistry, accept_mzml_file, file_identity, lock_against_replacement,
+    AcceptedFile, FileIdentity, FileRegistry, accept_mzml_file, file_identity,
+    lock_against_replacement,
 };
 
 /// The narrow set of operations the desktop application exposes.
@@ -481,7 +482,7 @@ impl PreviewService {
 /// replaced by another one of the same size at the same recorded time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SourceGeneration {
-    identity: Option<(u64, u64)>,
+    identity: Option<FileIdentity>,
     byte_length: Option<u64>,
     modified: Option<std::time::SystemTime>,
 }
@@ -506,6 +507,31 @@ impl SourceGeneration {
                 .ok()
                 .and_then(|metadata| metadata.modified().ok()),
         }
+    }
+}
+
+#[cfg(test)]
+mod source_generation_tests {
+    use super::{FileIdentity, SourceGeneration};
+
+    #[test]
+    fn a_generation_differs_when_only_the_upper_file_id_bits_do() {
+        // Length and modification time are held equal on purpose: the identity
+        // is the only thing left to tell these two apart, and before the
+        // widening its upper half was not part of it.
+        let mut lower_only = [0_u8; 16];
+        lower_only[..8].copy_from_slice(&42_u64.to_ne_bytes());
+        let mut with_upper = lower_only;
+        with_upper[8..].copy_from_slice(&1_u64.to_ne_bytes());
+        let at = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        let generation = |file_id| SourceGeneration {
+            identity: Some(FileIdentity::for_test(9, file_id)),
+            byte_length: Some(4_096),
+            modified: Some(at),
+        };
+
+        assert_ne!(generation(lower_only), generation(with_upper));
+        assert_eq!(generation(with_upper), generation(with_upper));
     }
 }
 

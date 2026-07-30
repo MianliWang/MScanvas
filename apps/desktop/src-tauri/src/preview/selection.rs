@@ -3,11 +3,48 @@
 //! Rust owns the path. The webview receives an opaque handle and a display
 //! name, never an absolute path, and the file itself is only ever read.
 
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::dto::{PreviewErrorDto, SelectedFileDto};
+
+/// What the filesystem itself calls one file, wide enough to be told apart from
+/// every other file on its volume.
+///
+/// The whole Windows file ID, not the 64-bit index `GetFileInformationByHandle`
+/// returns: that index is documented as unique only on volumes that have one,
+/// and ReFS is the counter-example the API's own successor exists for. While
+/// this only rechecked a single open handle, a truncated key cost at most a
+/// missed replacement; as the key that decides whether two chosen files are the
+/// same acquisition, it would merge two of them into one.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) struct FileIdentity {
+    volume_serial: u64,
+    file_id: [u8; 16],
+}
+
+impl fmt::Debug for FileIdentity {
+    /// Deliberately opaque. An identity is for comparing, and a `Debug` that
+    /// printed it would put a machine-correlatable fingerprint of the user's
+    /// file into any log, panic or assertion that touched one.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<opaque-file-identity>")
+    }
+}
+
+#[cfg(test)]
+impl FileIdentity {
+    /// Builds one directly, for tests that need two identities differing in a
+    /// chosen place rather than whatever the filesystem hands out.
+    pub(super) const fn for_test(volume_serial: u64, file_id: [u8; 16]) -> Self {
+        Self {
+            volume_serial,
+            file_id,
+        }
+    }
+}
 
 /// The only open format this slice accepts. mzXML and vendor acquisitions are
 /// deliberately out of scope.
@@ -53,7 +90,7 @@ pub fn accept_mzml_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
 /// What one inspection of the selected path established about it.
 struct InspectedFile {
     byte_length: u64,
-    identity: (u64, u64),
+    identity: FileIdentity,
 }
 
 /// Inspects the selected path through a single open handle.
@@ -80,6 +117,8 @@ fn inspect_selected_file(path: &Path) -> Result<InspectedFile, PreviewErrorDto> 
     /// not a reason to refuse to look at it. The read window takes a stricter
     /// handle of its own.
     const FILE_SHARE_ALL: u32 = 0x0000_0007;
+    /// `FileIdInfo`, the information class that answers with the whole file ID.
+    const FILE_ID_INFO_CLASS: i32 = 0x12;
 
     #[repr(C)]
     #[derive(Default)]
@@ -103,14 +142,30 @@ fn inspect_selected_file(path: &Path) -> Result<InspectedFile, PreviewErrorDto> 
         file_index_low: u32,
     }
 
-    // The equivalent std accessors are still unstable, and this is the same
-    // information the ProteoWizard crate binds a source identity to.
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileIdInformation {
+        volume_serial_number: u64,
+        file_id: [u8; 16],
+    }
+
+    // The equivalent std accessors are still unstable. The pair of calls is the
+    // one the ProteoWizard crate makes for a source identity: attributes and
+    // length from the first, the whole file ID from the second.
     #[link(name = "kernel32")]
     unsafe extern "system" {
         #[link_name = "GetFileInformationByHandle"]
         fn get_file_information_by_handle(
             file: *mut c_void,
             information: *mut ByHandleFileInformation,
+        ) -> i32;
+
+        #[link_name = "GetFileInformationByHandleEx"]
+        fn get_file_information_by_handle_ex(
+            file: *mut c_void,
+            information_class: i32,
+            information: *mut c_void,
+            information_size: u32,
         ) -> i32;
     }
 
@@ -140,11 +195,22 @@ fn inspect_selected_file(path: &Path) -> Result<InspectedFile, PreviewErrorDto> 
         return Err(not_a_regular_file());
     }
 
-    let index =
-        (u64::from(information.file_index_high) << 32) | u64::from(information.file_index_low);
-    // A zero index means this filesystem supplies no stable identity, so there
-    // is nothing to bind the handle to and the file is refused.
-    if index == 0 {
+    let mut file_id_information = FileIdInformation::default();
+    // SAFETY: the same live handle inspected above, and the out parameter is a
+    // fully initialized value of the exact FILE_ID_INFO layout the class
+    // requires, whose size is passed with it.
+    let identified = unsafe {
+        get_file_information_by_handle_ex(
+            file.as_raw_handle().cast(),
+            FILE_ID_INFO_CLASS,
+            (&raw mut file_id_information).cast(),
+            u32::try_from(std::mem::size_of::<FileIdInformation>())
+                .expect("FILE_ID_INFO fits in a DWORD"),
+        )
+    };
+    // A filesystem that cannot answer this one has no identity to bind to,
+    // which is the same position as answering with nothing.
+    if identified == 0 || file_id_information.file_id == [0; 16] {
         return Err(PreviewErrorDto::new(
             "file_identity_unavailable",
             "That file's identity could not be established, so MSCanvas did not open it.",
@@ -155,7 +221,10 @@ fn inspect_selected_file(path: &Path) -> Result<InspectedFile, PreviewErrorDto> 
     Ok(InspectedFile {
         byte_length: (u64::from(information.file_size_high) << 32)
             | u64::from(information.file_size_low),
-        identity: (u64::from(information.volume_serial_number), index),
+        identity: FileIdentity {
+            volume_serial: file_id_information.volume_serial_number,
+            file_id: file_id_information.file_id,
+        },
     })
 }
 
@@ -171,9 +240,17 @@ fn inspect_selected_file(path: &Path) -> Result<InspectedFile, PreviewErrorDto> 
     if selected.file_type().is_symlink() || is_reparse_point(&selected) || !selected.is_file() {
         return Err(not_a_regular_file());
     }
+    // Device and inode, which is what this platform has. They are carried in
+    // the same value type so everything above can compare identities without
+    // knowing the platform -- not because there is a file ID here to widen to.
+    let mut file_id = [0_u8; 16];
+    file_id[..8].copy_from_slice(&selected.ino().to_ne_bytes());
     Ok(InspectedFile {
         byte_length: selected.len(),
-        identity: (selected.dev(), selected.ino()),
+        identity: FileIdentity {
+            volume_serial: selected.dev(),
+            file_id,
+        },
     })
 }
 
@@ -182,7 +259,7 @@ fn inspect_selected_file(path: &Path) -> Result<InspectedFile, PreviewErrorDto> 
 /// The same inspection acceptance uses, so the two can never disagree about
 /// what identity a path has. Anything that is not an acceptable regular file
 /// reports no identity, which a comparison reads as a change.
-pub(super) fn file_identity(path: &Path) -> Option<(u64, u64)> {
+pub(super) fn file_identity(path: &Path) -> Option<FileIdentity> {
     inspect_selected_file(path)
         .ok()
         .map(|inspected| inspected.identity)
@@ -252,7 +329,7 @@ pub struct AcceptedFile {
     path: PathBuf,
     file_name: String,
     byte_length: u64,
-    identity: (u64, u64),
+    identity: FileIdentity,
 }
 
 impl AcceptedFile {
@@ -273,7 +350,7 @@ impl AcceptedFile {
 
     /// The filesystem identity this file was accepted with.
     #[must_use]
-    pub(super) const fn identity(&self) -> (u64, u64) {
+    pub(super) const fn identity(&self) -> FileIdentity {
         self.identity
     }
 }
@@ -467,6 +544,106 @@ mod tests {
         );
         // The target itself remains perfectly acceptable.
         assert!(accept_mzml_file(&target).is_ok());
+    }
+
+    #[test]
+    fn two_identities_differing_only_above_the_first_64_bits_are_different() {
+        // The regression this widening exists for. The old identity was the
+        // 64-bit index, so two files differing only above it compared equal --
+        // and as the key for "is this the same acquisition", equal means
+        // merged.
+        let mut lower_only = [0_u8; 16];
+        lower_only[..8].copy_from_slice(&7_u64.to_ne_bytes());
+        let mut with_upper = lower_only;
+        with_upper[8..].copy_from_slice(&1_u64.to_ne_bytes());
+
+        assert_ne!(
+            FileIdentity::for_test(3, lower_only),
+            FileIdentity::for_test(3, with_upper)
+        );
+        // The same identity is still the same one.
+        assert_eq!(
+            FileIdentity::for_test(3, with_upper),
+            FileIdentity::for_test(3, with_upper)
+        );
+        // And a file with the same ID on another volume is another file.
+        assert_ne!(
+            FileIdentity::for_test(3, with_upper),
+            FileIdentity::for_test(4, with_upper)
+        );
+    }
+
+    #[test]
+    fn an_identity_is_opaque_when_printed() {
+        // It fingerprints one of the user's files, and a `Debug` that printed
+        // it would put that fingerprint into any log, panic or assertion that
+        // touched one.
+        let mut file_id = [0_u8; 16];
+        file_id[..8].copy_from_slice(&0x0123_4567_89ab_cdef_u64.to_ne_bytes());
+
+        let rendered = format!("{:?}", FileIdentity::for_test(0xfeed_face, file_id));
+
+        assert_eq!(rendered, "<opaque-file-identity>");
+        assert!(!rendered.contains("feedface"));
+        assert!(!rendered.contains("cdef"));
+    }
+
+    #[test]
+    fn accepting_the_same_file_twice_reports_the_same_identity() {
+        let directory = TestDirectory::new("stable-identity");
+        let path = directory.path().join("sample.mzML");
+        fs::write(&path, b"<mzML/>").expect("write fixture");
+
+        let first = accept_mzml_file(&path).expect("accepted");
+        let second = accept_mzml_file(&path).expect("accepted again");
+
+        assert_eq!(first.identity(), second.identity());
+    }
+
+    /// Two names for one file. The identities must agree, because ADR 0006 will
+    /// ask exactly this question to decide whether the user added the same
+    /// acquisition twice.
+    #[cfg(windows)]
+    #[test]
+    fn a_hard_link_and_its_target_are_one_file() {
+        let directory = TestDirectory::new("hard-link");
+        let target = directory.path().join("acquisition.mzML");
+        fs::write(&target, b"<mzML/>").expect("write target");
+        let link = directory.path().join("another-name.mzML");
+        fs::hard_link(&target, &link).expect(
+            "the test volume must support hard links; without one this cannot establish that \
+             two names for one file share an identity",
+        );
+
+        let accepted_target = accept_mzml_file(&target).expect("the target is accepted");
+        let accepted_link = accept_mzml_file(&link).expect("the link is accepted");
+
+        assert_eq!(accepted_target.identity(), accepted_link.identity());
+        // Same file, two names: the paths are what differ.
+        assert_ne!(accepted_target.path(), accepted_link.path());
+        assert_ne!(accepted_target.file_name(), accepted_link.file_name());
+    }
+
+    #[test]
+    fn a_file_recreated_at_the_same_path_has_a_different_identity() {
+        // No sleep and no reliance on the modification time: the identity alone
+        // has to tell these apart, which is what the length and timestamp
+        // beside it cannot promise for a same-sized rewrite in the same tick.
+        let directory = TestDirectory::new("recreated");
+        let path = directory.path().join("sample.mzML");
+        fs::write(&path, b"<mzML/>").expect("write original");
+        let original = accept_mzml_file(&path).expect("accepted");
+
+        fs::remove_file(&path).expect("remove the original");
+        fs::write(&path, b"<mzML/>").expect("write the replacement");
+        let replacement = accept_mzml_file(&path).expect("the replacement is accepted");
+
+        assert_eq!(
+            original.byte_length(),
+            replacement.byte_length(),
+            "the test needs two files the length cannot tell apart"
+        );
+        assert_ne!(original.identity(), replacement.identity());
     }
 
     #[test]

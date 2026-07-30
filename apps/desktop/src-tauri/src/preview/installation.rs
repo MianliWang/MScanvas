@@ -10,7 +10,7 @@ use std::time::SystemTime;
 
 use mscanvas_proteowizard::{DiscoveredTool, DiscoveryFailure, DiscoveryResult, Sha256Digest};
 
-use super::selection::file_identity;
+use super::selection::{FileIdentity, file_identity};
 
 /// One resolved tool, identified well enough to notice it being replaced.
 ///
@@ -32,7 +32,7 @@ pub(crate) struct ToolIdentity {
     content: Option<Sha256Digest>,
     /// `None` when the path is not an acceptable regular file, which a
     /// comparison reads as a change rather than as a match.
-    filesystem: Option<(u64, u64)>,
+    filesystem: Option<FileIdentity>,
     byte_length: Option<u64>,
     modified: Option<SystemTime>,
 }
