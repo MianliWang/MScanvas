@@ -632,9 +632,18 @@ mod tests {
         let directory = TestDirectory::new("recreated");
         let path = directory.path().join("sample.mzML");
         fs::write(&path, b"<mzML/>").expect("write original");
+        // A second name for the original, so unlinking the first cannot hand
+        // its file ID back to the allocator. Without it a filesystem is free to
+        // reuse the ID for the replacement, and this would be asserting how an
+        // allocator behaves rather than whether two files compare as two.
+        let keepalive = directory.path().join("still-here.mzML");
+        fs::hard_link(&path, &keepalive).expect(
+            "the test volume must support hard links; without one the original file cannot be \
+             kept alive while its name is reused",
+        );
         let original = accept_mzml_file(&path).expect("accepted");
 
-        fs::remove_file(&path).expect("remove the original");
+        fs::remove_file(&path).expect("remove the original name");
         fs::write(&path, b"<mzML/>").expect("write the replacement");
         let replacement = accept_mzml_file(&path).expect("the replacement is accepted");
 
@@ -644,6 +653,13 @@ mod tests {
             "the test needs two files the length cannot tell apart"
         );
         assert_ne!(original.identity(), replacement.identity());
+        // The original is still there under its other name, and still itself.
+        assert_eq!(
+            accept_mzml_file(&keepalive)
+                .expect("the surviving name is accepted")
+                .identity(),
+            original.identity()
+        );
     }
 
     #[test]
