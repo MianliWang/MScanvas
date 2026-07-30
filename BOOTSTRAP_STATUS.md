@@ -649,15 +649,23 @@ transfer objects and frontend behaviour; no multi-dataset registry, no
 duplicate detection and no ADR 0006 yet. The identity is private, is not
 serialisable and prints as `<opaque-file-identity>`.
 
+The backend tool identity shares that capture, and review found what the
+widening cost it: on a volume that answers with no identity at all, both
+readings are `None`, and two unknowns agreeing used to satisfy the metadata
+fast path — so a tool replaced in place with its length and timestamp preserved
+was called unchanged. The recorded digest now decides in that case, which is
+the rule the equality beside it already stated.
+
 Validation on the exact head: `cargo fmt --all --check`,
 `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
-`cargo test --locked --workspace --all-targets` (74 desktop tests, six of them
+`cargo test --locked --workspace --all-targets` (75 desktop tests, seven of them
 new), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
 `pnpm test`, `pnpm build`. The new coverage includes a real Windows hard link
-and a delete-and-recreate at one path, both through the production acceptance
-path and neither using a scientific acquisition. Rendered QA was not required
-and not performed: no frontend file, transfer object, command signature,
-capability or user-facing string changed. ProteoWizard was not executed.
+and a delete-and-recreate at one path whose original is kept alive by a second
+name, both through the production acceptance path and neither using a
+scientific acquisition. Rendered QA was not required and not performed: no
+frontend file, transfer object, command signature, capability or user-facing
+string changed. ProteoWizard was not executed.
 
 ## Validation completed during repository initialization
 
