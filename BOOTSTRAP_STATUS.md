@@ -828,15 +828,34 @@ Validation on the exact head: `cargo fmt --all --check`,
 `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
 `pnpm build`.
 
-Eight mutations were introduced one at a time against this exact head, and each
+Nine mutations were introduced one at a time against this exact head, and each
 was caught by the test written for it: an accepted file holding something other
 than the object it names; registration letting the hold go the moment it stores
 the row; a duplicate keeping the handle it arrived with; a revoked row's hold
-outliving the row; the picker emptying the workspace before accepting the
-replacement; emptying the workspace reaching only its first row; a lease whose
-debug output prints its raw handle; and a lease opened without sharing deletion,
-which four existing tests caught because it stops the user replacing their own
-file.
+outliving the row (twice, once for the row itself and once for a row revoked
+while a read of it was still running); the picker emptying the workspace before
+accepting the replacement; emptying the workspace reaching only its first row; a
+lease whose debug output prints its raw handle; and a lease opened without
+sharing deletion, which four existing tests caught because it stops the user
+replacing their own file.
+
+Two further findings came out of automated review, and both were real. On
+non-Windows the identity was taken from the name while the lease was opened from
+a second resolution of it, so a rename between the two would have recorded an
+identity no descriptor was keeping alive — the very failure this slice removes,
+moved rather than closed. Identity and length now come from the opened
+descriptor, so what a row records is what it holds; the link test still runs
+against the name first, because std offers no `O_NOFOLLOW` open. That path is
+reasoned and formatted but not compiled or run here: CI is Windows-only and this
+repository does not build for another target.
+
+The second is about when a lease is released. A revoked row lets its own hold go
+immediately, but a read that was already under way holds the file itself for as
+long as it runs — it is reading it, and ADR 0006 has always said running work is
+not cancelled. So the object is released when that request finishes rather than
+when the row goes, and nothing outlives the request. That is now stated in the
+ADR, in the code, and asserted at both ends by the late-reply test: held while
+the read runs, released once it returns.
 
 The release proofs are of two kinds and both are deterministic. One asks this
 process, through a weak reference that holds nothing open itself, whether every

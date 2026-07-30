@@ -341,29 +341,41 @@ fn inspect_selected_file(path: &Path) -> Result<InspectedFile, PreviewErrorDto> 
     use mscanvas_proteowizard::is_reparse_point;
     use std::os::unix::fs::MetadataExt;
 
-    // std offers no O_NOFOLLOW open, so the link test and the identity are
-    // established separately here. The comparison on every use is what closes
-    // the gap that leaves.
-    let selected = std::fs::symlink_metadata(path).map_err(|_| unresolvable())?;
-    if selected.file_type().is_symlink() || is_reparse_point(&selected) || !selected.is_file() {
+    // std offers no O_NOFOLLOW open, so the link test cannot be made through
+    // the handle everything else comes from. It is made first, against the name
+    // itself, and the comparison on every use is what closes the gap that
+    // leaves.
+    let named = std::fs::symlink_metadata(path).map_err(|_| unresolvable())?;
+    if named.file_type().is_symlink() || is_reparse_point(&named) || !named.is_file() {
+        return Err(not_a_regular_file());
+    }
+    // The lease, and then the descriptor asked about itself. Identity and
+    // length come from the open object rather than from the name, so what this
+    // describes is what it holds. Taking them from the name instead would let a
+    // rename between the two record an identity that no descriptor keeps alive
+    // -- a row indexed under an identity free to be handed to something else,
+    // which is the failure this lease exists to remove rather than to move.
+    //
+    // What it keeps alive is the inode, which is the part of the Windows lease
+    // that carries here: an inode is not reused while a descriptor holds it.
+    // The rest does not -- FILE_ID_INFO is a Windows answer, and nothing here
+    // claims the Windows guarantee.
+    let handle = std::fs::File::open(path).map_err(|_| unresolvable())?;
+    let opened = handle.metadata().map_err(|_| unresolvable())?;
+    // The name was a regular file a moment ago; this is the object that was
+    // actually opened, and it answers for itself.
+    if !opened.is_file() {
         return Err(not_a_regular_file());
     }
     // Device and inode, which is what this platform has. They are carried in
     // the same value type so everything above can compare identities without
     // knowing the platform -- not because there is a file ID here to widen to.
     let mut file_id = [0_u8; 16];
-    file_id[..8].copy_from_slice(&selected.ino().to_ne_bytes());
-    // A second resolution of the same path rather than the handle the posture
-    // above came from, because this platform's inspection has no handle to hand
-    // over. It keeps the inode alive, which is the part of the Windows lease
-    // that carries: an inode is not reused while a descriptor holds it. The
-    // rest does not -- FILE_ID_INFO is a Windows answer, and nothing here
-    // claims the Windows guarantee.
-    let handle = std::fs::File::open(path).map_err(|_| unresolvable())?;
+    file_id[..8].copy_from_slice(&opened.ino().to_ne_bytes());
     Ok(InspectedFile {
-        byte_length: selected.len(),
+        byte_length: opened.len(),
         identity: FileIdentity {
-            volume_serial: selected.dev(),
+            volume_serial: opened.dev(),
             file_id,
         },
         lease: FileIdentityLease::new(handle),

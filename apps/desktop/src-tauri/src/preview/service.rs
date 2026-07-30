@@ -56,6 +56,13 @@ impl Workspace {
         // handle: a session that held on to it would go on pinning a file the
         // workspace no longer lists, and the user would have no row to remove
         // to get it back.
+        //
+        // What this cannot end early is a request that is already running. It
+        // took its own hold on the file when it revalidated, because it is
+        // reading it, and revocation does not cancel running work -- so the
+        // object is let go when that request finishes rather than when the row
+        // goes. Nothing outlives the request, which is the property that
+        // matters: the file is not held by a session that has forgotten it.
         drop(self.registry.revoke(id, reason));
         // Dropping the runtime state is what makes a request still waiting for
         // its turn fail to find its epoch, and a reply that arrives afterwards

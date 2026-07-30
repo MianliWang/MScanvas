@@ -110,6 +110,12 @@ distinct acquisitions merged into one workspace row.
   workspace releases every one of them. The removed value must not be kept in an
   error, a snapshot or a reply: holding it would pin a file the workspace no
   longer lists, with no row left for the user to remove.
+- A request that is already running is the one thing revocation cannot end
+  early, and that is the existing rule rather than a new one: running work is
+  not cancelled, and while it runs it holds the file itself, because it is
+  reading it. The object is therefore let go when that request finishes rather
+  than when the row goes. Nothing outlives the request, which is the property
+  that matters — the file is never held by a session that has forgotten it.
 - A duplicate addition was accepted like any other file and arrived holding a
   lease of its own — nothing can know it is a duplicate before it is inspected.
   The duplicate outcome drops it, so an object is held once, by the row that
@@ -149,12 +155,13 @@ On Windows this is the whole guarantee: `FILE_ID_INFO` names an object, and an
 open handle keeps that object alive.
 
 Elsewhere the registry holds an owned file handle for the same reason — an inode
-is not reused while a descriptor holds it — but it is a second resolution of the
-path rather than the handle the posture was established through, because that
-inspection has no handle to hand over, and there is no share mode to speak of.
-Nothing here claims the Windows identity guarantee for a platform that does not
-supply the Windows identity, and the coverage that proves the guarantee is
-Windows-only for the same reason.
+is not reused while a descriptor holds it — and the identity is taken from that
+descriptor rather than from the name, so what a row records is what it holds.
+The link test is still made against the name first, because std offers no
+`O_NOFOLLOW` open, and there is no share mode to speak of. Nothing here claims
+the Windows identity guarantee for a platform that does not supply the Windows
+identity, and the coverage that proves the guarantee is Windows-only for the
+same reason.
 
 ## Duplicate outcome
 

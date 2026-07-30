@@ -2496,6 +2496,14 @@ fn a_preview_that_finishes_after_its_dataset_is_gone_records_nothing() {
     // returns at all is the proof that the workspace stays answerable while a
     // backend process holds the gate.
     let second = service.accept_file(&other).expect("accepted again");
+    // Revocation cannot end a read that is already under way, and while that
+    // read runs it holds the file itself -- so the object is let go when the
+    // request finishes rather than when the row goes.
+    #[cfg(windows)]
+    assert!(
+        !nothing_else_holds_open(&file.path),
+        "a read already under way still holds the file it is reading"
+    );
     release.send(()).expect("the provider is still waiting");
 
     // The work had already started, so it is not cancelled and its caller is
@@ -2504,6 +2512,13 @@ fn a_preview_that_finishes_after_its_dataset_is_gone_records_nothing() {
         .join()
         .expect("the open finished")
         .expect("a read that had already started still completes");
+    // And nothing outlives it. The file is not left held by a session that has
+    // forgotten it, which is the property revocation actually owes.
+    #[cfg(windows)]
+    assert!(
+        nothing_else_holds_open(&file.path),
+        "the revoked dataset's file is let go once the request that was reading it finishes"
+    );
     // What it must not do is record anything. Preview facts under a dataset the
     // session has let go of would sit under an identifier nothing can reach and
     // nothing will ever clear.
