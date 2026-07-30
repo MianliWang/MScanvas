@@ -163,12 +163,19 @@ button:disabled {
   min-width: 0;
   min-height: 0;
   flex-direction: column;
+  /* The column owns whatever its panels cannot fit, so a short window clips
+     here rather than pushing the shell past the viewport. */
+  overflow: hidden;
   gap: 8px;
 }
 
+/* The roster's own chrome is a header and a row of actions, so a share of the
+   column smaller than that leaves the list with no height at all -- rows that
+   exist, are announced, and cannot be reached. The minimum is that chrome plus
+   enough room to be a list; the summary beside it gives ground first. */
 .dataset-roster-panel {
   display: flex;
-  min-height: 0;
+  min-height: 176px;
   flex: 1 1 40%;
   flex-direction: column;
 }
@@ -252,9 +259,14 @@ button:disabled {
   outline-offset: -2px;
 }
 
-.dataset-roster-details {
+/* Bounded here as well as in the summary itself: a batch of a thousand files
+   is a notice nobody scrolls past, and the shell's notice row is not a place
+   for one. */
+.workspace-notice-details {
+  max-height: 72px;
   margin: 0;
   padding-left: 18px;
+  overflow: auto;
   font-size: 11px;
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -612,7 +624,11 @@ button:disabled {
   .workspace-layout {
     grid-auto-rows: minmax(0, 1fr);
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 0.8fr) minmax(0, 1.6fr);
+    /* Stacked, a share of an already short window is not enough for the
+       workspace column: measured at 896x475 CSS pixels the roster's list came
+       out at zero height with four rows in it. The first track therefore has a
+       floor, and the viewer below keeps the rest. */
+    grid-template-rows: minmax(176px, 0.9fr) minmax(0, 1.6fr);
   }
 }
 

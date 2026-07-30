@@ -95,6 +95,58 @@ export function PreviewWorkspace() {
             </button>
           </div>
         )}
+
+        {workspace.workspaceError === null ? null : (
+          <div className="notice notice-danger" role="status">
+            <strong>The workspace could not be changed</strong>
+            <span>{workspace.workspaceError.summary}</span>
+            <button className="link-button" onClick={workspace.dismissWorkspaceError} type="button">
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {/* What the last workspace action did, above the workspace rather than
+            inside it. A summary that grows with the batch would otherwise take
+            its height from the list it is describing, and at a short window the
+            rows it announces would have nowhere left to be. */}
+        {workspace.workspaceNotice === null ? null : (
+          <div
+            className={
+              workspace.workspaceNotice.tone === "warning"
+                ? "notice notice-warning"
+                : "notice notice-neutral"
+            }
+            role="status"
+          >
+            <span>{workspace.workspaceNotice.message}</span>
+            {workspace.workspaceNotice.details.length === 0 ? null : (
+              <ul className="workspace-notice-details">
+                {workspace.workspaceNotice.details.map((detail) => (
+                  <li key={detail}>{detail}</li>
+                ))}
+                {workspace.workspaceNotice.more === 0 ? null : (
+                  <li key="more">
+                    {formatCount(workspace.workspaceNotice.more)} more not listed here.
+                  </li>
+                )}
+              </ul>
+            )}
+            <button className="link-button" onClick={workspace.dismissWorkspaceNotice} type="button">
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {workspace.rosterLoad.status === "failed" && roster.datasets.length > 0 ? (
+          <div className="notice notice-danger" role="status">
+            <strong>The workspace list could not be read</strong>
+            <span>{workspace.rosterLoad.error.summary}</span>
+            <button className="link-button" onClick={workspace.reloadRoster} type="button">
+              Try reading it again
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {/* One polite region so a screen reader hears state changes that happen
@@ -110,15 +162,11 @@ export function PreviewWorkspace() {
             canMutate={!workspace.workspaceBusy}
             canPreview={canPreview}
             dispatch={workspace.dispatchRoster}
-            error={workspace.workspaceError}
             focusAddFilesToken={workspace.focusAddFilesToken}
             load={workspace.rosterLoad}
-            notice={workspace.workspaceNotice}
             onActivate={workspace.activateDataset}
             onAddFiles={workspace.addFiles}
             onClearList={workspace.clearList}
-            onDismissError={workspace.dismissWorkspaceError}
-            onDismissNotice={workspace.dismissWorkspaceNotice}
             onReloadRoster={workspace.reloadRoster}
             onRemoveSelected={workspace.removeSelected}
             state={roster}

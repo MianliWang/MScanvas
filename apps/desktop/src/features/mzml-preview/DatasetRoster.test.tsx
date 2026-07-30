@@ -4,12 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { SelectedFile } from "./contracts";
 import { DatasetRoster } from "./DatasetRoster";
-import {
-  initialRosterState,
-  rosterReducer,
-  type RosterState,
-  type WorkspaceNotice,
-} from "./rosterSelection";
+import { initialRosterState, rosterReducer, type RosterState } from "./rosterSelection";
 import type { RosterLoadState } from "./usePreviewWorkspace";
 
 const NAMES = ["QC_pool_01.mzML", "QC_pool_02.mzML", "Blank_03.mzML", "QC_pool_04.mzML"];
@@ -38,7 +33,6 @@ interface HarnessProps {
   readonly canPreview?: boolean;
   readonly canAddFiles?: boolean;
   readonly canMutate?: boolean;
-  readonly notice?: WorkspaceNotice | null;
   readonly load?: RosterLoadState;
   readonly focusAddFilesToken?: number;
 }
@@ -53,7 +47,6 @@ function Harness({
   canPreview = true,
   canAddFiles = true,
   canMutate = true,
-  notice = null,
   load = { status: "ready" },
   focusAddFilesToken = 0,
 }: HarnessProps) {
@@ -64,15 +57,11 @@ function Harness({
       canMutate={canMutate}
       canPreview={canPreview}
       dispatch={dispatch}
-      error={null}
       focusAddFilesToken={focusAddFilesToken}
       load={load}
-      notice={notice}
       onActivate={onActivate}
       onAddFiles={onAddFiles}
       onClearList={onClearList}
-      onDismissError={() => undefined}
-      onDismissNotice={() => undefined}
       onReloadRoster={() => undefined}
       onRemoveSelected={onRemoveSelected}
       state={state}
@@ -119,16 +108,12 @@ describe("the workspace roster as an accessible list", () => {
         canMutate
         canPreview
         dispatch={() => undefined}
-        error={null}
-        focusAddFilesToken={0}
+          focusAddFilesToken={0}
         load={{ status: "ready" }}
-        notice={null}
-        onActivate={() => undefined}
+          onActivate={() => undefined}
         onAddFiles={() => undefined}
         onClearList={() => undefined}
-        onDismissError={() => undefined}
-        onDismissNotice={() => undefined}
-        onReloadRoster={() => undefined}
+            onReloadRoster={() => undefined}
         onRemoveSelected={() => undefined}
         state={state}
       />,
@@ -173,8 +158,7 @@ describe("the workspace roster as an accessible list", () => {
         canMutate
         canPreview
         dispatch={() => undefined}
-        error={null}
-        focusAddFilesToken={0}
+          focusAddFilesToken={0}
         load={{
           status: "failed",
           error: {
@@ -184,13 +168,10 @@ describe("the workspace roster as an accessible list", () => {
             retryable: true,
           },
         }}
-        notice={null}
-        onActivate={() => undefined}
+          onActivate={() => undefined}
         onAddFiles={() => undefined}
         onClearList={() => undefined}
-        onDismissError={() => undefined}
-        onDismissNotice={() => undefined}
-        onReloadRoster={retry}
+            onReloadRoster={retry}
         onRemoveSelected={() => undefined}
         state={initialRosterState}
       />,
@@ -336,25 +317,5 @@ describe("driving the roster from the keyboard alone", () => {
     rerender(<Harness focusAddFilesToken={1} rows={0} />);
 
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add files…" }));
-  });
-});
-
-describe("what the roster says about the last action", () => {
-  it("shows a bounded summary and says how many it did not list", () => {
-    render(
-      <Harness
-        notice={{
-          tone: "warning",
-          message: "Added 1 file. 2 files already in the workspace.",
-          details: ["a.mzML is already in the workspace.", "b.mzXML: MSCanvas opens .mzML files."],
-          more: 7,
-        }}
-      />,
-    );
-
-    const notice = screen.getByRole("status");
-    expect(notice).toHaveTextContent("Added 1 file. 2 files already in the workspace.");
-    expect(notice).toHaveTextContent("a.mzML is already in the workspace.");
-    expect(notice).toHaveTextContent("7 more not listed here.");
   });
 });

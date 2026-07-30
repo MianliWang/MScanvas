@@ -1,14 +1,12 @@
 import { useEffect, useRef } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
 
-import type { PreviewError } from "./contracts";
 import { formatByteLength, formatCount } from "./format";
 import {
   rowPresentation,
   type RosterAction,
   type RosterState,
   type RowPresentation,
-  type WorkspaceNotice,
 } from "./rosterSelection";
 import type { RosterLoadState } from "./usePreviewWorkspace";
 
@@ -30,10 +28,6 @@ export interface DatasetRosterProps {
   readonly canPreview: boolean;
   /** Whether the roster may be changed right now. */
   readonly canMutate: boolean;
-  readonly notice: WorkspaceNotice | null;
-  readonly onDismissNotice: () => void;
-  readonly error: PreviewError | null;
-  readonly onDismissError: () => void;
   /** Increments when focus should return to the `Add files…` action. */
   readonly focusAddFilesToken: number;
 }
@@ -66,10 +60,6 @@ export function DatasetRoster({
   canAddFiles,
   canPreview,
   canMutate,
-  notice,
-  onDismissNotice,
-  error,
-  onDismissError,
   focusAddFilesToken,
 }: DatasetRosterProps) {
   const listRef = useRef<HTMLUListElement | null>(null);
@@ -215,55 +205,25 @@ export function DatasetRoster({
         )}
       </div>
 
-      {error === null ? null : (
-        <div className="notice notice-danger" role="status">
-          <strong>The workspace could not be changed</strong>
-          <span>{error.summary}</span>
-          <button className="link-button" onClick={onDismissError} type="button">
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      {notice === null ? null : (
-        <div
-          className={notice.tone === "warning" ? "notice notice-warning" : "notice notice-neutral"}
-          role="status"
-        >
-          <span>{notice.message}</span>
-          {notice.details.length === 0 ? null : (
-            <ul className="dataset-roster-details">
-              {notice.details.map((detail) => (
-                <li key={detail}>{detail}</li>
-              ))}
-              {notice.more === 0 ? null : (
-                <li key="more">{formatCount(notice.more)} more not listed here.</li>
-              )}
-            </ul>
-          )}
-          <button className="link-button" onClick={onDismissNotice} type="button">
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      {load.status === "failed" ? (
-        <div className="notice notice-danger" role="status">
-          <strong>The workspace list could not be read</strong>
-          <span>{load.error.summary}</span>
-          <button className="link-button" onClick={onReloadRoster} type="button">
-            Try reading it again
-          </button>
-        </div>
-      ) : null}
-
       {rowCount === 0 ? (
         <div className="empty-state">
-          <strong>No files in this session yet</strong>
-          <span>
-            Add one or many local .mzML files. MSCanvas only reads them, nothing is uploaded, and
-            nothing leaves this computer.
-          </span>
+          {load.status === "failed" ? (
+            <>
+              <strong>The workspace list could not be read</strong>
+              <span>{load.error.summary}</span>
+              <button className="secondary-button" onClick={onReloadRoster} type="button">
+                Try reading it again
+              </button>
+            </>
+          ) : (
+            <>
+              <strong>No files in this session yet</strong>
+              <span>
+                Add one or many local .mzML files. MSCanvas only reads them, nothing is uploaded,
+                and nothing leaves this computer.
+              </span>
+            </>
+          )}
         </div>
       ) : (
         <ul

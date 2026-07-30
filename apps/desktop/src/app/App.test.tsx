@@ -895,6 +895,31 @@ describe("the session workspace roster", () => {
     expect(api.openCount()).toBe(1);
   });
 
+  it("says what a batch did above the list rather than inside it", async () => {
+    // A summary that grows with the batch must not take its height from the
+    // list it is describing: at a short window that leaves the rows it just
+    // announced with nowhere to be. It sits with the other shell notices, is
+    // bounded, and says how many items it did not spell out.
+    const api = createFakePreviewApi({
+      pickedFiles: [
+        selectedFile,
+        { rejected: "a.mzXML" },
+        { rejected: "b.mzXML" },
+        { rejected: "c.mzXML" },
+        { rejected: "d.mzXML" },
+        { rejected: "e.mzXML" },
+      ],
+    });
+    await openTheFile(api);
+
+    const notice = await screen.findByText(/Added 1 file\./);
+    expect(notice).toBeVisible();
+    expect(screen.getByText("2 more not listed here.")).toBeVisible();
+    // Above the workspace column, not inside the roster panel.
+    expect(notice.closest(".shell-notices")).not.toBeNull();
+    expect(notice.closest(".dataset-roster-panel")).toBeNull();
+  });
+
   it("keeps the files it could read and names the ones it could not", async () => {
     const api = createFakePreviewApi({
       pickedFiles: [

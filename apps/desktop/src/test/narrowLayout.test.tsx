@@ -177,6 +177,29 @@ describe("narrow desktop layout markup", () => {
     ).toBeVisible();
   });
 
+  it("keeps the roster tall enough to be a list when the column is stacked", () => {
+    // The defect a rendered check found. Stacked at 896x475 CSS pixels the
+    // workspace column got a fraction of an already short window, the roster's
+    // header and actions used all of it, and the list came out at zero height
+    // with four rows in it: rows that exist, are announced, and cannot be
+    // reached. The track has a floor and the panel has a minimum.
+    const app = mountStyles(appStyles);
+
+    expect(requireStyleRule(app, ".dataset-roster-panel").style.getPropertyValue("min-height")).toBe(
+      "176px",
+    );
+    expect(
+      requireMediaRule(app, "(max-width: 1120px)", ".workspace-layout").style.getPropertyValue(
+        "grid-template-rows",
+      ),
+    ).toBe("minmax(176px, 0.9fr) minmax(0, 1.6fr)");
+    // And what the column cannot fit is clipped here rather than pushing the
+    // shell past the viewport.
+    expect(requireStyleRule(app, ".workspace-sidebar").style.getPropertyValue("overflow")).toBe(
+      "hidden",
+    );
+  });
+
   it("leaves the workspace roster scrolling inside its own panel", async () => {
     // A roster is an unbounded list, so it owns its overflow exactly as the
     // spectrum table does. The document does not: containment here is what
