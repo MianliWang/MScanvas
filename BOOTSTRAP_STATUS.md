@@ -839,17 +839,23 @@ lease whose debug output prints its raw handle; and a lease opened without
 sharing deletion, which four existing tests caught because it stops the user
 replacing their own file.
 
-Two further findings came out of automated review, and both were real. On
-non-Windows the identity was taken from the name while the lease was opened from
-a second resolution of it, so a rename between the two would have recorded an
-identity no descriptor was keeping alive — the very failure this slice removes,
-moved rather than closed. Identity and length now come from the opened
-descriptor, so what a row records is what it holds; the link test still runs
-against the name first, because std offers no `O_NOFOLLOW` open. That path is
-reasoned and formatted but not compiled or run here: CI is Windows-only and this
-repository does not build for another target.
+Three further findings came out of automated review, and all three were real.
+Two were about the non-Windows path and are settled together, by that path
+taking no hold at all. The first attempt gave it an owned descriptor, opened by
+a second resolution of the name; review pointed out that a rename between the
+two would record an identity no descriptor was keeping alive — the failure this
+slice removes, moved rather than closed — and then that reading identity from
+the descriptor instead still left a worse hazard, because std offers no
+non-blocking open and a path replaced by a FIFO between the posture check and
+the open would block the selection for as long as no writer arrives. Introducing
+a way to hang in order to pin an identity nothing claims to pin is the wrong
+trade, so that platform is back to exactly what it did before this slice, the
+lease type stays uniform so the registry never branches on platform, and the
+guarantee, the coverage and the claim are all Windows. A non-Windows lease needs
+a non-blocking no-following open, which needs a dependency this project has not
+taken; ADR 0006 records it there.
 
-The second is about when a lease is released. A revoked row lets its own hold go
+The third is about when a lease is released. A revoked row lets its own hold go
 immediately, but a read that was already under way holds the file itself for as
 long as it runs — it is reading it, and ADR 0006 has always said running work is
 not cancelled. So the object is released when that request finishes rather than

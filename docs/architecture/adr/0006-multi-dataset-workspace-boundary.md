@@ -154,14 +154,20 @@ gathering.
 On Windows this is the whole guarantee: `FILE_ID_INFO` names an object, and an
 open handle keeps that object alive.
 
-Elsewhere the registry holds an owned file handle for the same reason — an inode
-is not reused while a descriptor holds it — and the identity is taken from that
-descriptor rather than from the name, so what a row records is what it holds.
-The link test is still made against the name first, because std offers no
-`O_NOFOLLOW` open, and there is no share mode to speak of. Nothing here claims
-the Windows identity guarantee for a platform that does not supply the Windows
-identity, and the coverage that proves the guarantee is Windows-only for the
-same reason.
+Elsewhere no hold is taken, and the decision is deliberate rather than pending.
+That platform's inspection establishes posture and identity from the name rather
+than through a handle, so it has none to hand over; opening the path a second
+time to make one would be a second resolution — recording an identity a rename
+could leave nothing keeping alive — and, worse, std offers no non-blocking open,
+so a path replaced by a FIFO between the posture check and that open would leave
+the selection blocked for as long as no writer arrives. Introducing a way to
+hang, in order to pin an identity this decision does not claim to pin, is the
+wrong trade. The lease type stays uniform so the registry never has to know
+which platform it is on, and the guarantee, the coverage and the claim are all
+Windows — which is the platform this application ships on and the only one its
+CI builds. A non-Windows lease would need a non-blocking no-following open,
+which needs a dependency this project has not taken, and it belongs with that
+decision rather than with this one.
 
 ## Duplicate outcome
 

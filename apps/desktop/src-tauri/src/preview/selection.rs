@@ -76,6 +76,8 @@ impl FileIdentity {
 /// use, and reopening the file each time would be one more resolution of a path
 /// that is already being revalidated. The object is released when the last
 /// clone is gone.
+///
+/// Windows is the only platform that takes a hold here. See `LeasedObject`.
 #[derive(Clone)]
 pub(super) struct FileIdentityLease {
     /// Closed by `Arc`'s own drop when the last holder lets go. There is no raw
@@ -91,13 +93,46 @@ pub(super) struct FileIdentityLease {
             reason = "the handle is held open, not read; only a test asks whether it is still there"
         )
     )]
-    handle: Arc<std::fs::File>,
+    handle: Arc<LeasedObject>,
 }
 
+/// What a lease holds open: the accepted file itself, on the platform where a
+/// handle is what keeps an object -- and so its identity -- from being recycled.
+#[cfg(windows)]
+type LeasedObject = std::fs::File;
+
+/// Nothing, elsewhere, and deliberately.
+///
+/// This platform's inspection establishes posture and identity from the name
+/// rather than through a handle, so it has none to hand over, and opening the
+/// path a second time to make one is not safe from here: std offers no
+/// non-blocking open, so a path replaced by a FIFO between the posture check and
+/// that open would leave the request blocked for as long as no writer arrives --
+/// forever, in the ordinary case, holding a worker with it. Introducing a way to
+/// hang in order to pin an identity that nothing claims to pin is the wrong
+/// trade.
+///
+/// The type stays uniform so the registry never has to know which platform it is
+/// on, and ADR 0006 claims the identity guarantee for Windows only, which is the
+/// platform this application ships on and the only one its CI builds.
+#[cfg(not(windows))]
+type LeasedObject = ();
+
 impl FileIdentityLease {
+    /// Takes the hold, on the platform that has one to take.
+    #[cfg(windows)]
     fn new(handle: std::fs::File) -> Self {
         Self {
             handle: Arc::new(handle),
+        }
+    }
+
+    /// The hold this platform can take, which is none. Named so that a reader
+    /// meets the fact rather than infers it from a type alias.
+    #[cfg(not(windows))]
+    fn unheld() -> Self {
+        Self {
+            handle: Arc::new(()),
         }
     }
 
@@ -126,7 +161,7 @@ impl fmt::Debug for FileIdentityLease {
 /// answer.
 #[cfg(test)]
 #[derive(Clone)]
-pub(super) struct LeaseWitness(std::sync::Weak<std::fs::File>);
+pub(super) struct LeaseWitness(std::sync::Weak<LeasedObject>);
 
 #[cfg(test)]
 impl LeaseWitness {
@@ -341,44 +376,30 @@ fn inspect_selected_file(path: &Path) -> Result<InspectedFile, PreviewErrorDto> 
     use mscanvas_proteowizard::is_reparse_point;
     use std::os::unix::fs::MetadataExt;
 
-    // std offers no O_NOFOLLOW open, so the link test cannot be made through
-    // the handle everything else comes from. It is made first, against the name
-    // itself, and the comparison on every use is what closes the gap that
-    // leaves.
-    let named = std::fs::symlink_metadata(path).map_err(|_| unresolvable())?;
-    if named.file_type().is_symlink() || is_reparse_point(&named) || !named.is_file() {
-        return Err(not_a_regular_file());
-    }
-    // The lease, and then the descriptor asked about itself. Identity and
-    // length come from the open object rather than from the name, so what this
-    // describes is what it holds. Taking them from the name instead would let a
-    // rename between the two record an identity that no descriptor keeps alive
-    // -- a row indexed under an identity free to be handed to something else,
-    // which is the failure this lease exists to remove rather than to move.
-    //
-    // What it keeps alive is the inode, which is the part of the Windows lease
-    // that carries here: an inode is not reused while a descriptor holds it.
-    // The rest does not -- FILE_ID_INFO is a Windows answer, and nothing here
-    // claims the Windows guarantee.
-    let handle = std::fs::File::open(path).map_err(|_| unresolvable())?;
-    let opened = handle.metadata().map_err(|_| unresolvable())?;
-    // The name was a regular file a moment ago; this is the object that was
-    // actually opened, and it answers for itself.
-    if !opened.is_file() {
+    // std offers no O_NOFOLLOW open, so the link test and the identity are
+    // established separately here. The comparison on every use is what closes
+    // the gap that leaves.
+    let selected = std::fs::symlink_metadata(path).map_err(|_| unresolvable())?;
+    if selected.file_type().is_symlink() || is_reparse_point(&selected) || !selected.is_file() {
         return Err(not_a_regular_file());
     }
     // Device and inode, which is what this platform has. They are carried in
     // the same value type so everything above can compare identities without
     // knowing the platform -- not because there is a file ID here to widen to.
     let mut file_id = [0_u8; 16];
-    file_id[..8].copy_from_slice(&opened.ino().to_ne_bytes());
+    file_id[..8].copy_from_slice(&selected.ino().to_ne_bytes());
     Ok(InspectedFile {
-        byte_length: opened.len(),
+        byte_length: selected.len(),
         identity: FileIdentity {
-            volume_serial: opened.dev(),
+            volume_serial: selected.dev(),
             file_id,
         },
-        lease: FileIdentityLease::new(handle),
+        // Nothing is held here, and `LeasedObject` says why: this inspection has
+        // no handle to hand over, and opening the path again to make one would
+        // introduce a way for a selection to hang. Unchanged from before the
+        // lease existed, which is what this platform's coverage -- and ADR
+        // 0006 -- already claim.
+        lease: FileIdentityLease::unheld(),
     })
 }
 
@@ -1309,7 +1330,10 @@ mod tests {
         let directory = TestDirectory::new("opaque-lease");
         let path = directory.path().join("sample.mzML");
         fs::write(&path, b"<mzML/>").expect("write fixture");
+        #[cfg(windows)]
         let lease = FileIdentityLease::new(fs::File::open(&path).expect("open the fixture"));
+        #[cfg(not(windows))]
+        let lease = FileIdentityLease::unheld();
 
         let rendered = format!("{lease:?}");
 
