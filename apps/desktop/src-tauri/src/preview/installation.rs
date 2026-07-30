@@ -10,7 +10,7 @@ use std::time::SystemTime;
 
 use mscanvas_proteowizard::{DiscoveredTool, DiscoveryFailure, DiscoveryResult, Sha256Digest};
 
-use super::selection::file_identity;
+use super::selection::{FileIdentity, file_identity};
 
 /// One resolved tool, identified well enough to notice it being replaced.
 ///
@@ -32,7 +32,7 @@ pub(crate) struct ToolIdentity {
     content: Option<Sha256Digest>,
     /// `None` when the path is not an acceptable regular file, which a
     /// comparison reads as a change rather than as a match.
-    filesystem: Option<(u64, u64)>,
+    filesystem: Option<FileIdentity>,
     byte_length: Option<u64>,
     modified: Option<SystemTime>,
 }
@@ -68,11 +68,22 @@ impl ToolIdentity {
     /// the common path. With no digest recorded there is nothing to appeal to
     /// and the metadata stands.
     fn same_file_now(&self) -> bool {
-        let now = Self::of(&self.path, None);
-        if now.filesystem == self.filesystem
+        self.same_as(&Self::of(&self.path, None))
+    }
+
+    /// Whether a fresh reading of this path describes the file this identity
+    /// saw. Split from the reading itself so the rule can be tested against
+    /// readings a development machine cannot produce.
+    fn same_as(&self, now: &Self) -> bool {
+        let metadata_agrees = now.filesystem == self.filesystem
             && now.byte_length == self.byte_length
-            && now.modified == self.modified
-        {
+            && now.modified == self.modified;
+        // Two unknown identities agreeing is not evidence of anything. Where a
+        // filesystem answers with no identity at all, length and timestamp are
+        // all the fast path has left, and an installer that preserved both
+        // would walk straight through it -- so the digest decides instead,
+        // whenever there is one to appeal to.
+        if metadata_agrees && (self.filesystem.is_some() || self.content.is_none()) {
             return true;
         }
         let Some(recorded) = self.content else {
@@ -151,6 +162,18 @@ impl InstallationIdentity {
             release: discovery.release.clone(),
             build_date: discovery.build_date.clone(),
         })
+    }
+}
+
+#[cfg(test)]
+impl ToolIdentity {
+    /// One whose filesystem could not answer with an identity, which is the
+    /// position a volume without file IDs leaves every tool on it in.
+    fn without_filesystem_facts(path: &Path, content: Sha256Digest) -> Self {
+        Self {
+            filesystem: None,
+            ..Self::of(path, Some(content))
+        }
     }
 }
 
@@ -507,6 +530,49 @@ mod tests {
         std::fs::write(&path, b"one build").expect("rewrite with the same bytes");
 
         assert!(recorded.same_file_now());
+    }
+
+    #[test]
+    fn a_tool_with_no_filesystem_identity_is_still_judged_by_its_bytes() {
+        // Some volumes answer with no file identity at all. Both readings are
+        // then `None`, and two unknowns comparing equal used to end the
+        // question -- so an installer that replaced the tool while preserving
+        // its length and timestamp was called the same tool, and the check that
+        // exists to refuse a stale preview cheaply refused nothing.
+        let tree = TempDir::new("no-filesystem-identity");
+        let path = tree.file(MSCONVERT_EXE, b"one build");
+        let recorded = ToolIdentity::without_filesystem_facts(
+            &path,
+            Sha256Digest::calculate(b"one build").expect("digest"),
+        );
+
+        // The replacement keeps the length and is given the timestamp back, so
+        // nothing but the identity and the bytes can tell it apart -- and the
+        // identity is what this volume does not have.
+        let before = std::fs::metadata(&path)
+            .expect("metadata")
+            .modified()
+            .expect("modification time");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&path, b"two build").expect("replace with the same length");
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("reopen to set times")
+            .set_times(std::fs::FileTimes::new().set_modified(before))
+            .expect("restore the modification time");
+        // A development machine has file identities, so the reading this volume
+        // would give is supplied rather than taken.
+        let now = ToolIdentity::without_filesystem_facts(
+            &path,
+            Sha256Digest::calculate(b"two build").expect("digest"),
+        );
+        assert_eq!(recorded.byte_length, now.byte_length);
+        assert_eq!(recorded.modified, now.modified);
+
+        assert!(!recorded.same_as(&now));
+        // The tool that really is unchanged still passes.
+        assert!(now.same_as(&now));
     }
 
     #[test]
