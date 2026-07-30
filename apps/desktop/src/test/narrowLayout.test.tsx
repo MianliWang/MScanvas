@@ -123,6 +123,22 @@ describe("narrow desktop layout rules", () => {
     expect(
       requireStyleRule(app, ".spectrum-table-viewport").style.getPropertyValue("overflow"),
     ).toBe("auto");
+    // Issue #29: the header row sits inside the one scrolling box and resolves
+    // its columns against the same track as the rows, so a label and its values
+    // hold one horizontal position between them at any scroll offset.
+    const head = requireStyleRule(app, ".spectrum-table-head").style;
+    expect(head.getPropertyValue("position")).toBe("sticky");
+    expect(head.getPropertyValue("top")).toBe("0px");
+    expect(requireStyleRule(app, ".spectrum-table-track").style.getPropertyValue("min-width")).toBe(
+      "min-content",
+    );
+    // And the header's row stays reserved, so a row scrolled into view lands
+    // below it rather than behind it.
+    expect(
+      requireStyleRule(app, ".spectrum-table-viewport").style.getPropertyValue(
+        "scroll-padding-top",
+      ),
+    ).toBe("30px");
   });
 });
 
