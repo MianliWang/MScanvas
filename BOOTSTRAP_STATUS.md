@@ -627,6 +627,38 @@ as a finding about the backend. The acquisition was read through a neutral
 working copy outside the repository, deleted afterwards, so no fixture name,
 path or scientific value appears here.
 
+## Accepted-file identity hardening, 2026-07-30
+
+An accepted mzML file is now bound to the complete Windows file identity: the
+64-bit volume serial and all sixteen file-ID bytes of `FILE_ID_INFO`, obtained
+through `GetFileInformationByHandleEx`. It previously used the 64-bit index from
+`GetFileInformationByHandle`, which is narrower than the identity the
+ProteoWizard source boundary in `crates/proteowizard` has always bound, and a
+comment in the desktop code wrongly said the two were the same information. A
+filesystem that cannot supply the identity is refused exactly as before rather
+than falling back to the old index or to the path.
+
+This is a prerequisite for M1 duplicate detection rather than a feature: with
+one accepted file at a time, a truncated identity can at most miss a
+replacement, but as the key deciding whether two chosen files are the same
+acquisition it could merge two distinct ones into a single workspace row.
+
+Nothing else changed. The same canonical resolution, regular-file and
+reparse-point rejection, per-use revalidation, handle format, Tauri commands,
+transfer objects and frontend behaviour; no multi-dataset registry, no
+duplicate detection and no ADR 0006 yet. The identity is private, is not
+serialisable and prints as `<opaque-file-identity>`.
+
+Validation on the exact head: `cargo fmt --all --check`,
+`cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --locked --workspace --all-targets` (74 desktop tests, six of them
+new), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
+`pnpm test`, `pnpm build`. The new coverage includes a real Windows hard link
+and a delete-and-recreate at one path, both through the production acceptance
+path and neither using a scientific acquisition. Rendered QA was not required
+and not performed: no frontend file, transfer object, command signature,
+capability or user-facing string changed. ProteoWizard was not executed.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.
