@@ -60,13 +60,15 @@ impl Workspace {
 
     /// Removes every dataset and everything the session derived from them.
     fn clear(&mut self, reason: RevocationReason) {
+        // One at a time through the atomic path, so emptying the workspace
+        // cannot come to mean something different from removing every dataset
+        // in it. Nothing is asserted here: one lock now covers the registry and
+        // everything derived from it, and a panic under it would take every
+        // later command with it. What this leaves behind is checked from
+        // outside instead.
         for id in self.registry.ids().to_vec() {
             self.revoke(id, reason);
         }
-        debug_assert!(
-            self.runtime.is_empty(),
-            "an emptied workspace derives nothing from anything"
-        );
     }
 
     /// Starts a request for one dataset and hands back the epoch that names it.

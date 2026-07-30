@@ -568,12 +568,13 @@ impl DatasetRegistry {
         let removed = self.datasets.remove(&id)?;
         // Both indexes, or the identity would keep answering for a dataset that
         // is gone and the next addition of that file would be called a
-        // duplicate of nothing. Only while it is still this dataset's entry: an
-        // identity a filesystem has since handed to another file belongs to the
-        // dataset holding it now.
-        if self.by_identity.get(&removed.file.identity()) == Some(&id) {
-            self.by_identity.remove(&removed.file.identity());
-        }
+        // duplicate of nothing.
+        debug_assert_eq!(
+            self.by_identity.get(&removed.file.identity()),
+            Some(&id),
+            "one filesystem object, one dataset: the index entry is this row's"
+        );
+        self.by_identity.remove(&removed.file.identity());
         self.order.retain(|held| *held != id);
         Some(removed)
     }

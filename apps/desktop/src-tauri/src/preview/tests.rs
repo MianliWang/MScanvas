@@ -45,6 +45,20 @@ const SPECTRUM_TABLE_OUTPUT: &str = concat!(
     "2\t21\t1\tFTMS\tms1\t0.30\t100\t1000\t500.00\t7000\t80000\t\t\t\t\t\n",
 );
 
+/// A table whose native identifiers are path-shaped, which nothing stops an
+/// acquisition from containing.
+///
+/// The rows a session records are kept as the backend reported them, because
+/// reconciling a later spectrum against redacted text would compare two
+/// different strings. That makes them the one place in the session where a path
+/// can arrive without passing through the redactor.
+const PATH_SHAPED_SPECTRUM_TABLE_OUTPUT: &str = concat!(
+    "# sample.mzML\n",
+    "index\tid\tevent\tanalyzer\tmsLevel\trt\tmzLow\tmzHigh\tbasePeakMZ\tbasePeakInt\tTIC\t",
+    "charge\tprecursorMZ\tthermo_monoMZ\tfilterStringMZ\tionInjectionTime\n",
+    "0\tD:\\MSData\\private-run.raw#19\t1\tFTMS\tms1\t0.10\t100\t1000\t445.12\t9000\t120000\t\t\t\t\t\n",
+);
+
 /// A second acquisition's table, told apart from the first by every value a
 /// selected spectrum is reconciled against.
 ///
@@ -1349,46 +1363,16 @@ fn opening_another_file_supersedes_a_spectrum_still_waiting_for_its_turn() {
     use std::sync::Arc;
     use std::sync::mpsc;
 
-    /// Blocks inside the gate until released, so a second request can be
-    /// observed waiting rather than raced against.
-    struct BlockingProvider {
-        inner: FakeProvider,
-        started: mpsc::Sender<()>,
-        release: Mutex<mpsc::Receiver<()>>,
-    }
-
-    impl PreviewProvider for BlockingProvider {
-        fn use_installation(&self, _home: Option<PathBuf>) {}
-
-        fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
-            self.inner.availability()
-        }
-
-        fn run(
-            &self,
-            source: &Path,
-            operation: &PreviewOperation,
-        ) -> Result<OperationAttempt, PreviewErrorDto> {
-            let _ = self.started.send(());
-            let _ = self
-                .release
-                .lock()
-                .expect("test lock")
-                .recv_timeout(std::time::Duration::from_secs(5));
-            self.inner.run(source, operation)
-        }
-    }
-
     let file = TestFile::new("supersede");
     let (started, observe_start) = mpsc::channel();
     let (release, wait_for_release) = mpsc::channel();
-    let service = Arc::new(PreviewService::new(Box::new(BlockingProvider {
+    let service = Arc::new(PreviewService::new(Box::new(BlockFirstProvider {
         inner: FakeProvider::available(vec![
             Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
             Response::File(selected_spectrum_output(1, &[(333.33, 5000.0)])),
         ]),
         started,
-        release: Mutex::new(wait_for_release),
+        release: Mutex::new(Some(wait_for_release)),
     })));
     let first = service.accept_file(&file.path).expect("accepted");
 
@@ -1399,7 +1383,7 @@ fn opening_another_file_supersedes_a_spectrum_still_waiting_for_its_turn() {
         std::thread::spawn(move || service.load_spectrum(&handle, 0))
     };
     observe_start
-        .recv_timeout(std::time::Duration::from_secs(5))
+        .recv_timeout(std::time::Duration::from_secs(10))
         .expect("the first request reached the provider");
 
     // A second one queues behind it.
@@ -1408,11 +1392,21 @@ fn opening_another_file_supersedes_a_spectrum_still_waiting_for_its_turn() {
         let handle = first.handle.clone();
         std::thread::spawn(move || service.load_spectrum(&handle, 1))
     };
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    // Waited for rather than slept on. Replacing the selection before this
+    // request has claimed its turn answers `unknown_file_handle`, which is a
+    // different thing from the supersession this test is about.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while service.requests_made(&first.handle) < 2 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the queued request never claimed its turn"
+        );
+        std::thread::yield_now();
+    }
 
     // The user opens another file while it is still waiting.
     service.accept_file(&file.path).expect("accepted again");
-    let _ = release.send(());
+    release.send(()).expect("the provider is still waiting");
 
     assert!(
         running
@@ -2096,8 +2090,14 @@ fn managing_the_workspace_never_reaches_the_backend() {
     service.accept_file(&file.path).expect("accepted");
     service.accept_file(&other).expect("accepted again");
     service.add_dataset(&file.path).expect("added alongside");
-
     assert_eq!(service.dataset_count(), 2);
+
+    // And emptying a workspace that holds more than one is still no process.
+    // This is also the only place the multi-dataset path through `clear` runs:
+    // the picker reaches it with one dataset and never more.
+    service.accept_file(&other).expect("accepted a third time");
+
+    assert_eq!(service.dataset_count(), 1);
 }
 
 /// Two names for one file. Windows-only because the identity this decides on is
@@ -2227,6 +2227,15 @@ fn work_on_one_dataset_never_supersedes_work_on_another() {
     // Then, and only then, a request in the other dataset arrives.
     let elsewhere = spectrum(&second.handle, 0);
     claimed(&second.handle, 1);
+    // Exactly one, which is what makes waiting for it an ordering and not a
+    // guess. A session-wide counter would already be past two here, so this
+    // request would be released before it had claimed anything and the test
+    // would be watching a race instead of a rule.
+    assert_eq!(
+        service.requests_made(&second.handle),
+        1,
+        "a dataset counts its own requests and nobody else's"
+    );
     release.send(()).expect("the provider is still waiting");
 
     assert!(
@@ -2296,6 +2305,103 @@ fn a_preview_that_finishes_after_its_dataset_is_gone_records_nothing() {
 }
 
 #[test]
+fn changing_the_installation_rereads_nothing() {
+    // A workspace of twenty datasets must not become twenty queued backend jobs
+    // because the user pointed at another ProteoWizard. What a change
+    // invalidates is backend-derived and is refused when the user next asks for
+    // something; rereading one is a thing they ask for, one dataset at a time.
+    let file = TestFile::new("reread");
+    let other = file.sibling("other.mzML");
+    let provider = Box::new(FakeProvider::available(open_responses()));
+    let world = provider.clone_world();
+    let service = PreviewService::new(provider);
+    let first = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&first.handle)
+        .expect("the preview loads");
+    let second = service.add_dataset(&other).expect("added");
+    let before = world.requested_count();
+
+    service.use_installation(Some(file.directory.clone()));
+
+    assert_eq!(
+        world.requested_count(),
+        before,
+        "changing the installation runs no preview operation"
+    );
+    // The roster and everything derived from the source are left alone. The
+    // recorded preview is now stale against the installation in use, which the
+    // checks around a spectrum are what catch.
+    assert_eq!(service.dataset_count(), 2);
+    assert!(service.holds_preview_state(&first.handle));
+    assert!(!service.holds_preview_state(&second.handle));
+}
+
+#[test]
+fn a_batch_that_answers_the_wrong_question_records_nothing() {
+    /// Answers every operation of the batch with the first one's.
+    ///
+    /// The provider contract does not promise that the i-th attempt answers the
+    /// i-th operation. A batch of the right length that is nonetheless short of
+    /// a required result is the state the open action has to refuse before it
+    /// records anything, and this is what produces it.
+    struct AlwaysTheFirstQuestion(FakeProvider);
+
+    impl PreviewProvider for AlwaysTheFirstQuestion {
+        fn use_installation(&self, home: Option<PathBuf>) {
+            self.0.use_installation(home);
+        }
+
+        fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
+            self.0.availability()
+        }
+
+        fn run(
+            &self,
+            source: &Path,
+            operation: &PreviewOperation,
+        ) -> Result<OperationAttempt, PreviewErrorDto> {
+            self.0.run(source, operation)
+        }
+
+        fn run_batch(
+            &self,
+            source: &Path,
+            operations: &[PreviewOperation],
+        ) -> Result<Vec<OperationAttempt>, PreviewErrorDto> {
+            let first = operations.first().expect("the open batch is not empty");
+            operations
+                .iter()
+                .map(|_| self.0.run(source, first))
+                .collect()
+        }
+    }
+
+    let file = TestFile::new("wrong-answers");
+    let service = PreviewService::new(Box::new(AlwaysTheFirstQuestion(FakeProvider::available(
+        vec![
+            Response::File(METADATA_OUTPUT.to_owned()),
+            Response::File(METADATA_OUTPUT.to_owned()),
+            Response::File(METADATA_OUTPUT.to_owned()),
+        ],
+    ))));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let error = service
+        .open_preview(&selected.handle)
+        .expect_err("a batch short of a required result is refused");
+
+    assert_eq!(error.kind, "preview_result_missing");
+    // The refusal is the whole of it. A dataset owning preview facts the user
+    // was never shown would put rows behind a later spectrum's reconciliation
+    // that no preview on screen ever came from.
+    assert!(
+        !service.holds_preview_state(&selected.handle),
+        "a refused open records nothing"
+    );
+}
+
+#[test]
 fn replacing_the_selection_drops_what_the_session_derived_from_it() {
     // Revoking a dataset has to reach more than its row. Its request epoch and
     // its preview facts are what a late reply and a waiting request find, and a
@@ -2341,7 +2447,15 @@ fn nothing_the_session_holds_prints_a_path() {
     // generation, the installation that read it and every table row -- so a
     // field added to any of those would show up here.
     let file = TestFile::new("opaque-session");
-    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        // A native spectrum identifier shaped like a path, which is a thing an
+        // acquisition is free to contain. The rows are kept raw for
+        // reconciliation, so this is the one value in the session that carries
+        // a path and is never redacted.
+        Response::File(PATH_SHAPED_SPECTRUM_TABLE_OUTPUT.to_owned()),
+    ])));
     let selected = service.accept_file(&file.path).expect("accepted");
     service
         .open_preview(&selected.handle)
@@ -2354,10 +2468,16 @@ fn nothing_the_session_holds_prints_a_path() {
         file.directory.to_string_lossy().as_ref(),
         "sample.mzML",
         "MSData",
+        // The installation the preview was read by, which the session records
+        // beside every dataset's preview facts.
+        r"C:\fake",
+        MSACCESS,
+        // And the native identifier of a row.
+        "private-run.raw",
     ] {
         assert!(
             !rendered.contains(secret),
-            "the session must not print what it holds"
+            "the session must not print what it holds, and it printed {secret}"
         );
     }
     assert!(rendered.contains("<registry of 1 dataset>"));

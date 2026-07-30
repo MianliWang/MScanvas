@@ -698,14 +698,19 @@ were known to be present, so a batch short of one result left facts behind that
 the caller was then refused; a spectrum request cloned the whole recorded table
 — one entry per spectrum of the acquisition — while holding both the workspace
 lock and the backend gate; and the identifier allocator could in principle wrap,
-which is now a checked increment.
+which is now a checked increment. The preview-recording repair matters because
+the provider contract does not promise that the *i*-th attempt answers the
+*i*-th operation, and a batch of the right length that is short of a required
+result is exactly what that permits.
 
-ADR 0006 also records two limits this slice does not close, both unreachable in
-the product because the picker empties the workspace before it registers. A
-filesystem may hand a deleted file's identity to a new file, and only a live
-handle per dataset would prevent that being read as a duplicate; and two opens
-of one dataset are serialised at the backend gate but not at the commit, so the
-later commit wins whether or not it ran last.
+ADR 0006 also records two limits this slice does not close, each unreachable in
+the product for its own reason. A filesystem may hand a deleted file's identity
+to a new file, and only a live handle per dataset would prevent that being read
+as a duplicate — unreachable because the picker empties the workspace before it
+registers, so no duplicate check ever runs against a stale row. And two opens of
+one dataset are serialised at the backend gate but not at the commit, so the
+later commit wins whether or not it ran last — unreachable because the frontend
+disables the picker while an open is in flight and never has two outstanding.
 
 Boundary behaviour is deliberately unchanged where a user can reach it. A
 request still waiting for its turn on a replaced selection still fails with
@@ -731,24 +736,25 @@ never issued, and independent review found all three:
 
 Validation on the exact head: `cargo fmt --all --check`,
 `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
-`cargo test --locked --workspace --all-targets` (88 desktop tests: fourteen are
-new, and one that asserted the single-slot registry's revocation was rewritten
-against the registry that replaced it), `python -B scripts/check_repo.py`,
-`pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`. Twelve mutations were
-introduced one at a time and each was caught by the test written for it: a
-duplicate minting a second identifier, the allocator rewinding on clear,
-revocation leaving the identity index behind, revocation leaving the request
-epoch and preview facts behind, removal losing insertion order, an accepted
-file's debug output carrying the path, the session's own debug output carrying a
-filesystem identity, one session-wide request ticket, a late reply recreating
-preview state, one preview record for the whole session, the picker accumulating
-datasets, and a handle parser that accepts spellings the session never issued.
+`cargo test --locked --workspace --all-targets` (90 desktop tests, up from 75:
+sixteen test names added and one removed, one of the additions being the
+single-slot registry's revocation test rewritten against the registry that
+replaced it), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
+`pnpm test`, `pnpm build`.
 
-One repair carries no mutation proof and is not claimed to: hoisting the
-required-result checks above the commit closes a state the current provider
-contract cannot produce, since every operation is interpreted under the
-operation that asked for it and a wrong-kind result fails earlier. It is a
-tightening of what is representable, not a fix for an observed failure.
+Eighteen mutations were introduced one at a time against this exact head, and
+each was caught by the test written for it: a duplicate minting a second
+identifier; the allocator rewinding when the workspace is emptied; revocation
+leaving the identity index behind; revocation leaving the request epoch and
+preview facts behind; emptying the workspace reaching only its first dataset;
+removal losing insertion order; an accepted file's debug output carrying the
+path; the session's own debug output carrying a filesystem identity, an
+installation path, or a native spectrum identifier; one session-wide request
+ticket; a late reply recreating preview state; one preview record for the whole
+session; reconciliation rows taken from another dataset; the picker accumulating
+datasets; a handle parser that accepts spellings the session never issued; a
+preview recorded before its required results were known to be present; and an
+installation change rereading every dataset it invalidates.
 
 Duplicate detection is proven with a real Windows hard link, taken through the
 production acceptance path and then into the `cfg(test)` entry point, since no
