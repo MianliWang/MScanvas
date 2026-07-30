@@ -3,10 +3,9 @@
 //! Rust owns the path. The webview receives an opaque handle and a display
 //! name, never an absolute path, and the file itself is only ever read.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::dto::{PreviewErrorDto, SelectedFileDto};
 
@@ -324,12 +323,22 @@ fn not_a_regular_file() -> PreviewErrorDto {
     )
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AcceptedFile {
     path: PathBuf,
     file_name: String,
     byte_length: u64,
     identity: FileIdentity,
+}
+
+impl fmt::Debug for AcceptedFile {
+    /// Deliberately opaque. This holds the absolute path the boundary exists to
+    /// keep in Rust, and a workspace holds one of these per dataset -- so a
+    /// single `{:?}` of anything containing them would put the user's whole
+    /// roster into a log or a panic message.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<opaque-accepted-file>")
+    }
 }
 
 impl AcceptedFile {
@@ -355,74 +364,257 @@ impl AcceptedFile {
     }
 }
 
-/// The one file a session currently has open, behind an opaque handle.
+/// One dataset of a session, named by a number the session allocated.
 ///
-/// Exactly one, replaced on each selection. The product opens one file at a
-/// time, so keeping every previously chosen path callable would leave the
-/// webview holding a capability over files the user has moved on from, for the
-/// lifetime of the process. Handles are session-scoped and meaningless outside
-/// the running process, so a frontend value can never name a path the user did
-/// not choose.
-#[derive(Debug, Default)]
-pub struct FileRegistry {
-    next_handle: AtomicU64,
-    current: Mutex<Option<(String, AcceptedFile)>>,
+/// Opaque, but not a secret. What stops a value from naming a file the user did
+/// not choose is that only Rust can turn one into a path, and does so against a
+/// registry that revalidates the file every time -- not that the number is hard
+/// to guess. Never reused within the process, so a reply that arrives after its
+/// dataset is gone cannot land on whatever was added next.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(super) struct DatasetId(u64);
+
+/// The spelling the boundary already speaks. The frontend holds these strings
+/// today, so the type is new and the wire is not.
+const HANDLE_PREFIX: &str = "file-";
+
+impl DatasetId {
+    /// The handle string this dataset is known by outside Rust.
+    pub(super) fn handle(self) -> String {
+        format!("{HANDLE_PREFIX}{}", self.0)
+    }
+
+    /// Reads a handle the frontend sent back. Anything else is not a dataset
+    /// this session ever allocated, which resolves like one that is gone.
+    ///
+    /// Byte-equal or nothing. `u64::from_str` also accepts a leading plus and
+    /// leading zeros, so without the round-trip `file-0`, `file-00` and
+    /// `file-+0` would all reach one dataset -- three spellings of a handle
+    /// this session never issued, one of which would then come back in a reply
+    /// as a fourth.
+    pub(super) fn parse(handle: &str) -> Option<Self> {
+        let id = Self(handle.strip_prefix(HANDLE_PREFIX)?.parse().ok()?);
+        (id.handle() == handle).then_some(id)
+    }
 }
 
-impl FileRegistry {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+impl fmt::Debug for DatasetId {
+    /// The number alone, which names a dataset and nothing about the file.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "dataset-{}", self.0)
+    }
+}
+
+/// One accepted file, and the dataset the session knows it as.
+#[derive(Clone)]
+pub(super) struct RegisteredDataset {
+    id: DatasetId,
+    file: AcceptedFile,
+}
+
+impl RegisteredDataset {
+    pub(super) const fn id(&self) -> DatasetId {
+        self.id
     }
 
-    /// Registers a newly accepted file and revokes the previous one.
-    pub fn register(&self, file: AcceptedFile) -> SelectedFileDto {
-        let handle = format!("file-{}", self.next_handle.fetch_add(1, Ordering::Relaxed));
-        let dto = SelectedFileDto {
-            handle: handle.clone(),
-            file_name: file.file_name().to_owned(),
-            byte_length: file.byte_length(),
-        };
-        *self
-            .current
-            .lock()
-            .expect("the file registry lock is never poisoned by user code") = Some((handle, file));
-        dto
+    pub(super) const fn file(&self) -> &AcceptedFile {
+        &self.file
     }
+}
 
-    /// Resolves a handle and revalidates the path before every use.
+impl fmt::Debug for RegisteredDataset {
+    /// The dataset, never the file behind it.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "<registered {:?}>", self.id())
+    }
+}
+
+/// What adding a file to the workspace did.
+///
+/// A file that is already there is an ordinary answer rather than a failure:
+/// the user asked for it to be in the workspace, and it is. Carries the dataset
+/// it resolved to and nothing else -- no path, no identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AddDatasetOutcome {
+    Added { id: DatasetId },
+    Duplicate { existing_id: DatasetId },
+}
+
+impl AddDatasetOutcome {
+    /// The dataset the file is now known as, either way.
     ///
-    /// The checks made when the file was chosen do not stay true. A path can
-    /// be replaced by a link between the picker and the read, and the command
-    /// planning that follows resolves paths again, so the accepted-at-pick
-    /// posture has to be re-established each time rather than remembered.
-    pub fn resolve(&self, handle: &str) -> Result<AcceptedFile, PreviewErrorDto> {
-        let remembered = self
-            .current
-            .lock()
-            .expect("the file registry lock is never poisoned by user code")
-            .as_ref()
-            .filter(|(current, _)| current == handle)
-            .map(|(_, file)| file.clone())
-            .ok_or_else(|| {
-                PreviewErrorDto::new(
-                    "unknown_file_handle",
-                    "That file is no longer open. Open it again to continue.",
-                    false,
-                )
-            })?;
-
-        let current = accept_mzml_file(remembered.path())?;
-        // Both, because a name can come to point elsewhere and a different
-        // file can also take the same name.
-        if current.path() != remembered.path() || current.identity != remembered.identity {
-            return Err(PreviewErrorDto::new(
-                "file_identity_changed",
-                "That name no longer refers to the file that was opened. Open it again to continue.",
-                false,
-            ));
+    /// For a caller that only needs to name the file it just added, both
+    /// outcomes answer the same question. Callers that must tell the two apart
+    /// -- the roster, which reports a duplicate rather than drawing a row --
+    /// match on the variants instead.
+    pub(super) const fn id(self) -> DatasetId {
+        match self {
+            Self::Added { id } | Self::Duplicate { existing_id: id } => id,
         }
-        Ok(current)
+    }
+}
+
+/// Why a dataset stopped being part of the session.
+///
+/// Recorded because the three are different events to a reader of this code,
+/// and none of them may carry a path or an operating-system message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RevocationReason {
+    /// The picker replaced the current selection, which is what it does until
+    /// the roster exists.
+    ReplacedBySelection,
+    /// The user removed this one dataset.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the roster interface (M1.2) removes rows")
+    )]
+    Removed,
+    /// The user emptied the workspace.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the roster interface (M1.2) empties the workspace"
+        )
+    )]
+    Cleared,
+}
+
+/// The datasets a session holds, in the order they were added.
+///
+/// Holds no lock of its own. Removing a dataset has to reach its runtime state
+/// in the same breath as its row, and a registry that locked itself would make
+/// that two steps with a gap in between -- so the service owns one lock over
+/// both.
+#[derive(Default)]
+pub(super) struct DatasetRegistry {
+    /// Only ever counts up, including across an emptied workspace, so an
+    /// identifier is never handed out twice in one process.
+    next_id: u64,
+    order: Vec<DatasetId>,
+    datasets: HashMap<DatasetId, RegisteredDataset>,
+    /// One filesystem object, one dataset. This is what makes two names for the
+    /// same acquisition a duplicate rather than two rows.
+    ///
+    /// An identity names an object only while that object exists: a filesystem
+    /// is free to hand a deleted file's ID to the next one it creates. ADR 0006
+    /// records what that costs and why holding a live handle per dataset is the
+    /// M1.2 decision rather than this one.
+    by_identity: HashMap<FileIdentity, DatasetId>,
+}
+
+impl fmt::Debug for DatasetRegistry {
+    /// How many, never which.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let held = self.len();
+        let noun = if held == 1 { "dataset" } else { "datasets" };
+        write!(formatter, "<registry of {held} {noun}>")
+    }
+}
+
+impl DatasetRegistry {
+    /// Adds an accepted file, or reports the dataset it already is.
+    pub(super) fn add(&mut self, file: AcceptedFile) -> AddDatasetOutcome {
+        if let Some(&existing_id) = self.by_identity.get(&file.identity()) {
+            return AddDatasetOutcome::Duplicate { existing_id };
+        }
+        let id = DatasetId(self.next_id);
+        // Checked, so the invariant is absolute rather than nearly so. Wrapping
+        // is the one way this allocator could hand out an identifier twice, and
+        // a release build wraps silently.
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .expect("a session cannot allocate more than u64::MAX datasets");
+        self.by_identity.insert(file.identity(), id);
+        self.datasets.insert(id, RegisteredDataset { id, file });
+        self.order.push(id);
+        AddDatasetOutcome::Added { id }
+    }
+
+    pub(super) fn get(&self, id: DatasetId) -> Option<&RegisteredDataset> {
+        self.datasets.get(&id)
+    }
+
+    pub(super) fn contains(&self, id: DatasetId) -> bool {
+        self.datasets.contains_key(&id)
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.order.len()
+    }
+
+    /// The datasets in the order they were added.
+    pub(super) fn ids(&self) -> &[DatasetId] {
+        &self.order
+    }
+
+    /// Removes one dataset. Returns what was removed, so a caller can tell a
+    /// revocation that did something from one that found nothing.
+    ///
+    /// Not the whole of removing a dataset: a session also derives state from
+    /// one, and that has to go in the same breath. Go through the workspace,
+    /// which owns both.
+    pub(super) fn revoke(
+        &mut self,
+        id: DatasetId,
+        reason: RevocationReason,
+    ) -> Option<RegisteredDataset> {
+        // Required of the caller and deliberately not stored. It names the
+        // event here and in tests; nothing reports revocations yet, and a
+        // record with no reader would be a second answer to keep true once the
+        // roster starts reporting them for real.
+        let _ = reason;
+        let removed = self.datasets.remove(&id)?;
+        // Both indexes, or the identity would keep answering for a dataset that
+        // is gone and the next addition of that file would be called a
+        // duplicate of nothing.
+        debug_assert_eq!(
+            self.by_identity.get(&removed.file.identity()),
+            Some(&id),
+            "one filesystem object, one dataset: the index entry is this row's"
+        );
+        self.by_identity.remove(&removed.file.identity());
+        self.order.retain(|held| *held != id);
+        Some(removed)
+    }
+}
+
+/// Rechecks the file a dataset was accepted as, before every use of it.
+///
+/// The checks made when the file was chosen do not stay true. A path can be
+/// replaced by a link between the picker and the read, and the command planning
+/// that follows resolves paths again, so the accepted-at-pick posture has to be
+/// re-established each time rather than remembered.
+pub(super) fn revalidate(remembered: &AcceptedFile) -> Result<AcceptedFile, PreviewErrorDto> {
+    let current = accept_mzml_file(remembered.path())?;
+    // Both, because a name can come to point elsewhere and a different file can
+    // also take the same name.
+    if current.path() != remembered.path() || current.identity != remembered.identity {
+        return Err(PreviewErrorDto::new(
+            "file_identity_changed",
+            "That name no longer refers to the file that was opened. Open it again to continue.",
+            false,
+        ));
+    }
+    Ok(current)
+}
+
+/// What a handle that names no live dataset answers with.
+pub(super) fn unknown_dataset() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "unknown_file_handle",
+        "That file is no longer open. Open it again to continue.",
+        false,
+    )
+}
+
+/// What the boundary is told about one accepted file.
+pub(super) fn selected_file_dto(id: DatasetId, file: &AcceptedFile) -> SelectedFileDto {
+    SelectedFileDto {
+        handle: id.handle(),
+        file_name: file.file_name().to_owned(),
+        byte_length: file.byte_length(),
     }
 }
 
@@ -662,35 +854,56 @@ mod tests {
         );
     }
 
+    /// Writes an mzML fixture and accepts it, which is the only way into the
+    /// registry.
+    fn accepted(directory: &TestDirectory, name: &str, body: &[u8]) -> AcceptedFile {
+        let path = directory.path().join(name);
+        fs::write(&path, body).unwrap_or_else(|error| panic!("write {name}: {error}"));
+        accept_mzml_file(&path).unwrap_or_else(|error| panic!("{name} is accepted: {error:?}"))
+    }
+
     #[test]
     fn handles_are_opaque_and_never_carry_the_path() {
         let directory = TestDirectory::new("registry");
-        let path = directory.path().join("sample.mzML");
-        fs::write(&path, b"<mzML/>").expect("write fixture");
-        let registry = FileRegistry::new();
+        let file = accepted(&directory, "sample.mzML", b"<mzML/>");
+        let mut registry = DatasetRegistry::default();
 
-        let first = registry.register(accept_mzml_file(&path).expect("accepted"));
+        let id = registry.add(file.clone()).id();
+        let dto = selected_file_dto(id, &file);
 
-        assert_eq!(first.file_name, "sample.mzML");
-        let rendered = serde_json::to_string(&first).expect("the handle serializes");
+        assert_eq!(dto.file_name, "sample.mzML");
+        let rendered = serde_json::to_string(&dto).expect("the handle serializes");
         assert!(!rendered.contains("mscanvas-selection-registry"));
         assert!(!rendered.contains(':') || !rendered.contains('\\'));
 
         assert_eq!(
+            DatasetId::parse(&dto.handle),
+            Some(id),
+            "the handle the boundary receives is the one that comes back"
+        );
+        assert_eq!(
             registry
-                .resolve(&first.handle)
-                .expect("a registered handle resolves")
+                .get(id)
+                .expect("a registered dataset resolves")
+                .file()
                 .file_name(),
             "sample.mzML"
         );
         assert_eq!(
-            registry.resolve("file-does-not-exist").map(|_| ()),
-            Err(PreviewErrorDto::new(
-                "unknown_file_handle",
-                "That file is no longer open. Open it again to continue.",
-                false,
-            ))
+            DatasetId::parse("file-does-not-exist"),
+            None,
+            "a handle this session never allocated names nothing"
         );
+        // One dataset, one spelling. `u64::from_str` would take all three of
+        // these for the dataset above, and a handle the boundary never issued
+        // must not reach one.
+        for invented in ["file-00", "file-+0", "file- 0", "FILE-0", "file-0 "] {
+            assert_eq!(
+                DatasetId::parse(invented),
+                None,
+                "{invented} is not a handle this session issued"
+            );
+        }
     }
 
     #[test]
@@ -700,9 +913,8 @@ mod tests {
         let elsewhere = directory.path().join("elsewhere.mzML");
         fs::write(&chosen, b"<mzML/>").expect("write chosen fixture");
         fs::write(&elsewhere, b"<mzML> another acquisition </mzML>").expect("write other fixture");
-        let registry = FileRegistry::new();
-        let selected = registry.register(accept_mzml_file(&chosen).expect("accepted"));
-        assert!(registry.resolve(&selected.handle).is_ok());
+        let remembered = accept_mzml_file(&chosen).expect("accepted");
+        assert!(revalidate(&remembered).is_ok());
 
         // The chosen name is swapped for a link to a different acquisition.
         fs::remove_file(&chosen).expect("remove the chosen file");
@@ -711,7 +923,7 @@ mod tests {
         }
 
         assert_eq!(
-            registry.resolve(&selected.handle).map(|_| ()),
+            revalidate(&remembered).map(|_| ()),
             Err(PreviewErrorDto::new(
                 "not_a_regular_file",
                 "That path is not a regular file.",
@@ -725,16 +937,15 @@ mod tests {
         let directory = TestDirectory::new("replaced");
         let chosen = directory.path().join("chosen.mzML");
         fs::write(&chosen, b"<mzML/>").expect("write chosen fixture");
-        let registry = FileRegistry::new();
-        let selected = registry.register(accept_mzml_file(&chosen).expect("accepted"));
-        assert!(registry.resolve(&selected.handle).is_ok());
+        let remembered = accept_mzml_file(&chosen).expect("accepted");
+        assert!(revalidate(&remembered).is_ok());
 
         // Same name, same canonical path, different acquisition.
         fs::remove_file(&chosen).expect("remove the chosen file");
         fs::write(&chosen, b"<mzML> a different acquisition </mzML>").expect("write replacement");
 
         assert_eq!(
-            registry.resolve(&selected.handle).map(|_| ()),
+            revalidate(&remembered).map(|_| ()),
             Err(PreviewErrorDto::new(
                 "file_identity_changed",
                 "That name no longer refers to the file that was opened. Open it again to continue.",
@@ -744,34 +955,153 @@ mod tests {
     }
 
     #[test]
-    fn opening_another_file_revokes_the_previous_handle() {
+    fn a_revoked_dataset_leaves_nothing_in_the_registry() {
         let directory = TestDirectory::new("revoke");
-        let first_path = directory.path().join("first.mzML");
-        let second_path = directory.path().join("second.mzML");
-        fs::write(&first_path, b"<mzML/>").expect("write first fixture");
-        fs::write(&second_path, b"<mzML/>").expect("write second fixture");
-        let registry = FileRegistry::new();
+        let first = accepted(&directory, "first.mzML", b"<mzML/>");
+        let second = accepted(&directory, "second.mzML", b"<mzML/>");
+        let mut registry = DatasetRegistry::default();
+        let first_id = registry.add(first.clone()).id();
+        let second_id = registry.add(second).id();
 
-        let first = registry.register(accept_mzml_file(&first_path).expect("accepted"));
-        let second = registry.register(accept_mzml_file(&second_path).expect("accepted"));
+        let removed = registry.revoke(first_id, RevocationReason::Removed);
 
-        assert_ne!(first.handle, second.handle);
+        assert_eq!(
+            removed
+                .expect("the dataset that was there is returned")
+                .id(),
+            first_id
+        );
+        assert!(!registry.contains(first_id));
+        assert!(registry.get(first_id).is_none());
+        assert_eq!(registry.ids(), [second_id], "the rest keep their order");
+        assert!(
+            registry
+                .revoke(first_id, RevocationReason::Removed)
+                .is_none(),
+            "a second removal finds nothing to remove"
+        );
+        // The identity index goes with it: without that, adding the file again
+        // would be called a duplicate of a dataset that no longer exists.
+        assert_eq!(
+            registry.add(first).id(),
+            DatasetId(2),
+            "a re-added file is a new dataset, not the one that was removed"
+        );
+    }
+
+    #[test]
+    fn identifiers_are_never_handed_out_twice() {
+        let directory = TestDirectory::new("monotonic");
+        let first = accepted(&directory, "first.mzML", b"<mzML/>");
+        let second = accepted(&directory, "second.mzML", b"<mzML/>");
+        let mut registry = DatasetRegistry::default();
+        let first_id = registry.add(first.clone()).id();
+        let second_id = registry.add(second).id();
+
+        for id in registry.ids().to_vec() {
+            registry.revoke(id, RevocationReason::Cleared);
+        }
+
+        assert_eq!(registry.len(), 0);
+        assert!(registry.ids().is_empty());
+        // The allocator does not rewind. A reply still in flight for one of the
+        // emptied datasets cannot land on whatever is added next.
+        let after_clear = registry.add(first).id();
+        assert_ne!(after_clear, first_id);
+        assert_ne!(after_clear, second_id);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn two_names_for_one_file_are_one_dataset() {
+        let directory = TestDirectory::new("duplicate-link");
+        let target = directory.path().join("acquisition.mzML");
+        fs::write(&target, b"<mzML/>").expect("write target");
+        let link = directory.path().join("another-name.mzML");
+        fs::hard_link(&target, &link).expect(
+            "the test volume must support hard links; without one this cannot establish that two \
+             names for one file are one dataset",
+        );
+        let mut registry = DatasetRegistry::default();
+        let first = registry.add(accept_mzml_file(&target).expect("the target is accepted"));
+
+        let again = registry.add(accept_mzml_file(&link).expect("the link is accepted"));
+
+        let AddDatasetOutcome::Added { id } = first else {
+            panic!("the first addition is a new dataset");
+        };
+        assert_eq!(again, AddDatasetOutcome::Duplicate { existing_id: id });
+        // Nothing about the workspace moved: no row, no identifier, no order.
+        assert_eq!(registry.ids(), [id]);
         assert_eq!(
             registry
-                .resolve(&second.handle)
-                .expect("the current handle resolves")
+                .get(id)
+                .expect("the dataset is still there")
+                .file()
                 .file_name(),
-            "second.mzML"
+            "acquisition.mzML",
+            "the duplicate did not replace what was registered"
         );
-        // The webview keeps no capability over a file the user has moved on
-        // from, for the rest of the process lifetime or at all.
+    }
+
+    #[test]
+    fn a_byte_identical_copy_is_a_second_dataset() {
+        // Two acquisitions that happen to be identical are two things the user
+        // added, and the roster has to be able to hold both. This is why the
+        // key is the filesystem identity rather than the content.
+        let directory = TestDirectory::new("duplicate-copy");
+        let original = accepted(&directory, "original.mzML", b"<mzML/>");
+        let copy = accepted(&directory, "copy.mzML", b"<mzML/>");
+        assert_eq!(original.byte_length(), copy.byte_length());
+        let mut registry = DatasetRegistry::default();
+
+        let first = registry.add(original).id();
+        let second = registry.add(copy).id();
+
+        assert_ne!(first, second);
+        assert_eq!(registry.ids(), [first, second]);
+    }
+
+    #[test]
+    fn additions_append_and_removals_keep_the_rest_in_order() {
+        let directory = TestDirectory::new("order");
+        let mut registry = DatasetRegistry::default();
+        let ids: Vec<DatasetId> = ["a.mzML", "b.mzML", "c.mzML"]
+            .iter()
+            .map(|name| registry.add(accepted(&directory, name, b"<mzML/>")).id())
+            .collect();
+
+        registry.revoke(ids[1], RevocationReason::Removed);
+        let readded = registry
+            .add(accepted(&directory, "d.mzML", b"<mzML/>"))
+            .id();
+
+        assert_eq!(registry.ids(), [ids[0], ids[2], readded]);
+    }
+
+    #[test]
+    fn nothing_in_the_registry_prints_a_path() {
+        // A roster is many paths in one structure. One `{:?}` of it in a log or
+        // a panic message would be enough to put them all somewhere they should
+        // not be.
+        let directory = TestDirectory::new("opaque");
+        let file = accepted(&directory, "sample.mzML", b"<mzML/>");
+        let path = file.path().display().to_string();
+        let mut registry = DatasetRegistry::default();
+        let id = registry.add(file.clone()).id();
+        let dataset = registry.get(id).expect("registered");
+
+        let rendered = format!("{registry:?} {dataset:?} {id:?} {file:?}");
+
+        assert!(
+            !rendered.contains(&path),
+            "debug output must not carry the path"
+        );
+        assert!(!rendered.contains("sample.mzML"));
+        assert!(!rendered.contains(directory.path().to_string_lossy().as_ref()));
         assert_eq!(
-            registry.resolve(&first.handle).map(|_| ()),
-            Err(PreviewErrorDto::new(
-                "unknown_file_handle",
-                "That file is no longer open. Open it again to continue.",
-                false,
-            ))
+            rendered,
+            "<registry of 1 dataset> <registered dataset-0> dataset-0 <opaque-accepted-file>"
         );
     }
 }

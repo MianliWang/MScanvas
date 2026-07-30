@@ -667,6 +667,102 @@ scientific acquisition. Rendered QA was not required and not performed: no
 frontend file, transfer object, command signature, capability or user-facing
 string changed. ProteoWizard was not executed.
 
+## Multi-dataset registry foundation, 2026-07-30
+
+ADR 0006 records the M1 multi-dataset workspace boundary, and the Rust side of
+that boundary now exists. A session owns an ordered `DatasetRegistry` of
+accepted mzML datasets keyed by the Windows filesystem identity the previous
+slice widened, with monotonic session-scoped identifiers that are never reused,
+insertion order, typed add and revocation outcomes, and a per-dataset runtime
+state holding a request epoch and either no preview or a complete one.
+
+Nothing about this is reachable from the product. No Tauri command was added or
+changed, no transfer object changed, no capability changed and no frontend file
+was touched. `accept_file` still empties the workspace before registering, so
+the session holds exactly one dataset and the webview holds exactly one
+`file-N` handle, unchanged in spelling and in lifetime. The entry point that
+adds a second dataset is compiled out of the shipped binary under `cfg(test)`:
+until the roster interface exists, a file the user cannot see, curate or remove
+would be a capability they never asked for and could not withdraw.
+
+Two defects a roster would otherwise have shipped with are closed. Spectrum
+supersession was one session-wide ticket, so a request in one dataset would have
+cancelled a request the user was still waiting for in another; it is now a
+per-dataset epoch. Preview facts lived in two maps written one after the other,
+which made a recorded generation with no rows, and rows with no record of which
+backend produced them, both representable; they now commit together under one
+lock, and an open that finishes after its dataset was revoked records nothing
+rather than leaving state under an identifier nothing can reach. Independent
+review closed three more: a preview was recorded before the results it needs
+were known to be present, so a batch short of one result left facts behind that
+the caller was then refused; a spectrum request cloned the whole recorded table
+— one entry per spectrum of the acquisition — while holding both the workspace
+lock and the backend gate; and the identifier allocator could in principle wrap,
+which is now a checked increment. The preview-recording repair matters because
+the provider contract does not promise that the *i*-th attempt answers the
+*i*-th operation, and a batch of the right length that is short of a required
+result is exactly what that permits.
+
+ADR 0006 also records two limits this slice does not close, each unreachable in
+the product for its own reason. A filesystem may hand a deleted file's identity
+to a new file, and only a live handle per dataset would prevent that being read
+as a duplicate — unreachable because the picker empties the workspace before it
+registers, so no duplicate check ever runs against a stale row. And two opens of
+one dataset are serialised at the backend gate but not at the commit, so the
+later commit wins whether or not it ran last — unreachable because the frontend
+disables the picker while an open is in flight and never has two outstanding.
+
+Boundary behaviour is deliberately unchanged where a user can reach it. A
+request still waiting for its turn on a replaced selection still fails with
+`selection_superseded`; a stale handle still fails with `unknown_file_handle`;
+work that had already started is still not cancelled and its caller is still
+answered.
+
+Three differences are reachable only by a race or by a handle the application
+never issued, and independent review found all three:
+
+- A spectrum request for an unknown handle is now refused before it waits for
+  the backend gate, instead of after. It used to claim a session-wide ticket
+  first, so a request for a dead handle could supersede a live one, and a dead
+  handle raced against a newer request answered `selection_superseded` rather
+  than `unknown_file_handle`.
+- The table rows a spectrum is reconciled against are now snapshotted with the
+  rest of that dataset's preview facts, before the read, instead of being read
+  again after it. A spectrum racing an `open_preview` commit could previously
+  find no rows and skip reconciliation entirely.
+- `file-00`, `file-+0` and `file-007` used to be refused as unknown handles and,
+  for a moment during this work, would have reached `file-0`; the handle parser
+  now requires the spelling the session issued.
+
+Validation on the exact head: `cargo fmt --all --check`,
+`cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --locked --workspace --all-targets` (90 desktop tests, up from 75:
+sixteen test names added and one removed, one of the additions being the
+single-slot registry's revocation test rewritten against the registry that
+replaced it), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
+`pnpm test`, `pnpm build`.
+
+Eighteen mutations were introduced one at a time against this exact head, and
+each was caught by the test written for it: a duplicate minting a second
+identifier; the allocator rewinding when the workspace is emptied; revocation
+leaving the identity index behind; revocation leaving the request epoch and
+preview facts behind; emptying the workspace reaching only its first dataset;
+removal losing insertion order; an accepted file's debug output carrying the
+path; the session's own debug output carrying a filesystem identity, an
+installation path, or a native spectrum identifier; one session-wide request
+ticket; a late reply recreating preview state; one preview record for the whole
+session; reconciliation rows taken from another dataset; the picker accumulating
+datasets; a handle parser that accepts spellings the session never issued; a
+preview recorded before its required results were known to be present; and an
+installation change rereading every dataset it invalidates.
+
+Duplicate detection is proven with a real Windows hard link, taken through the
+production acceptance path and then into the `cfg(test)` entry point, since no
+production caller adds a second dataset. That coverage is Windows-only, as the
+identity it decides on is. No scientific acquisition is used as a fixture.
+Rendered QA was not required and not performed: nothing the user can see
+changed. ProteoWizard was not executed.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.
