@@ -70,6 +70,26 @@ identity — the volume serial and the whole 128-bit file ID that M1.0 introduce
   There is no path fallback, because a fallback would silently make the weakest
   case the one that decides whether two acquisitions are the same.
 
+An identity names an object only while that object exists. A filesystem is free
+to hand a deleted file's ID to the next one it creates, and the registry holds
+the value rather than a live handle — so a file added after a registered one was
+deleted could match an identity that is no longer its owner's, and be reported
+as a duplicate of a row that names something else.
+
+Rechecking the recorded file at that moment does not close it: a hard link that
+outlived one of its names is the same object under a path that no longer
+resolves, and from here that is indistinguishable from a recycled ID. Splitting
+on the doubt would put one acquisition on two rows, which is the failure the
+roster exists to prevent.
+
+What closes it is holding an open handle per registered dataset, so the ID
+cannot be recycled while the row exists. That is an M1.2 decision, because it
+brings its own costs — a handle per dataset, and a file the user cannot delete
+from Explorer while MSCanvas has it listed — and those are visible to the user
+in a way this slice is not. Until then the gap is unreachable in the product:
+the picker empties the workspace before it registers, so no duplicate check ever
+runs against a stale row.
+
 ## Duplicate outcome
 
 Adding a dataset that is already registered is an ordinary outcome, not an
@@ -198,11 +218,20 @@ another, which under a single global ticket it would.
 
 No workspace lock is held while waiting for the backend gate, while a backend
 process runs, or while its output is parsed. State is read under the lock,
-released, and rechecked under the lock again before anything is committed.
+released, and taken again to commit — and what the commit rechecks is that the
+dataset is still registered, which is what stops a late reply recreating state.
+It does not check that this is still the newest read of that dataset: two opens
+of one dataset are serialised at the backend gate but not at the commit, so the
+later commit wins whether or not it ran last. The cost is a preview stamped with
+the earlier generation and a spurious refusal on the next spectrum, never mixed
+data, and the fix is an epoch for opens as well — M1.2, where a roster makes
+concurrent opens something a user can actually cause.
 
 ## Testing obligations
 
 - identifiers are monotonic and never reused, including after clear;
+- a handle the session never issued reaches no dataset, whatever it is spelled
+  like;
 - duplicates are decided by filesystem identity, proven with a hard link;
 - a byte-identical copy is not a duplicate;
 - duplicate addition changes nothing;

@@ -692,28 +692,70 @@ per-dataset epoch. Preview facts lived in two maps written one after the other,
 which made a recorded generation with no rows, and rows with no record of which
 backend produced them, both representable; they now commit together under one
 lock, and an open that finishes after its dataset was revoked records nothing
-rather than leaving state under an identifier nothing can reach.
+rather than leaving state under an identifier nothing can reach. Independent
+review closed three more: a preview was recorded before the results it needs
+were known to be present, so a batch short of one result left facts behind that
+the caller was then refused; a spectrum request cloned the whole recorded table
+— one entry per spectrum of the acquisition — while holding both the workspace
+lock and the backend gate; and the identifier allocator could in principle wrap,
+which is now a checked increment.
 
-Boundary behaviour is deliberately unchanged, including in the races. A request
-still waiting for its turn on a replaced selection still fails with
+ADR 0006 also records two limits this slice does not close, both unreachable in
+the product because the picker empties the workspace before it registers. A
+filesystem may hand a deleted file's identity to a new file, and only a live
+handle per dataset would prevent that being read as a duplicate; and two opens
+of one dataset are serialised at the backend gate but not at the commit, so the
+later commit wins whether or not it ran last.
+
+Boundary behaviour is deliberately unchanged where a user can reach it. A
+request still waiting for its turn on a replaced selection still fails with
 `selection_superseded`; a stale handle still fails with `unknown_file_handle`;
 work that had already started is still not cancelled and its caller is still
 answered.
 
+Three differences are reachable only by a race or by a handle the application
+never issued, and independent review found all three:
+
+- A spectrum request for an unknown handle is now refused before it waits for
+  the backend gate, instead of after. It used to claim a session-wide ticket
+  first, so a request for a dead handle could supersede a live one, and a dead
+  handle raced against a newer request answered `selection_superseded` rather
+  than `unknown_file_handle`.
+- The table rows a spectrum is reconciled against are now snapshotted with the
+  rest of that dataset's preview facts, before the read, instead of being read
+  again after it. A spectrum racing an `open_preview` commit could previously
+  find no rows and skip reconciliation entirely.
+- `file-00`, `file-+0` and `file-007` used to be refused as unknown handles and,
+  for a moment during this work, would have reached `file-0`; the handle parser
+  now requires the spelling the session issued.
+
 Validation on the exact head: `cargo fmt --all --check`,
 `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
-`cargo test --locked --workspace --all-targets` (86 desktop tests, eleven of
-them new), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
-`pnpm test`, `pnpm build`. Nine mutations were introduced one at a time and
-each was caught by the test written for it: a duplicate minting a second
-identifier, the allocator rewinding on clear, revocation leaving the identity
-index behind, removal losing insertion order, debug output carrying the path,
-one session-wide request ticket, a late reply recreating preview state, one
-preview record for the whole session, and the picker accumulating datasets. The
-duplicate coverage uses a real Windows hard link through the production
-acceptance path; no scientific acquisition is used as a fixture. Rendered QA was
-not required and not performed: nothing the user can see changed. ProteoWizard
-was not executed.
+`cargo test --locked --workspace --all-targets` (88 desktop tests: fourteen are
+new, and one that asserted the single-slot registry's revocation was rewritten
+against the registry that replaced it), `python -B scripts/check_repo.py`,
+`pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`. Twelve mutations were
+introduced one at a time and each was caught by the test written for it: a
+duplicate minting a second identifier, the allocator rewinding on clear,
+revocation leaving the identity index behind, revocation leaving the request
+epoch and preview facts behind, removal losing insertion order, an accepted
+file's debug output carrying the path, the session's own debug output carrying a
+filesystem identity, one session-wide request ticket, a late reply recreating
+preview state, one preview record for the whole session, the picker accumulating
+datasets, and a handle parser that accepts spellings the session never issued.
+
+One repair carries no mutation proof and is not claimed to: hoisting the
+required-result checks above the commit closes a state the current provider
+contract cannot produce, since every operation is interpreted under the
+operation that asked for it and a wrong-kind result fails earlier. It is a
+tightening of what is representable, not a fix for an observed failure.
+
+Duplicate detection is proven with a real Windows hard link, taken through the
+production acceptance path and then into the `cfg(test)` entry point, since no
+production caller adds a second dataset. That coverage is Windows-only, as the
+identity it decides on is. No scientific acquisition is used as a fixture.
+Rendered QA was not required and not performed: nothing the user can see
+changed. ProteoWizard was not executed.
 
 ## Validation completed during repository initialization
 

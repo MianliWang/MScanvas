@@ -45,6 +45,43 @@ const SPECTRUM_TABLE_OUTPUT: &str = concat!(
     "2\t21\t1\tFTMS\tms1\t0.30\t100\t1000\t500.00\t7000\t80000\t\t\t\t\t\n",
 );
 
+/// A second acquisition's table, told apart from the first by every value a
+/// selected spectrum is reconciled against.
+///
+/// Two datasets opened with the same canned table would let a test that claims
+/// each keeps its own rows pass while they shared one.
+const OTHER_SPECTRUM_TABLE_OUTPUT: &str = concat!(
+    "# other.mzML\n",
+    "index\tid\tevent\tanalyzer\tmsLevel\trt\tmzLow\tmzHigh\tbasePeakMZ\tbasePeakInt\tTIC\t",
+    "charge\tprecursorMZ\tthermo_monoMZ\tfilterStringMZ\tionInjectionTime\n",
+    "0\t807\t1\tFTMS\tms1\t4.10\t100\t1000\t612.45\t2200\t31000\t\t\t\t\t\n",
+    "1\t808\t2\tFTMS\tms2\t4.20\t100\t1000\t488.90\t1400\t19000\t2\t612.45\t\t\t\n",
+);
+
+/// One spectrum of that second acquisition, agreeing with the row above.
+fn other_selected_spectrum_output(index: u64, points: &[(f64, f64)]) -> String {
+    let mut text = String::from("# other.mzML\n#\n");
+    text.push_str(&format!("# index: {index}\n"));
+    text.push_str(&format!("# id: scan={}\n", index + 807));
+    text.push_str(&format!("# scanNumber: {}\n", index + 807));
+    text.push_str("# massAnalyzerType: FTMS\n");
+    text.push_str("# scanEvent: 1\n");
+    text.push_str("# msLevel: 1\n");
+    text.push_str("# retentionTime: 4.10\n");
+    text.push_str("# filterString: synthetic\n");
+    text.push_str("# mzLow: 100\n");
+    text.push_str("# mzHigh: 1000\n");
+    text.push_str("# basePeakMZ: 612.45000000\n");
+    text.push_str("# basePeakIntensity: 2200.00000000\n");
+    text.push_str("# totalIonCurrent: 31000.00000000\n");
+    text.push_str("# precursorCount: 0\n");
+    text.push_str(&format!("# binary ({}):\n", points.len()));
+    for (mz, intensity) in points {
+        text.push_str(&format!("{mz:.8} {intensity:.8}\n"));
+    }
+    text
+}
+
 fn run_summary_output() -> String {
     let headers = [
         "Filename",
@@ -511,7 +548,12 @@ impl PreviewProvider for BlockFirstProvider {
     ) -> Result<OperationAttempt, PreviewErrorDto> {
         if let Some(release) = self.release.lock().expect("test lock").take() {
             let _ = self.started.send(());
-            let _ = release.recv_timeout(std::time::Duration::from_secs(5));
+            // Not ignored. A test that timed out here would go on to pass a
+            // little late, and the thing it is watching for -- a lock held
+            // where it should not be -- looks exactly like that.
+            release
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("the test released the gate rather than timing out");
         }
         self.inner.run(source, operation)
     }
@@ -2085,16 +2127,19 @@ fn adding_one_file_under_two_names_is_one_dataset() {
 fn two_datasets_each_keep_their_own_preview_facts() {
     let file = TestFile::new("per-dataset");
     let other = file.sibling("other.mzML");
-    let mut responses = open_responses();
-    responses.extend(open_responses());
-    responses.push(Response::File(selected_spectrum_output(
-        0,
-        &[(445.12, 9000.0)],
-    )));
-    responses.push(Response::File(selected_spectrum_output(
-        0,
-        &[(445.12, 9000.0)],
-    )));
+    // Two different acquisitions. The rows a spectrum is reconciled against
+    // agree with one and contradict the other, so a shared or swapped record
+    // fails rather than passing quietly.
+    let responses = vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(OTHER_SPECTRUM_TABLE_OUTPUT.to_owned()),
+        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+        Response::File(other_selected_spectrum_output(0, &[(612.45, 2200.0)])),
+    ];
     let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
     let first = service.add_dataset(&file.path).expect("added");
     let second = service.add_dataset(&other).expect("added");
@@ -2102,7 +2147,7 @@ fn two_datasets_each_keep_their_own_preview_facts() {
     service
         .open_preview(&first.handle)
         .expect("the first preview loads");
-    service
+    let second_preview = service
         .open_preview(&second.handle)
         .expect("the second preview loads");
 
@@ -2110,13 +2155,21 @@ fn two_datasets_each_keep_their_own_preview_facts() {
     // "the preview" would have done.
     assert!(service.holds_preview_state(&first.handle));
     assert!(service.holds_preview_state(&second.handle));
-    for handle in [&first.handle, &second.handle] {
-        assert!(
-            matches!(
-                service.load_spectrum(handle, 0),
-                Ok(SelectedSpectrumOutcomeDto::Spectrum { .. })
-            ),
-            "each dataset reconciles a spectrum against its own rows"
+    assert_eq!(
+        second_preview.spectrum_table.rows.len(),
+        2,
+        "the second dataset was read as itself"
+    );
+    for (handle, scan) in [(&first.handle, 19_u64), (&second.handle, 807)] {
+        let Ok(SelectedSpectrumOutcomeDto::Spectrum { spectrum }) =
+            service.load_spectrum(handle, 0)
+        else {
+            panic!("each dataset reconciles a spectrum against its own rows");
+        };
+        assert_eq!(
+            spectrum.scan_number,
+            Some(scan),
+            "and against its own rows rather than the other dataset's"
         );
     }
 }
@@ -2148,19 +2201,33 @@ fn work_on_one_dataset_never_supersedes_work_on_another() {
         let handle = handle.to_owned();
         std::thread::spawn(move || service.load_spectrum(&handle, index))
     };
+    // Waits for a request to have been claimed rather than guessing at it with
+    // a sleep. The order these two queue in is the whole point of the test: a
+    // single session-wide ticket only cancels the second if the third claimed
+    // its number afterwards.
+    let claimed = |handle: &str, requests: u64| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while service.requests_made(handle) < requests {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "a spawned request never claimed its turn"
+            );
+            std::thread::yield_now();
+        }
+    };
     // One request occupies the only process slot.
     let running = spectrum(&first.handle, 0);
     observe_start
-        .recv_timeout(std::time::Duration::from_secs(5))
+        .recv_timeout(std::time::Duration::from_secs(10))
         .expect("the first request reached the provider");
     // The same dataset is asked again and queues behind it. This is the request
     // the user is now waiting for.
     let waiting = spectrum(&first.handle, 0);
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    // Then a request in the other dataset arrives.
+    claimed(&first.handle, 2);
+    // Then, and only then, a request in the other dataset arrives.
     let elsewhere = spectrum(&second.handle, 0);
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    let _ = release.send(());
+    claimed(&second.handle, 1);
+    release.send(()).expect("the provider is still waiting");
 
     assert!(
         running
@@ -2203,11 +2270,13 @@ fn a_preview_that_finishes_after_its_dataset_is_gone_records_nothing() {
         std::thread::spawn(move || service.open_preview(&handle))
     };
     observe_start
-        .recv_timeout(std::time::Duration::from_secs(5))
+        .recv_timeout(std::time::Duration::from_secs(10))
         .expect("the open reached the provider");
-    // The user picks another file while the read is still running.
+    // The user picks another file while the read is still running. That this
+    // returns at all is the proof that the workspace stays answerable while a
+    // backend process holds the gate.
     let second = service.accept_file(&other).expect("accepted again");
-    let _ = release.send(());
+    release.send(()).expect("the provider is still waiting");
 
     // The work had already started, so it is not cancelled and its caller is
     // answered.
@@ -2224,4 +2293,73 @@ fn a_preview_that_finishes_after_its_dataset_is_gone_records_nothing() {
         "and they must not land on the dataset that replaced it"
     );
     assert_eq!(service.dataset_count(), 1);
+}
+
+#[test]
+fn replacing_the_selection_drops_what_the_session_derived_from_it() {
+    // Revoking a dataset has to reach more than its row. Its request epoch and
+    // its preview facts are what a late reply and a waiting request find, and a
+    // revocation that left them would leave both answering for a dataset the
+    // session no longer has.
+    let file = TestFile::new("revoke-derived");
+    let other = file.sibling("other.mzML");
+    let mut responses = open_responses();
+    responses.push(Response::File(selected_spectrum_output(
+        0,
+        &[(445.12, 9000.0)],
+    )));
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let first = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&first.handle)
+        .expect("the preview loads");
+    service
+        .load_spectrum(&first.handle, 0)
+        .expect("the spectrum loads");
+    assert!(service.holds_preview_state(&first.handle));
+    assert_eq!(service.requests_made(&first.handle), 1);
+
+    service.accept_file(&other).expect("accepted again");
+
+    assert!(
+        !service.holds_preview_state(&first.handle),
+        "the preview facts go with the dataset"
+    );
+    assert_eq!(
+        service.requests_made(&first.handle),
+        0,
+        "and so does the count of requests made against it"
+    );
+    assert_eq!(service.dataset_count(), 1);
+}
+
+#[test]
+fn nothing_the_session_holds_prints_a_path() {
+    // The registry types are opaque one by one; this is the structure that
+    // actually holds them, and the one a `{:?}` in a log or a panic message
+    // would reach. It carries a dataset's preview facts too -- the source
+    // generation, the installation that read it and every table row -- so a
+    // field added to any of those would show up here.
+    let file = TestFile::new("opaque-session");
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the preview loads");
+
+    let rendered = service.debug_workspace();
+
+    for secret in [
+        file.path.to_string_lossy().as_ref(),
+        file.directory.to_string_lossy().as_ref(),
+        "sample.mzML",
+        "MSData",
+    ] {
+        assert!(
+            !rendered.contains(secret),
+            "the session must not print what it holds"
+        );
+    }
+    assert!(rendered.contains("<registry of 1 dataset>"));
+    assert!(rendered.contains("<opaque-file-identity>"));
 }

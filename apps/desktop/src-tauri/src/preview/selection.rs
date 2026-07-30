@@ -386,8 +386,15 @@ impl DatasetId {
 
     /// Reads a handle the frontend sent back. Anything else is not a dataset
     /// this session ever allocated, which resolves like one that is gone.
+    ///
+    /// Byte-equal or nothing. `u64::from_str` also accepts a leading plus and
+    /// leading zeros, so without the round-trip `file-0`, `file-00` and
+    /// `file-+0` would all reach one dataset -- three spellings of a handle
+    /// this session never issued, one of which would then come back in a reply
+    /// as a fourth.
     pub(super) fn parse(handle: &str) -> Option<Self> {
-        handle.strip_prefix(HANDLE_PREFIX)?.parse().ok().map(Self)
+        let id = Self(handle.strip_prefix(HANDLE_PREFIX)?.parse().ok()?);
+        (id.handle() == handle).then_some(id)
     }
 }
 
@@ -418,7 +425,7 @@ impl RegisteredDataset {
 impl fmt::Debug for RegisteredDataset {
     /// The dataset, never the file behind it.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "<registered {:?}>", self.id)
+        write!(formatter, "<registered {:?}>", self.id())
     }
 }
 
@@ -488,13 +495,20 @@ pub(super) struct DatasetRegistry {
     datasets: HashMap<DatasetId, RegisteredDataset>,
     /// One filesystem object, one dataset. This is what makes two names for the
     /// same acquisition a duplicate rather than two rows.
+    ///
+    /// An identity names an object only while that object exists: a filesystem
+    /// is free to hand a deleted file's ID to the next one it creates. ADR 0006
+    /// records what that costs and why holding a live handle per dataset is the
+    /// M1.2 decision rather than this one.
     by_identity: HashMap<FileIdentity, DatasetId>,
 }
 
 impl fmt::Debug for DatasetRegistry {
     /// How many, never which.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "<registry of {} datasets>", self.len())
+        let held = self.len();
+        let noun = if held == 1 { "dataset" } else { "datasets" };
+        write!(formatter, "<registry of {held} {noun}>")
     }
 }
 
@@ -505,7 +519,13 @@ impl DatasetRegistry {
             return AddDatasetOutcome::Duplicate { existing_id };
         }
         let id = DatasetId(self.next_id);
-        self.next_id += 1;
+        // Checked, so the invariant is absolute rather than nearly so. Wrapping
+        // is the one way this allocator could hand out an identifier twice, and
+        // a release build wraps silently.
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .expect("a session cannot allocate more than u64::MAX datasets");
         self.by_identity.insert(file.identity(), id);
         self.datasets.insert(id, RegisteredDataset { id, file });
         self.order.push(id);
@@ -524,8 +544,17 @@ impl DatasetRegistry {
         self.order.len()
     }
 
+    /// The datasets in the order they were added.
+    pub(super) fn ids(&self) -> &[DatasetId] {
+        &self.order
+    }
+
     /// Removes one dataset. Returns what was removed, so a caller can tell a
     /// revocation that did something from one that found nothing.
+    ///
+    /// Not the whole of removing a dataset: a session also derives state from
+    /// one, and that has to go in the same breath. Go through the workspace,
+    /// which owns both.
     pub(super) fn revoke(
         &mut self,
         id: DatasetId,
@@ -539,42 +568,14 @@ impl DatasetRegistry {
         let removed = self.datasets.remove(&id)?;
         // Both indexes, or the identity would keep answering for a dataset that
         // is gone and the next addition of that file would be called a
-        // duplicate of nothing.
-        self.by_identity.remove(&removed.file.identity());
+        // duplicate of nothing. Only while it is still this dataset's entry: an
+        // identity a filesystem has since handed to another file belongs to the
+        // dataset holding it now.
+        if self.by_identity.get(&removed.file.identity()) == Some(&id) {
+            self.by_identity.remove(&removed.file.identity());
+        }
         self.order.retain(|held| *held != id);
         Some(removed)
-    }
-
-    /// Empties the workspace and reports what it held, in order.
-    ///
-    /// One dataset at a time through `revoke`, so emptying the registry cannot
-    /// come to mean something different from removing every row. The identifier
-    /// allocator does not rewind: a file added afterwards is a new dataset.
-    pub(super) fn clear(&mut self, reason: RevocationReason) -> Vec<DatasetId> {
-        self.order
-            .clone()
-            .into_iter()
-            .filter_map(|id| self.revoke(id, reason))
-            .map(|dataset| dataset.id())
-            .collect()
-    }
-}
-
-/// What the roster interface will call, and this slice only tests.
-///
-/// Here rather than in M1.2 because the registry's invariants are stated in
-/// terms of listing: that additions append, that a removal leaves the rest in
-/// order, and that a re-addition goes to the end with a new identifier. A
-/// registry whose listing arrived later would have those asserted for the first
-/// time by the code that depends on them.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the roster interface (M1.2) is the caller")
-)]
-impl DatasetRegistry {
-    /// The datasets in the order they were added.
-    pub(super) fn ids(&self) -> &[DatasetId] {
-        &self.order
     }
 }
 
@@ -892,6 +893,16 @@ mod tests {
             None,
             "a handle this session never allocated names nothing"
         );
+        // One dataset, one spelling. `u64::from_str` would take all three of
+        // these for the dataset above, and a handle the boundary never issued
+        // must not reach one.
+        for invented in ["file-00", "file-+0", "file- 0", "FILE-0", "file-0 "] {
+            assert_eq!(
+                DatasetId::parse(invented),
+                None,
+                "{invented} is not a handle this session issued"
+            );
+        }
     }
 
     #[test]
@@ -943,7 +954,7 @@ mod tests {
     }
 
     #[test]
-    fn a_revoked_dataset_leaves_nothing_behind() {
+    fn a_revoked_dataset_leaves_nothing_in_the_registry() {
         let directory = TestDirectory::new("revoke");
         let first = accepted(&directory, "first.mzML", b"<mzML/>");
         let second = accepted(&directory, "second.mzML", b"<mzML/>");
@@ -986,12 +997,14 @@ mod tests {
         let first_id = registry.add(first.clone()).id();
         let second_id = registry.add(second).id();
 
-        let cleared = registry.clear(RevocationReason::Cleared);
+        for id in registry.ids().to_vec() {
+            registry.revoke(id, RevocationReason::Cleared);
+        }
 
-        assert_eq!(cleared, [first_id, second_id], "cleared in order");
         assert_eq!(registry.len(), 0);
-        // The allocator does not rewind. A reply still in flight for the
-        // cleared dataset cannot land on whatever is added next.
+        assert!(registry.ids().is_empty());
+        // The allocator does not rewind. A reply still in flight for one of the
+        // emptied datasets cannot land on whatever is added next.
         let after_clear = registry.add(first).id();
         assert_ne!(after_clear, first_id);
         assert_ne!(after_clear, second_id);
@@ -1087,7 +1100,7 @@ mod tests {
         assert!(!rendered.contains(directory.path().to_string_lossy().as_ref()));
         assert_eq!(
             rendered,
-            "<registry of 1 datasets> <registered dataset-0> dataset-0 <opaque-accepted-file>"
+            "<registry of 1 dataset> <registered dataset-0> dataset-0 <opaque-accepted-file>"
         );
     }
 }

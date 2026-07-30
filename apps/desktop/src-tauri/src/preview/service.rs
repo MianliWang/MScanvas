@@ -45,14 +45,28 @@ struct Workspace {
 }
 
 impl Workspace {
+    /// Removes one dataset and everything the session derived from it.
+    ///
+    /// The only way a dataset should ever leave a session. Reaching the row
+    /// without reaching the runtime state would leave a request epoch and a
+    /// preview under an identifier nothing can name.
+    fn revoke(&mut self, id: DatasetId, reason: RevocationReason) {
+        self.registry.revoke(id, reason);
+        // Dropping the runtime state is what makes a request still waiting for
+        // its turn fail to find its epoch, and a reply that arrives afterwards
+        // fail to find its dataset.
+        self.runtime.remove(&id);
+    }
+
     /// Removes every dataset and everything the session derived from them.
     fn clear(&mut self, reason: RevocationReason) {
-        for id in self.registry.clear(reason) {
-            // Dropping the runtime state is what makes a request still waiting
-            // for its turn fail to find its epoch, and a reply that arrives
-            // afterwards fail to find its dataset.
-            self.runtime.remove(&id);
+        for id in self.registry.ids().to_vec() {
+            self.revoke(id, reason);
         }
+        debug_assert!(
+            self.runtime.is_empty(),
+            "an emptied workspace derives nothing from anything"
+        );
     }
 
     /// Starts a request for one dataset and hands back the epoch that names it.
@@ -260,16 +274,25 @@ impl PreviewService {
         // answer.
         workspace.clear(RevocationReason::ReplacedBySelection);
         let id = workspace.registry.add(accepted).id();
+        let held = workspace.registry.len();
+        let dto = selected_file_dto(
+            id,
+            workspace
+                .registry
+                .get(id)
+                .expect("the dataset was registered a line ago")
+                .file(),
+        );
+        drop(workspace);
+        // Outside the lock. One session-wide lock now covers the registry and
+        // everything derived from it, so a panic inside it would take every
+        // later command with it -- and this assertion is about what the caller
+        // was handed, which is already decided.
         debug_assert_eq!(
-            workspace.registry.len(),
-            1,
+            held, 1,
             "the picker replaces the selection; the roster is what adds to it"
         );
-        let dataset = workspace
-            .registry
-            .get(id)
-            .expect("the dataset was registered a line ago");
-        Ok(selected_file_dto(id, dataset.file()))
+        Ok(dto)
     }
 }
 
@@ -313,6 +336,27 @@ impl PreviewService {
                 .get(&id)
                 .is_some_and(|state| state.preview.is_some())
         })
+    }
+
+    /// How many requests this dataset has had, so a test can wait for one to be
+    /// claimed instead of sleeping and hoping.
+    pub(super) fn requests_made(&self, handle: &str) -> u64 {
+        DatasetId::parse(handle).map_or(0, |id| {
+            self.workspace()
+                .runtime
+                .get(&id)
+                .map_or(0, |state| state.request_epoch)
+        })
+    }
+
+    /// Everything the session holds, printed.
+    ///
+    /// A roster is many paths in one structure, and this is that structure --
+    /// the one a `{:?}` in a log or a panic message would reach. Exposed so a
+    /// test can assert on the whole of it rather than on the types it happens
+    /// to know about.
+    pub(super) fn debug_workspace(&self) -> String {
+        format!("{:?}", self.workspace())
     }
 }
 
@@ -430,6 +474,15 @@ impl PreviewService {
             ));
         }
 
+        // Everything the caller is owed, established before anything is
+        // recorded. A batch can be the right length and still be short of a
+        // result, and recording a preview that is about to be refused would
+        // leave the dataset owning facts the user was never shown -- with rows
+        // a later spectrum would silently reconcile against.
+        let metadata = metadata.ok_or_else(|| missing("metadata"))?;
+        let run_summary = run_summary.ok_or_else(|| missing("run summary"))?;
+        let spectrum_table = spectrum_table.ok_or_else(|| missing("spectrum table"))?;
+
         // One commit, under one lock, of facts that are only true together: the
         // generation this was read at, the backend that read it, and the rows a
         // later spectrum is reconciled against.
@@ -454,9 +507,9 @@ impl PreviewService {
         Ok(PreviewDto {
             installation_generation: generation,
             file: selected_file_dto(id, &file),
-            metadata: metadata.ok_or_else(|| missing("metadata"))?,
-            run_summary: run_summary.ok_or_else(|| missing("run summary"))?,
-            spectrum_table: spectrum_table.ok_or_else(|| missing("spectrum table"))?,
+            metadata,
+            run_summary,
+            spectrum_table,
         })
     }
 
@@ -484,7 +537,13 @@ impl PreviewService {
         // would belong to a different run than everything around it. Read in
         // the same lock as the supersession check, so the preview facts belong
         // to the request that was just found to be current.
-        let (remembered, preview) = {
+        //
+        // The recorded preview is not cloned whole. Its table holds one entry
+        // per spectrum of the acquisition, and copying tens of thousands of
+        // them under this lock -- while also holding the backend gate -- would
+        // stall every other command for the length of the copy. Only the two
+        // facts this read uses are taken.
+        let (remembered, opened, expected_row) = {
             let workspace = self.workspace();
             if !workspace.request_is_current(id, epoch) {
                 return Err(superseded());
@@ -498,11 +557,13 @@ impl PreviewService {
             let preview = workspace
                 .runtime
                 .get(&id)
-                .and_then(|state| state.preview.clone());
-            (remembered, preview)
+                .and_then(|state| state.preview.as_ref());
+            let opened = preview.map(|preview| preview.opened.clone());
+            let expected_row =
+                preview.and_then(|preview| preview.table_rows.get(index as usize).cloned());
+            (remembered, opened, expected_row)
         };
         let file = revalidate(&remembered)?;
-        let opened = preview.as_ref().map(|preview| preview.opened.clone());
         // Two refusals, before anything is launched, and neither replaces the
         // other. The table's rows are what this spectrum is reconciled against,
         // and they were read by whichever backend was in use then; reconciling
@@ -594,10 +655,7 @@ impl PreviewService {
                     // If they disagree about which scan this index is, the row
                     // the user clicked and the panel beside it would describe
                     // different spectra, so the result is refused instead.
-                    let expected = preview
-                        .as_ref()
-                        .and_then(|preview| preview.table_rows.get(index as usize).cloned());
-                    if let Some(expected) = expected {
+                    if let Some(expected) = expected_row {
                         if expected.identity.reconcile(spectrum.identity()).is_err() {
                             return Err(PreviewErrorDto::new(
                                 "spectrum_identity_conflict",
