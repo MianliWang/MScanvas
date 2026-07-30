@@ -1,16 +1,17 @@
 import { useCallback, useLayoutEffect } from "react";
 
 import { BackendStatus } from "./BackendStatus";
+import { DatasetRoster } from "./DatasetRoster";
 import { PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel } from "./SelectedSpectrumPanel";
 import { SpectrumTable } from "./SpectrumTable";
 import { formatCount } from "./format";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
 
-/** The first user-visible slice: open one mzML file and look inside it. */
+/** The session workspace: a curated roster of mzML files, and one open preview. */
 export function PreviewWorkspace() {
   const workspace = usePreviewWorkspace();
-  const { preview, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
+  const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
 
   // Runs after the panels below have been committed, so each measurement
   // covers the work its name describes rather than stopping when the reply
@@ -20,7 +21,7 @@ export function PreviewWorkspace() {
     completeRenderMeasurements();
   }, [completeRenderMeasurements, preview, spectrum]);
 
-  // Opening a file needs a backend positively known to work. "Checking" and
+  // Reading a file needs a backend positively known to work. "Checking" and
   // "failed" are not that: a failed check cannot say whether an installation is
   // present, and a folder choice that failed before reaching the backend says
   // nothing about it either. Offering an action whose only outcome is another
@@ -34,6 +35,15 @@ export function PreviewWorkspace() {
   const backendUnavailable =
     workspace.backend.status === "resolved" &&
     workspace.backend.availability.state === "unavailable";
+
+  // Curating the workspace is not backend work, so it stays available when no
+  // ProteoWizard is installed. What it waits for is a picker already on screen,
+  // and an installation request whose own modal dialog is open.
+  const canAddFiles = !workspace.backendBusy && !workspace.pickerBusy;
+  // One viewer read at a time. Rust supersedes an older open of one dataset
+  // anyway; this is what stops a queue of them forming behind the single
+  // backend gate in the first place.
+  const canPreview = backendUsable && !workspace.backendBusy && !workspace.previewBackendBusy;
 
   const handleTableRendered = useCallback(
     (renderedRowCount: number, milliseconds: number) => {
@@ -55,19 +65,8 @@ export function PreviewWorkspace() {
           </span>
           <div>
             <strong>MSCanvas</strong>
-            <span>Local mzML preview</span>
+            <span>Local mzML workspace</span>
           </div>
-        </div>
-
-        <div className="toolbar-actions">
-          <button
-            className="primary-button"
-            disabled={!backendUsable || preview.status === "opening" || workspace.backendBusy}
-            onClick={workspace.openFile}
-            type="button"
-          >
-            {preview.status === "opening" ? "Opening…" : "Open mzML…"}
-          </button>
         </div>
       </header>
 
@@ -83,13 +82,13 @@ export function PreviewWorkspace() {
         />
 
         {/* A picker that would not open is its own problem. It never replaces
-            the file already on screen, which is still open and still usable. */}
+            what is already on screen, which is still open and still usable. */}
         {workspace.pickerError === null ? null : (
           <div className="notice notice-danger" role="status">
             <strong>The file picker could not be opened</strong>
             <span>{workspace.pickerError.summary}</span>
-            <button className="link-button" onClick={workspace.openFile} type="button">
-              Try choosing a file again
+            <button className="link-button" onClick={workspace.addFiles} type="button">
+              Try choosing files again
             </button>
             <button className="link-button" onClick={workspace.dismissPickerError} type="button">
               Dismiss
@@ -105,8 +104,26 @@ export function PreviewWorkspace() {
       </p>
 
       <main className="workspace-layout">
-        {preview.status === "loaded" ? (
-          <>
+        <aside className="workspace-sidebar">
+          <DatasetRoster
+            canAddFiles={canAddFiles}
+            canMutate={!workspace.workspaceBusy}
+            canPreview={canPreview}
+            dispatch={workspace.dispatchRoster}
+            error={workspace.workspaceError}
+            focusAddFilesToken={workspace.focusAddFilesToken}
+            load={workspace.rosterLoad}
+            notice={workspace.workspaceNotice}
+            onActivate={workspace.activateDataset}
+            onAddFiles={workspace.addFiles}
+            onClearList={workspace.clearList}
+            onDismissError={workspace.dismissWorkspaceError}
+            onDismissNotice={workspace.dismissWorkspaceNotice}
+            onReloadRoster={workspace.reloadRoster}
+            onRemoveSelected={workspace.removeSelected}
+            state={roster}
+          />
+          {preview.status === "loaded" ? (
             <PreviewSummary
               file={preview.preview.file}
               measurements={workspace.measurements}
@@ -114,16 +131,19 @@ export function PreviewWorkspace() {
               runSummary={preview.preview.runSummary}
               spectrumListTotal={preview.preview.spectrumTable.totalRowCount}
             />
-            <div className="viewer-stack">
-              <SpectrumTable
-                onRendered={handleTableRendered}
-                onSelect={workspace.selectSpectrum}
-                selectedIndex={workspace.selectedIndex}
-                table={preview.preview.spectrumTable}
-              />
-              <SelectedSpectrumPanel onRetry={workspace.retrySpectrum} state={spectrum} />
-            </div>
-          </>
+          ) : null}
+        </aside>
+
+        {preview.status === "loaded" ? (
+          <div className="viewer-stack">
+            <SpectrumTable
+              onRendered={handleTableRendered}
+              onSelect={workspace.selectSpectrum}
+              selectedIndex={workspace.selectedIndex}
+              table={preview.preview.spectrumTable}
+            />
+            <SelectedSpectrumPanel onRetry={workspace.retrySpectrum} state={spectrum} />
+          </div>
         ) : (
           <section className="panel workspace-placeholder">
             {preview.status === "opening" ? (
@@ -139,64 +159,54 @@ export function PreviewWorkspace() {
                 <strong>{preview.error.summary}</strong>
                 {preview.error.detail === null ? null : <span>{preview.error.detail}</span>}
                 <div className="empty-state-actions">
-                  {/* Both steps are idempotent reads, so a retry is offered
-                      when the backend said the failure was retryable — and it
-                      repeats the step that actually failed. */}
-                  {preview.error.retryable ? (
+                  {/* Reading is idempotent, so a retry is offered when the
+                      backend said the failure was retryable — and it repeats
+                      the step that actually failed. */}
+                  {preview.error.retryable && workspace.activeDataset !== null ? (
                     <button
                       className="secondary-button"
-                      disabled={!backendUsable || workspace.backendBusy}
-                      onClick={workspace.retryOpen}
+                      disabled={!canPreview}
+                      onClick={workspace.previewActiveAgain}
                       type="button"
                     >
-                      Try opening this file again
+                      Try reading this file again
                     </button>
                   ) : null}
-                  <button
-                    className="secondary-button"
-                    disabled={!backendUsable || workspace.backendBusy}
-                    onClick={workspace.openFile}
-                    type="button"
-                  >
-                    Choose a different file
-                  </button>
                 </div>
               </div>
             ) : (
               <div className="empty-state">
-                <strong>Open an mzML file</strong>
+                <strong>{roster.datasets.length === 0 ? "Add mzML files" : "Preview a file"}</strong>
                 <span>
-                  MSCanvas reads one local .mzML file at a time and never writes to it. Nothing is
-                  uploaded and nothing leaves this machine.
+                  MSCanvas reads local .mzML files from this computer and never writes to them.
+                  Nothing is uploaded and nothing leaves this machine.
                 </span>
                 {backendUnavailable ? (
-                  <span>Install ProteoWizard first, then check again above.</span>
+                  <span>
+                    Install ProteoWizard to read a file. The workspace list works without it.
+                  </span>
+                ) : roster.datasets.length === 0 ? (
+                  <span>Use Add files… in the workspace list to choose one or several.</span>
                 ) : (
                   <>
-                    {/* Rust is still holding the file, so reopening it is one
-                        click and not a trip back through the picker. This is
+                    {/* Rust still holds every path, so reading one again is one
+                        action and not a trip back through the picker. This is
                         what changing the installation costs: the readings go,
-                        the selection does not. */}
-                    {workspace.selectedFileName === null ? null : (
+                        the workspace does not. */}
+                    {workspace.activeDataset === null ? (
+                      <span>
+                        Select a file in the workspace list, then choose Preview focused.
+                      </span>
+                    ) : (
                       <button
                         className="primary-button"
-                        disabled={!backendUsable || workspace.backendBusy}
-                        onClick={workspace.reopenSelectedFile}
+                        disabled={!canPreview}
+                        onClick={workspace.previewActiveAgain}
                         type="button"
                       >
-                        Reopen {workspace.selectedFileName}
+                        Preview {workspace.activeDataset.fileName}
                       </button>
                     )}
-                    <button
-                      className={
-                        workspace.selectedFileName === null ? "primary-button" : "secondary-button"
-                      }
-                      disabled={!backendUsable || workspace.backendBusy}
-                      onClick={workspace.openFile}
-                      type="button"
-                    >
-                      Choose an mzML file
-                    </button>
                   </>
                 )}
               </div>
@@ -209,15 +219,17 @@ export function PreviewWorkspace() {
 }
 
 function announce(workspace: ReturnType<typeof usePreviewWorkspace>): string {
-  const { preview, spectrum } = workspace;
+  const { preview, roster, spectrum } = workspace;
   if (preview.status === "opening") {
-    return "Opening the selected file.";
+    return "Reading the selected file.";
   }
   if (preview.status === "failed") {
-    return `The file could not be opened. ${preview.error.summary}`;
+    return `The file could not be read. ${preview.error.summary}`;
   }
   if (preview.status === "empty") {
-    return "No file is open.";
+    return roster.datasets.length === 0
+      ? "The workspace is empty."
+      : `${formatCount(roster.datasets.length)} files in the workspace. No preview is open.`;
   }
   switch (spectrum.status) {
     case "none":

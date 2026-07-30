@@ -56,6 +56,24 @@ pub const MAX_ERROR_DETAIL_CHARS: usize = 400;
 /// format, but it is backend text and a file may put anything there.
 pub const MAX_IDENTIFIER_CHARS: usize = 200;
 
+/// The most datasets one session's workspace may hold.
+///
+/// A named resource contract rather than a performance promise. Every Windows
+/// row owns a live handle on its file for as long as it exists, and every
+/// mutation answers with the whole roster, so the session's cost in handles and
+/// in transfer size both rise with the number of rows. A thousand is far above
+/// what a batch of acquisitions looks like and far below where either of those
+/// becomes a question, which is what a bound is for.
+pub const MAX_WORKSPACE_DATASETS: usize = 1_024;
+
+/// The longest candidate name a rejected addition may report.
+///
+/// A rejected candidate never reached acceptance, so nothing has vouched for
+/// its name. Windows bounds a file name at 255 characters; this bounds what the
+/// boundary forwards at the same place, so a name that arrived longer than any
+/// filesystem allows cannot become an unbounded string on screen.
+pub const MAX_CANDIDATE_NAME_CHARS: usize = 255;
+
 /// Whether a user-installed ProteoWizard backend is usable.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -102,6 +120,81 @@ pub struct SelectedFileDto {
     pub handle: String,
     pub file_name: String,
     pub byte_length: u64,
+}
+
+/// Every dataset the session holds, in the order they were added.
+///
+/// The order is the registry's and is authoritative: the webview draws what it
+/// is given rather than sorting a list of its own. There is no path field and
+/// no parent-folder field, because a roster of many rows is exactly where one
+/// would leak the most.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRosterDto {
+    pub datasets: Vec<SelectedFileDto>,
+    /// The session capacity these rows are bounded by.
+    ///
+    /// Carried with the roster rather than restated in the webview, so the
+    /// limit the interface shows is the limit Rust enforces. A second copy of
+    /// the number would be a second authority to keep true.
+    pub capacity: usize,
+}
+
+/// What one chosen file did to the workspace.
+///
+/// Reported per item and in picker order, because one rejected candidate says
+/// nothing about the rest of a batch: the files that were accepted stay
+/// accepted, and the user is told which of the ones they chose did not arrive.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "outcome", rename_all = "camelCase")]
+pub enum WorkspaceAddOutcomeDto {
+    #[serde(rename_all = "camelCase")]
+    Added { dataset: SelectedFileDto },
+    /// The file is already in the workspace. The row named here is the one the
+    /// user already has, described as it was registered rather than as it was
+    /// just named: two names for one file are one dataset.
+    #[serde(rename_all = "camelCase")]
+    Duplicate { existing: SelectedFileDto },
+    /// A file that could not be added, named by its final filename only.
+    ///
+    /// Nothing accepted it, so there is no dataset to name it by -- and the one
+    /// thing that may be said about it is the last component of what the user
+    /// picked, never the folder it sits in.
+    #[serde(rename_all = "camelCase")]
+    Rejected {
+        candidate_name: String,
+        error: PreviewErrorDto,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceAddResultDto {
+    pub roster: WorkspaceRosterDto,
+    pub outcomes: Vec<WorkspaceAddOutcomeDto>,
+}
+
+/// What removing rows did, including the handles that named nothing.
+///
+/// A handle the session no longer holds is an ordinary reconciliation outcome
+/// rather than a failure: the webview asked about a row it believed it had, and
+/// the answer is the roster it actually has.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRemoveResultDto {
+    pub roster: WorkspaceRosterDto,
+    pub removed_handles: Vec<String>,
+    pub unknown_handles: Vec<String>,
+}
+
+/// What a valid, non-duplicate file is refused with when the session is full.
+pub fn workspace_full() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "workspace_full",
+        "This session already holds as many files as MSCanvas keeps in one workspace, so that \
+         one was not added. Remove some rows and add it again.",
+        false,
+    )
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

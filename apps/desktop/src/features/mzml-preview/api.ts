@@ -4,16 +4,21 @@ import { createContext, useContext } from "react";
 import type {
   BackendAvailability,
   Preview,
-  SelectedFile,
   SelectedSpectrumOutcome,
+  WorkspaceAddResult,
+  WorkspaceRemoveResult,
+  WorkspaceRoster,
 } from "./contracts";
 
 /**
- * The six things the webview may ask the desktop backend.
+ * What the webview may ask the desktop backend.
  *
- * It cannot supply a command, an executable path or an argument list, and it
- * never receives raw ProteoWizard output. Naming the boundary as an interface
- * also lets tests drive the workspace deterministically without a WebView.
+ * Three things about the installed backend, four about the workspace the
+ * session holds, and two about one dataset in it. It cannot supply a command,
+ * an executable path, a file path or an argument list, and it never receives
+ * raw ProteoWizard output: choosing files is a request to show a picker, not a
+ * path this side names. Naming the boundary as an interface also lets tests
+ * drive the workspace deterministically without a WebView.
  */
 export interface PreviewApi {
   inspectBackend(): Promise<BackendAvailability>;
@@ -28,8 +33,21 @@ export interface PreviewApi {
   chooseInstallation(): Promise<BackendAvailability | null>;
   /** Goes back to searching automatically, and reports what that finds. */
   useAutomaticDiscovery(): Promise<BackendAvailability>;
-  /** Resolves to `null` when the user dismissed the picker. */
-  chooseFile(): Promise<SelectedFile | null>;
+  /**
+   * Everything the session holds, in the order Rust holds it. Reads stored
+   * facts: no file is revalidated and no backend work is started.
+   */
+  getRoster(): Promise<WorkspaceRoster>;
+  /**
+   * Shows the native picker and adds every chosen file. Resolves to `null` when
+   * the user dismissed the picker, which is not the same as a batch that added
+   * nothing. Launches no preview.
+   */
+  chooseFiles(): Promise<WorkspaceAddResult | null>;
+  /** Removes the rows these handles name. Source files are never touched. */
+  removeDatasets(handles: readonly string[]): Promise<WorkspaceRemoveResult>;
+  /** Empties the workspace. Source files are never touched. */
+  clearWorkspace(): Promise<WorkspaceRoster>;
   openPreview(handle: string): Promise<Preview>;
   loadSpectrum(handle: string, index: number): Promise<SelectedSpectrumOutcome>;
 }
@@ -38,7 +56,11 @@ export const tauriPreviewApi: PreviewApi = {
   inspectBackend: () => invoke<BackendAvailability>("inspect_backend"),
   chooseInstallation: () => invoke<BackendAvailability | null>("choose_backend_installation"),
   useAutomaticDiscovery: () => invoke<BackendAvailability>("use_automatic_backend_discovery"),
-  chooseFile: () => invoke<SelectedFile | null>("choose_mzml_file"),
+  getRoster: () => invoke<WorkspaceRoster>("get_workspace_roster"),
+  chooseFiles: () => invoke<WorkspaceAddResult | null>("choose_mzml_files"),
+  removeDatasets: (handles) =>
+    invoke<WorkspaceRemoveResult>("remove_workspace_datasets", { handles }),
+  clearWorkspace: () => invoke<WorkspaceRoster>("clear_workspace"),
   openPreview: (handle) => invoke<Preview>("open_mzml_preview", { handle }),
   loadSpectrum: (handle, index) =>
     invoke<SelectedSpectrumOutcome>("load_selected_spectrum", { handle, index }),

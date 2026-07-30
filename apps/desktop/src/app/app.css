@@ -149,12 +149,115 @@ button:disabled {
   padding: 8px;
 }
 
-/* Spans every track in both axes, so the single-column layout below does not
-   drop it into an auto-sized first row and shrink it to its own text. */
+/* The viewer column when there is no preview in it. It sits in the track it
+   would occupy loaded, so the workspace list beside it never moves. */
 .workspace-placeholder {
   display: flex;
-  grid-row: 1 / -1;
-  grid-column: 1 / -1;
+}
+
+/* The persistent workspace column: the roster always, and the run summary
+   beneath it once one is loaded. Bounded in both directions so neither panel
+   can push the other out of the viewport; each scrolls inside its own share. */
+.workspace-sidebar {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dataset-roster-panel {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 40%;
+  flex-direction: column;
+}
+
+.workspace-sidebar > .inspector-panel {
+  flex: 1 1 60%;
+}
+
+.dataset-roster-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* The roster owns its overflow. A long list scrolls inside this box and a long
+   file name is truncated in its own cell, so neither can make the document
+   wider or taller than the window. */
+.dataset-roster-list {
+  min-height: 0;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.dataset-row {
+  display: grid;
+  align-items: center;
+  gap: 8px;
+  grid-template-columns: 12px 12px minmax(0, 1fr) auto auto;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+/* Both markers keep their column whether or not they are drawn, so rows do not
+   shift sideways as the active row or the selection changes. */
+.dataset-row-marker {
+  color: var(--color-accent);
+  text-align: center;
+}
+
+.dataset-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dataset-row-size {
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.dataset-row-state {
+  color: var(--color-warning);
+  font-weight: 650;
+}
+
+.dataset-row:hover {
+  background: var(--color-surface-subtle);
+}
+
+.dataset-row.is-selected {
+  background: var(--color-surface-selected);
+  font-weight: 650;
+}
+
+/* A bar down the leading edge, which is a shape rather than a shade: the row
+   whose preview is on screen has to be distinguishable from the selected rows
+   in greyscale and in high contrast, and the glyph beside it says the same
+   thing again. */
+.dataset-row.is-active {
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+.dataset-row:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
+.dataset-roster-details {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .panel {

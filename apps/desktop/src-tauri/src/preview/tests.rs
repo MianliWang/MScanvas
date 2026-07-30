@@ -16,7 +16,8 @@ use mscanvas_proteowizard::{
 
 use super::backend::{OperationAttempt, PreviewProvider, interpretation_error};
 use super::dto::{
-    BackendAvailabilityDto, BackendFailureDto, PreviewErrorDto, SelectedSpectrumOutcomeDto,
+    BackendAvailabilityDto, BackendFailureDto, MAX_WORKSPACE_DATASETS, PreviewErrorDto,
+    SelectedSpectrumOutcomeDto, WorkspaceAddOutcomeDto,
 };
 use super::installation::InstallationIdentity;
 /// The share-mode probe that answers whether a file is still held open. It
@@ -607,6 +608,37 @@ impl TestFile {
         let path = self.directory.join(name);
         fs::write(&path, b"<mzML> another acquisition </mzML>").expect("write sibling source");
         path
+    }
+
+    /// A second name for this very file, which is the same acquisition.
+    #[cfg(windows)]
+    fn hard_link(&self, name: &str) -> PathBuf {
+        let path = self.directory.join(name);
+        fs::hard_link(&self.path, &path).expect(
+            "the test volume must support hard links; without one this cannot establish that two \
+             names for one file are one dataset",
+        );
+        path
+    }
+
+    /// A byte-identical copy, which is a different acquisition that happens to
+    /// be identical.
+    fn copy(&self, name: &str) -> PathBuf {
+        let path = self.directory.join(name);
+        fs::copy(&self.path, &path).expect("copy the source");
+        path
+    }
+
+    /// A file this boundary does not open.
+    fn unsupported(&self, name: &str) -> PathBuf {
+        let path = self.directory.join(name);
+        fs::write(&path, b"<mzXML/>").expect("write an unsupported fixture");
+        path
+    }
+
+    /// A name in the same folder with nothing behind it.
+    fn absent(&self, name: &str) -> PathBuf {
+        self.directory.join(name)
     }
 }
 
@@ -2064,30 +2096,35 @@ fn choosing_a_file_keeps_the_session_holding_exactly_one_dataset() {
     );
 }
 
-#[test]
-fn managing_the_workspace_never_reaches_the_backend() {
-    /// Fails the test outright if anything registry-shaped tries to start a
-    /// process or probe an installation.
-    struct NoProcess;
+/// Fails the test outright if anything workspace-shaped tries to start a
+/// process or probe an installation.
+///
+/// The whole roster is meant to be free of the machine: reading it, adding to
+/// it, removing from it and emptying it are decisions about what the session
+/// lists, and a user curating twenty rows must not be twenty ProteoWizard
+/// launches.
+struct NoProcess;
 
-    impl PreviewProvider for NoProcess {
-        fn use_installation(&self, _home: Option<PathBuf>) {
-            panic!("holding datasets must not reconfigure the backend");
-        }
-
-        fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
-            panic!("holding datasets must not probe the backend");
-        }
-
-        fn run(
-            &self,
-            _source: &Path,
-            _operation: &PreviewOperation,
-        ) -> Result<OperationAttempt, PreviewErrorDto> {
-            panic!("holding datasets must not launch a process");
-        }
+impl PreviewProvider for NoProcess {
+    fn use_installation(&self, _home: Option<PathBuf>) {
+        panic!("holding datasets must not reconfigure the backend");
     }
 
+    fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
+        panic!("holding datasets must not probe the backend");
+    }
+
+    fn run(
+        &self,
+        _source: &Path,
+        _operation: &PreviewOperation,
+    ) -> Result<OperationAttempt, PreviewErrorDto> {
+        panic!("holding datasets must not launch a process");
+    }
+}
+
+#[test]
+fn managing_the_workspace_never_reaches_the_backend() {
     let file = TestFile::new("no-process");
     let other = file.sibling("other.mzML");
     let service = PreviewService::new(Box::new(NoProcess));
@@ -2959,4 +2996,560 @@ fn nothing_the_session_holds_prints_a_path() {
     }
     assert!(rendered.contains("<registry of 1 dataset>"));
     assert!(rendered.contains("<opaque-file-identity>"));
+}
+
+/// The handle an outcome names, whichever way it names one.
+fn outcome_handle(outcome: &WorkspaceAddOutcomeDto) -> &str {
+    match outcome {
+        WorkspaceAddOutcomeDto::Added { dataset } => &dataset.handle,
+        WorkspaceAddOutcomeDto::Duplicate { existing } => &existing.handle,
+        WorkspaceAddOutcomeDto::Rejected { candidate_name, .. } => {
+            panic!("{candidate_name} was rejected, so it names no dataset")
+        }
+    }
+}
+
+fn roster_handles(roster: &super::dto::WorkspaceRosterDto) -> Vec<&str> {
+    roster
+        .datasets
+        .iter()
+        .map(|dataset| dataset.handle.as_str())
+        .collect()
+}
+
+#[test]
+fn one_picker_operation_adds_every_file_it_chose_in_the_order_it_chose_them() {
+    let file = TestFile::new("add-many");
+    let second = file.sibling("second.mzML");
+    let third = file.sibling("third.mzML");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let result = service.add_files(&[file.path.clone(), second, third]);
+
+    assert_eq!(result.outcomes.len(), 3);
+    assert!(
+        result
+            .outcomes
+            .iter()
+            .all(|outcome| matches!(outcome, WorkspaceAddOutcomeDto::Added { .. }))
+    );
+    // The outcomes are in picker order and so is the roster, which is what lets
+    // the interface say "these are the rows you just added" without matching
+    // anything up itself.
+    assert_eq!(
+        result
+            .outcomes
+            .iter()
+            .map(outcome_handle)
+            .collect::<Vec<_>>(),
+        ["file-0", "file-1", "file-2"]
+    );
+    assert_eq!(roster_handles(&result.roster), ["file-0", "file-1", "file-2"]);
+    assert_eq!(
+        result.roster.datasets[1].file_name, "second.mzML",
+        "each row is described as the file it is"
+    );
+    assert_eq!(result.roster.capacity, MAX_WORKSPACE_DATASETS);
+    // And the roster the batch answered with is the roster a later read gives.
+    assert_eq!(service.roster(), result.roster);
+}
+
+#[test]
+fn adding_one_file_is_one_row_and_reading_the_roster_is_no_work() {
+    let file = TestFile::new("add-one");
+    let service = PreviewService::new(Box::new(NoProcess));
+    assert!(service.roster().datasets.is_empty(), "a session starts empty");
+
+    let result = service.add_files(&[file.path.clone()]);
+
+    assert_eq!(roster_handles(&result.roster), ["file-0"]);
+    assert_eq!(result.roster.datasets[0].file_name, "sample.mzML");
+    assert_eq!(result.roster.datasets[0].byte_length, 7);
+    // Read again and again: a roster read is stored facts, so nothing here
+    // reaches the filesystem or the backend.
+    assert_eq!(service.roster(), service.roster());
+}
+
+#[test]
+fn a_batch_that_chose_nothing_leaves_the_workspace_exactly_as_it_was() {
+    // A dismissed picker never reaches this: the command answers `None` before
+    // the service is asked. What this pins is that an empty list is not a batch
+    // that removed anything either.
+    let file = TestFile::new("add-nothing");
+    let service = PreviewService::new(Box::new(NoProcess));
+    service.add_files(&[file.path.clone()]);
+    let before = service.roster();
+
+    let result = service.add_files(&[]);
+
+    assert!(result.outcomes.is_empty());
+    assert_eq!(result.roster, before);
+}
+
+#[cfg(windows)]
+#[test]
+fn one_file_under_two_names_in_one_batch_is_one_row_and_one_duplicate() {
+    let file = TestFile::new("add-duplicate");
+    let alias = file.hard_link("another-name.mzML");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let result = service.add_files(&[file.path.clone(), alias, file.path.clone()]);
+
+    assert_eq!(roster_handles(&result.roster), ["file-0"], "one file, one row");
+    let WorkspaceAddOutcomeDto::Added { dataset } = &result.outcomes[0] else {
+        panic!("the first name registers the dataset");
+    };
+    assert_eq!(dataset.handle, "file-0");
+    for (position, outcome) in result.outcomes[1..].iter().enumerate() {
+        let WorkspaceAddOutcomeDto::Duplicate { existing } = outcome else {
+            panic!("outcome {} is a duplicate of a row the user already has", position + 1);
+        };
+        assert_eq!(existing.handle, "file-0");
+        // Described as it was registered. The second name is another way to
+        // reach the same acquisition, not a rename of the row they have.
+        assert_eq!(existing.file_name, "sample.mzML");
+    }
+    // A duplicate spends no identifier: the next real addition is file-1.
+    let next = service.add_files(&[file.sibling("second.mzML")]);
+    assert_eq!(outcome_handle(&next.outcomes[0]), "file-1");
+}
+
+#[test]
+fn a_byte_identical_copy_is_a_second_row_rather_than_a_duplicate() {
+    // Two acquisitions that happen to be identical are two things the user
+    // added, which is why the key is the filesystem identity and not the bytes.
+    let file = TestFile::new("add-copy");
+    let copy = file.copy("copy.mzML");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let result = service.add_files(&[file.path.clone(), copy]);
+
+    assert_eq!(roster_handles(&result.roster), ["file-0", "file-1"]);
+    assert_eq!(
+        result.roster.datasets[0].byte_length, result.roster.datasets[1].byte_length,
+        "the test needs two files no length can tell apart"
+    );
+}
+
+#[test]
+fn one_file_that_cannot_be_read_does_not_roll_back_the_ones_that_arrived() {
+    // A batch is a list of files the user pointed at, not a transaction.
+    // Refusing the whole picker operation because one file among them was the
+    // wrong format would punish every other file for its company.
+    let file = TestFile::new("add-partial");
+    let unsupported = file.unsupported("acquisition.mzXML");
+    let absent = file.absent("never-existed.mzML");
+    let last = file.sibling("last.mzML");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let result = service.add_files(&[file.path.clone(), unsupported, absent, last]);
+
+    assert_eq!(roster_handles(&result.roster), ["file-0", "file-1"]);
+    assert_eq!(result.outcomes.len(), 4, "one outcome per file the user chose");
+    assert!(matches!(
+        result.outcomes[0],
+        WorkspaceAddOutcomeDto::Added { .. }
+    ));
+    let WorkspaceAddOutcomeDto::Rejected {
+        candidate_name,
+        error,
+    } = &result.outcomes[1]
+    else {
+        panic!("a file this boundary does not open is rejected");
+    };
+    assert_eq!(candidate_name, "acquisition.mzXML");
+    assert_eq!(error.kind, "unsupported_extension");
+    let WorkspaceAddOutcomeDto::Rejected {
+        candidate_name,
+        error,
+    } = &result.outcomes[2]
+    else {
+        panic!("a name with nothing behind it is rejected");
+    };
+    assert_eq!(candidate_name, "never-existed.mzML");
+    assert_eq!(error.kind, "file_not_resolvable");
+    // The file after the failures still arrived, and took the next identifier
+    // rather than one the refusals had spent.
+    assert_eq!(outcome_handle(&result.outcomes[3]), "file-1");
+}
+
+#[test]
+fn a_full_workspace_refuses_new_files_and_still_answers_for_the_ones_it_holds() {
+    let file = TestFile::new("capacity");
+    let service = PreviewService::new(Box::new(NoProcess));
+    let held: Vec<PathBuf> = (0..MAX_WORKSPACE_DATASETS)
+        .map(|index| file.sibling(&format!("held-{index}.mzML")))
+        .collect();
+
+    let filled = service.add_files(&held);
+
+    assert_eq!(filled.roster.datasets.len(), MAX_WORKSPACE_DATASETS);
+    assert!(
+        filled
+            .outcomes
+            .iter()
+            .all(|outcome| matches!(outcome, WorkspaceAddOutcomeDto::Added { .. }))
+    );
+
+    // A file the workspace already holds is still a file it holds. Answering
+    // "full" would tell the user to make space for something that needs none.
+    let again = service.add_files(&[held[0].clone(), file.path.clone(), held[7].clone()]);
+
+    assert_eq!(outcome_handle(&again.outcomes[0]), "file-0");
+    let WorkspaceAddOutcomeDto::Rejected {
+        candidate_name,
+        error,
+    } = &again.outcomes[1]
+    else {
+        panic!("a valid new file is refused when the workspace is full");
+    };
+    assert_eq!(candidate_name, "sample.mzML");
+    assert_eq!(error.kind, "workspace_full");
+    assert!(!error.retryable, "retrying without removing a row cannot help");
+    assert_eq!(
+        outcome_handle(&again.outcomes[2]),
+        "file-7",
+        "duplicates are decided before capacity, wherever they sit in the batch"
+    );
+    assert_eq!(again.roster.datasets.len(), MAX_WORKSPACE_DATASETS);
+
+    // No identifier was spent on anything the session refused: making room for
+    // one file admits exactly one, under the identifier after the last one
+    // actually registered.
+    service.remove_datasets(&["file-3".to_owned()]);
+    let admitted = service.add_files(&[file.path.clone()]);
+    assert_eq!(
+        outcome_handle(&admitted.outcomes[0]),
+        &format!("file-{MAX_WORKSPACE_DATASETS}")
+    );
+}
+
+#[test]
+fn emptying_a_full_workspace_reaches_every_row_without_rewinding_the_allocator() {
+    let file = TestFile::new("clear-capacity");
+    let service = PreviewService::new(Box::new(NoProcess));
+    let held: Vec<PathBuf> = (0..MAX_WORKSPACE_DATASETS)
+        .map(|index| file.sibling(&format!("held-{index}.mzML")))
+        .collect();
+    let filled = service.add_files(&held);
+    let witnesses: Vec<_> = filled
+        .roster
+        .datasets
+        .iter()
+        .map(|dataset| {
+            service
+                .lease_witness(&dataset.handle)
+                .expect("every row is registered")
+        })
+        .collect();
+
+    let roster = service.clear_workspace();
+
+    assert!(roster.datasets.is_empty());
+    assert_eq!(roster.capacity, MAX_WORKSPACE_DATASETS);
+    // Every row, not the first. A loop that reached only the head of the
+    // registry would leave the rest of the user's files pinned by a session that
+    // no longer lists them, with no row left to remove to get them back.
+    for (position, witness) in witnesses.iter().enumerate() {
+        assert!(
+            witness.is_released(),
+            "row {position} was still being held after the workspace was emptied"
+        );
+    }
+    // Removing a row is never deleting a file.
+    assert!(held.iter().all(|path| path.exists()));
+    // And the allocator does not rewind: a reply still in flight for one of the
+    // emptied datasets cannot land on whatever is added next.
+    let readded = service.add_files(&held[..1]);
+    assert_eq!(
+        outcome_handle(&readded.outcomes[0]),
+        &format!("file-{MAX_WORKSPACE_DATASETS}")
+    );
+}
+
+#[test]
+fn removing_rows_says_what_went_and_what_named_nothing() {
+    let file = TestFile::new("remove");
+    let second = file.sibling("second.mzML");
+    let third = file.sibling("third.mzML");
+    let service = PreviewService::new(Box::new(NoProcess));
+    service.add_files(&[file.path.clone(), second, third]);
+
+    let result = service.remove_datasets(&[
+        "file-2".to_owned(),
+        "file-0".to_owned(),
+        // The same row twice is one removal, not one removal and one stale
+        // handle: a caller assembling a request need not have been careful.
+        "file-2".to_owned(),
+        // A row this session never had, and a spelling it never issued.
+        "file-9".to_owned(),
+        "file-00".to_owned(),
+    ]);
+
+    assert_eq!(result.removed_handles, ["file-2", "file-0"]);
+    assert_eq!(result.unknown_handles, ["file-9", "file-00"]);
+    assert_eq!(roster_handles(&result.roster), ["file-1"]);
+    assert_eq!(service.roster(), result.roster);
+}
+
+#[test]
+fn removing_a_row_releases_its_hold_and_leaves_its_file_where_it_was() {
+    let file = TestFile::new("remove-lease");
+    let second = file.sibling("second.mzML");
+    let service = PreviewService::new(Box::new(NoProcess));
+    let added = service.add_files(&[file.path.clone(), second.clone()]);
+    let held: Vec<_> = added
+        .roster
+        .datasets
+        .iter()
+        .map(|dataset| {
+            service
+                .lease_witness(&dataset.handle)
+                .expect("registered")
+        })
+        .collect();
+
+    service.remove_datasets(&["file-0".to_owned()]);
+
+    assert!(held[0].is_released(), "the removed row let its file go");
+    assert!(!held[1].is_released(), "and the row that stayed did not");
+    #[cfg(windows)]
+    assert!(
+        nothing_else_holds_open(&file.path),
+        "the operating system agrees that nothing is pinning it"
+    );
+    assert!(file.path.exists(), "removing a row never deletes a file");
+    assert!(second.exists());
+}
+
+#[test]
+fn removing_the_row_a_preview_belongs_to_takes_its_facts_with_it() {
+    let file = TestFile::new("remove-runtime");
+    let other = file.sibling("other.mzML");
+    let mut responses = open_responses();
+    responses.push(Response::File(selected_spectrum_output(
+        0,
+        &[(445.12, 9000.0)],
+    )));
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    service.add_files(&[file.path.clone(), other]);
+    service.open_preview("file-0").expect("the preview loads");
+    service.load_spectrum("file-0", 0).expect("the spectrum loads");
+    assert!(service.holds_preview_state("file-0"));
+
+    let result = service.remove_datasets(&["file-0".to_owned()]);
+
+    assert_eq!(roster_handles(&result.roster), ["file-1"]);
+    assert!(
+        !service.holds_preview_state("file-0"),
+        "the preview facts go with the row"
+    );
+    assert_eq!(
+        service.requests_made("file-0"),
+        0,
+        "and so does the count of requests made against it"
+    );
+    assert_eq!(
+        service
+            .open_preview("file-0")
+            .expect_err("the handle names nothing now")
+            .kind,
+        "unknown_file_handle"
+    );
+}
+
+#[test]
+fn a_workspace_emptied_while_a_read_runs_answers_at_once_and_keeps_nothing() {
+    use std::sync::Arc;
+    use std::sync::mpsc;
+
+    let file = TestFile::new("clear-during-open");
+    let (started, observe_start) = mpsc::channel();
+    let (release, wait_for_release) = mpsc::channel();
+    let service = Arc::new(PreviewService::new(Box::new(BlockFirstProvider {
+        inner: FakeProvider::available(open_responses()),
+        started,
+        release: Mutex::new(Some(wait_for_release)),
+    })));
+    service.add_files(&[file.path.clone()]);
+
+    let opening = {
+        let service = Arc::clone(&service);
+        std::thread::spawn(move || service.open_preview("file-0"))
+    };
+    observe_start
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the open reached the provider");
+
+    // That these return at all is the proof that no workspace lock is held
+    // while a backend process runs. A roster the user cannot read, and a list
+    // they cannot empty, for as long as one file is being read would make the
+    // interface unusable exactly when they most want out of it.
+    assert_eq!(service.roster().datasets.len(), 1);
+    let roster = service.clear_workspace();
+    assert!(roster.datasets.is_empty());
+
+    release.send(()).expect("the provider is still waiting");
+
+    assert_eq!(
+        opening
+            .join()
+            .expect("the open finished")
+            .expect_err("a read whose row is gone is not returned as current")
+            .kind,
+        "selection_superseded"
+    );
+    assert!(!service.holds_preview_state("file-0"));
+    assert!(service.roster().datasets.is_empty());
+}
+
+#[test]
+fn curating_the_workspace_never_reaches_the_backend() {
+    let file = TestFile::new("roster-no-process");
+    let second = file.sibling("second.mzML");
+    let unsupported = file.unsupported("acquisition.mzXML");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    // Every roster operation there is, including the ones that fail an item and
+    // the ones that empty rows the session had.
+    service.roster();
+    service.add_files(&[file.path.clone(), unsupported, second]);
+    service.roster();
+    service.remove_datasets(&["file-0".to_owned(), "file-404".to_owned()]);
+    service.clear_workspace();
+
+    assert!(service.roster().datasets.is_empty());
+}
+
+#[test]
+fn nothing_the_roster_transfers_carries_a_path_a_folder_or_an_identity() {
+    let file = TestFile::new("roster-privacy");
+    let second = file.sibling("second.mzML");
+    let unsupported = file.unsupported("acquisition.mzXML");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let added = service.add_files(&[file.path.clone(), unsupported, second]);
+    let removed = service.remove_datasets(&["file-0".to_owned(), "file-77".to_owned()]);
+    let cleared = service.clear_workspace();
+
+    let directory = file.directory.to_string_lossy().into_owned();
+    for rendered in [
+        serde_json::to_string(&added).expect("the batch result serializes"),
+        serde_json::to_string(&removed).expect("the removal result serializes"),
+        serde_json::to_string(&cleared).expect("the roster serializes"),
+    ] {
+        assert!(!rendered.contains(&directory), "{rendered}");
+        assert!(!rendered.contains("mscanvas-preview-tests"), "{rendered}");
+        // No separator of any kind: the rendering escapes a backslash, so one
+        // escaped pair would be one separator.
+        assert!(!rendered.contains("\\\\"), "{rendered}");
+        assert!(!rendered.contains('/'), "{rendered}");
+        // The filesystem identity a duplicate is decided by is never sent.
+        assert!(!rendered.contains("identity"), "{rendered}");
+        assert!(!rendered.contains("volume"), "{rendered}");
+    }
+    // A rejected candidate is named by its final filename and nothing else.
+    let WorkspaceAddOutcomeDto::Rejected { candidate_name, .. } = &added.outcomes[1] else {
+        panic!("the unsupported file is rejected");
+    };
+    assert_eq!(candidate_name, "acquisition.mzXML");
+}
+
+#[test]
+fn a_candidate_name_is_bounded_and_is_never_more_than_a_file_name() {
+    use super::selection::candidate_display_name;
+
+    assert_eq!(
+        candidate_display_name(Path::new(r"D:\MSData\private\sample.mzML")),
+        "sample.mzML"
+    );
+    assert_eq!(
+        candidate_display_name(Path::new("/home/alice/private/sample.mzML")),
+        "sample.mzML"
+    );
+    // Nothing to name is nothing, rather than an invented stand-in that could
+    // be mistaken for a file the user chose.
+    assert_eq!(candidate_display_name(Path::new(r"D:\")), "(unnamed file)");
+    // A name is not the place an unbounded string reaches the interface.
+    let long = format!("{}.mzML", "n".repeat(4_000));
+    let bounded = candidate_display_name(&PathBuf::from(r"D:\MSData").join(&long));
+    assert!(
+        bounded.chars().count() <= super::dto::MAX_CANDIDATE_NAME_CHARS + 1,
+        "{}",
+        bounded.chars().count()
+    );
+}
+
+#[test]
+fn the_registered_command_surface_is_the_one_the_frontend_calls() {
+    // Asserted against the source, because a registration list is the one thing
+    // a unit test cannot ask the framework for -- and it is exactly where a
+    // second picker with conflicting semantics would survive unnoticed.
+    let host = include_str!("../lib.rs");
+    let api = include_str!("../../../src/features/mzml-preview/api.ts");
+
+    let registered = host
+        .split_once("generate_handler![")
+        .expect("the host registers its commands")
+        .1
+        .split_once(']')
+        .expect("the registration list is closed")
+        .0;
+    let registered: Vec<&str> = registered
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect();
+
+    assert_eq!(
+        registered,
+        [
+            "get_bootstrap_status",
+            "inspect_backend",
+            "choose_backend_installation",
+            "use_automatic_backend_discovery",
+            "get_workspace_roster",
+            "choose_mzml_files",
+            "remove_workspace_datasets",
+            "clear_workspace",
+            "open_mzml_preview",
+            "load_selected_spectrum",
+        ]
+    );
+    // The retired single-file picker is gone rather than left beside its
+    // replacement. Two registered pickers with opposite semantics -- one that
+    // replaces the workspace, one that adds to it -- is a boundary nobody can
+    // reason about.
+    assert!(
+        !registered.contains(&"choose_mzml_file"),
+        "the replacement picker is retired, not kept alongside the roster"
+    );
+
+    // Every command the product uses is a command the host registers, spelled
+    // the same way. `get_bootstrap_status` is legacy bootstrap plumbing with no
+    // caller here and is deliberately not in this list.
+    for name in &registered[1..] {
+        assert!(
+            api.contains(&format!("\"{name}\"")),
+            "the frontend never calls {name}"
+        );
+    }
+    assert!(
+        !api.contains("\"choose_mzml_file\""),
+        "the frontend must not call a command that no longer exists"
+    );
+
+    // No command takes a path from JavaScript, in either spelling.
+    assert!(!host.contains("PathBuf"), "no command accepts a path");
+    assert!(!host.contains("path:"), "no command accepts a path");
+
+    // And the webview is still granted nothing.
+    let capability: serde_json::Value =
+        serde_json::from_str(include_str!("../../capabilities/default.json"))
+            .expect("the capability file parses");
+    assert_eq!(
+        capability["permissions"].as_array().map(Vec::len),
+        Some(0),
+        "the main window is granted no Tauri core API permission"
+    );
 }
