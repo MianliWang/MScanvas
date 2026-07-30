@@ -563,6 +563,58 @@ scientific value appears here. Window captures were not used as evidence in this
 session: the measuring process ran without per-monitor DPI awareness, which
 crops them, so every claim above is a measurement.
 
+## Rendered check of the spectrum-table column labels, 2026-07-29
+
+Issue #29 — the table's column header row sitting outside the element that
+scrolls it — was measured, repaired and rechecked interactively on Windows at
+150% display scaling (`AppliedDPI` 144, `devicePixelRatio` 1.5). Baseline on
+`3429bd49fa7da6b3452c965065155103e46f5e02`, final application code on
+`49acfdccac5c1aeb8422f48ea2364526db39c568`; the documentation commit after it
+changes none of that code. Native outer `900×700` is a CSS viewport of
+`586×430` at this scaling, and the CSS viewport is what the layout answers to.
+
+Baseline, with an acquisition open at that viewport: the scrolling viewport
+measured 553 wide against 760 of content while the header row measured 569 and
+did not scroll. At `scrollLeft` 0 the two agreed; at 104 the header was 104
+pixels adrift and `Total ion current` showed values with no label; at the
+maximum, 207, both `Total ion current` and `Precursor m/z` did, and their
+labels could not be brought into view at any scroll position.
+
+After the fix, at the same viewport and the same three positions — 0, 109 and
+217 — the largest difference between any column label's left edge and its
+values' left edge was **0 pixels**, and the set of visible labels equalled the
+set of visible values at each position, `Total ion current` and `Precursor m/z`
+included. `1366×768` and `1920×1080` need no horizontal scrolling at all and
+measured the same zero difference. Scrolled down to 400 and 900 pixels the
+header stayed at the top of the viewport, still aligned, with the rendered row
+window advancing and holding no duplicate or blank rows.
+
+Only one element in the table now scrolls, and the header is not it. The header
+is sticky with an opaque background and wins the paint order against the rows
+passing under it. Keyboard: `Tab` reaches a row in five stops with a visible
+focus ring, the arrows move focus without selecting, `Enter` selects, and a row
+reached by keyboard is never left behind the sticky header or below the
+viewport — checked at the right-hand scroll position as well as the left. The
+nine columns, their order, their labels and their values are unchanged;
+`aria-rowcount`, `aria-colcount`, the single header row, the row roles and the
+single roving tab stop are unchanged.
+
+Issue #24 containment did not regress: `documentElement.scrollWidth` equals
+`clientWidth` and `body.scrollWidth` equals `body.clientWidth` at all three
+viewports, with the table's own scrolling inside its panel. Issue #25 did not
+regress: `Choose folder…`, `Enter`, `Escape` returns the keyboard to that
+control with its focus ring, leaving the verdict as it was.
+
+The WebView2 console held the same four development artefacts and nothing else,
+and the Rust/Tauri and Vite output added nothing during the session. The
+selected-spectrum panel refused to draw for this acquisition, saying the
+spectrum list and the spectrum disagree about which scan the row is; it says
+the same for every row of it, it is the backend's identity reconciliation
+declining a synthetic file rather than an error, and no console entry
+accompanied it. The acquisition was read through a neutral working copy outside
+the repository, deleted afterwards, so no fixture name, path or scientific value
+appears here.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.
