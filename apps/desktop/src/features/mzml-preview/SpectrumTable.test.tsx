@@ -100,7 +100,7 @@ describe("spectrum table horizontal position", () => {
     expect(viewport.contains(row)).toBe(true);
   });
 
-  it("gives both grids one width to resolve their columns against", () => {
+  it("declares one width for both grids to resolve their columns against", () => {
     mountAppStyles();
     const { container } = renderTable();
     const track = requireElement(container, ".spectrum-table-track");
@@ -134,7 +134,7 @@ describe("spectrum table horizontal position", () => {
     expect(scrolls(requireElement(container, ".spectrum-table-head"))).toBe(false);
   });
 
-  it("keeps the header in view down the rows without covering the top one", () => {
+  it("declares the sticky header that keeps the labels in view down the rows", () => {
     mountAppStyles();
     const { container } = renderTable();
     const head = requireElement(container, ".spectrum-table-head");
@@ -146,6 +146,18 @@ describe("spectrum table horizontal position", () => {
     // paint order against the rows it covers.
     expect(style.background).toContain("var(--color-surface-subtle)");
     expect(style.zIndex).toBe("1");
+  });
+
+  it("reserves the header's row when the browser brings a row into view", () => {
+    // jsdom does not scroll anything into view, so this asserts the rule and
+    // not its effect. The effect is the point of it: a row that is already
+    // half under the header counts as in view, and Tab would leave the focus
+    // ring beneath the labels without this.
+    mountAppStyles();
+    const { container } = renderTable();
+    const viewport = requireElement(container, ".spectrum-table-viewport");
+
+    expect(getComputedStyle(viewport).scrollPaddingTop).toBe("30px");
   });
 });
 
@@ -164,6 +176,19 @@ describe("spectrum table rows", () => {
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Enter" });
 
     expect(onSelect).toHaveBeenCalledWith(2);
+  });
+
+  it("pages by what the rows have, not by what the header takes", () => {
+    // The header occupies the first row of the scrolling box, so a page is one
+    // row shorter than that box. Counting the whole box would page the focus
+    // one row further than the user can see.
+    renderTable(400);
+    const grid = screen.getByRole("grid", { name: "Spectra" });
+    within(grid).getAllByRole("row")[1]?.focus();
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "PageDown" });
+
+    expect(document.activeElement).toHaveAttribute("aria-rowindex", "20");
   });
 
   it("carries exactly one tab stop among the rendered rows", () => {
