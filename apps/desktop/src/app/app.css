@@ -341,7 +341,13 @@ button:disabled {
   font-size: 12px;
 }
 
+/* Stays at the top of the rows while they scroll under it, and travels with
+   them sideways because it is inside the same scrolling box. The background is
+   opaque on purpose: rows pass beneath it. */
 .spectrum-table-head {
+  position: sticky;
+  z-index: 1;
+  top: 0;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface-subtle);
   color: var(--color-text-tertiary);
@@ -372,6 +378,21 @@ button:disabled {
   min-height: 0;
   flex: 1;
   overflow: auto;
+  /* The header's row, reserved. Bringing a row into view is the browser's to
+     do when focus moves to it, and left to itself it counts a row that is
+     already half behind the header as near enough -- which is how a row can be
+     focused with its top edge, and its focus ring, under the header. */
+  scroll-padding-top: 30px;
+}
+
+/* The width the header row and the rows below it both resolve their columns
+   against. Wider than the viewport exactly when the columns cannot fit, so the
+   two grids always compute the same tracks: the label and its values are one
+   column, kept together by the layout rather than by anything watching a
+   scroll position. This element is the only reason the header can be sticky
+   and still be as wide as the rows. */
+.spectrum-table-track {
+  min-width: min-content;
 }
 
 .spectrum-table-canvas {

@@ -10,6 +10,15 @@ import {
 
 /** Fixed row height keeps the windowing arithmetic exact. Mirrored in CSS. */
 const ROW_HEIGHT = 30;
+/**
+ * The header row's height, which is a row's.
+ *
+ * It sits inside the scrolling element so that a column label and its values
+ * share one horizontal position, and stays put vertically. That costs the top
+ * of the scrolling box: everything below has to be placed as though the box
+ * began one row lower, or a row scrolled to would arrive behind the header.
+ */
+const HEADER_HEIGHT = ROW_HEIGHT;
 /** Rows kept rendered outside the viewport so scrolling does not flash gaps. */
 const OVERSCAN = 10;
 /**
@@ -71,7 +80,9 @@ export function SpectrumTable({
   }, []);
 
   const rowCount = table.rows.length;
-  const visibleCount = Math.ceil(viewportHeight / ROW_HEIGHT) + OVERSCAN * 2;
+  /** What the viewport has left for rows once the header has its row. */
+  const rowsHeight = Math.max(ROW_HEIGHT, viewportHeight - HEADER_HEIGHT);
+  const visibleCount = Math.ceil(rowsHeight / ROW_HEIGHT) + OVERSCAN * 2;
   const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
   const end = Math.min(rowCount, start + visibleCount);
   const rendered = table.rows.slice(start, end);
@@ -110,7 +121,13 @@ export function SpectrumTable({
         return;
       }
       const top = clamped * ROW_HEIGHT;
-      const height = viewport.clientHeight || viewportHeight;
+      // What the rows have, not what the viewport has: the header covers the
+      // first row's worth of it wherever the scroll happens to be, so a row
+      // brought to the bottom edge has to stop that much sooner.
+      const height = Math.max(
+        ROW_HEIGHT,
+        (viewport.clientHeight || viewportHeight) - HEADER_HEIGHT,
+      );
       if (top < viewport.scrollTop) {
         viewport.scrollTop = top;
         setScrollTop(top);
@@ -130,7 +147,7 @@ export function SpectrumTable({
    */
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>, position: number) => {
-      const pageSize = Math.max(1, Math.floor(viewportHeight / ROW_HEIGHT) - 1);
+      const pageSize = Math.max(1, Math.floor(rowsHeight / ROW_HEIGHT) - 1);
       switch (event.key) {
         case "ArrowDown":
           moveFocus(position + 1);
@@ -159,7 +176,7 @@ export function SpectrumTable({
       }
       event.preventDefault();
     },
-    [moveFocus, onSelect, rowCount, table.rows, viewportHeight],
+    [moveFocus, onSelect, rowCount, rowsHeight, table.rows],
   );
 
   return (
@@ -195,19 +212,10 @@ export function SpectrumTable({
         className="spectrum-table"
         role="grid"
       >
-        <div aria-rowindex={1} className="spectrum-table-row spectrum-table-head" role="row">
-          {COLUMNS.map((column, columnIndex) => (
-            <span
-              aria-colindex={columnIndex + 1}
-              className="spectrum-table-cell"
-              key={column}
-              role="columnheader"
-            >
-              {column}
-            </span>
-          ))}
-        </div>
-
+        {/* The one thing that scrolls. The header is inside it rather than
+            above it, so a column label and the values under it hold one
+            horizontal position between them -- not two that something has to
+            keep in step. */}
         <div
           className="spectrum-table-viewport"
           onScroll={(event) => {
@@ -216,32 +224,50 @@ export function SpectrumTable({
           ref={viewportRef}
           role="presentation"
         >
-          <div
-            className="spectrum-table-canvas"
-            role="presentation"
-            style={{ height: `${rowCount * ROW_HEIGHT}px` }}
-          >
-            <div
-              className="spectrum-table-window"
-              role="presentation"
-              style={{ transform: `translateY(${start * ROW_HEIGHT}px)` }}
-            >
-              {rendered.map((row, offset) => (
-                <SpectrumTableRow
-                  isFocusStop={start + offset === focusStop}
-                  isSelected={selectedIndex === row.index}
-                  key={row.index}
-                  onActivate={(position) => {
-                    // Activating a row also makes it the tab stop, so keyboard
-                    // navigation resumes from what the user just chose.
-                    setFocusRow(position);
-                    onSelect(row.index);
-                  }}
-                  onKeyDown={handleKeyDown}
-                  position={start + offset}
-                  row={row}
-                />
+          {/* Carries the width both grids resolve against, which is what makes
+              the label and the value the same column rather than two that
+              happen to agree. */}
+          <div className="spectrum-table-track" role="presentation">
+            <div aria-rowindex={1} className="spectrum-table-row spectrum-table-head" role="row">
+              {COLUMNS.map((column, columnIndex) => (
+                <span
+                  aria-colindex={columnIndex + 1}
+                  className="spectrum-table-cell"
+                  key={column}
+                  role="columnheader"
+                >
+                  {column}
+                </span>
               ))}
+            </div>
+
+            <div
+              className="spectrum-table-canvas"
+              role="presentation"
+              style={{ height: `${rowCount * ROW_HEIGHT}px` }}
+            >
+              <div
+                className="spectrum-table-window"
+                role="presentation"
+                style={{ transform: `translateY(${start * ROW_HEIGHT}px)` }}
+              >
+                {rendered.map((row, offset) => (
+                  <SpectrumTableRow
+                    isFocusStop={start + offset === focusStop}
+                    isSelected={selectedIndex === row.index}
+                    key={row.index}
+                    onActivate={(position) => {
+                      // Activating a row also makes it the tab stop, so keyboard
+                      // navigation resumes from what the user just chose.
+                      setFocusRow(position);
+                      onSelect(row.index);
+                    }}
+                    onKeyDown={handleKeyDown}
+                    position={start + offset}
+                    row={row}
+                  />
+                ))}
+              </div>
             </div>
           </div>
         </div>
