@@ -2468,6 +2468,252 @@ fn work_on_one_dataset_never_supersedes_work_on_another() {
         .expect("a request in another dataset runs on its own turn");
 }
 
+/// Waits for a dataset to have claimed a given number of requests, rather than
+/// guessing at it with a sleep.
+///
+/// The order two opens queue in is the whole point of the tests below: an open
+/// that had not yet claimed its epoch would be released before it had taken a
+/// number, and the test would be watching a race instead of a rule.
+fn wait_for_requests(service: &PreviewService, handle: &str, requests: u64) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while service.requests_made(handle) < requests {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "a spawned request never claimed its turn"
+        );
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn an_open_still_waiting_for_its_turn_never_starts_once_a_newer_one_arrives() {
+    // Reachable only now. The old interface showed one file and disabled its
+    // open action while opening; a roster lets the user activate a row, activate
+    // it again, and activate it a third time before the first read has finished.
+    // Each of those is a ProteoWizard process against a large file, and the only
+    // one anybody will look at is the last.
+    use std::sync::Arc;
+    use std::sync::mpsc;
+
+    let file = TestFile::new("open-supersede-waiting");
+    let (started, observe_start) = mpsc::channel();
+    let (release, wait_for_release) = mpsc::channel();
+    let mut responses = open_responses();
+    responses.extend(open_responses());
+    let inner = FakeProvider::available(responses);
+    let world = inner.clone_world();
+    let service = Arc::new(PreviewService::new(Box::new(BlockFirstProvider {
+        inner,
+        started,
+        release: Mutex::new(Some(wait_for_release)),
+    })));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let open = || {
+        let service = Arc::clone(&service);
+        let handle = selected.handle.clone();
+        std::thread::spawn(move || service.open_preview(&handle))
+    };
+
+    // One open occupies the only process slot.
+    let running = open();
+    observe_start
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the first open reached the provider");
+    // A second queues behind it, and a third behind that.
+    let waiting = open();
+    wait_for_requests(&service, &selected.handle, 2);
+    let newest = open();
+    wait_for_requests(&service, &selected.handle, 3);
+    release.send(()).expect("the provider is still waiting");
+
+    assert_eq!(
+        running
+            .join()
+            .expect("the running open finished")
+            .expect_err("its result is no longer the one the user wants")
+            .kind,
+        "selection_superseded"
+    );
+    assert_eq!(
+        waiting
+            .join()
+            .expect("the waiting open finished")
+            .expect_err("a request for a row the user has moved past never starts")
+            .kind,
+        "selection_superseded"
+    );
+    newest
+        .join()
+        .expect("the newest open finished")
+        .expect("the request the user is waiting for is the one that answers");
+    // Six operations, not nine: the open that was still waiting spent nothing.
+    assert_eq!(
+        world.requested_count(),
+        6,
+        "a superseded open must not launch an operation"
+    );
+}
+
+#[test]
+fn an_open_that_had_already_started_cannot_commit_after_a_newer_one() {
+    // The gate serialises two opens of one dataset; it does not order their
+    // commits. Without an epoch the later commit wins whether or not it ran
+    // last, so the rows a spectrum is reconciled against could come from the
+    // read the user abandoned.
+    use std::sync::Arc;
+    use std::sync::mpsc;
+
+    let file = TestFile::new("open-supersede-running");
+    let (started, observe_start) = mpsc::channel();
+    let (release, wait_for_release) = mpsc::channel();
+    // Two different acquisitions' tables, so which one the session kept is a
+    // question a spectrum can answer rather than a matter of counting.
+    let responses = vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(OTHER_SPECTRUM_TABLE_OUTPUT.to_owned()),
+        Response::File(other_selected_spectrum_output(0, &[(612.45, 2200.0)])),
+    ];
+    let service = Arc::new(PreviewService::new(Box::new(BlockFirstProvider {
+        inner: FakeProvider::available(responses),
+        started,
+        release: Mutex::new(Some(wait_for_release)),
+    })));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let open = || {
+        let service = Arc::clone(&service);
+        let handle = selected.handle.clone();
+        std::thread::spawn(move || service.open_preview(&handle))
+    };
+
+    let running = open();
+    observe_start
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the first open reached the provider");
+    let newer = open();
+    wait_for_requests(&service, &selected.handle, 2);
+    release.send(()).expect("the provider is still waiting");
+
+    assert_eq!(
+        running
+            .join()
+            .expect("the older open finished")
+            .expect_err("an open the user has moved past is not returned as current")
+            .kind,
+        "selection_superseded"
+    );
+    newer
+        .join()
+        .expect("the newer open finished")
+        .expect("the newer open is the one that answers");
+
+    let Ok(SelectedSpectrumOutcomeDto::Spectrum { spectrum }) =
+        service.load_spectrum(&selected.handle, 0)
+    else {
+        panic!("the spectrum reconciles against the rows the newer open recorded");
+    };
+    assert_eq!(
+        spectrum.scan_number,
+        Some(807),
+        "the session kept the newer read's rows, not the abandoned read's"
+    );
+}
+
+#[test]
+fn an_open_of_one_dataset_never_supersedes_an_open_of_another() {
+    use std::sync::Arc;
+    use std::sync::mpsc;
+
+    let file = TestFile::new("open-cross-dataset");
+    let other = file.sibling("other.mzML");
+    let (started, observe_start) = mpsc::channel();
+    let (release, wait_for_release) = mpsc::channel();
+    let mut responses = open_responses();
+    responses.extend(open_responses());
+    let service = Arc::new(PreviewService::new(Box::new(BlockFirstProvider {
+        inner: FakeProvider::available(responses),
+        started,
+        release: Mutex::new(Some(wait_for_release)),
+    })));
+    let first = service.add_dataset(&file.path).expect("added");
+    let second = service.add_dataset(&other).expect("added");
+
+    let open = |handle: &str| {
+        let service = Arc::clone(&service);
+        let handle = handle.to_owned();
+        std::thread::spawn(move || service.open_preview(&handle))
+    };
+
+    let running = open(&first.handle);
+    observe_start
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the first open reached the provider");
+    let elsewhere = open(&second.handle);
+    wait_for_requests(&service, &second.handle, 1);
+    assert_eq!(
+        service.requests_made(&first.handle),
+        1,
+        "a dataset counts its own requests and nobody else's"
+    );
+    release.send(()).expect("the provider is still waiting");
+
+    running
+        .join()
+        .expect("the running open finished")
+        .expect("a request nobody has moved on from still commits");
+    elsewhere
+        .join()
+        .expect("the other dataset's open finished")
+        .expect("an open in another dataset runs on its own turn");
+    assert!(service.holds_preview_state(&first.handle));
+    assert!(service.holds_preview_state(&second.handle));
+}
+
+#[test]
+fn beginning_an_open_drops_what_the_previous_open_recorded() {
+    // A reopen that fails must not leave the previous open's rows usable. They
+    // are what a selected spectrum is reconciled against, and after a failed
+    // reopen nothing on screen came from them -- so a spectrum compared against
+    // them is compared against a reading the user is no longer being shown.
+    let file = TestFile::new("reopen-invalidates");
+    let responses = vec![
+        Response::File(METADATA_OUTPUT.to_owned()),
+        Response::Stdout(run_summary_output()),
+        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
+        retryable_launch_failure(),
+        // Another acquisition's spectrum entirely: it agrees with nothing in the
+        // table the first open recorded, so it is refused if those rows survived.
+        Response::File(other_selected_spectrum_output(0, &[(612.45, 2200.0)])),
+    ];
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service
+        .open_preview(&selected.handle)
+        .expect("the file opens");
+    assert!(service.holds_preview_state(&selected.handle));
+
+    let error = service
+        .open_preview(&selected.handle)
+        .expect_err("the reopen failed");
+
+    assert_eq!(error.kind, "backend_launch_failed");
+    assert!(
+        !service.holds_preview_state(&selected.handle),
+        "a failed reopen leaves no preview behind"
+    );
+    let Ok(SelectedSpectrumOutcomeDto::Spectrum { spectrum }) =
+        service.load_spectrum(&selected.handle, 0)
+    else {
+        panic!("with no recorded table there is nothing to reconcile against");
+    };
+    assert_eq!(spectrum.scan_number, Some(807));
+}
+
 #[test]
 fn a_preview_that_finishes_after_its_dataset_is_gone_records_nothing() {
     use std::sync::Arc;
@@ -2507,11 +2753,14 @@ fn a_preview_that_finishes_after_its_dataset_is_gone_records_nothing() {
     release.send(()).expect("the provider is still waiting");
 
     // The work had already started, so it is not cancelled and its caller is
-    // answered.
-    opening
+    // answered -- with the stale-request refusal, because the dataset it was
+    // reading is gone. A successful preview here would be a result presented as
+    // current for a row the workspace no longer has.
+    let stale = opening
         .join()
         .expect("the open finished")
-        .expect("a read that had already started still completes");
+        .expect_err("a read whose dataset has gone answers that its result was not used");
+    assert_eq!(stale.kind, "selection_superseded");
     // And nothing outlives it. The file is not left held by a session that has
     // forgotten it, which is the property revocation actually owes.
     #[cfg(windows)]
@@ -2649,7 +2898,9 @@ fn replacing_the_selection_drops_what_the_session_derived_from_it() {
         .load_spectrum(&first.handle, 0)
         .expect("the spectrum loads");
     assert!(service.holds_preview_state(&first.handle));
-    assert_eq!(service.requests_made(&first.handle), 1);
+    // Two: the open claims the dataset's epoch as well, so a newer request for
+    // it makes an older open stale exactly as it makes an older spectrum stale.
+    assert_eq!(service.requests_made(&first.handle), 2);
 
     service.accept_file(&other).expect("accepted again");
 

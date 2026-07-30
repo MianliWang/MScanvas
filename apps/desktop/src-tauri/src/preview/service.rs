@@ -99,6 +99,26 @@ impl Workspace {
         Some(state.request_epoch)
     }
 
+    /// Starts an open for one dataset: claims the epoch that names it, drops
+    /// what the previous open recorded, and hands back the file to read.
+    ///
+    /// The three happen under one lock because they are one decision. The
+    /// recorded preview is what a selected spectrum reconciles against, and it
+    /// describes the read that produced it; the moment a newer open begins,
+    /// that description is no longer the one the user is asking about. Left in
+    /// place it would outlive its own open -- a reopen that fails would leave
+    /// the previous open's rows silently usable, and a spectrum read afterwards
+    /// would be reconciled against a table nothing on screen came from.
+    ///
+    /// `None` when the dataset is not registered.
+    fn begin_open_request(&mut self, id: DatasetId) -> Option<(u64, AcceptedFile)> {
+        let file = self.registry.get(id)?.file().clone();
+        let state = self.runtime.entry(id).or_default();
+        state.request_epoch += 1;
+        state.preview = None;
+        Some((state.request_epoch, file))
+    }
+
     /// Whether this request is still the newest one for a dataset that is still
     /// there. Anything else means the user has moved on.
     fn request_is_current(&self, id: DatasetId, epoch: u64) -> bool {
@@ -196,19 +216,6 @@ impl PreviewService {
         self.workspace
             .lock()
             .expect("the workspace lock is never poisoned by user code")
-    }
-
-    /// The file a handle names, as it was accepted, or the refusal for a handle
-    /// that names nothing this session holds.
-    ///
-    /// A clone rather than a borrow, so the lock is released before the file is
-    /// revalidated or read.
-    fn remembered_file(&self, id: DatasetId) -> Result<AcceptedFile, PreviewErrorDto> {
-        self.workspace()
-            .registry
-            .get(id)
-            .map(|dataset| dataset.file().clone())
-            .ok_or_else(unknown_dataset)
     }
 
     /// Reports whether a usable backend is installed.
@@ -406,12 +413,29 @@ impl PreviewService {
     /// All three share a single discovery and capability probe, so opening a
     /// file resolves the backend once rather than once per panel.
     pub fn open_preview(&self, handle: &str) -> Result<PreviewDto, PreviewErrorDto> {
-        // Taken before anything is established about the file, so what is
-        // checked describes the moment the read actually begins rather than
-        // the moment the request arrived.
-        let running = self.enter_backend();
         let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
-        let file = revalidate(&self.remembered_file(id)?)?;
+        // Claimed before the wait, so a request that arrives after this one
+        // supersedes it -- and claimed by the same per-dataset counter a
+        // spectrum uses, because an open and a spectrum are both requests about
+        // the same dataset and the newer of the two is the one the user is
+        // waiting for. A roster is what makes two opens of one dataset
+        // something a user can cause: nothing stops them activating a row
+        // twice, or activating it again while the first read is still running.
+        let (epoch, remembered) = self
+            .workspace()
+            .begin_open_request(id)
+            .ok_or_else(unknown_dataset)?;
+        // Taken after the epoch and before anything is established about the
+        // file, so what is checked describes the moment the read actually
+        // begins rather than the moment the request arrived.
+        let running = self.enter_backend();
+        // Checked after the wait, not before it: what matters is whether the
+        // user has moved on by the time this would start. A request that is
+        // still waiting when a newer one arrives never launches a process.
+        if !self.workspace().request_is_current(id, epoch) {
+            return Err(superseded());
+        }
+        let file = revalidate(&remembered)?;
         let redactor = reporting_redactor(file.path());
         let operations = open_operations();
         // The three operations read the file separately. If it is rewritten
@@ -527,21 +551,24 @@ impl PreviewService {
         // generation this was read at, the backend that read it, and the rows a
         // later spectrum is reconciled against.
         let mut workspace = self.workspace();
-        // The dataset can have been revoked while this ran: the workspace stays
-        // answerable throughout, which is the point of not holding it. A reply
-        // that arrives then records nothing. Writing it would leave the session
-        // holding preview facts for a dataset that no longer exists, under an
-        // identifier nothing can reach and nothing will ever clear.
-        if workspace.registry.contains(id) {
-            workspace.runtime.entry(id).or_default().preview = Some(DatasetPreviewState {
-                opened: OpenedPreview {
-                    source: before,
-                    generation,
-                    installation,
-                },
-                table_rows,
-            });
+        // The dataset can have been revoked while this ran, and a newer request
+        // for it can have been made: the workspace stays answerable throughout,
+        // which is the point of not holding it. Either way this reply records
+        // nothing and says so. Writing it would leave the session holding
+        // preview facts for a dataset that no longer exists, or the older of two
+        // reads of one dataset deciding what a later spectrum is reconciled
+        // against -- the commit order of two opens is not their request order.
+        if !workspace.request_is_current(id, epoch) {
+            return Err(superseded());
         }
+        workspace.runtime.entry(id).or_default().preview = Some(DatasetPreviewState {
+            opened: OpenedPreview {
+                source: before,
+                generation,
+                installation,
+            },
+            table_rows,
+        });
         drop(workspace);
 
         Ok(PreviewDto {
@@ -913,15 +940,19 @@ fn missing(what: &str) -> PreviewErrorDto {
     )
 }
 
-/// What a spectrum request answers with once the user has moved on from it.
+/// What a request answers with once the user has moved on from it.
 ///
-/// One kind for both ways that happens -- a newer spectrum chosen in the same
-/// dataset, and the dataset itself replaced -- because they are the same fact
-/// to the caller: the answer it asked for is no longer the one it wants.
+/// One kind for every way that happens -- a newer spectrum chosen in the same
+/// dataset, a newer open of it, and the dataset itself removed -- because they
+/// are the same fact to the caller: the answer it asked for is no longer the
+/// one it wants. The kind is the one the boundary already spoke; what widened
+/// is which requests can reach it, now that a roster lets the user activate one
+/// dataset twice.
 fn superseded() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "selection_superseded",
-        "A newer spectrum was selected before this one started, so it was not read.",
+        "A newer request for that file arrived before this one finished, so its result was not \
+         used.",
         false,
     )
 }
