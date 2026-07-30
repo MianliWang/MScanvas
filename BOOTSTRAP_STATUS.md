@@ -871,10 +871,10 @@ else has the object open, decided by the share rules rather than by timing. The
 identity-recycling scenario is exercised against the real filesystem: a
 registered file is renamed away, a different acquisition is written at its former
 name, and the original's last name is then removed, so nothing but the registry's
-lease keeps it alive. Windows-specific coverage is gated on `#[cfg(windows)]`;
-other platforms hold an owned file handle for the same reason and claim no part
-of the Windows identity guarantee, which CI does not exercise because it runs on
-Windows only. No scientific acquisition is used as a fixture. Rendered QA was not
+lease keeps it alive. Windows-specific coverage is gated on `#[cfg(windows)]`,
+and there is nothing to gate elsewhere: only Windows holds a file handle, so
+only Windows has the guarantee to prove, and CI builds no other target anyway.
+No scientific acquisition is used as a fixture. Rendered QA was not
 required and not performed: nothing the user can see changed. ProteoWizard was
 not executed and the desktop application was not launched.
 
