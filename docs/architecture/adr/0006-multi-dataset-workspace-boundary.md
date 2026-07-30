@@ -82,8 +82,8 @@ never added. *Identity lifetime* below is how that is closed.
 ## Identity lifetime
 
 Every registered dataset owns an identity lease: a live handle on the filesystem
-object it names, opened by the same inspection that established the identity and
-held for exactly as long as the registry row exists.
+object it names, taken when the file is accepted and held for exactly as long as
+the registry row exists.
 
 The lease keeps the object alive. An identity cannot be recycled while its
 object is alive, so every key in the identity index is still its own row's, and
@@ -93,10 +93,13 @@ have its identity handed to an unrelated acquisition, and the registry would
 report that acquisition as a duplicate of a row naming something else — two
 distinct acquisitions merged into one workspace row.
 
-- The handle is opened sharing read, write and delete, the posture accepted
-  files already used. Renaming, deleting and replacing the path all remain
-  permitted while MSCanvas lists the file. Listing a file is not a claim on it:
-  a workspace row is a row, and removing one is the only thing that removes one.
+- On Windows the lease is the very handle the inspection read the identity
+  through, so there is no interval between establishing an identity and holding
+  the object that owns it. It is opened sharing read, write and delete, the
+  posture accepted files already used. Renaming, deleting and replacing the path
+  all remain permitted while MSCanvas lists the file. Listing a file is not a
+  claim on it: a workspace row is a row, and removing one is the only thing that
+  removes one.
 - Because deletion is permitted, a replacement object at the same path is
   necessarily alive at the same moment as the object it replaced, and two
   objects alive at once cannot share an identity. The replacement is therefore
@@ -129,10 +132,15 @@ Explorer while MSCanvas lists it — is not paid, because the share mode is the
 permissive one.
 
 On Windows this is the whole guarantee: `FILE_ID_INFO` names an object, and an
-open handle keeps that object alive. Elsewhere the registry holds an owned file
-handle for the same reason, which keeps an inode from being reused while a
-descriptor holds it; nothing here claims the Windows identity guarantee for a
-platform that does not supply the Windows identity.
+open handle keeps that object alive.
+
+Elsewhere the registry holds an owned file handle for the same reason — an inode
+is not reused while a descriptor holds it — but it is a second resolution of the
+path rather than the handle the posture was established through, because that
+inspection has no handle to hand over, and there is no share mode to speak of.
+Nothing here claims the Windows identity guarantee for a platform that does not
+supply the Windows identity, and the coverage that proves the guarantee is
+Windows-only for the same reason.
 
 ## Duplicate outcome
 
