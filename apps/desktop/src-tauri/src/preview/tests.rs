@@ -485,6 +485,38 @@ impl PreviewProvider for FakeProvider {
     }
 }
 
+/// Holds the backend gate open until released, so the requests behind it can be
+/// observed waiting rather than raced against.
+///
+/// Only the first operation waits. Everything after it runs immediately, which
+/// is what lets one test watch several queued requests come through in whatever
+/// order the gate grants them.
+struct BlockFirstProvider {
+    inner: FakeProvider,
+    started: std::sync::mpsc::Sender<()>,
+    release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+}
+
+impl PreviewProvider for BlockFirstProvider {
+    fn use_installation(&self, _home: Option<PathBuf>) {}
+
+    fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
+        self.inner.availability()
+    }
+
+    fn run(
+        &self,
+        source: &Path,
+        operation: &PreviewOperation,
+    ) -> Result<OperationAttempt, PreviewErrorDto> {
+        if let Some(release) = self.release.lock().expect("test lock").take() {
+            let _ = self.started.send(());
+            let _ = release.recv_timeout(std::time::Duration::from_secs(5));
+        }
+        self.inner.run(source, operation)
+    }
+}
+
 struct TestFile {
     directory: PathBuf,
     path: PathBuf,
@@ -504,6 +536,16 @@ impl TestFile {
         let path = directory.join("sample.mzML");
         fs::write(&path, b"<mzML/>").expect("write test source");
         Self { directory, path }
+    }
+}
+
+impl TestFile {
+    /// Another acquisition beside this one, for the tests that need the session
+    /// to hold more than one dataset.
+    fn sibling(&self, name: &str) -> PathBuf {
+        let path = self.directory.join(name);
+        fs::write(&path, b"<mzML> another acquisition </mzML>").expect("write sibling source");
+        path
     }
 }
 
@@ -1955,4 +1997,231 @@ fn an_open_stops_at_its_first_failed_operation() {
         1,
         "nothing after the failed operation should have been run"
     );
+}
+
+#[test]
+fn choosing_a_file_keeps_the_session_holding_exactly_one_dataset() {
+    // The workspace can hold several datasets. The picker deliberately does not
+    // use that. A file the user cannot see, curate or remove is a capability
+    // they never asked for and have no way to withdraw, so the roster interface
+    // is what will add a second one -- not this entry point.
+    let file = TestFile::new("one-at-a-time");
+    let other = file.sibling("other.mzML");
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+
+    let first = service.accept_file(&file.path).expect("accepted");
+    let second = service.accept_file(&other).expect("accepted again");
+
+    assert_ne!(first.handle, second.handle);
+    assert_eq!(service.dataset_count(), 1);
+    assert_eq!(
+        service
+            .open_preview(&first.handle)
+            .expect_err("the previous handle is revoked")
+            .kind,
+        "unknown_file_handle"
+    );
+}
+
+#[test]
+fn managing_the_workspace_never_reaches_the_backend() {
+    /// Fails the test outright if anything registry-shaped tries to start a
+    /// process or probe an installation.
+    struct NoProcess;
+
+    impl PreviewProvider for NoProcess {
+        fn use_installation(&self, _home: Option<PathBuf>) {
+            panic!("holding datasets must not reconfigure the backend");
+        }
+
+        fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
+            panic!("holding datasets must not probe the backend");
+        }
+
+        fn run(
+            &self,
+            _source: &Path,
+            _operation: &PreviewOperation,
+        ) -> Result<OperationAttempt, PreviewErrorDto> {
+            panic!("holding datasets must not launch a process");
+        }
+    }
+
+    let file = TestFile::new("no-process");
+    let other = file.sibling("other.mzML");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    service.accept_file(&file.path).expect("accepted");
+    service.accept_file(&other).expect("accepted again");
+    service.add_dataset(&file.path).expect("added alongside");
+
+    assert_eq!(service.dataset_count(), 2);
+}
+
+/// Two names for one file. Windows-only because the identity this decides on is
+/// the Windows file ID, and a hard link is how two names come to share one.
+#[cfg(windows)]
+#[test]
+fn adding_one_file_under_two_names_is_one_dataset() {
+    let file = TestFile::new("duplicate");
+    let link = file.directory.join("another-name.mzML");
+    fs::hard_link(&file.path, &link).expect(
+        "the test volume must support hard links; without one this cannot establish that two \
+         names for one file are one dataset",
+    );
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+    let first = service.add_dataset(&file.path).expect("added");
+
+    let again = service.add_dataset(&link).expect("added again");
+
+    assert_eq!(again.handle, first.handle, "one file, one dataset");
+    assert_eq!(service.dataset_count(), 1);
+    // Described as it was registered. The second name is another way to reach
+    // the same acquisition, not a rename of the row the user already has.
+    assert_eq!(again.file_name, "sample.mzML");
+}
+
+#[test]
+fn two_datasets_each_keep_their_own_preview_facts() {
+    let file = TestFile::new("per-dataset");
+    let other = file.sibling("other.mzML");
+    let mut responses = open_responses();
+    responses.extend(open_responses());
+    responses.push(Response::File(selected_spectrum_output(
+        0,
+        &[(445.12, 9000.0)],
+    )));
+    responses.push(Response::File(selected_spectrum_output(
+        0,
+        &[(445.12, 9000.0)],
+    )));
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let first = service.add_dataset(&file.path).expect("added");
+    let second = service.add_dataset(&other).expect("added");
+
+    service
+        .open_preview(&first.handle)
+        .expect("the first preview loads");
+    service
+        .open_preview(&second.handle)
+        .expect("the second preview loads");
+
+    // Neither open took the other's facts with it, which one shared record of
+    // "the preview" would have done.
+    assert!(service.holds_preview_state(&first.handle));
+    assert!(service.holds_preview_state(&second.handle));
+    for handle in [&first.handle, &second.handle] {
+        assert!(
+            matches!(
+                service.load_spectrum(handle, 0),
+                Ok(SelectedSpectrumOutcomeDto::Spectrum { .. })
+            ),
+            "each dataset reconciles a spectrum against its own rows"
+        );
+    }
+}
+
+#[test]
+fn work_on_one_dataset_never_supersedes_work_on_another() {
+    use std::sync::Arc;
+    use std::sync::mpsc;
+
+    let file = TestFile::new("cross-dataset");
+    let other = file.sibling("other.mzML");
+    let (started, observe_start) = mpsc::channel();
+    let (release, wait_for_release) = mpsc::channel();
+    let service = Arc::new(PreviewService::new(Box::new(BlockFirstProvider {
+        inner: FakeProvider::available(vec![
+            Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+            Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+            Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
+        ]),
+        started,
+        release: Mutex::new(Some(wait_for_release)),
+    })));
+    let first = service.add_dataset(&file.path).expect("added");
+    let second = service.add_dataset(&other).expect("added");
+    assert_eq!(service.dataset_count(), 2);
+
+    let spectrum = |handle: &str, index: u64| {
+        let service = Arc::clone(&service);
+        let handle = handle.to_owned();
+        std::thread::spawn(move || service.load_spectrum(&handle, index))
+    };
+    // One request occupies the only process slot.
+    let running = spectrum(&first.handle, 0);
+    observe_start
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the first request reached the provider");
+    // The same dataset is asked again and queues behind it. This is the request
+    // the user is now waiting for.
+    let waiting = spectrum(&first.handle, 0);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    // Then a request in the other dataset arrives.
+    let elsewhere = spectrum(&second.handle, 0);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let _ = release.send(());
+
+    assert!(
+        running
+            .join()
+            .expect("the running request finished")
+            .is_ok()
+    );
+    // The one this test exists for. Under a single session-wide ticket, the
+    // other dataset's arrival would have cancelled this one, throwing away a
+    // read for a row the user is still looking at.
+    waiting
+        .join()
+        .expect("the waiting request finished")
+        .expect("a request nobody has moved on from still runs");
+    elsewhere
+        .join()
+        .expect("the other dataset's request finished")
+        .expect("a request in another dataset runs on its own turn");
+}
+
+#[test]
+fn a_preview_that_finishes_after_its_dataset_is_gone_records_nothing() {
+    use std::sync::Arc;
+    use std::sync::mpsc;
+
+    let file = TestFile::new("late-reply");
+    let other = file.sibling("other.mzML");
+    let (started, observe_start) = mpsc::channel();
+    let (release, wait_for_release) = mpsc::channel();
+    let service = Arc::new(PreviewService::new(Box::new(BlockFirstProvider {
+        inner: FakeProvider::available(open_responses()),
+        started,
+        release: Mutex::new(Some(wait_for_release)),
+    })));
+    let first = service.accept_file(&file.path).expect("accepted");
+
+    let opening = {
+        let service = Arc::clone(&service);
+        let handle = first.handle.clone();
+        std::thread::spawn(move || service.open_preview(&handle))
+    };
+    observe_start
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the open reached the provider");
+    // The user picks another file while the read is still running.
+    let second = service.accept_file(&other).expect("accepted again");
+    let _ = release.send(());
+
+    // The work had already started, so it is not cancelled and its caller is
+    // answered.
+    opening
+        .join()
+        .expect("the open finished")
+        .expect("a read that had already started still completes");
+    // What it must not do is record anything. Preview facts under a dataset the
+    // session has let go of would sit under an identifier nothing can reach and
+    // nothing will ever clear.
+    assert!(!service.holds_preview_state(&first.handle));
+    assert!(
+        !service.holds_preview_state(&second.handle),
+        "and they must not land on the dataset that replaced it"
+    );
+    assert_eq!(service.dataset_count(), 1);
 }

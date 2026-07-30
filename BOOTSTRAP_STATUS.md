@@ -667,6 +667,54 @@ scientific acquisition. Rendered QA was not required and not performed: no
 frontend file, transfer object, command signature, capability or user-facing
 string changed. ProteoWizard was not executed.
 
+## Multi-dataset registry foundation, 2026-07-30
+
+ADR 0006 records the M1 multi-dataset workspace boundary, and the Rust side of
+that boundary now exists. A session owns an ordered `DatasetRegistry` of
+accepted mzML datasets keyed by the Windows filesystem identity the previous
+slice widened, with monotonic session-scoped identifiers that are never reused,
+insertion order, typed add and revocation outcomes, and a per-dataset runtime
+state holding a request epoch and either no preview or a complete one.
+
+Nothing about this is reachable from the product. No Tauri command was added or
+changed, no transfer object changed, no capability changed and no frontend file
+was touched. `accept_file` still empties the workspace before registering, so
+the session holds exactly one dataset and the webview holds exactly one
+`file-N` handle, unchanged in spelling and in lifetime. The entry point that
+adds a second dataset is compiled out of the shipped binary under `cfg(test)`:
+until the roster interface exists, a file the user cannot see, curate or remove
+would be a capability they never asked for and could not withdraw.
+
+Two defects a roster would otherwise have shipped with are closed. Spectrum
+supersession was one session-wide ticket, so a request in one dataset would have
+cancelled a request the user was still waiting for in another; it is now a
+per-dataset epoch. Preview facts lived in two maps written one after the other,
+which made a recorded generation with no rows, and rows with no record of which
+backend produced them, both representable; they now commit together under one
+lock, and an open that finishes after its dataset was revoked records nothing
+rather than leaving state under an identifier nothing can reach.
+
+Boundary behaviour is deliberately unchanged, including in the races. A request
+still waiting for its turn on a replaced selection still fails with
+`selection_superseded`; a stale handle still fails with `unknown_file_handle`;
+work that had already started is still not cancelled and its caller is still
+answered.
+
+Validation on the exact head: `cargo fmt --all --check`,
+`cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --locked --workspace --all-targets` (86 desktop tests, eleven of
+them new), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
+`pnpm test`, `pnpm build`. Nine mutations were introduced one at a time and
+each was caught by the test written for it: a duplicate minting a second
+identifier, the allocator rewinding on clear, revocation leaving the identity
+index behind, removal losing insertion order, debug output carrying the path,
+one session-wide request ticket, a late reply recreating preview state, one
+preview record for the whole session, and the picker accumulating datasets. The
+duplicate coverage uses a real Windows hard link through the production
+acceptance path; no scientific acquisition is used as a fixture. Rendered QA was
+not required and not performed: nothing the user can see changed. ProteoWizard
+was not executed.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.

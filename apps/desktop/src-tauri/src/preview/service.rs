@@ -28,30 +28,94 @@ use super::dto::{
 };
 use super::installation::InstallationIdentity;
 use super::selection::{
-    AcceptedFile, FileIdentity, FileRegistry, accept_mzml_file, file_identity,
-    lock_against_replacement,
+    AcceptedFile, DatasetId, DatasetRegistry, FileIdentity, RevocationReason, accept_mzml_file,
+    file_identity, lock_against_replacement, revalidate, selected_file_dto, unknown_dataset,
 };
+
+/// Everything the session knows about the datasets it holds.
+///
+/// One structure behind one lock, because removing a dataset has to reach its
+/// row and everything derived from it in the same breath. Split across two
+/// locks there would be a moment where a dataset is gone and its preview facts
+/// are not, and a reply arriving in that moment would find state to attach to.
+#[derive(Debug, Default)]
+struct Workspace {
+    registry: DatasetRegistry,
+    runtime: HashMap<DatasetId, DatasetRuntimeState>,
+}
+
+impl Workspace {
+    /// Removes every dataset and everything the session derived from them.
+    fn clear(&mut self, reason: RevocationReason) {
+        for id in self.registry.clear(reason) {
+            // Dropping the runtime state is what makes a request still waiting
+            // for its turn fail to find its epoch, and a reply that arrives
+            // afterwards fail to find its dataset.
+            self.runtime.remove(&id);
+        }
+    }
+
+    /// Starts a request for one dataset and hands back the epoch that names it.
+    ///
+    /// `None` when the dataset is not registered, which is a request for
+    /// something the session no longer has.
+    fn begin_request(&mut self, id: DatasetId) -> Option<u64> {
+        if !self.registry.contains(id) {
+            return None;
+        }
+        let state = self.runtime.entry(id).or_default();
+        state.request_epoch += 1;
+        Some(state.request_epoch)
+    }
+
+    /// Whether this request is still the newest one for a dataset that is still
+    /// there. Anything else means the user has moved on.
+    fn request_is_current(&self, id: DatasetId, epoch: u64) -> bool {
+        self.registry.contains(id)
+            && self
+                .runtime
+                .get(&id)
+                .is_some_and(|state| state.request_epoch == epoch)
+    }
+}
+
+/// What one dataset's session state is.
+#[derive(Debug, Default)]
+struct DatasetRuntimeState {
+    /// Counts the requests made for this dataset. A request that is still
+    /// waiting for the backend gate when a newer one arrives never starts: the
+    /// user has moved on, and launching a process for a row they left is
+    /// spending the machine on an answer nobody will see. Per dataset, so work
+    /// on one never cancels work on another.
+    request_epoch: u64,
+    preview: Option<DatasetPreviewState>,
+}
+
+/// What one open action established about one dataset.
+///
+/// The generation, the backend that read it and the rows a later spectrum is
+/// reconciled against, committed together. Held apart they made two states
+/// representable that must never occur: a recorded generation with no rows to
+/// reconcile against, and rows with no record of which backend produced them.
+#[derive(Debug, Clone)]
+struct DatasetPreviewState {
+    opened: OpenedPreview,
+    table_rows: Vec<TableRowFacts>,
+}
 
 /// The narrow set of operations the desktop application exposes.
 pub struct PreviewService {
     provider: Box<dyn PreviewProvider>,
-    files: FileRegistry,
-    /// What each open preview described, so a later spectrum load can be
-    /// refused rather than answered from a different one.
-    generations: Mutex<HashMap<String, OpenedPreview>>,
-    /// What the opened spectrum table said about each row, so a later selected
-    /// spectrum can be checked against the row the user actually clicked.
-    table_rows: Mutex<HashMap<String, Vec<TableRowFacts>>>,
+    workspace: Mutex<Workspace>,
     /// Held for the length of one backend operation, so this application runs
     /// at most one process at a time. Moving the wait to a blocking thread
     /// stopped it starving the async runtime; it did nothing to stop several
     /// reads of the same large file competing for the machine.
+    ///
+    /// Never taken while the workspace lock is held: this one is waited on for
+    /// as long as a backend process takes, and the workspace has to stay
+    /// answerable in the meantime.
     backend_gate: Mutex<()>,
-    /// The newest spectrum request. A request that is still waiting for the
-    /// gate when a newer one arrives never starts: the user has moved on, and
-    /// launching a process for a row they left is spending the machine on an
-    /// answer nobody will see.
-    spectrum_ticket: AtomicU64,
     /// How many times the installation in use has changed.
     ///
     /// Stamped onto every verdict under the same gate that serves it, so the
@@ -89,14 +153,31 @@ impl PreviewService {
     pub fn new(provider: Box<dyn PreviewProvider>) -> Self {
         Self {
             provider,
-            files: FileRegistry::new(),
-            generations: Mutex::new(HashMap::new()),
-            table_rows: Mutex::new(HashMap::new()),
+            workspace: Mutex::new(Workspace::default()),
             backend_gate: Mutex::new(()),
-            spectrum_ticket: AtomicU64::new(0),
             installation_generation: AtomicU64::new(0),
             resolved: Mutex::new(ObservedBackend::default()),
         }
+    }
+
+    /// The workspace, locked. Never held across backend work.
+    fn workspace(&self) -> std::sync::MutexGuard<'_, Workspace> {
+        self.workspace
+            .lock()
+            .expect("the workspace lock is never poisoned by user code")
+    }
+
+    /// The file a handle names, as it was accepted, or the refusal for a handle
+    /// that names nothing this session holds.
+    ///
+    /// A clone rather than a borrow, so the lock is released before the file is
+    /// revalidated or read.
+    fn remembered_file(&self, id: DatasetId) -> Result<AcceptedFile, PreviewErrorDto> {
+        self.workspace()
+            .registry
+            .get(id)
+            .map(|dataset| dataset.file().clone())
+            .ok_or_else(unknown_dataset)
     }
 
     /// Reports whether a usable backend is installed.
@@ -164,24 +245,78 @@ impl PreviewService {
     }
 
     /// Accepts one already-chosen path and registers it for later operations.
+    ///
+    /// The registry can hold several datasets; this entry point deliberately
+    /// keeps exactly one. Registering files the user cannot see, curate or
+    /// remove would hand the webview capabilities it never asked for and cannot
+    /// withdraw, which is what ADR 0005 refused and ADR 0006 keeps refusing
+    /// until the roster interface exists to make them visible.
     pub fn accept_file(&self, path: &Path) -> Result<SelectedFileDto, PreviewErrorDto> {
         let accepted = accept_mzml_file(path)?;
-        // A different file supersedes any spectrum still waiting for its turn
-        // on the old one, which nobody is going to look at now.
-        self.spectrum_ticket.fetch_add(1, Ordering::Relaxed);
-        // The previous handle is revoked by the registry, so its recorded
-        // generation is dead weight rather than something to keep.
-        self.generations
-            .lock()
-            .expect("the generation lock is never poisoned by user code")
-            .clear();
-        self.table_rows
-            .lock()
-            .expect("the table lock is never poisoned by user code")
-            .clear();
-        Ok(self.files.register(accepted))
+        let mut workspace = self.workspace();
+        // Everything the previous selection owned goes at once: its row, its
+        // preview facts, and the request epoch that lets a spectrum still
+        // waiting for its turn on it find out that nobody will look at the
+        // answer.
+        workspace.clear(RevocationReason::ReplacedBySelection);
+        let id = workspace.registry.add(accepted).id();
+        debug_assert_eq!(
+            workspace.registry.len(),
+            1,
+            "the picker replaces the selection; the roster is what adds to it"
+        );
+        let dataset = workspace
+            .registry
+            .get(id)
+            .expect("the dataset was registered a line ago");
+        Ok(selected_file_dto(id, dataset.file()))
+    }
+}
+
+/// The workspace behaviour this slice builds and nothing in production reaches.
+///
+/// Compiled out of the shipped binary on purpose. The roster interface (M1.2)
+/// is what will add a second dataset for real; until a user can see, curate and
+/// remove what the session holds, a production path that accumulates files
+/// would hand the webview capabilities it never asked for and cannot withdraw.
+/// Keeping these behind `cfg(test)` is what makes that a fact about the build
+/// rather than a promise about the call sites.
+#[cfg(test)]
+impl PreviewService {
+    /// Adds one accepted file without disturbing the datasets already held.
+    ///
+    /// Answers with the dataset the file is now known as. A file already in the
+    /// workspace answers with the row it is already on, described as it was
+    /// registered rather than as it was just named: two names for one file are
+    /// one dataset, and the one the user has is the one they added.
+    pub(super) fn add_dataset(&self, path: &Path) -> Result<SelectedFileDto, PreviewErrorDto> {
+        let accepted = accept_mzml_file(path)?;
+        let mut workspace = self.workspace();
+        let id = workspace.registry.add(accepted).id();
+        let dataset = workspace
+            .registry
+            .get(id)
+            .expect("the dataset was registered a line ago");
+        Ok(selected_file_dto(id, dataset.file()))
     }
 
+    /// How many datasets the session holds.
+    pub(super) fn dataset_count(&self) -> usize {
+        self.workspace().registry.len()
+    }
+
+    /// Whether the session is holding preview facts under this handle.
+    pub(super) fn holds_preview_state(&self, handle: &str) -> bool {
+        DatasetId::parse(handle).is_some_and(|id| {
+            self.workspace()
+                .runtime
+                .get(&id)
+                .is_some_and(|state| state.preview.is_some())
+        })
+    }
+}
+
+impl PreviewService {
     /// Loads metadata, run summary and the spectrum table for one open action.
     ///
     /// All three share a single discovery and capability probe, so opening a
@@ -191,7 +326,8 @@ impl PreviewService {
         // checked describes the moment the read actually begins rather than
         // the moment the request arrived.
         let running = self.enter_backend();
-        let file = self.files.resolve(handle)?;
+        let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
+        let file = revalidate(&self.remembered_file(id)?)?;
         let redactor = reporting_redactor(file.path());
         let operations = open_operations();
         // The three operations read the file separately. If it is rewritten
@@ -294,25 +430,30 @@ impl PreviewService {
             ));
         }
 
-        self.generations
-            .lock()
-            .expect("the generation lock is never poisoned by user code")
-            .insert(
-                handle.to_owned(),
-                OpenedPreview {
+        // One commit, under one lock, of facts that are only true together: the
+        // generation this was read at, the backend that read it, and the rows a
+        // later spectrum is reconciled against.
+        let mut workspace = self.workspace();
+        // The dataset can have been revoked while this ran: the workspace stays
+        // answerable throughout, which is the point of not holding it. A reply
+        // that arrives then records nothing. Writing it would leave the session
+        // holding preview facts for a dataset that no longer exists, under an
+        // identifier nothing can reach and nothing will ever clear.
+        if workspace.registry.contains(id) {
+            workspace.runtime.entry(id).or_default().preview = Some(DatasetPreviewState {
+                opened: OpenedPreview {
                     source: before,
                     generation,
                     installation,
                 },
-            );
-        self.table_rows
-            .lock()
-            .expect("the table lock is never poisoned by user code")
-            .insert(handle.to_owned(), table_rows);
+                table_rows,
+            });
+        }
+        drop(workspace);
 
         Ok(PreviewDto {
             installation_generation: generation,
-            file: file_dto(handle, &file),
+            file: selected_file_dto(id, &file),
             metadata: metadata.ok_or_else(|| missing("metadata"))?,
             run_summary: run_summary.ok_or_else(|| missing("run summary"))?,
             spectrum_table: spectrum_table.ok_or_else(|| missing("spectrum table"))?,
@@ -326,28 +467,42 @@ impl PreviewService {
         handle: &str,
         index: u64,
     ) -> Result<SelectedSpectrumOutcomeDto, PreviewErrorDto> {
-        let ticket = self.spectrum_ticket.fetch_add(1, Ordering::Relaxed) + 1;
+        let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
+        // Claimed before the wait, so a request that arrives after this one
+        // supersedes it. Per dataset: a spectrum chosen in one dataset says
+        // nothing about whether the user still wants one from another.
+        let epoch = self
+            .workspace()
+            .begin_request(id)
+            .ok_or_else(unknown_dataset)?;
         // Waiting first, so everything below describes the moment this read
         // begins. Checked after the wait, not before it: what matters is
         // whether the user has moved on by the time it would start.
         let running = self.enter_backend();
-        if self.spectrum_ticket.load(Ordering::Relaxed) != ticket {
-            return Err(PreviewErrorDto::new(
-                "selection_superseded",
-                "A newer spectrum was selected before this one started, so it was not read.",
-                false,
-            ));
-        }
-        let file = self.files.resolve(handle)?;
         // A selected spectrum is shown beside the metadata and the table from
         // the open action. If the file has changed since then, this spectrum
-        // would belong to a different run than everything around it.
-        let opened = self
-            .generations
-            .lock()
-            .expect("the generation lock is never poisoned by user code")
-            .get(handle)
-            .cloned();
+        // would belong to a different run than everything around it. Read in
+        // the same lock as the supersession check, so the preview facts belong
+        // to the request that was just found to be current.
+        let (remembered, preview) = {
+            let workspace = self.workspace();
+            if !workspace.request_is_current(id, epoch) {
+                return Err(superseded());
+            }
+            let remembered = workspace
+                .registry
+                .get(id)
+                .expect("a current request names a registered dataset")
+                .file()
+                .clone();
+            let preview = workspace
+                .runtime
+                .get(&id)
+                .and_then(|state| state.preview.clone());
+            (remembered, preview)
+        };
+        let file = revalidate(&remembered)?;
+        let opened = preview.as_ref().map(|preview| preview.opened.clone());
         // Two refusals, before anything is launched, and neither replaces the
         // other. The table's rows are what this spectrum is reconciled against,
         // and they were read by whichever backend was in use then; reconciling
@@ -426,6 +581,12 @@ impl PreviewService {
         {
             return Err(source_changed_since_preview());
         }
+        // Nothing is rechecked against the workspace from here on. A request
+        // that had already started is not cancelled by a later selection, and
+        // the rows this result is reconciled against were read above, under the
+        // same lock that found this request current -- so the comparison below
+        // is against the preview this spectrum actually belongs to, whatever
+        // has happened to the workspace since.
         match outcome {
             PreviewOutcome::Value(value) => match *value {
                 PreviewValue::SelectedSpectrum(spectrum) => {
@@ -433,12 +594,9 @@ impl PreviewService {
                     // If they disagree about which scan this index is, the row
                     // the user clicked and the panel beside it would describe
                     // different spectra, so the result is refused instead.
-                    let expected = self
-                        .table_rows
-                        .lock()
-                        .expect("the table lock is never poisoned by user code")
-                        .get(handle)
-                        .and_then(|rows| rows.get(index as usize).cloned());
+                    let expected = preview
+                        .as_ref()
+                        .and_then(|preview| preview.table_rows.get(index as usize).cloned());
                     if let Some(expected) = expected {
                         if expected.identity.reconcile(spectrum.identity()).is_err() {
                             return Err(PreviewErrorDto::new(
@@ -657,12 +815,17 @@ fn missing(what: &str) -> PreviewErrorDto {
     )
 }
 
-fn file_dto(handle: &str, file: &AcceptedFile) -> SelectedFileDto {
-    SelectedFileDto {
-        handle: handle.to_owned(),
-        file_name: file.file_name().to_owned(),
-        byte_length: file.byte_length(),
-    }
+/// What a spectrum request answers with once the user has moved on from it.
+///
+/// One kind for both ways that happens -- a newer spectrum chosen in the same
+/// dataset, and the dataset itself replaced -- because they are the same fact
+/// to the caller: the answer it asked for is no longer the one it wants.
+fn superseded() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "selection_superseded",
+        "A newer spectrum was selected before this one started, so it was not read.",
+        false,
+    )
 }
 
 fn section_title(kind: MetadataSectionKind) -> &'static str {
