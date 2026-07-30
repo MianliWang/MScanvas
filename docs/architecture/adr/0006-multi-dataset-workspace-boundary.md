@@ -131,6 +131,20 @@ records. The cost the earlier draft feared — a file the user cannot delete fro
 Explorer while MSCanvas lists it — is not paid, because the share mode is the
 permissive one.
 
+One narrower cost is paid, and is named here rather than discovered later. The
+lease asks for read access, and Windows will not grant a later open whose own
+share mode refuses to share that read. Renaming, deleting, replacing, reading
+and writing the file all still work — a writer that shares reads, which is what
+an in-place edit does, is unaffected — but a program that opens the file
+offering no sharing at all is refused for as long as a row names it, and the
+user's remedy is to remove the row. That is the same rule the release coverage
+uses to ask the operating system whether a lease is still held, so it is a
+property this decision knows it has. Narrowing the lease to an access mask the
+sharing rules exempt would remove it, at the price of no longer being the handle
+the identity was read through; that is a separate decision with its own evidence
+to gather, and M1.2 is where a roster of several held files makes it worth
+gathering.
+
 On Windows this is the whole guarantee: `FILE_ID_INFO` names an object, and an
 open handle keeps that object alive.
 

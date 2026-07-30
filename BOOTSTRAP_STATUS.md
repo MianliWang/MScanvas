@@ -796,6 +796,22 @@ go — so a path the picker refuses leaves the selection and its hold exactly as
 they were, and there is no window in which a released identity is free for the
 file being accepted to be given.
 
+One cost is paid and is recorded rather than left to be found, after automated
+review raised it and it was measured. The lease asks for read access, and
+Windows will not grant a later open whose own share mode refuses to share that
+read, so a program that opens the file offering no sharing at all is refused
+while a row names it. Measured against this head: an ordinary reader, a writer
+that shares reads — which is what an in-place edit does — a rename and a delete
+all still succeed while the lease is held; only the no-sharing open is refused,
+with `ERROR_SHARING_VIOLATION`. The suggested repair, narrowing the lease to an
+access mask the sharing rules exempt, was not taken here: it would stop the
+lease being the handle the identity was read through, which is the property that
+leaves no interval between establishing an identity and holding the object that
+owns it, and it would remove the rule the release proofs use to ask the
+operating system whether a handle is still open. ADR 0006 records it as a
+separate decision for M1.2, where a roster of several held files is what makes
+it worth the evidence.
+
 Nothing the user can reach changed. No Tauri command was added or changed, no
 transfer object, capability or frontend file was touched, no dependency moved,
 the `file-N` handle spelling is unchanged, and the session still holds exactly

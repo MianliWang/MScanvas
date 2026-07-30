@@ -59,9 +59,18 @@ impl FileIdentity {
 /// a read goes through, and it does not make the remembered path trustworthy:
 /// every use still canonicalises, reopens and revalidates. It is also not a
 /// lock. The handle is opened sharing read, write and delete, so the user and
-/// every other program may still rename, delete or replace the file while
-/// MSCanvas lists it -- a workspace row is a row, and removing one is the only
-/// thing that removes one.
+/// every other program may still rename, delete, replace, read and write the
+/// file while MSCanvas lists it -- a workspace row is a row, and removing one
+/// is the only thing that removes one.
+///
+/// One thing it does cost, named here rather than left to be found. This asks
+/// for read access, and Windows will not grant a later open whose own share
+/// mode refuses to share that read -- so a program that opens the file offering
+/// no sharing at all is refused while a row names it, and the remedy is to
+/// remove the row. A writer that shares reads, which is what an in-place edit
+/// does, is unaffected. It is also the rule the release tests use to ask the
+/// operating system whether a lease is still held. ADR 0006 records what
+/// narrowing the access mask would cost instead.
 ///
 /// Cloned by handle rather than by object: an `AcceptedFile` is cloned on every
 /// use, and reopening the file each time would be one more resolution of a path
