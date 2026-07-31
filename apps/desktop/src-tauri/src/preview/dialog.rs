@@ -343,12 +343,7 @@ mod windows_dialog {
     pub fn choose_installation_folder(
         owner: Option<isize>,
     ) -> Result<Option<PathBuf>, PreviewErrorDto> {
-        browse_for_folder(
-            owner,
-            "Choose the ProteoWizard installation folder",
-            "folder_picker_failed",
-            "That choice could not be read as a folder on this computer.",
-        )
+        browse_for_folder(owner, "Choose the ProteoWizard installation folder")
     }
 
     /// Shows the native folder picker and returns the folder of acquisitions to
@@ -367,25 +362,21 @@ mod windows_dialog {
     /// Must be called from a thread that can run a modal message loop; the
     /// Tauri command dispatches it onto the main thread.
     pub fn choose_mzml_folder(owner: Option<isize>) -> Result<Option<PathBuf>, PreviewErrorDto> {
-        browse_for_folder(
-            owner,
-            "Choose a folder containing .mzML files",
-            "folder_picker_failed",
-            "That choice could not be read as a folder on this computer.",
-        )
+        browse_for_folder(owner, "Choose a folder containing .mzML files")
     }
 
     /// The one native folder dialog, told what to ask for.
     ///
-    /// Both public operations are this with a different title. Sharing the
-    /// implementation is what keeps the flags identical between them -- real
-    /// filesystem directories only, no new-folder button, and the caller's
-    /// window as the owner -- rather than two copies that drift.
+    /// The title is the only thing that differs between the two operations, and
+    /// deliberately the only thing: sharing the implementation is what keeps
+    /// their flags identical -- real filesystem directories only, no new-folder
+    /// button, and the caller's window as the owner -- rather than two copies
+    /// that drift. A failure here is the same failure either way, because it is
+    /// the shell declining to resolve a choice to a filesystem path, which says
+    /// nothing about what the caller wanted the folder for.
     fn browse_for_folder(
         owner: Option<isize>,
         title: &str,
-        failure_kind: &str,
-        failure_summary: &str,
     ) -> Result<Option<PathBuf>, PreviewErrorDto> {
         // The resizable dialog style needs an initialised apartment. Tauri's
         // main thread already has one, so this is normally S_FALSE; it is called
@@ -448,7 +439,11 @@ mod windows_dialog {
         }
 
         if resolved == 0 {
-            return Err(PreviewErrorDto::new(failure_kind, failure_summary, true));
+            return Err(PreviewErrorDto::new(
+                "folder_picker_failed",
+                "That choice could not be read as a folder on this computer.",
+                true,
+            ));
         }
         let length = buffer.iter().position(|unit| *unit == 0).unwrap_or(0);
         if length == 0 {
