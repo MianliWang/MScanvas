@@ -112,6 +112,46 @@ describe("adopting what Rust holds", () => {
     expect(rowPresentation(reread, "file-0")).toBe("failed");
   });
 
+  it("keeps a selection built while a removal was unresolved", () => {
+    // The list stays interactive while a removal is in flight, so the next
+    // batch can already be picked by the time the reply lands. Collapsing to
+    // the row beside the gap would disable `Remove selected` on rows the user
+    // had just chosen.
+    const picked = rosterReducer(loaded("file-0", "file-1", "file-2", "file-3"), {
+      type: "rowPressed",
+      handle: "file-2",
+      modifiers: { ctrl: false, shift: false },
+    });
+    const batch = rosterReducer(picked, {
+      type: "rowPressed",
+      handle: "file-3",
+      modifiers: { ctrl: true, shift: false },
+    });
+
+    const answered = rosterReducer(batch, {
+      type: "datasetsRemoved",
+      result: removeResult(["file-0"], [], "file-1", "file-2", "file-3"),
+    });
+
+    expect(selection(answered)).toEqual(["file-2", "file-3"]);
+  });
+
+  it("falls back to the row beside the gap when the rows picked are the rows that went", () => {
+    const picked = rosterReducer(loaded("file-0", "file-1", "file-2"), {
+      type: "rowPressed",
+      handle: "file-1",
+      modifiers: { ctrl: false, shift: false },
+    });
+
+    const answered = rosterReducer(picked, {
+      type: "datasetsRemoved",
+      result: removeResult(["file-1"], [], "file-0", "file-2"),
+    });
+
+    expect(selection(answered)).toEqual(["file-2"]);
+    expect(answered.focused).toBe("file-2");
+  });
+
   it("keeps where the user was and what they had picked", () => {
     // Reading the list back is not a reason to move the keyboard to the top of
     // it or to empty a selection the user built -- which would also disable

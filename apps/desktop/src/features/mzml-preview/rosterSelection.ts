@@ -244,20 +244,6 @@ function survivingHandle(handle: string | null, live: ReadonlySet<string>): stri
   return handle !== null && live.has(handle) ? handle : null;
 }
 
-/** The selection, keeping only the rows the roster still holds. */
-function prunedSelection(
-  selected: ReadonlySet<string>,
-  live: ReadonlySet<string>,
-): Set<string> {
-  const kept = new Set<string>();
-  for (const handle of selected) {
-    if (live.has(handle)) {
-      kept.add(handle);
-    }
-  }
-  return kept;
-}
-
 function prunedRowState(
   rowState: ReadonlyMap<string, RowPresentation>,
   live: ReadonlySet<string>,
@@ -353,7 +339,7 @@ export function rosterReducer(state: RosterState, action: RosterAction): RosterS
         datasets: action.roster.datasets,
         capacity: action.roster.capacity,
         focused,
-        selected: prunedSelection(state.selected, live),
+        selected: keptIn(state.selected, live),
         anchor: survivingHandle(state.anchor, live) ?? focused,
         active: survivingHandle(state.active, live),
         rowState: prunedRowState(state.rowState, live),
@@ -411,12 +397,17 @@ export function rosterReducer(state: RosterState, action: RosterAction): RosterS
     case "datasetsRemoved": {
       const live = handlesOf(action.result.roster.datasets);
       const survivor = nearestSurvivor(state.datasets, live, state.focused);
+      // The list stays interactive while a removal is unresolved, so the user
+      // can have built the next batch already. Anything of theirs that survives
+      // is theirs to keep; the row beside the gap is only what to fall back to
+      // when the rows they had picked are the rows that went.
+      const kept = keptIn(state.selected, live);
       return {
         datasets: action.result.roster.datasets,
         capacity: action.result.roster.capacity,
         focused: survivor,
         anchor: survivor,
-        selected: survivor === null ? new Set() : new Set([survivor]),
+        selected: kept.size > 0 ? kept : survivor === null ? new Set() : new Set([survivor]),
         // Removing the row a preview belongs to takes the preview with it, and
         // nothing else is opened in its place: reading another acquisition is
         // an action the user takes.
