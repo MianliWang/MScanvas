@@ -1345,11 +1345,29 @@ excluded row is there; and a search that matched nothing left the roster with no
 focused row at all, so clearing it brought the rows back with `Preview focused`
 still disabled and Enter and Space doing nothing until an arrow was pressed.
 
+One residual of the blocking repair was found by the automated reviewer and is
+repaired too: the record of which row held the keyboard was never cleared when
+the keyboard left the list, and an addition replaces the selection, so a kept
+row a user had tabbed away from could leave the projection during the very
+picker request whose restoration must not be taken. It is now cleared on the way
+out — but only when the keyboard genuinely went somewhere, which is what a
+`relatedTarget` outside the list means. A `relatedTarget` of `null` is what an
+unmounting row looks like, and that is the case the record exists for.
+
+jsdom cannot answer which of those a browser actually reports, so the rendered
+check was asked instead. Unpinning a focused row in WebView2 produced two
+`focusout` events, one naming another row inside the list and one `null`;
+neither clears the record, and focus ended on the row that took the vanished
+one's place rather than on the body.
+
 Nine further mutations cover these repairs and all nine are caught. Two were
 replaced after surviving: one mutated a grid track and one a colour token, and
 neither is observable in jsdom, so both are now pinned through the CSSOM the way
-the narrow-layout rules already were. One mutation is recorded as equivalent
-rather than caught: remembering the roster's logical focused handle instead of
+the narrow-layout rules already were. Two mutations are recorded as equivalent
+rather than caught. Clearing the record on a `focusout` that names nothing has
+no test that can reach it, because jsdom fires no `focusout` when a focused node
+is removed; the rendered check above covers the behaviour instead. And
+remembering the roster's logical focused handle instead of
 the row that actually took the keyboard cannot diverge through the interface,
 because clicking a row sets the logical focus in the same event that moves the
 keyboard to it. The more precise expression is kept anyway.

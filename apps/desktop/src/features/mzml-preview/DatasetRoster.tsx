@@ -141,9 +141,10 @@ export function DatasetRoster({
     }
     const orphaned = keyboardOn.current;
     if (active !== document.body || orphaned === null || projection.handles.has(orphaned)) {
-      // Either the keyboard is somewhere of the user's own choosing, or the row
-      // that held it is still on screen and has simply been blurred by
-      // something that is not this component's business.
+      // Either the keyboard is somewhere of the user's own choosing, or nothing
+      // was left behind here to recover, or the row that held it is still on
+      // screen and has simply been blurred by something that is not this
+      // component's business.
       return;
     }
     keyboardOn.current = null;
@@ -470,6 +471,18 @@ export function DatasetRoster({
           aria-labelledby="dataset-roster-heading"
           aria-multiselectable="true"
           className="dataset-roster-list"
+          onBlur={(event) => {
+            // Only when the keyboard has genuinely gone somewhere else. A
+            // `relatedTarget` outside the list is a user moving on, and what
+            // they left behind stops being this component's to recover. A null
+            // one is what an unmounting row looks like -- there is nowhere for
+            // focus to have gone -- and that is the case the record exists for,
+            // so it is kept.
+            const next = event.relatedTarget;
+            if (next instanceof Node && !event.currentTarget.contains(next)) {
+              keyboardOn.current = null;
+            }
+          }}
           onFocus={(event) => {
             // Recorded as it happens rather than at the next commit. A row can
             // be focused and then unmounted without a render in between, and

@@ -93,10 +93,16 @@ function Harness({
 }
 
 /** The real component over a state built by hand, for the cases a keystroke cannot reach. */
-function Fixed({ state }: { readonly state: RosterState }) {
+function Fixed({
+  state,
+  canAddFiles = true,
+}: {
+  readonly state: RosterState;
+  readonly canAddFiles?: boolean;
+}) {
   return (
     <DatasetRoster
-      canAddFiles
+      canAddFiles={canAddFiles}
       canMutate
       canPreview
       dispatch={() => undefined}
@@ -394,6 +400,54 @@ describe("looking at the roster through a search and a sort", () => {
 
     expect(document.activeElement).toBe(document.body);
     expect(rows()).not.toContain(document.activeElement);
+  });
+
+  it("forgets the row it was watching once the keyboard has gone somewhere else", () => {
+    // The same defect one step further on. Adding files replaces the selection,
+    // so a kept row the user tabbed away from can leave the projection during
+    // the very picker request whose restoration must not be taken -- and then
+    // the recovery would be looking at a row that really has gone, for a user
+    // who really has left.
+    // A kept row: selected, and outside the search that is keeping it visible.
+    const kept = rosterReducer(
+      rosterReducer(seeded(4), {
+        type: "rowPressed",
+        handle: "file-2",
+        modifiers: { ctrl: false, shift: false },
+      }),
+      { type: "searchChanged", query: "qc_pool" },
+    );
+    const { rerender } = render(<Fixed state={kept} />);
+    screen.getByRole("option", { name: /Blank_03\.mzML/ }).focus();
+
+    const add = screen.getByRole("button", { name: "Add files…" });
+    add.focus();
+    fireEvent.click(add);
+    rerender(<Fixed canAddFiles={false} state={kept} />);
+    blurAsABrowserWould(add);
+
+    // The addition replaces the selection, so the row the user tabbed away from
+    // leaves the projection during the very request whose restoration must not
+    // be taken.
+    const added = rosterReducer(kept, {
+      type: "filesAdded",
+      result: {
+        roster: {
+          datasets: [...kept.datasets, { handle: "file-9", fileName: "QC_pool_09.mzML", byteLength: 1 }],
+          capacity: 1_024,
+        },
+        outcomes: [
+          { outcome: "added", dataset: { handle: "file-9", fileName: "QC_pool_09.mzML", byteLength: 1 } },
+        ],
+      },
+    });
+    rerender(<Fixed canAddFiles={false} state={added} />);
+
+    expect(screen.queryByRole("option", { name: /Blank_03\.mzML/ })).toBeNull();
+    expect(document.activeElement).toBe(document.body);
+
+    rerender(<Fixed state={added} />);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add files…" }));
   });
 
   it("still reports a row's own state while a search is keeping it visible", () => {
