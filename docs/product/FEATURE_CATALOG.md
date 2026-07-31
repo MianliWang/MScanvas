@@ -26,6 +26,11 @@ This catalog is the concise feature index. Detailed semantics remain in [`PROJEC
 | WSP-009 | Search/sort/filter | P1 | Handles large batches without obscuring selected/running items. |
 | WSP-010 | Restore workspace | P1 | Restores logical state safely and marks missing files rather than deleting rows silently. |
 
+Staging for the two folder features, so the acceptance above is read as a target rather than as behavior:
+
+- **WSP-002 — Planned.** M1.4.0 builds the private discovery foundation ([ADR 0007](../architecture/adr/0007-logical-acquisition-discovery-and-folder-traversal.md)); M1.4.1 will expose `Add mzML folder…`. Directory-formatted acquisitions remain evidence-gated: MSCanvas recognizes none of them today, and will only claim one once this repository can convert it.
+- **WSP-003 — Planned** after the same discovery boundary is product-reachable.
+
 ## Acquisition overview and viewer
 
 | ID | Feature | Priority | Acceptance summary |

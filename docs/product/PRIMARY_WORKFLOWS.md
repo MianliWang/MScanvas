@@ -30,13 +30,15 @@ the selected file: it stays one click from being reopened.
 
 ## WF-002 — Add and curate a batch
 
-1. Drop files/folders or use Add files/Add folder.
+1. Use `Add files…` to choose one or many mzML files.
 2. Discovery represents each logical acquisition once.
 3. Rows progressively show format, size and readiness.
-4. User selects/removes items or activates Clear list.
+4. User searches, sorts, selects/removes items or activates Clear workspace.
 
 **Success:** the intended logical batch is visible.
 **Invariant:** removal and clearing never delete source data.
+
+**Planned follow-ups**, none of which the application does yet: `Add mzML folder…`, Explorer drag-and-drop, and directory-formatted acquisition discovery. The private traversal foundation the first of those needs exists as of M1.4.0; see [ADR 0007](../architecture/adr/0007-logical-acquisition-discovery-and-folder-traversal.md).
 
 ## WF-003 — Inspect an acquisition
 

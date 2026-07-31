@@ -1464,6 +1464,88 @@ three known development messages, with no page error and no unhandled
 rejection. The only error-matching line in the Rust output is the non-zero exit
 this check itself caused by terminating the process.
 
+## Private folder-discovery foundation, 2026-07-31
+
+**MSCanvas cannot add a folder after this change.** What exists is the
+traversal a folder action will need, settled and tested before anything can
+reach it: [ADR 0007](docs/architecture/adr/0007-logical-acquisition-discovery-and-folder-traversal.md)
+and a private Rust module. No Tauri command, transfer object, capability,
+frontend method, picker or visible action was added or modified; the module is
+reachable from nothing but its own tests, which is why it carries an explicit
+`dead_code` expectation that M1.4.1 will have to remove.
+
+**Exact scope.** Recursive discovery of mzML *files* under one chosen folder,
+returning private candidates. Directory-formatted acquisitions are recognized
+as nothing: there is no vendor enum, no `.d` or `.raw` case and no unconstructed
+future variant waiting to be filled in, because this repository has no evidence
+it can convert one and a taxonomy is a claim. Discovery accepts nothing, leases
+nothing, registers nothing and never runs the acceptance boundary — every
+candidate is re-opened, re-identified and re-decided by `accept_mzml_file` when
+a later slice offers it.
+
+**Root authority and reparse posture.** A chosen root is opened as a live
+directory handle and enumerated through that handle, so entries describe the
+object the walk is standing in rather than whatever a path string resolves to
+on the next read. Containment is not a path-prefix test — path canonicalization
+would answer a question about text, and the question is about objects. A root
+that is itself a reparse point is refused outright. Every child entry carrying a
+reparse tag — junction, symbolic link, mount point, cloud placeholder alike, no
+tag whitelist — is skipped and counted, and its subtree is never enumerated. A
+child directory is opened with `FILE_FLAG_OPEN_REPARSE_POINT` and its 128-bit
+identity compared against what its parent enumerated, so a name re-pointed
+between those two moments is refused rather than descended into. Hidden, System
+and dot-prefixed *ordinary* entries are not skipped: a user who pointed at a
+folder asked for what is in it, and skipping by name or attribute would silently
+omit their data. UNC, mapped and remote roots are refused; this slice makes no
+claim about identity on one.
+
+**Budgets and order.** Four named limits bound the walk — depth 32, entries
+200,000, directories 20,000 and candidates 1,024 (the workspace capacity, so
+discovery never proposes more files than a session could hold). Reaching one
+truncates and says which, keeping what was already found; a result reports
+incompleteness once, covering limits, skipped reparse entries and unreadable
+subtrees together. Order is this application's rather than the filesystem's: a
+level's own files precede the files below it, each group sorted by UTF-16 code
+unit, ordinal and not case-folded, so the same tree discovers the same way twice
+on any machine. The traversal is an explicit stack, not recursion — how much
+native stack the process uses is not a decision a directory tree gets to make.
+
+**Windows-only, and why.** Off Windows the entry point returns
+`platform_unavailable` rather than a weaker walk. The guarantees above rest on a
+no-following open and a stable file identity, which this project has no
+dependency-free way to obtain elsewhere; ADR 0006 made the same call about
+identity leases for the same reason.
+
+**Privacy.** Nothing path-bearing prints a path. A candidate's `Debug` is
+`<opaque-discovered-candidate>`, an error's is its kind alone, and a summary is
+counts. Each candidate keeps its location under the chosen root so that two
+files called `sample.mzML` can be told apart later — ADR 0007 approves showing
+that relative context only when names actually collide.
+
+**Tests.** 200 tests in the desktop crate, 71 of them discovery: 45 policy tests
+against a fake filesystem that can present a cycle, answer in a different order
+every time, or hand back a child that is no longer itself; 12 record-decoding
+tests over malformed `FILE_ID_EXTD_DIR_INFO` buffers; and 26 against real
+`%TEMP%` trees on NTFS. The central claim is one of those — a junction planted
+in the chosen folder, pointing at a directory outside it, yields the inside file
+only, one counted reparse skip and one directory entered. A junction as the root
+is refused. A child directory deleted and re-created under the same name between
+enumeration and open is refused by identity, as is one replaced by a junction or
+by a file. A 6,000-deep chain is walked to the bottom without a call stack. No
+real acquisition, vendor data or user folder was touched, and no ProteoWizard
+process was started: discovery never reaches the backend at all.
+
+**Mutations.** All 24 named mutations were introduced, run and restored; none
+was committed. Every one was caught by a discriminating test, including the four
+that only a real filesystem can answer — root reparse accepted, hidden directory
+skipped, System directory skipped and child identity mismatch ignored — and the
+recursive rewrite, which overflows its stack on the 6,000-deep chain.
+
+**Rendered QA was exempted, and honestly so.** This change has no rendered
+state to check: no pixel, no DOM node and no command changes. Every claim above
+is a Rust test on this machine. The rendered evidence for folder ingestion is
+owed by M1.4.1, when there is finally a button to press.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.
