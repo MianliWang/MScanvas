@@ -67,6 +67,15 @@ export interface WorkspaceNotice {
   readonly details: readonly string[];
   /** How many more items there were than the details name. */
   readonly more: number;
+  /**
+   * Which account this is, counted from the first.
+   *
+   * Two actions of the same shape say the same sentence, and a live region
+   * whose text does not change is a region with nothing to announce. This is
+   * what lets the spoken half differ when the words do not. Zero until the hook
+   * stamps it, because only the hook knows how many there have been.
+   */
+  readonly sequence: number;
 }
 
 /** The most per-item details any one notice spells out. */
@@ -112,6 +121,7 @@ export function describeAddResult(result: WorkspaceAddResult): WorkspaceNotice {
     message: parts.join(" "),
     details: details.slice(0, MAX_NOTICE_DETAILS),
     more: Math.max(0, details.length - MAX_NOTICE_DETAILS),
+    sequence: 0,
   };
 }
 
@@ -130,6 +140,7 @@ export function describeRemoveResult(result: WorkspaceRemoveResult): WorkspaceNo
     message: parts.join(" "),
     details: [],
     more: 0,
+    sequence: 0,
   };
 }
 
@@ -139,6 +150,7 @@ export function describeClear(removed: number): WorkspaceNotice {
     message: `Cleared ${plural(removed, "file")} from the list. The files on disk were not changed.`,
     details: [],
     more: 0,
+    sequence: 0,
   };
 }
 

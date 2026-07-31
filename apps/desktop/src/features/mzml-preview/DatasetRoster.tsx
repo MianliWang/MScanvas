@@ -251,12 +251,14 @@ export function DatasetRoster({
             // change discards what it read, and the marker must not go on
             // claiming a preview nobody can see -- least of all in the hidden
             // text, which is the whole of what a screen reader is told.
-            const reading = state.active === dataset.handle && presentation === "opening";
+            // The bar and the glyph say one thing between them, so they follow
+            // one condition. A row being read says so in words instead: the
+            // "Reading…" label beside it, which needs no colour either.
             const showing = state.active === dataset.handle && presentation === "loaded";
             return (
               <li
                 aria-selected={selected}
-                className={`dataset-row${selected ? " is-selected" : ""}${reading || showing ? " is-active" : ""}`}
+                className={`dataset-row${selected ? " is-selected" : ""}${showing ? " is-active" : ""}`}
                 data-handle={dataset.handle}
                 key={dataset.handle}
                 onClick={(event) => {

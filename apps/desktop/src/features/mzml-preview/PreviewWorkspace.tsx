@@ -39,8 +39,12 @@ export function PreviewWorkspace() {
 
   // Curating the workspace is not backend work, so it stays available when no
   // ProteoWizard is installed. What it waits for is a picker already on screen,
-  // and an installation request whose own modal dialog is open.
-  const canAddFiles = !workspace.backendBusy && !workspace.pickerBusy;
+  // an installation request whose own modal dialog is open, and a workspace
+  // change that has not been answered yet -- the last because two mutations in
+  // flight at once let an older reply's roster snapshot overwrite a newer one's,
+  // and Rust serialises them anyway, so waiting costs a moment and no more.
+  const canAddFiles =
+    !workspace.backendBusy && !workspace.pickerBusy && !workspace.workspaceBusy;
   // One viewer read at a time. Rust supersedes an older open of one dataset
   // anyway; this is what stops a queue of them forming behind the single
   // backend gate in the first place.
@@ -168,6 +172,14 @@ export function PreviewWorkspace() {
       </p>
       <p aria-live="polite" className="visually-hidden">
         {workspace.workspaceNotice === null ? "" : announceNotice(workspace.workspaceNotice)}
+        {/* A trailing space that alternates with each account. Two removals of
+            one row say the same sentence, and React writes nothing into a
+            region whose string is unchanged -- so the second action would be
+            announced nowhere, which is the case this region exists for. The
+            space itself is not spoken. */}
+        {workspace.workspaceNotice !== null && workspace.workspaceNotice.sequence % 2 === 1
+          ? " "
+          : ""}
       </p>
 
       <main className="workspace-layout">
@@ -290,9 +302,9 @@ export function PreviewWorkspace() {
  */
 function announceNotice(notice: WorkspaceNotice): string {
   const said = `Workspace: ${notice.message}`;
-  return notice.more === 0
-    ? said
-    : `${said} ${formatCount(notice.more)} more are listed on screen.`;
+  // `more` counts the items the notice did not spell out, so saying they are on
+  // screen would be the opposite of what the notice says beside it.
+  return notice.more === 0 ? said : `${said} ${formatCount(notice.more)} more are not listed.`;
 }
 
 function announce(workspace: ReturnType<typeof usePreviewWorkspace>): string {
@@ -309,6 +321,11 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>): string {
       // of this window, so until the list has been read that is a claim this
       // side cannot make.
       return "Reading the workspace list.";
+    }
+    if (rosterLoad.status === "failed" && roster.datasets.length === 0) {
+      // Nor after the read failed, which is the same ignorance by another
+      // route -- and the failure itself is worth hearing.
+      return `The workspace list could not be read. ${rosterLoad.error.summary}`;
     }
     return roster.datasets.length === 0
       ? "The workspace is empty."

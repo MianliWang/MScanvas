@@ -249,7 +249,8 @@ button:disabled {
 /* A bar down the leading edge, which is a shape rather than a shade: the row
    whose preview is on screen has to be distinguishable from the selected rows
    in greyscale and in high contrast, and the glyph beside it says the same
-   thing again. */
+   thing again -- both follow one condition, so neither can appear without the
+   other. A row that is only being read says so in words instead. */
 .dataset-row.is-active {
   box-shadow: inset 3px 0 0 var(--color-accent);
 }

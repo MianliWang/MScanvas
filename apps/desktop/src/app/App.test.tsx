@@ -1229,6 +1229,127 @@ describe("the session workspace roster", () => {
     }
   });
 
+  it("starts no second workspace change while one is unresolved", async () => {
+    // Two in flight together let the older reply's roster snapshot overwrite
+    // the newer one's: a clear answered after an add would drop a row Rust
+    // still holds and take away a preview started for it. Rust serialises the
+    // two behind one gate anyway, so waiting costs a moment and no more.
+    const clearing = deferred<WorkspaceRoster>();
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      clearWorkspace: () => clearing.promise,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    });
+    expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
+
+    clearing.resolve({ datasets: [], capacity: 1_024 });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
+    });
+  });
+
+  it("announces a workspace action that repeats the one before it", async () => {
+    // Two removals of one row say the same sentence, and React writes nothing
+    // into a region whose string is unchanged — so the second action would be
+    // announced nowhere, which is the case that region exists for.
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile, secondFile, thirdFile],
+    });
+    renderApp(api);
+    const spoken = () =>
+      [...document.querySelectorAll("[aria-live='polite']")]
+        .map((region) => region.textContent)
+        .join("|");
+
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(2);
+    });
+    const afterFirst = spoken();
+    expect(afterFirst).toContain("Removed 1 file from the list.");
+
+    fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(1);
+    });
+
+    // The same words, and still a change for a screen reader to notice.
+    expect(spoken()).toContain("Removed 1 file from the list.");
+    expect(spoken()).not.toBe(afterFirst);
+  });
+
+  it("says the unlisted items are unlisted", async () => {
+    const api = createFakePreviewApi({
+      pickedFiles: [
+        selectedFile,
+        { rejected: "a.mzXML" },
+        { rejected: "b.mzXML" },
+        { rejected: "c.mzXML" },
+        { rejected: "d.mzXML" },
+        { rejected: "e.mzXML" },
+      ],
+    });
+    await openTheFile(api);
+
+    await screen.findByText("2 more not listed here.", VISIBLE);
+    const spoken = [...document.querySelectorAll("[aria-live='polite']")]
+      .map((region) => region.textContent)
+      .join(" ");
+    // What the notice does not list is not on screen, so the spoken half must
+    // not say it is.
+    expect(spoken).toContain("2 more are not listed.");
+    expect(spoken).not.toContain("listed on screen");
+  });
+
+  it("does not say the workspace is empty when its list could not be read", async () => {
+    const api = createFakePreviewApi({
+      roster: () => Promise.reject(previewError({ kind: "preview_worker_unavailable" })),
+    });
+    renderApp(api);
+
+    expect(await screen.findByText("The workspace list could not be read")).toBeVisible();
+    const spoken = [...document.querySelectorAll("[aria-live='polite']")]
+      .map((region) => region.textContent)
+      .join(" ");
+    expect(spoken).toContain("The workspace list could not be read.");
+    expect(spoken).not.toContain("The workspace is empty.");
+  });
+
+  it("marks no row as shown while one is only being read", async () => {
+    // The bar and the glyph are one statement in two encodings, so neither may
+    // appear without the other. A row being read says so in words.
+    const open = deferred<ReturnType<typeof buildPreview>>();
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      preview: () => open.promise,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+
+    const row = await screen.findByRole("option", { name: /Reading…/ });
+    expect(row.className).not.toContain("is-active");
+    expect(row).not.toHaveTextContent("▸");
+    expect(within(row).queryByText("Showing,")).toBeNull();
+
+    open.resolve(buildPreview(3));
+
+    await waitFor(() => {
+      expect(rosterRow(/QC_pool_01\.mzML/)).toHaveTextContent("▸");
+    });
+    expect(rosterRow(/QC_pool_01\.mzML/).className).toContain("is-active");
+  });
+
   it("marks a row whose file was replaced, without removing it", async () => {
     const api = createFakePreviewApi({
       initialDatasets: [selectedFile],

@@ -176,6 +176,19 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const [roster, dispatchRoster] = useReducer(rosterReducer, initialRosterState);
   const [rosterLoad, setRosterLoad] = useState<RosterLoadState>({ status: "loading" });
   const [workspaceNotice, setWorkspaceNotice] = useState<WorkspaceNotice | null>(null);
+  /**
+   * How many accounts of a workspace action there have been.
+   *
+   * Two actions of the same shape say the same sentence, and a live region
+   * whose text does not change has nothing to announce. Stamping each account
+   * with its place in the sequence is what lets the spoken half differ when the
+   * words do not.
+   */
+  const noticeSequence = useRef(0);
+  const showWorkspaceNotice = useCallback((notice: WorkspaceNotice) => {
+    noticeSequence.current += 1;
+    setWorkspaceNotice({ ...notice, sequence: noticeSequence.current });
+  }, []);
   const [focusAddFilesToken, setFocusAddFilesToken] = useState(0);
   /**
    * The roster where a promise handler can read it.
@@ -706,7 +719,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   }, [activateDataset]);
 
   const addFiles = useCallback(() => {
-    if (pickerBusyRef.current) {
+    // One workspace change at a time. Two in flight together let the older
+    // reply's roster snapshot overwrite the newer one's, and Rust serialises
+    // them behind one gate regardless, so this waits for a moment rather than
+    // for anything.
+    if (pickerBusyRef.current || workspaceBusyRef.current) {
       return;
     }
     const startedAt = now();
@@ -729,7 +746,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           outcome.outcome === "added" ? [outcome.dataset.handle] : [],
         );
         dispatchRoster({ type: "filesAdded", result });
-        setWorkspaceNotice(describeAddResult(result));
+        showWorkspaceNotice(describeAddResult(result));
         // At most one read, and only into a workspace that had nothing in it.
         // This is what keeps one picker operation costing one process rather
         // than one per file, while a first-run session still ends up looking at
@@ -758,7 +775,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           setPickerBusy(false);
         }
       });
-  }, [api, loadPreview]);
+  }, [api, loadPreview, showWorkspaceNotice]);
 
   const removeSelected = useCallback(() => {
     const handles = [...rosterRef.current.selected];
@@ -787,7 +804,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           clearVisiblePreview();
         }
         dispatchRoster({ type: "datasetsRemoved", result });
-        setWorkspaceNotice(describeRemoveResult(result));
+        showWorkspaceNotice(describeRemoveResult(result));
         if (result.roster.datasets.length === 0) {
           setFocusAddFilesToken((token) => token + 1);
         }
@@ -803,7 +820,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           setWorkspaceBusy(false);
         }
       });
-  }, [api, clearVisiblePreview]);
+  }, [api, clearVisiblePreview, showWorkspaceNotice]);
 
   const clearList = useCallback(() => {
     if (workspaceBusyRef.current || rosterRef.current.datasets.length === 0) {
@@ -821,7 +838,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         }
         clearVisiblePreview();
         dispatchRoster({ type: "workspaceCleared", roster: loaded });
-        setWorkspaceNotice(describeClear(removed));
+        showWorkspaceNotice(describeClear(removed));
         setFocusAddFilesToken((token) => token + 1);
       })
       .catch((cause: unknown) => {
@@ -835,7 +852,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           setWorkspaceBusy(false);
         }
       });
-  }, [api, clearVisiblePreview]);
+  }, [api, clearVisiblePreview, showWorkspaceNotice]);
 
   const dismissPickerError = useCallback(() => {
     setPickerError(null);
