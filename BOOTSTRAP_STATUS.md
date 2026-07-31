@@ -1669,28 +1669,44 @@ files were found in that folder" is said only by a scan that described the whole
 folder; a scan that stopped short says "No files were added, and the scan was
 incomplete" instead.
 
-**Tests.** 235 tests in the desktop crate, 233 passing and 2 ignored by default
+**Tests.** 236 tests in the desktop crate, 234 passing and 2 ignored by default
 because they need the local administrative share, counted with
-`cargo test --lib -- --list`. The frontend has 333 tests across 12 files. The new
+`cargo test --lib -- --list`. The frontend has 334 tests across 12 files. The new
 Rust coverage is the discovery-to-acceptance identity join, both reload
 orderings, a scan superseded by a roster read and by an emptied list, a scan
 that survives a look that decides nothing, collision context appearing and
 disappearing, the shallow-end truncation, every discovery refusal mapping to a
 kind of its own, a real junction under a real chosen folder yielding nothing
-from the other side, and the eleven-command boundary. The concurrency tests are
-driven by channels around a controlled walk rather than by sleeping. No real
-acquisition, vendor data or user folder was touched, and no ProteoWizard process
-was started.
+from the other side, the eleven-command boundary, and that the scan limits and summary fields are
+spelled on the Rust side the way the frontend's contract file reads them — in
+both directions, including the two private counters that must not be there. The
+concurrency tests are driven by channels around a controlled walk rather than by
+sleeping. No real acquisition, vendor data or user folder was touched, and no
+ProteoWizard process was started.
 
 **Mutations.** 36 named mutations were introduced, run and restored; none was
-committed. All 36 are caught by a discriminating test. One survived its first
-run and is recorded here because the repair was to the test rather than to the
-product: folding the collision context into the name sort produced the same
-order as the correct comparator, because the fixture's contexts happened to sort
-the same way the session held them. The fixture now holds them in the opposite
-order, so the two comparators disagree and the mutation is caught. Three further
-anchors had drifted after `rustfmt` reflowed the lines they named; they were
-re-anchored and re-run rather than reported as evidence.
+committed. All 36 are caught by a discriminating test, and the whole set was run
+again on the delivered head after the review repairs rather than only on the
+head that existed when it was written.
+
+One survived its first run and is recorded here because the repair was to the
+test rather than to the product: folding the collision context into the name
+sort produced the same order as the correct comparator, because the fixture's
+contexts happened to sort the same way the session held them. The fixture now
+holds them in the opposite order, so the two comparators disagree and the
+mutation is caught. Three further anchors had drifted after `rustfmt` reflowed
+the lines they named; they were re-anchored and re-run rather than reported as
+evidence.
+
+**What review found.** Three findings, each repaired with its own commit and its
+own test. The workspace list's own `Try reading it again` was the one route to a
+roster read that stayed enabled during an import, and a roster read advances the
+mutation generation — so pressing it would have superseded the very import the
+user was waiting for. The shared folder dialog carried a failure kind and
+message as parameters that both callers passed identically, which suggested the
+two operations fail differently when they do not. And nothing pinned the wire
+spelling of the scan limits or the summary's fields between serde and the
+frontend's closed union, where a disagreement would be silent in the worst way.
 
 **Rendered Windows QA is still owed and is not claimed here.** Every statement
 above is an automated test on this machine. Driving a native modal folder dialog
