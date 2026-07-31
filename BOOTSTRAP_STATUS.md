@@ -1035,18 +1035,33 @@ by automated tests instead — adding files with no usable backend leaves the
 roster fully usable, reads nothing, and says that ProteoWizard is needed to read
 a file rather than to curate the list.
 
-One crash was seen once, and is recorded because it was seen rather than as a
-finding about this change. The application exited with `0xc000041d` — an
-exception inside a window-procedure callback — while the file picker was being
-driven, at a moment when a killed earlier run had left a second instance
-contending for the same WebView2 user-data directory and the same remote
-debugging port. No Rust panic was printed, nothing appeared in the Windows
-application log, and it did not recur: from a clean start the whole flow ran
-through three times, including three separate picker operations, with the
-process alive at the end of each. It is not reproducible from a clean start and
-nothing in this change is implicated by evidence; whether a second instance
-sharing a user-data directory can do that is a question about running two
-instances, not about the roster.
+One crash was seen, three times, and was chased until it could be reproduced on
+demand. The application exits with `0xc000041d` — `STATUS_FATAL_USER_CALLBACK_
+EXCEPTION`, an exception escaping a window-procedure callback the kernel
+invoked — while the file picker is being driven. It never printed a Rust panic,
+not even under `RUST_BACKTRACE=full`, and never reached the Windows application
+log, which is consistent with an exception that never passes through Rust at
+all.
+
+What separates the runs that crash from the runs that do not is the harness, not
+the product. To make a modal picker appear in front, this check sent a synthetic
+`ALT` keystroke to whatever window held the foreground and then called
+`SetForegroundWindow` across the process boundary, immediately before the dialog
+was asked for. Every one of the three crashes came from a run that did that. The
+foreground window at the time was recorded on the reproducing run: the Windows
+lock screen. Removing those two calls and driving the same dialog by posting
+`WM_SETTEXT` and `WM_COMMAND` to it, eleven consecutive picker operations across
+three application launches all left the process alive. Putting the two calls
+back reproduced the exit on the first attempt.
+
+So the recorded finding is about the check: injecting keyboard input and a
+cross-process foreground change into a locked desktop, and then opening a modal
+common dialog there, can take the process down. That is not a state a user can
+be in — a file picker cannot be operated on a locked screen — and no code path
+in this change is implicated: `choose_mzml_files` and `parse_selection` have no
+panic in them, every slice index is provably in range, and the crash leaves no
+Rust unwind. The harness no longer makes the foreground change, and the rendered
+evidence below was collected without it.
 
 ### What review found in the roster, 2026-07-30
 
@@ -1114,6 +1129,65 @@ clearing put the keyboard on `Add files…`; both polite regions were present wi
 the workspace summary in the one that had been mounted all along; and no
 viewport overflowed the document in either axis. Console and page errors were
 empty.
+
+### Two further review rounds over the repairs themselves, 2026-07-30
+
+The repairs were reviewed twice more on the same terms — every finding put to
+one skeptic asked to refute it and one asked to reproduce it step by step. Five
+findings survived the second round and four the third, and the third round's
+were mostly defects introduced by the second round's repairs, which is the
+reason for running a review over a repair at all.
+
+The second round. `Clear list` read the count it announces after its own reply
+rather than before its request, so it could report a number from a workspace
+that had already changed; two mutations could be in flight at once, letting an
+older reply's roster snapshot overwrite a newer one's; a workspace action that
+repeated the one before it produced the same sentence and so was announced
+nowhere; the visible notice said its unlisted items were "listed on screen",
+which is the opposite of what it means; the roster's empty state said "the
+workspace is empty" after the read that would have told it had failed; and a row
+could carry the active accent bar with no glyph beside it, which is colour
+carrying meaning alone.
+
+The third round, over those repairs. The alternating character added to make a
+repeated announcement announceable was a *sibling* text node, so React left the
+sentence node untouched and the only mutation was a space appearing or
+disappearing — a `childList` change the region's default `aria-relevant` does
+not announce in one direction, and a collapsible trailing space that Blink drops
+from the accessibility tree in the other. The repeated action was still
+announced nowhere; the test that was supposed to hold it asserted `textContent`,
+which jsdom reports without any of the CSS collapsing a browser applies, so it
+passed on a difference no screen reader would ever see. The alternation now
+lives inside the sentence and is a non-breaking space, which CSS keeps. The
+spoken account also claimed "N more are not listed" while enumerating none of
+them — a count belonging to the visible list, which is the half that stopped
+short — and now says only the totals. The one-mutation-at-a-time gate turned out
+to be one-directional: `Add files…` waited for a removal or a clear, but neither
+waited for an add, and an add holds the picker *and* the registration behind it.
+And a roster read that failed on mount was permanent, so the workspace went on
+reporting that its list could not be read long after an action had established
+what it holds.
+
+Each repair in both rounds is pinned by a test that fails without it, verified by
+mutation — eleven mutations across the two rounds, each reintroducing exactly one
+defect, all caught. Two mutations survived their first attempt and are worth
+recording: one asserted a live region's text by joining both regions together,
+which passed whether or not the region under test had changed at all, and one
+tested an equivalence rather than the original defect. Both tests were replaced
+rather than the mutations dropped.
+
+Validation on the final head: `cargo fmt --all --check`, `cargo clippy --locked
+--workspace --all-targets -- -D warnings`, `cargo test --locked --workspace
+--all-targets` (215 tests), `python -B scripts/check_repo.py`, `pnpm lint`,
+`pnpm typecheck`, `pnpm test` (168 tests across ten files), `pnpm build`. The
+rendered check was run once more on that head, without the foreground injection
+described above: one picker operation with three files gave three rows and one
+`open_mzml_preview`; pointer and keyboard selection issued no command; Enter
+issued exactly one; removal and clearing behaved as before; the console and page
+errors were empty; and at CSS viewports of 886x663, 1366x753 and 1920x1065 the
+roster list measured 69, 97 and 262 pixels tall, holding two, three and three of
+three rows with its own scrolling for the rest, with no viewport overflowing the
+document in either axis and the spectrum table never forcing the page sideways.
 
 ## Validation completed during repository initialization
 
