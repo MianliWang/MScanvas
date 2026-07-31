@@ -74,6 +74,19 @@ const ENTRY_NAME_OFFSET: usize = 88;
 /// allocation.
 const ENUMERATION_BUFFER_BYTES: usize = 64 * 1024;
 
+#[cfg(test)]
+thread_local! {
+    /// How many enumerations this thread has issued.
+    ///
+    /// The allowance below bounds two different costs, and only one of them is
+    /// visible in a result. That a walk stops *inspecting* at its allowance is
+    /// observable from the summary; that it stops *reading* is not, and a check
+    /// that only bounded memory would leave a directory of a million names
+    /// still being read to the end. Counting the calls is the only way a test
+    /// can tell those apart. Thread-local because tests run in parallel.
+    pub(super) static ENUMERATION_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[repr(C)]
 #[derive(Default)]
 struct FileAttributeTagInformation {
@@ -88,16 +101,39 @@ struct FileIdInformation {
     file_id: [u8; 16],
 }
 
+/// The size of `FILE_REMOTE_PROTOCOL_INFO`, counted from the Windows SDK
+/// (`um/winbase.h`, `_FILE_REMOTE_PROTOCOL_INFO`) rather than estimated.
+///
+/// `StructureVersion` and `StructureSize` (`USHORT`×2) = 4, `Protocol`
+/// (`ULONG`) = 4, `ProtocolMajorVersion`, `ProtocolMinorVersion`,
+/// `ProtocolRevision` and `Reserved` (`USHORT`×4) = 8, `Flags` (`ULONG`) = 4 —
+/// twenty bytes of header. Then `GenericReserved` (`ULONG[8]`) = 32, and the
+/// `ProtocolSpecific` union, whose largest arm is `ULONG[16]` = 64. Total 116,
+/// aligned to 4 because no member is wider.
+///
+/// This number is the whole check. Windows validates the declared length before
+/// it looks at the object, so a buffer even one byte short is refused with
+/// `ERROR_BAD_LENGTH` for a local file and a remote one alike — and a check
+/// that reads "did the call succeed" then answers "local" for everything and
+/// silently does nothing. This file shipped 88 once, and the refusal it claimed
+/// to make could not happen.
+pub(super) const REMOTE_PROTOCOL_INFO_BYTES: usize = 116;
+
 /// `FILE_REMOTE_PROTOCOL_INFO`, whose contents this file never reads.
 ///
-/// Only the size is load-bearing: the call must be given the real buffer the
-/// class expects, and whether it succeeds is the whole answer. Declared as
-/// bytes rather than as fields because naming fields nothing reads would invite
-/// someone to trust them. `sizeof(FILE_REMOTE_PROTOCOL_INFO)` is 88 in the
-/// Windows SDK (`winbase.h`): six `USHORT`/`ULONG` header fields, then two
-/// 16-byte specific-info unions padded to `ULONG[16]`.
-#[repr(C, align(8))]
-struct FileRemoteProtocolInformation([u8; 88]);
+/// Only the size is load-bearing: whether the call succeeds is the whole
+/// answer. Declared as bytes rather than as fields because naming fields
+/// nothing reads would invite someone to trust them.
+#[repr(C, align(4))]
+struct FileRemoteProtocolInformation([u8; REMOTE_PROTOCOL_INFO_BYTES]);
+
+// The declared size must be the size the class is told about, exactly. An
+// alignment that rounded it up would pass a larger length than the buffer
+// documents, and one that rounded it down would be the bug above again.
+const _: () = assert!(
+    std::mem::size_of::<FileRemoteProtocolInformation>() == REMOTE_PROTOCOL_INFO_BYTES,
+    "FILE_REMOTE_PROTOCOL_INFO must be passed at its documented size"
+);
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
@@ -190,6 +226,9 @@ impl DirectorySource for WindowsDirectorySource {
                 return Ok(entries);
             }
 
+            #[cfg(test)]
+            ENUMERATION_CALLS.with(|calls| calls.set(calls.get() + 1));
+
             // SAFETY: the handle outlives the call, and the buffer is a live
             // allocation whose length is passed with it. The API writes at most
             // that many bytes and reports the rest on the next call.
@@ -265,7 +304,7 @@ impl DirectorySource for WindowsDirectorySource {
 }
 
 /// Opens a path without following a link on its final component.
-fn open_no_follow(path: &Path) -> std::io::Result<File> {
+pub(super) fn open_no_follow(path: &Path) -> std::io::Result<File> {
     OpenOptions::new()
         .read(true)
         .share_mode(FILE_SHARE_ALL)
@@ -327,20 +366,31 @@ fn identity_of(handle: &File) -> Result<FileIdentity, ()> {
 /// everything that names a share outright; this closes the case the path
 /// cannot see, where an ordinary-looking local path passes through a link to
 /// one.
-fn is_remote_object(handle: &File) -> bool {
-    let mut information = FileRemoteProtocolInformation([0; 88]);
+pub(super) fn is_remote_object(handle: &File) -> bool {
+    ask_remote_protocol(handle, REMOTE_PROTOCOL_INFO_BYTES) != 0
+}
+
+/// Asks the remote-protocol class with a chosen declared length.
+///
+/// The length is a parameter for one reason: a test has to be able to show that
+/// getting it wrong is the difference between asking about the object and being
+/// refused before the object is consulted. Production has exactly one caller and
+/// it passes the documented size.
+pub(super) fn ask_remote_protocol(handle: &File, declared_bytes: usize) -> i32 {
+    let mut information = FileRemoteProtocolInformation([0; REMOTE_PROTOCOL_INFO_BYTES]);
     // SAFETY: the handle outlives the call, and the out parameter is a live
-    // allocation of exactly the size the class is told about.
-    let answered = unsafe {
+    // allocation of `REMOTE_PROTOCOL_INFO_BYTES`. The declared length is never
+    // larger than that allocation -- production passes exactly it, and the one
+    // test that passes anything else passes less.
+    debug_assert!(declared_bytes <= REMOTE_PROTOCOL_INFO_BYTES);
+    unsafe {
         get_file_information_by_handle_ex(
             handle.as_raw_handle().cast(),
             FILE_REMOTE_PROTOCOL_INFO_CLASS,
             (&raw mut information).cast(),
-            u32::try_from(std::mem::size_of::<FileRemoteProtocolInformation>())
-                .expect("FILE_REMOTE_PROTOCOL_INFO fits in a DWORD"),
+            u32::try_from(declared_bytes).expect("FILE_REMOTE_PROTOCOL_INFO fits in a DWORD"),
         )
-    };
-    answered != 0
+    }
 }
 
 /// Whether a root lives somewhere this slice makes no claims about.
@@ -417,8 +467,10 @@ fn parse_entries(
                 .try_into()
                 .map_err(|_| invariant())?,
         ) as usize;
-        // A wide name is a whole number of UTF-16 code units by definition.
-        if !name_bytes.is_multiple_of(2) {
+        // A wide name is a whole number of UTF-16 code units by definition, and
+        // no entry has no name at all. Neither is producible by NTFS, which is
+        // why both are refused rather than interpreted.
+        if name_bytes == 0 || !name_bytes.is_multiple_of(2) {
             return Err(invariant());
         }
         let name_end = ENTRY_NAME_OFFSET

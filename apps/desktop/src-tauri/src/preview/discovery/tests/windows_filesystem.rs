@@ -216,6 +216,35 @@ fn unicode_names_survive_a_real_round_trip() {
 }
 
 #[test]
+fn every_name_length_decodes_through_the_record_bounds_check() {
+    // The decoder now refuses a record whose `next` does not clear its own
+    // name, which is only safe if no real record ever looks like that. Windows
+    // aligns `NextEntryOffset` up to eight bytes, so the argument is that
+    // `next >= 88 + FileNameLength` always -- and the place an alignment
+    // argument goes wrong is at the boundaries.
+    //
+    // So: one name of every length from 1 to 64 characters, which covers every
+    // residue of the alignment twice over. A false refusal here would break
+    // real enumeration for particular filename lengths only, which is exactly
+    // the kind of bug that survives a suite of tidy fixture names.
+    let tree = TestTree::new("lengths");
+    let mut expected = Vec::new();
+    for length in 1..=64_usize {
+        let stem: String = std::iter::repeat_n('n', length).collect();
+        tree.file(&format!("{stem}.mzML"), 1);
+        expected.push(format!("{stem}.mzML"));
+    }
+    expected.sort();
+
+    let result = walk_real(tree.path());
+
+    let mut found = names(&result);
+    found.sort();
+    assert_eq!(found, expected);
+    assert!(result.is_complete());
+}
+
+#[test]
 fn the_same_filename_in_two_real_subdirectories_keeps_both() {
     let tree = TestTree::new("collision");
     tree.file("A\\sample.mzML", 4);
@@ -594,11 +623,7 @@ fn what_discovery_offers_is_what_acceptance_takes() {
 }
 
 #[test]
-fn a_real_walk_asks_for_no_more_entries_than_it_can_afford() {
-    // The budget has to bound what a directory costs, not only what it counts.
-    // A folder holding millions of names must not be read whole before the
-    // first entry is looked at, and the only way to see that from outside is
-    // that the walk stops having inspected exactly its allowance.
+fn a_real_walk_stops_inspecting_at_its_allowance() {
     let tree = TestTree::new("allowance");
     for index in 0..40 {
         tree.file(&format!("f{index:02}.mzML"), 4);
@@ -617,6 +642,89 @@ fn a_real_walk_asks_for_no_more_entries_than_it_can_afford() {
     assert_eq!(result.candidates().len(), 5);
     assert_eq!(result.limits(), [DiscoveryLimit::Entries]);
     assert!(!result.is_complete());
+}
+
+#[test]
+fn a_real_walk_stops_reading_at_its_allowance_too() {
+    // The half of the budget a result cannot show. That the walk stops
+    // *inspecting* at its allowance is visible in the summary above; that it
+    // stops *reading* is not, and a bound that only capped the vector would
+    // leave a directory of a million names still enumerated to the end -- the
+    // I/O half of the very defect the allowance was added to fix, with every
+    // other test green. So this counts the enumerations.
+    //
+    // The directory is deliberately larger than one 64 KiB buffer: at roughly
+    // 112 bytes a record, one call returns about 585 entries, so 1,500 names
+    // take three calls to read out and one call to satisfy an allowance of six.
+    let tree = TestTree::new("reads");
+    for index in 0..1_500 {
+        tree.file(&format!("f{index:04}.mzML"), 0);
+    }
+
+    super::super::windows::ENUMERATION_CALLS.with(|calls| calls.set(0));
+    let result = discover_mzml_candidates(
+        tree.path(),
+        DiscoveryBudget {
+            max_entries: 5,
+            ..DiscoveryBudget::default()
+        },
+    )
+    .expect("a real root opens");
+    let issued = super::super::windows::ENUMERATION_CALLS.with(std::cell::Cell::get);
+
+    assert_eq!(result.summary().entries_inspected, 5);
+    assert_eq!(
+        issued, 1,
+        "a bounded walk reads one buffer; an unbounded one reads the directory out"
+    );
+}
+
+#[test]
+fn the_remote_class_must_be_asked_with_the_size_it_documents() {
+    // The check reads nothing out of this class -- whether the call answers at
+    // all is the whole finding -- which makes the declared size the only thing
+    // that can silently disable it. Windows validates the length before it
+    // consults the object, so a buffer one byte short is refused for its length
+    // on a local file and a remote one alike, and "did it succeed" then means
+    // "local" everywhere.
+    //
+    // That is not hypothetical. This adapter shipped 88 bytes for a 116-byte
+    // structure, and the refusal it advertised could not occur. So the two
+    // failures are told apart here by their reasons, on an ordinary local
+    // directory that any machine has.
+    let tree = TestTree::new("remote-size");
+    let handle = super::super::windows::open_no_follow(tree.path()).expect("a local root opens");
+
+    let short = super::super::windows::ask_remote_protocol(&handle, 88);
+    let short_error = std::io::Error::last_os_error().raw_os_error();
+    let documented = super::super::windows::ask_remote_protocol(
+        &handle,
+        super::super::windows::REMOTE_PROTOCOL_INFO_BYTES,
+    );
+    let documented_error = std::io::Error::last_os_error().raw_os_error();
+
+    // ERROR_BAD_LENGTH: refused before the object was looked at.
+    assert_eq!((short, short_error), (0, Some(24)));
+    // ERROR_INVALID_PARAMETER: the documented answer for a local object, which
+    // is the one the check is entitled to read.
+    assert_eq!((documented, documented_error), (0, Some(87)));
+    assert_eq!(super::super::windows::REMOTE_PROTOCOL_INFO_BYTES, 116);
+}
+
+#[test]
+#[ignore = "needs the local administrative share; run with --ignored"]
+fn a_loopback_share_is_seen_as_the_remote_object_it_is() {
+    // The positive direction, which needs something genuinely reached over a
+    // remote protocol. `\\localhost\C$` is served by the SMB redirector and is
+    // remote in every sense this check cares about, but it needs the
+    // administrative share, so this is ignored by default rather than skipped
+    // silently: `cargo test -- --ignored` runs it, and a suite that quietly
+    // passed when the share was absent would retire the claim instead of
+    // checking it.
+    let handle = super::super::windows::open_no_follow(Path::new(r"\\localhost\C$\Windows"))
+        .expect("the administrative share opens; this test is ignored when it does not");
+
+    assert!(super::super::windows::is_remote_object(&handle));
 }
 
 #[test]

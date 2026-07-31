@@ -1527,12 +1527,15 @@ counts. Each candidate keeps its location under the chosen root so that two
 files called `sample.mzML` can be told apart later — ADR 0007 approves showing
 that relative context only when names actually collide.
 
-**Tests.** 206 tests in the desktop crate, 76 of them discovery, counted with
-`cargo test --lib -- --list`: 35 policy tests against a fake filesystem that can
-present a cycle, answer in a different order every time, or hand back a child
-that is no longer itself; 16 record-decoding tests over malformed
-`FILE_ID_EXTD_DIR_INFO` buffers; and 25 against real `%TEMP%` trees on NTFS. The
-central claim is one of those — a junction planted in the chosen folder,
+**Tests.** 211 tests in the desktop crate, 81 of them discovery, counted with
+`cargo test --lib -- --list` rather than from a name filter — a filter on
+"discovery" answers higher, because two tests elsewhere have the word in their
+names. The 81 are 35 policy tests against a fake filesystem that can present a
+cycle, answer in a different order every time, or hand back a child that is no
+longer itself; 16 record-decoding tests over malformed `FILE_ID_EXTD_DIR_INFO`
+buffers; and 30 against real `%TEMP%` trees on NTFS, one of which is ignored by
+default because it needs the local administrative share. The central claim is
+one of those — a junction planted in the chosen folder,
 pointing at a directory outside it, yields the inside file only, one counted
 reparse skip and one directory entered. A junction as the root is refused. A
 child directory deleted and re-created under the same name between enumeration
@@ -1546,19 +1549,24 @@ acquisition, vendor data or user folder was touched, and no ProteoWizard process
 was started: discovery never reaches the backend at all.
 
 **Mutations.** All 24 named mutations were introduced, run and restored, along
-with four more written for the repairs that review produced; none was committed.
-Twenty-seven of the twenty-eight were caught by a discriminating test, including
-the four that only a real filesystem can answer — root reparse accepted, hidden
-directory skipped, System directory skipped and child identity mismatch ignored
-— and the recursive rewrite, which overflows its stack on the 6,000-deep chain.
+with six more written for the repairs that review produced; none was committed.
+Every one is caught by a discriminating test, including the four that only a
+real filesystem can answer — root reparse accepted, hidden directory skipped,
+System directory skipped and child identity mismatch ignored — and the recursive
+rewrite, which overflows its stack on the 6,000-deep chain.
 
-One survived, and is recorded rather than explained away: removing the
-handle-level remote check leaves every test passing, because proving that a
-genuine remote object is refused needs a network share this repository has none
-of. What is tested is the other direction, that ordinary local folders are not
-mistaken for remote ones. Deleting the check would return the code to refusing
-remote roots by path alone, which is what every UNC and device spelling still
-meets before a handle is opened.
+One of them was caught the hard way, and by review rather than by a test. The
+handle-level remote check shipped in the first repair round asking for a
+116-byte structure at 88 bytes, and Windows validates a declared length before
+it consults the object. Measured here: at 88 bytes the call is refused with
+`ERROR_BAD_LENGTH` for a local directory and for the loopback administrative
+share alike, so a check reading "did it answer" said "local" about everything
+and did nothing whatsoever. At the documented 116 bytes the same local directory
+answers `ERROR_INVALID_PARAMETER` and the loopback share succeeds, which is the
+distinction the check is entitled to read. It is now pinned by a test that tells
+those two refusals apart by their reason on any ordinary local folder, by a
+compile-time size assertion, and by an explicitly ignored test that proves the
+positive direction against the administrative share.
 
 **Rendered QA was exempted, and honestly so.** This change has no rendered
 state to check: no pixel, no DOM node and no command changes. Every claim above

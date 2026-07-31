@@ -81,14 +81,19 @@ place a junction can point.
   network round trip is made, and once from the opened handle, which catches
   what the path cannot show -- an ordinary-looking local path that reaches a
   share through a linked directory somewhere along the way, or a relative path
-  resolved against a mapped drive. Only one direction of the second refusal is
-  tested here: that ordinary local folders are not mistaken for remote ones,
-  which every real-filesystem test in this repository depends on. That a
-  genuine remote object is refused needs a share, and this repository has none
-  to test against; deleting the handle check would return the code to the
-  path-only posture without failing a test, and that is recorded rather than
-  papered over. The cost of it being wrong is bounded: everything that names a
-  share outright is already refused by the path.
+  resolved against a mapped drive. The handle is asked with
+  `FileRemoteProtocolInfo`, which Windows answers only for an object actually
+  reached over a remote protocol — so the finding is that the call succeeds at
+  all, and nothing reads its buffer. The declared length is then the whole
+  check, because Windows validates it before it consults the object: a buffer
+  one byte short is refused for its length on local and remote alike, and a
+  check reading "did it answer" says "local" about everything. That failure is
+  tested for directly, by telling the two refusal reasons apart on an ordinary
+  local directory, and by a compile-time assertion on the structure size. The
+  positive direction is tested against the local administrative share, which
+  the SMB redirector serves as a genuinely remote object; that test is marked
+  ignored rather than skipped silently, because a machine without the share
+  must be told the claim went unchecked instead of shown a green run.
 - A child entry carrying `FILE_ATTRIBUTE_REPARSE_POINT` is not followed, not
   descended into, not offered as a candidate, and counted.
 - No link target is resolved at any point.
