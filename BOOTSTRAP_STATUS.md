@@ -1189,6 +1189,281 @@ roster list measured 69, 97 and 262 pixels tall, holding two, three and three of
 three rows with its own scrolling for the rest, with no viewport overflowing the
 document in either axis and the spectrum table never forcing the page sideways.
 
+## Rendered check of workspace search and sort, 2026-07-31
+
+Run on the exact final application-code head, against a real ProteoWizard
+3.0.26013 on Windows, in an unlocked session — the input desktop was confirmed
+to be `Default` before anything was driven, and none of the foreground
+injection that took the process down during M1.2 was used at any point.
+
+The roster was fifteen neutral working copies outside the repository: one hard
+link to an authorized local acquisition, renamed, and fourteen small files that
+carry the name the boundary accepts and no acquisition, so they can be listed
+without ever being read. Between them they cover numeric ordering
+(`Sample-2` against `Sample-10`, `Standard-3` against `Standard-21`), case
+(`qc_pool-1` against `QC_pool-2`), a diacritic, a full-width Unicode name, a
+name far too long for its column, and sizes from 1 KiB to 212.7 MiB. No path,
+real name or scientific value is recorded here.
+
+**What the search does.** `qc` found four rows of fifteen; `QC_POOL` found three,
+which is the same comparison with the case that decides nothing; the full-width
+query `ｑｃ` found the same four as `qc`, including the full-width name, which is
+NFKC doing the only job it is there for; `stÖrung` found `Störung-Messung`. The
+count reported is the count of matches — `2 matches of 15 files; 1 selected or
+active file kept visible` — never the number of rows on screen.
+
+**What it does not hide.** With a preview open on `QC_pool-2` and a query that
+does not match it, its row stayed on screen saying `Showing — outside search`.
+Rows selected before a search stayed, saying `Selected — outside search`. A row
+being read said `Reading — outside search`. A row satisfying several of those at
+once appeared once and was counted once. And a query matching nothing while
+three rows were kept said `0 matches of 15 files; 3 selected or active files
+kept visible` rather than anything about the workspace being empty; with nothing
+kept, the list gave way to `No files match this search` over `13 files are in
+this session. Clear the search to see them again.`, with `Clear search` and all
+four roster actions still there.
+
+**What the sort does.** All five modes were exercised with a preview open.
+`Added order` reproduced Rust's list exactly; `Name A–Z` gave
+`Blank-1, Blank-2, blank-10` and `Sample-2, Sample-10` and `Standard-3,
+Standard-21`, which is case deciding nothing and numbers reading as numbers;
+`Name Z–A` reversed it; the two size orders ran 1 KiB to 212.7 MiB and back. The
+preview stayed up through every one of them.
+
+**What all of it cost.** Five queries, five sort changes, a Shift range, a
+Shift+Arrow extension and `Ctrl+A` issued **no Tauri command at all**. That is
+measured rather than assumed, and the measurement was itself checked: the first
+counter this check installed — wrapping `__TAURI_INTERNALS__.invoke` — recorded
+nothing whatsoever, because the property is non-writable and the assignment
+failed silently, and a counter that cannot count would have made every zero in
+this section meaningless. The count that stands is taken at `window.fetch`, the
+custom-protocol hop every command actually leaves through, and it was proved to
+count by recording `inspect_backend` from a backend re-check before any of the
+figures above were taken. Over a whole document, the commands issued were
+`inspect_backend`, `get_workspace_roster`, `inspect_backend`,
+`get_workspace_roster` at start-up — the pair twice, which is React's
+development-mode double effect — and one `open_mzml_preview` for the one file
+that was explicitly read. Nothing else.
+
+**Selection, keyboard and focus.** Sorted by name and narrowed to `a`, a
+Shift range spanned the visible run and skipped the rows the query was hiding —
+including one that sits inside the range in Rust's order and outside it on
+screen. Shift+Arrow extended along the visible order. `Ctrl+A` selected 11 of 11
+visible rows and no hidden one. Deselecting a row that a search was keeping on
+screen made it disappear from under the keyboard; focus moved to the nearest
+row still visible, and when none was, to the search box. Focus was never
+observed on the document body. Clearing the search from its button put the
+keyboard back in the search box.
+
+**Adding, removing, clearing and reloading.** With a query and a non-default
+sort in place, adding two non-matching files kept both, selected, labelled
+`Selected — outside search`; the query, the sort and the open preview were all
+unchanged, and nothing was read automatically into a session that already held
+files. Removing them left the hidden rows nobody had selected untouched and the
+view exactly as it was. `Clear list` emptied the whole session rather than the
+two rows the search was showing, reset the query and the sort, returned the
+keyboard to `Add files…`, and left all fifteen files on disk. Reloading the
+webview brought back the roster Rust still held with no query, `Added order`,
+and no preview started on its own.
+
+**Viewports.** At native 900x700 (886x663 CSS), at 1366x773 CSS and at 1920x1085
+CSS, the document overflowed in neither axis, the search and sort controls fitted
+without overflowing their row at 39px tall in every case, the spectrum table
+never forced the page sideways, and the roster list measured 82px, 66px and
+231px — two, two and eight whole rows of thirteen, scrolling for the rest. The
+two-row floor is met at every size. The list is the same height it was before
+this change at the reference viewport (66px against 67px), which is the point of
+raising the panel's minimum by exactly what the controls cost rather than
+letting them take it out of the list.
+
+**Console and logs.** The WebView2 console held the three known development
+messages and nothing else: two Vite connection lines and the React DevTools
+notice. No page error and no unhandled rejection, recorded from a listener
+installed before the document's first script rather than sampled afterwards. The
+Rust/Tauri and Vite output contained no line matching error, panic or warning.
+No path appeared anywhere in the rendered document.
+
+**Regressions.** M1.2 multi-selection, issue #24 containment (no horizontal
+overflow at any of the three viewports), issue #25 folder-picker focus
+restoration and issue #29 table-header alignment were all still holding.
+
+One flow was not reproduced: a backend that is unavailable. It is covered by
+automated tests instead, which is the same answer M1.2 gave for the same reason.
+
+### What review found in the projection, 2026-07-31
+
+Two whole-diff reviews — one on state and asynchrony, one on accessibility and
+layout — produced findings that were each put to two independent skeptics, one
+asked to refute and one asked to write out a reproducing sequence and check
+every step against the code. Ten survived, several of them the same defect seen
+from two sides, and all are repaired here. One further finding came from the
+repository's automated reviewer.
+
+**The blocking one, and it was this change's own doing.** The focus recovery a
+projection needs — a row can leave the list while the keyboard is on it — asked
+whether the keyboard had *ever* been in the list. That stays true long after the
+user has walked out of it, and `Add files…` is disabled for the picker's whole
+lifetime, which blurs that button to the document body. The roster then pulled
+the keyboard into itself, and the button waiting for its own restoration never
+got it: the defect issue #25 fixed, reintroduced. It now remembers which row
+held the keyboard and recovers only when that row has left the projection, which
+is the only case it exists for. Confirmed rendered: with the keyboard in the
+list, pressing `Add files…` and cancelling the dialog now returns focus to
+`Add files…`.
+
+**A search was suppressing what a row said about its file.** The view reason and
+the row state shared one label slot and the reason won, so a row that was
+`Replaced`, `Missing` or `Could not be read` stopped saying so the moment a
+query kept it visible. A row now carries both — and the accessible name carries
+a separator between them, because a row's name is its text content run together
+and a reader would otherwise hear "Could not be readSelected — outside search".
+
+**The panel floor was arithmetic over a row that does not exist.** 228px assumed
+the roster's four actions on one line. In the sidebar they wrap to two, which
+they already did before this change, so at those widths the list was left with
+under two rows. The search summary moved into the header line, which exists
+either way and already truncates, and the floor was recomputed over what the
+panel actually holds. Measured afterwards at the width where the actions wrap:
+the panel sits exactly on its 240px floor, the actions take 91px, and the list
+gets exactly 56px — two whole rows, which is what the floor is for.
+
+**And the file name could be squeezed to nothing.** A grid `auto` track takes
+its max-content width before a flexible one gets any, so a row carrying two
+labels left the name 0px wide — measured, not inferred. Lowering the notes
+track's minimum was not enough, because that is a floor and the problem was the
+ceiling; the name has a floor of its own now, and remeasuring gave it 72px with
+the notes ellipsised beside it.
+
+The rest: removing every selected row under a search fell back to selecting the
+nearest survivor in Rust's order, very often a row the query excludes, which
+then appeared in the filtered view marked selected — that affordance now applies
+only when no search is narrowing the view; clearing a search was announced by
+nothing, because removing a live region's text announces nothing under the
+default `aria-relevant`; the search's own explanations took a text colour of
+about 3.5:1 against the panel, for the one thing on screen that says why an
+excluded row is there; and a search that matched nothing left the roster with no
+focused row at all, so clearing it brought the rows back with `Preview focused`
+still disabled and Enter and Space doing nothing until an arrow was pressed.
+
+One residual of the blocking repair was found by the automated reviewer and is
+repaired too: the record of which row held the keyboard was never cleared when
+the keyboard left the list, and an addition replaces the selection, so a kept
+row a user had tabbed away from could leave the projection during the very
+picker request whose restoration must not be taken. It is now cleared on the way
+out — but only when the keyboard genuinely went somewhere, which is what a
+`relatedTarget` outside the list means. A `relatedTarget` of `null` is what an
+unmounting row looks like, and that is the case the record exists for.
+
+jsdom cannot answer which of those a browser actually reports, so the rendered
+check was asked instead. Unpinning a focused row in WebView2 produced two
+`focusout` events, one naming another row inside the list and one `null`;
+neither clears the record, and focus ended on the row that took the vanished
+one's place rather than on the body.
+
+Nine further mutations cover these repairs and all nine are caught. Two were
+replaced after surviving: one mutated a grid track and one a colour token, and
+neither is observable in jsdom, so both are now pinned through the CSSOM the way
+the narrow-layout rules already were. Two mutations are recorded as equivalent
+rather than caught. Clearing the record on a `focusout` that names nothing has
+no test that can reach it, because jsdom fires no `focusout` when a focused node
+is removed; the rendered check above covers the behaviour instead. And
+remembering the roster's logical focused handle instead of
+the row that actually took the keyboard cannot diverge through the interface,
+because clicking a row sets the logical focus in the same event that moves the
+keyboard to it. The more precise expression is kept anyway.
+
+Validation on the repaired head: `cargo fmt --all --check`, `cargo clippy
+--locked --workspace --all-targets --all-features -- -D warnings`, `cargo test
+--locked --workspace --all-targets` (215 tests), `python -B
+scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (265 tests
+across eleven files), `pnpm build`.
+
+The rendered check was re-run in full on that head. Labels are associated by
+`for` and named exactly `Search files` and `Sort files`, with the clear action
+outside the label it would otherwise have renamed. The picker restoration holds
+with the keyboard starting in the list. Five queries, five sorts, a range and
+`Ctrl+A` issued no command, counted through a hook proved to count first.
+Clearing a search now says `All 15 files listed.` where it previously said
+nothing. At CSS viewports of 886x663, 1226x723, 1366x773 and 1920x1085 the
+document overflowed in neither axis, the view controls fitted their row at a
+fixed 39px, and the list held three, two, two and eight whole rows. The console
+held the three known development messages and nothing else, with no page error
+and no unhandled rejection. The only line matching error, panic or warning in
+the Rust output is the non-zero exit this check itself produced by terminating
+the process at the end.
+
+### Two findings after the first repaired head, 2026-07-31
+
+The automated reviewer raised two more against `9b40660`, both valid and both
+repaired.
+
+**Removal recovery was following the wrong list.** Removing the focused row
+looked its neighbour up in Rust's insertion order, then handed that row the
+keyboard and the fallback selection. Under a sort or a query the user is not
+looking at that order. Sorted by name a roster reads `alpha-2, bravo-9, charlie,
+delta-2, delta-10, echo` while Rust holds `delta-10` before `delta-2`, so
+removing `charlie` sent the keyboard to a row the user was not near, and a run
+of removals jumped about rather than walking down the list. The survivor now
+comes from the projection as it stood immediately before the removal, which is
+the rule ADR 0006 already stated. With no query and `Added order` the projection
+*is* Rust's list, so nothing about the unfiltered case changes.
+
+**The match count could not be read.** While a query hides rows that line is the
+only visible account of how much of the session is out of sight, and it
+inherited the header note's tertiary colour: measured in the rendered
+application in the light theme, `rgb(127, 138, 156)` on `rgb(255, 255, 255)` at
+11px is 3.49:1, under AA. It has a selector of its own now, applied only while a
+query is actually hiding something — measured again after the repair,
+`rgb(91, 103, 122)` on white is **5.73:1**, and in the dark theme
+`rgb(169, 181, 198)` on `rgb(21, 30, 44)` is **8.06:1**.
+
+What that repair deliberately does not do is worth stating plainly, because a
+later reviewer found the gap and was right about the facts. Unsearched, the same
+line still reads at 3.49:1 in the light theme, and it is not redundant text: it
+carries the session's capacity, which appears nowhere else, and the only
+statement that removing a row leaves the file alone that a user sees *before*
+pressing the button. But `.panel-header p` is tertiary across the whole
+application — the preview summary, the spectrum panel, the spectrum table's
+caption — and it is tertiary on `main` exactly as it is here. That is one
+decision about one token affecting several panels, not this panel's to make on
+its own while a search happens to be running, and it wants a change that can
+weigh every panel it moves and check each one rendered. This milestone fixed the
+text it added and left the rest recorded rather than quietly implied to be fine.
+
+Nine reducer tests hold the first — built on rows whose insertion, name and size
+orders disagree everywhere, so every one of them fails outright if the lookup
+goes back to insertion order — and two hold the second. All six mutations over
+the two repairs are caught, insertion-order lookup, the post-removal roster, the
+tertiary token, the missing selector and the class applied in the wrong states
+among them.
+
+Rendered on the repaired head, with the fixture set chosen so the three orders
+disagree. Name ascending, removing the middle row moved the keyboard to the row
+that took its position rather than to the insertion-order neighbour; size
+ascending at the last visible row looked backwards; name descending behaved the
+same; and under a query the keyboard went to the next match rather than to a
+hidden neighbour, with no hidden row selected and every hidden row still held by
+Rust afterwards. Each removal issued exactly one command,
+`remove_workspace_datasets`, and no preview.
+
+One thing about that check is worth recording because it looked like a defect
+and was not. DOM focus recovery is invisible while the application window is not
+the active window: Chromium dispatches no focus event at all, so the component
+never learns which row held the keyboard and focus stays on the body. Asking the
+debugger to focus its own page — not the foreground injection that took the
+process down in M1.2 — made the whole sequence appear: `focusout` naming
+nothing as the row unmounted, then `focusin` on the row that replaced it.
+
+At CSS viewports of 586x430, 1366x768 and 1920x1080 the document overflowed in
+neither axis, the view controls fitted their row at a fixed 39px, the summary
+was visible and clear of the controls, and the list held three whole rows of
+three. Search and sort still issued no command; a Shift range and `Ctrl+A`
+covered the visible rows and no hidden one; a reload brought the roster back
+with no query, `Added order` and no preview of its own. The console held the
+three known development messages, with no page error and no unhandled
+rejection. The only error-matching line in the Rust output is the non-zero exit
+this check itself caused by terminating the process.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.

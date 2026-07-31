@@ -810,6 +810,18 @@ describe("mzML preview workspace", () => {
  */
 const VISIBLE = { ignore: "[aria-live], script, style" } as const;
 
+/**
+ * Every row of the workspace list.
+ *
+ * Scoped to that listbox on purpose: the sort control is a native select, and
+ * its five options carry the same role. A document-wide query would count them
+ * as roster rows.
+ */
+function rosterRows(): HTMLElement[] {
+  const list = screen.queryByRole("listbox", { name: "Workspace" });
+  return list === null ? [] : within(list).getAllByRole("option");
+}
+
 function rosterRow(name: RegExp): HTMLElement {
   return screen.getByRole("option", { name });
 }
@@ -860,11 +872,11 @@ describe("the session workspace roster", () => {
     // be three ProteoWizard launches against three large files for two results
     // nobody asked to see.
     expect(api.openedHandles).toEqual(["file-0"]);
-    expect(screen.getAllByRole("option")).toHaveLength(3);
+    expect(rosterRows()).toHaveLength(3);
     // Everything that arrived is selected, so `Remove selected` acts on the
     // batch the user just added; the first of them is the one being shown.
     expect(
-      screen.getAllByRole("option").filter((row) => row.getAttribute("aria-selected") === "true"),
+      rosterRows().filter((row) => row.getAttribute("aria-selected") === "true"),
     ).toHaveLength(3);
     expect(rosterRow(/QC_pool_01\.mzML/)).toHaveTextContent("▸");
     expect(rosterRow(/QC_pool_02\.mzML/)).not.toHaveTextContent("▸");
@@ -904,7 +916,7 @@ describe("the session workspace roster", () => {
 
     expect(await screen.findByText(/1 file already in the workspace/, VISIBLE)).toBeVisible();
     expect(screen.getByText("QC_pool_01.mzML is already in the workspace.")).toBeVisible();
-    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(rosterRows()).toHaveLength(1);
     // Nothing was read for it either: it is a row the user already has.
     expect(api.openCount()).toBe(1);
   });
@@ -951,7 +963,7 @@ describe("the session workspace roster", () => {
     // A rejected candidate is named by its file name and nothing else: no
     // folder, no path.
     expect(screen.queryByText(/[A-Z]:\\/)).toBeNull();
-    expect(screen.getAllByRole("option")).toHaveLength(2);
+    expect(rosterRows()).toHaveLength(2);
   });
 
   it("says plainly when a file did not fit the session", async () => {
@@ -959,7 +971,7 @@ describe("the session workspace roster", () => {
     await openTheFile(api);
 
     expect(await screen.findByText(/1 file did not fit/, VISIBLE)).toBeVisible();
-    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(rosterRows()).toHaveLength(1);
     // The limit is stated where the count is, rather than left to be inferred
     // from a refusal.
     expect(screen.getByText(/1 of 1 files in this session/)).toBeVisible();
@@ -976,7 +988,7 @@ describe("the session workspace roster", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
 
     await waitFor(() => {
-      expect(screen.getAllByRole("option")).toHaveLength(1);
+      expect(rosterRows()).toHaveLength(1);
     });
     expect(screen.getByText(/Removed 2 files from the list\./, VISIBLE)).toBeVisible();
     expect(screen.getByText(/The files on disk were not changed\./, VISIBLE)).toBeVisible();
@@ -1063,7 +1075,7 @@ describe("the session workspace roster", () => {
     fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
     fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
     await waitFor(() => {
-      expect(screen.getAllByRole("option")).toHaveLength(1);
+      expect(rosterRows()).toHaveLength(1);
     });
 
     expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
@@ -1094,7 +1106,7 @@ describe("the session workspace roster", () => {
     });
     // The rows are Rust's paths and the user's choices; no backend decided
     // either, so neither goes.
-    expect(screen.getAllByRole("option")).toHaveLength(2);
+    expect(rosterRows()).toHaveLength(2);
     // The marker does go, because nothing is on screen for that row any more.
     // Saying "Showing" beside a file whose reading was just discarded is the
     // one thing the hidden half of that affordance must not do.
@@ -1139,7 +1151,7 @@ describe("the session workspace roster", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getAllByRole("option")).toHaveLength(1);
+      expect(rosterRows()).toHaveLength(1);
     });
     expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
     expect(rosterRow(/QC_pool_02\.mzML/)).toHaveTextContent("▸");
@@ -1174,7 +1186,9 @@ describe("the session workspace roster", () => {
     renderApp(api);
     const regions = () => [...document.querySelectorAll("[aria-live='polite']")];
     await screen.findByRole("button", { name: "Add files…" });
-    expect(regions()).toHaveLength(2);
+    // Three, all mounted for the life of the application: what the viewer is
+    // doing, what the search found, and what the last workspace action did.
+    expect(regions()).toHaveLength(3);
 
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
@@ -1183,8 +1197,8 @@ describe("the session workspace roster", () => {
         "Workspace: Added 2 files.",
       );
     });
-    // The same two regions, with new text in one of them.
-    expect(regions()).toHaveLength(2);
+    // The same three regions, with new text in one of them.
+    expect(regions()).toHaveLength(3);
   });
 
   it("does not claim the session is empty before its list has been read", async () => {
@@ -1274,7 +1288,7 @@ describe("the session workspace roster", () => {
     fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
     fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
     await waitFor(() => {
-      expect(screen.getAllByRole("option")).toHaveLength(2);
+      expect(rosterRows()).toHaveLength(2);
     });
     const afterFirst = spoken();
     expect(afterFirst).toContain("Removed 1 file from the list.");
@@ -1282,7 +1296,7 @@ describe("the session workspace roster", () => {
     fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
     fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
     await waitFor(() => {
-      expect(screen.getAllByRole("option")).toHaveLength(1);
+      expect(rosterRows()).toHaveLength(1);
     });
 
     // The same words, and still a change for a screen reader to notice.
@@ -1389,6 +1403,202 @@ describe("the session workspace roster", () => {
     reading.resolve({ datasets: [selectedFile], capacity: 1_024 });
   });
 
+  it("searches and sorts without asking Rust anything at all", async () => {
+    // The whole architectural claim of this slice: a projection over what has
+    // already crossed the boundary costs no command, no process and no trip.
+    const api = createFakePreviewApi({
+      pickedFiles: [selectedFile, secondFile, thirdFile],
+      availability: unavailableBackend,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+    await screen.findByRole("option", { name: /Blank_03\.mzML/ });
+    const before = api.calls();
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
+      target: { value: "QC" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+      target: { value: "name-desc" },
+    });
+    fireEvent.click(rosterRows()[0] as HTMLElement);
+    fireEvent.keyDown(rosterRows()[0] as HTMLElement, { key: "a", ctrlKey: true });
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+
+    expect(api.calls()).toEqual(before);
+    expect(api.openCount()).toBe(0);
+    expect(api.rosterReads()).toBe(1);
+  });
+
+  it("keeps the preview, the query and the sort while the view changes", async () => {
+    const api = createFakePreviewApi({ pickedFiles: [selectedFile, secondFile, thirdFile] });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+    // The first addition into an empty session reads exactly one file.
+    await screen.findByRole("grid", { name: "Spectra" });
+    const reads = api.openCount();
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
+      target: { value: "Blank_03" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+      target: { value: "size-asc" },
+    });
+
+    // Still on screen, still the same reading, and nothing re-read to keep it.
+    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(api.openCount()).toBe(reads);
+    // And the row it belongs to is still on screen, saying why.
+    expect(
+      screen.getByRole("option", { name: /QC_pool_01\.mzML/ }),
+    ).toHaveAccessibleName(/Showing — outside search/);
+  });
+
+  it("keeps the query and the sort across adding, and across removing what it matched", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile, secondFile],
+      pickedFiles: [thirdFile],
+      availability: unavailableBackend,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
+      target: { value: "QC_pool_01" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+      target: { value: "name-desc" },
+    });
+    expect(rosterRows()).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+
+    // The arrival does not match, and is on screen because it was selected.
+    const arrival = await screen.findByRole("option", { name: /Blank_03\.mzML/ });
+    expect(arrival).toHaveAccessibleName(/Selected — outside search/);
+    expect(screen.getByRole("searchbox", { name: "Search files" })).toHaveValue("QC_pool_01");
+    expect(screen.getByRole("combobox", { name: "Sort files" })).toHaveValue("name-desc");
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("option", { name: /Blank_03\.mzML/ })).toBeNull();
+    });
+    // The hidden row nobody selected is untouched, and the view is unchanged.
+    expect(screen.getByRole("searchbox", { name: "Search files" })).toHaveValue("QC_pool_01");
+    expect(api.datasets().map((entry) => entry.fileName)).toEqual([
+      "QC_pool_01.mzML",
+      "QC_pool_02.mzML",
+    ]);
+  });
+
+  it("clears the whole session rather than the search result, and forgets the view", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile, secondFile, thirdFile],
+      availability: unavailableBackend,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
+      target: { value: "QC_pool_01" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+      target: { value: "size-asc" },
+    });
+    expect(rosterRows()).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+
+    // Every file, not the one the search was showing.
+    expect(await screen.findByText("No files in this session yet")).toBeVisible();
+    expect(api.datasets()).toEqual([]);
+    expect(screen.queryByRole("searchbox", { name: "Search files" })).toBeNull();
+    expect(screen.getByText(/Cleared 3 files from the list/, VISIBLE)).toBeVisible();
+  });
+
+  it("says how many files matched, in a region that was mounted all along", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile, secondFile, thirdFile],
+      availability: unavailableBackend,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    const regions = () => [...document.querySelectorAll("[aria-live='polite']")];
+    expect(regions()).toHaveLength(3);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
+      target: { value: "QC" },
+    });
+
+    const spoken = regions()
+      .map((region) => region.textContent)
+      .join(" ");
+    expect(spoken).toContain("2 matches of 3 files.");
+    // A search that found nothing is not an empty workspace, and the two must
+    // not sound alike.
+    expect(spoken).not.toContain("The workspace is empty.");
+    expect(regions()).toHaveLength(3);
+  });
+
+  it("says the search was cleared rather than falling silent", async () => {
+    // A live region whose text is removed announces nothing — the default
+    // `aria-relevant` is `additions text` — so clearing a search would be the
+    // one step of a search nobody was told about.
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile, secondFile, thirdFile],
+      availability: unavailableBackend,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    const spoken = () =>
+      [...document.querySelectorAll("[aria-live='polite']")]
+        .map((region) => region.textContent)
+        .join(" ");
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
+      target: { value: "QC" },
+    });
+    expect(spoken()).toContain("2 matches of 3 files.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+
+    expect(rosterRows()).toHaveLength(3);
+    expect(spoken()).toContain("All 3 files listed.");
+    expect(spoken()).not.toContain("2 matches of 3 files.");
+  });
+
+  it("renders a roster at capacity through a search and a sort", async () => {
+    // Not timed and not a benchmark: what it holds is that the size Rust
+    // actually allows renders, matches and orders without falling over.
+    const many = Array.from({ length: 1_024 }, (_, index) => ({
+      handle: `file-${String(index)}`,
+      fileName: `${index % 2 === 0 ? "QC" : "blank"}_run-${String(index)}.mzML`,
+      byteLength: (index % 7) * 1_000,
+    }));
+    const api = createFakePreviewApi({
+      initialDatasets: many,
+      availability: unavailableBackend,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /QC_run-0\.mzML/ });
+    expect(rosterRows()).toHaveLength(1_024);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
+      target: { value: "qc_run" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+      target: { value: "name-asc" },
+    });
+
+    expect(rosterRows()).toHaveLength(512);
+    // Naturally ordered, which is the whole reason for a numeric collator.
+    expect(
+      rosterRows()
+        .slice(0, 3)
+        .map((row) => within(row).getByTitle(/\.mzML$/).textContent),
+    ).toEqual(["QC_run-0.mzML", "QC_run-2.mzML", "QC_run-4.mzML"]);
+    expect(api.openCount()).toBe(0);
+  });
+
   it("stops saying the list could not be read once an action has read it", async () => {
     // A read that fails on mount is otherwise permanent: nothing but the retry
     // ever moves that state, so the workspace goes on reporting that its list
@@ -1474,6 +1684,6 @@ describe("the session workspace roster", () => {
     expect(await screen.findByRole("option", { name: /Replaced/ })).toBeVisible();
     // The row stays. What the name now points at is a question for the next
     // read of it, and removing it is the user's decision.
-    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(rosterRows()).toHaveLength(1);
   });
 });

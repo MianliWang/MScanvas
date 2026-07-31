@@ -13,6 +13,16 @@ All notable changes will be documented here once versioned releases begin.
   the rest of the batch added. Rows can be selected with the pointer or the
   keyboard, removed, or cleared — none of which changes anything on disk. The
   session holds up to 1,024 files.
+- Workspace search and sort. The list can be narrowed by filename and ordered by
+  the order files were added, by name in either direction, or by size in either
+  direction; names with numbers in them sort the way they read, so `sample-2`
+  comes before `sample-10`. A search never hides work in progress: a row you
+  selected, the row whose preview is on screen and a row being read stay visible
+  and say why. The count says how many files matched rather than how many rows
+  are on screen, and a search that finds nothing says so rather than claiming the
+  session is empty. Ranges, `Ctrl+A` and the keyboard follow what is on screen.
+  None of it reaches the backend, and neither the search nor the sort outlives
+  the session.
 - Explicit, one-at-a-time reading. Moving around the workspace starts no backend
   work; previewing the focused file reads its acquisition metadata, run summary,
   virtualized spectrum table and, on selecting a row, one spectrum. Choosing ten

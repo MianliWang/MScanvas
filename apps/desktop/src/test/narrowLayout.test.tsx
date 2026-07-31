@@ -12,13 +12,19 @@
  * nothing here is written as though they were.
  */
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import appStyles from "../app/app.css?raw";
 import { App } from "../app/App";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
-import { createFakePreviewApi } from "./previewFixtures";
+import {
+  createFakePreviewApi,
+  secondFile,
+  selectedFile,
+  thirdFile,
+  unavailableBackend,
+} from "./previewFixtures";
 
 const mountedStyles: HTMLStyleElement[] = [];
 
@@ -183,21 +189,99 @@ describe("narrow desktop layout markup", () => {
     // header and actions used all of it, and the list came out at zero height
     // with four rows in it: rows that exist, are announced, and cannot be
     // reached. The track has a floor and the panel has a minimum.
+    //
+    // M1.3 raised both by what the search and sort controls cost. The two are
+    // pinned together because they are one decision: a track shorter than the
+    // panel's own minimum clamps the panel back to a height its chrome does
+    // not fit in, which is the original defect by another route.
     const app = mountStyles(appStyles);
 
     expect(requireStyleRule(app, ".dataset-roster-panel").style.getPropertyValue("min-height")).toBe(
-      "176px",
+      "240px",
     );
     expect(
       requireMediaRule(app, "(max-width: 1120px)", ".workspace-layout").style.getPropertyValue(
         "grid-template-rows",
       ),
-    ).toBe("minmax(176px, 0.9fr) minmax(0, 1.6fr)");
+    ).toBe("minmax(240px, 0.9fr) minmax(0, 1.6fr)");
     // And what the column cannot fit is clipped here rather than pushing the
     // shell past the viewport.
     expect(requireStyleRule(app, ".workspace-sidebar").style.getPropertyValue("overflow")).toBe(
       "hidden",
     );
+  });
+
+  it("lets a row's notes give ground so the file name keeps a column", () => {
+    // A grid `auto` track takes its max-content width before a flexible track
+    // gets any. With `Replaced` and `Selected — outside search` side by side in
+    // an `auto` track, a narrow panel had nothing left for the name and the row
+    // showed a size and two labels for a file it would not name.
+    const app = mountStyles(appStyles);
+
+    // The name keeps a floor of its own. Lowering the notes track's minimum is
+    // not enough: an `auto` track still takes its max-content width before a
+    // flexible one gets any, and measured in a rendered window a row carrying
+    // both `Could not be read` and `Selected — outside search` left the name
+    // exactly 0px wide.
+    expect(requireStyleRule(app, ".dataset-row").style.getPropertyValue("grid-template-columns")).toBe(
+      "12px 12px minmax(72px, 1fr) auto minmax(0, auto)",
+    );
+    const notes = requireStyleRule(app, ".dataset-row-notes").style;
+    expect(notes.getPropertyValue("min-width")).toBe("0px");
+    expect(notes.getPropertyValue("overflow")).toBe("hidden");
+  });
+
+  it("gives the search's own explanations a colour that can be read", () => {
+    // `Selected — outside search` is the only thing on screen that explains a
+    // row the query excludes, and the match count is the only thing that says
+    // how much of the session is hidden. The tertiary text colour is #7f8a9c on
+    // white, about 3.5:1, which is under AA for text this size; the secondary
+    // one is #5b677a, about 6.2:1. Quiet is a reason to use the quieter of two
+    // readable colours, not a reason to use an unreadable one.
+    const app = mountStyles(appStyles);
+
+    expect(requireStyleRule(app, ".dataset-row-kept").style.getPropertyValue("color")).toBe(
+      "var(--color-text-secondary)",
+    );
+    expect(requireStyleRule(app, ".roster-field > label").style.getPropertyValue("color")).toBe(
+      "var(--color-text-secondary)",
+    );
+    // And the match count, which while a query hides rows is the only visible
+    // account of how much of the session is out of sight. It owns a selector of
+    // its own rather than inheriting the header note's tertiary colour, and
+    // that selector has to out-specify `.panel-header p` to mean anything.
+    const matches = requireStyleRule(app, ".panel-header p.dataset-roster-matches").style;
+    expect(matches.getPropertyValue("color")).toBe("var(--color-text-secondary)");
+    expect(requireStyleRule(app, ".panel-header p").style.getPropertyValue("color")).toBe(
+      "var(--color-text-tertiary)",
+    );
+  });
+
+  it("gives the match count its own class only while a query is hiding rows", async () => {
+    // The line has two duties. As a header note about how many files a session
+    // holds it is quiet chrome, and the roster shows the same count in full
+    // underneath; as the account of a search it is the only thing that says so.
+    render(
+      <PreviewApiProvider
+        value={createFakePreviewApi({
+          initialDatasets: [selectedFile, secondFile, thirdFile],
+          availability: unavailableBackend,
+        })}
+      >
+        <App />
+      </PreviewApiProvider>,
+    );
+    const line = () => document.querySelector("#dataset-roster-matches");
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+
+    expect(line()).not.toHaveClass("dataset-roster-matches");
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
+      target: { value: "QC" },
+    });
+
+    expect(line()).toHaveClass("dataset-roster-matches");
+    expect(line()).toHaveTextContent("2 matches of 3 files.");
   });
 
   it("leaves the workspace roster scrolling inside its own panel", async () => {
@@ -209,8 +293,12 @@ describe("narrow desktop layout markup", () => {
     expect(requireStyleRule(app, ".dataset-roster-list").style.getPropertyValue("overflow")).toBe(
       "auto",
     );
+    // Two whole rows, which is the promise the panel's floor is the arithmetic
+    // for: a list with files in it always looks like a list. Stated on the box
+    // that would otherwise be the one to give ground, because it is the only
+    // flexible child of the panel and would give all of it.
     expect(requireStyleRule(app, ".dataset-roster-list").style.getPropertyValue("min-height")).toBe(
-      "0px",
+      "56px",
     );
     // And a file name too long for its column is truncated rather than pushing
     // the row -- and the panel, and the document -- wider.

@@ -169,15 +169,82 @@ button:disabled {
   gap: 8px;
 }
 
-/* The roster's own chrome is a header and a row of actions, so a share of the
-   column smaller than that leaves the list with no height at all -- rows that
-   exist, are announced, and cannot be reached. The minimum is that chrome plus
-   enough room to be a list; the summary beside it gives ground first. */
+/* The roster's own chrome is a header, a row of view controls and a row of
+   actions, so a share of the column smaller than that leaves the list with no
+   height at all -- rows that exist, are announced, and cannot be reached. The
+   minimum is that chrome plus enough room to be a list; the summary beside it
+   gives ground first.
+
+   The arithmetic, because it is the whole reason for the number: 2px of panel
+   border, 55px of header, 39px of view controls and 87px of actions -- four
+   buttons that do not fit one line in this column and wrap to two, which is
+   what they already did before the view controls existed -- is 183px of chrome,
+   and `.dataset-roster-list` is the only child that can give ground. 183 plus
+   the 56px two-row floor below is 239, rounded up to 240 so a font that
+   measures a little differently does not spend the rounding.
+
+   The search summary is deliberately not a row here. It lives in the header
+   line, which exists either way and already truncates: given a row of its own
+   it cost 24px in the one panel that is counting them, and at the widths where
+   the actions wrap it was the list that paid. */
 .dataset-roster-panel {
   display: flex;
-  min-height: 176px;
+  min-height: 240px;
   flex: 1 1 40%;
   flex-direction: column;
+}
+
+/* Search and sort. Two columns that shrink rather than wrap: wrapping them
+   would put a third line into the panel at exactly the window where there is
+   least room, and the viewer below would pay for it. `minmax(0, 1fr)` is what
+   lets them shrink at all -- a grid item's automatic minimum is its content,
+   which for an input is wider than a narrow panel has. */
+.dataset-roster-filters {
+  display: grid;
+  align-items: center;
+  gap: 6px 8px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* A label beside its control rather than above it, which is one line rather
+   than two in a panel that is counting them. */
+.roster-field {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.roster-field > label {
+  flex: none;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.roster-field > .link-button {
+  flex: none;
+  font-size: 11px;
+}
+
+.roster-field > input,
+.roster-field > select {
+  min-width: 0;
+  min-height: 26px;
+  flex: 1 1 auto;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: inherit;
+  font-size: 12px;
+}
+
+.roster-field > input:focus-visible,
+.roster-field > select:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
 }
 
 .workspace-sidebar > .inspector-panel {
@@ -196,7 +263,10 @@ button:disabled {
    file name is truncated in its own cell, so neither can make the document
    wider or taller than the window. */
 .dataset-roster-list {
-  min-height: 0;
+  /* Two whole rows, stated here rather than left in a comment on the panel's
+     floor: this is the promise -- a list with files in it always looks like a
+     list -- and the floor above is only the arithmetic that pays for it. */
+  min-height: 56px;
   flex: 1;
   margin: 0;
   padding: 0;
@@ -208,7 +278,13 @@ button:disabled {
   display: grid;
   align-items: center;
   gap: 8px;
-  grid-template-columns: 12px 12px minmax(0, 1fr) auto auto;
+  /* The name has a floor of its own, and it is the only column that does.
+     `minmax(0, auto)` on the notes lowers their minimum but not their maximum,
+     and an `auto` track still takes its max-content width before a flexible one
+     gets any -- measured, a row carrying both `Could not be read` and
+     `Selected — outside search` left the name exactly 0px. The file a row is
+     about is the last thing on it that may disappear. */
+  grid-template-columns: 12px 12px minmax(72px, 1fr) auto minmax(0, auto);
   height: 28px;
   padding: 0 12px;
   font-size: 12px;
@@ -235,6 +311,32 @@ button:disabled {
 .dataset-row-state {
   color: var(--color-warning);
   font-weight: 650;
+}
+
+/* What a row has to say about itself: its state, why the search kept it, or
+   both. One track, which can shrink to nothing -- an `auto` track takes its
+   max-content width before the name's `1fr` gets any, so a long reason beside a
+   long state could squeeze the file name out of a narrow panel entirely. */
+.dataset-row-notes {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
+}
+
+/* Why a row the search did not match is on screen anyway. Quieter than a row
+   state, because it is a fact about the view rather than about the file -- but
+   only quieter: this is the one thing on screen that explains a row the query
+   excludes, so it takes the secondary text colour rather than the tertiary one,
+   which does not reach 4.5:1 against the panel at this size. Words either way,
+   so it survives greyscale and reaches a screen reader. */
+.dataset-row-kept {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dataset-row:hover {
@@ -325,6 +427,27 @@ button:disabled {
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* While a query is hiding rows this line stops being a note about the panel and
+   becomes the only visible account of how much of the session is out of sight.
+   Ordinary text at 11px, so it takes the secondary colour rather than the
+   tertiary one, which is about 3.5:1 against the panel.
+
+   Scoped to the search state, and the reason is narrower than "the rest is
+   redundant": it is not. Unsearched, the same line carries the session's
+   capacity, which appears nowhere else, and the only statement that removing a
+   row leaves the file alone that a user sees *before* pressing the button. Both
+   deserve to be readable. But `.panel-header p` is tertiary across the whole
+   application -- the preview summary, the spectrum panel, the table's caption --
+   and that is one decision about one token, not this panel's to make on its own
+   while a search happens to be running. It belongs to a change that can weigh
+   every panel it moves and check each one rendered. What is fixed here is the
+   text this milestone added; what is left is recorded rather than implied.
+
+   Everything else about the line, its truncation included, is inherited. */
+.panel-header p.dataset-roster-matches {
+  color: var(--color-text-secondary);
 }
 
 .inspector-panel,
@@ -628,8 +751,11 @@ button:disabled {
     /* Stacked, a share of an already short window is not enough for the
        workspace column: measured at 896x475 CSS pixels the roster's list came
        out at zero height with four rows in it. The first track therefore has a
-       floor, and the viewer below keeps the rest. */
-    grid-template-rows: minmax(176px, 0.9fr) minmax(0, 1.6fr);
+       floor, and the viewer below keeps the rest. The floor is the panel's own
+       minimum, raised in M1.3 by what the search and sort controls cost; the
+       two have to move together, because a track shorter than the panel's
+       minimum clamps it back to a height its chrome does not fit in. */
+    grid-template-rows: minmax(240px, 0.9fr) minmax(0, 1.6fr);
   }
 }
 
