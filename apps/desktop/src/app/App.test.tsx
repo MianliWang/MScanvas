@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { PreviewApi } from "../features/mzml-preview/api";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
@@ -1199,22 +1199,34 @@ describe("the session workspace roster", () => {
     expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
   });
 
-  it("lists two names for one acquisition as two lines rather than one", async () => {
+  it("lists two names for one acquisition as two lines, and warns about neither", async () => {
     // Rust reports one outcome per file the user chose, and two names for one
-    // file produce the same sentence. Keying the list on that sentence made two
-    // reports one row.
-    const api = createFakePreviewApi({
-      initialDatasets: [selectedFile],
-      pickedFiles: [selectedFile, selectedFile],
+    // file produce the same sentence. Keying the list on that sentence gives
+    // React two children with one key, which it complains about — and this
+    // application's rendered check requires a console with nothing new in it.
+    const complaints: unknown[][] = [];
+    const reportError = vi.spyOn(console, "error").mockImplementation((...args) => {
+      complaints.push(args);
     });
-    renderApp(api);
-    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+    try {
+      const api = createFakePreviewApi({
+        initialDatasets: [selectedFile],
+        pickedFiles: [selectedFile, selectedFile],
+      });
+      renderApp(api);
+      fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
 
-    await waitFor(() => {
-      expect(
-        screen.getAllByText("QC_pool_01.mzML is already in the workspace.", VISIBLE),
-      ).toHaveLength(2);
-    });
+      await waitFor(() => {
+        expect(
+          screen.getAllByText("QC_pool_01.mzML is already in the workspace.", VISIBLE),
+        ).toHaveLength(2);
+      });
+      expect(complaints.map((args) => args.map(String).join(" ")).join(" | ")).not.toContain(
+        "same key",
+      );
+    } finally {
+      reportError.mockRestore();
+    }
   });
 
   it("marks a row whose file was replaced, without removing it", async () => {
