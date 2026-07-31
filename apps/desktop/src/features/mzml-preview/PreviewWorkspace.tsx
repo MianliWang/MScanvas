@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect } from "react";
+import { useCallback, useLayoutEffect, useMemo } from "react";
 
 import { BackendStatus } from "./BackendStatus";
 import { DatasetRoster } from "./DatasetRoster";
@@ -6,13 +6,19 @@ import { PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel } from "./SelectedSpectrumPanel";
 import { SpectrumTable } from "./SpectrumTable";
 import { formatCount } from "./format";
-import type { WorkspaceNotice } from "./rosterSelection";
+import { rosterProjection, type WorkspaceNotice } from "./rosterSelection";
+import { describeProjection } from "./rosterView";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
 
 /** The session workspace: a curated roster of mzML files, and one open preview. */
 export function PreviewWorkspace() {
   const workspace = usePreviewWorkspace();
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
+
+  // Derived once per roster change and handed down, so the rows the list
+  // renders are the same list the reducer ranges over rather than a second
+  // answer to the same question.
+  const projection = useMemo(() => rosterProjection(roster), [roster]);
 
   // Runs after the panels below have been committed, so each measurement
   // covers the work its name describes rather than stopping when the reply
@@ -189,6 +195,19 @@ export function PreviewWorkspace() {
           the sentence repeats, and React would add or remove the second node
           instead -- a change this region's default `aria-relevant` does not
           announce in one direction and CSS collapses away in the other. */}
+      {/* What the search found, which is otherwise announced nowhere: the list
+          simply becomes shorter, and neither of the other two regions says a
+          word about it. Empty until a query narrows something, so an ordinary
+          session is not given a third thing to say.
+
+          No alternating character here, unlike the account below. Two searches
+          that happen to find the same number of files are not two events worth
+          repeating — and the sort has no sentence at all, because a native
+          select announces its own value and a second voice saying the same
+          thing is noise rather than access. */}
+      <p aria-live="polite" className="visually-hidden">
+        {describeProjection(projection)}
+      </p>
       <p aria-live="polite" className="visually-hidden">
         {workspace.workspaceNotice === null ? "" : announceNotice(workspace.workspaceNotice)}
       </p>
@@ -207,6 +226,7 @@ export function PreviewWorkspace() {
             onClearList={workspace.clearList}
             onReloadRoster={workspace.reloadRoster}
             onRemoveSelected={workspace.removeSelected}
+            projection={projection}
             state={roster}
           />
           {preview.status === "loaded" ? (

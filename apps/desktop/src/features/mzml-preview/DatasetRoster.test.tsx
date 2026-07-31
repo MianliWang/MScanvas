@@ -4,7 +4,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { SelectedFile } from "./contracts";
 import { DatasetRoster } from "./DatasetRoster";
-import { initialRosterState, rosterReducer, type RosterState } from "./rosterSelection";
+import {
+  initialRosterState,
+  rosterProjection,
+  rosterReducer,
+  type RosterState,
+} from "./rosterSelection";
 import type { RosterLoadState } from "./usePreviewWorkspace";
 
 const NAMES = ["QC_pool_01.mzML", "QC_pool_02.mzML", "Blank_03.mzML", "QC_pool_04.mzML"];
@@ -81,13 +86,38 @@ function Harness({
       onClearList={onClearList}
       onReloadRoster={() => undefined}
       onRemoveSelected={onRemoveSelected}
+      projection={rosterProjection(state)}
+      state={state}
+    />
+  );
+}
+
+/** The real component over a state built by hand, for the cases a keystroke cannot reach. */
+function Fixed({ state }: { readonly state: RosterState }) {
+  return (
+    <DatasetRoster
+      canAddFiles
+      canMutate
+      canPreview
+      dispatch={() => undefined}
+      focusAddFilesToken={0}
+      load={{ status: "ready" }}
+      onActivate={() => undefined}
+      onAddFiles={() => undefined}
+      onClearList={() => undefined}
+      onReloadRoster={() => undefined}
+      onRemoveSelected={() => undefined}
+      projection={rosterProjection(state)}
       state={state}
     />
   );
 }
 
 function rows(): HTMLElement[] {
-  return screen.getAllByRole("option");
+  // Scoped to the workspace listbox: the sort control is a native select, and
+  // its options carry the same role.
+  const list = screen.queryByRole("listbox", { name: "Workspace" });
+  return list === null ? [] : within(list).getAllByRole("option");
 }
 
 function selectedNames(): string[] {
@@ -103,6 +133,253 @@ function tabStops(): HTMLElement[] {
 function press(key: string, modifiers: { ctrlKey?: boolean; shiftKey?: boolean } = {}): void {
   fireEvent.keyDown(document.activeElement ?? document.body, { key, ...modifiers });
 }
+
+function searchBox(): HTMLInputElement {
+  return screen.getByRole("searchbox", { name: "Search files" });
+}
+
+function type(query: string): void {
+  fireEvent.change(searchBox(), { target: { value: query } });
+}
+
+function rowNames(): string[] {
+  return rows().map((row) => within(row).getByTitle(/\.mzML$/).textContent ?? "");
+}
+
+describe("looking at the roster through a search and a sort", () => {
+  it("labels both controls visibly and offers exactly the five sort modes", () => {
+    render(<Harness />);
+
+    // Named by a real label rather than by placeholder text, which is gone the
+    // moment anything is typed into it.
+    expect(searchBox()).toHaveAttribute("type", "search");
+    expect(screen.getByText("Search files").tagName).toBe("SPAN");
+    const sort = screen.getByRole("combobox", { name: "Sort files" });
+    expect(within(sort).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Added order",
+      "Name A–Z",
+      "Name Z–A",
+      "Size: smallest first",
+      "Size: largest first",
+    ]);
+  });
+
+  it("offers neither control over a workspace with nothing in it", () => {
+    // Two controls that cannot do anything, taking the height the empty state
+    // needs to explain itself.
+    render(<Harness rows={0} />);
+
+    expect(screen.queryByRole("searchbox", { name: "Search files" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Sort files" })).toBeNull();
+  });
+
+  it("shows only the matching rows, and says how many of how many", () => {
+    render(<Harness />);
+
+    type("qc_pool");
+
+    expect(rowNames()).toEqual(["QC_pool_01.mzML", "QC_pool_02.mzML", "QC_pool_04.mzML"]);
+    expect(screen.getByText("3 matches of 4 files.")).toBeVisible();
+  });
+
+  it("says nothing about counts when the search narrows nothing", () => {
+    render(<Harness />);
+
+    type("mzML");
+
+    expect(rows()).toHaveLength(4);
+    expect(screen.queryByText(/shown$/)).toBeNull();
+  });
+
+  it("offers Clear search only once there is a search to clear", () => {
+    render(<Harness />);
+    expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
+
+    type("blank");
+    expect(screen.getByRole("button", { name: "Clear search" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+
+    expect(rows()).toHaveLength(4);
+    // Back where they were typing: clearing a search is a step in the search.
+    expect(document.activeElement).toBe(searchBox());
+  });
+
+  it("clears the search on Escape", () => {
+    render(<Harness />);
+    type("blank");
+    expect(rows()).toHaveLength(1);
+
+    fireEvent.keyDown(searchBox(), { key: "Escape" });
+
+    expect(rows()).toHaveLength(4);
+    expect(searchBox()).toHaveValue("");
+  });
+
+  it("reorders the rendered rows to follow the chosen sort", () => {
+    render(<Harness />);
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+      target: { value: "name-asc" },
+    });
+    expect(rowNames()).toEqual([
+      "Blank_03.mzML",
+      "QC_pool_01.mzML",
+      "QC_pool_02.mzML",
+      "QC_pool_04.mzML",
+    ]);
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+      target: { value: "size-desc" },
+    });
+    expect(rowNames()).toEqual([
+      "QC_pool_04.mzML",
+      "Blank_03.mzML",
+      "QC_pool_02.mzML",
+      "QC_pool_01.mzML",
+    ]);
+
+    // And back to exactly the order the session holds.
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+      target: { value: "added" },
+    });
+    expect(rowNames()).toEqual([
+      "QC_pool_01.mzML",
+      "QC_pool_02.mzML",
+      "Blank_03.mzML",
+      "QC_pool_04.mzML",
+    ]);
+  });
+
+  it("keeps a selected row visible outside the search, and says why in words", () => {
+    render(<Harness />);
+    fireEvent.click(rows()[2] as HTMLElement);
+
+    type("qc_pool");
+
+    const kept = screen.getByRole("option", { name: /Blank_03\.mzML/ });
+    // Not a shade and not a marker: the reason is text, so it survives
+    // greyscale and reaches a screen reader through the row's own name.
+    expect(within(kept).getByText("Selected — outside search")).toBeVisible();
+    expect(kept).toHaveAccessibleName(/Selected — outside search/);
+    // Four rows on screen, three of them matches: the count says so rather
+    // than letting the visible length speak for the search.
+    expect(rows()).toHaveLength(4);
+    expect(
+      screen.getByText("3 matches of 4 files; 1 selected or active file kept visible."),
+    ).toBeVisible();
+  });
+
+  it("says a kept row is showing only when something is on screen for it", () => {
+    const shown = rosterReducer(
+      rosterReducer(seeded(4), { type: "activated", handle: "file-2" }),
+      { type: "rowStateChanged", handle: "file-2", state: "loaded" },
+    );
+    const searched = rosterReducer(shown, { type: "searchChanged", query: "qc_pool" });
+    const { rerender } = render(<Fixed state={searched} />);
+
+    expect(
+      within(screen.getByRole("option", { name: /Blank_03\.mzML/ })).getByText(
+        "Showing — outside search",
+      ),
+    ).toBeVisible();
+
+    // A backend change discards what it read. The row stays -- it is still the
+    // one an explicit re-read acts on -- and stops claiming to be showing.
+    rerender(<Fixed state={rosterReducer(searched, { type: "previewDiscarded" })} />);
+
+    const kept = screen.getByRole("option", { name: /Blank_03\.mzML/ });
+    expect(within(kept).queryByText("Showing — outside search")).toBeNull();
+    expect(within(kept).getByText("Kept for the viewer — outside search")).toBeVisible();
+  });
+
+  it("says a row being read is being read", () => {
+    const reading = rosterReducer(
+      rosterReducer(seeded(4), { type: "searchChanged", query: "qc_pool" }),
+      { type: "rowStateChanged", handle: "file-2", state: "opening" },
+    );
+    render(<Fixed state={reading} />);
+
+    expect(
+      within(screen.getByRole("option", { name: /Blank_03\.mzML/ })).getByText(
+        "Reading — outside search",
+      ),
+    ).toBeVisible();
+  });
+
+  it("distinguishes a search that found nothing from a session that holds nothing", () => {
+    render(<Harness />);
+
+    type("zzz");
+
+    expect(screen.getByText("No files match this search")).toBeVisible();
+    expect(screen.getByText(/4 files are in this session/)).toBeVisible();
+    // The one thing it must not say: the workspace still holds every file.
+    expect(screen.queryByText("No files in this session yet")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(rows()).toHaveLength(4);
+  });
+
+  it("ranges and selects over what is on screen rather than what is held", () => {
+    render(<Harness />);
+    type("qc_pool");
+
+    fireEvent.click(rows()[0] as HTMLElement);
+    fireEvent.click(rows()[2] as HTMLElement, { shiftKey: true });
+    expect(selectedNames()).toEqual([
+      "QC_pool_01.mzML",
+      "QC_pool_02.mzML",
+      "QC_pool_04.mzML",
+    ]);
+
+    press("a", { ctrlKey: true });
+    // Blank_03 is hidden and is not swept into either.
+    expect(selectedNames()).toEqual([
+      "QC_pool_01.mzML",
+      "QC_pool_02.mzML",
+      "QC_pool_04.mzML",
+    ]);
+  });
+
+  it("keeps one tab stop over the visible rows", () => {
+    render(<Harness />);
+
+    type("qc_pool");
+
+    expect(rows()).toHaveLength(3);
+    expect(tabStops()).toHaveLength(1);
+  });
+
+  it("moves the keyboard to a visible row when the one it was on disappears", () => {
+    render(<Harness />);
+    fireEvent.click(rows()[2] as HTMLElement);
+    type("qc_pool");
+    const kept = screen.getByRole("option", { name: /Blank_03\.mzML/ });
+    kept.focus();
+    expect(document.activeElement).toBe(kept);
+
+    // Deselecting it takes away the only reason it was on screen.
+    fireEvent.click(kept, { ctrlKey: true });
+
+    expect(rows()).toHaveLength(3);
+    expect(document.activeElement).not.toBe(document.body);
+    expect(rows()).toContain(document.activeElement);
+  });
+
+  it("moves the keyboard to the search box when no visible row survives", () => {
+    render(<Harness />);
+    fireEvent.click(rows()[2] as HTMLElement);
+    type("zzz");
+    const kept = screen.getByRole("option", { name: /Blank_03\.mzML/ });
+    kept.focus();
+
+    fireEvent.click(kept, { ctrlKey: true });
+
+    expect(screen.getByText("No files match this search")).toBeVisible();
+    expect(document.activeElement).toBe(searchBox());
+  });
+});
 
 describe("the workspace roster as an accessible list", () => {
   it("is one multi-selectable listbox with one roving tab stop", () => {
@@ -128,13 +405,14 @@ describe("the workspace roster as an accessible list", () => {
         canMutate
         canPreview
         dispatch={() => undefined}
-          focusAddFilesToken={0}
+        focusAddFilesToken={0}
         load={{ status: "ready" }}
-          onActivate={() => undefined}
+        onActivate={() => undefined}
         onAddFiles={() => undefined}
         onClearList={() => undefined}
-            onReloadRoster={() => undefined}
+        onReloadRoster={() => undefined}
         onRemoveSelected={() => undefined}
+        projection={rosterProjection(state)}
         state={state}
       />,
     );
@@ -170,6 +448,7 @@ describe("the workspace roster as an accessible list", () => {
         onClearList={() => undefined}
         onReloadRoster={() => undefined}
         onRemoveSelected={() => undefined}
+        projection={rosterProjection(discarded)}
         state={discarded}
       />,
     );
@@ -221,7 +500,7 @@ describe("the workspace roster as an accessible list", () => {
         canMutate
         canPreview
         dispatch={() => undefined}
-          focusAddFilesToken={0}
+        focusAddFilesToken={0}
         load={{
           status: "failed",
           error: {
@@ -231,11 +510,12 @@ describe("the workspace roster as an accessible list", () => {
             retryable: true,
           },
         }}
-          onActivate={() => undefined}
+        onActivate={() => undefined}
         onAddFiles={() => undefined}
         onClearList={() => undefined}
-            onReloadRoster={retry}
+        onReloadRoster={retry}
         onRemoveSelected={() => undefined}
+        projection={rosterProjection(initialRosterState)}
         state={initialRosterState}
       />,
     );

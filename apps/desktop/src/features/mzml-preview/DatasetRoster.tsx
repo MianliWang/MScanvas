@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { KeyboardEvent, MouseEvent } from "react";
+import type { ChangeEvent, KeyboardEvent, MouseEvent } from "react";
 
 import { formatByteLength, formatCount } from "./format";
 import {
@@ -8,10 +8,23 @@ import {
   type RosterState,
   type RowPresentation,
 } from "./rosterSelection";
+import {
+  describeProjection,
+  isSortMode,
+  PIN_REASON_LABEL,
+  SORT_MODE_LABEL,
+  SORT_MODES,
+  type RosterProjection,
+} from "./rosterView";
 import type { RosterLoadState } from "./usePreviewWorkspace";
 
 export interface DatasetRosterProps {
   readonly state: RosterState;
+  /**
+   * What the state puts on screen. Passed in rather than derived here so the
+   * rows this renders and the rows the reducer ranges over are one list.
+   */
+  readonly projection: RosterProjection;
   readonly load: RosterLoadState;
   readonly onReloadRoster: () => void;
   readonly dispatch: (action: RosterAction) => void;
@@ -50,6 +63,7 @@ const ROW_STATE_LABEL: Record<RowPresentation, string> = {
  */
 export function DatasetRoster({
   state,
+  projection,
   load,
   onReloadRoster,
   dispatch,
@@ -64,29 +78,75 @@ export function DatasetRoster({
 }: DatasetRosterProps) {
   const listRef = useRef<HTMLUListElement | null>(null);
   const addFilesRef = useRef<HTMLButtonElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
   const seenFocusToken = useRef(focusAddFilesToken);
   const pendingRestore = useRef<HTMLButtonElement | null>(null);
   const restoreOutstanding = useRef(false);
+  /** Whether the keyboard was in the list when this component last looked. */
+  const keyboardInList = useRef(false);
+  /** The focused handle the roving tab stop was last moved to follow. */
+  const followed = useRef(state.focused);
 
   /**
-   * Keeps the keyboard on the row that has the tab stop.
+   * Keeps the keyboard on the row that has the tab stop, and never on nothing.
    *
-   * Only while the keyboard is already inside the list. Adding files moves the
-   * focused row too, and taking the keyboard away from wherever the user
-   * actually is would be a move of its own rather than a roving tab stop.
+   * Two jobs that used to be one. While the keyboard is inside the list it
+   * follows the roving tab stop, and only then: adding files moves the focused
+   * row too, and taking the keyboard away from wherever the user actually is
+   * would be a move of its own rather than a roving tab stop.
+   *
+   * The second job is what a projection makes possible. A row can leave the
+   * list while the keyboard is on it -- deselect the kept row a search was
+   * holding on screen, or let a read finish on a row the query does not match --
+   * and an unmounting element takes focus to the body silently, with no event
+   * and with `contains` no longer true of anything. Having seen the keyboard in
+   * the list is what tells that apart from a user who put it elsewhere
+   * themselves, whose focus is not ours to move. The row that took its place if
+   * there is one, the search box if there is not, the body never.
+   *
+   * Deliberately not keyed on `state.focused`: the row can go while the focused
+   * handle stays exactly as it was.
    */
   useEffect(() => {
     const list = listRef.current;
-    if (list === null || state.focused === null) {
+    const active = document.activeElement;
+    const moved = followed.current !== state.focused;
+    followed.current = state.focused;
+    if (list !== null && list.contains(active)) {
+      keyboardInList.current = true;
+      if (!moved) {
+        // The tab stop is where it was, so the keyboard is where the user put
+        // it. Following it on every commit would take focus off a row they
+        // reached for themselves.
+        return;
+      }
+      const row = list.querySelector<HTMLElement>(`[data-handle="${state.focused ?? ""}"]`);
+      if (row !== null && row !== active) {
+        row.focus({ preventScroll: false });
+      }
       return;
     }
-    if (!list.contains(document.activeElement)) {
+    if (active !== document.body) {
+      // Somewhere of the user's own choosing, including `Add files…` waiting
+      // for its own restoration. Nothing here has any business moving it.
+      keyboardInList.current = false;
       return;
     }
-    list
-      .querySelector<HTMLElement>(`[data-handle="${state.focused}"]`)
-      ?.focus({ preventScroll: false });
-  }, [state.focused]);
+    if (!keyboardInList.current) {
+      return;
+    }
+    keyboardInList.current = false;
+    const row =
+      state.focused === null
+        ? null
+        : (list?.querySelector<HTMLElement>(`[data-handle="${state.focused}"]`) ?? null);
+    if (row !== null) {
+      row.focus({ preventScroll: true });
+      keyboardInList.current = true;
+      return;
+    }
+    searchRef.current?.focus({ preventScroll: true });
+  });
 
   /**
    * Gives the keyboard back to `Add files…` when the last row goes.
@@ -207,8 +267,43 @@ export function DatasetRoster({
     event.preventDefault();
   };
 
+  const handleSearch = (event: ChangeEvent<HTMLInputElement>) => {
+    dispatch({ type: "searchChanged", query: event.target.value });
+  };
+
+  const handleSearchKeys = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Escape" || state.query === "") {
+      return;
+    }
+    dispatch({ type: "searchCleared" });
+    event.preventDefault();
+  };
+
+  const clearSearch = () => {
+    dispatch({ type: "searchCleared" });
+    // Back where they were typing. Clearing a search is a step in the search,
+    // not a way out of it.
+    searchRef.current?.focus({ preventScroll: true });
+  };
+
+  const handleSort = (event: ChangeEvent<HTMLSelectElement>) => {
+    const chosen = event.target.value;
+    if (isSortMode(chosen)) {
+      dispatch({ type: "sortChanged", sort: chosen });
+    }
+  };
+
   const rowCount = state.datasets.length;
-  const focusStop = state.focused ?? state.datasets[0]?.handle ?? null;
+  const visible = projection.datasets;
+  const focusStop = state.focused ?? visible[0]?.handle ?? null;
+  // Measured against what the search matched, never against what is on screen:
+  // a query that matched three of four files narrowed the view whether or not
+  // a fourth row is being kept visible for another reason. The same sentence
+  // the live region reads, so the two halves cannot drift apart.
+  const summary =
+    projection.searching && projection.matchCount !== rowCount
+      ? describeProjection(projection)
+      : null;
 
   return (
     <section aria-labelledby="dataset-roster-heading" className="panel dataset-roster-panel">
@@ -223,6 +318,48 @@ export function DatasetRoster({
           </p>
         </div>
       </header>
+
+      {/* Only over a list there is something to narrow. Offered against an
+          empty workspace they would be two controls that cannot do anything,
+          taking the height the empty state needs to explain itself. */}
+      {rowCount === 0 ? null : (
+        <div className="dataset-roster-filters">
+          <label className="roster-field">
+            <span>Search files</span>
+            <input
+              aria-describedby={summary === null ? undefined : "dataset-roster-matches"}
+              onChange={handleSearch}
+              onKeyDown={handleSearchKeys}
+              ref={searchRef}
+              type="search"
+              value={state.query}
+            />
+          </label>
+          <label className="roster-field">
+            <span>Sort files</span>
+            <select onChange={handleSort} value={state.sort}>
+              {SORT_MODES.map((mode) => (
+                <option key={mode} value={mode}>
+                  {SORT_MODE_LABEL[mode]}
+                </option>
+              ))}
+            </select>
+          </label>
+          {/* Not while the no-match state is showing: that state offers the
+              same action, and two controls of one name is two answers to
+              "which one clears the search". */}
+          {state.query === "" || visible.length === 0 ? null : (
+            <button className="link-button" onClick={clearSearch} type="button">
+              Clear search
+            </button>
+          )}
+          {summary === null ? null : (
+            <p className="dataset-roster-matches" id="dataset-roster-matches">
+              {summary}
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="dataset-roster-actions">
         <button
@@ -266,7 +403,22 @@ export function DatasetRoster({
         )}
       </div>
 
-      {rowCount === 0 ? (
+      {rowCount > 0 && visible.length === 0 ? (
+        // Not the empty state. The session holds files; the search is what is
+        // standing between the user and them, and saying "no files in this
+        // session" here would be a claim about the workspace rather than about
+        // the query.
+        <div className="empty-state">
+          <strong>No files match this search</strong>
+          <span>
+            {formatCount(rowCount)} {rowCount === 1 ? "file is" : "files are"} in this session.
+            Clear the search to see {rowCount === 1 ? "it" : "them"} again.
+          </span>
+          <button className="secondary-button" onClick={clearSearch} type="button">
+            Clear search
+          </button>
+        </div>
+      ) : rowCount === 0 ? (
         <div className="empty-state">
           {load.status === "failed" ? (
             <>
@@ -299,14 +451,25 @@ export function DatasetRoster({
           aria-labelledby="dataset-roster-heading"
           aria-multiselectable="true"
           className="dataset-roster-list"
+          onFocus={() => {
+            // Recorded as it happens rather than at the next commit. A row can
+            // be focused and then unmounted without a render in between, and
+            // by the time anything else runs the only evidence that the
+            // keyboard was ever here has gone with it.
+            keyboardInList.current = true;
+          }}
           onKeyDown={handleKeyDown}
           ref={listRef}
           role="listbox"
         >
-          {state.datasets.map((dataset) => {
+          {visible.map((dataset) => {
             const selected = state.selected.has(dataset.handle);
             const presentation = rowPresentation(state, dataset.handle);
-            const label = ROW_STATE_LABEL[presentation];
+            const pinned = projection.pinned.get(dataset.handle);
+            // A row the search did not match says why it is here anyway, in
+            // words rather than in a shade, and in the row's own text so a
+            // screen reader is told the same thing the screen says.
+            const label = pinned === undefined ? ROW_STATE_LABEL[presentation] : PIN_REASON_LABEL[pinned];
             // Being the row a read belongs to is not the same as having
             // something on screen. A row keeps that place after a backend
             // change discards what it read, and the marker must not go on
@@ -347,7 +510,13 @@ export function DatasetRoster({
                   {dataset.fileName}
                 </span>
                 <span className="dataset-row-size">{formatByteLength(dataset.byteLength)}</span>
-                {label === "" ? null : <span className="dataset-row-state">{label}</span>}
+                {label === "" ? null : (
+                  <span
+                    className={pinned === undefined ? "dataset-row-state" : "dataset-row-kept"}
+                  >
+                    {label}
+                  </span>
+                )}
               </li>
             );
           })}

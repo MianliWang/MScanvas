@@ -183,16 +183,21 @@ describe("narrow desktop layout markup", () => {
     // header and actions used all of it, and the list came out at zero height
     // with four rows in it: rows that exist, are announced, and cannot be
     // reached. The track has a floor and the panel has a minimum.
+    //
+    // M1.3 raised both by what the search and sort controls cost. The two are
+    // pinned together because they are one decision: a track shorter than the
+    // panel's own minimum clamps the panel back to a height its chrome does
+    // not fit in, which is the original defect by another route.
     const app = mountStyles(appStyles);
 
     expect(requireStyleRule(app, ".dataset-roster-panel").style.getPropertyValue("min-height")).toBe(
-      "176px",
+      "228px",
     );
     expect(
       requireMediaRule(app, "(max-width: 1120px)", ".workspace-layout").style.getPropertyValue(
         "grid-template-rows",
       ),
-    ).toBe("minmax(176px, 0.9fr) minmax(0, 1.6fr)");
+    ).toBe("minmax(228px, 0.9fr) minmax(0, 1.6fr)");
     // And what the column cannot fit is clipped here rather than pushing the
     // shell past the viewport.
     expect(requireStyleRule(app, ".workspace-sidebar").style.getPropertyValue("overflow")).toBe(
@@ -209,8 +214,12 @@ describe("narrow desktop layout markup", () => {
     expect(requireStyleRule(app, ".dataset-roster-list").style.getPropertyValue("overflow")).toBe(
       "auto",
     );
+    // Two whole rows, which is the promise the panel's floor is the arithmetic
+    // for: a list with files in it always looks like a list. Stated on the box
+    // that would otherwise be the one to give ground, because it is the only
+    // flexible child of the panel and would give all of it.
     expect(requireStyleRule(app, ".dataset-roster-list").style.getPropertyValue("min-height")).toBe(
-      "0px",
+      "56px",
     );
     // And a file name too long for its column is truncated rather than pushing
     // the row -- and the panel, and the document -- wider.

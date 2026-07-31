@@ -286,6 +286,13 @@ export interface FakePreviewApi extends PreviewApi {
   readonly openedHandles: string[];
   /** How many times the roster has been read. */
   readonly rosterReads: () => number;
+  /**
+   * Every command this fake was asked for, oldest first.
+   *
+   * The only way to state "this interaction crossed the boundary zero times"
+   * rather than counting one method and hoping the others were quiet too.
+   */
+  readonly calls: () => readonly string[];
   /** What the fake's session currently holds. */
   readonly datasets: () => readonly SelectedFile[];
   /** Every verdict this fake has handed back, oldest first. */
@@ -306,6 +313,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   const openedHandles: string[] = [];
   let openCount = 0;
   let rosterReads = 0;
+  const calls: string[] = [];
 
   const capacity = options.capacity ?? FAKE_WORKSPACE_CAPACITY;
   let datasets: SelectedFile[] = [...(options.initialDatasets ?? [])];
@@ -350,11 +358,12 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     return { outcome: "added", dataset: picked };
   };
 
-  return {
+  const fake: FakePreviewApi = {
     requestedSpectra,
     openedHandles,
     openCount: () => openCount,
     rosterReads: () => rosterReads,
+    calls: () => [...calls],
     datasets: () => datasets,
     deliveredVerdicts,
     inspectBackend: () =>
@@ -441,4 +450,28 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         : options.spectrum(index);
     },
   };
+
+  // Wrapped once, here, rather than threaded through nine method bodies. What
+  // this makes testable is the negative claim -- that an interaction crossed
+  // the boundary zero times -- which counting any single method cannot state.
+  const commands = [
+    "inspectBackend",
+    "chooseInstallation",
+    "useAutomaticDiscovery",
+    "getRoster",
+    "chooseFiles",
+    "removeDatasets",
+    "clearWorkspace",
+    "openPreview",
+    "loadSpectrum",
+  ] as const satisfies readonly (keyof PreviewApi)[];
+  const recorded: Record<string, unknown> = { ...fake };
+  for (const command of commands) {
+    const answer = fake[command] as (...args: readonly unknown[]) => unknown;
+    recorded[command] = (...args: readonly unknown[]) => {
+      calls.push(command);
+      return answer(...args);
+    };
+  }
+  return recorded as unknown as FakePreviewApi;
 }
