@@ -595,6 +595,52 @@ fn a_candidate_whose_file_disappears_after_the_walk_is_still_only_a_proposal() {
 }
 
 #[test]
+fn a_real_candidate_carries_the_identity_acceptance_will_resolve_to() {
+    // The claim the whole recheck rests on: what the parent enumeration said
+    // this name was is the same object acceptance opens when nothing has
+    // changed. If these two ever disagreed on an untouched file, the recheck
+    // would refuse every candidate and folder import would add nothing.
+    let tree = TestTree::new("candidate-identity");
+    tree.file("A\\sample.mzML", 8);
+    tree.file("top.mzML", 8);
+
+    let result = walk_real(tree.path());
+
+    assert_eq!(result.candidates().len(), 2);
+    for candidate in result.candidates() {
+        let accepted = super::super::super::selection::accept_mzml_file(candidate.path())
+            .expect("acceptance takes what discovery offered");
+        assert_eq!(
+            accepted.identity(),
+            candidate.identity(),
+            "the enumeration record and the opened file describe one object"
+        );
+    }
+}
+
+#[test]
+fn a_real_candidate_replaced_after_the_walk_no_longer_matches_its_identity() {
+    // And the other direction, which is what the recheck exists for. The path
+    // still resolves, the name is unchanged, the length is unchanged -- only
+    // the object behind the name is different, and only the identity says so.
+    let tree = TestTree::new("candidate-swap");
+    let path = tree.file("sample.mzML", 8);
+
+    let result = walk_real(tree.path());
+    let candidate = result.candidates().first().expect("one candidate");
+    fs::remove_file(&path).expect("remove the discovered file");
+    tree.file("sample.mzML", 8);
+
+    let accepted = super::super::super::selection::accept_mzml_file(candidate.path())
+        .expect("the replacement is an ordinary mzML file");
+    assert_ne!(
+        accepted.identity(),
+        candidate.identity(),
+        "a file re-created under the same name is not the file that was found"
+    );
+}
+
+#[test]
 fn what_discovery_offers_is_what_acceptance_takes() {
     // The agreement, asked of both sides rather than of the shared predicate.
     // Discovery proposing a file the picker would refuse is a folder action

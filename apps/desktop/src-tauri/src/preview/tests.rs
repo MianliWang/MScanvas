@@ -17,7 +17,7 @@ use mscanvas_proteowizard::{
 use super::backend::{OperationAttempt, PreviewProvider, interpretation_error};
 use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, MAX_WORKSPACE_DATASETS, PreviewErrorDto,
-    SelectedSpectrumOutcomeDto, WorkspaceAddOutcomeDto,
+    SelectedFileDto, SelectedSpectrumOutcomeDto, WorkspaceAddOutcomeDto,
 };
 use super::installation::InstallationIdentity;
 /// The share-mode probe that answers whether a file is still held open. It
@@ -3570,4 +3570,761 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
         Some(0),
         "the main window is granted no Tauri core API permission"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Folder ingestion
+// ---------------------------------------------------------------------------
+
+/// A real directory tree under `%TEMP%`, removed when the test ends.
+///
+/// Real rather than modelled, because what these tests are about is the join
+/// between a walk and acceptance. A candidate is a proposal about an object,
+/// and only a filesystem can be made to hand back a different object for the
+/// same name; the traversal policy itself is proved against a fake source in
+/// `discovery::tests`, where a tree no filesystem would build can be described.
+#[cfg(windows)]
+struct FolderTree(PathBuf);
+
+#[cfg(windows)]
+impl FolderTree {
+    fn new(label: &str) -> Self {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "mscanvas-folder-tests-{label}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).expect("create folder test tree");
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+
+    /// Writes a file under the tree, creating whatever parents it needs.
+    fn file(&self, relative: &str, body: &[u8]) -> PathBuf {
+        let path = self.0.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create folder test parent");
+        }
+        fs::write(&path, body).expect("write folder test file");
+        path
+    }
+
+    /// Creates a directory junction at `link` pointing at `target`.
+    ///
+    /// `mklink /J` through the command processor because std has no junction
+    /// API and this project adds no dependency for one. A junction needs no
+    /// elevation, which is exactly why the containment claim matters.
+    fn junction(&self, link: &str, target: &Path) {
+        let link_path = self.0.join(link);
+        if let Some(parent) = link_path.parent() {
+            fs::create_dir_all(parent).expect("create junction parent");
+        }
+        let status = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link_path)
+            .arg(target)
+            // Silenced because it confirms itself by printing both real paths,
+            // and a suite whose subject is that nothing prints a path should
+            // not be the thing printing them into a CI log.
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("run the command processor to create a junction");
+        assert!(
+            status.success() && link_path.exists(),
+            "could not create the junction this containment test depends on"
+        );
+    }
+}
+
+#[cfg(windows)]
+impl Drop for FolderTree {
+    fn drop(&mut self) {
+        // Junctions first, and with `rmdir`, which removes the link and never
+        // what it points at. A recursive delete over one could take the target
+        // with it, and in these tests the target is another fixture.
+        remove_junctions_under(&self.0);
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Removes every junction under a tree, deepest first.
+#[cfg(windows)]
+fn remove_junctions_under(directory: &Path) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(metadata) = fs::symlink_metadata(entry.path()) else {
+            continue;
+        };
+        if !metadata.is_dir() {
+            continue;
+        }
+        if metadata.file_type().is_symlink() {
+            // `symlink_metadata` reports a junction as a symlink on Windows.
+            let _ = std::process::Command::new("cmd")
+                .args(["/c", "rmdir"])
+                .arg(entry.path())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        } else {
+            remove_junctions_under(&entry.path());
+        }
+    }
+}
+
+/// Every row the session holds, by name, in the order it holds them.
+#[cfg(windows)]
+fn roster_names(service: &PreviewService) -> Vec<String> {
+    service
+        .roster()
+        .datasets
+        .into_iter()
+        .map(|dataset| dataset.file_name)
+        .collect()
+}
+
+/// What each row would say to tell itself apart, `None` where it says nothing.
+#[cfg(windows)]
+fn roster_contexts(service: &PreviewService) -> Vec<(String, Option<String>)> {
+    service
+        .roster()
+        .datasets
+        .into_iter()
+        .map(|dataset| (dataset.file_name, dataset.relative_context))
+        .collect()
+}
+
+/// Runs the real walk under a chosen root, at the shipped budget.
+#[cfg(windows)]
+fn walk(
+    root: &Path,
+) -> Result<super::discovery::DiscoveryResult, super::discovery::DiscoveryError> {
+    super::discovery::discover_mzml_candidates(root, super::discovery::DiscoveryBudget::default())
+}
+
+#[cfg(windows)]
+#[test]
+fn a_folder_adds_every_mzml_below_it_in_discovery_order() {
+    // The order is ADR 0007's, not the filesystem's: a level's files before
+    // that level's subdirectories, each group in ordinal name order. What the
+    // user gets from one folder must be the same list twice.
+    let tree = FolderTree::new("order");
+    tree.file("top.mzML", b"<mzML/>");
+    tree.file(r"b\inner.mzML", b"<mzML> b </mzML>");
+    tree.file(r"a\deep\leaf.mzML", b"<mzML> a </mzML>");
+    // Neither of these is an acquisition this boundary opens, and neither may
+    // appear as a rejected candidate either: discovery never proposed them.
+    tree.file("notes.txt", b"not an acquisition");
+    tree.file("run.mzXML", b"<mzXML/>");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let result = service
+        .add_mzml_folder(tree.path())
+        .expect("an ordinary folder is scanned");
+
+    assert_eq!(
+        result
+            .outcomes
+            .iter()
+            .map(|outcome| match outcome {
+                WorkspaceAddOutcomeDto::Added { dataset } => dataset.file_name.as_str(),
+                WorkspaceAddOutcomeDto::Duplicate { existing } => existing.file_name.as_str(),
+                WorkspaceAddOutcomeDto::Rejected { candidate_name, .. } => candidate_name.as_str(),
+            })
+            .collect::<Vec<_>>(),
+        vec!["top.mzML", "leaf.mzML", "inner.mzML"]
+    );
+    assert!(
+        result
+            .outcomes
+            .iter()
+            .all(|outcome| matches!(outcome, WorkspaceAddOutcomeDto::Added { .. })),
+        "every ordinary mzML under the folder is added"
+    );
+    assert_eq!(
+        roster_names(&service),
+        vec!["top.mzML", "leaf.mzML", "inner.mzML"]
+    );
+    assert!(result.discovery.complete);
+    assert!(result.discovery.limits_reached.is_empty());
+    assert_eq!(result.discovery.skipped_reparse_count, 0);
+    assert_eq!(result.discovery.inaccessible_entry_count, 0);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_folder_of_many_files_costs_no_backend_process_at_all() {
+    // The fan-out this milestone must not become. `NoProcess` panics on any
+    // provider call, so a single launch anywhere in acceptance, registration or
+    // description fails this rather than merely slowing it down.
+    let tree = FolderTree::new("no-fan-out");
+    for index in 0..24 {
+        tree.file(&format!("run-{index:02}.mzML"), b"<mzML/>");
+    }
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let result = service
+        .add_mzml_folder(tree.path())
+        .expect("an ordinary folder is scanned");
+
+    assert_eq!(result.roster.datasets.len(), 24);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_candidate_replaced_between_the_walk_and_the_open_is_refused_and_the_batch_survives() {
+    // The recheck, at the boundary it defends. Discovery proved containment for
+    // the object it found; between that and acceptance re-resolving the name,
+    // the name can be made to mean a different object -- and only the identity
+    // that came out of the parent's own enumeration record notices.
+    let tree = FolderTree::new("swap");
+    let swapped = tree.file("sample.mzML", b"<mzML/>");
+    tree.file("untouched.mzML", b"<mzML/>");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let result = service
+        .import_folder(|| {
+            let found = walk(tree.path())?;
+            // After the walk and before acceptance, which is the whole window
+            // this defends. The path still resolves, the name is unchanged and
+            // the length is unchanged; only the object is different.
+            fs::remove_file(&swapped).expect("remove the discovered file");
+            fs::write(&swapped, b"<mzML/>").expect("put a different file in its place");
+            Ok(found)
+        })
+        .expect("the folder itself is fine");
+
+    let refused = result
+        .outcomes
+        .iter()
+        .find_map(|outcome| match outcome {
+            WorkspaceAddOutcomeDto::Rejected {
+                candidate_name,
+                error,
+            } => Some((candidate_name.as_str(), error.kind.as_str())),
+            _ => None,
+        })
+        .expect("the replaced candidate is refused");
+    assert_eq!(refused, ("sample.mzML", "folder_candidate_changed"));
+    // One candidate's failure is its own: the rest of the folder still arrives.
+    assert_eq!(roster_names(&service), vec!["untouched.mzML"]);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_scan_the_user_moved_past_by_reading_the_list_adds_nothing_and_holds_nothing() {
+    use std::sync::mpsc;
+
+    // The reload race, in the order that makes it dangerous. A window that
+    // reloads reads the roster, adopts it, and has no further read coming; a
+    // scan the *previous* window started is still out there holding no lock. It
+    // must not arrive afterwards, because nothing would ever tell the new
+    // window it had.
+    let tree = FolderTree::new("superseded-by-read");
+    let candidate = tree.file("sample.mzML", b"<mzML/>");
+    let service = Arc::new(PreviewService::new(Box::new(NoProcess)));
+    let (started, observe_start) = mpsc::channel();
+    let (release, wait_for_release) = mpsc::channel();
+
+    let scanning = {
+        let service = Arc::clone(&service);
+        let root = tree.path().to_path_buf();
+        std::thread::spawn(move || {
+            service.import_folder(|| {
+                // Waited for rather than slept on: the test decides exactly
+                // when the workspace moves on, and it moves on while this call
+                // is provably inside the walk.
+                started.send(()).expect("the test is waiting for the walk");
+                wait_for_release.recv().expect("the test releases the walk");
+                walk(&root)
+            })
+        })
+    };
+    observe_start
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the scan reached its walk");
+
+    // The reloaded window's read. That it returns at all is the other half of
+    // this: a scan does not hold the workspace, so the list stays answerable.
+    assert!(service.roster().datasets.is_empty());
+    release.send(()).expect("the scan is still waiting");
+
+    let error = scanning
+        .join()
+        .expect("the scan finished")
+        .expect_err("a scan the user has moved past does not commit");
+    assert_eq!(error.kind, "import_superseded");
+    // Nothing accepted, so nothing registered and nothing leased. A superseded
+    // import that had taken a hold would keep the user's file open with no row
+    // to release it.
+    assert!(service.roster().datasets.is_empty());
+    assert!(
+        nothing_else_holds_open(&candidate),
+        "a superseded import holds no file it did not add"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_scan_the_user_moved_past_by_emptying_the_list_adds_nothing() {
+    use std::sync::mpsc;
+
+    // The same rule from the direction a user actually reaches for. They
+    // started a scan, changed their mind, emptied the list -- and rows from
+    // that scan arriving afterwards would repopulate a workspace they had just
+    // said was empty.
+    let tree = FolderTree::new("superseded-by-clear");
+    tree.file("sample.mzML", b"<mzML/>");
+    let elsewhere = TestFile::new("kept-through-clear");
+    let service = Arc::new(PreviewService::new(Box::new(NoProcess)));
+    service.add_files(std::slice::from_ref(&elsewhere.path));
+    let (started, observe_start) = mpsc::channel();
+    let (release, wait_for_release) = mpsc::channel();
+
+    let scanning = {
+        let service = Arc::clone(&service);
+        let root = tree.path().to_path_buf();
+        std::thread::spawn(move || {
+            service.import_folder(|| {
+                started.send(()).expect("the test is waiting for the walk");
+                wait_for_release.recv().expect("the test releases the walk");
+                walk(&root)
+            })
+        })
+    };
+    observe_start
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the scan reached its walk");
+
+    assert!(service.clear_workspace().datasets.is_empty());
+    release.send(()).expect("the scan is still waiting");
+
+    assert_eq!(
+        scanning
+            .join()
+            .expect("the scan finished")
+            .expect_err("a scan across an emptied list does not commit")
+            .kind,
+        "import_superseded"
+    );
+    assert!(service.roster().datasets.is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_look_that_decides_nothing_about_the_workspace_does_not_supersede_a_scan() {
+    use std::sync::mpsc;
+
+    // The other side of the rule, and the reason it is a generation rather than
+    // a lock. Looking at the session is not deciding what it holds, so a scan
+    // that spans any number of looks still commits -- otherwise the guard would
+    // make a long import fail for no reason a user could see.
+    let tree = FolderTree::new("survives-a-look");
+    tree.file("sample.mzML", b"<mzML/>");
+    let service = Arc::new(PreviewService::new(Box::new(NoProcess)));
+    let (started, observe_start) = mpsc::channel();
+    let (release, wait_for_release) = mpsc::channel();
+
+    let scanning = {
+        let service = Arc::clone(&service);
+        let root = tree.path().to_path_buf();
+        std::thread::spawn(move || {
+            service.import_folder(|| {
+                started.send(()).expect("the test is waiting for the walk");
+                wait_for_release.recv().expect("the test releases the walk");
+                walk(&root)
+            })
+        })
+    };
+    observe_start
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the scan reached its walk");
+
+    assert_eq!(service.dataset_count(), 0);
+    assert!(!service.holds_preview_state("file-0"));
+    release.send(()).expect("the scan is still waiting");
+
+    let result = scanning
+        .join()
+        .expect("the scan finished")
+        .expect("looking at the session does not supersede a scan");
+    assert_eq!(result.roster.datasets.len(), 1);
+    assert_eq!(roster_names(&service), vec!["sample.mzML"]);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_window_that_reads_the_list_after_a_scan_commits_is_given_its_rows() {
+    // The reload race in the harmless order, which must stay harmless. The scan
+    // committed first, so the read that follows it is the read that describes
+    // the workspace including its rows -- and the window has them.
+    let tree = FolderTree::new("read-after-commit");
+    tree.file("sample.mzML", b"<mzML/>");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let result = service
+        .add_mzml_folder(tree.path())
+        .expect("an ordinary folder is scanned");
+
+    assert_eq!(service.roster(), result.roster);
+    assert_eq!(roster_names(&service), vec!["sample.mzML"]);
+}
+
+#[cfg(windows)]
+#[test]
+fn two_files_of_one_name_say_where_they_came_from_and_no_other_row_does() {
+    // ADR 0006 permits a location on screen for exactly one reason: two rows
+    // the user cannot otherwise choose between. A unique name needs no help,
+    // and showing a folder fragment beside one would be a path on screen for
+    // nothing.
+    let tree = FolderTree::new("collision");
+    tree.file(r"batch-1\sample.mzML", b"<mzML> one </mzML>");
+    tree.file(r"batch-2\sample.mzML", b"<mzML> two </mzML>");
+    tree.file("unique.mzML", b"<mzML> unique </mzML>");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    service
+        .add_mzml_folder(tree.path())
+        .expect("an ordinary folder is scanned");
+
+    assert_eq!(
+        roster_contexts(&service),
+        vec![
+            ("unique.mzML".to_owned(), None),
+            ("sample.mzML".to_owned(), Some("batch-1".to_owned())),
+            ("sample.mzML".to_owned(), Some("batch-2".to_owned())),
+        ]
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn an_outcome_names_its_row_exactly_as_the_roster_beside_it_does() {
+    // Which is why outcomes are described after the whole batch rather than as
+    // each file is accepted. A row's context is a fact about the finished
+    // roster, and the second `sample.mzML` is the reason the first one has one
+    // at all: described as it arrived, the first outcome would carry no context
+    // while the roster beside it carried one, and the interface would be
+    // showing two answers to the same question.
+    let tree = FolderTree::new("outcome-context");
+    tree.file(r"batch-1\sample.mzML", b"<mzML> one </mzML>");
+    tree.file(r"batch-2\sample.mzML", b"<mzML> two </mzML>");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let result = service
+        .add_mzml_folder(tree.path())
+        .expect("an ordinary folder is scanned");
+
+    let described: Vec<&SelectedFileDto> = result
+        .outcomes
+        .iter()
+        .map(|outcome| match outcome {
+            WorkspaceAddOutcomeDto::Added { dataset } => dataset,
+            other => panic!("every candidate is added: {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        described.into_iter().cloned().collect::<Vec<_>>(),
+        result.roster.datasets,
+        "an outcome's dataset is the roster's copy of that dataset"
+    );
+    assert_eq!(
+        result.roster.datasets[0].relative_context.as_deref(),
+        Some("batch-1")
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_context_goes_when_the_row_that_made_it_necessary_does() {
+    // Which is why it is computed over the live roster every time one is built
+    // rather than stored when a row arrives. Frozen at insertion, the survivor
+    // would go on carrying a folder fragment to distinguish it from a row that
+    // is no longer there.
+    let tree = FolderTree::new("collision-removed");
+    tree.file(r"batch-1\sample.mzML", b"<mzML> one </mzML>");
+    tree.file(r"batch-2\sample.mzML", b"<mzML> two </mzML>");
+    let service = PreviewService::new(Box::new(NoProcess));
+    service
+        .add_mzml_folder(tree.path())
+        .expect("an ordinary folder is scanned");
+    assert_eq!(
+        roster_contexts(&service),
+        vec![
+            ("sample.mzML".to_owned(), Some("batch-1".to_owned())),
+            ("sample.mzML".to_owned(), Some("batch-2".to_owned())),
+        ]
+    );
+
+    let remaining = service.remove_datasets(&["file-0".to_owned()]);
+
+    assert_eq!(remaining.roster.datasets.len(), 1);
+    assert_eq!(
+        roster_contexts(&service),
+        vec![("sample.mzML".to_owned(), None)]
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_directly_added_file_and_a_discovered_one_of_one_name_are_told_apart() {
+    // A picked file has no place under a chosen folder to describe, so it says
+    // so rather than being given an invented one. "Top level" is a location and
+    // "Added directly" is not, and conflating them would put a picked file in a
+    // tree the user never named.
+    let picked = TestFile::new("direct-vs-folder");
+    let tree = FolderTree::new("direct-vs-folder-tree");
+    tree.file("sample.mzML", b"<mzML> discovered </mzML>");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    service.add_files(std::slice::from_ref(&picked.path));
+    service
+        .add_mzml_folder(tree.path())
+        .expect("an ordinary folder is scanned");
+
+    assert_eq!(
+        roster_contexts(&service),
+        vec![
+            ("sample.mzML".to_owned(), Some("Added directly".to_owned())),
+            ("sample.mzML".to_owned(), Some("Top level".to_owned())),
+        ]
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn two_rows_that_would_say_the_same_thing_are_told_apart_by_the_session() {
+    // Two files picked from two different folders are both "Added directly",
+    // which distinguishes neither. The fallback names the row rather than the
+    // filesystem: it is the session identifier the webview already holds, so it
+    // reveals nothing a caller does not have.
+    let first = TestFile::new("same-words-a");
+    let second = TestFile::new("same-words-b");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    service.add_files(&[first.path.clone(), second.path.clone()]);
+
+    let contexts: Vec<String> = service
+        .roster()
+        .datasets
+        .into_iter()
+        .filter_map(|dataset| dataset.relative_context)
+        .collect();
+    assert_eq!(contexts.len(), 2);
+    assert_ne!(contexts[0], contexts[1], "two rows, two answers");
+    for context in &contexts {
+        assert!(
+            context.starts_with("Added directly · workspace item "),
+            "{context}"
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_context_too_long_to_show_keeps_the_end_nearest_the_file() {
+    // Truncating from the end would drop the very components that disambiguate,
+    // because the deepest one is the one closest to the file. What is lost is
+    // the shallow end, and the ellipsis leads so a reader can see that
+    // something was.
+    let tree = FolderTree::new("bounded-context");
+    let deep = "a-directory-with-a-deliberately-long-name";
+    let nested = format!("{deep}-1\\{deep}-2\\{deep}-3\\{deep}-4");
+    tree.file(&format!("{nested}\\sample.mzML"), b"<mzML> deep </mzML>");
+    tree.file("sample.mzML", b"<mzML> shallow </mzML>");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    service
+        .add_mzml_folder(tree.path())
+        .expect("an ordinary folder is scanned");
+
+    let deepest = service
+        .roster()
+        .datasets
+        .into_iter()
+        .filter_map(|dataset| dataset.relative_context)
+        .find(|context| context != "Top level")
+        .expect("the nested row says where it is");
+    assert!(
+        deepest.chars().count() <= super::dto::MAX_RELATIVE_CONTEXT_CHARS,
+        "{}",
+        deepest.chars().count()
+    );
+    assert!(deepest.starts_with('…'), "{deepest}");
+    assert!(deepest.ends_with(&format!("{deep}-4")), "{deepest}");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_scan_cut_short_by_a_limit_says_so_and_names_the_limit() {
+    // An incomplete answer reported as a complete one is the worst outcome
+    // available here: the user would believe a folder holds three acquisitions
+    // when it holds three hundred. Which limit ran out is what tells them
+    // whether a narrower folder would help.
+    let tree = FolderTree::new("limit");
+    tree.file("one.mzML", b"<mzML/>");
+    tree.file("two.mzML", b"<mzML/>");
+    tree.file("three.mzML", b"<mzML/>");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let result = service
+        .import_folder(|| {
+            super::discovery::discover_mzml_candidates(
+                tree.path(),
+                super::discovery::DiscoveryBudget {
+                    max_candidates: 1,
+                    ..super::discovery::DiscoveryBudget::default()
+                },
+            )
+        })
+        .expect("a bounded scan is still a scan");
+
+    assert_eq!(result.roster.datasets.len(), 1);
+    assert!(!result.discovery.complete);
+    assert_eq!(
+        result.discovery.limits_reached,
+        vec![super::dto::FolderScanLimitDto::Candidates]
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_junction_under_the_chosen_folder_is_counted_rather_than_followed() {
+    // The authority boundary, end to end. The user pointed at one folder; they
+    // did not point at wherever a junction inside it happens to lead, and the
+    // acquisition on the other side must not appear in their workspace. That it
+    // was skipped is reported, because a scan that refused something is not a
+    // scan that described everything.
+    let outside = FolderTree::new("junction-target");
+    outside.file("outside.mzML", b"<mzML> outside </mzML>");
+    let tree = FolderTree::new("junction-root");
+    tree.file("inside.mzML", b"<mzML> inside </mzML>");
+    tree.junction("shortcut", outside.path());
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let result = service
+        .add_mzml_folder(tree.path())
+        .expect("a folder with a junction in it is still scanned");
+
+    assert_eq!(roster_names(&service), vec!["inside.mzML"]);
+    assert_eq!(result.discovery.skipped_reparse_count, 1);
+    assert!(!result.discovery.complete);
+}
+
+#[cfg(windows)]
+#[test]
+fn nothing_a_folder_import_transfers_carries_a_path_a_root_name_or_an_identity() {
+    // The chosen root's own name is as private as the path it sits on: it is
+    // the user's word for their data, and this boundary was given it to scan
+    // rather than to repeat. Only the bounded collision context may name any
+    // part of a location, and only what is below the root.
+    let tree = FolderTree::new("privacy");
+    tree.file(r"batch-1\sample.mzML", b"<mzML> one </mzML>");
+    tree.file(r"batch-2\sample.mzML", b"<mzML> two </mzML>");
+    tree.file("run.mzXML", b"<mzXML/>");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let result = service
+        .add_mzml_folder(tree.path())
+        .expect("an ordinary folder is scanned");
+
+    let rendered = serde_json::to_string(&result).expect("the folder result serializes");
+    let root = tree.path().to_string_lossy().into_owned();
+    assert!(!rendered.contains(&root), "{rendered}");
+    assert!(!rendered.contains("mscanvas-folder-tests"), "{rendered}");
+    assert!(!rendered.contains("C:"), "{rendered}");
+    assert!(!rendered.contains("\\\\"), "{rendered}");
+    assert!(!rendered.contains('/'), "{rendered}");
+    assert!(!rendered.contains("identity"), "{rendered}");
+    assert!(!rendered.contains("volume"), "{rendered}");
+    // The scan's own shape is not reported either: how many entries a folder
+    // holds and how many directories are under it describe the user's tree.
+    assert!(!rendered.contains("entriesInspected"), "{rendered}");
+    assert!(!rendered.contains("directoriesEntered"), "{rendered}");
+    // What may appear is the least that tells two identical names apart.
+    assert!(rendered.contains("batch-1"), "{rendered}");
+}
+
+#[test]
+fn every_discovery_refusal_maps_to_a_visible_kind_of_its_own() {
+    // One arm per kind, spelled out rather than defaulted, so a new traversal
+    // refusal makes the mapping fail to compile instead of quietly arriving as
+    // one of the old ones. Asked through the boundary rather than of the
+    // mapping function, because what matters is what a caller is told.
+    use super::discovery::{DiscoveryError, DiscoveryErrorKind};
+
+    let expected = [
+        (
+            DiscoveryErrorKind::PlatformUnavailable,
+            "folder_discovery_unavailable",
+        ),
+        (DiscoveryErrorKind::RootUnavailable, "folder_not_readable"),
+        (DiscoveryErrorKind::RootNotDirectory, "folder_not_directory"),
+        (
+            DiscoveryErrorKind::RootReparsePoint,
+            "folder_link_unsupported",
+        ),
+        (
+            DiscoveryErrorKind::RemoteRootUnsupported,
+            "network_folder_unsupported",
+        ),
+        (
+            DiscoveryErrorKind::RootEnumerationFailed,
+            "folder_scan_unreadable",
+        ),
+        (
+            DiscoveryErrorKind::FilesystemInvariantFailed,
+            "folder_scan_failed",
+        ),
+    ];
+
+    let service = PreviewService::new(Box::new(NoProcess));
+    let mut seen: Vec<String> = Vec::new();
+    for (kind, expected_kind) in expected {
+        let error = service
+            .import_folder(|| Err(DiscoveryError::new(kind)))
+            .expect_err("a refused walk is a refused import");
+        assert_eq!(error.kind, expected_kind, "{kind:?}");
+        // Nothing an operating system said, and nothing a path could hide in.
+        assert!(!error.summary.contains('\\'), "{}", error.summary);
+        assert!(error.detail.is_none(), "{:?}", error.detail);
+        assert!(!error.summary.is_empty());
+        seen.push(error.kind.clone());
+    }
+    let mut unique = seen.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(
+        unique.len(),
+        seen.len(),
+        "each refusal has a kind of its own"
+    );
+}
+
+#[test]
+fn a_refused_walk_leaves_the_workspace_exactly_as_it_was() {
+    // A folder that could not be read is not a reason to touch the session. The
+    // generation was reserved and released, and nothing between then and the
+    // refusal writes anything.
+    use super::discovery::{DiscoveryError, DiscoveryErrorKind};
+
+    let file = TestFile::new("refused-walk");
+    let service = PreviewService::new(Box::new(NoProcess));
+    service.add_files(std::slice::from_ref(&file.path));
+    let before = service.roster();
+
+    service
+        .import_folder(|| Err(DiscoveryError::new(DiscoveryErrorKind::RootUnavailable)))
+        .expect_err("a refused walk is a refused import");
+
+    assert_eq!(service.roster(), before);
 }

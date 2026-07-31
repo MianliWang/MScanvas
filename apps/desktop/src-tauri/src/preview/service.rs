@@ -18,11 +18,11 @@ use mscanvas_proteowizard::{
 use super::backend::{
     PreviewProvider, open_operations, reporting_redactor, selected_spectrum_operation,
 };
+use super::discovery::{
+    DiscoveryBudget, DiscoveryError, DiscoveryErrorKind, DiscoveryLimit, DiscoveryResult,
+    discover_mzml_candidates,
+};
 use super::dto::MAX_WORKSPACE_DATASETS;
-/// Named only by what the retired picker's replacement semantics still answer
-/// with, which is compiled out of the shipped binary.
-#[cfg(test)]
-use super::dto::SelectedFileDto;
 use super::dto::{
     BackendAvailabilityDto, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES, MAX_METADATA_LINE_CHARS,
     MAX_MS_LEVELS, MAX_PRECURSORS, MAX_SPECTRUM_POINTS, MAX_SPECTRUM_TABLE_ROWS, MetadataDto,
@@ -32,11 +32,15 @@ use super::dto::{
     WorkspaceAddResultDto, WorkspaceRemoveResultDto, WorkspaceRosterDto, bounded_text,
     redact_absolute_paths, require_finite, require_finite_option, workspace_full,
 };
+use super::dto::{
+    FolderDiscoverySummaryDto, FolderIngestionResultDto, FolderScanLimitDto, SelectedFileDto,
+    import_superseded,
+};
 use super::installation::InstallationIdentity;
 use super::selection::{
     AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity, RevocationReason,
-    accept_mzml_file, candidate_display_name, file_identity, lock_against_replacement, revalidate,
-    selected_file_dto, unknown_dataset,
+    accept_mzml_file, candidate_display_name, file_identity, lock_against_replacement,
+    relative_contexts, revalidate, selected_file_dto, unknown_dataset,
 };
 
 /// Everything the session knows about the datasets it holds.
@@ -142,21 +146,108 @@ impl Workspace {
 /// Built from the registry's own order, which is the only order there is. The
 /// capacity travels with it so the interface states the limit Rust enforces
 /// rather than one of its own.
+///
+/// The disambiguating contexts are computed here, over the whole registry,
+/// every time. Whether a filename is ambiguous is a property of the roster
+/// rather than of a row: adding a second `sample.mzML` gives both of them
+/// context and removing one takes it away again, so an answer stored per row
+/// would be an answer to a question that had since changed.
 fn roster_of(workspace: &Workspace) -> WorkspaceRosterDto {
+    let contexts = relative_contexts(&workspace.registry);
     WorkspaceRosterDto {
         datasets: workspace
             .registry
             .ids()
             .iter()
             .filter_map(|id| {
-                workspace
-                    .registry
-                    .get(*id)
-                    .map(|dataset| selected_file_dto(*id, dataset.file()))
+                workspace.registry.get(*id).map(|dataset| {
+                    selected_file_dto(*id, dataset.file(), contexts.get(id).cloned())
+                })
             })
             .collect(),
         capacity: MAX_WORKSPACE_DATASETS,
     }
+}
+
+/// One dataset, described as the roster it belongs to would describe it.
+///
+/// Used wherever an outcome names a row, so the dataset in an outcome and the
+/// same dataset in the roster beside it can never disagree about its context.
+fn dataset_dto(workspace: &Workspace, id: DatasetId) -> Option<SelectedFileDto> {
+    let contexts = relative_contexts(&workspace.registry);
+    workspace
+        .registry
+        .get(id)
+        .map(|dataset| selected_file_dto(id, dataset.file(), contexts.get(&id).cloned()))
+}
+
+/// What happened to one candidate, before it is described.
+///
+/// Held back because describing a row is a question about the finished roster,
+/// and a batch is not finished until its last file has been accepted. The
+/// candidate name travels with both variants because a rejection has no dataset
+/// to be named by, and the user still has to be told which file it was.
+enum PendingOutcome {
+    Registered {
+        candidate_name: String,
+        outcome: AddDatasetOutcome,
+    },
+    Rejected {
+        candidate_name: String,
+        error: PreviewErrorDto,
+    },
+}
+
+/// Turns a batch's registry outcomes into what the webview is told.
+///
+/// Run once, after the whole batch, against the roster it produced. Every
+/// dataset named in an outcome is therefore described exactly as the roster
+/// beside it describes the same dataset -- including its disambiguating
+/// context, which cannot be known until every row that might collide with it
+/// has arrived.
+fn describe_outcomes(
+    workspace: &Workspace,
+    pending: Vec<PendingOutcome>,
+) -> Vec<WorkspaceAddOutcomeDto> {
+    let contexts = relative_contexts(&workspace.registry);
+    let describe = |id: DatasetId| {
+        workspace
+            .registry
+            .get(id)
+            .map(|dataset| selected_file_dto(id, dataset.file(), contexts.get(&id).cloned()))
+    };
+    pending
+        .into_iter()
+        .map(|item| match item {
+            PendingOutcome::Rejected {
+                candidate_name,
+                error,
+            } => WorkspaceAddOutcomeDto::Rejected {
+                candidate_name,
+                error,
+            },
+            PendingOutcome::Registered {
+                candidate_name,
+                outcome,
+            } => match (outcome, outcome.registered_id().and_then(describe)) {
+                (AddDatasetOutcome::Added { .. }, Some(dataset)) => {
+                    WorkspaceAddOutcomeDto::Added { dataset }
+                }
+                (AddDatasetOutcome::Duplicate { .. }, Some(existing)) => {
+                    WorkspaceAddOutcomeDto::Duplicate { existing }
+                }
+                // Either the workspace was full, or -- unreachably -- a row
+                // named by an outcome had gone by the time it was described.
+                // A batch holds the mutation gate throughout, so the second
+                // cannot happen; reporting it as full rather than asserting
+                // keeps one command from taking a session down.
+                _ => WorkspaceAddOutcomeDto::Rejected {
+                    candidate_name,
+                    error: workspace_full(),
+                },
+            },
+        })
+        .collect()
 }
 
 /// What one dataset's session state is.
@@ -197,14 +288,22 @@ pub struct PreviewService {
     /// answerable in the meantime.
     backend_gate: Mutex<()>,
     /// Held for the length of one workspace mutation, so two of them cannot
-    /// interleave the rows of one batch.
+    /// interleave the rows of one batch, and carrying the generation that says
+    /// which decision about the workspace is the current one.
     ///
     /// Distinct from the workspace lock and always taken before it. A batch
     /// accepts each file in turn, which is filesystem work, and holding the
     /// workspace across the whole batch would leave every other command waiting
     /// on a picker's worth of inspections. This is what keeps a batch's order
     /// contiguous without doing that.
-    workspace_mutation: Mutex<()>,
+    ///
+    /// A folder scan cannot hold it: scanning is filesystem work that lasts as
+    /// long as the tree takes, and a workspace frozen for the length of it would
+    /// be a workspace nobody could remove a row from. So the generation exists.
+    /// A scan reserves one before it starts and commits only while it is still
+    /// current; anything the user does that says "the workspace state from here
+    /// on" advances it, and the abandoned scan then adds nothing.
+    workspace_mutation: Mutex<WorkspaceMutationState>,
     /// How many times the installation in use has changed.
     ///
     /// Stamped onto every verdict under the same gate that serves it, so the
@@ -244,7 +343,7 @@ impl PreviewService {
             provider,
             workspace: Mutex::new(Workspace::default()),
             backend_gate: Mutex::new(()),
-            workspace_mutation: Mutex::new(()),
+            workspace_mutation: Mutex::new(WorkspaceMutationState::default()),
             installation_generation: AtomicU64::new(0),
             resolved: Mutex::new(ObservedBackend::default()),
         }
@@ -330,7 +429,21 @@ impl PreviewService {
     /// it was is a question the next preview of it asks, and answers where the
     /// user can see it.
     pub fn roster(&self) -> WorkspaceRosterDto {
-        roster_of(&self.workspace())
+        // Advancing the generation is a side effect, and it is the point. This
+        // is the read a webview makes when it mounts, which is also what a
+        // reloaded window does -- and a folder scan started by the window
+        // before it may still be running, holding no lock and about to commit
+        // rows the new window has never heard of.
+        //
+        // Going through the gate linearises the two. Either the scan commits
+        // first and this read includes its rows, or this read wins and the scan
+        // finds its generation stale and adds nothing. What cannot happen is
+        // the new window adopting a roster and then being given rows it never
+        // asked about, with no read left to discover them.
+        let (gate, _) = self.begin_mutation();
+        let roster = roster_of(&self.workspace());
+        drop(gate);
+        roster
     }
 
     /// Adds every chosen path, in picker order, and answers with what each one
@@ -348,7 +461,7 @@ impl PreviewService {
         // opens and inspects a file, which is filesystem work, and holding the
         // workspace across it would stop every other command for the length of
         // a batch.
-        let _batch = self.enter_workspace_mutation();
+        let (_batch, _generation) = self.begin_mutation();
         let mut outcomes = Vec::with_capacity(paths.len());
         for path in paths {
             // Taken before acceptance, because acceptance is what may fail and
@@ -357,7 +470,7 @@ impl PreviewService {
             let accepted = match accept_mzml_file(path) {
                 Ok(accepted) => accepted,
                 Err(error) => {
-                    outcomes.push(WorkspaceAddOutcomeDto::Rejected {
+                    outcomes.push(PendingOutcome::Rejected {
                         candidate_name: candidate,
                         error,
                     });
@@ -368,33 +481,141 @@ impl PreviewService {
             // does not hold the workspace across the acceptance of every file
             // in it.
             let mut workspace = self.workspace();
-            let outcome = workspace.registry.add(accepted);
-            let described = outcome.registered_id().map(|id| {
-                selected_file_dto(
-                    id,
-                    workspace
-                        .registry
-                        .get(id)
-                        .expect("an outcome that names a dataset names a registered one")
-                        .file(),
-                )
-            });
+            let outcome = workspace.registry.add_direct(accepted);
             drop(workspace);
-            outcomes.push(match (outcome, described) {
-                (AddDatasetOutcome::Added { .. }, Some(dataset)) => {
-                    WorkspaceAddOutcomeDto::Added { dataset }
-                }
-                (AddDatasetOutcome::Duplicate { .. }, Some(existing)) => {
-                    WorkspaceAddOutcomeDto::Duplicate { existing }
-                }
-                _ => WorkspaceAddOutcomeDto::Rejected {
-                    candidate_name: candidate,
-                    error: workspace_full(),
-                },
+            // The dataset each outcome names is described after the batch, not
+            // here: a row's context depends on what else the roster holds, and
+            // the second file of a colliding pair is what gives the first one
+            // its context. Described mid-batch, the earlier outcome would carry
+            // no context while the roster beside it carried one.
+            outcomes.push(PendingOutcome::Registered {
+                candidate_name: candidate,
+                outcome,
             });
         }
-        let roster = roster_of(&self.workspace());
+        let workspace = self.workspace();
+        let roster = roster_of(&workspace);
+        let outcomes = describe_outcomes(&workspace, outcomes);
+        drop(workspace);
         WorkspaceAddResultDto { roster, outcomes }
+    }
+
+    /// Scans one chosen folder and adds every mzML file it proposes.
+    ///
+    /// The shape of this is the whole of what M1.4.1 adds, and every step is
+    /// load-bearing:
+    ///
+    /// 1. reserve a generation, so there is a name for "the workspace as it was
+    ///    when this scan was asked for";
+    /// 2. scan holding **no** lock -- not the workspace, not the mutation gate.
+    ///    A tree can take as long as it takes, and a session frozen for the
+    ///    length of it would be one the user could not remove a row from;
+    /// 3. take the gate back and refuse outright if anything has happened
+    ///    since. A user who cleared the list, added files, or reloaded the
+    ///    window has said what the workspace is, and rows from a scan they
+    ///    started before that would arrive from nowhere;
+    /// 4. accept the candidates in discovery order, under the gate, so the
+    ///    batch is one contiguous run;
+    /// 5. recheck each candidate's identity against what discovery found,
+    ///    because a path is a proposal and the object behind it can be
+    ///    replaced between the walk and the open.
+    ///
+    /// No backend is launched, for any candidate, ever. A folder of a thousand
+    /// files costs a thousand filesystem inspections and no processes.
+    pub fn add_mzml_folder(
+        &self,
+        root: &Path,
+    ) -> Result<FolderIngestionResultDto, PreviewErrorDto> {
+        self.import_folder(|| discover_mzml_candidates(root, DiscoveryBudget::default()))
+    }
+
+    /// The reserve, scan and commit an import is made of, with the walk itself
+    /// left to the caller.
+    ///
+    /// Named as its own step because the walk is the one part that runs outside
+    /// the gate, and that is both what makes a long scan safe and what makes it
+    /// raceable. A test stands a controlled walk in its place and decides
+    /// exactly what happens to the workspace while it runs — no sleep, no
+    /// guess, and no tree the size of the case being described.
+    pub(super) fn import_folder<S>(
+        &self,
+        scan: S,
+    ) -> Result<FolderIngestionResultDto, PreviewErrorDto>
+    where
+        S: FnOnce() -> Result<DiscoveryResult, DiscoveryError>,
+    {
+        // Reserved before the scan and released immediately. What it buys is a
+        // number: everything that happens afterwards can be compared against
+        // it, and nothing has to be held for the comparison to be sound.
+        let (gate, reserved) = self.begin_mutation();
+        drop(gate);
+
+        let discovered = scan().map_err(|error| folder_error(error.kind()))?;
+
+        // Back under the gate, and deliberately without advancing it: this
+        // commit is the completion of the decision made above, not a new one.
+        let batch = self.enter_workspace_mutation();
+        if batch.generation != reserved {
+            // Nothing accepted, so nothing leased and no identifier spent. The
+            // candidates are dropped here, which is also where the files they
+            // named stop being held.
+            return Err(import_superseded());
+        }
+
+        let mut outcomes = Vec::with_capacity(discovered.candidates().len());
+        for candidate in discovered.candidates() {
+            let candidate_name = candidate_display_name(candidate.path());
+            let accepted = match accept_mzml_file(candidate.path()) {
+                Ok(accepted) => accepted,
+                Err(error) => {
+                    outcomes.push(PendingOutcome::Rejected {
+                        candidate_name,
+                        error,
+                    });
+                    continue;
+                }
+            };
+            // The recheck. Acceptance resolved the path again, and between the
+            // walk finding this name and that resolution the name can have been
+            // made to mean a different file -- one outside the folder the user
+            // chose, in the case worth worrying about. Containment was proved
+            // for the object discovery found; this is what carries that proof
+            // across to the object being registered.
+            if accepted.identity() != candidate.identity() {
+                outcomes.push(PendingOutcome::Rejected {
+                    candidate_name,
+                    error: folder_candidate_changed(),
+                });
+                continue;
+            }
+            let relative_parents = parent_components(candidate.relative_components());
+            let mut workspace = self.workspace();
+            let outcome = workspace
+                .registry
+                .add_discovered(accepted, relative_parents);
+            drop(workspace);
+            outcomes.push(PendingOutcome::Registered {
+                candidate_name,
+                outcome,
+            });
+        }
+
+        let workspace = self.workspace();
+        let roster = roster_of(&workspace);
+        let outcomes = describe_outcomes(&workspace, outcomes);
+        drop(workspace);
+        drop(batch);
+
+        Ok(FolderIngestionResultDto {
+            roster,
+            outcomes,
+            discovery: FolderDiscoverySummaryDto {
+                complete: discovered.is_complete(),
+                skipped_reparse_count: discovered.summary().skipped_reparse_count,
+                inaccessible_entry_count: discovered.summary().inaccessible_entry_count,
+                limits_reached: discovered.limits().iter().copied().map(limit_dto).collect(),
+            },
+        })
     }
 
     /// Removes the rows these handles name, and says which named nothing.
@@ -402,7 +623,10 @@ impl PreviewService {
     /// The source acquisitions are never touched. Removing a row removes a row
     /// and releases the handle that row was holding.
     pub fn remove_datasets(&self, handles: &[String]) -> WorkspaceRemoveResultDto {
-        let _batch = self.enter_workspace_mutation();
+        // Advances the generation even when every handle names nothing. The
+        // user said "this is the workspace now", and a folder scan that
+        // committed across that would repopulate a list they had just pruned.
+        let (_batch, _generation) = self.begin_mutation();
         let mut removed = Vec::new();
         let mut unknown = Vec::new();
         // The same handle twice is one row to remove, not one removal and one
@@ -443,7 +667,7 @@ impl PreviewService {
     /// in flight for one of the emptied datasets must not land on whatever is
     /// added next.
     pub fn clear_workspace(&self) -> WorkspaceRosterDto {
-        let _batch = self.enter_workspace_mutation();
+        let (_batch, _generation) = self.begin_mutation();
         let mut workspace = self.workspace();
         workspace.clear(RevocationReason::Cleared);
         roster_of(&workspace)
@@ -455,10 +679,55 @@ impl PreviewService {
     /// batches could interleave their rows, and the order the user picked files
     /// in -- which is the order the roster is -- would depend on which thread
     /// won each turn.
-    fn enter_workspace_mutation(&self) -> std::sync::MutexGuard<'_, ()> {
+    fn enter_workspace_mutation(&self) -> std::sync::MutexGuard<'_, WorkspaceMutationState> {
         self.workspace_mutation
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Takes the gate and declares a new state of the workspace.
+    ///
+    /// Every immediate mutation goes through here, and so does the roster read
+    /// the product uses. What they have in common is that each one is a
+    /// statement about the workspace from that moment on, which is exactly what
+    /// makes an older folder scan's answer no longer the one the user is
+    /// waiting for.
+    ///
+    /// It advances even when the operation ends up changing nothing. Removing
+    /// zero rows is still the user saying "this is the workspace now", and a
+    /// scan that committed across it would add rows to a list that had already
+    /// been answered for.
+    fn begin_mutation(&self) -> (std::sync::MutexGuard<'_, WorkspaceMutationState>, u64) {
+        let mut gate = self.enter_workspace_mutation();
+        let generation = gate.advance();
+        (gate, generation)
+    }
+}
+
+/// Which decision about the workspace is the current one.
+///
+/// A single counter behind the mutation gate. It is not a lock and it is not a
+/// version of the contents: it is the answer to "has anything happened that
+/// makes a scan started earlier no longer the thing the user is waiting for".
+#[derive(Debug, Default)]
+struct WorkspaceMutationState {
+    generation: u64,
+}
+
+impl WorkspaceMutationState {
+    /// Moves to the next generation and reports it.
+    ///
+    /// Checked, so the invariant is absolute rather than nearly so: a wrapped
+    /// counter would hand a stale scan the token it needed to commit, and a
+    /// release build wraps silently. A session cannot reach this in practice --
+    /// it counts user actions -- which is exactly why the failure would be
+    /// invisible if it ever did.
+    fn advance(&mut self) -> u64 {
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .expect("a session cannot make more than u64::MAX workspace decisions");
+        self.generation
     }
 }
 
@@ -490,15 +759,8 @@ impl PreviewService {
         // own, and the request epoch that lets a spectrum still waiting for its
         // turn on it find out that nobody will look at the answer.
         workspace.clear(RevocationReason::ReplacedBySelection);
-        let id = workspace.registry.add(accepted).id();
-        let dto = selected_file_dto(
-            id,
-            workspace
-                .registry
-                .get(id)
-                .expect("the dataset was registered a line ago")
-                .file(),
-        );
+        let id = workspace.registry.add_direct(accepted).id();
+        let dto = dataset_dto(&workspace, id).expect("the dataset was registered a line ago");
         Ok(dto)
     }
 
@@ -511,12 +773,8 @@ impl PreviewService {
     pub(super) fn add_dataset(&self, path: &Path) -> Result<SelectedFileDto, PreviewErrorDto> {
         let accepted = accept_mzml_file(path)?;
         let mut workspace = self.workspace();
-        let id = workspace.registry.add(accepted).id();
-        let dataset = workspace
-            .registry
-            .get(id)
-            .expect("the dataset was registered a line ago");
-        Ok(selected_file_dto(id, dataset.file()))
+        let id = workspace.registry.add_direct(accepted).id();
+        Ok(dataset_dto(&workspace, id).expect("the dataset was registered a line ago"))
     }
 
     /// How many datasets the session holds.
@@ -731,11 +989,23 @@ impl PreviewService {
             },
             table_rows,
         });
+        // Described as the roster describes it, so a preview header and the row
+        // it belongs to cannot disagree about which of two identically named
+        // files this is. Read from the lock that is already held rather than
+        // taking it again: the workspace mutex is not reentrant, and asking for
+        // it a second time inside an expression still holding the first is a
+        // deadlock that stops the whole session.
+        //
+        // The fallback is not decoration. `request_is_current` above proves the
+        // request has not been superseded, not that the row is still there --
+        // and the accepted file is what the read was actually of.
+        let described =
+            dataset_dto(&workspace, id).unwrap_or_else(|| selected_file_dto(id, &file, None));
         drop(workspace);
 
         Ok(PreviewDto {
             installation_generation: generation,
-            file: selected_file_dto(id, &file),
+            file: described,
             metadata,
             run_summary,
             spectrum_table,
@@ -1073,6 +1343,99 @@ struct OpenedPreview {
     /// none, which compares equal to nothing and so refuses rather than
     /// assumes.
     installation: Option<InstallationIdentity>,
+}
+
+/// The parents of a discovered candidate, which is its location without its
+/// name.
+///
+/// Discovery's components end in the filename, because that is what makes them
+/// a location *of a file*. What a display context needs is where the file is,
+/// and repeating the name inside the thing that disambiguates the name would
+/// say it twice.
+fn parent_components(relative: &[std::ffi::OsString]) -> Vec<std::ffi::OsString> {
+    relative
+        .split_last()
+        .map(|(_, parents)| parents.to_vec())
+        .unwrap_or_default()
+}
+
+fn limit_dto(limit: DiscoveryLimit) -> FolderScanLimitDto {
+    match limit {
+        DiscoveryLimit::Depth => FolderScanLimitDto::Depth,
+        DiscoveryLimit::Entries => FolderScanLimitDto::Entries,
+        DiscoveryLimit::Directories => FolderScanLimitDto::Directories,
+        DiscoveryLimit::Candidates => FolderScanLimitDto::Candidates,
+    }
+}
+
+/// What a candidate is refused with when the file behind its name changed.
+///
+/// Its own kind rather than the acceptance failures beside it, because it is
+/// the one refusal that is not about the file being unreadable: the path
+/// resolved, the file opened, and it simply is not the file that was found.
+fn folder_candidate_changed() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "folder_candidate_changed",
+        "That file changed while MSCanvas was scanning the folder, so it was not added. Scan \
+         the folder again to pick up what is there now.",
+        true,
+    )
+}
+
+/// Turns a private discovery refusal into something the webview may see.
+///
+/// One arm per kind, spelled out rather than defaulted, so adding a kind to the
+/// traversal makes this fail to compile instead of silently reporting the new
+/// refusal as one of the old ones. Nothing here carries a path, a root name or
+/// an operating-system message.
+fn folder_error(kind: DiscoveryErrorKind) -> PreviewErrorDto {
+    match kind {
+        DiscoveryErrorKind::PlatformUnavailable => PreviewErrorDto::new(
+            "folder_discovery_unavailable",
+            "Adding a folder of mzML files is available on Windows in this version.",
+            false,
+        ),
+        DiscoveryErrorKind::RootUnavailable => PreviewErrorDto::new(
+            "folder_not_readable",
+            "MSCanvas could not read that folder. Check that it still exists and that you can \
+             open it, or choose another one.",
+            true,
+        ),
+        DiscoveryErrorKind::RootNotDirectory => PreviewErrorDto::new(
+            "folder_not_directory",
+            "That choice is not a folder. Choose the folder that holds the .mzML files.",
+            true,
+        ),
+        // Not retryable for the same choice, and the message says what to
+        // choose instead rather than inviting the user to try the same thing.
+        DiscoveryErrorKind::RootReparsePoint => PreviewErrorDto::new(
+            "folder_link_unsupported",
+            "That is a shortcut or link to a folder rather than a folder. MSCanvas does not \
+             follow links when scanning, so choose the folder it points at.",
+            false,
+        ),
+        DiscoveryErrorKind::RemoteRootUnsupported => PreviewErrorDto::new(
+            "network_folder_unsupported",
+            "MSCanvas scans folders on this computer in this version. Choose a folder on a \
+             local drive.",
+            false,
+        ),
+        DiscoveryErrorKind::RootEnumerationFailed => PreviewErrorDto::new(
+            "folder_scan_unreadable",
+            "MSCanvas could not list what is in that folder. Check that you can open it, or \
+             choose another one.",
+            true,
+        ),
+        // Deliberately says nothing about what the filesystem answered. The
+        // detail is a Win32 record layout, which is neither actionable nor
+        // safe to forward.
+        DiscoveryErrorKind::FilesystemInvariantFailed => PreviewErrorDto::new(
+            "folder_scan_failed",
+            "MSCanvas stopped scanning that folder because the filesystem described it in a \
+             way it could not read. Nothing was added.",
+            true,
+        ),
+    }
 }
 
 fn installation_changed_since_preview() -> PreviewErrorDto {

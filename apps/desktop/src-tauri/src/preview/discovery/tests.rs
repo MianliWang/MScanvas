@@ -238,6 +238,42 @@ fn discovery_offers_every_spelling_of_the_extension() {
 }
 
 #[test]
+fn a_candidate_carries_the_identity_its_parent_described_it_by() {
+    // Discovery proposes a path; acceptance resolves that path again. Between
+    // the two, the name can be made to mean a different file. Carrying the
+    // identity the enumeration record gave is what lets acceptance notice --
+    // and it has to be that record's own identity, not something looked up
+    // afterwards, or it would describe whatever the name means later.
+    let result = walk(
+        &FakeSource::new()
+            .directory(1, vec![file("top.mzML", 40), directory("A", 2)])
+            .directory(2, vec![file("inner.mzML", 41)]),
+    );
+
+    assert_eq!(located(&result), vec!["top.mzML", "A\\inner.mzML"]);
+    assert_eq!(result.candidates()[0].identity(), identity(40));
+    assert_eq!(result.candidates()[1].identity(), identity(41));
+}
+
+#[test]
+fn two_files_of_one_name_carry_the_two_identities_that_tell_them_apart() {
+    let result = walk(
+        &FakeSource::new()
+            .directory(1, vec![directory("A", 2), directory("B", 3)])
+            .directory(2, vec![file("sample.mzML", 50)])
+            .directory(3, vec![file("sample.mzML", 51)]),
+    );
+
+    let identities: Vec<_> = result
+        .candidates()
+        .iter()
+        .map(super::DiscoveredCandidate::identity)
+        .collect();
+    assert_eq!(identities, vec![identity(50), identity(51)]);
+    assert_ne!(identities[0], identities[1]);
+}
+
+#[test]
 fn a_zero_byte_file_is_still_a_candidate() {
     // Discovery does not read a file, so it has nothing to say about one being
     // empty. Acceptance and the backend answer that later.

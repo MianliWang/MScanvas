@@ -20,18 +20,6 @@
 //! (`selection::accept_mzml_file`) re-decides every one of them. Nothing here is
 //! serialisable and nothing here is reachable from a command; see ADR 0007.
 
-// Nothing outside this module uses any of it yet, which is the whole shape of
-// this slice: the traversal boundary is settled and tested before a command,
-// a transfer object or a button depends on it. M1.4.1 wires it up and this
-// expectation stops being met, which is exactly when it should be removed.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the discovery foundation is deliberately unreachable until M1.4.1 wires it to a command"
-    )
-)]
-
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -97,12 +85,24 @@ pub(super) enum DiscoveryLimit {
 pub(super) struct DiscoveredCandidate {
     path: PathBuf,
     relative: Vec<OsString>,
+    identity: FileIdentity,
 }
 
 impl DiscoveredCandidate {
     /// The path acceptance will be given. Never leaves the preview module.
     pub(super) fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// What the parent directory said this file was, when it said this name.
+    ///
+    /// The name and the identity come out of one enumeration record, so they
+    /// describe one object rather than two lookups. Acceptance re-opens the
+    /// path and compares: between the walk seeing the name and acceptance
+    /// resolving it, the name can be made to mean a different file, and a
+    /// candidate is only ever a proposal about the object that was found.
+    pub(super) fn identity(&self) -> FileIdentity {
+        self.identity
     }
 
     /// Where the file sat under the chosen root, root name excluded.
@@ -181,6 +181,17 @@ impl DiscoveryResult {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum DiscoveryErrorKind {
     /// This platform has no folder discovery. See ADR 0007's platform posture.
+    ///
+    /// Kept on every platform rather than compiled out on Windows, so the
+    /// boundary that maps kinds to what a user is told has one arm per kind
+    /// whichever target it is built for. Nothing constructs it here.
+    #[cfg_attr(
+        all(windows, not(test)),
+        expect(
+            dead_code,
+            reason = "only the non-Windows entry point constructs it; the mapping is total on every target"
+        )
+    )]
     PlatformUnavailable,
     RootUnavailable,
     RootNotDirectory,
@@ -454,6 +465,7 @@ pub(super) fn discover<S: DirectorySource>(
             candidates.push(DiscoveredCandidate {
                 path: pending.path.join(&entry.name),
                 relative,
+                identity: entry.identity,
             });
         }
 
