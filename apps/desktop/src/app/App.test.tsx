@@ -1364,6 +1364,31 @@ describe("the session workspace roster", () => {
     expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
   });
 
+  it("reads nothing on its own when a slow first read hid a session that was not empty", async () => {
+    // Rust keeps the workspace across a reload of this window, and `Add files…`
+    // does not wait for the list to arrive. Deciding from what is on screen
+    // would call a restored session empty and read a file into it that nobody
+    // asked for -- the one automatic read this workspace allows, spent in the
+    // one place it is not meant for.
+    const reading = deferred<WorkspaceRoster>();
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      pickedFiles: [secondFile],
+      roster: () => reading.promise,
+    });
+    renderApp(api);
+    // Deliberately not waiting for the roster: this is the window under test.
+    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+
+    expect(await screen.findByRole("option", { name: /QC_pool_02\.mzML/ })).toBeVisible();
+    // Both rows are there, because Rust answered with everything it holds.
+    expect(screen.getByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(api.openCount()).toBe(0);
+    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+
+    reading.resolve({ datasets: [selectedFile], capacity: 1_024 });
+  });
+
   it("stops saying the list could not be read once an action has read it", async () => {
     // A read that fails on mount is otherwise permanent: nothing but the retry
     // ever moves that state, so the workspace goes on reporting that its list

@@ -757,10 +757,17 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         if (result === null) {
           return;
         }
-        const wasEmpty = rosterRef.current.datasets.length === 0;
         const added = result.outcomes.flatMap((outcome) =>
           outcome.outcome === "added" ? [outcome.dataset.handle] : [],
         );
+        // Whether the session was empty is Rust's answer, not this side's
+        // projection of it. A webview can reload while Rust still holds rows,
+        // and a first read that is slow or failed leaves the roster on screen
+        // empty while the session is not -- reading a file into a workspace
+        // that already had several, with nobody having asked for it. Every row
+        // in the reply being one this batch added is the same question asked of
+        // the only list that knows.
+        const wasEmpty = result.roster.datasets.length === added.length;
         dispatchRoster({ type: "filesAdded", result });
         rosterSettled();
         showWorkspaceNotice(describeAddResult(result));
