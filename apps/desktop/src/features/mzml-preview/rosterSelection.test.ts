@@ -93,6 +93,36 @@ describe("adopting what Rust holds", () => {
     expect(state.anchor).toBeNull();
     expect(state.datasets).toEqual([]);
   });
+
+  it("keeps the row being shown, and what rows said, across a re-read", () => {
+    // Reading the list is not a reason to forget which row is being shown.
+    // Dropping it would take the marker off the row whose preview is up, leave
+    // its "read this again" action with nothing to act on, and — because a
+    // removal answers for the row the viewer belongs to — let a table stay on
+    // screen for a dataset the workspace no longer holds.
+    const shown = rosterReducer(
+      rosterReducer(loaded("file-0", "file-1"), { type: "activated", handle: "file-1" }),
+      { type: "rowStateChanged", handle: "file-0", state: "failed" },
+    );
+    expect(shown.active).toBe("file-1");
+
+    const reread = rosterReducer(shown, { type: "rosterLoaded", roster: roster("file-0", "file-1") });
+
+    expect(reread.active).toBe("file-1");
+    expect(rowPresentation(reread, "file-0")).toBe("failed");
+  });
+
+  it("keeps neither for a row the re-read says has gone", () => {
+    const shown = rosterReducer(loaded("file-0", "file-1"), {
+      type: "activated",
+      handle: "file-1",
+    });
+
+    const reread = rosterReducer(shown, { type: "rosterLoaded", roster: roster("file-0") });
+
+    expect(reread.active).toBeNull();
+    expect(reread.datasets.map((entry) => entry.handle)).toEqual(["file-0"]);
+  });
 });
 
 describe("adding files", () => {

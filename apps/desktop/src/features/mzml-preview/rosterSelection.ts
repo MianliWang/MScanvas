@@ -318,7 +318,14 @@ export function rosterReducer(state: RosterState, action: RosterAction): RosterS
     case "rosterLoaded": {
       // An authoritative replacement, used when the session's contents are read
       // rather than changed: the first mount, and a retry after that failed.
-      // Nothing is active, because nothing has been read.
+      //
+      // Reading the list is not a reason to forget which row is being shown.
+      // A retry is reachable with a preview on screen — the first read can fail
+      // while adding and reading files still work — and dropping `active` there
+      // would take the marker off the row whose preview is up and leave its
+      // "read this again" action with nothing to act on. Both survive only for
+      // as long as the row does, which on a first mount is not at all.
+      const live = handlesOf(action.roster.datasets);
       const first = action.roster.datasets[0]?.handle ?? null;
       return {
         datasets: action.roster.datasets,
@@ -326,8 +333,8 @@ export function rosterReducer(state: RosterState, action: RosterAction): RosterS
         focused: first,
         selected: new Set(),
         anchor: first,
-        active: null,
-        rowState: new Map(),
+        active: survivingHandle(state.active, live),
+        rowState: prunedRowState(state.rowState, live),
       };
     }
 
