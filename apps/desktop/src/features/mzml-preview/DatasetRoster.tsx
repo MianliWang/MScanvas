@@ -65,6 +65,8 @@ export function DatasetRoster({
   const listRef = useRef<HTMLUListElement | null>(null);
   const addFilesRef = useRef<HTMLButtonElement | null>(null);
   const seenFocusToken = useRef(focusAddFilesToken);
+  const pendingRestore = useRef<HTMLButtonElement | null>(null);
+  const restoreOutstanding = useRef(false);
 
   /**
    * Keeps the keyboard on the row that has the tab stop.
@@ -100,6 +102,65 @@ export function DatasetRoster({
     seenFocusToken.current = focusAddFilesToken;
     addFilesRef.current?.focus({ preventScroll: true });
   }, [focusAddFilesToken]);
+
+  /**
+   * Remembers `Add files…` so the keyboard can be given back to it.
+   *
+   * Only what actually held the keyboard is remembered. A press that did not
+   * focus the button has no place to return to, and taking focus the user never
+   * put here would be a move of its own rather than a restoration.
+   */
+  const startAdding = (event: MouseEvent<HTMLButtonElement>) => {
+    const control = event.currentTarget;
+    pendingRestore.current = document.activeElement === control ? control : null;
+    restoreOutstanding.current = false;
+    onAddFiles();
+  };
+
+  /**
+   * Returns the keyboard to `Add files…` once the picker has settled.
+   *
+   * The action is disabled for the whole request, the picker's modal lifetime
+   * included, and disabling the focused button is what blurs it. The browser
+   * does not put focus back when it is enabled again, so cancelling the dialog
+   * or completing an ordinary addition left a keyboard user without their place
+   * in the tab order.
+   *
+   * Deliberately not keyed on `canAddFiles`: a request begins and ends with it
+   * true, so an effect comparing that value alone would not run again if the
+   * two renders were ever batched into one. Running after every commit costs a
+   * null check, and what makes a settle a settle is stated here instead.
+   */
+  useEffect(() => {
+    const control = pendingRestore.current;
+    if (control === null) {
+      return;
+    }
+    if (!canAddFiles) {
+      // Outstanding, so nothing is restored yet -- and having seen it is what
+      // tells the end of this request from an effect queued before it began.
+      restoreOutstanding.current = true;
+      return;
+    }
+    if (!restoreOutstanding.current) {
+      return;
+    }
+    // Settled, whatever the outcome. Held any longer it could fire on a later
+    // request it says nothing about.
+    pendingRestore.current = null;
+    restoreOutstanding.current = false;
+    if (!control.isConnected || control.disabled) {
+      return;
+    }
+    // Never over a control the user has since chosen for themselves, including
+    // the row this addition just gave the tab stop to. Blurred by the
+    // disabling, focus is on the body until something else claims it.
+    const active = document.activeElement;
+    if (active !== null && active !== document.body) {
+      return;
+    }
+    control.focus({ preventScroll: true });
+  });
 
   const handleRowPress = (event: MouseEvent<HTMLLIElement>, handle: string) => {
     dispatch({
@@ -167,7 +228,7 @@ export function DatasetRoster({
         <button
           className="primary-button"
           disabled={!canAddFiles}
-          onClick={onAddFiles}
+          onClick={startAdding}
           ref={addFilesRef}
           type="button"
         >

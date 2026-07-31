@@ -136,6 +136,37 @@ describe("adopting what Rust holds", () => {
     expect(selection(answered)).toEqual(["file-2", "file-3"]);
   });
 
+  it("keeps the end a range extends from", () => {
+    // The anchor is not the row the keyboard is on. Moving it to the focused
+    // survivor would make the next Shift+Arrow grow the selection from the
+    // wrong end of a range the user built while the removal was unresolved.
+    const anchored = rosterReducer(loaded("file-0", "file-1", "file-2", "file-3"), {
+      type: "rowPressed",
+      handle: "file-1",
+      modifiers: { ctrl: false, shift: false },
+    });
+    const ranged = rosterReducer(anchored, {
+      type: "rowPressed",
+      handle: "file-3",
+      modifiers: { ctrl: false, shift: true },
+    });
+    expect(ranged.anchor).toBe("file-1");
+
+    const answered = rosterReducer(ranged, {
+      type: "datasetsRemoved",
+      result: removeResult(["file-0"], [], "file-1", "file-2", "file-3"),
+    });
+
+    expect(answered.anchor).toBe("file-1");
+    // And the next extension grows from that end rather than from the survivor.
+    const extended = rosterReducer(answered, {
+      type: "rowPressed",
+      handle: "file-2",
+      modifiers: { ctrl: false, shift: true },
+    });
+    expect(selection(extended)).toEqual(["file-1", "file-2"]);
+  });
+
   it("falls back to the row beside the gap when the rows picked are the rows that went", () => {
     const picked = rosterReducer(loaded("file-0", "file-1", "file-2"), {
       type: "rowPressed",

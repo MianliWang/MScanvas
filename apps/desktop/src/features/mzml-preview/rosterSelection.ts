@@ -405,8 +405,14 @@ export function rosterReducer(state: RosterState, action: RosterAction): RosterS
       return {
         datasets: action.result.roster.datasets,
         capacity: action.result.roster.capacity,
+        // `nearestSurvivor` starts from the focused row, so this is where the
+        // user already was whenever that row is still there.
         focused: survivor,
-        anchor: survivor,
+        // The end a Shift range extends from, which is not the end the keyboard
+        // is on. Moving it to the focused row would make the next Shift+click
+        // or Shift+Arrow grow the selection from the wrong end of a range the
+        // user built while the removal was unresolved.
+        anchor: survivingHandle(state.anchor, live) ?? survivor,
         selected: kept.size > 0 ? kept : survivor === null ? new Set() : new Set([survivor]),
         // Removing the row a preview belongs to takes the preview with it, and
         // nothing else is opened in its place: reading another acquisition is

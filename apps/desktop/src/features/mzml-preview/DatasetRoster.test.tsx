@@ -37,6 +37,23 @@ interface HarnessProps {
   readonly focusAddFilesToken?: number;
 }
 
+/**
+ * Blurs the way a browser does when a focused control is disabled.
+ *
+ * jsdom leaves a disabled control focused and then refuses to blur it -- an
+ * unfocusable element cannot be blurred -- so the control is briefly enabled to
+ * move the keyboard off it and set back exactly as it was. React owns the
+ * attribute and is not consulted in between.
+ */
+function blurAsABrowserWould(control: HTMLElement): void {
+  const button = control as HTMLButtonElement;
+  const disabled = button.disabled;
+  button.disabled = false;
+  button.blur();
+  button.disabled = disabled;
+  expect(document.body).toHaveFocus();
+}
+
 /** The real component over the real reducer, so a keystroke does what it does. */
 function Harness({
   rows = 4,
@@ -363,5 +380,57 @@ describe("driving the roster from the keyboard alone", () => {
     rerender(<Harness focusAddFilesToken={1} rows={0} />);
 
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add files…" }));
+  });
+
+  it("gives the keyboard back to Add files… when the picker settles", () => {
+    // The action is disabled for the picker's whole modal lifetime, and
+    // disabling the focused button is what blurs it. Nothing puts it back, so a
+    // keyboard user who cancelled the dialog was left at the top of the
+    // document with no place in the tab order.
+    const { rerender } = render(<Harness canAddFiles rows={2} />);
+    const add = screen.getByRole("button", { name: "Add files…" });
+    add.focus();
+    expect(document.activeElement).toBe(add);
+
+    fireEvent.click(add);
+    rerender(<Harness canAddFiles={false} rows={2} />);
+    blurAsABrowserWould(add);
+
+    rerender(<Harness canAddFiles rows={2} />);
+
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add files…" }));
+  });
+
+  it("takes no focus the user never put on Add files…", () => {
+    // A pointer press that never gave the button the keyboard has no place to
+    // return to, and taking focus here would be a move of its own rather than a
+    // restoration. Deliberately settled with the keyboard on the body, which is
+    // the one state in which taking it would succeed.
+    const { rerender } = render(<Harness canAddFiles rows={2} />);
+    expect(document.body).toHaveFocus();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    rerender(<Harness canAddFiles={false} rows={2} />);
+    expect(document.body).toHaveFocus();
+    rerender(<Harness canAddFiles rows={2} />);
+
+    expect(document.body).toHaveFocus();
+  });
+
+  it("takes no focus back over a control the user has since chosen", () => {
+    const { rerender } = render(<Harness canAddFiles rows={2} />);
+    const add = screen.getByRole("button", { name: "Add files…" });
+    add.focus();
+
+    fireEvent.click(add);
+    rerender(<Harness canAddFiles={false} rows={2} />);
+    blurAsABrowserWould(add);
+    // The user went somewhere themselves while the dialog was up.
+    rows()[1]?.focus();
+    const chosen = document.activeElement;
+
+    rerender(<Harness canAddFiles rows={2} />);
+
+    expect(document.activeElement).toBe(chosen);
   });
 });
