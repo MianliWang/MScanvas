@@ -1035,6 +1035,19 @@ by automated tests instead — adding files with no usable backend leaves the
 roster fully usable, reads nothing, and says that ProteoWizard is needed to read
 a file rather than to curate the list.
 
+One crash was seen once, and is recorded because it was seen rather than as a
+finding about this change. The application exited with `0xc000041d` — an
+exception inside a window-procedure callback — while the file picker was being
+driven, at a moment when a killed earlier run had left a second instance
+contending for the same WebView2 user-data directory and the same remote
+debugging port. No Rust panic was printed, nothing appeared in the Windows
+application log, and it did not recur: from a clean start the whole flow ran
+through three times, including three separate picker operations, with the
+process alive at the end of each. It is not reproducible from a clean start and
+nothing in this change is implicated by evidence; whether a second instance
+sharing a user-data directory can do that is a question about running two
+instances, not about the roster.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.
