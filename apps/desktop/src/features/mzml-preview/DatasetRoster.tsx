@@ -545,6 +545,13 @@ export function DatasetRoster({
                 {label === "" && reason === "" ? null : (
                   <span className="dataset-row-notes">
                     {label === "" ? null : <span className="dataset-row-state">{label}</span>}
+                    {/* A separator in the text, not only a gap in the layout.
+                        The row's accessible name is its text content run
+                        together, and without this a reader hears
+                        "Could not be readSelected — outside search". */}
+                    {label === "" || reason === "" ? null : (
+                      <span className="visually-hidden">, </span>
+                    )}
                     {reason === "" ? null : <span className="dataset-row-kept">{reason}</span>}
                   </span>
                 )}

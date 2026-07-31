@@ -278,7 +278,13 @@ button:disabled {
   display: grid;
   align-items: center;
   gap: 8px;
-  grid-template-columns: 12px 12px minmax(0, 1fr) auto minmax(0, auto);
+  /* The name has a floor of its own, and it is the only column that does.
+     `minmax(0, auto)` on the notes lowers their minimum but not their maximum,
+     and an `auto` track still takes its max-content width before a flexible one
+     gets any -- measured, a row carrying both `Could not be read` and
+     `Selected — outside search` left the name exactly 0px. The file a row is
+     about is the last thing on it that may disappear. */
+  grid-template-columns: 12px 12px minmax(72px, 1fr) auto minmax(0, auto);
   height: 28px;
   padding: 0 12px;
   font-size: 12px;

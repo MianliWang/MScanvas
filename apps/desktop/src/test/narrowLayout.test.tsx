@@ -212,8 +212,13 @@ describe("narrow desktop layout markup", () => {
     // showed a size and two labels for a file it would not name.
     const app = mountStyles(appStyles);
 
+    // The name keeps a floor of its own. Lowering the notes track's minimum is
+    // not enough: an `auto` track still takes its max-content width before a
+    // flexible one gets any, and measured in a rendered window a row carrying
+    // both `Could not be read` and `Selected — outside search` left the name
+    // exactly 0px wide.
     expect(requireStyleRule(app, ".dataset-row").style.getPropertyValue("grid-template-columns")).toBe(
-      "12px 12px minmax(0, 1fr) auto minmax(0, auto)",
+      "12px 12px minmax(72px, 1fr) auto minmax(0, auto)",
     );
     const notes = requireStyleRule(app, ".dataset-row-notes").style;
     expect(notes.getPropertyValue("min-width")).toBe("0px");

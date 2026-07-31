@@ -1290,6 +1290,90 @@ restoration and issue #29 table-header alignment were all still holding.
 One flow was not reproduced: a backend that is unavailable. It is covered by
 automated tests instead, which is the same answer M1.2 gave for the same reason.
 
+### What review found in the projection, 2026-07-31
+
+Two whole-diff reviews — one on state and asynchrony, one on accessibility and
+layout — produced findings that were each put to two independent skeptics, one
+asked to refute and one asked to write out a reproducing sequence and check
+every step against the code. Ten survived, several of them the same defect seen
+from two sides, and all are repaired here. One further finding came from the
+repository's automated reviewer.
+
+**The blocking one, and it was this change's own doing.** The focus recovery a
+projection needs — a row can leave the list while the keyboard is on it — asked
+whether the keyboard had *ever* been in the list. That stays true long after the
+user has walked out of it, and `Add files…` is disabled for the picker's whole
+lifetime, which blurs that button to the document body. The roster then pulled
+the keyboard into itself, and the button waiting for its own restoration never
+got it: the defect issue #25 fixed, reintroduced. It now remembers which row
+held the keyboard and recovers only when that row has left the projection, which
+is the only case it exists for. Confirmed rendered: with the keyboard in the
+list, pressing `Add files…` and cancelling the dialog now returns focus to
+`Add files…`.
+
+**A search was suppressing what a row said about its file.** The view reason and
+the row state shared one label slot and the reason won, so a row that was
+`Replaced`, `Missing` or `Could not be read` stopped saying so the moment a
+query kept it visible. A row now carries both — and the accessible name carries
+a separator between them, because a row's name is its text content run together
+and a reader would otherwise hear "Could not be readSelected — outside search".
+
+**The panel floor was arithmetic over a row that does not exist.** 228px assumed
+the roster's four actions on one line. In the sidebar they wrap to two, which
+they already did before this change, so at those widths the list was left with
+under two rows. The search summary moved into the header line, which exists
+either way and already truncates, and the floor was recomputed over what the
+panel actually holds. Measured afterwards at the width where the actions wrap:
+the panel sits exactly on its 240px floor, the actions take 91px, and the list
+gets exactly 56px — two whole rows, which is what the floor is for.
+
+**And the file name could be squeezed to nothing.** A grid `auto` track takes
+its max-content width before a flexible one gets any, so a row carrying two
+labels left the name 0px wide — measured, not inferred. Lowering the notes
+track's minimum was not enough, because that is a floor and the problem was the
+ceiling; the name has a floor of its own now, and remeasuring gave it 72px with
+the notes ellipsised beside it.
+
+The rest: removing every selected row under a search fell back to selecting the
+nearest survivor in Rust's order, very often a row the query excludes, which
+then appeared in the filtered view marked selected — that affordance now applies
+only when no search is narrowing the view; clearing a search was announced by
+nothing, because removing a live region's text announces nothing under the
+default `aria-relevant`; the search's own explanations took a text colour of
+about 3.5:1 against the panel, for the one thing on screen that says why an
+excluded row is there; and a search that matched nothing left the roster with no
+focused row at all, so clearing it brought the rows back with `Preview focused`
+still disabled and Enter and Space doing nothing until an arrow was pressed.
+
+Nine further mutations cover these repairs and all nine are caught. Two were
+replaced after surviving: one mutated a grid track and one a colour token, and
+neither is observable in jsdom, so both are now pinned through the CSSOM the way
+the narrow-layout rules already were. One mutation is recorded as equivalent
+rather than caught: remembering the roster's logical focused handle instead of
+the row that actually took the keyboard cannot diverge through the interface,
+because clicking a row sets the logical focus in the same event that moves the
+keyboard to it. The more precise expression is kept anyway.
+
+Validation on the repaired head: `cargo fmt --all --check`, `cargo clippy
+--locked --workspace --all-targets --all-features -- -D warnings`, `cargo test
+--locked --workspace --all-targets` (215 tests), `python -B
+scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (265 tests
+across eleven files), `pnpm build`.
+
+The rendered check was re-run in full on that head. Labels are associated by
+`for` and named exactly `Search files` and `Sort files`, with the clear action
+outside the label it would otherwise have renamed. The picker restoration holds
+with the keyboard starting in the list. Five queries, five sorts, a range and
+`Ctrl+A` issued no command, counted through a hook proved to count first.
+Clearing a search now says `All 15 files listed.` where it previously said
+nothing. At CSS viewports of 886x663, 1226x723, 1366x773 and 1920x1085 the
+document overflowed in neither axis, the view controls fitted their row at a
+fixed 39px, and the list held three, two, two and eight whole rows. The console
+held the three known development messages and nothing else, with no page error
+and no unhandled rejection. The only line matching error, panic or warning in
+the Rust output is the non-zero exit this check itself produced by terminating
+the process at the end.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.
