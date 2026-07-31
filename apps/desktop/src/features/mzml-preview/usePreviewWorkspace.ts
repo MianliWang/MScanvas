@@ -470,6 +470,22 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   useEffect(reloadRoster, [reloadRoster]);
 
   /**
+   * Records that the workspace list is known again.
+   *
+   * Every mutation answers with the roster Rust now holds, which is a newer and
+   * more authoritative read than anything `reloadRoster` still has in flight —
+   * hence the token, which drops those older replies rather than letting one
+   * install a list from before the change. Clearing a failed load matters on
+   * its own: without it a read that failed on mount is permanent, and the
+   * workspace goes on reporting that its list could not be read long after an
+   * action has read it.
+   */
+  const rosterSettled = useCallback(() => {
+    rosterToken.current += 1;
+    setRosterLoad({ status: "ready" });
+  }, []);
+
+  /**
    * Applies a verdict that comes back from changing which installation is used.
    *
    * The reply is never dropped on token order alone. A change can span a modal
@@ -746,6 +762,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           outcome.outcome === "added" ? [outcome.dataset.handle] : [],
         );
         dispatchRoster({ type: "filesAdded", result });
+        rosterSettled();
         showWorkspaceNotice(describeAddResult(result));
         // At most one read, and only into a workspace that had nothing in it.
         // This is what keeps one picker operation costing one process rather
@@ -775,11 +792,15 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           setPickerBusy(false);
         }
       });
-  }, [api, loadPreview, showWorkspaceNotice]);
+  }, [api, loadPreview, rosterSettled, showWorkspaceNotice]);
 
   const removeSelected = useCallback(() => {
     const handles = [...rosterRef.current.selected];
-    if (handles.length === 0 || workspaceBusyRef.current) {
+    // `pickerBusyRef` as well, and for the same reason `addFiles` reads this
+    // one: an add holds it across the picker *and* the registration after it,
+    // and a removal answering inside that window carries a roster snapshot
+    // taken before the added rows existed.
+    if (handles.length === 0 || workspaceBusyRef.current || pickerBusyRef.current) {
       return;
     }
     workspaceBusyRef.current = true;
@@ -804,6 +825,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           clearVisiblePreview();
         }
         dispatchRoster({ type: "datasetsRemoved", result });
+        rosterSettled();
         showWorkspaceNotice(describeRemoveResult(result));
         if (result.roster.datasets.length === 0) {
           setFocusAddFilesToken((token) => token + 1);
@@ -820,10 +842,17 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           setWorkspaceBusy(false);
         }
       });
-  }, [api, clearVisiblePreview, showWorkspaceNotice]);
+  }, [api, clearVisiblePreview, rosterSettled, showWorkspaceNotice]);
 
   const clearList = useCallback(() => {
-    if (workspaceBusyRef.current || rosterRef.current.datasets.length === 0) {
+    // The count this action announces is read here, so an add still in flight
+    // would make it a count of the workspace before the added rows -- on top of
+    // being the second mutation in flight that `addFiles` refuses to be.
+    if (
+      workspaceBusyRef.current ||
+      pickerBusyRef.current ||
+      rosterRef.current.datasets.length === 0
+    ) {
       return;
     }
     const removed = rosterRef.current.datasets.length;
@@ -838,6 +867,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         }
         clearVisiblePreview();
         dispatchRoster({ type: "workspaceCleared", roster: loaded });
+        rosterSettled();
         showWorkspaceNotice(describeClear(removed));
         setFocusAddFilesToken((token) => token + 1);
       })
@@ -852,7 +882,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           setWorkspaceBusy(false);
         }
       });
-  }, [api, clearVisiblePreview, showWorkspaceNotice]);
+  }, [api, clearVisiblePreview, rosterSettled, showWorkspaceNotice]);
 
   const dismissPickerError = useCallback(() => {
     setPickerError(null);

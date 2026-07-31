@@ -45,6 +45,12 @@ export function PreviewWorkspace() {
   // and Rust serialises them anyway, so waiting costs a moment and no more.
   const canAddFiles =
     !workspace.backendBusy && !workspace.pickerBusy && !workspace.workspaceBusy;
+  // The same gate from the other side. An add holds `pickerBusy` for the whole
+  // of the picker *and* the registration that follows it, so a removal or a
+  // clear started in that window is the second mutation in flight that
+  // `canAddFiles` exists to prevent -- and it would answer with a roster
+  // snapshot taken before the added rows existed.
+  const canMutate = !workspace.workspaceBusy && !workspace.pickerBusy;
   // One viewer read at a time. Rust supersedes an older open of one dataset
   // anyway; this is what stops a queue of them forming behind the single
   // backend gate in the first place.
@@ -92,7 +98,15 @@ export function PreviewWorkspace() {
           <div className="notice notice-danger" role="status">
             <strong>The file picker could not be opened</strong>
             <span>{workspace.pickerError.summary}</span>
-            <button className="link-button" onClick={workspace.addFiles} type="button">
+            {/* The same action as `Add files…`, so it is refused in the same
+                states. An enabled control that returns at a guard tells the
+                user their retry failed again. */}
+            <button
+              className="link-button"
+              disabled={!canAddFiles}
+              onClick={workspace.addFiles}
+              type="button"
+            >
               Try choosing files again
             </button>
             <button className="link-button" onClick={workspace.dismissPickerError} type="button">
@@ -170,23 +184,20 @@ export function PreviewWorkspace() {
       <p aria-live="polite" className="visually-hidden">
         {announce(workspace)}
       </p>
+      {/* One expression, so the region holds one text node whose string
+          changes. Two children would leave the sentence node untouched when
+          the sentence repeats, and React would add or remove the second node
+          instead -- a change this region's default `aria-relevant` does not
+          announce in one direction and CSS collapses away in the other. */}
       <p aria-live="polite" className="visually-hidden">
         {workspace.workspaceNotice === null ? "" : announceNotice(workspace.workspaceNotice)}
-        {/* A trailing space that alternates with each account. Two removals of
-            one row say the same sentence, and React writes nothing into a
-            region whose string is unchanged -- so the second action would be
-            announced nowhere, which is the case this region exists for. The
-            space itself is not spoken. */}
-        {workspace.workspaceNotice !== null && workspace.workspaceNotice.sequence % 2 === 1
-          ? " "
-          : ""}
       </p>
 
       <main className="workspace-layout">
         <aside className="workspace-sidebar">
           <DatasetRoster
             canAddFiles={canAddFiles}
-            canMutate={!workspace.workspaceBusy}
+            canMutate={canMutate}
             canPreview={canPreview}
             dispatch={workspace.dispatchRoster}
             focusAddFilesToken={workspace.focusAddFilesToken}
@@ -298,13 +309,19 @@ export function PreviewWorkspace() {
  *
  * The details are deliberately left out: the visible notice carries them, and a
  * polite region that reads a list of file names aloud after every batch is
- * noise rather than feedback.
+ * noise rather than feedback. `more` is left out with them -- it counts what
+ * the *visible* list stopped short of, and a channel that enumerated nothing
+ * has no cutoff to report. The message itself carries the totals either way.
+ *
+ * The sentence ends in a non-breaking space on every other account. Two
+ * removals of one row produce the same words, and a region whose string does
+ * not change is announced nowhere -- which is the case this region exists for.
+ * It has to be part of this string rather than a sibling node, and it has to be
+ * U+00A0 rather than a plain space, because CSS collapses a trailing ordinary
+ * space out of the rendered text a screen reader is given. It is not spoken.
  */
 function announceNotice(notice: WorkspaceNotice): string {
-  const said = `Workspace: ${notice.message}`;
-  // `more` counts the items the notice did not spell out, so saying they are on
-  // screen would be the opposite of what the notice says beside it.
-  return notice.more === 0 ? said : `${said} ${formatCount(notice.more)} more are not listed.`;
+  return `Workspace: ${notice.message}${notice.sequence % 2 === 1 ? "\u00a0" : ""}`;
 }
 
 function announce(workspace: ReturnType<typeof usePreviewWorkspace>): string {

@@ -8,6 +8,7 @@ import type {
   WorkspaceRemoveResult,
   WorkspaceRoster,
 } from "../features/mzml-preview/contracts";
+import type { PickedFile } from "../test/previewFixtures";
 import {
   availableBackend,
   buildPreview,
@@ -1287,6 +1288,22 @@ describe("the session workspace roster", () => {
     // The same words, and still a change for a screen reader to notice.
     expect(spoken()).toContain("Removed 1 file from the list.");
     expect(spoken()).not.toBe(afterFirst);
+
+    // How it differs is the whole of the repair. The region must hold one text
+    // node whose own string changed: two nodes would leave the sentence node
+    // untouched and make the difference an added or removed sibling instead,
+    // which is not what the default `aria-relevant` announces in one direction.
+    const region = [...document.querySelectorAll("[aria-live='polite']")].at(-1);
+    expect(region?.childNodes).toHaveLength(1);
+    expect(region?.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+    // And it must differ by a character CSS keeps. A trailing ordinary space is
+    // collapsed out of the rendered text a screen reader is given, so two
+    // strings differing only by one would be the same to everyone this region
+    // is for. The sentences are otherwise identical, which is the case under
+    // test: exactly one of the two carries the non-breaking space.
+    const trailing = (said: string) => said.slice(said.replace(/\u00a0+$/u, "").length);
+    expect(afterFirst.trimEnd()).toBe(spoken().trimEnd());
+    expect([trailing(afterFirst), trailing(spoken())].sort().join("|")).toBe("|\u00a0");
   });
 
   it("says the unlisted items are unlisted", async () => {
@@ -1306,10 +1323,78 @@ describe("the session workspace roster", () => {
     const spoken = [...document.querySelectorAll("[aria-live='polite']")]
       .map((region) => region.textContent)
       .join(" ");
-    // What the notice does not list is not on screen, so the spoken half must
-    // not say it is.
-    expect(spoken).toContain("2 more are not listed.");
+    // The count belongs to the visible list, which is the half that stopped
+    // short. The spoken half enumerates nothing at all, so it has no cutoff to
+    // report and must claim neither that the rest are listed nor that a
+    // particular number of them are not.
+    expect(spoken).not.toContain("more are not listed");
     expect(spoken).not.toContain("listed on screen");
+    // What it does carry is the totals, which is the account that survives
+    // without any list beside it.
+    expect(spoken).toContain("Added 1 file.");
+    expect(spoken).toContain("5 files could not be added.");
+  });
+
+  it("refuses a removal and a clear while an add is unresolved", async () => {
+    // `addFiles` refuses to start while a mutation is in flight; this is the
+    // same gate from the other side. An add holds the picker *and* the
+    // registration after it, and a removal answering inside that window carries
+    // a roster snapshot taken before the added rows existed -- while `Clear
+    // list` would additionally announce a count from before them.
+    const picking = deferred<readonly PickedFile[] | null>();
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      pickedFiles: () => picking.promise,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
+    });
+    expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
+
+    picking.resolve(null);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Remove selected" })).toBeEnabled();
+    });
+    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
+  });
+
+  it("stops saying the list could not be read once an action has read it", async () => {
+    // A read that fails on mount is otherwise permanent: nothing but the retry
+    // ever moves that state, so the workspace goes on reporting that its list
+    // is unknown long after adding files has established what it holds.
+    let reads = 0;
+    const api = createFakePreviewApi({
+      pickedFiles: [selectedFile],
+      roster: () => {
+        reads += 1;
+        return reads === 1
+          ? Promise.reject(previewError({ kind: "preview_worker_unavailable" }))
+          : Promise.resolve({ datasets: [], capacity: 1_024 });
+      },
+    });
+    renderApp(api);
+    expect(await screen.findByText("The workspace list could not be read")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+
+    fireEvent.click(screen.getByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+
+    // Back to an empty workspace, which is now something this side knows
+    // rather than something it failed to find out.
+    expect(await screen.findByText("No files in this session yet")).toBeVisible();
+    expect(screen.queryByText("The workspace list could not be read")).toBeNull();
+    const spoken = [...document.querySelectorAll("[aria-live='polite']")]
+      .map((region) => region.textContent)
+      .join(" ");
+    expect(spoken).not.toContain("The workspace list could not be read.");
   });
 
   it("does not say the workspace is empty when its list could not be read", async () => {
