@@ -1089,6 +1089,138 @@ describe("looking at the roster through a search and a sort", () => {
     expect(visible(answered)).toContain("file-2");
   });
 
+  /**
+   * Removals against a view whose order is not Rust's.
+   *
+   * `ROWS` is chosen so the three orders disagree everywhere. Sorted by name it
+   * reads `blank, QC_pool, sample-2, sample-10` — `file-3, file-1, file-2,
+   * file-0` — which shares no adjacency at all with the insertion order, so
+   * every assertion here fails outright if the survivor is looked up in
+   * `state.datasets` instead of in what the user was looking at.
+   */
+  function removing(state: RosterState, ...gone: string[]): RosterState {
+    return rosterReducer(state, {
+      type: "datasetsRemoved",
+      result: {
+        roster: {
+          datasets: ROWS.filter((row) => !gone.includes(row.handle)),
+          capacity: CAPACITY,
+        },
+        removedHandles: gone,
+        unknownHandles: [],
+      },
+    });
+  }
+
+  it("hands the keyboard to the row that took the gone row's place on screen", () => {
+    const sorted = rosterReducer(view(...ROWS), { type: "sortChanged", sort: "name-asc" });
+    expect(visible(sorted)).toEqual(["file-3", "file-1", "file-2", "file-0"]);
+    const picked = press(sorted, "file-2");
+
+    const answered = removing(picked, "file-2");
+
+    // `sample-10` now occupies the position `sample-2` had. In Rust's order the
+    // neighbour is `blank`, at the other end of what the user can see.
+    expect(answered.focused).toBe("file-0");
+    expect(answered.anchor).toBe("file-0");
+    expect(answered.selected.has("file-0")).toBe(true);
+    expect(visible(answered)).toEqual(["file-3", "file-1", "file-0"]);
+  });
+
+  it("looks backwards when the row that went was the last one on screen", () => {
+    const sorted = rosterReducer(view(...ROWS), { type: "sortChanged", sort: "name-asc" });
+    const picked = press(sorted, "file-0");
+
+    const answered = removing(picked, "file-0");
+
+    expect(answered.focused).toBe("file-2");
+    expect(visible(answered)).toEqual(["file-3", "file-1", "file-2"]);
+  });
+
+  it("does the same when the order on screen is by size", () => {
+    const sorted = rosterReducer(view(...ROWS), { type: "sortChanged", sort: "size-asc" });
+    expect(visible(sorted)).toEqual(["file-1", "file-3", "file-0", "file-2"]);
+    const picked = press(sorted, "file-3");
+
+    const answered = removing(picked, "file-3");
+
+    expect(answered.focused).toBe("file-0");
+    expect(visible(answered)).toEqual(["file-1", "file-0", "file-2"]);
+  });
+
+  it("does the same descending, at the first row on screen", () => {
+    const sorted = rosterReducer(view(...ROWS), { type: "sortChanged", sort: "size-desc" });
+    expect(visible(sorted)).toEqual(["file-2", "file-0", "file-3", "file-1"]);
+    const picked = press(sorted, "file-2");
+
+    const answered = removing(picked, "file-2");
+
+    expect(answered.focused).toBe("file-0");
+  });
+
+  it("does the same descending by name", () => {
+    const sorted = rosterReducer(view(...ROWS), { type: "sortChanged", sort: "name-desc" });
+    expect(visible(sorted)).toEqual(["file-0", "file-2", "file-1", "file-3"]);
+    const picked = press(sorted, "file-2");
+
+    const answered = removing(picked, "file-2");
+
+    expect(answered.focused).toBe("file-1");
+  });
+
+  it("steps to the next row a query is showing, never to one it hides", () => {
+    // `sample-10` and `sample-2` are the matches; `QC_pool` sits between them in
+    // Rust's order and is hidden. Removing the first match must reach the
+    // second, not the row nobody can see.
+    const searched = search(view(...ROWS), "sample");
+    expect(visible(searched)).toEqual(["file-0", "file-2"]);
+    const picked = press(searched, "file-0");
+
+    const answered = removing(picked, "file-0");
+
+    expect(answered.focused).toBe("file-2");
+    expect(answered.selected.has("file-1")).toBe(false);
+    expect(visible(answered)).toEqual(["file-2"]);
+  });
+
+  it("keeps a Shift anchor whose row survived, whatever the order on screen", () => {
+    const sorted = rosterReducer(view(...ROWS), { type: "sortChanged", sort: "name-asc" });
+    const anchored = press(sorted, "file-3");
+    const ranged = press(anchored, "file-2", { shift: true });
+    expect(ranged.anchor).toBe("file-3");
+
+    const answered = removing(ranged, "file-2");
+
+    expect(answered.anchor).toBe("file-3");
+  });
+
+  it("keeps the row being shown when a different row goes, and lets it go with its own", () => {
+    const sorted = rosterReducer(
+      rosterReducer(view(...ROWS), { type: "sortChanged", sort: "name-asc" }),
+      { type: "activated", handle: "file-1" },
+    );
+
+    expect(removing(press(sorted, "file-2"), "file-2").active).toBe("file-1");
+    expect(removing(press(sorted, "file-1"), "file-1").active).toBeNull();
+  });
+
+  it("has nothing to hand the keyboard to when nothing on screen survives", () => {
+    const sorted = rosterReducer(view(...ROWS), { type: "sortChanged", sort: "name-desc" });
+    const all = rosterReducer(sorted, { type: "allSelected" });
+
+    const answered = rosterReducer(all, {
+      type: "datasetsRemoved",
+      result: {
+        roster: { datasets: [], capacity: CAPACITY },
+        removedHandles: ROWS.map((row) => row.handle),
+        unknownHandles: [],
+      },
+    });
+
+    expect(answered.focused).toBeNull();
+    expect(selection(answered)).toEqual([]);
+  });
+
   it("forgets the query and the sort when the last row goes", () => {
     // A filter over an empty workspace is a filter the next batch of files
     // would silently arrive behind.

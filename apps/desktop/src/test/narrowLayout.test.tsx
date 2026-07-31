@@ -12,13 +12,19 @@
  * nothing here is written as though they were.
  */
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import appStyles from "../app/app.css?raw";
 import { App } from "../app/App";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
-import { createFakePreviewApi } from "./previewFixtures";
+import {
+  createFakePreviewApi,
+  secondFile,
+  selectedFile,
+  thirdFile,
+  unavailableBackend,
+} from "./previewFixtures";
 
 const mountedStyles: HTMLStyleElement[] = [];
 
@@ -240,6 +246,42 @@ describe("narrow desktop layout markup", () => {
     expect(requireStyleRule(app, ".roster-field > label").style.getPropertyValue("color")).toBe(
       "var(--color-text-secondary)",
     );
+    // And the match count, which while a query hides rows is the only visible
+    // account of how much of the session is out of sight. It owns a selector of
+    // its own rather than inheriting the header note's tertiary colour, and
+    // that selector has to out-specify `.panel-header p` to mean anything.
+    const matches = requireStyleRule(app, ".panel-header p.dataset-roster-matches").style;
+    expect(matches.getPropertyValue("color")).toBe("var(--color-text-secondary)");
+    expect(requireStyleRule(app, ".panel-header p").style.getPropertyValue("color")).toBe(
+      "var(--color-text-tertiary)",
+    );
+  });
+
+  it("gives the match count its own class only while a query is hiding rows", async () => {
+    // The line has two duties. As a header note about how many files a session
+    // holds it is quiet chrome, and the roster shows the same count in full
+    // underneath; as the account of a search it is the only thing that says so.
+    render(
+      <PreviewApiProvider
+        value={createFakePreviewApi({
+          initialDatasets: [selectedFile, secondFile, thirdFile],
+          availability: unavailableBackend,
+        })}
+      >
+        <App />
+      </PreviewApiProvider>,
+    );
+    const line = () => document.querySelector("#dataset-roster-matches");
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+
+    expect(line()).not.toHaveClass("dataset-roster-matches");
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
+      target: { value: "QC" },
+    });
+
+    expect(line()).toHaveClass("dataset-roster-matches");
+    expect(line()).toHaveTextContent("2 matches of 3 files.");
   });
 
   it("leaves the workspace roster scrolling inside its own panel", async () => {

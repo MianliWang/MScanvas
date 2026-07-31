@@ -549,7 +549,13 @@ function transition(state: RosterState, action: RosterAction): RosterState {
         return { ...initialRosterState, capacity: action.result.roster.capacity };
       }
       const live = handlesOf(action.result.roster.datasets);
-      const survivor = nearestSurvivor(state.datasets, live, state.focused);
+      // In the order they were just looking at, which under a sort or a query
+      // is not the order Rust holds. Sorted by name, `blank, QC_pool, sample-2,
+      // sample-10` shares no adjacency with the insertion order at all: asking
+      // Rust's list which row took the gone row's place sent the keyboard to
+      // the far end of what was on screen, and a run of removals jumped about
+      // instead of walking down the list.
+      const survivor = nearestSurvivor(rosterProjection(state).datasets, live, state.focused);
       // The list stays interactive while a removal is unresolved, so the user
       // can have built the next batch already. Anything of theirs that survives
       // is theirs to keep; the row beside the gap is only what to fall back to

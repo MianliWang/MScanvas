@@ -429,6 +429,19 @@ button:disabled {
   white-space: nowrap;
 }
 
+/* While a query is hiding rows this line stops being a note about the panel and
+   becomes the only visible account of how much of the session is out of sight.
+   Ordinary text at 11px, so it takes the secondary colour rather than the
+   tertiary one, which is about 3.5:1 against the panel. Scoped to the search
+   state on purpose: the line's other duty -- how many files the session holds,
+   which the roster shows in full underneath -- stays the quiet header note it
+   has always been, and every other `.panel-header p` in the application is
+   untouched. Everything else about the line, its truncation included, is
+   inherited. */
+.panel-header p.dataset-roster-matches {
+  color: var(--color-text-secondary);
+}
+
 .inspector-panel,
 .spectrum-panel,
 .spectrum-table-panel {

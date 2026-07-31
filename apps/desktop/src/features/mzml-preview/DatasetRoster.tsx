@@ -331,7 +331,11 @@ export function DatasetRoster({
               a row of its own costs height in the one panel that is counting
               it, and at the widths where the roster's actions wrap it was the
               list that paid. */}
-          <p id="dataset-roster-matches" title={headline}>
+          <p
+            className={searching ? "dataset-roster-matches" : undefined}
+            id="dataset-roster-matches"
+            title={headline}
+          >
             {headline}
           </p>
         </div>
