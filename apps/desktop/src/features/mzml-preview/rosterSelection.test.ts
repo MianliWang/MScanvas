@@ -9,6 +9,7 @@ import type {
 } from "./contracts";
 import {
   MAX_NOTICE_DETAILS,
+  rosterProjection,
   describeAddResult,
   describeClear,
   describeRemoveResult,
@@ -17,6 +18,7 @@ import {
   rowPresentation,
   rowStateForError,
   type RosterState,
+  type SelectionModifiers,
 } from "./rosterSelection";
 
 const CAPACITY = 1_024;
@@ -701,5 +703,313 @@ describe("saying what a workspace action did", () => {
     const cleared = describeClear(3);
     expect(cleared.message).toContain("Cleared 3 files from the list.");
     expect(cleared.message).toContain("The files on disk were not changed.");
+  });
+});
+
+describe("looking at the roster through a search and a sort", () => {
+  function sized(handle: string, fileName: string, byteLength: number): SelectedFile {
+    return { handle, fileName, byteLength };
+  }
+
+  /** Four rows whose added, name and size orders are all different. */
+  const ROWS = [
+    sized("file-0", "sample-10.mzML", 3_000),
+    sized("file-1", "QC_pool.mzML", 1_000),
+    sized("file-2", "sample-2.mzML", 4_000),
+    sized("file-3", "blank.mzML", 2_000),
+  ];
+
+  function view(...datasets: SelectedFile[]): RosterState {
+    return rosterReducer(initialRosterState, {
+      type: "rosterLoaded",
+      roster: { datasets, capacity: CAPACITY },
+    });
+  }
+
+  function visible(state: RosterState): string[] {
+    return rosterProjection(state).datasets.map((entry) => entry.handle);
+  }
+
+  function search(state: RosterState, query: string): RosterState {
+    return rosterReducer(state, { type: "searchChanged", query });
+  }
+
+  function press(
+    state: RosterState,
+    handle: string,
+    modifiers: Partial<SelectionModifiers> = {},
+  ): RosterState {
+    return rosterReducer(state, {
+      type: "rowPressed",
+      handle,
+      modifiers: { ctrl: false, shift: false, ...modifiers },
+    });
+  }
+
+  it("starts on the whole roster in the order Rust holds it", () => {
+    const state = view(...ROWS);
+
+    expect(state.query).toBe("");
+    expect(state.sort).toBe("added");
+    expect(visible(state)).toEqual(["file-0", "file-1", "file-2", "file-3"]);
+  });
+
+  it("keeps the selection and the shown row when the query changes", () => {
+    const shown = rosterReducer(press(view(...ROWS), "file-2", { ctrl: true }), {
+      type: "activated",
+      handle: "file-0",
+    });
+
+    const searched = search(shown, "blank");
+
+    expect(selection(searched)).toEqual(["file-2"]);
+    expect(searched.active).toBe("file-0");
+  });
+
+  it("keeps the selection, the shown row and the focused row when the sort changes", () => {
+    const working = rosterReducer(press(view(...ROWS), "file-2"), {
+      type: "activated",
+      handle: "file-2",
+    });
+
+    const sorted = rosterReducer(working, { type: "sortChanged", sort: "name-asc" });
+
+    expect(sorted.focused).toBe("file-2");
+    expect(selection(sorted)).toEqual(["file-2"]);
+    expect(sorted.active).toBe("file-2");
+    expect(visible(sorted)).toEqual(["file-3", "file-1", "file-2", "file-0"]);
+  });
+
+  it("moves a hidden focused row to the first visible one", () => {
+    // Narrowing the view is a move the user made deliberately, so the top of
+    // the list they asked for is where they are now looking. Focused without
+    // being selected, which is what adopting a roster leaves behind.
+    const state = view(...ROWS);
+    expect(state.focused).toBe("file-0");
+    expect(selection(state)).toEqual([]);
+
+    const searched = search(state, "blank");
+
+    expect(visible(searched)).toEqual(["file-3"]);
+    expect(searched.focused).toBe("file-3");
+    expect(searched.anchor).toBe("file-3");
+  });
+
+  it("leaves a visible focused row exactly where it was", () => {
+    // End moves the keyboard without selecting anything, so the row is
+    // focused and nothing is keeping it on screen but the query itself.
+    const focused = rosterReducer(view(...ROWS), {
+      type: "focusJumped",
+      to: "last",
+      extend: false,
+    });
+    expect(focused.focused).toBe("file-3");
+    expect(selection(focused)).toEqual([]);
+
+    expect(search(focused, "blank").focused).toBe("file-3");
+  });
+
+  it("has no focused row when nothing is visible at all", () => {
+    const searched = search(view(...ROWS), "zzz");
+
+    expect(visible(searched)).toEqual([]);
+    expect(searched.focused).toBeNull();
+    expect(searched.anchor).toBeNull();
+  });
+
+  it("replaces a hidden range anchor and keeps a visible one", () => {
+    // Kept, a hidden anchor would make the next Shift action measure a range
+    // from a row that is not on screen.
+    const anchored = view(...ROWS);
+    expect(anchored.anchor).toBe("file-0");
+
+    const searched = search(anchored, "sample");
+    expect(searched.anchor).toBe("file-0");
+
+    expect(search(searched, "blank").anchor).toBe("file-3");
+  });
+
+  it("ranges over the visible order rather than the order Rust holds", () => {
+    // Sorted by name the rows read blank, QC_pool, sample-2, sample-10. A
+    // range from the first to the third is those three, which in Rust's own
+    // order is not a contiguous run at all.
+    const sorted = rosterReducer(view(...ROWS), { type: "sortChanged", sort: "name-asc" });
+    const anchored = press(sorted, "file-3");
+
+    const ranged = press(anchored, "file-2", { shift: true });
+
+    expect(selection(ranged)).toEqual(["file-1", "file-2", "file-3"]);
+  });
+
+  it("steps the keyboard through the visible order", () => {
+    const sorted = rosterReducer(view(...ROWS), { type: "sortChanged", sort: "name-asc" });
+    const stepped = rosterReducer(press(sorted, "file-3"), {
+      type: "focusStepped",
+      delta: 1,
+      extend: false,
+    });
+
+    expect(stepped.focused).toBe("file-1");
+    expect(
+      rosterReducer(stepped, { type: "focusJumped", to: "last", extend: false }).focused,
+    ).toBe("file-0");
+  });
+
+  it("extends with Shift and an arrow over the visible order", () => {
+    const focused = press(search(view(...ROWS), "sample"), "file-0");
+
+    const extended = rosterReducer(focused, { type: "focusStepped", delta: 1, extend: true });
+
+    // file-1 and file-3 are hidden and are not swept up on the way.
+    expect(selection(extended)).toEqual(["file-0", "file-2"]);
+  });
+
+  it("selects only what is on screen with Ctrl+A", () => {
+    const all = rosterReducer(search(view(...ROWS), "sample"), { type: "allSelected" });
+
+    expect(selection(all)).toEqual(["file-0", "file-2"]);
+  });
+
+  it("ignores a press on a row the search is hiding", () => {
+    const searched = search(view(...ROWS), "sample");
+
+    expect(press(searched, "file-1")).toBe(searched);
+  });
+
+  it("keeps a nonmatching row the user selected, and lets go when they deselect it", () => {
+    // Picked first, searched second, which is the order this happens in: the
+    // search is what turns an ordinary selected row into a kept one.
+    const kept = search(press(view(...ROWS), "file-3"), "sample");
+
+    expect(visible(kept)).toEqual(["file-0", "file-2", "file-3"]);
+    expect(kept.focused).toBe("file-3");
+
+    // Toggling it off takes away the only reason it was on screen, so the
+    // keyboard has to go somewhere that can still be seen -- and to the
+    // nearest row in the order they were just looking at, not the top.
+    const released = press(kept, "file-3", { ctrl: true });
+
+    expect(visible(released)).toEqual(["file-0", "file-2"]);
+    expect(released.focused).toBe("file-2");
+    expect(released.anchor).toBe("file-2");
+  });
+
+  it("does the same when Space is what takes the row away", () => {
+    const kept = search(press(view(...ROWS), "file-3"), "sample");
+
+    const released = rosterReducer(kept, { type: "focusedToggled" });
+
+    expect(visible(released)).toEqual(["file-0", "file-2"]);
+    expect(released.focused).toBe("file-2");
+  });
+
+  it("keeps the shown row visible outside the search, and after the selection moves", () => {
+    const shown = rosterReducer(
+      rosterReducer(view(...ROWS), { type: "activated", handle: "file-3" }),
+      { type: "rowStateChanged", handle: "file-3", state: "loaded" },
+    );
+    const searched = search(shown, "sample");
+    expect(visible(searched)).toContain("file-3");
+
+    const moved = press(searched, "file-0");
+
+    expect(selection(moved)).toEqual(["file-0"]);
+    expect(visible(moved)).toContain("file-3");
+  });
+
+  it("restores the whole roster when the search is cleared", () => {
+    const cleared = rosterReducer(search(view(...ROWS), "blank"), { type: "searchCleared" });
+
+    expect(cleared.query).toBe("");
+    expect(visible(cleared)).toEqual(["file-0", "file-1", "file-2", "file-3"]);
+  });
+
+  it("keeps the query and the sort while the workspace stays non-empty", () => {
+    const working = rosterReducer(search(view(...ROWS), "sample"), {
+      type: "sortChanged",
+      sort: "size-desc",
+    });
+    const arrival = sized("file-4", "extra.mzML", 500);
+
+    const refreshed = rosterReducer(working, {
+      type: "rosterLoaded",
+      roster: { datasets: ROWS, capacity: CAPACITY },
+    });
+    expect([refreshed.query, refreshed.sort]).toEqual(["sample", "size-desc"]);
+
+    const addedTo = rosterReducer(working, {
+      type: "filesAdded",
+      result: {
+        roster: { datasets: [...ROWS, arrival], capacity: CAPACITY },
+        outcomes: [{ outcome: "added", dataset: arrival }],
+      },
+    });
+    expect([addedTo.query, addedTo.sort]).toEqual(["sample", "size-desc"]);
+
+    const removedFrom = rosterReducer(working, {
+      type: "datasetsRemoved",
+      result: {
+        roster: { datasets: ROWS.slice(1), capacity: CAPACITY },
+        removedHandles: ["file-0"],
+        unknownHandles: [],
+      },
+    });
+    expect([removedFrom.query, removedFrom.sort]).toEqual(["sample", "size-desc"]);
+  });
+
+  it("keeps a newly added nonmatching row visible, because it is selected", () => {
+    // M1.2 selects what just arrived, and the pinning rule is what stops a
+    // search hiding rows the user asked for in the same breath.
+    const searched = search(view(...ROWS), "sample");
+    const arrival = sized("file-4", "extra.mzML", 500);
+
+    const added = rosterReducer(searched, {
+      type: "filesAdded",
+      result: {
+        roster: { datasets: [...ROWS, arrival], capacity: CAPACITY },
+        outcomes: [{ outcome: "added", dataset: arrival }],
+      },
+    });
+
+    expect(added.focused).toBe("file-4");
+    expect(visible(added)).toEqual(["file-0", "file-2", "file-4"]);
+    expect(rosterProjection(added).pinned.get("file-4")).toBe("selected");
+  });
+
+  it("forgets the query and the sort when the last row goes", () => {
+    // A filter over an empty workspace is a filter the next batch of files
+    // would silently arrive behind.
+    const working = rosterReducer(search(view(...ROWS), "sample"), {
+      type: "sortChanged",
+      sort: "name-desc",
+    });
+
+    const emptied = rosterReducer(working, {
+      type: "datasetsRemoved",
+      result: {
+        roster: { datasets: [], capacity: CAPACITY },
+        removedHandles: ROWS.map((row) => row.handle),
+        unknownHandles: [],
+      },
+    });
+    expect([emptied.query, emptied.sort]).toEqual(["", "added"]);
+
+    const cleared = rosterReducer(working, {
+      type: "workspaceCleared",
+      roster: { datasets: [], capacity: CAPACITY },
+    });
+    expect([cleared.query, cleared.sort]).toEqual(["", "added"]);
+  });
+
+  it("keeps the query and the sort when a backend change discards the readings", () => {
+    const working = rosterReducer(search(view(...ROWS), "sample"), {
+      type: "sortChanged",
+      sort: "name-asc",
+    });
+
+    const discarded = rosterReducer(working, { type: "previewDiscarded" });
+
+    expect([discarded.query, discarded.sort]).toEqual(["sample", "name-asc"]);
+    expect(visible(discarded)).toEqual(["file-2", "file-0"]);
   });
 });
