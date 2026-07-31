@@ -28,6 +28,29 @@ pub(super) struct FileIdentity {
     file_id: [u8; 16],
 }
 
+impl FileIdentity {
+    /// Builds an identity from what a filesystem answered.
+    ///
+    /// Folder discovery needs one for a directory it is holding open and one
+    /// for the entry its parent described, so that it can refuse a child that
+    /// is no longer the object it was told about.
+    pub(super) fn new(volume_serial: u64, file_id: [u8; 16]) -> Self {
+        Self {
+            volume_serial,
+            file_id,
+        }
+    }
+
+    /// The volume this identity belongs to.
+    ///
+    /// A directory enumeration record carries a file ID but no serial, because
+    /// every entry is on the directory's own volume; this is how that serial is
+    /// supplied to complete them.
+    pub(super) fn volume_serial(self) -> u64 {
+        self.volume_serial
+    }
+}
+
 impl fmt::Debug for FileIdentity {
     /// Deliberately opaque. An identity is for comparing, and a `Debug` that
     /// printed it would put a machine-correlatable fingerprint of the user's
@@ -179,6 +202,17 @@ impl LeaseWitness {
 /// deliberately out of scope.
 const ACCEPTED_EXTENSION: &str = "mzML";
 
+/// Whether a name ends in the one extension this boundary opens.
+///
+/// Extracted rather than left inline because folder discovery has to ask the
+/// same question of a name it found, and two spellings of "is this an mzML"
+/// would be free to drift apart. It is a proposal either way: acceptance below
+/// asks it of the canonical path and remains what actually decides.
+pub(super) fn has_mzml_extension(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(ACCEPTED_EXTENSION))
+}
+
 /// Validates a caller-supplied path and describes it without leaking it.
 ///
 /// Extension and regular-file posture are checked here rather than in the
@@ -191,10 +225,7 @@ pub fn accept_mzml_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
     let inspected = inspect_selected_file(path)?;
 
     let canonical = std::fs::canonicalize(path).map_err(|_| unresolvable())?;
-    let extension_matches = canonical
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case(ACCEPTED_EXTENSION));
-    if !extension_matches {
+    if !has_mzml_extension(&canonical) {
         return Err(PreviewErrorDto::new(
             "unsupported_extension",
             "MSCanvas opens .mzML files in this version.",
