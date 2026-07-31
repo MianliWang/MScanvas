@@ -12,6 +12,12 @@
 
 pub mod backend;
 pub mod dialog;
+/// Bounded, private discovery of mzML candidates under a chosen folder.
+///
+/// Nothing outside the preview module can reach it, and nothing inside it is
+/// wired to a command yet: the traversal boundary is settled and tested before
+/// a folder action depends on it. See ADR 0007.
+mod discovery;
 pub mod dto;
 mod installation;
 pub mod selection;
