@@ -11,6 +11,8 @@
 import type { PreviewApi } from "../features/mzml-preview/api";
 import type {
   BackendAvailability,
+  FolderDiscoverySummary,
+  FolderIngestionResult,
   Preview,
   PreviewError,
   SelectedFile,
@@ -79,18 +81,41 @@ export const selectedFile: SelectedFile = {
   handle: "file-0",
   fileName: "QC_pool_01.mzML",
   byteLength: 208_408_454,
+  relativeContext: null,
 };
 
 export const secondFile: SelectedFile = {
   handle: "file-1",
   fileName: "QC_pool_02.mzML",
   byteLength: 191_004_112,
+  relativeContext: null,
 };
 
 export const thirdFile: SelectedFile = {
   handle: "file-2",
   fileName: "Blank_03.mzML",
   byteLength: 12_004_112,
+  relativeContext: null,
+};
+
+/**
+ * Two files of one name, which is the case relative context exists for.
+ *
+ * Distinct handles and distinct sizes, because they are different acquisitions:
+ * the only thing they share is the last component of where they were found.
+ */
+export const collidingFile: SelectedFile = {
+  handle: "file-3",
+  fileName: "sample.mzML",
+  byteLength: 4_000_000,
+  relativeContext: null,
+};
+
+export const otherCollidingFile: SelectedFile = {
+  handle: "file-4",
+  fileName: "sample.mzML",
+  byteLength: 6_000_000,
+  relativeContext: null,
 };
 
 /** The session capacity Rust enforces, restated here only for the fake. */
@@ -251,6 +276,111 @@ export type PickedFile =
   | SelectedFile
   | { readonly rejected: string; readonly error?: PreviewError };
 
+/**
+ * Where a row was found, which is what a collision context is derived from.
+ *
+ * `null` is a file the user pointed at directly; an array is the components
+ * below the chosen folder, filename excluded, so an empty array is a file at
+ * the top of that folder. It is never rendered as such — Rust decides whether
+ * anything is said at all, and this fake decides it the same way.
+ */
+export type DatasetOrigin = readonly string[] | null;
+
+/** A row the session already holds, with where it came from when that matters. */
+export type HeldFile =
+  | SelectedFile
+  | { readonly file: SelectedFile; readonly parents: readonly string[] };
+
+/** One thing a folder scan proposed: a file to add, or a candidate Rust refused. */
+export type ScannedFile =
+  | { readonly file: SelectedFile; readonly parents?: readonly string[] }
+  | { readonly rejected: string; readonly error?: PreviewError };
+
+/** What one folder scan found, and how the scan itself went. */
+export interface FolderScan {
+  readonly files: readonly ScannedFile[];
+  /** Complete and clean unless a test says otherwise. */
+  readonly discovery?: Partial<FolderDiscoverySummary>;
+}
+
+/** A scan that described the whole folder and skipped nothing. */
+export const COMPLETE_SCAN: FolderDiscoverySummary = {
+  complete: true,
+  skippedReparseCount: 0,
+  inaccessibleEntryCount: 0,
+  limitsReached: [],
+};
+
+/**
+ * What the folder picker hands back when a test did not say.
+ *
+ * Deliberately not `null`: a dismissed picker is a case a test chooses, and a
+ * default that stood in for one would let a test claiming to add a folder pass
+ * without the folder ever being added.
+ */
+const DEFAULT_FOLDER_SCAN: FolderScan = {
+  files: [{ file: selectedFile, parents: [] }],
+};
+
+/**
+ * The session's rows, each with where it came from.
+ *
+ * Held apart from the roster the fake hands back, because the roster is
+ * derived: a row's collision context is a fact about the whole list and changes
+ * as rows arrive and leave, exactly as it does in Rust.
+ */
+interface Held {
+  readonly file: SelectedFile;
+  readonly origin: DatasetOrigin;
+  /** The session identifier, which never rewinds, as the allocator's does not. */
+  readonly item: number;
+}
+
+/**
+ * Which rows need a context said about them, modelled as Rust models it.
+ *
+ * Recomputed over the whole list rather than stored, and produced only for
+ * exact filename collisions. A fake that stored the context at insertion could
+ * not tell a correct rule from one that leaves a stale context behind after the
+ * row that caused it has gone.
+ */
+function relativeContexts(held: readonly Held[]): Map<number, string> {
+  const byName = new Map<string, Held[]>();
+  for (const entry of held) {
+    const group = byName.get(entry.file.fileName) ?? [];
+    group.push(entry);
+    byName.set(entry.file.fileName, group);
+  }
+
+  const contexts = new Map<number, string>();
+  for (const group of byName.values()) {
+    if (group.length < 2) {
+      continue;
+    }
+    const described = group.map((entry) => [entry, describeOrigin(entry.origin)] as const);
+    const seen = new Map<string, number>();
+    for (const [, description] of described) {
+      seen.set(description, (seen.get(description) ?? 0) + 1);
+    }
+    for (const [entry, description] of described) {
+      contexts.set(
+        entry.item,
+        (seen.get(description) ?? 0) > 1
+          ? `${description} · workspace item ${String(entry.item)}`
+          : description,
+      );
+    }
+  }
+  return contexts;
+}
+
+function describeOrigin(origin: DatasetOrigin): string {
+  if (origin === null) {
+    return "Added directly";
+  }
+  return origin.length === 0 ? "Top level" : origin.join("\\");
+}
+
 export interface FakePreviewApiOptions {
   readonly availability?: BackendAvailability | (() => Promise<BackendAvailability>);
   /** What the folder picker resolves to. `null` stands for a dismissed picker. */
@@ -259,7 +389,7 @@ export interface FakePreviewApiOptions {
     | null
     | (() => Promise<BackendAvailability | null>);
   /** What the session already holds when the webview mounts. */
-  readonly initialDatasets?: readonly SelectedFile[];
+  readonly initialDatasets?: readonly HeldFile[];
   /** Replaces the roster read entirely, for the cases where it fails. */
   readonly roster?: () => Promise<WorkspaceRoster>;
   /**
@@ -270,6 +400,16 @@ export interface FakePreviewApiOptions {
     | readonly PickedFile[]
     | null
     | (() => Promise<readonly PickedFile[] | null>);
+  /**
+   * What the folder picker and the scan behind it hand back. `null` is a
+   * dismissed picker, which is deliberately not the same as a folder that held
+   * no mzML files.
+   *
+   * Supplied as a function for the cases where the operation fails: a rejected
+   * promise is a discovery refusal, and a deferred one is a scan the test
+   * finishes by hand.
+   */
+  readonly scannedFolder?: FolderScan | null | (() => Promise<FolderScan | null>);
   readonly capacity?: number;
   /** Replaces the removal entirely, for the cases where it fails. */
   readonly removeDatasets?: (handles: readonly string[]) => Promise<WorkspaceRemoveResult>;
@@ -316,8 +456,26 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   const calls: string[] = [];
 
   const capacity = options.capacity ?? FAKE_WORKSPACE_CAPACITY;
-  let datasets: SelectedFile[] = [...(options.initialDatasets ?? [])];
-  const snapshot = (): WorkspaceRoster => ({ datasets: [...datasets], capacity });
+  let nextItem = 1;
+  const hold = (file: SelectedFile, origin: DatasetOrigin): Held => ({
+    file,
+    origin,
+    item: nextItem++,
+  });
+  let held: Held[] = (options.initialDatasets ?? []).map((entry) =>
+    "file" in entry ? hold(entry.file, entry.parents) : hold(entry, null),
+  );
+  const snapshot = (): WorkspaceRoster => {
+    const contexts = relativeContexts(held);
+    return {
+      datasets: held.map((entry) => ({
+        ...entry.file,
+        relativeContext: contexts.get(entry.item) ?? null,
+      })),
+      capacity,
+    };
+  };
+  const datasets = (): readonly SelectedFile[] => snapshot().datasets;
 
   const deliveredVerdicts: BackendAvailability[] = [];
   // Counted here as the service counts it: a change advances it, a plain
@@ -335,27 +493,72 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     return deliver(verdict);
   };
 
-  const addOne = (picked: PickedFile): WorkspaceAddOutcome => {
-    if ("rejected" in picked) {
-      return {
-        outcome: "rejected",
-        candidateName: picked.rejected,
-        error: picked.error ?? previewError({ kind: "unsupported_extension", retryable: false }),
-      };
-    }
-    const existing = datasets.find((dataset) => dataset.handle === picked.handle);
+  /**
+   * What one candidate did, before anything is said about it.
+   *
+   * An added or duplicate row is named by its session item rather than by a
+   * copy of the dataset, because the dataset a caller is handed depends on what
+   * the rest of the batch turns out to be: the second `sample.mzML` is the
+   * reason the first one has a context at all. Described mid-batch, the first
+   * outcome would carry none while the roster beside it carried one.
+   */
+  type Pending =
+    | { readonly kind: "row"; readonly duplicate: boolean; readonly item: number }
+    | { readonly kind: "rejected"; readonly candidateName: string; readonly error: PreviewError };
+
+  const acceptOne = (file: SelectedFile, origin: DatasetOrigin): Pending => {
+    const existing = held.find((entry) => entry.file.handle === file.handle);
     if (existing !== undefined) {
-      return { outcome: "duplicate", existing };
+      return { kind: "row", duplicate: true, item: existing.item };
     }
-    if (datasets.length >= capacity) {
-      return {
-        outcome: "rejected",
-        candidateName: picked.fileName,
-        error: workspaceFullError(),
-      };
+    if (held.length >= capacity) {
+      return { kind: "rejected", candidateName: file.fileName, error: workspaceFullError() };
     }
-    datasets = [...datasets, picked];
-    return { outcome: "added", dataset: picked };
+    const entry = hold(file, origin);
+    held = [...held, entry];
+    return { kind: "row", duplicate: false, item: entry.item };
+  };
+
+  const addOne = (picked: PickedFile): Pending =>
+    "rejected" in picked
+      ? {
+          kind: "rejected",
+          candidateName: picked.rejected,
+          error:
+            picked.error ?? previewError({ kind: "unsupported_extension", retryable: false }),
+        }
+      : acceptOne(picked, null);
+
+  const scanOne = (scanned: ScannedFile): Pending =>
+    "rejected" in scanned
+      ? {
+          kind: "rejected",
+          candidateName: scanned.rejected,
+          error:
+            scanned.error ?? previewError({ kind: "unsupported_extension", retryable: false }),
+        }
+      : acceptOne(scanned.file, scanned.parents ?? []);
+
+  /** Says what each candidate did, once the whole batch is in the roster. */
+  const describeAll = (pending: readonly Pending[]): WorkspaceAddOutcome[] => {
+    const roster = snapshot();
+    const byItem = new Map(held.map((entry, index) => [entry.item, roster.datasets[index]]));
+    return pending.map((entry): WorkspaceAddOutcome => {
+      if (entry.kind === "rejected") {
+        return {
+          outcome: "rejected",
+          candidateName: entry.candidateName,
+          error: entry.error,
+        };
+      }
+      const dataset = byItem.get(entry.item);
+      if (dataset === undefined) {
+        throw new Error("the fake described an outcome for a row it does not hold");
+      }
+      return entry.duplicate
+        ? { outcome: "duplicate", existing: dataset }
+        : { outcome: "added", dataset };
+    });
   };
 
   const fake: FakePreviewApi = {
@@ -364,7 +567,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     openCount: () => openCount,
     rosterReads: () => rosterReads,
     calls: () => [...calls],
-    datasets: () => datasets,
+    datasets,
     deliveredVerdicts,
     inspectBackend: () =>
       (typeof options.availability === "function"
@@ -400,11 +603,29 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         if (picked === null) {
           return null;
         }
-        // Every outcome first, then the roster they produced. Snapshotting
-        // before the batch would answer with the workspace as it was, which is
-        // the one thing a batch result must not do.
-        const outcomes = picked.map(addOne);
-        return { roster: snapshot(), outcomes };
+        // Every candidate first, then the roster they produced, and only then
+        // what each one did. Snapshotting before the batch would answer with
+        // the workspace as it was, and describing an outcome before the batch
+        // ends would describe a row against a roster it is not in yet.
+        const pending = picked.map(addOne);
+        return { roster: snapshot(), outcomes: describeAll(pending) };
+      }),
+    chooseFolder: () =>
+      (typeof options.scannedFolder === "function"
+        ? options.scannedFolder()
+        : Promise.resolve(
+            options.scannedFolder === undefined ? DEFAULT_FOLDER_SCAN : options.scannedFolder,
+          )
+      ).then((scan): FolderIngestionResult | null => {
+        if (scan === null) {
+          return null;
+        }
+        const pending = scan.files.map(scanOne);
+        return {
+          roster: snapshot(),
+          outcomes: describeAll(pending),
+          discovery: { ...COMPLETE_SCAN, ...scan.discovery },
+        };
       }),
     removeDatasets: (handles) => {
       if (options.removeDatasets !== undefined) {
@@ -412,17 +633,17 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       }
       const requested = [...new Set(handles)];
       const removedHandles = requested.filter((handle) =>
-        datasets.some((dataset) => dataset.handle === handle),
+        held.some((entry) => entry.file.handle === handle),
       );
       const unknownHandles = requested.filter((handle) => !removedHandles.includes(handle));
-      datasets = datasets.filter((dataset) => !removedHandles.includes(dataset.handle));
+      held = held.filter((entry) => !removedHandles.includes(entry.file.handle));
       return Promise.resolve({ roster: snapshot(), removedHandles, unknownHandles });
     },
     clearWorkspace: () => {
       if (options.clearWorkspace !== undefined) {
         return options.clearWorkspace();
       }
-      datasets = [];
+      held = [];
       return Promise.resolve(snapshot());
     },
     openPreview: (handle) => {
@@ -440,7 +661,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         ...preview,
         installationGeneration: generation,
         // The preview describes the row that was asked for, as Rust's does.
-        file: datasets.find((dataset) => dataset.handle === handle) ?? preview.file,
+        file: datasets().find((dataset) => dataset.handle === handle) ?? preview.file,
       }));
     },
     loadSpectrum: (_handle, index) => {
@@ -460,6 +681,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     "useAutomaticDiscovery",
     "getRoster",
     "chooseFiles",
+    "chooseFolder",
     "removeDatasets",
     "clearWorkspace",
     "openPreview",

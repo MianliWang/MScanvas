@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useReducer } from "react";
 import { describe, expect, it, vi } from "vitest";
 
+import { blurAsABrowserWould as blurTheWayABrowserWould } from "../../test/browserFocus";
 import type { SelectedFile } from "./contracts";
 import { DatasetRoster } from "./DatasetRoster";
 import {
@@ -14,11 +15,12 @@ import type { RosterLoadState } from "./usePreviewWorkspace";
 
 const NAMES = ["QC_pool_01.mzML", "QC_pool_02.mzML", "Blank_03.mzML", "QC_pool_04.mzML"];
 
-function dataset(index: number): SelectedFile {
+function dataset(index: number, relativeContext: string | null = null): SelectedFile {
   return {
     handle: `file-${String(index)}`,
     fileName: NAMES[index] ?? `file-${String(index)}.mzML`,
     byteLength: 4_096 * (index + 1),
+    relativeContext,
   };
 }
 
@@ -33,29 +35,21 @@ interface HarnessProps {
   readonly rows?: number;
   readonly onActivate?: (handle: string) => void;
   readonly onAddFiles?: () => void;
+  readonly onAddFolder?: () => void;
   readonly onRemoveSelected?: () => void;
   readonly onClearList?: () => void;
   readonly canPreview?: boolean;
   readonly canAddFiles?: boolean;
+  readonly canAddFolder?: boolean;
+  readonly folderBusy?: boolean;
   readonly canMutate?: boolean;
   readonly load?: RosterLoadState;
   readonly focusAddFilesToken?: number;
 }
 
-/**
- * Blurs the way a browser does when a focused control is disabled.
- *
- * jsdom leaves a disabled control focused and then refuses to blur it -- an
- * unfocusable element cannot be blurred -- so the control is briefly enabled to
- * move the keyboard off it and set back exactly as it was. React owns the
- * attribute and is not consulted in between.
- */
+/** Blurs the way a browser does when a focused control is disabled. */
 function blurAsABrowserWould(control: HTMLElement): void {
-  const button = control as HTMLButtonElement;
-  const disabled = button.disabled;
-  button.disabled = false;
-  button.blur();
-  button.disabled = disabled;
+  blurTheWayABrowserWould(control);
   expect(document.body).toHaveFocus();
 }
 
@@ -64,10 +58,13 @@ function Harness({
   rows = 4,
   onActivate = () => undefined,
   onAddFiles = () => undefined,
+  onAddFolder = () => undefined,
   onRemoveSelected = () => undefined,
   onClearList = () => undefined,
   canPreview = true,
   canAddFiles = true,
+  canAddFolder = true,
+  folderBusy = false,
   canMutate = true,
   load = { status: "ready" },
   focusAddFilesToken = 0,
@@ -76,13 +73,16 @@ function Harness({
   return (
     <DatasetRoster
       canAddFiles={canAddFiles}
+      canAddFolder={canAddFolder}
       canMutate={canMutate}
       canPreview={canPreview}
       dispatch={dispatch}
       focusAddFilesToken={focusAddFilesToken}
+      folderBusy={folderBusy}
       load={load}
       onActivate={onActivate}
       onAddFiles={onAddFiles}
+      onAddFolder={onAddFolder}
       onClearList={onClearList}
       onReloadRoster={() => undefined}
       onRemoveSelected={onRemoveSelected}
@@ -103,13 +103,16 @@ function Fixed({
   return (
     <DatasetRoster
       canAddFiles={canAddFiles}
+      canAddFolder
       canMutate
       canPreview
       dispatch={() => undefined}
       focusAddFilesToken={0}
+      folderBusy={false}
       load={{ status: "ready" }}
       onActivate={() => undefined}
       onAddFiles={() => undefined}
+      onAddFolder={() => undefined}
       onClearList={() => undefined}
       onReloadRoster={() => undefined}
       onRemoveSelected={() => undefined}
@@ -433,11 +436,11 @@ describe("looking at the roster through a search and a sort", () => {
       type: "filesAdded",
       result: {
         roster: {
-          datasets: [...kept.datasets, { handle: "file-9", fileName: "QC_pool_09.mzML", byteLength: 1 }],
+          datasets: [...kept.datasets, { handle: "file-9", fileName: "QC_pool_09.mzML", byteLength: 1, relativeContext: null }],
           capacity: 1_024,
         },
         outcomes: [
-          { outcome: "added", dataset: { handle: "file-9", fileName: "QC_pool_09.mzML", byteLength: 1 } },
+          { outcome: "added", dataset: { handle: "file-9", fileName: "QC_pool_09.mzML", byteLength: 1, relativeContext: null } },
         ],
       },
     });
@@ -501,13 +504,16 @@ describe("the workspace roster as an accessible list", () => {
     render(
       <DatasetRoster
         canAddFiles
+        canAddFolder
         canMutate
         canPreview
         dispatch={() => undefined}
         focusAddFilesToken={0}
+        folderBusy={false}
         load={{ status: "ready" }}
         onActivate={() => undefined}
         onAddFiles={() => undefined}
+        onAddFolder={() => undefined}
         onClearList={() => undefined}
         onReloadRoster={() => undefined}
         onRemoveSelected={() => undefined}
@@ -537,13 +543,16 @@ describe("the workspace roster as an accessible list", () => {
     render(
       <DatasetRoster
         canAddFiles
+        canAddFolder
         canMutate
         canPreview
         dispatch={() => undefined}
         focusAddFilesToken={0}
+        folderBusy={false}
         load={{ status: "ready" }}
         onActivate={() => undefined}
         onAddFiles={() => undefined}
+        onAddFolder={() => undefined}
         onClearList={() => undefined}
         onReloadRoster={() => undefined}
         onRemoveSelected={() => undefined}
@@ -596,10 +605,12 @@ describe("the workspace roster as an accessible list", () => {
     render(
       <DatasetRoster
         canAddFiles
+        canAddFolder
         canMutate
         canPreview
         dispatch={() => undefined}
         focusAddFilesToken={0}
+        folderBusy={false}
         load={{
           status: "failed",
           error: {
@@ -611,6 +622,7 @@ describe("the workspace roster as an accessible list", () => {
         }}
         onActivate={() => undefined}
         onAddFiles={() => undefined}
+        onAddFolder={() => undefined}
         onClearList={() => undefined}
         onReloadRoster={retry}
         onRemoveSelected={() => undefined}
@@ -811,5 +823,108 @@ describe("driving the roster from the keyboard alone", () => {
     rerender(<Harness canAddFiles rows={2} />);
 
     expect(document.activeElement).toBe(chosen);
+  });
+});
+
+describe("the two ways of adding acquisitions", () => {
+  it("offers five actions, in one place, under stable names", () => {
+    render(<Harness />);
+
+    const actions = screen
+      .getAllByRole("button")
+      .map((button) => button.textContent)
+      .filter((label) => label !== "Clear search");
+    expect(actions).toEqual([
+      "Add files…",
+      "Add mzML folder…",
+      "Preview focused",
+      "Remove selected",
+      "Clear list",
+    ]);
+  });
+
+  it("says what is running in the control that started it, without inventing a proportion", () => {
+    render(<Harness canAddFiles={false} canAddFolder={false} canMutate={false} folderBusy />);
+
+    const scanning = screen.getByRole("button", { name: "Scanning folder…" });
+    expect(scanning).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Add mzML folder…" })).toBeNull();
+    // No percentage anywhere: nothing has counted the tree, so there is no
+    // proportion to report and none is made up.
+    expect(scanning.textContent).not.toMatch(/\d/);
+    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
+  });
+
+  it("hands each acquisition action to its own callback", () => {
+    const onAddFiles = vi.fn();
+    const onAddFolder = vi.fn();
+    render(<Harness onAddFiles={onAddFiles} onAddFolder={onAddFolder} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    expect(onAddFolder).toHaveBeenCalledTimes(1);
+    expect(onAddFiles).not.toHaveBeenCalled();
+  });
+});
+
+describe("saying which of two identically named rows is which", () => {
+  /** A state whose first two rows share a filename and say where they are. */
+  function collided(): RosterState {
+    return rosterReducer(initialRosterState, {
+      type: "rosterLoaded",
+      roster: {
+        datasets: [
+          { handle: "file-0", fileName: "sample.mzML", byteLength: 4_096, relativeContext: "batch-1" },
+          { handle: "file-1", fileName: "sample.mzML", byteLength: 8_192, relativeContext: "batch-2" },
+          { handle: "file-2", fileName: "unique.mzML", byteLength: 2_048, relativeContext: null },
+        ],
+        capacity: 1_024,
+      },
+    });
+  }
+
+  it("renders the context beside the name and nowhere else", () => {
+    render(<Fixed state={collided()} />);
+
+    const row = screen.getByRole("option", { name: /sample\.mzML,\s*batch-1/ });
+    expect(within(row).getByText("batch-1")).toBeVisible();
+    // The filename is the primary label and is said once.
+    expect(within(row).getAllByText("sample.mzML")).toHaveLength(1);
+    // And a row whose name is already unique says nothing.
+    const unique = screen.getByRole("option", { name: /unique\.mzML/ });
+    expect(unique.textContent).toBe("unique.mzML2.0 KiB");
+  });
+
+  it("uses the bounded value exactly as Rust gave it, in the visible text and the title alike", () => {
+    render(<Fixed state={collided()} />);
+
+    const context = within(screen.getByRole("option", { name: /sample\.mzML,\s*batch-2/ })).getByText(
+      "batch-2",
+    );
+    // No client-side path processing of any kind: the tooltip says exactly what
+    // is on screen, so hovering reveals nothing the row did not already show.
+    expect(context).toHaveAttribute("title", "batch-2");
+  });
+
+  it("does not take the place of what a row says about its file or about the view", () => {
+    // Three different things, and none of them may stand in for another: where
+    // the file was found, what happened when it was read, and why a row the
+    // search did not match is on screen anyway.
+    const searched = rosterReducer(
+      rosterReducer(
+        rosterReducer(collided(), { type: "rowPressed", handle: "file-0", modifiers: { ctrl: false, shift: false } }),
+        { type: "rowStateChanged", handle: "file-0", state: "missing" },
+      ),
+      { type: "searchChanged", query: "unique" },
+    );
+
+    render(<Fixed state={searched} />);
+
+    const row = screen.getByRole("option", { name: /sample\.mzML/ });
+    expect(within(row).getByText("batch-1")).toBeVisible();
+    expect(within(row).getByText("Missing")).toBeVisible();
+    expect(within(row).getByText("Selected — outside search")).toBeVisible();
   });
 });

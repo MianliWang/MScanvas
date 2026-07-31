@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type {
+  FolderIngestionResult,
   SelectedFile,
   WorkspaceAddOutcome,
   WorkspaceAddResult,
@@ -24,7 +25,7 @@ import {
 const CAPACITY = 1_024;
 
 function dataset(handle: string): SelectedFile {
-  return { handle, fileName: `${handle}.mzML`, byteLength: 4_096 };
+  return { handle, fileName: `${handle}.mzML`, byteLength: 4_096, relativeContext: null };
 }
 
 function roster(...handles: string[]): WorkspaceRoster {
@@ -708,7 +709,7 @@ describe("saying what a workspace action did", () => {
 
 describe("looking at the roster through a search and a sort", () => {
   function sized(handle: string, fileName: string, byteLength: number): SelectedFile {
-    return { handle, fileName, byteLength };
+    return { handle, fileName, byteLength, relativeContext: null };
   }
 
   /** Four rows whose added, name and size orders are all different. */
@@ -1256,5 +1257,136 @@ describe("looking at the roster through a search and a sort", () => {
 
     expect([discarded.query, discarded.sort]).toEqual(["sample", "name-asc"]);
     expect(visible(discarded)).toEqual(["file-2", "file-0"]);
+  });
+});
+
+describe("importing a folder", () => {
+  function folderResult(
+    outcomes: readonly WorkspaceAddOutcome[],
+    ...handles: string[]
+  ): FolderIngestionResult {
+    return {
+      roster: roster(...handles),
+      outcomes,
+      discovery: {
+        complete: true,
+        skippedReparseCount: 0,
+        inaccessibleEntryCount: 0,
+        limitsReached: [],
+      },
+    };
+  }
+
+  it("keeps a selection the user built while the scan was running", () => {
+    // The difference between this and `filesAdded`, and it is time. A file
+    // picker is modal, so replacing the selection answers a question nothing
+    // else could have changed. A folder scan is not: searching, sorting and
+    // selecting all stay live for its whole length, so the selection this reply
+    // meets is one the user may have built while it ran.
+    const before = rosterReducer(loaded("file-0", "file-1"), {
+      type: "rowPressed",
+      handle: "file-1",
+      modifiers: { ctrl: false, shift: false },
+    });
+    expect(selection(before)).toEqual(["file-1"]);
+
+    const state = rosterReducer(before, {
+      type: "folderImported",
+      result: folderResult(
+        [added("file-2"), added("file-3")],
+        "file-0",
+        "file-1",
+        "file-2",
+        "file-3",
+      ),
+    });
+
+    // Theirs, and the batch's. Not one instead of the other.
+    expect(selection(state)).toEqual(["file-1", "file-2", "file-3"]);
+    expect(state.focused).toBe("file-2");
+    expect(state.anchor).toBe("file-2");
+  });
+
+  it("drops a row the user selected that the authoritative result no longer holds", () => {
+    // The list stays live for the length of a scan, so a row can be selected
+    // and then go -- removed elsewhere, or gone from the session. Carrying its
+    // handle would arm `Remove selected` with a row that is not there.
+    const before = rosterReducer(loaded("file-0", "file-1"), { type: "allSelected" });
+    expect(selection(before)).toEqual(["file-0", "file-1"]);
+
+    const state = rosterReducer(before, {
+      type: "folderImported",
+      result: folderResult([added("file-2")], "file-0", "file-2"),
+    });
+
+    expect(selection(state)).toEqual(["file-0", "file-2"]);
+  });
+
+  it("leaves the preview on screen and the view the user chose", () => {
+    const before = rosterReducer(
+      rosterReducer(
+        rosterReducer(
+          rosterReducer(loaded("file-0", "file-1"), { type: "activated", handle: "file-0" }),
+          { type: "rowStateChanged", handle: "file-0", state: "loaded" },
+        ),
+        { type: "searchChanged", query: "file-0" },
+      ),
+      { type: "sortChanged", sort: "name-desc" },
+    );
+
+    const state = rosterReducer(before, {
+      type: "folderImported",
+      result: folderResult([added("file-2")], "file-0", "file-1", "file-2"),
+    });
+
+    // Reading one row is not something a scan decides.
+    expect(state.active).toBe("file-0");
+    expect(rowPresentation(state, "file-0")).toBe("loaded");
+    // How the user is looking at the roster is theirs, not the scan's.
+    expect(state.query).toBe("file-0");
+    expect(state.sort).toBe("name-desc");
+    // And a new row the query does not match is still selected, so it is kept
+    // on screen and says why.
+    expect(selection(state)).toContain("file-2");
+    expect(rosterProjection(state).pinned.get("file-2")).toBe("selected");
+  });
+
+  it("says nothing about rows that have just arrived", () => {
+    const state = rosterReducer(loaded("file-0"), {
+      type: "folderImported",
+      result: folderResult([added("file-1")], "file-0", "file-1"),
+    });
+
+    expect(rowPresentation(state, "file-1")).toBe("ready");
+  });
+
+  it("changes nothing about where the user is when the folder added nothing", () => {
+    const before = rosterReducer(loaded("file-0", "file-1"), {
+      type: "rowPressed",
+      handle: "file-1",
+      modifiers: { ctrl: false, shift: false },
+    });
+
+    const state = rosterReducer(before, {
+      type: "folderImported",
+      result: folderResult([duplicate("file-0")], "file-0", "file-1"),
+    });
+
+    expect(selection(state)).toEqual(["file-1"]);
+    expect(state.focused).toBe("file-1");
+    expect(state.anchor).toBe("file-1");
+  });
+
+  it("adopts the roster it was given rather than adding to the one it had", () => {
+    // The reply is authoritative. A reducer that appended the added rows to its
+    // own list would keep a row Rust had dropped, and no read is coming that
+    // would notice.
+    const state = rosterReducer(loaded("file-0", "file-9"), {
+      type: "folderImported",
+      result: folderResult([added("file-1")], "file-0", "file-1"),
+    });
+
+    expect(state.datasets.map((dataset) => dataset.handle)).toEqual(["file-0", "file-1"]);
+    expect(state.capacity).toBe(CAPACITY);
   });
 });

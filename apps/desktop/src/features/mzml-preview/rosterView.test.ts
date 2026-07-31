@@ -13,8 +13,13 @@ import {
   type SortMode,
 } from "./rosterView";
 
-function dataset(handle: string, fileName: string, byteLength = 4_096): SelectedFile {
-  return { handle, fileName, byteLength };
+function dataset(
+  handle: string,
+  fileName: string,
+  byteLength = 4_096,
+  relativeContext: string | null = null,
+): SelectedFile {
+  return { handle, fileName, byteLength, relativeContext };
 }
 
 interface Options {

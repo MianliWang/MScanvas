@@ -162,6 +162,7 @@ describe("narrow desktop layout markup", () => {
     );
 
     expect(await screen.findAllByRole("button", { name: "Add files…" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Add mzML folder…" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Preview focused" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Remove selected" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Check again" })).toHaveLength(1);
@@ -190,20 +191,22 @@ describe("narrow desktop layout markup", () => {
     // with four rows in it: rows that exist, are announced, and cannot be
     // reached. The track has a floor and the panel has a minimum.
     //
-    // M1.3 raised both by what the search and sort controls cost. The two are
-    // pinned together because they are one decision: a track shorter than the
-    // panel's own minimum clamps the panel back to a height its chrome does
-    // not fit in, which is the original defect by another route.
+    // M1.3 raised both by what the search and sort controls cost, and M1.4.1
+    // by the third line five actions wrap to at this column's minimum width.
+    // The two are pinned together because they are one decision: a track
+    // shorter than the panel's own minimum clamps the panel back to a height
+    // its chrome does not fit in, which is the original defect by another
+    // route.
     const app = mountStyles(appStyles);
 
     expect(requireStyleRule(app, ".dataset-roster-panel").style.getPropertyValue("min-height")).toBe(
-      "240px",
+      "280px",
     );
     expect(
       requireMediaRule(app, "(max-width: 1120px)", ".workspace-layout").style.getPropertyValue(
         "grid-template-rows",
       ),
-    ).toBe("minmax(240px, 0.9fr) minmax(0, 1.6fr)");
+    ).toBe("minmax(280px, 0.9fr) minmax(0, 1.6fr)");
     // And what the column cannot fit is clipped here rather than pushing the
     // shell past the viewport.
     expect(requireStyleRule(app, ".workspace-sidebar").style.getPropertyValue("overflow")).toBe(
@@ -229,6 +232,58 @@ describe("narrow desktop layout markup", () => {
     const notes = requireStyleRule(app, ".dataset-row-notes").style;
     expect(notes.getPropertyValue("min-width")).toBe("0px");
     expect(notes.getPropertyValue("overflow")).toBe("hidden");
+  });
+
+  it("lets five actions wrap rather than widening the column they sit in", () => {
+    // The fifth action is what raised the panel's floor by one wrapped line.
+    // What must not happen instead is the row refusing to wrap and pushing the
+    // sidebar -- and the document -- wider than the window.
+    const app = mountStyles(appStyles);
+    const actions = requireStyleRule(app, ".dataset-roster-actions").style;
+
+    expect(actions.getPropertyValue("display")).toBe("flex");
+    expect(actions.getPropertyValue("flex-wrap")).toBe("wrap");
+  });
+
+  it("lets a row's collision context give ground before the file name does", () => {
+    // The name and its context share one grid cell, so the cell needs the same
+    // treatment the notes track got: a minimum of zero for the part that may
+    // disappear, and a floor for the part that may not. A context long enough
+    // to fill the cell would otherwise leave the name at zero, which is issue
+    // #24's defect one column over.
+    const app = mountStyles(appStyles);
+    const label = requireStyleRule(app, ".dataset-row-label").style;
+    const name = requireStyleRule(app, ".dataset-row-name").style;
+    const context = requireStyleRule(app, ".dataset-row-context").style;
+
+    expect(label.getPropertyValue("display")).toBe("flex");
+    expect(label.getPropertyValue("min-width")).toBe("0px");
+    // The file a row is about is the last thing on it that may disappear.
+    expect(name.getPropertyValue("min-width")).toBe("48px");
+    expect(name.getPropertyValue("flex")).toBe("1 1 auto");
+    // The context gives ground first, and ellipsizes rather than wrapping: a
+    // row is one line tall and Rust already bounds the string.
+    expect(context.getPropertyValue("min-width")).toBe("0px");
+    expect(context.getPropertyValue("flex")).toBe("0 1 auto");
+    expect(context.getPropertyValue("overflow")).toBe("hidden");
+    expect(context.getPropertyValue("text-overflow")).toBe("ellipsis");
+    expect(context.getPropertyValue("white-space")).toBe("nowrap");
+    // And it keeps the row's five tracks exactly as they were: the context
+    // lives inside the name's cell rather than taking one of its own.
+    expect(
+      requireStyleRule(app, ".dataset-row").style.getPropertyValue("grid-template-columns"),
+    ).toBe("12px 12px minmax(72px, 1fr) auto minmax(0, auto)");
+  });
+
+  it("gives a row's collision context a colour that can be read", () => {
+    // 11px secondary text, for the same reason the search's explanations take
+    // it: the tertiary colour is about 3.5:1 on white, which is under AA at
+    // this size.
+    const app = mountStyles(appStyles);
+
+    expect(requireStyleRule(app, ".dataset-row-context").style.getPropertyValue("color")).toBe(
+      "var(--color-text-secondary)",
+    );
   });
 
   it("gives the search's own explanations a colour that can be read", () => {

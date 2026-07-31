@@ -186,6 +186,12 @@ function harness(
         roster: { datasets: [selectedFile], capacity: FAKE_WORKSPACE_CAPACITY },
         outcomes: [{ outcome: "added", dataset: selectedFile }],
       }),
+    // Stated rather than defaulted, so a test in this file that ever reaches
+    // for a folder has to say what it expects rather than silently receiving a
+    // dismissed picker. Nothing here does: this file is about the installation
+    // ordering, and a folder import touches none of it.
+    chooseFolder: () =>
+      Promise.reject(new Error("this harness has no folder picker")),
     removeDatasets: (handles) =>
       Promise.resolve<WorkspaceRemoveResult>({
         roster: empty,
