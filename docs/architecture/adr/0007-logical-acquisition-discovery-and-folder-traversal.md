@@ -1,8 +1,8 @@
 # ADR 0007 — Logical acquisition discovery and folder traversal
 
-- Status: Accepted for the private mzML folder-discovery foundation; the visible
-  `Add mzML folder…` workflow and directory-formatted acquisitions are
-  separately gated
+- Status: Accepted for the private mzML folder-discovery foundation (M1.4.0) and
+  for the visible `Add mzML folder…` workflow over it (M1.4.1);
+  directory-formatted acquisitions remain separately gated
 - Date: 2026-07-31
 
 ## Context
@@ -32,10 +32,18 @@ M1.4.0 discovers regular `.mzML` files under one explicitly chosen local Windows
 folder. It adds no command, no transfer object, no picker and no interface: the
 engine is private to the preview module and nothing in the product can reach it.
 
+M1.4.1 makes exactly that engine reachable, and nothing else: one native folder
+picker, one command, one transfer object, and one visible action. The traversal
+is unchanged — the same budgets, the same ordering, the same refusal of every
+reparse entry — and what M1.4.1 adds is the commit around it: whose decision the
+scan is still answering, and what a candidate has to prove at acceptance.
+
 Out of scope here, each for its own reason: vendor formats and
 directory-formatted acquisitions (no evidence), Explorer drag-and-drop (a
 different authority boundary), persistence (ADR 0006 excludes it), and any
-backend work at all (discovery never asks ProteoWizard anything).
+backend work at all (discovery never asks ProteoWizard anything, and neither
+does ingestion — a folder of a thousand files costs a thousand filesystem
+inspections and no processes).
 
 ## Definition of a logical acquisition root
 
@@ -222,6 +230,22 @@ establishes posture, length, identity and the lease, and a second resolution
 supplies the canonical path, the extension verdict and the display name. This
 ADR does not change that and does not claim the window between them is closed.
 
+**Identity recheck (M1.4.1).** A candidate carries the `FileIdentity` its parent
+directory reported in the same enumeration record as its name, and ingestion
+compares that against the identity acceptance resolves. A mismatch is refused
+with `folder_candidate_changed` and the rest of the batch continues. This is what
+carries the walk's containment proof across to the object being registered:
+containment was established for the object discovery found, and between the walk
+and acceptance a name can be made to mean a different file — one outside the
+chosen folder, in the case worth worrying about. The refusal has a kind of its
+own rather than reusing an acceptance failure, because the path resolved and the
+file opened; it simply is not the file that was found.
+
+This does not close the residual window the Consequences section records. It
+converts it from "a file outside the folder can be registered" into "a file that
+changed identity is refused", which is the strongest statement the documented
+APIs support.
+
 ## Duplicate identity
 
 Unchanged. Duplicates are decided by filesystem identity at acceptance, before
@@ -236,35 +260,89 @@ Recursive discovery can find `A\sample.mzML` and `B\sample.mzML`. Both are
 different acquisitions and both would render as `sample.mzML`, which is not
 enough to choose between them.
 
-The approved future rule is collision-only, chosen-root-relative context: the
-relative location is shown only for rows whose final filename collides with
-another row's. It is based only on the folder the user chose, never contains a
-drive, a UNC root or the chosen root's own name, never contains `..`, is
-bounded, and is not persisted.
+The rule is collision-only, chosen-root-relative context: the relative location
+is shown only for rows whose final filename collides with another row's. It is
+based only on the folder the user chose, never contains a drive, a UNC root or
+the chosen root's own name, never contains `..`, is bounded, and is not
+persisted.
 
-M1.4.0 retains the relative components privately so that rule remains possible.
-It sends nothing: no transfer object changes in this slice, and the relative
-form does not cross a boundary until M1.4.1 amends ADR 0006's path privacy
-section deliberately.
+M1.4.0 retained the relative components privately so that rule remained
+possible. M1.4.1 implements it and amends ADR 0006's path-privacy section
+deliberately, as that section now records.
+
+What M1.4.1 settled beyond the rule itself:
+
+- The context is **derived over the whole live roster every time one is built**,
+  not stored when a row arrives. Whether a name is ambiguous is a property of
+  the list, and it changes as rows arrive and leave: adding a second
+  `sample.mzML` gives both of them context, and removing one takes it away from
+  the survivor. Deciding it at insertion would freeze an answer to a question
+  that keeps being asked.
+- A row's origin is private and is **not part of its identity**. Two names for
+  one acquisition are one row whichever route each name arrived by, and a
+  duplicate addition never rewrites where the existing row says it came from.
+- A directly picked file says `Added directly` rather than a location. It has no
+  place under a chosen folder to describe, and inventing one — `Top level`, say
+  — would put it in a tree the user never named.
+- Two rows that would say the same words (two folders each with a `data`
+  subdirectory; two files picked from different folders) are told apart by
+  appending the session's own identifier: `workspace item N`. That identifier is
+  already the handle the webview holds, so it reveals nothing a caller does not
+  have, and it is stable for as long as the row is.
+- Bounded at 128 characters, truncated **from the shallow end** with a leading
+  ellipsis. The deepest component is the one nearest the file and the one that
+  actually disambiguates; truncating from the end would drop exactly that.
+- Display only. It is never searched, never a sort key, never part of identity,
+  and its `title` says exactly what the row already shows.
 
 ## Partial success and outcomes
 
-The visible slice will report per-item outcomes for files only — added,
-duplicate, rejected — reusing the shapes the file picker already produces.
-Directory-level events are aggregate counts, because a per-item directory
-outcome is a per-item directory name.
+The visible slice reports per-item outcomes for files only — added, duplicate,
+rejected — reusing the shapes the file picker already produces. Directory-level
+events are aggregate counts, because a per-item directory outcome is a per-item
+directory name.
 
 One inaccessible subdirectory does not roll back unrelated additions. A root
 that cannot be inspected is a command-level failure that leaves the roster
 untouched. A truncated scan is never described as complete, and a scan that
 completed and found nothing is not described as a failure.
 
+The summary that crosses the boundary is deliberately narrower than the private
+one. It carries `complete`, the skipped-reparse count, the inaccessible-entry
+count and which named limits were reached. It does **not** carry how many entries
+were inspected or how many directories were entered: those describe the shape of
+the user's tree, and pointing at a folder is not permission to report it.
+
+`complete` is one field rather than three so that a caller cannot report a
+partial scan as a whole one by checking the wrong thing. It is false whenever a
+limit was reached, a linked entry was skipped, or a subtree could not be read.
+
+The two sentences a partial scan must never merge are "no mzML files were found
+in that folder" and "no files were added, and the scan was incomplete". The
+first is a claim about the folder's contents and only a complete scan may make
+it.
+
 ## Mutation concurrency
 
-For M1.4.1, and not implemented here: scan outside the workspace mutation gate,
-snapshot a monotonic workspace mutation generation before scanning, and commit
-only if that generation is unchanged. Otherwise return a typed
-`import_superseded` and add nothing.
+Implemented in M1.4.1 as recorded: the scan runs outside the workspace mutation
+gate, a monotonic workspace mutation generation is reserved before scanning, and
+the batch commits only if that generation is unchanged. Otherwise the command
+returns a typed `import_superseded`, accepts nothing, leases nothing and spends
+no identifier.
+
+What advances the generation is every statement about what the workspace *is*:
+adding files, removing rows, emptying the list — and the product-facing roster
+read. That last one is the reload race and is the reason the read is a mutation
+at all. A webview that reloads adopts the roster it is given and has no further
+read coming; a scan the previous window started is still out there holding no
+lock. Going through the gate linearises the two: either the scan commits first
+and the read includes its rows, or the read wins and the scan finds its
+generation stale and adds nothing. What cannot happen is a new window adopting a
+roster and then being given rows nothing will ever tell it about.
+
+Looking at the session is not deciding what it holds. Reading a preview,
+inspecting the backend or counting rows internally does not advance the
+generation, so a long scan does not fail for a reason the user cannot see.
 
 Holding the gate across a recursive scan is rejected. `Clear list` and
 `Remove selected` queue on that same gate, so a user who chose the wrong folder
@@ -275,20 +353,49 @@ the gate without a generation is rejected too: a scan that began before a
 
 ## Cancellation and progress
 
-For M1.4.1: no cancellation task model, no percentage, and a visible
-`Scanning folder…` while a scan is outstanding. The budgets are what bound the
-worst case. A percentage without a known total is a number the application would
-be inventing, and a task/cancellation protocol overlaps the future conversion
-queue and needs its own decision.
+As recorded: no cancellation task model, no percentage, and a visible
+`Scanning folder…` while a scan is outstanding — carried by the folder action's
+own label, with a permanently mounted live region saying that the length is not
+known. The budgets are what bound the worst case. A percentage without a known
+total is a number the application would be inventing, and a task/cancellation
+protocol overlaps the future conversion queue and needs its own decision.
+
+Because there is no cancellation, the scan deliberately does **not** make the
+session unusable while it runs. Searching, sorting, selecting and reading a file
+already in the workspace all stay live; what waits is only the right to change
+the roster.
 
 ## Tauri boundary
 
 M1.4.0 adds no command. The engine is private to `preview::discovery`, mounted
 privately, and reachable only from within that module.
 
-M1.4.1 will add exactly one command, `choose_mzml_folder`, returning a typed
-result. The webview will not supply or receive a path, a parent, a folder
-identifier or an ordering key, and the capability set stays empty.
+M1.4.1 adds exactly one command, `choose_mzml_folder`, the eleventh and last. It
+takes no argument beyond the application handle, shows the native picker on the
+main thread, and answers with a roster, one outcome per candidate and the scan
+summary — or `None` for a dismissed picker, which is an ordinary outcome and
+deliberately not an empty result. The webview supplies and receives no path, no
+parent, no folder identifier and no ordering key, and the capability set stays
+empty.
+
+Every discovery refusal maps to a stable visible kind, one arm per kind and no
+default, so a new traversal refusal fails to compile rather than arriving as one
+of the old ones:
+
+| Traversal refusal | Visible kind |
+| --- | --- |
+| `PlatformUnavailable` | `folder_discovery_unavailable` |
+| `RootUnavailable` | `folder_not_readable` |
+| `RootNotDirectory` | `folder_not_directory` |
+| `RootReparsePoint` | `folder_link_unsupported` |
+| `RemoteRootUnsupported` | `network_folder_unsupported` |
+| `RootEnumerationFailed` | `folder_scan_unreadable` |
+| `FilesystemInvariantFailed` | `folder_scan_failed` |
+
+Two more kinds belong to the commit rather than to the walk:
+`folder_candidate_changed` for a candidate whose object changed, and
+`import_superseded` for a scan the workspace moved past. None of them carries a
+path, a root name or an operating-system message.
 
 ## Platform posture
 
@@ -331,12 +438,41 @@ does not use it. It is untouched by this slice.
 - A tree deeper than the configured budget neither overflows the stack nor stops
   its shallower siblings.
 
+Added for M1.4.1, all of them deterministic and none of them timed:
+
+- A candidate whose object is replaced between the walk and acceptance is
+  refused with its own kind, and the rest of the batch still arrives.
+- A scan that spans a product roster read, or an emptying of the list, commits
+  nothing, holds no lease and answers `import_superseded`; a scan that spans a
+  look that decides nothing still commits. The interleaving is driven by
+  channels around a controlled walk rather than by sleeping.
+- Both reload orderings: a read after a commit sees the committed rows, and a
+  read before a commit supersedes it.
+- Collision context appears only for exact filename collisions, distinguishes a
+  directly added row from a discovered one, falls back to the session
+  identifier when two rows would say the same words, disappears when the row
+  that made it necessary goes, and is truncated from the shallow end.
+- An outcome's dataset is byte-for-byte the roster's copy of that dataset, which
+  is what pins describing outcomes after the whole batch.
+- Every discovery refusal maps to a kind of its own, asked through the boundary.
+- A real junction under a real chosen folder yields no candidate from the other
+  side, is counted, and makes the scan incomplete.
+- Nothing a folder import transfers contains the chosen root's name, a drive, a
+  separator, an identity, or either private counter.
+- The command list is exactly eleven, in order, and the capability set is empty.
+
 ## Consequences
 
 Folder discovery becomes possible without any of it being reachable, which is
 the point: the traversal boundary is settled and tested before a button depends
-on it. The cost is that the milestone delivers nothing a user can see, and the
-feature catalogue must say so.
+on it. The cost is that M1.4.0 delivers nothing a user can see, and the feature
+catalogue said so until M1.4.1 made it visible.
+
+A scan the user has moved past adds nothing and says so, which means a user who
+starts a long scan and then changes the list has to start it again. That is the
+price of keeping the list usable throughout, and it is the right way round:
+losing a scan costs a repeat, while repopulating a list somebody just emptied
+costs their trust in the list.
 
 A folder full of cloud placeholders yields little or nothing until a tag
 decision is made. That is visible and counted rather than silent, and it is the
@@ -383,8 +519,8 @@ proof of where it lives.
 
 ## Follow-up slices
 
-- **M1.4.1** — the visible `Add mzML folder…` workflow: the picker, one command,
-  a transfer object, the interface and rendered Windows QA.
+- **M1.4.1 — delivered.** The visible `Add mzML folder…` workflow: the picker,
+  one command, the transfer object, the interface and rendered Windows QA.
 - **M1.5** — Explorer drag-and-drop over this same discovery boundary.
 - **Later** — evidence-backed directory-acquisition families, behind the gate
   recorded above.

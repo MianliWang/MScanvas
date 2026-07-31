@@ -371,10 +371,12 @@ rereading one is a thing the user asks for, one dataset at a time.
 No command accepts a path from the webview, and the main window's capability set
 stays empty.
 
-Four commands make the registry reachable:
+Five commands make the registry reachable:
 
 - `get_workspace_roster` — the ordered, path-free list the session holds;
 - `choose_mzml_files` — show the native picker and add everything chosen;
+- `choose_mzml_folder` — show the native folder picker and add every mzML file
+  found beneath the folder chosen (added by M1.4.1; see ADR 0007);
 - `remove_workspace_datasets` — remove the rows these handles name;
 - `clear_workspace` — empty the session.
 
@@ -403,11 +405,18 @@ them apart:
   asked for.
 
 Only activation reads. Moving focus, changing the selection, adding files,
-removing rows and emptying the list all launch nothing, so walking a roster of a
-thousand rows costs nothing on the machine. Adding files reads at most the first
-row of a session that had nothing in it — which keeps one picker operation to one
-process while a first-run session still ends up looking at something — and never
-reads a row added beside a preview that is already open.
+adding a folder, removing rows and emptying the list all launch nothing, so
+walking a roster of a thousand rows costs nothing on the machine. Adding files
+reads at most the first row of a session that had nothing in it — which keeps one
+picker operation to one process while a first-run session still ends up looking
+at something — and never reads a row added beside a preview that is already open.
+
+Adding a folder follows the same rule for the same reason, and it is where the
+rule earns its keep: a folder of a thousand files is one picker operation and
+therefore at most one process. Whether the session was empty is decided from the
+authoritative reply — every row in it being one this import added — rather than
+from the list on screen, because a reloaded window can show nothing while Rust
+still holds rows.
 
 The service stores no active dataset. Which row is being shown is presentation
 state and stays in the frontend; a second copy in Rust would be a second answer
@@ -420,6 +429,33 @@ installation identity already does. A roster is many paths in one structure, and
 one `{:?}` in a log or a panic message would be enough to put them all somewhere
 they should not be. Typed outcomes and reasons carry no path, no filename and no
 raw filesystem identity.
+
+**Amended by M1.4.1: collision-only relative context.** One exception is now
+made, and it is the narrowest one that solves a real problem. Recursive folder
+ingestion can find `A\sample.mzML` and `B\sample.mzML`; both are different
+acquisitions, both render as `sample.mzML`, and a user cannot choose between
+them. A row may therefore carry a `relativeContext` — a fragment of where it sat
+below the folder the user chose — under all of these conditions:
+
+- only when two or more **live** rows share its exact final filename, decided
+  over the whole roster every time one is built, so it appears when a colliding
+  row arrives and goes when that row leaves;
+- never a drive, never a UNC prefix, never absolute, never `..`, and never the
+  chosen root's own name;
+- bounded to 128 characters, truncated from the shallow end so what survives is
+  the part nearest the file;
+- `Added directly` for a picked file, because it has no place under a chosen
+  folder to describe and inventing one would put it in a tree nobody named;
+- disambiguated by the session's own row identifier when two rows would
+  otherwise say the same words — that identifier is already the handle the
+  webview holds;
+- display only: never searched, never a sort key, never part of identity, never
+  persisted, and its tooltip says exactly what the row already shows.
+
+The registry's own origin record stays private and stays out of identity: two
+names for one acquisition are one row whichever route each arrived by, and a
+duplicate addition never rewrites where the existing row came from. Its debug
+output reports a depth, never a component.
 
 ## Unsupported formats
 
@@ -467,6 +503,19 @@ invalidates what a backend produced and rereads none of it; a workspace of a
 thousand datasets does not become a thousand queued jobs because the user pointed
 at another ProteoWizard, and it does not become one because they walked the list.
 
+**Amended by M1.4.1: the workspace mutation generation.** The gate that
+serialises one workspace mutation against another now carries a monotonic
+counter, advanced by every operation that is a statement about what the
+workspace *is* — adding files, adding a folder, removing rows, emptying the
+list, and the product-facing roster read. Its only purpose is folder ingestion,
+which is the one operation long enough that the user can decide something else
+while it runs: the scan reserves a generation, runs holding no lock at all, and
+commits only if the generation is still the one it reserved.
+
+The roster read advancing it is deliberate and is the reload race. See ADR 0007's
+mutation-concurrency section for why, and for what deliberately does not advance
+it.
+
 ## Testing obligations
 
 - identifiers are monotonic and never reused, including after clear;
@@ -507,7 +556,12 @@ at another ProteoWizard, and it does not become one because they walked the list
   leaves nothing to reconcile against;
 - the roster can be read and emptied while a backend process is running;
 - the registered command surface is exactly the one the frontend calls, the
-  retired picker is gone, and the capability set is still empty.
+  retired picker is gone, and the capability set is still empty;
+- relative context appears only for exact filename collisions and disappears
+  when the row that caused it does, is never searched and is never a sort key,
+  and a directly added row is told apart from a discovered one;
+- a folder import commits only against the generation it reserved, and a
+  superseded one accepts nothing and holds nothing.
 
 ## Consequences
 

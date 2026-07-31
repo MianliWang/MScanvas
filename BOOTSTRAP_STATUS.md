@@ -1580,6 +1580,123 @@ state to check: no pixel, no DOM node and no command changes. Every claim above
 is a Rust test on this machine. The rendered evidence for folder ingestion is
 owed by M1.4.1, when there is finally a button to press.
 
+## Visible mzML folder ingestion, 2026-07-31
+
+**MSCanvas can now add a folder.** `Add mzML folder…` is the fifth workspace
+action, and it is the M1.4.0 traversal made reachable and nothing else: the
+walk, its budgets, its ordering and its refusal of every reparse entry are
+unchanged. What this slice adds is the commit around that walk, the boundary it
+answers across, and the interface over it.
+
+**One command, no path in either direction.** `choose_mzml_folder` is the
+eleventh and last registered command. It takes no argument beyond the
+application handle, shows the native picker on the main thread with the title
+`Choose a folder containing .mzML files`, and answers with a roster, one outcome
+per candidate in discovery order, and how the scan itself went. A dismissed
+picker answers `None`, which is an ordinary outcome and deliberately not an
+empty result. The webview never supplies or receives a path, a parent, a folder
+identifier or an ordering key, and the main window's capability set is still
+empty. The picker itself is now one shared helper with two callers, so the
+installation picker and the folder picker cannot drift apart in their flags.
+
+**No backend fan-out, ever.** A folder of a thousand files costs a thousand
+filesystem inspections and no processes. Reading is still explicit and still at
+most one file — the first row of a session Rust says was empty. Whether it was
+empty is decided from the authoritative reply rather than from the list on
+screen, because a reloaded window can show nothing while Rust still holds rows.
+
+**The scan holds no lock, and cannot arrive late.** A workspace mutation
+generation now lives behind the gate that already serialised one mutation
+against another. An import reserves a generation, scans holding nothing, takes
+the gate back without advancing it, and commits only if the generation is still
+the one it reserved; otherwise it answers `import_superseded`, accepts nothing,
+leases nothing and spends no identifier. Adding files, adding a folder, removing
+rows, emptying the list and the product-facing roster read all advance it.
+
+That last one is the reload race and is the reason the read is a mutation at
+all. A reloaded window reads the roster, adopts it, and has no further read
+coming; a scan the previous window started is still out there. Going through the
+gate linearises the two, so either the scan commits first and the read includes
+its rows, or the read wins and the scan adds nothing. What cannot happen is a
+window adopting a roster and then being given rows nothing will ever tell it
+about. Looking at the session — counting rows, inspecting the backend — is not
+deciding what it holds and does not advance it.
+
+**A candidate is a proposal, and acceptance re-decides it.** Each candidate now
+carries the 128-bit identity its parent directory reported in the same
+enumeration record as its name, and ingestion compares that against the identity
+acceptance resolves. A mismatch is refused with `folder_candidate_changed` and
+the rest of the batch continues. This is what carries the walk's containment
+proof across to the object being registered: containment was proved for the
+object discovery found, and between the walk and acceptance a name can be made
+to mean a different file.
+
+**Two files of one name say where they are, and only then.** ADR 0006's
+path-privacy section is amended deliberately for exactly one case. A row carries
+a relative context only while two or more live rows share its final filename;
+it is recomputed over the whole roster every time one is built, so it appears
+when a colliding row arrives and goes when that row leaves. It never contains a
+drive, a UNC prefix, an absolute path, `..` or the chosen root's own name; it is
+bounded at 128 characters and truncated from the shallow end, because the
+deepest component is the one that disambiguates. A directly picked file says
+`Added directly` rather than being given an invented location. Two rows that
+would say the same words are told apart by the session's own identifier, which
+is already the handle the webview holds. It is display only: never searched,
+never a sort key, never part of identity, never persisted.
+
+Outcomes are described after the whole batch rather than as each file is
+accepted, and that is the same fact from the other side: the second
+`sample.mzML` is the reason the first one has a context at all, so an outcome
+described mid-batch would carry none while the roster beside it carried one.
+
+**What the interface does while a scan runs.** The folder action says
+`Scanning folder…`, a permanently mounted live region says the length is not
+known, and no percentage is shown because nothing has counted the tree. Adding
+files, adding a folder, removing rows, emptying the list and retrying the roster
+read all wait. Searching, sorting, selecting and reading a file already in the
+session do not — a scan launches no process, and there is no honest reason to
+take the viewer away for a filesystem walk. A selection built while the scan
+runs survives it, is pruned against the authoritative roster, and the new rows
+join it rather than replacing it. Keyboard focus returns to whichever
+acquisition action was used, never to the other one, and never over a control
+the user reached for meanwhile.
+
+**Honest incompleteness.** The transferred summary carries `complete`, the
+skipped-reparse count, the inaccessible-entry count and which named limits were
+reached — and deliberately not how many entries were inspected or how many
+directories were entered, which describe the shape of the user's tree. "No mzML
+files were found in that folder" is said only by a scan that described the whole
+folder; a scan that stopped short says "No files were added, and the scan was
+incomplete" instead.
+
+**Tests.** 235 tests in the desktop crate, 233 passing and 2 ignored by default
+because they need the local administrative share, counted with
+`cargo test --lib -- --list`. The frontend has 333 tests across 12 files. The new
+Rust coverage is the discovery-to-acceptance identity join, both reload
+orderings, a scan superseded by a roster read and by an emptied list, a scan
+that survives a look that decides nothing, collision context appearing and
+disappearing, the shallow-end truncation, every discovery refusal mapping to a
+kind of its own, a real junction under a real chosen folder yielding nothing
+from the other side, and the eleven-command boundary. The concurrency tests are
+driven by channels around a controlled walk rather than by sleeping. No real
+acquisition, vendor data or user folder was touched, and no ProteoWizard process
+was started.
+
+**Mutations.** 36 named mutations were introduced, run and restored; none was
+committed. All 36 are caught by a discriminating test. One survived its first
+run and is recorded here because the repair was to the test rather than to the
+product: folding the collision context into the name sort produced the same
+order as the correct comparator, because the fixture's contexts happened to sort
+the same way the session held them. The fixture now holds them in the opposite
+order, so the two comparators disagree and the mutation is caught. Three further
+anchors had drifted after `rustfmt` reflowed the lines they named; they were
+re-anchored and re-run rather than reported as evidence.
+
+**Rendered Windows QA is still owed and is not claimed here.** Every statement
+above is an automated test on this machine. Driving a native modal folder dialog
+needs a human at an unlocked, exclusive desktop session, and this repository
+refuses synthetic foreground injection to fake one.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.

@@ -13,6 +13,23 @@ All notable changes will be documented here once versioned releases begin.
   the rest of the batch added. Rows can be selected with the pointer or the
   keyboard, removed, or cleared — none of which changes anything on disk. The
   session holds up to 1,024 files.
+- Adding a folder of mzML files. `Add mzML folder…` scans one folder you choose
+  and adds every regular `.mzML` file beneath it in a single operation, in a
+  deterministic order, without launching any ProteoWizard process. The scan stays
+  inside the folder you chose: junctions, symbolic links, mount points and cloud
+  placeholders are never followed, and are counted and reported instead of being
+  silently skipped. Four named limits bound how deep, how wide and how far it
+  goes, and a scan that reached one of them, refused a linked entry or could not
+  read a subtree says so — "no mzML files were found in that folder" is said only
+  by a scan that described the whole folder. The list stays usable while it runs;
+  a selection you build meanwhile survives the scan and the new rows join it. If
+  the workspace changes while a scan is running, the scan adds nothing and says
+  so rather than repopulating a list you have moved on from.
+- Where a row was found, shown only when two rows in the session share a
+  filename, and only for as long as they do. It is a fragment of where the file
+  sat under the folder you chose, never an absolute path, never a drive and never
+  the folder's own name; it is display only, so it changes neither what a search
+  finds nor how the list is sorted, and it does not outlive the session.
 - Workspace search and sort. The list can be narrowed by filename and ordered by
   the order files were added, by name in either direction, or by size in either
   direction; names with numbers in them sort the way they read, so `sample-2`

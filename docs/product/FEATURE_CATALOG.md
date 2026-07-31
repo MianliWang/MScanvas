@@ -16,7 +16,7 @@ This catalog is the concise feature index. Detailed semantics remain in [`PROJEC
 | ID | Feature | Priority | Acceptance summary |
 |---|---|---:|---|
 | WSP-001 | Add files | P0 | Add one or many supported candidate paths in one operation. |
-| WSP-002 | Add folder | P0 | Discover logical acquisition roots without descending inside recognized directory datasets. |
+| WSP-002 | Add folder | P0 | Discover logical acquisition roots without descending inside recognized directory datasets. Partially implemented: regular `.mzML` files only. |
 | WSP-003 | Explorer drag-and-drop | P0 | Files/folders dropped from Windows Explorer enter the same discovery path as pickers. |
 | WSP-004 | Duplicate prevention | P0 | Re-adding the same canonical logical dataset does not create another row. |
 | WSP-005 | Multi-selection | P0 | Pointer and keyboard selection follow familiar desktop list behavior. |
@@ -28,8 +28,8 @@ This catalog is the concise feature index. Detailed semantics remain in [`PROJEC
 
 Staging for the two folder features, so the acceptance above is read as a target rather than as behavior:
 
-- **WSP-002 — Planned.** M1.4.0 builds the private discovery foundation ([ADR 0007](../architecture/adr/0007-logical-acquisition-discovery-and-folder-traversal.md)); M1.4.1 will expose `Add mzML folder…`. Directory-formatted acquisitions remain evidence-gated: MSCanvas recognizes none of them today, and will only claim one once this repository can convert it.
-- **WSP-003 — Planned** after the same discovery boundary is product-reachable.
+- **WSP-002 — Partially implemented.** M1.4.0 built the private discovery foundation and M1.4.1 exposed `Add mzML folder…` over it ([ADR 0007](../architecture/adr/0007-logical-acquisition-discovery-and-folder-traversal.md)). What works today: one chosen local Windows folder is scanned recursively for regular `.mzML` files, in a deterministic order, under four named limits, without following any linked or special filesystem entry, and an incomplete scan says so. What is still absent from the acceptance above: directory-formatted acquisitions are not recognized, so there is nothing to stop descending inside. They remain evidence-gated — MSCanvas recognizes none of them today, and will only claim one once this repository can convert it.
+- **WSP-003 — Planned** for M1.5, over the same discovery boundary, which is now product-reachable.
 
 ## Acquisition overview and viewer
 

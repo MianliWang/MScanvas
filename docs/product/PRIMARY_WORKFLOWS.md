@@ -30,7 +30,7 @@ the selected file: it stays one click from being reopened.
 
 ## WF-002 — Add and curate a batch
 
-1. Use `Add files…` to choose one or many mzML files.
+1. Use `Add files…` to choose one or many mzML files, or `Add mzML folder…` to take every `.mzML` file found beneath one folder.
 2. Discovery represents each logical acquisition once.
 3. Rows progressively show format, size and readiness.
 4. User searches, sorts, selects/removes items or activates Clear workspace.
@@ -38,7 +38,16 @@ the selected file: it stays one click from being reopened.
 **Success:** the intended logical batch is visible.
 **Invariant:** removal and clearing never delete source data.
 
-**Planned follow-ups**, none of which the application does yet: `Add mzML folder…`, Explorer drag-and-drop, and directory-formatted acquisition discovery. The private traversal foundation the first of those needs exists as of M1.4.0; see [ADR 0007](../architecture/adr/0007-logical-acquisition-discovery-and-folder-traversal.md).
+**Adding a folder**, as of M1.4.1 and bounded by [ADR 0007](../architecture/adr/0007-logical-acquisition-discovery-and-folder-traversal.md):
+
+- The scan is recursive over one folder the user chose in a native picker, and finds regular `.mzML` files only. Nothing else is offered, and no ProteoWizard process is launched for any of them.
+- Linked and special filesystem entries — junctions, symbolic links, mount points, cloud placeholders — are never followed, so the scan cannot leave the folder the user pointed at. They are counted and reported.
+- A scan that stopped at one of its four named limits, skipped a linked entry, or could not read a subtree says so. "No mzML files were found in that folder" is said only by a scan that described the whole folder.
+- The list stays usable throughout: searching, sorting, selecting and reading a file already in the session all keep working, and a selection made while a scan runs survives it. What waits is changing the roster.
+- If the workspace changes while a scan is running — files added, rows removed, the list cleared, or the window reloaded — the scan adds nothing and says so, rather than repopulating a list the user has moved on from.
+- Two rows that end up sharing a filename show where each was found, and only for as long as they collide.
+
+**Planned follow-ups**, neither of which the application does yet: Explorer drag-and-drop (M1.5), and directory-formatted acquisition discovery, which stays gated until this repository can convert one.
 
 ## WF-003 — Inspect an acquisition
 
