@@ -1264,10 +1264,11 @@ describe("the session workspace roster", () => {
       initialDatasets: [selectedFile, secondFile, thirdFile],
     });
     renderApp(api);
+    // The account's own region, not the viewer's: the viewer's sentence names
+    // a count that falls with each removal, so comparing both together would
+    // pass whether or not this region changed at all.
     const spoken = () =>
-      [...document.querySelectorAll("[aria-live='polite']")]
-        .map((region) => region.textContent)
-        .join("|");
+      [...document.querySelectorAll("[aria-live='polite']")].at(-1)?.textContent ?? "";
 
     fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
     fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
