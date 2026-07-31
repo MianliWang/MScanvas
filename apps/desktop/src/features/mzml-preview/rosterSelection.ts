@@ -244,6 +244,20 @@ function survivingHandle(handle: string | null, live: ReadonlySet<string>): stri
   return handle !== null && live.has(handle) ? handle : null;
 }
 
+/** The selection, keeping only the rows the roster still holds. */
+function prunedSelection(
+  selected: ReadonlySet<string>,
+  live: ReadonlySet<string>,
+): Set<string> {
+  const kept = new Set<string>();
+  for (const handle of selected) {
+    if (live.has(handle)) {
+      kept.add(handle);
+    }
+  }
+  return kept;
+}
+
 function prunedRowState(
   rowState: ReadonlyMap<string, RowPresentation>,
   live: ReadonlySet<string>,
@@ -325,14 +339,22 @@ export function rosterReducer(state: RosterState, action: RosterAction): RosterS
       // would take the marker off the row whose preview is up and leave its
       // "read this again" action with nothing to act on. Both survive only for
       // as long as the row does, which on a first mount is not at all.
+      // Where the user was and what they had picked are this side's to keep as
+      // well. Reading the list back is not a reason to move the keyboard to the
+      // top of it or to empty a selection the user built, so all of it is pruned
+      // against what Rust says is there rather than reset. The list still needs
+      // a tab stop to be reachable at all, which is what `first` is for -- and
+      // on a first mount, where nothing has survived because nothing existed,
+      // it is the whole of the answer.
       const live = handlesOf(action.roster.datasets);
       const first = action.roster.datasets[0]?.handle ?? null;
+      const focused = survivingHandle(state.focused, live) ?? first;
       return {
         datasets: action.roster.datasets,
         capacity: action.roster.capacity,
-        focused: first,
-        selected: new Set(),
-        anchor: first,
+        focused,
+        selected: prunedSelection(state.selected, live),
+        anchor: survivingHandle(state.anchor, live) ?? focused,
         active: survivingHandle(state.active, live),
         rowState: prunedRowState(state.rowState, live),
       };

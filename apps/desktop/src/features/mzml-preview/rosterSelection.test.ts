@@ -112,15 +112,49 @@ describe("adopting what Rust holds", () => {
     expect(rowPresentation(reread, "file-0")).toBe("failed");
   });
 
-  it("keeps neither for a row the re-read says has gone", () => {
-    const shown = rosterReducer(loaded("file-0", "file-1"), {
-      type: "activated",
+  it("keeps where the user was and what they had picked", () => {
+    // Reading the list back is not a reason to move the keyboard to the top of
+    // it or to empty a selection the user built -- which would also disable
+    // `Remove selected` under them.
+    const working = rosterReducer(loaded("file-0", "file-1", "file-2"), {
+      type: "rowPressed",
       handle: "file-1",
+      modifiers: { ctrl: false, shift: false },
     });
+    const extended = rosterReducer(working, {
+      type: "rowPressed",
+      handle: "file-2",
+      modifiers: { ctrl: true, shift: false },
+    });
+
+    const reread = rosterReducer(extended, {
+      type: "rosterLoaded",
+      roster: roster("file-0", "file-1", "file-2"),
+    });
+
+    expect(reread.focused).toBe("file-2");
+    expect(reread.anchor).toBe("file-2");
+    expect(selection(reread)).toEqual(["file-1", "file-2"]);
+  });
+
+  it("keeps none of it for a row the re-read says has gone", () => {
+    const shown = rosterReducer(
+      rosterReducer(loaded("file-0", "file-1"), {
+        type: "rowPressed",
+        handle: "file-1",
+        modifiers: { ctrl: false, shift: false },
+      }),
+      { type: "activated", handle: "file-1" },
+    );
+    expect(shown.focused).toBe("file-1");
 
     const reread = rosterReducer(shown, { type: "rosterLoaded", roster: roster("file-0") });
 
     expect(reread.active).toBeNull();
+    expect(selection(reread)).toEqual([]);
+    // Still reachable by keyboard: a list with rows in it always has a tab stop.
+    expect(reread.focused).toBe("file-0");
+    expect(reread.anchor).toBe("file-0");
     expect(reread.datasets.map((entry) => entry.handle)).toEqual(["file-0"]);
   });
 });
