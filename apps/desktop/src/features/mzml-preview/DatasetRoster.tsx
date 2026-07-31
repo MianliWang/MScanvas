@@ -503,7 +503,18 @@ export function DatasetRoster({
             <>
               <strong>The workspace list could not be read</strong>
               <span>{load.error.summary}</span>
-              <button className="secondary-button" onClick={onReloadRoster} type="button">
+              {/* Refused while a mutation is unresolved, exactly as the shell's
+                  copy of this action is. In Rust a roster read is itself a
+                  statement about the workspace -- it is what linearises a
+                  reloaded window against a scan the window before it started --
+                  so reading the list back mid-import would supersede the very
+                  import the user is waiting for. */}
+              <button
+                className="secondary-button"
+                disabled={!canMutate}
+                onClick={onReloadRoster}
+                type="button"
+              >
                 Try reading it again
               </button>
             </>

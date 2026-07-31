@@ -1876,6 +1876,33 @@ describe("adding a folder of mzML files", () => {
     expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
   });
 
+  it("refuses to read the list back while a scan is committing", async () => {
+    // In Rust a roster read is itself a statement about the workspace: it is
+    // what linearises a reloaded window against a scan the window before it
+    // started. Reading the list back mid-import would therefore supersede the
+    // very import the user is waiting for, so both copies of the action wait.
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      roster: () => Promise.reject(previewError({ kind: "preview_worker_unavailable" })),
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    const retry = await screen.findByRole("button", { name: "Try reading it again" });
+    expect(retry).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    expect(screen.getByRole("button", { name: "Try reading it again" })).toBeDisabled();
+    scan.resolve({ files: [] });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    // The roster read the import answered for settles the load, so the failure
+    // state it was offered from is gone rather than merely re-enabled.
+    expect(screen.queryByRole("button", { name: "Try reading it again" })).toBeNull();
+  });
+
   it("does not let a folder scan take the viewer away", async () => {
     // A scan launches no process, so nothing about it is a reason to disable
     // reading a file that is already in the session.
