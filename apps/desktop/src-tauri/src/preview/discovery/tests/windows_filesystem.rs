@@ -216,7 +216,7 @@ fn unicode_names_survive_a_real_round_trip() {
 }
 
 #[test]
-fn every_name_length_decodes_through_the_record_bounds_check() {
+fn no_real_name_length_is_refused_by_the_record_bounds_check() {
     // The decoder now refuses a record whose `next` does not clear its own
     // name, which is only safe if no real record ever looks like that. Windows
     // aligns `NextEntryOffset` up to eight bytes, so the argument is that
@@ -727,18 +727,56 @@ fn a_loopback_share_is_seen_as_the_remote_object_it_is() {
     assert!(super::super::windows::is_remote_object(&handle));
 }
 
+/// Restores the process working directory however the test ends.
+struct WorkingDirectory(PathBuf);
+
+impl WorkingDirectory {
+    fn moved_to(target: &Path) -> Self {
+        let previous = std::env::current_dir().expect("a working directory");
+        std::env::set_current_dir(target).expect("the share is reachable as a working directory");
+        Self(previous)
+    }
+}
+
+impl Drop for WorkingDirectory {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.0);
+    }
+}
+
+#[test]
+#[ignore = "needs the local administrative share and moves the process working directory; run with --ignored"]
+fn a_root_that_reaches_a_share_without_naming_one_is_refused() {
+    // That the handle is asked at all, rather than that it answers correctly.
+    // Those are two different claims, and the test above only makes the second:
+    // it calls the primitive directly, so deleting the call inside `open_root`
+    // leaves it green.
+    //
+    // Reaching the wiring needs a root that is genuinely remote and that the
+    // path test lets through, and `is_remote_root` lets a relative path through
+    // by design -- it names no volume that can be read out of the text. So the
+    // process stands on the share and asks for a relative root. This is the
+    // second case ADR 0007 names, "a relative path resolved against a mapped
+    // drive", and the only one reachable here without the symbolic-link
+    // privilege the first would need.
+    let _restore = WorkingDirectory::moved_to(Path::new(r"\\localhost\C$"));
+
+    let error = discover_mzml_candidates(Path::new("Windows"), DiscoveryBudget::default())
+        .expect_err("a root on a share is refused however it was spelled");
+
+    assert_eq!(error.kind(), DiscoveryErrorKind::RemoteRootUnsupported);
+}
+
 #[test]
 fn a_real_local_root_is_not_mistaken_for_a_remote_one() {
-    // Half of the remote check, and the half this machine can answer. Asking
-    // the opened handle is only worth doing if it stays quiet about ordinary
-    // local folders; a check that refused those would refuse every walk.
-    //
-    // The other half -- that a genuine remote object *is* refused -- needs a
-    // share, and there is none here. It is recorded as unverified rather than
-    // covered by a test that would quietly skip when no share existed, since a
-    // test that skips silently retires the claim instead of checking it. The
-    // path-level refusal, which every UNC and device spelling still meets
-    // before a handle is ever opened, is separately tested above.
+    // Half of the remote check, and the half every machine can answer without a
+    // share: asking the opened handle is only worth doing if it stays quiet
+    // about ordinary local folders, since a check that refused those would
+    // refuse every walk. The two tests above make the other half -- that a
+    // genuinely remote object answers, and that `open_root` is what asks it --
+    // and both are ignored by default rather than skipped in silence, because a
+    // machine without the share has to be told the claim went unchecked instead
+    // of shown a green run.
     let tree = TestTree::new("local");
     tree.file("sample.mzML", 4);
 

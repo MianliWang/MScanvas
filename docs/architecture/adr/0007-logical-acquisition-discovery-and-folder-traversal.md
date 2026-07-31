@@ -89,11 +89,12 @@ place a junction can point.
   one byte short is refused for its length on local and remote alike, and a
   check reading "did it answer" says "local" about everything. That failure is
   tested for directly, by telling the two refusal reasons apart on an ordinary
-  local directory, and by a compile-time assertion on the structure size. The
-  positive direction is tested against the local administrative share, which
-  the SMB redirector serves as a genuinely remote object; that test is marked
-  ignored rather than skipped silently, because a machine without the share
-  must be told the claim went unchecked instead of shown a green run.
+  local directory. Two further tests make the claims that one cannot: that a
+  genuinely remote object answers, and that opening a root is what asks. Both
+  need the local administrative share, which the SMB redirector serves as a
+  remote object, and both are marked ignored rather than skipped silently,
+  because a machine without the share must be told the claim went unchecked
+  instead of shown a green run.
 - A child entry carrying `FILE_ATTRIBUTE_REPARSE_POINT` is not followed, not
   descended into, not offered as a candidate, and counted.
 - No link target is resolved at any point.

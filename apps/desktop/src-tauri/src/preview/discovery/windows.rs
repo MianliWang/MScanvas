@@ -378,17 +378,21 @@ pub(super) fn is_remote_object(handle: &File) -> bool {
 /// it passes the documented size.
 pub(super) fn ask_remote_protocol(handle: &File, declared_bytes: usize) -> i32 {
     let mut information = FileRemoteProtocolInformation([0; REMOTE_PROTOCOL_INFO_BYTES]);
+    // Clamped rather than asserted. A debug assertion is stripped from the
+    // build that ships, and what it would be guarding is the kernel writing
+    // past the end of this allocation -- which is not a thing to leave resting
+    // on a caller being careful. Clamping costs nothing and keeps the one test
+    // that passes a smaller length meaningful, since it passes less.
+    let declared = declared_bytes.min(REMOTE_PROTOCOL_INFO_BYTES);
     // SAFETY: the handle outlives the call, and the out parameter is a live
-    // allocation of `REMOTE_PROTOCOL_INFO_BYTES`. The declared length is never
-    // larger than that allocation -- production passes exactly it, and the one
-    // test that passes anything else passes less.
-    debug_assert!(declared_bytes <= REMOTE_PROTOCOL_INFO_BYTES);
+    // allocation of `REMOTE_PROTOCOL_INFO_BYTES` whose length is passed with it,
+    // never larger, by the clamp above.
     unsafe {
         get_file_information_by_handle_ex(
             handle.as_raw_handle().cast(),
             FILE_REMOTE_PROTOCOL_INFO_CLASS,
             (&raw mut information).cast(),
-            u32::try_from(declared_bytes).expect("FILE_REMOTE_PROTOCOL_INFO fits in a DWORD"),
+            u32::try_from(declared).expect("FILE_REMOTE_PROTOCOL_INFO fits in a DWORD"),
         )
     }
 }
@@ -693,6 +697,18 @@ mod tests {
     fn a_name_longer_than_its_record_is_refused() {
         let mut record = Record::named("sample.mzML");
         record.declared_name_bytes = Some(4096);
+
+        assert_refused(&record.build());
+    }
+
+    #[test]
+    fn a_record_declaring_no_name_at_all_is_refused() {
+        // The one length the decoder used to let through. NTFS produces no
+        // such record -- every real name is at least one code unit, checked
+        // against a real directory -- which is why an entry with no name is
+        // something to stop on rather than to push.
+        let mut record = Record::named("sample.mzML");
+        record.declared_name_bytes = Some(0);
 
         assert_refused(&record.build());
     }
