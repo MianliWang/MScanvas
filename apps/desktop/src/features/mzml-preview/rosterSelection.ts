@@ -561,13 +561,19 @@ function transition(state: RosterState, action: RosterAction): RosterState {
       // is theirs to keep; the row beside the gap is only what to fall back to
       // when the rows they had picked are the rows that went.
       const kept = keptIn(state.selected, live);
-      // The row beside the gap is a "keep going" affordance, and it is only
-      // that while the user can see the row. The nearest survivor by Rust's
-      // order is very often one the query excludes, and selecting it would pin
-      // a row into the view that the user never picked and cannot see the point
-      // of. The test is whether the query itself finds that row, not whether a
-      // query was typed: a whitespace-only one, or one like `.mzML` that every
-      // file matches, hides nothing and must behave exactly as no query does.
+      // The row beside the gap is a "keep going" affordance for pruning a run
+      // of files, and it arms the next `Remove selected` without the user
+      // pressing anything. That is only safe for a row the search itself
+      // found. `survivor` now comes from the projection, so it is always on
+      // screen; the rows this refuses are the ones on screen for another
+      // reason -- the one being read, or the one whose preview is up. Arming a
+      // removal on the acquisition the user is looking at, in a view that
+      // excludes it, is the one thing a convenience must not do, and stopping
+      // the run at that boundary costs one keystroke.
+      //
+      // The test is whether the query finds the row, not whether a query was
+      // typed: a whitespace-only one, or one like `.mzML` that every file
+      // matches, hides nothing and must behave exactly as no query does.
       const survivorName = action.result.roster.datasets.find(
         (dataset) => dataset.handle === survivor,
       )?.fileName;

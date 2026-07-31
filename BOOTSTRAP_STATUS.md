@@ -1415,9 +1415,20 @@ application in the light theme, `rgb(127, 138, 156)` on `rgb(255, 255, 255)` at
 11px is 3.49:1, under AA. It has a selector of its own now, applied only while a
 query is actually hiding something — measured again after the repair,
 `rgb(91, 103, 122)` on white is **5.73:1**, and in the dark theme
-`rgb(169, 181, 198)` on `rgb(21, 30, 44)` is **8.06:1**. The same line's other
-duty, restating a count the roster shows in full underneath, stays the quiet
-header note it has always been, and no other `.panel-header p` is touched.
+`rgb(169, 181, 198)` on `rgb(21, 30, 44)` is **8.06:1**.
+
+What that repair deliberately does not do is worth stating plainly, because a
+later reviewer found the gap and was right about the facts. Unsearched, the same
+line still reads at 3.49:1 in the light theme, and it is not redundant text: it
+carries the session's capacity, which appears nowhere else, and the only
+statement that removing a row leaves the file alone that a user sees *before*
+pressing the button. But `.panel-header p` is tertiary across the whole
+application — the preview summary, the spectrum panel, the spectrum table's
+caption — and it is tertiary on `main` exactly as it is here. That is one
+decision about one token affecting several panels, not this panel's to make on
+its own while a search happens to be running, and it wants a change that can
+weigh every panel it moves and check each one rendered. This milestone fixed the
+text it added and left the rest recorded rather than quietly implied to be fine.
 
 Nine reducer tests hold the first — built on rows whose insertion, name and size
 orders disagree everywhere, so every one of them fails outright if the lookup

@@ -432,12 +432,20 @@ button:disabled {
 /* While a query is hiding rows this line stops being a note about the panel and
    becomes the only visible account of how much of the session is out of sight.
    Ordinary text at 11px, so it takes the secondary colour rather than the
-   tertiary one, which is about 3.5:1 against the panel. Scoped to the search
-   state on purpose: the line's other duty -- how many files the session holds,
-   which the roster shows in full underneath -- stays the quiet header note it
-   has always been, and every other `.panel-header p` in the application is
-   untouched. Everything else about the line, its truncation included, is
-   inherited. */
+   tertiary one, which is about 3.5:1 against the panel.
+
+   Scoped to the search state, and the reason is narrower than "the rest is
+   redundant": it is not. Unsearched, the same line carries the session's
+   capacity, which appears nowhere else, and the only statement that removing a
+   row leaves the file alone that a user sees *before* pressing the button. Both
+   deserve to be readable. But `.panel-header p` is tertiary across the whole
+   application -- the preview summary, the spectrum panel, the table's caption --
+   and that is one decision about one token, not this panel's to make on its own
+   while a search happens to be running. It belongs to a change that can weigh
+   every panel it moves and check each one rendered. What is fixed here is the
+   text this milestone added; what is left is recorded rather than implied.
+
+   Everything else about the line, its truncation included, is inherited. */
 .panel-header p.dataset-roster-matches {
   color: var(--color-text-secondary);
 }
