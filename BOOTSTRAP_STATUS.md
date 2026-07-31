@@ -1392,6 +1392,67 @@ and no unhandled rejection. The only line matching error, panic or warning in
 the Rust output is the non-zero exit this check itself produced by terminating
 the process at the end.
 
+### Two findings after the first repaired head, 2026-07-31
+
+The automated reviewer raised two more against `9b40660`, both valid and both
+repaired.
+
+**Removal recovery was following the wrong list.** Removing the focused row
+looked its neighbour up in Rust's insertion order, then handed that row the
+keyboard and the fallback selection. Under a sort or a query the user is not
+looking at that order. Sorted by name a roster reads `alpha-2, bravo-9, charlie,
+delta-2, delta-10, echo` while Rust holds `delta-10` before `delta-2`, so
+removing `charlie` sent the keyboard to a row the user was not near, and a run
+of removals jumped about rather than walking down the list. The survivor now
+comes from the projection as it stood immediately before the removal, which is
+the rule ADR 0006 already stated. With no query and `Added order` the projection
+*is* Rust's list, so nothing about the unfiltered case changes.
+
+**The match count could not be read.** While a query hides rows that line is the
+only visible account of how much of the session is out of sight, and it
+inherited the header note's tertiary colour: measured in the rendered
+application in the light theme, `rgb(127, 138, 156)` on `rgb(255, 255, 255)` at
+11px is 3.49:1, under AA. It has a selector of its own now, applied only while a
+query is actually hiding something — measured again after the repair,
+`rgb(91, 103, 122)` on white is **5.73:1**, and in the dark theme
+`rgb(169, 181, 198)` on `rgb(21, 30, 44)` is **8.06:1**. The same line's other
+duty, restating a count the roster shows in full underneath, stays the quiet
+header note it has always been, and no other `.panel-header p` is touched.
+
+Nine reducer tests hold the first — built on rows whose insertion, name and size
+orders disagree everywhere, so every one of them fails outright if the lookup
+goes back to insertion order — and two hold the second. All six mutations over
+the two repairs are caught, insertion-order lookup, the post-removal roster, the
+tertiary token, the missing selector and the class applied in the wrong states
+among them.
+
+Rendered on the repaired head, with the fixture set chosen so the three orders
+disagree. Name ascending, removing the middle row moved the keyboard to the row
+that took its position rather than to the insertion-order neighbour; size
+ascending at the last visible row looked backwards; name descending behaved the
+same; and under a query the keyboard went to the next match rather than to a
+hidden neighbour, with no hidden row selected and every hidden row still held by
+Rust afterwards. Each removal issued exactly one command,
+`remove_workspace_datasets`, and no preview.
+
+One thing about that check is worth recording because it looked like a defect
+and was not. DOM focus recovery is invisible while the application window is not
+the active window: Chromium dispatches no focus event at all, so the component
+never learns which row held the keyboard and focus stays on the body. Asking the
+debugger to focus its own page — not the foreground injection that took the
+process down in M1.2 — made the whole sequence appear: `focusout` naming
+nothing as the row unmounted, then `focusin` on the row that replaced it.
+
+At CSS viewports of 586x430, 1366x768 and 1920x1080 the document overflowed in
+neither axis, the view controls fitted their row at a fixed 39px, the summary
+was visible and clear of the controls, and the list held three whole rows of
+three. Search and sort still issued no command; a Shift range and `Ctrl+A`
+covered the visible rows and no hidden one; a reload brought the roster back
+with no query, `Added order` and no preview of its own. The console held the
+three known development messages, with no page error and no unhandled
+rejection. The only error-matching line in the Rust output is the non-zero exit
+this check itself caused by terminating the process.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.
