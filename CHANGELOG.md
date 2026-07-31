@@ -6,11 +6,18 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
-- Single-file mzML preview workspace. One local `.mzML` file can be opened
-  through a Rust-owned opaque handle, and its acquisition metadata, run summary,
-  virtualized spectrum table and one selected spectrum read from it. The
-  spectrum is drawn as a repository-owned SVG stick plot with no charting
-  dependency.
+- Session mzML workspace. One or many local `.mzML` files can be chosen in a
+  single native picker operation and appear as an ordered list, each held through
+  a Rust-owned opaque handle. Adding the same acquisition again reports the row
+  you already have; files that could not be read are named individually and leave
+  the rest of the batch added. Rows can be selected with the pointer or the
+  keyboard, removed, or cleared — none of which changes anything on disk. The
+  session holds up to 1,024 files.
+- Explicit, one-at-a-time reading. Moving around the workspace starts no backend
+  work; previewing the focused file reads its acquisition metadata, run summary,
+  virtualized spectrum table and, on selecting a row, one spectrum. Choosing ten
+  files starts one read, not ten. The spectrum is drawn as a repository-owned SVG
+  stick plot with no charting dependency.
 - Session-only ProteoWizard installation-folder selection, alongside automatic
   discovery on `PATH` and in the locations an installer writes. The chosen
   folder applies to the current session only, is never written to disk, and
@@ -31,6 +38,9 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Changed
 
+- The single-file picker was replaced by the workspace list. Choosing a file no
+  longer discards the one before it; the list is what holds them and removing a
+  row is what removes one.
 - The mock acquisition list, mock conversion inspector, mock run queue and mock
   total ion chromatogram were removed rather than migrated. Everything the
   application displays now comes from the opened file.
@@ -43,5 +53,9 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Fixed
 
+- Reading one file twice in quick succession no longer lets the older read
+  decide what is on screen. A newer request for a file makes an older one stale,
+  and a read the user has moved past says so instead of answering as though it
+  were current.
 - Automatic discovery now finds a ProteoWizard written by the per-user
   installer, and searches a newer release before an older one.

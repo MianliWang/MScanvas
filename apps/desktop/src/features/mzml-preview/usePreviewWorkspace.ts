@@ -185,9 +185,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * exactly the wrong answer.
    */
   const rosterRef = useRef(roster);
-  useEffect(() => {
-    rosterRef.current = roster;
-  }, [roster]);
+  // Written during the render whose value it mirrors, not in an effect. An
+  // effect would leave it one commit behind, and a picker reply landing in that
+  // gap would decide "was the workspace empty" from the workspace before the
+  // last change.
+  rosterRef.current = roster;
 
   const [backendBusy, setBackendBusy] = useState(true);
   /**
@@ -202,12 +204,20 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     backendBusyRef.current = busy;
     setBackendBusy(busy);
   }, []);
-  /** Whether the backend is positively known to be usable, for the handlers. */
+  /**
+   * Whether the backend is positively known to be usable, where a promise
+   * handler can read it.
+   *
+   * Written with the state rather than after it. Derived in an effect this
+   * would be one commit behind, and the reply that decides whether to read the
+   * first file of a new session can arrive inside that gap.
+   */
   const backendUsableRef = useRef(false);
-  useEffect(() => {
+  const showBackend = useCallback((next: BackendState) => {
     backendUsableRef.current =
-      backend.status === "resolved" && backend.availability.state === "available";
-  }, [backend]);
+      next.status === "resolved" && next.availability.state === "available";
+    setBackend(next);
+  }, []);
 
   const backendToken = useRef(0);
   /**
@@ -375,7 +385,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       }
       const changed = generation > appliedGeneration.current && appliedGeneration.current >= 0;
       appliedGeneration.current = generation;
-      setBackend({ status: "resolved", availability });
+      showBackend({ status: "resolved", availability });
       // Not while an open is in flight. That open has already emptied the
       // screen and is about to fill it, and its reply is judged on its own
       // generation when it lands -- so discarding here would only reject a
@@ -392,7 +402,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     backendToken.current += 1;
     const token = backendToken.current;
     markBackendBusy(true);
-    setBackend({ status: "checking" });
+    showBackend({ status: "checking" });
     void api
       .inspectBackend()
       .then((availability) => {
@@ -406,7 +416,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       })
       .catch((cause: unknown) => {
         if (mounted.current && token === backendToken.current) {
-          setBackend({ status: "failed", error: toPreviewError(cause) });
+          showBackend({ status: "failed", error: toPreviewError(cause) });
         }
       })
       .finally(() => {
@@ -466,7 +476,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       const generationAtRequest = appliedGeneration.current;
       markBackendBusy(true);
       if (announceChecking) {
-        setBackend({ status: "checking" });
+        showBackend({ status: "checking" });
       }
       // Whether this change left the banner as it found it, which is what
       // decides a deferred recovery check below. A dismissed picker does;
@@ -485,7 +495,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         })
         .catch((cause: unknown) => {
           if (mounted.current && appliedGeneration.current <= generationAtRequest) {
-            setBackend({ status: "failed", error: toPreviewError(cause) });
+            showBackend({ status: "failed", error: toPreviewError(cause) });
             refreshed = true;
           }
         })

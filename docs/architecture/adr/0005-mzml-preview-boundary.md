@@ -2,6 +2,13 @@
 
 - Status: Accepted for the first M1–M2 preview slice; later capabilities separately gated
 - Date: 2026-07-27
+- Amended: 2026-07-30 (M1.2) — the command surface. The webview may now ask for a
+  native multi-file selection and for path-free changes to the session roster,
+  and the single-file picker command is retired rather than kept beside its
+  replacement. The paragraph this replaces counted the commands, which is a
+  number the boundary was always going to outgrow; what it was protecting — no
+  command takes a path, and every one is typed on both sides — is stated
+  directly instead. ADR 0006 records the roster itself.
 
 ## Context
 
@@ -19,17 +26,31 @@ from Rust.
 
 ## Decision
 
-The webview may ask exactly six things: whether a backend is installed, to
-choose which installation is used, to go back to finding one automatically, to
-choose one file, to open that file's preview, and to load one spectrum by
-index. Every one of them is typed on both sides.
+The webview may ask an explicit, enumerated set of application questions: three
+about the installed backend — is one there, use the installation in this folder,
+go back to finding one automatically — four about the session's workspace — what
+does it hold, show a picker and add what is chosen, remove these rows, empty it —
+and two about one dataset in it: open its preview, and load one spectrum by
+index. Every one of them is typed on both sides, none of them accepts a path,
+and none of them accepts a command, an argument list or an executable.
+
+The set is enumerated rather than counted. A number in this document is a fact
+about one slice that a later slice quietly falsifies; what has to stay true is
+that each command is a named application operation with a typed answer, and that
+adding one is a decision recorded here.
+
+`get_bootstrap_status` sits outside that set: it is bootstrap plumbing from
+before this boundary existed, has no caller in the product, and is left where it
+is rather than removed in a slice that is about something else.
 
 - **The frontend never parses ProteoWizard output.** All interpretation happens
   in `mscanvas-proteowizard` and reaches the webview as transfer objects.
 - **Rust owns the path.** The native picker is invoked through `comdlg32`
   rather than a Tauri dialog plugin, so the webview keeps an empty capability
-  set. The chosen path stays in a process-local registry; the frontend holds an
-  opaque session handle and a display name.
+  set. The chosen paths stay in a process-local registry; the frontend holds an
+  opaque session handle and a display name. Choosing many files at once is the
+  same request as choosing one — `OFN_ALLOWMULTISELECT` beside the flags that
+  were already there — and the webview names no path in either direction.
 - **Which installation is used can be changed, for the session only.** A user
   whose ProteoWizard sits somewhere no installer would put it had no way to say
   so, and the alternative — widening automatic discovery — would mean executing
@@ -93,11 +114,20 @@ index. Every one of them is typed on both sides.
 - A large run is windowed in the table rather than cached or paged, so the
   bounded-preview-cache decision stays open for M2 and is not pre-empted by an
   implementation chosen for a demo.
-- Exactly one file is open at a time and choosing another revokes the previous
-  handle, so the webview never accumulates a capability over paths the user has
-  moved on from. Because Rust holds the path, the frontend also cannot offer
-  "recent files", drag-and-drop from Explorer, or multi-file workspaces without
-  extending the boundary deliberately. That is the intended cost.
+- A session holds a roster of accepted files and shows one preview at a time.
+  Every row is one the user chose, can see and can remove, which is what makes
+  holding several of them a capability they granted rather than one that
+  accumulated: ADR 0006 records the registry, the duplicate rule and the bound.
+  Because Rust holds the paths, the frontend still cannot offer "recent files"
+  or drag-and-drop from Explorer without extending the boundary deliberately,
+  and folder ingestion is a traversal decision of its own. That is the intended
+  cost.
+- Reading a dataset is explicit. The roster is navigable for free — focus,
+  selection and removal launch nothing — and a preview is started by activating
+  one row. Adding files reads at most the first row of a session that had
+  nothing in it, so one picker operation is one process rather than one per
+  file. That rule lives in the interface; what makes it safe is that Rust
+  refuses stale work rather than trusting the interface not to ask.
 - The spectrum list and a selected spectrum are separate reads too, and the
   crate's `SpectrumIdentity::reconcile` decides whether they agree. A selected
   spectrum whose recognized scan number contradicts the row the user clicked is
