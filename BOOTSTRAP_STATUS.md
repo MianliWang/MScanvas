@@ -1189,6 +1189,107 @@ roster list measured 69, 97 and 262 pixels tall, holding two, three and three of
 three rows with its own scrolling for the rest, with no viewport overflowing the
 document in either axis and the spectrum table never forcing the page sideways.
 
+## Rendered check of workspace search and sort, 2026-07-31
+
+Run on the exact final application-code head, against a real ProteoWizard
+3.0.26013 on Windows, in an unlocked session — the input desktop was confirmed
+to be `Default` before anything was driven, and none of the foreground
+injection that took the process down during M1.2 was used at any point.
+
+The roster was fifteen neutral working copies outside the repository: one hard
+link to an authorized local acquisition, renamed, and fourteen small files that
+carry the name the boundary accepts and no acquisition, so they can be listed
+without ever being read. Between them they cover numeric ordering
+(`Sample-2` against `Sample-10`, `Standard-3` against `Standard-21`), case
+(`qc_pool-1` against `QC_pool-2`), a diacritic, a full-width Unicode name, a
+name far too long for its column, and sizes from 1 KiB to 212.7 MiB. No path,
+real name or scientific value is recorded here.
+
+**What the search does.** `qc` found four rows of fifteen; `QC_POOL` found three,
+which is the same comparison with the case that decides nothing; the full-width
+query `ｑｃ` found the same four as `qc`, including the full-width name, which is
+NFKC doing the only job it is there for; `stÖrung` found `Störung-Messung`. The
+count reported is the count of matches — `2 matches of 15 files; 1 selected or
+active file kept visible` — never the number of rows on screen.
+
+**What it does not hide.** With a preview open on `QC_pool-2` and a query that
+does not match it, its row stayed on screen saying `Showing — outside search`.
+Rows selected before a search stayed, saying `Selected — outside search`. A row
+being read said `Reading — outside search`. A row satisfying several of those at
+once appeared once and was counted once. And a query matching nothing while
+three rows were kept said `0 matches of 15 files; 3 selected or active files
+kept visible` rather than anything about the workspace being empty; with nothing
+kept, the list gave way to `No files match this search` over `13 files are in
+this session. Clear the search to see them again.`, with `Clear search` and all
+four roster actions still there.
+
+**What the sort does.** All five modes were exercised with a preview open.
+`Added order` reproduced Rust's list exactly; `Name A–Z` gave
+`Blank-1, Blank-2, blank-10` and `Sample-2, Sample-10` and `Standard-3,
+Standard-21`, which is case deciding nothing and numbers reading as numbers;
+`Name Z–A` reversed it; the two size orders ran 1 KiB to 212.7 MiB and back. The
+preview stayed up through every one of them.
+
+**What all of it cost.** Five queries, five sort changes, a Shift range, a
+Shift+Arrow extension and `Ctrl+A` issued **no Tauri command at all**. That is
+measured rather than assumed, and the measurement was itself checked: the first
+counter this check installed — wrapping `__TAURI_INTERNALS__.invoke` — recorded
+nothing whatsoever, because the property is non-writable and the assignment
+failed silently, and a counter that cannot count would have made every zero in
+this section meaningless. The count that stands is taken at `window.fetch`, the
+custom-protocol hop every command actually leaves through, and it was proved to
+count by recording `inspect_backend` from a backend re-check before any of the
+figures above were taken. Over a whole document, the commands issued were
+`inspect_backend`, `get_workspace_roster`, `inspect_backend`,
+`get_workspace_roster` at start-up — the pair twice, which is React's
+development-mode double effect — and one `open_mzml_preview` for the one file
+that was explicitly read. Nothing else.
+
+**Selection, keyboard and focus.** Sorted by name and narrowed to `a`, a
+Shift range spanned the visible run and skipped the rows the query was hiding —
+including one that sits inside the range in Rust's order and outside it on
+screen. Shift+Arrow extended along the visible order. `Ctrl+A` selected 11 of 11
+visible rows and no hidden one. Deselecting a row that a search was keeping on
+screen made it disappear from under the keyboard; focus moved to the nearest
+row still visible, and when none was, to the search box. Focus was never
+observed on the document body. Clearing the search from its button put the
+keyboard back in the search box.
+
+**Adding, removing, clearing and reloading.** With a query and a non-default
+sort in place, adding two non-matching files kept both, selected, labelled
+`Selected — outside search`; the query, the sort and the open preview were all
+unchanged, and nothing was read automatically into a session that already held
+files. Removing them left the hidden rows nobody had selected untouched and the
+view exactly as it was. `Clear list` emptied the whole session rather than the
+two rows the search was showing, reset the query and the sort, returned the
+keyboard to `Add files…`, and left all fifteen files on disk. Reloading the
+webview brought back the roster Rust still held with no query, `Added order`,
+and no preview started on its own.
+
+**Viewports.** At native 900x700 (886x663 CSS), at 1366x773 CSS and at 1920x1085
+CSS, the document overflowed in neither axis, the search and sort controls fitted
+without overflowing their row at 39px tall in every case, the spectrum table
+never forced the page sideways, and the roster list measured 82px, 66px and
+231px — two, two and eight whole rows of thirteen, scrolling for the rest. The
+two-row floor is met at every size. The list is the same height it was before
+this change at the reference viewport (66px against 67px), which is the point of
+raising the panel's minimum by exactly what the controls cost rather than
+letting them take it out of the list.
+
+**Console and logs.** The WebView2 console held the three known development
+messages and nothing else: two Vite connection lines and the React DevTools
+notice. No page error and no unhandled rejection, recorded from a listener
+installed before the document's first script rather than sampled afterwards. The
+Rust/Tauri and Vite output contained no line matching error, panic or warning.
+No path appeared anywhere in the rendered document.
+
+**Regressions.** M1.2 multi-selection, issue #24 containment (no horizontal
+overflow at any of the three viewports), issue #25 folder-picker focus
+restoration and issue #29 table-header alignment were all still holding.
+
+One flow was not reproduced: a backend that is unavailable. It is covered by
+automated tests instead, which is the same answer M1.2 gave for the same reason.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.

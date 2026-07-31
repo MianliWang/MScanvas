@@ -1,7 +1,7 @@
 # ADR 0006 — Multi-dataset workspace boundary
 
-- Status: Accepted for the M1 workspace foundation and its first interface;
-  search, sort, folder ingestion and drag-and-drop separately gated
+- Status: Accepted for the M1 workspace foundation, its first interface and the
+  view projection over it; folder ingestion and drag-and-drop separately gated
 - Date: 2026-07-30
 - Amended: 2026-07-30 (M1.1.5) — identity lifetime. Every registered dataset now
   holds a live handle on its file, so a filesystem identity cannot be recycled
@@ -13,6 +13,11 @@
   does. See *Session capacity*, *Frontend and Tauri boundary* and *Concurrency*
   below; the paragraphs this replaces recorded the roster as unreachable and the
   commit order of two opens as an open M1.2 decision.
+- Amended: 2026-07-31 (M1.3) — the roster has a view. A search over the display
+  filename and one of five orderings decide what is on screen, entirely on the
+  frontend and at the cost of no command; the registry's order, contents and
+  identity are untouched. See *Roster view projection* below; the paragraph this
+  replaces recorded search and sort as work that belonged to M1.3.
 
 ## Context
 
@@ -192,8 +197,54 @@ row and leaves the rest in order. Re-adding a file that was removed allocates a
 new identifier and appends it: it is a new decision by the user, and the
 identifier it had before is gone for good.
 
-Search, sort and filtering are view work over the roster and belong to M1.3.
-The registry has one order.
+Search, sort and filtering are view work over the roster. The registry has one
+order; M1.3 added a projection over it and did not touch it. See *Roster view
+projection* below.
+
+## Roster view projection
+
+The registry's insertion order stays authoritative. What the user is looking at
+is derived from it by a pure function on the frontend, and the derivation is not
+a thing Rust is told about, asked for, or able to observe.
+
+- **Search matches the display filename and nothing else.** Not the opaque
+  handle, not the rendered byte size, not the row's state, and — because the
+  frontend has never been given one — no path, parent directory or canonical
+  form. A query is compared in NFKC, trimmed and lower-cased; the name that is
+  displayed is what Rust said, character for character.
+- **Sort is one of five orderings**: the registry's own order, name ascending or
+  descending through a single `Intl.Collator` with `numeric: true` and
+  `sensitivity: "base"`, and byte length ascending or descending. Every one of
+  them is stable and falls back to the registry index, so `Added order` is the
+  identity and no other order is ever authoritative.
+- **A search does not hide the user's own work.** A row that is selected, the
+  row whose preview is on screen and a row being read stay visible whether or
+  not they match, listed once, each saying in words which of those it is. A row
+  that is active with nothing on screen for it — a backend change discards what
+  a row read while leaving it the row an explicit re-read acts on — stays too,
+  and says it is kept for the viewer rather than that it is showing anything.
+- **Counts describe the search, not the list.** The number reported is how many
+  rows matched, out of everything the session holds; rows kept for another
+  reason are counted separately and named as such.
+- **Range selection and `Ctrl+A` follow the visible order.** A Shift range spans
+  what is on screen, in the order it is on screen, and never reaches a row the
+  query is hiding: a selection the user cannot see is one they cannot check
+  before pressing `Remove selected`.
+- **Focus is reconciled in the same transition that changes the view.** A
+  focused row that the view no longer shows moves to the first visible row when
+  the user narrowed the view themselves, and to the nearest surviving row in the
+  order they were just looking at when a row went from under them. It never
+  stays on a row that is not on screen, and DOM focus never lands on the
+  document body: the row that took its place if there is one, the search box if
+  there is not.
+- **Neither is persisted.** The query and the sort are session interface state.
+  A reload of the webview brings back the roster Rust holds and no query at all,
+  and emptying the workspace forgets both, so the next batch of files cannot
+  arrive behind a filter nobody can see.
+- **No backend work is launched.** Typing, clearing, sorting, ranging and
+  selecting issue no Tauri command and start no process. That is the whole
+  reason this is view work rather than a roster query command: the answer is
+  already on this side.
 
 ## Session capacity
 
@@ -519,7 +570,8 @@ that reads an acquisition is asking for one to be read.
 
 - **M1.2** — done: the first user-visible roster, recorded in the amendments
   above.
-- **M1.3** — search and sort over the roster.
+- **M1.3** — done: search and sort as a view projection, recorded in the
+  amendments above.
 - **M1.4** — folder ingestion, with its own traversal boundary.
 - **M1.5** — Explorer drag-and-drop, whose security boundary differs from the
   folder picker's and is therefore separate.

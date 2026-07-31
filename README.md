@@ -28,6 +28,14 @@ Build a session workspace of local `.mzML` files and inspect one of them:
   Ctrl-click, Shift-click, arrows, Space, Home, End and Ctrl+A. Remove the
   selected rows, or clear the list, without restarting. Neither ever deletes,
   moves or writes to a file on disk. The session holds up to 1,024 files.
+- Narrow the list by filename, and order it by the order files were added, by
+  name in either direction, or by size in either direction. Names with numbers in
+  them sort the way they read, so `sample-2` comes before `sample-10`. A search
+  never hides work in progress: a row you selected, the row whose preview is on
+  screen and a row being read stay visible and say why they are still there, and
+  the count tells you how many files matched rather than how many rows you can
+  see. Ranges and Ctrl+A follow what is on screen. Neither the search nor the
+  sort reaches ProteoWizard, and neither outlives the session.
 - Rust owns the file paths and decides what may be opened. The interface holds an
   opaque session handle and a display name, never a path, never parses backend
   output, and nothing is uploaded.
@@ -43,8 +51,9 @@ Build a session workspace of local `.mzML` files and inspect one of them:
   the acquisition itself records them.
 
 Not implemented yet: vendor RAW preview; TIC, BPC and chromatogram views; folder
-ingestion and Explorer drag-and-drop; search, sort and filtering over the
-workspace; a workspace that outlives the session; the conversion workflow with
+ingestion and Explorer drag-and-drop; filtering the workspace by anything other
+than filename, and grouping it; a workspace that outlives the session, which
+includes remembering a search or a sort; the conversion workflow with
 its queue, progress and cancellation; and figure export. mzXML output stays
 disabled and fail-closed until representative multi-source integrity checks pass.
 Typed mzML conversion planning and conversion-integrity verification exist in
