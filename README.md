@@ -4,44 +4,60 @@
 
 MSCanvas aims to be a Windows-first, local-first desktop application for importing mass-spectrometry acquisitions, exploring linked chromatograms and spectra, converting vendor data to open formats, and exporting clean scientific figures. Later releases may orchestrate established analysis packages through typed modules and isolated workers.
 
-> Status: **pre-alpha**. The application has one real end-to-end path: open a local
-> `.mzML` file and inspect it against a user-installed ProteoWizard. It is not yet
-> the batch workspace described under [Product scope](#product-scope).
+> Status: **pre-alpha**. The application has one real end-to-end path: curate a
+> session workspace of local `.mzML` files and inspect one of them against a
+> user-installed ProteoWizard. It is not yet the batch workspace described under
+> [Product scope](#product-scope).
 
 Canonical repository: [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas) (currently private).
 
 ## What works today
 
-Open one local `.mzML` file and inspect it:
+Build a session workspace of local `.mzML` files and inspect one of them:
 
 - ProteoWizard is discovered automatically on `PATH` and in the locations an
   installer writes. If it is installed somewhere else, you can choose its
   installation folder for the current session; that choice is never written to
   disk, and returning to automatic discovery is offered from every state.
-- Rust owns the file path and decides what may be opened. The interface holds an
-  opaque session handle and a display name, never a path, and never parses
-  backend output.
-- One open action reads acquisition metadata, a run summary and a spectrum
-  table. Selecting a row loads that one spectrum.
+- Choose one or many `.mzML` files in a single native picker operation. They
+  appear as an ordered list, and adding the same acquisition again — under a
+  second name, or by picking it twice — reports the row you already have instead
+  of listing it twice. Files that could not be read are named individually and do
+  not affect the ones that arrived.
+- Select rows with the pointer or the keyboard the way a file list works: click,
+  Ctrl-click, Shift-click, arrows, Space, Home, End and Ctrl+A. Remove the
+  selected rows, or clear the list, without restarting. Neither ever deletes,
+  moves or writes to a file on disk. The session holds up to 1,024 files.
+- Rust owns the file paths and decides what may be opened. The interface holds an
+  opaque session handle and a display name, never a path, never parses backend
+  output, and nothing is uploaded.
+- Reading is explicit and one at a time. Moving around the list costs nothing;
+  previewing the focused row reads acquisition metadata, a run summary and a
+  spectrum table for that one file, and selecting a table row loads that one
+  spectrum. Adding files reads at most the first file of a session that had
+  nothing in it, so choosing ten files does not start ten reads.
 - The spectrum is drawn as a repository-owned SVG stick plot with no charting
   dependency. The retention-time unit, the profile/centroid representation and
   array units are shown as unreported rather than guessed, because the backend
   output this preview reads does not carry them. That says nothing about whether
   the acquisition itself records them.
 
-Not implemented yet: vendor RAW preview; TIC, BPC and chromatogram views; a
-multi-file workspace; the conversion workflow with its queue, progress and
-cancellation; and figure export. mzXML output stays disabled and fail-closed
-until representative multi-source integrity checks pass. Typed mzML conversion
-planning and conversion-integrity verification exist in Rust and are covered by
-tests, but no user-facing conversion workflow is built on them yet.
+Not implemented yet: vendor RAW preview; TIC, BPC and chromatogram views; folder
+ingestion and Explorer drag-and-drop; search, sort and filtering over the
+workspace; a workspace that outlives the session; the conversion workflow with
+its queue, progress and cancellation; and figure export. mzXML output stays
+disabled and fail-closed until representative multi-source integrity checks pass.
+Typed mzML conversion planning and conversion-integrity verification exist in
+Rust and are covered by tests, but no user-facing conversion workflow is built on
+them yet.
 
 ## Product scope
 
-The first usable product is the target below, not a description of today. Of the
-second item, metadata, spectrum and scan-table exploration are built and TIC/BPC
-are not; nothing else in this list is built yet. See
-[What works today](#what-works-today).
+The first usable product is the target below, not a description of today. A
+session file workspace exists, built from the file picker rather than from
+drag-and-drop or folders. Of the second item, metadata, spectrum and scan-table
+exploration are built and TIC/BPC are not; nothing else in this list is built
+yet. See [What works today](#what-works-today).
 
 - drag-and-drop file and folder workspaces;
 - metadata, TIC/BPC, spectrum and scan-table exploration;

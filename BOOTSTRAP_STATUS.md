@@ -1,6 +1,6 @@
 # Bootstrap status
 
-**Updated:** 2026-07-29
+**Updated:** 2026-07-30
 
 **Canonical repository:** [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas)
 
@@ -877,6 +877,317 @@ only Windows has the guarantee to prove, and CI builds no other target anyway.
 No scientific acquisition is used as a fixture. Rendered QA was not
 required and not performed: nothing the user can see changed. ProteoWizard was
 not executed and the desktop application was not launched.
+
+## First user-visible multi-file workspace, 2026-07-30
+
+The registry M1.0–M1.1.5 built is now a list the user can see and curate. Four
+typed commands reach it — read the roster, show the native picker and add
+everything chosen, remove named rows, empty the session — and the single-file
+picker command is retired rather than kept beside its replacement. No command
+accepts a path, the main window's capability set is still empty, and the webview
+still receives an opaque handle and a display name and nothing else.
+
+The Windows picker gained `OFN_ALLOWMULTISELECT` beside the flags it already had,
+and a parser for the documented multi-string answer: one absolute path for a
+single file, a directory and one bare name per file for several. A component
+that cannot be what its position says it is, and an answer with no final
+terminator, are refused rather than joined into paths nobody chose; an answer
+that did not fit is a typed failure rather than a shorter selection that looks
+whole.
+
+A session is bounded to 1,024 datasets, because every Windows row owns a live
+identity lease and every mutation answers with the whole roster. Duplicates are
+decided before capacity, so a file already in a full workspace is still a
+duplicate, and nothing the session refuses spends an identifier.
+
+One defect the previous slice recorded as unreachable is closed first, because
+the roster is what makes it reachable: an open now claims the same per-dataset
+request epoch a selected spectrum claims. A newer request for one dataset makes
+an older open of it stale at both ends — one still waiting for the backend gate
+never launches, and one that had already started records nothing and answers
+`selection_superseded` rather than returning a preview as though it were current.
+Beginning an open also drops what the previous open recorded, so a reopen that
+fails leaves no table rows behind for a later spectrum to be reconciled against.
+Work on one dataset supersedes nothing in another.
+
+Reading is explicit and bounded. Moving around the roster, changing the
+selection, adding files, removing rows and emptying the list start no backend
+work at all; adding into a session that had nothing in it reads the first row
+that arrived and nothing else, so one picker operation is one process rather
+than one per file; and a second activation waits until the current viewer
+request settles. The frontend's single boolean open marker was replaced by a
+token-and-handle marker plus a count of unsettled viewer requests, so a stale
+reply can neither overwrite a newer preview nor report the backend lane idle
+while its own process is still running.
+
+Validation on the exact head: `cargo fmt --all --check`,
+`cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --locked --workspace --all-targets` (130 desktop tests, up from 100),
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`
+(154 across ten files, up from 88), `pnpm build`. `pnpm lint` and `pnpm typecheck`
+remain the same `tsc -b` invocation; this repository has no separate linter.
+
+Thirty mutations were introduced one at a time against this head and every one
+was caught by the test written for it: capacity decided before duplicates; an
+identifier spent on a duplicate, a rejection or a full workspace; additions
+prepended rather than appended; a rejected candidate named by its whole path;
+emptying the workspace reaching only its first row; a repeated handle removing
+twice; the roster stating a capacity of its own; beginning an open keeping what
+the previous one recorded; an open committing without rechecking its epoch; an
+open that waited its turn launching anyway; a picker answer with no terminator
+read as a whole selection; a later component that is really a path joined anyway;
+a first component that is not absolute accepted; adding to a non-empty session
+stealing the row being read; a batch leaving the previous selection in place; a
+removed row still counting as the row being read; focus recovery never looking
+backwards; a Shift press dragging the anchor; Ctrl only ever adding; Shift with
+an arrow not extending; a missing source reported as an ordinary failure; a
+notice listing every item it has; a second activation not bounded by the one
+running; a settling request reporting the lane idle whatever else is running;
+every added file being read rather than the first of an empty session; removing
+any row taking the preview with it; a failed read saying nothing about the row it
+failed on; a stale open reply applied to whatever is on screen; a roster read
+never adopted; and a failed roster read replacing the rows with an empty list.
+
+### Rendered check of the workspace roster
+
+Run against `pnpm tauri dev` on Windows 11 at 150% display scaling, on the exact
+application-code head, with a real ProteoWizard 3.0.26013 and two authorized
+local acquisitions of about 208 MB each. They were reached through neutral hard
+links in a working directory outside the repository, which was deleted
+afterwards; the acquisitions themselves were not modified and are still there.
+No fixture name, path or scientific value is recorded here.
+
+The application was driven through the WebView2 debugging protocol: pointer
+presses and key presses were dispatched into the page's own input pipeline and
+hit-tested against the element they were aimed at, and every command the
+interface issued was counted at the IPC transport. The two native dialogs cannot
+be reached that way, so the picker's file-name field and its Open button were
+driven directly as the windows they are, and the folder picker was cancelled with
+a real Escape.
+
+- **One picker operation, two files.** Two rows in the order they were chosen,
+  both selected, the first focused, holding the roving tab stop and marked as the
+  one being shown. Exactly two commands were issued: `choose_mzml_files` and one
+  `open_mzml_preview`. Not one path, drive letter or UNC prefix appears anywhere
+  in the document; the two path shapes the acquisition's own metadata records are
+  redacted to `<path>`.
+- **The webview reloaded.** Rust still held both rows, and the list came back with
+  neither of them selected and neither being shown: a workspace is what the
+  session holds, and a reload is not a request to read anything.
+- **A duplicate.** The same acquisition added again under a second name produced
+  no new row and no read; the notice named the row the user already has, by the
+  name it was registered under rather than the name it was just given. Two other
+  files added in the same operation arrived normally, and a `.mzXML` typed into
+  the picker was refused by its own filename with the reason for it — the files
+  accepted beside it stayed accepted.
+- **Selection, with a real pointer and a real keyboard.** Plain click, Ctrl-click,
+  Shift-click over a range, ArrowUp, ArrowDown, Space, Home, End, Shift+Arrow and
+  Ctrl+A each did what a file list does, and across all of them the interface
+  issued no command whatsoever. Enter on the focused row issued exactly one
+  `open_mzml_preview`.
+- **Switching.** Focusing another row read nothing and left the summary naming
+  the row still on screen; `Preview focused` then read that row, moved the marker
+  and replaced the summary. No stale reply from the first read overwrote it.
+- **Removing and clearing.** Removing two rows that were not the one on screen
+  left the preview alone and said "Removed 2 files from the list. The files on
+  disk were not changed."; removing the row that was on screen cleared the
+  preview, read nothing in its place, and left the tab stop on the row that took
+  its position; `Clear list` emptied the session without a restart and put the
+  keyboard on `Add files…`. Every fixture file was still on disk afterwards, at
+  its original size.
+- **Issue #24.** `documentElement.scrollWidth` equals `clientWidth` and
+  `body.scrollWidth` equals `body.clientWidth` at all three viewports, and the
+  document does not scroll vertically either.
+- **Issue #25.** Opening the backend folder picker and cancelling it returned the
+  keyboard to `Choose folder…` with its focus ring visible, left the verdict as
+  it was, and left the workspace and the preview untouched.
+- **Issue #29.** At the narrowest viewport the spectrum table is horizontally
+  scrollable by 217 CSS pixels; at scroll offsets 0, 109 and 217 every column
+  label sits at exactly the same horizontal position as the values beneath it —
+  maximum drift zero — with the header row pinned to the top of the scroller.
+- **Spectrum keyboard.** Two arrow presses moved the focused row and issued
+  nothing; Enter issued exactly one `load_selected_spectrum` and selected the row
+  it was on.
+- **Console and logs.** The WebView2 console held the three known development
+  messages from a `tauri dev` session — two Vite connection lines and the React
+  DevTools notice — and nothing else. No page error and no unhandled rejection.
+  The Rust/Tauri output held its ordinary build and watch banner; the Vite output
+  held its ordinary ready line.
+
+The rendered check found one defect, which is repaired in this branch. Stacked at
+896x475 CSS pixels the workspace column got a fraction of an already short
+window, the roster's header, actions and the summary of the batch that had just
+arrived used all of it, and the list came out at zero height with four rows in
+it — rows that exist, are announced to a screen reader, and cannot be reached by
+pointer or keyboard. The panel now has a minimum height that is its own chrome
+plus room to be a list, the stacked track has a floor to match, and the account
+of the last workspace action moved out of the roster panel into the shell
+notices, where a summary that grows with the batch no longer takes its height
+from the list it is describing. Measured after the repair, at native 900x700
+(586x430 CSS), at 1362x743 CSS and at 1906x1043 CSS, the list holds two, two and
+two of two rows with its own scrolling for more, and no viewport overflows the
+document in either axis.
+
+One flow was not reproduced: the backend being unavailable. Making a real
+ProteoWizard installation unusable means changing the machine this check runs on,
+and the folder picker offers no way to name a folder without one. It is covered
+by automated tests instead — adding files with no usable backend leaves the
+roster fully usable, reads nothing, and says that ProteoWizard is needed to read
+a file rather than to curate the list.
+
+One crash was seen, three times, and was chased until it could be reproduced on
+demand. The application exits with `0xc000041d` — `STATUS_FATAL_USER_CALLBACK_
+EXCEPTION`, an exception escaping a window-procedure callback the kernel
+invoked — while the file picker is being driven. It never printed a Rust panic,
+not even under `RUST_BACKTRACE=full`, and never reached the Windows application
+log, which is consistent with an exception that never passes through Rust at
+all.
+
+What separates the runs that crash from the runs that do not is the harness, not
+the product. To make a modal picker appear in front, this check sent a synthetic
+`ALT` keystroke to whatever window held the foreground and then called
+`SetForegroundWindow` across the process boundary, immediately before the dialog
+was asked for. Every one of the three crashes came from a run that did that. The
+foreground window at the time was recorded on the reproducing run: the Windows
+lock screen. Removing those two calls and driving the same dialog by posting
+`WM_SETTEXT` and `WM_COMMAND` to it, eleven consecutive picker operations across
+three application launches all left the process alive. Putting the two calls
+back reproduced the exit on the first attempt.
+
+So the recorded finding is about the check: injecting keyboard input and a
+cross-process foreground change into a locked desktop, and then opening a modal
+common dialog there, can take the process down. That is not a state a user can
+be in — a file picker cannot be operated on a locked screen — and no code path
+in this change is implicated: `choose_mzml_files` and `parse_selection` have no
+panic in them, every slice index is provably in range, and the crash leaves no
+Rust unwind. The harness no longer makes the foreground change, and the rendered
+evidence below was collected without it.
+
+### What review found in the roster, 2026-07-30
+
+Two whole-diff reviews — one on the security and boundary side, one on the
+interface, accessibility and async side — produced seven findings, each then put
+to two independent skeptics: one asked to refute it, one asked to write out a
+reproducing sequence and check every step against the code. Six survived and are
+repaired here; one was refuted by both, and the reason is recorded below.
+
+The blocking one. Removing rows decided whether to take the preview off the
+screen from the row it had captured *before* the request was sent. Curating
+stays live while a removal is in flight, so the user can start reading another
+file in that gap — and the reply then cleared the reading they had just started,
+leaving its row saying "Reading…" for the rest of the session, because the
+open's own reply was rejected on token order before it could say otherwise. It
+now asks what the viewer actually belongs to at the moment it is answered.
+
+Two were a row claiming a preview nobody can see. The reducer marked the first
+file of a newly filled session as the one being shown whether or not a read
+started, so on a machine with no ProteoWizard a row announced "Showing" beside a
+file nothing had opened, while the viewer beside it said to install
+ProteoWizard; the same marker also survived a backend change that had just
+discarded what that row read. Which row is being read is now said where a read
+begins, and the marker follows what the row actually holds — so the row keeps
+its place as the one an explicit re-read acts on without claiming anything is on
+screen for it.
+
+Three were about what is said and to whom. The account of a workspace action was
+announced only through a live region that arrived together with its text, which
+is the shape screen readers routinely miss, and with a preview loaded no other
+region's text changes when rows are added or removed — so a removal, including
+its statement that the files on disk were not changed, could be silent. It is
+now announced through a region mounted for the life of the application. The list
+of per-item details keyed on its own text, which two names for one acquisition
+make identical. And the roster stated "No files in this session yet" before it
+had asked what the session holds, which is the one claim it cannot make: Rust
+keeps the workspace across a reload of this window.
+
+The refuted one was a variant of the duplicate-key finding whose reproduction
+needed two files of the same name from two different folders in one batch. The
+picker's multi-selection answer is one directory followed by bare names, and the
+parser refuses anything else, so that batch cannot exist — the surviving variant
+reaches the same key collision through two names for one file in one folder,
+which can.
+
+Each repair is pinned by a test that fails without it, verified by mutation:
+the removal deciding from a handle captured before it was sent; the marker
+ignoring whether anything was read; a read no longer saying which row it belongs
+to; the notice list keying on its own text; the empty state claiming emptiness
+while the list is being read; and the summary announced nowhere that already
+existed. The duplicate-key repair is watched through the console, because
+rendering two children with one key is something React complains about rather
+than something a user sees.
+
+Validation after the repairs: `pnpm lint`, `pnpm typecheck`, `pnpm test` (161
+tests across ten files), `pnpm build`, `python -B scripts/check_repo.py`,
+`cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`.
+The rendered check was run again on the repaired head from a clean start: one
+picker operation with three files gave three rows and one `open_mzml_preview`;
+click, Ctrl-click, Home, Shift+Arrow and Ctrl+A issued no command at all; Enter
+issued exactly one; removing a row that was not being read left the preview up
+and removing the one that was took it away and read nothing in its place;
+clearing put the keyboard on `Add files…`; both polite regions were present with
+the workspace summary in the one that had been mounted all along; and no
+viewport overflowed the document in either axis. Console and page errors were
+empty.
+
+### Two further review rounds over the repairs themselves, 2026-07-30
+
+The repairs were reviewed twice more on the same terms — every finding put to
+one skeptic asked to refute it and one asked to reproduce it step by step. Five
+findings survived the second round and four the third, and the third round's
+were mostly defects introduced by the second round's repairs, which is the
+reason for running a review over a repair at all.
+
+The second round. `Clear list` read the count it announces after its own reply
+rather than before its request, so it could report a number from a workspace
+that had already changed; two mutations could be in flight at once, letting an
+older reply's roster snapshot overwrite a newer one's; a workspace action that
+repeated the one before it produced the same sentence and so was announced
+nowhere; the visible notice said its unlisted items were "listed on screen",
+which is the opposite of what it means; the roster's empty state said "the
+workspace is empty" after the read that would have told it had failed; and a row
+could carry the active accent bar with no glyph beside it, which is colour
+carrying meaning alone.
+
+The third round, over those repairs. The alternating character added to make a
+repeated announcement announceable was a *sibling* text node, so React left the
+sentence node untouched and the only mutation was a space appearing or
+disappearing — a `childList` change the region's default `aria-relevant` does
+not announce in one direction, and a collapsible trailing space that Blink drops
+from the accessibility tree in the other. The repeated action was still
+announced nowhere; the test that was supposed to hold it asserted `textContent`,
+which jsdom reports without any of the CSS collapsing a browser applies, so it
+passed on a difference no screen reader would ever see. The alternation now
+lives inside the sentence and is a non-breaking space, which CSS keeps. The
+spoken account also claimed "N more are not listed" while enumerating none of
+them — a count belonging to the visible list, which is the half that stopped
+short — and now says only the totals. The one-mutation-at-a-time gate turned out
+to be one-directional: `Add files…` waited for a removal or a clear, but neither
+waited for an add, and an add holds the picker *and* the registration behind it.
+And a roster read that failed on mount was permanent, so the workspace went on
+reporting that its list could not be read long after an action had established
+what it holds.
+
+Each repair in both rounds is pinned by a test that fails without it, verified by
+mutation — eleven mutations across the two rounds, each reintroducing exactly one
+defect, all caught. Two mutations survived their first attempt and are worth
+recording: one asserted a live region's text by joining both regions together,
+which passed whether or not the region under test had changed at all, and one
+tested an equivalence rather than the original defect. Both tests were replaced
+rather than the mutations dropped.
+
+Validation on the final head: `cargo fmt --all --check`, `cargo clippy --locked
+--workspace --all-targets -- -D warnings`, `cargo test --locked --workspace
+--all-targets` (215 tests), `python -B scripts/check_repo.py`, `pnpm lint`,
+`pnpm typecheck`, `pnpm test` (168 tests across ten files), `pnpm build`. The
+rendered check was run once more on that head, without the foreground injection
+described above: one picker operation with three files gave three rows and one
+`open_mzml_preview`; pointer and keyboard selection issued no command; Enter
+issued exactly one; removal and clearing behaved as before; the console and page
+errors were empty; and at CSS viewports of 886x663, 1366x753 and 1920x1065 the
+roster list measured 69, 97 and 262 pixels tall, holding two, three and three of
+three rows with its own scrolling for the rest, with no viewport overflowing the
+document in either axis and the spectrum table never forcing the page sideways.
 
 ## Validation completed during repository initialization
 

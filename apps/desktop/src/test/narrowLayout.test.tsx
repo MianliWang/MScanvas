@@ -123,6 +123,22 @@ describe("narrow desktop layout rules", () => {
     expect(
       requireStyleRule(app, ".spectrum-table-viewport").style.getPropertyValue("overflow"),
     ).toBe("auto");
+    // Issue #29: the header row sits inside the one scrolling box and resolves
+    // its columns against the same track as the rows, so a label and its values
+    // hold one horizontal position between them at any scroll offset.
+    const head = requireStyleRule(app, ".spectrum-table-head").style;
+    expect(head.getPropertyValue("position")).toBe("sticky");
+    expect(head.getPropertyValue("top")).toBe("0px");
+    expect(requireStyleRule(app, ".spectrum-table-track").style.getPropertyValue("min-width")).toBe(
+      "min-content",
+    );
+    // And the header's row stays reserved, so a row scrolled into view lands
+    // below it rather than behind it.
+    expect(
+      requireStyleRule(app, ".spectrum-table-viewport").style.getPropertyValue(
+        "scroll-padding-top",
+      ),
+    ).toBe("30px");
   });
 });
 
@@ -130,14 +146,18 @@ describe("narrow desktop layout markup", () => {
   it("keeps one set of actions, whatever the width", async () => {
     // A narrow layout that duplicates the actions would pass a screenshot and
     // give a keyboard user two of everything, or a hidden one that still takes
-    // a tab stop. There is one Open action and one of each banner action.
+    // a tab stop. There is one of each workspace action and one of each banner
+    // action, and the workspace actions live in one place rather than being
+    // repeated in a toolbar.
     render(
       <PreviewApiProvider value={createFakePreviewApi()}>
         <App />
       </PreviewApiProvider>,
     );
 
-    expect(await screen.findAllByRole("button", { name: "Open mzML…" })).toHaveLength(1);
+    expect(await screen.findAllByRole("button", { name: "Add files…" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Preview focused" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Remove selected" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Check again" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Choose folder…" })).toHaveLength(1);
   });
@@ -152,8 +172,54 @@ describe("narrow desktop layout markup", () => {
 
     expect(
       await screen.findByText(
-        "MSCanvas reads one local .mzML file at a time and never writes to it. Nothing is uploaded and nothing leaves this machine.",
+        "MSCanvas reads local .mzML files from this computer and never writes to them. Nothing is uploaded and nothing leaves this machine.",
       ),
     ).toBeVisible();
+  });
+
+  it("keeps the roster tall enough to be a list when the column is stacked", () => {
+    // The defect a rendered check found. Stacked at 896x475 CSS pixels the
+    // workspace column got a fraction of an already short window, the roster's
+    // header and actions used all of it, and the list came out at zero height
+    // with four rows in it: rows that exist, are announced, and cannot be
+    // reached. The track has a floor and the panel has a minimum.
+    const app = mountStyles(appStyles);
+
+    expect(requireStyleRule(app, ".dataset-roster-panel").style.getPropertyValue("min-height")).toBe(
+      "176px",
+    );
+    expect(
+      requireMediaRule(app, "(max-width: 1120px)", ".workspace-layout").style.getPropertyValue(
+        "grid-template-rows",
+      ),
+    ).toBe("minmax(176px, 0.9fr) minmax(0, 1.6fr)");
+    // And what the column cannot fit is clipped here rather than pushing the
+    // shell past the viewport.
+    expect(requireStyleRule(app, ".workspace-sidebar").style.getPropertyValue("overflow")).toBe(
+      "hidden",
+    );
+  });
+
+  it("leaves the workspace roster scrolling inside its own panel", async () => {
+    // A roster is an unbounded list, so it owns its overflow exactly as the
+    // spectrum table does. The document does not: containment here is what
+    // stops a thousand rows becoming a taller document than the window.
+    const app = mountStyles(appStyles);
+
+    expect(requireStyleRule(app, ".dataset-roster-list").style.getPropertyValue("overflow")).toBe(
+      "auto",
+    );
+    expect(requireStyleRule(app, ".dataset-roster-list").style.getPropertyValue("min-height")).toBe(
+      "0px",
+    );
+    // And a file name too long for its column is truncated rather than pushing
+    // the row -- and the panel, and the document -- wider.
+    const name = requireStyleRule(app, ".dataset-row-name").style;
+    expect(name.getPropertyValue("white-space")).toBe("nowrap");
+    expect(name.getPropertyValue("overflow")).toBe("hidden");
+    expect(name.getPropertyValue("text-overflow")).toBe("ellipsis");
+    expect(requireStyleRule(app, ".workspace-sidebar").style.getPropertyValue("min-height")).toBe(
+      "0px",
+    );
   });
 });

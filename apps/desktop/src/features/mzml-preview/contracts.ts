@@ -42,6 +42,53 @@ export interface SelectedFile {
   readonly byteLength: number;
 }
 
+/**
+ * Every dataset the session holds, in the order Rust holds them.
+ *
+ * The order is authoritative and is not re-derived here: the registry has one
+ * order, and sorting or grouping a copy of it would be a second answer to the
+ * same question.
+ */
+export interface WorkspaceRoster {
+  readonly datasets: readonly SelectedFile[];
+  /**
+   * The session limit these rows are bounded by, counted in Rust.
+   *
+   * Carried with the roster so the interface states the limit that is actually
+   * enforced rather than a number of its own.
+   */
+  readonly capacity: number;
+}
+
+/**
+ * What one chosen file did. Reported per item and in picker order, because one
+ * file that could not be read says nothing about the rest of a batch.
+ */
+export type WorkspaceAddOutcome =
+  | { readonly outcome: "added"; readonly dataset: SelectedFile }
+  | { readonly outcome: "duplicate"; readonly existing: SelectedFile }
+  | {
+      readonly outcome: "rejected";
+      /** The final filename only. Never a path and never a folder. */
+      readonly candidateName: string;
+      readonly error: PreviewError;
+    };
+
+export interface WorkspaceAddResult {
+  readonly roster: WorkspaceRoster;
+  readonly outcomes: readonly WorkspaceAddOutcome[];
+}
+
+export interface WorkspaceRemoveResult {
+  readonly roster: WorkspaceRoster;
+  readonly removedHandles: readonly string[];
+  /**
+   * Handles that named no row. An ordinary reconciliation outcome: the
+   * interface asked about rows it believed it had, and this is the answer.
+   */
+  readonly unknownHandles: readonly string[];
+}
+
 export interface MetadataSection {
   readonly id: string;
   readonly title: string;

@@ -1,9 +1,14 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { PreviewApi } from "../features/mzml-preview/api";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
-import type { SelectedSpectrumOutcome } from "../features/mzml-preview/contracts";
+import type {
+  SelectedSpectrumOutcome,
+  WorkspaceRemoveResult,
+  WorkspaceRoster,
+} from "../features/mzml-preview/contracts";
+import type { PickedFile } from "../test/previewFixtures";
 import {
   availableBackend,
   buildPreview,
@@ -13,7 +18,9 @@ import {
   createFakePreviewApi,
   deferred,
   previewError,
+  secondFile,
   selectedFile,
+  thirdFile,
   unavailableBackend,
 } from "../test/previewFixtures";
 import { App } from "./App";
@@ -26,10 +33,16 @@ function renderApp(api: PreviewApi): void {
   );
 }
 
-/** Renders, then takes the toolbar's open action, as a user would. */
+/**
+ * Renders, then adds files through the workspace action, as a user would.
+ *
+ * Adding into an empty session reads exactly the first row that arrived, which
+ * is what preserves the one-picker/one-preview experience the single-file
+ * workspace had without launching one process per file.
+ */
 async function openTheFile(api: PreviewApi): Promise<void> {
   renderApp(api);
-  fireEvent.click(await screen.findByRole("button", { name: "Open mzML…" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
 }
 
 function selectRowByIdentifier(identifier: string): void {
@@ -50,15 +63,35 @@ describe("mzML preview workspace", () => {
       screen.getByText("No ProteoWizard installation was found on this machine."),
     ).toBeVisible();
     expect(screen.getByText("Install ProteoWizard, then check again.")).toBeVisible();
-    // Opening a file cannot succeed without a backend, so it is not offered.
-    expect(screen.getByRole("button", { name: "Open mzML…" })).toBeDisabled();
+    // Reading a file cannot succeed without a backend, so it is not offered.
+    expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
+    // Curating the workspace is not backend work, so it stays available: the
+    // user can build the list they want and read it once ProteoWizard is there.
+    expect(await screen.findByRole("button", { name: "Add files…" })).toBeEnabled();
+  });
+
+  it("adds files with no backend installed, and reads none of them", async () => {
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      pickedFiles: [selectedFile, secondFile],
+    });
+    renderApp(api);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+
+    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(screen.getByRole("option", { name: /QC_pool_02\.mzML/ })).toBeVisible();
+    // Not one read. Nothing about an unusable backend stops the user telling
+    // MSCanvas which acquisitions this session is about.
+    expect(api.openCount()).toBe(0);
+    expect(screen.getByText(/Install ProteoWizard to read a file/)).toBeVisible();
   });
 
   it("reports an available backend with the release the backend itself named", async () => {
     renderApp(createFakePreviewApi());
 
     expect(await screen.findByText(/ProteoWizard is available/)).toHaveTextContent("3.0.25000");
-    expect(screen.getByRole("button", { name: "Open mzML…" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
   });
 
   it("reports the installation the user chose, never the one it replaced", async () => {
@@ -73,7 +106,7 @@ describe("mzML preview workspace", () => {
 
     expect(await screen.findByText(/ProteoWizard is available/)).toHaveTextContent("3.0.26013");
     expect(screen.getByText(/from the folder you chose/)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Open mzML…" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
   });
 
   it("drops what the previous installation read when the installation changes", async () => {
@@ -108,7 +141,7 @@ describe("mzML preview workspace", () => {
     const picksBefore = api.requestedSpectra.length;
 
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
-    const reopen = await screen.findByRole("button", { name: /^Reopen / });
+    const reopen = await screen.findByRole("button", { name: /^Preview QC_pool_01/ });
 
     expect(reopen).toHaveTextContent("QC_pool_01.mzML");
     fireEvent.click(reopen);
@@ -135,7 +168,7 @@ describe("mzML preview workspace", () => {
 
     // The readings go, and the retained file is offered back rather than left
     // looking like it still describes what is installed.
-    expect(await screen.findByRole("button", { name: /^Reopen / })).toBeVisible();
+    expect(await screen.findByRole("button", { name: /^Preview QC_pool_01/ })).toBeVisible();
     expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
   });
 
@@ -155,7 +188,7 @@ describe("mzML preview workspace", () => {
 
     // The readings go, and the retained file is offered back rather than left
     // looking like it still describes what is installed.
-    expect(await screen.findByRole("button", { name: /^Reopen / })).toBeVisible();
+    expect(await screen.findByRole("button", { name: /^Preview QC_pool_01/ })).toBeVisible();
     expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
   });
 
@@ -172,7 +205,7 @@ describe("mzML preview workspace", () => {
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
 
-    expect(await screen.findByRole("button", { name: /^Reopen / })).toBeVisible();
+    expect(await screen.findByRole("button", { name: /^Preview QC_pool_01/ })).toBeVisible();
     expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
   });
 
@@ -217,9 +250,9 @@ describe("mzML preview workspace", () => {
     expect(api.requestedSpectra.length).toBe(readsBefore);
   });
 
-  it("closes the open actions when the backend state is not positively available", async () => {
+  it("closes the reading actions when the backend state is not positively available", async () => {
     // A failed call cannot say whether an installation is present. Gating on
-    // "explicitly unavailable" left every open action live in that state, so
+    // "explicitly unavailable" left every reading action live in that state, so
     // the only thing it could lead to was another failure -- including after a
     // folder choice that failed before ever reaching the backend.
     const api = createFakePreviewApi({
@@ -229,7 +262,10 @@ describe("mzML preview workspace", () => {
 
     await screen.findByRole("button", { name: "Search automatically" });
 
-    expect(screen.getByRole("button", { name: "Open mzML…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
+    // Curating is not reading, so it is not closed by a backend nobody can
+    // describe: the user can still build the list this session is about.
+    expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
     // The recovery actions the banner offers stay live -- they are the way out.
     expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Choose folder…" })).toBeEnabled();
@@ -256,7 +292,7 @@ describe("mzML preview workspace", () => {
 
     // Nothing to act on and nothing to act with while the first check runs.
     expect(screen.queryByRole("button", { name: "Choose folder…" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Open mzML…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
 
     recheck.resolve(availableBackend);
 
@@ -355,7 +391,12 @@ describe("mzML preview workspace", () => {
     await openTheFile(createFakePreviewApi());
 
     expect(await screen.findByRole("heading", { name: "Run" })).toBeVisible();
-    expect(screen.getByText(/QC_pool_01\.mzML/)).toBeVisible();
+    // Named in the run summary as well as in the workspace list: the summary
+    // says which acquisition these numbers describe, and the list says which
+    // rows the session holds.
+    const summary = screen.getByRole("region", { name: "Run" });
+    expect(within(summary).getByText(/QC_pool_01\.mzML/)).toBeVisible();
+    expect(screen.getByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
     expect(screen.getByRole("heading", { name: "File description" })).toBeVisible();
     expect(screen.getByText("software: pwiz 3.0.25000")).toBeVisible();
 
@@ -394,11 +435,12 @@ describe("mzML preview workspace", () => {
   });
 
   it("treats a dismissed file picker as no change rather than as a failure", async () => {
-    const api = createFakePreviewApi({ file: null });
+    const api = createFakePreviewApi({ pickedFiles: null });
     await openTheFile(api);
 
-    expect(await screen.findByText("Open an mzML file")).toBeVisible();
+    expect(await screen.findByText("No files in this session yet")).toBeVisible();
     expect(screen.queryByRole("grid")).not.toBeInTheDocument();
+    expect(screen.queryByRole("option")).not.toBeInTheDocument();
     expect(api.openCount()).toBe(0);
   });
 
@@ -408,7 +450,7 @@ describe("mzML preview workspace", () => {
     });
     await openTheFile(retryable);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Try opening this file again" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Try reading this file again" }));
     // Reading the same file again is idempotent, so the retry repeats it
     // rather than reopening the picker.
     await waitFor(() => {
@@ -427,36 +469,38 @@ describe("mzML preview workspace", () => {
     expect(await screen.findByText("The preview could not be produced.")).toBeVisible();
     expect(screen.getByText("malformed_output")).toBeVisible();
     expect(
-      screen.queryByRole("button", { name: "Try opening this file again" }),
+      screen.queryByRole("button", { name: "Try reading this file again" }),
     ).not.toBeInTheDocument();
-    // Choosing a different file stays available: it is a new action, not a
-    // repeat of one that already failed.
-    expect(screen.getByRole("button", { name: "Choose a different file" })).toBeVisible();
+    // The row is still in the workspace and still removable, and adding more
+    // files is still available: neither is a repeat of what just failed.
+    expect(screen.getByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
   });
 
-  it("keeps the open file on screen when the picker itself fails", async () => {
+  it("keeps what is on screen when the picker itself fails", async () => {
     let pickerAttempts = 0;
     const api = createFakePreviewApi({
-      file: () => {
+      pickedFiles: () => {
         pickerAttempts += 1;
         return pickerAttempts === 1
-          ? Promise.resolve(selectedFile)
+          ? Promise.resolve([selectedFile])
           : Promise.reject(previewError({ kind: "file_picker_failed" }));
       },
     });
     await openTheFile(api);
     await screen.findByRole("grid", { name: "Spectra" });
 
-    // The user reaches for another file and the dialog will not open.
-    fireEvent.click(screen.getByRole("button", { name: "Open mzML…" }));
+    // The user reaches for more files and the dialog will not open.
+    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
     expect(await screen.findByText("The file picker could not be opened")).toBeVisible();
 
-    // Failing to choose a new file is no reason to take away the one already
-    // open: it is still open in Rust and still on screen.
+    // Failing to choose new files is no reason to take away what is already
+    // there: the row is still in the workspace and its preview is still shown.
     expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Run" })).toBeVisible();
+    expect(screen.getByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "Try choosing a file again" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try choosing files again" }));
     await waitFor(() => {
       expect(pickerAttempts).toBe(3);
     });
@@ -627,38 +671,54 @@ describe("mzML preview workspace", () => {
     expect(api.requestedSpectra).toEqual([1, 1]);
   });
 
-  it("keeps every row selectable after a new file is opened mid-load", async () => {
-    const abandoned = deferred<SelectedSpectrumOutcome>();
-    let requests = 0;
-    const api = createFakePreviewApi({
-      spectrum: (index) => {
-        requests += 1;
-        return requests === 1
-          ? abandoned.promise
-          : Promise.resolve<SelectedSpectrumOutcome>({
-              outcome: "spectrum",
-              spectrum: buildSpectrum(index, 4),
-            });
-      },
-    });
+  it("keeps every row selectable after another dataset is previewed", async () => {
+    // A spectrum abandoned by a new preview must not leave its row index
+    // unselectable in the dataset now on screen: the guard that stops one row
+    // being read twice is keyed by request, not by index.
+    const api = createFakePreviewApi({ pickedFiles: [selectedFile, secondFile] });
     await openTheFile(api);
     await screen.findByRole("grid", { name: "Spectra" });
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
-    // A new file arrives while row 0 is still being read.
-    fireEvent.click(screen.getByRole("button", { name: "Open mzML…" }));
+    await screen.findByText(/Spectrum 0, MS2, 12 points\./);
+
+    // The second row is previewed explicitly, which is the only way a second
+    // dataset is ever read.
+    fireEvent.click(screen.getByRole("option", { name: /QC_pool_02\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    await waitFor(() => {
+      expect(api.openedHandles).toEqual(["file-0", "file-1"]);
+    });
     await screen.findByRole("grid", { name: "Spectra" });
 
-    // The same row index must still be selectable in the new file, without
-    // waiting for the abandoned read to settle.
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
-    await screen.findByText(/Spectrum 0, MS2, 4 points\./);
+    await screen.findByText(/Spectrum 0, MS2, 12 points\./);
     expect(api.requestedSpectra).toEqual([0, 0]);
+  });
+
+  it("ignores a spectrum reply for a row that has been removed", async () => {
+    // Removing the active row clears the screen at once. The read it abandoned
+    // is still running -- Rust does not cancel work that has started -- and its
+    // reply must not put a spectrum back under a row that is gone.
+    const abandoned = deferred<SelectedSpectrumOutcome>();
+    const api = createFakePreviewApi({ spectrum: () => abandoned.promise });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+
+    fireEvent.click(screen.getByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    });
 
     abandoned.resolve({ outcome: "spectrum", spectrum: buildSpectrum(0, 77) });
+
     await waitFor(() => {
-      expect(screen.queryByText(/77 points/)).not.toBeInTheDocument();
+      expect(screen.getByText(/The files on disk were not changed/, VISIBLE)).toBeVisible();
     });
+    expect(screen.queryByText(/77 points/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
   });
 
   it("discloses a run summary and spectrum list that disagree about the size", async () => {
@@ -738,5 +798,682 @@ describe("mzML preview workspace", () => {
     ).toBeVisible();
     // No chromatogram count is emitted, so none is shown as zero.
     expect(screen.getByText("Chromatograms").nextElementSibling).toHaveTextContent("Not reported");
+  });
+});
+
+/**
+ * Names the visible notice rather than the polite region that mirrors it.
+ *
+ * What a workspace action did is said twice on purpose: once where it can be
+ * read, and once in a region that was mounted before it had anything to say,
+ * which is the shape a screen reader actually announces.
+ */
+const VISIBLE = { ignore: "[aria-live], script, style" } as const;
+
+function rosterRow(name: RegExp): HTMLElement {
+  return screen.getByRole("option", { name });
+}
+
+describe("the session workspace roster", () => {
+  it("shows what Rust already holds when the webview is opened again", async () => {
+    // A webview can be reloaded while Rust keeps the workspace. The list on
+    // screen has to be the list that exists, not the empty one this window
+    // happens to start with -- and reading it must cost nothing.
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile] });
+    renderApp(api);
+
+    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(rosterRow(/QC_pool_02\.mzML/)).toBeVisible();
+    expect(api.openCount()).toBe(0);
+    expect(api.rosterReads()).toBe(1);
+    // Listed but not selected and not being read: nothing here is a decision
+    // the user has made yet.
+    expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
+    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+  });
+
+  it("says the list could not be read, and can be told to read it again", async () => {
+    let attempts = 0;
+    const api = createFakePreviewApi({
+      roster: () => {
+        attempts += 1;
+        return attempts === 1
+          ? Promise.reject(previewError({ kind: "preview_worker_unavailable" }))
+          : Promise.resolve({ datasets: [selectedFile], capacity: 1_024 });
+      },
+    });
+    renderApp(api);
+
+    expect(await screen.findByText("The workspace list could not be read")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try reading it again" }));
+
+    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+  });
+
+  it("reads exactly one file however many were chosen at once", async () => {
+    const api = createFakePreviewApi({ pickedFiles: [selectedFile, secondFile, thirdFile] });
+    await openTheFile(api);
+
+    expect(await screen.findByRole("grid", { name: "Spectra" })).toBeVisible();
+    // One picker operation, three rows, one process. Reading all of them would
+    // be three ProteoWizard launches against three large files for two results
+    // nobody asked to see.
+    expect(api.openedHandles).toEqual(["file-0"]);
+    expect(screen.getAllByRole("option")).toHaveLength(3);
+    // Everything that arrived is selected, so `Remove selected` acts on the
+    // batch the user just added; the first of them is the one being shown.
+    expect(
+      screen.getAllByRole("option").filter((row) => row.getAttribute("aria-selected") === "true"),
+    ).toHaveLength(3);
+    expect(rosterRow(/QC_pool_01\.mzML/)).toHaveTextContent("▸");
+    expect(rosterRow(/QC_pool_02\.mzML/)).not.toHaveTextContent("▸");
+    expect(screen.getByText("Added 3 files.", VISIBLE)).toBeVisible();
+  });
+
+  it("leaves the file on screen alone when more files are added beside it", async () => {
+    let pickerOperations = 0;
+    const api = createFakePreviewApi({
+      pickedFiles: () => {
+        pickerOperations += 1;
+        return Promise.resolve(pickerOperations === 1 ? [selectedFile] : [secondFile]);
+      },
+    });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    // A second picker operation, adding to a session that already has a file
+    // open. Nothing about that is a request to read something else.
+    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    expect(await screen.findByRole("option", { name: /QC_pool_02\.mzML/ })).toBeVisible();
+
+    expect(api.openedHandles).toEqual(["file-0"]);
+    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(rosterRow(/QC_pool_01\.mzML/)).toHaveTextContent("▸");
+    // The new row is what is selected, so removing it takes it away again.
+    expect(rosterRow(/QC_pool_02\.mzML/)).toHaveAttribute("aria-selected", "true");
+    expect(rosterRow(/QC_pool_01\.mzML/)).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("reports a file the session already holds rather than listing it twice", async () => {
+    const api = createFakePreviewApi({ pickedFiles: [selectedFile] });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+
+    expect(await screen.findByText(/1 file already in the workspace/, VISIBLE)).toBeVisible();
+    expect(screen.getByText("QC_pool_01.mzML is already in the workspace.")).toBeVisible();
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    // Nothing was read for it either: it is a row the user already has.
+    expect(api.openCount()).toBe(1);
+  });
+
+  it("says what a batch did above the list rather than inside it", async () => {
+    // A summary that grows with the batch must not take its height from the
+    // list it is describing: at a short window that leaves the rows it just
+    // announced with nowhere to be. It sits with the other shell notices, is
+    // bounded, and says how many items it did not spell out.
+    const api = createFakePreviewApi({
+      pickedFiles: [
+        selectedFile,
+        { rejected: "a.mzXML" },
+        { rejected: "b.mzXML" },
+        { rejected: "c.mzXML" },
+        { rejected: "d.mzXML" },
+        { rejected: "e.mzXML" },
+      ],
+    });
+    await openTheFile(api);
+
+    const notice = await screen.findByText(/Added 1 file\./, VISIBLE);
+    expect(notice).toBeVisible();
+    expect(screen.getByText("2 more not listed here.")).toBeVisible();
+    // Above the workspace column, not inside the roster panel.
+    expect(notice.closest(".shell-notices")).not.toBeNull();
+    expect(notice.closest(".dataset-roster-panel")).toBeNull();
+  });
+
+  it("keeps the files it could read and names the ones it could not", async () => {
+    const api = createFakePreviewApi({
+      pickedFiles: [
+        selectedFile,
+        { rejected: "acquisition.mzXML" },
+        secondFile,
+        { rejected: "gone.mzML", error: previewError({ kind: "file_not_resolvable" }) },
+      ],
+    });
+    await openTheFile(api);
+
+    expect(await screen.findByText(/Added 2 files\./, VISIBLE)).toBeVisible();
+    expect(screen.getByText(/2 files could not be added/, VISIBLE)).toBeVisible();
+    expect(screen.getByText(/acquisition\.mzXML:/)).toBeVisible();
+    // A rejected candidate is named by its file name and nothing else: no
+    // folder, no path.
+    expect(screen.queryByText(/[A-Z]:\\/)).toBeNull();
+    expect(screen.getAllByRole("option")).toHaveLength(2);
+  });
+
+  it("says plainly when a file did not fit the session", async () => {
+    const api = createFakePreviewApi({ capacity: 1, pickedFiles: [selectedFile, secondFile] });
+    await openTheFile(api);
+
+    expect(await screen.findByText(/1 file did not fit/, VISIBLE)).toBeVisible();
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    // The limit is stated where the count is, rather than left to be inferred
+    // from a refusal.
+    expect(screen.getByText(/1 of 1 files in this session/)).toBeVisible();
+  });
+
+  it("removes the selected rows, keeps the preview whose row survived, and says the files are untouched", async () => {
+    const api = createFakePreviewApi({ pickedFiles: [selectedFile, secondFile, thirdFile] });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    // The first row is the one being shown; the other two are removed.
+    fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
+    fireEvent.click(rosterRow(/Blank_03\.mzML/), { ctrlKey: true });
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(1);
+    });
+    expect(screen.getByText(/Removed 2 files from the list\./, VISIBLE)).toBeVisible();
+    expect(screen.getByText(/The files on disk were not changed\./, VISIBLE)).toBeVisible();
+    // The preview belonged to a row that survived, so it is still on screen.
+    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(rosterRow(/QC_pool_01\.mzML/)).toHaveTextContent("▸");
+  });
+
+  it("clears the preview when the row it belongs to is removed, and reads nothing else", async () => {
+    const api = createFakePreviewApi({ pickedFiles: [selectedFile, secondFile] });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+    const readsBefore = api.openCount();
+
+    fireEvent.click(rosterRow(/QC_pool_01\.mzML/));
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    });
+    // Nothing takes its place on its own: reading another acquisition is an
+    // action the user takes.
+    expect(api.openCount()).toBe(readsBefore);
+    // And the row that took its position has the tab stop, so the keyboard
+    // still has somewhere to be.
+    expect(rosterRow(/QC_pool_02\.mzML/)).toHaveAttribute("tabindex", "0");
+    expect(rosterRow(/QC_pool_02\.mzML/)).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("empties the list without a restart and gives the keyboard back to Add files", async () => {
+    const api = createFakePreviewApi({ pickedFiles: [selectedFile, secondFile] });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+
+    expect(await screen.findByText("No files in this session yet")).toBeVisible();
+    expect(screen.queryByRole("option")).toBeNull();
+    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    expect(screen.getByText(/Cleared 2 files from the list\./, VISIBLE)).toBeVisible();
+    expect(screen.getByText(/The files on disk were not changed\./, VISIBLE)).toBeVisible();
+    // Focus lands somewhere it can be used rather than on the body.
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add files…" }));
+    expect(screen.queryByRole("button", { name: "Clear list" })).toBeNull();
+  });
+
+  it("bounds repeated activation to one read at a time", async () => {
+    // Every activation is one process behind one global gate. Without this a
+    // user walking the roster with Enter would queue one read per row, and the
+    // only one they would ever see is the last.
+    const open = deferred<ReturnType<typeof buildPreview>>();
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile, secondFile],
+      preview: () => open.promise,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+
+    fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
+    expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+
+    expect(api.openedHandles).toEqual(["file-0"]);
+
+    open.resolve(buildPreview(3));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Preview focused" })).toBeEnabled();
+    });
+  });
+
+  it("does not report the backend idle while a removed row's read is still running", async () => {
+    // Removing the active row clears the screen at once. The process is still
+    // running, and saying otherwise would let a second activation queue behind
+    // it -- which is the fan-out the roster makes possible.
+    const open = deferred<ReturnType<typeof buildPreview>>();
+    const api = createFakePreviewApi({
+      pickedFiles: [selectedFile, secondFile],
+      preview: () => open.promise,
+    });
+    await openTheFile(api);
+    await screen.findByText("Reading the file…");
+
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(1);
+    });
+
+    expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
+
+    open.resolve(buildPreview(3));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Preview focused" })).toBeEnabled();
+    });
+    // The reply landed for a row that is gone, so it put nothing back.
+    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    expect(api.openedHandles).toEqual(["file-0"]);
+  });
+
+  it("keeps the workspace and which row was being read across a backend change", async () => {
+    const api = createFakePreviewApi({
+      chosenInstallation: chosenBackend,
+      pickedFiles: [selectedFile, secondFile],
+    });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+    const readsBefore = api.openCount();
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    });
+    // The rows are Rust's paths and the user's choices; no backend decided
+    // either, so neither goes.
+    expect(screen.getAllByRole("option")).toHaveLength(2);
+    // The marker does go, because nothing is on screen for that row any more.
+    // Saying "Showing" beside a file whose reading was just discarded is the
+    // one thing the hidden half of that affordance must not do.
+    expect(rosterRow(/QC_pool_01\.mzML/)).not.toHaveTextContent("▸");
+    expect(within(rosterRow(/QC_pool_01\.mzML/)).queryByText("Showing,")).toBeNull();
+    // Nothing was re-read on the user's behalf, and reading it again is one
+    // action rather than a trip back through the picker.
+    expect(api.openCount()).toBe(readsBefore);
+    fireEvent.click(screen.getByRole("button", { name: /^Preview QC_pool_01/ }));
+    expect(await screen.findByRole("grid", { name: "Spectra" })).toBeVisible();
+  });
+
+  it("does not take away a preview that was started while a removal was in flight", async () => {
+    // Curating stays live while a removal is unresolved, so the row the viewer
+    // belongs to can change between asking and being answered. Deciding from a
+    // handle captured beforehand would clear the reading the user has just
+    // started and leave its row saying "Reading…" for the rest of the session.
+    const removal = deferred<WorkspaceRemoveResult>();
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile, secondFile],
+      removeDatasets: () => removal.promise,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    // The row on screen is removed, and before Rust answers the user reads
+    // another one.
+    fireEvent.click(rosterRow(/QC_pool_01\.mzML/));
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    await waitFor(() => {
+      expect(api.openedHandles).toEqual(["file-0", "file-1"]);
+    });
+
+    removal.resolve({
+      roster: { datasets: [secondFile], capacity: 1_024 },
+      removedHandles: [selectedFile.handle],
+      unknownHandles: [],
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(1);
+    });
+    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(rosterRow(/QC_pool_02\.mzML/)).toHaveTextContent("▸");
+    expect(rosterRow(/QC_pool_02\.mzML/)).not.toHaveTextContent("Reading…");
+  });
+
+  it("says no row is being shown when nothing was read", async () => {
+    // Adding into an empty session used to mark the first row as the one being
+    // shown whether or not a read started. With no usable backend none does,
+    // and a row that announces "Showing" beside a file nothing has opened tells
+    // a screen-reader user something that is not true.
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      pickedFiles: [selectedFile, secondFile],
+    });
+    renderApp(api);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+
+    const row = await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    expect(api.openCount()).toBe(0);
+    expect(row).not.toHaveTextContent("▸");
+    expect(within(row).queryByText("Showing,")).toBeNull();
+  });
+
+  it("announces what a workspace action did through a region that already existed", async () => {
+    // A live region inserted together with its text is the shape screen readers
+    // routinely miss, and with a preview loaded the viewer's own sentence does
+    // not change when rows are added or removed — so without this the user
+    // would hear nothing at all.
+    const api = createFakePreviewApi({ pickedFiles: [selectedFile, secondFile] });
+    renderApp(api);
+    const regions = () => [...document.querySelectorAll("[aria-live='polite']")];
+    await screen.findByRole("button", { name: "Add files…" });
+    expect(regions()).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+
+    await waitFor(() => {
+      expect(regions().map((region) => region.textContent).join(" ")).toContain(
+        "Workspace: Added 2 files.",
+      );
+    });
+    // The same two regions, with new text in one of them.
+    expect(regions()).toHaveLength(2);
+  });
+
+  it("does not claim the session is empty before its list has been read", async () => {
+    const roster = deferred<WorkspaceRoster>();
+    const api = createFakePreviewApi({ roster: () => roster.promise });
+    renderApp(api);
+
+    expect(await screen.findByText("Reading the workspace list…")).toBeVisible();
+    expect(screen.queryByText("No files in this session yet")).toBeNull();
+
+    roster.resolve({ datasets: [selectedFile], capacity: 1_024 });
+
+    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+  });
+
+  it("lists two names for one acquisition as two lines, and warns about neither", async () => {
+    // Rust reports one outcome per file the user chose, and two names for one
+    // file produce the same sentence. Keying the list on that sentence gives
+    // React two children with one key, which it complains about — and this
+    // application's rendered check requires a console with nothing new in it.
+    const complaints: unknown[][] = [];
+    const reportError = vi.spyOn(console, "error").mockImplementation((...args) => {
+      complaints.push(args);
+    });
+    try {
+      const api = createFakePreviewApi({
+        initialDatasets: [selectedFile],
+        pickedFiles: [selectedFile, selectedFile],
+      });
+      renderApp(api);
+      fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+
+      await waitFor(() => {
+        expect(
+          screen.getAllByText("QC_pool_01.mzML is already in the workspace.", VISIBLE),
+        ).toHaveLength(2);
+      });
+      expect(complaints.map((args) => args.map(String).join(" ")).join(" | ")).not.toContain(
+        "same key",
+      );
+    } finally {
+      reportError.mockRestore();
+    }
+  });
+
+  it("starts no second workspace change while one is unresolved", async () => {
+    // Two in flight together let the older reply's roster snapshot overwrite
+    // the newer one's: a clear answered after an add would drop a row Rust
+    // still holds and take away a preview started for it. Rust serialises the
+    // two behind one gate anyway, so waiting costs a moment and no more.
+    const clearing = deferred<WorkspaceRoster>();
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      clearWorkspace: () => clearing.promise,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    });
+    expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
+
+    clearing.resolve({ datasets: [], capacity: 1_024 });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
+    });
+  });
+
+  it("announces a workspace action that repeats the one before it", async () => {
+    // Two removals of one row say the same sentence, and React writes nothing
+    // into a region whose string is unchanged — so the second action would be
+    // announced nowhere, which is the case that region exists for.
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile, secondFile, thirdFile],
+    });
+    renderApp(api);
+    // The account's own region, not the viewer's: the viewer's sentence names
+    // a count that falls with each removal, so comparing both together would
+    // pass whether or not this region changed at all.
+    const spoken = () =>
+      [...document.querySelectorAll("[aria-live='polite']")].at(-1)?.textContent ?? "";
+
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(2);
+    });
+    const afterFirst = spoken();
+    expect(afterFirst).toContain("Removed 1 file from the list.");
+
+    fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(1);
+    });
+
+    // The same words, and still a change for a screen reader to notice.
+    expect(spoken()).toContain("Removed 1 file from the list.");
+    expect(spoken()).not.toBe(afterFirst);
+
+    // How it differs is the whole of the repair. The region must hold one text
+    // node whose own string changed: two nodes would leave the sentence node
+    // untouched and make the difference an added or removed sibling instead,
+    // which is not what the default `aria-relevant` announces in one direction.
+    const region = [...document.querySelectorAll("[aria-live='polite']")].at(-1);
+    expect(region?.childNodes).toHaveLength(1);
+    expect(region?.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+    // And it must differ by a character CSS keeps. A trailing ordinary space is
+    // collapsed out of the rendered text a screen reader is given, so two
+    // strings differing only by one would be the same to everyone this region
+    // is for. The sentences are otherwise identical, which is the case under
+    // test: exactly one of the two carries the non-breaking space.
+    const trailing = (said: string) => said.slice(said.replace(/\u00a0+$/u, "").length);
+    expect(afterFirst.trimEnd()).toBe(spoken().trimEnd());
+    expect([trailing(afterFirst), trailing(spoken())].sort().join("|")).toBe("|\u00a0");
+  });
+
+  it("says the unlisted items are unlisted", async () => {
+    const api = createFakePreviewApi({
+      pickedFiles: [
+        selectedFile,
+        { rejected: "a.mzXML" },
+        { rejected: "b.mzXML" },
+        { rejected: "c.mzXML" },
+        { rejected: "d.mzXML" },
+        { rejected: "e.mzXML" },
+      ],
+    });
+    await openTheFile(api);
+
+    await screen.findByText("2 more not listed here.", VISIBLE);
+    const spoken = [...document.querySelectorAll("[aria-live='polite']")]
+      .map((region) => region.textContent)
+      .join(" ");
+    // The count belongs to the visible list, which is the half that stopped
+    // short. The spoken half enumerates nothing at all, so it has no cutoff to
+    // report and must claim neither that the rest are listed nor that a
+    // particular number of them are not.
+    expect(spoken).not.toContain("more are not listed");
+    expect(spoken).not.toContain("listed on screen");
+    // What it does carry is the totals, which is the account that survives
+    // without any list beside it.
+    expect(spoken).toContain("Added 1 file.");
+    expect(spoken).toContain("5 files could not be added.");
+  });
+
+  it("refuses a removal and a clear while an add is unresolved", async () => {
+    // `addFiles` refuses to start while a mutation is in flight; this is the
+    // same gate from the other side. An add holds the picker *and* the
+    // registration after it, and a removal answering inside that window carries
+    // a roster snapshot taken before the added rows existed -- while `Clear
+    // list` would additionally announce a count from before them.
+    const picking = deferred<readonly PickedFile[] | null>();
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      pickedFiles: () => picking.promise,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
+    });
+    expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
+
+    picking.resolve(null);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Remove selected" })).toBeEnabled();
+    });
+    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
+  });
+
+  it("reads nothing on its own when a slow first read hid a session that was not empty", async () => {
+    // Rust keeps the workspace across a reload of this window, and `Add files…`
+    // does not wait for the list to arrive. Deciding from what is on screen
+    // would call a restored session empty and read a file into it that nobody
+    // asked for -- the one automatic read this workspace allows, spent in the
+    // one place it is not meant for.
+    const reading = deferred<WorkspaceRoster>();
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      pickedFiles: [secondFile],
+      roster: () => reading.promise,
+    });
+    renderApp(api);
+    // Deliberately not waiting for the roster: this is the window under test.
+    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+
+    expect(await screen.findByRole("option", { name: /QC_pool_02\.mzML/ })).toBeVisible();
+    // Both rows are there, because Rust answered with everything it holds.
+    expect(screen.getByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(api.openCount()).toBe(0);
+    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+
+    reading.resolve({ datasets: [selectedFile], capacity: 1_024 });
+  });
+
+  it("stops saying the list could not be read once an action has read it", async () => {
+    // A read that fails on mount is otherwise permanent: nothing but the retry
+    // ever moves that state, so the workspace goes on reporting that its list
+    // is unknown long after adding files has established what it holds.
+    let reads = 0;
+    const api = createFakePreviewApi({
+      pickedFiles: [selectedFile],
+      roster: () => {
+        reads += 1;
+        return reads === 1
+          ? Promise.reject(previewError({ kind: "preview_worker_unavailable" }))
+          : Promise.resolve({ datasets: [], capacity: 1_024 });
+      },
+    });
+    renderApp(api);
+    expect(await screen.findByText("The workspace list could not be read")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+
+    fireEvent.click(screen.getByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+
+    // Back to an empty workspace, which is now something this side knows
+    // rather than something it failed to find out.
+    expect(await screen.findByText("No files in this session yet")).toBeVisible();
+    expect(screen.queryByText("The workspace list could not be read")).toBeNull();
+    const spoken = [...document.querySelectorAll("[aria-live='polite']")]
+      .map((region) => region.textContent)
+      .join(" ");
+    expect(spoken).not.toContain("The workspace list could not be read.");
+  });
+
+  it("does not say the workspace is empty when its list could not be read", async () => {
+    const api = createFakePreviewApi({
+      roster: () => Promise.reject(previewError({ kind: "preview_worker_unavailable" })),
+    });
+    renderApp(api);
+
+    expect(await screen.findByText("The workspace list could not be read")).toBeVisible();
+    const spoken = [...document.querySelectorAll("[aria-live='polite']")]
+      .map((region) => region.textContent)
+      .join(" ");
+    expect(spoken).toContain("The workspace list could not be read.");
+    expect(spoken).not.toContain("The workspace is empty.");
+  });
+
+  it("marks no row as shown while one is only being read", async () => {
+    // The bar and the glyph are one statement in two encodings, so neither may
+    // appear without the other. A row being read says so in words.
+    const open = deferred<ReturnType<typeof buildPreview>>();
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      preview: () => open.promise,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+
+    const row = await screen.findByRole("option", { name: /Reading…/ });
+    expect(row.className).not.toContain("is-active");
+    expect(row).not.toHaveTextContent("▸");
+    expect(within(row).queryByText("Showing,")).toBeNull();
+
+    open.resolve(buildPreview(3));
+
+    await waitFor(() => {
+      expect(rosterRow(/QC_pool_01\.mzML/)).toHaveTextContent("▸");
+    });
+    expect(rosterRow(/QC_pool_01\.mzML/).className).toContain("is-active");
+  });
+
+  it("marks a row whose file was replaced, without removing it", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      preview: () =>
+        Promise.reject(previewError({ kind: "file_identity_changed", retryable: false })),
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+
+    expect(await screen.findByRole("option", { name: /Replaced/ })).toBeVisible();
+    // The row stays. What the name now points at is a question for the next
+    // read of it, and removing it is the user's decision.
+    expect(screen.getAllByRole("option")).toHaveLength(1);
   });
 });

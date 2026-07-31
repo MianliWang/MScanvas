@@ -4,7 +4,7 @@
 //! place allowed to decide what the webview may see, and it is unit-testable
 //! without a WebView or a local ProteoWizard installation.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,18 +18,25 @@ use mscanvas_proteowizard::{
 use super::backend::{
     PreviewProvider, open_operations, reporting_redactor, selected_spectrum_operation,
 };
+use super::dto::MAX_WORKSPACE_DATASETS;
+/// Named only by what the retired picker's replacement semantics still answer
+/// with, which is compiled out of the shipped binary.
+#[cfg(test)]
+use super::dto::SelectedFileDto;
 use super::dto::{
     BackendAvailabilityDto, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES, MAX_METADATA_LINE_CHARS,
     MAX_MS_LEVELS, MAX_PRECURSORS, MAX_SPECTRUM_POINTS, MAX_SPECTRUM_TABLE_ROWS, MetadataDto,
     MetadataSectionDto, MsLevelCountDto, PrecursorDto, PreviewDto, PreviewErrorDto,
-    RetentionTimeDto, RetentionTimeRangeDto, RunSummaryDto, SelectedFileDto, SelectedSpectrumDto,
-    SelectedSpectrumOutcomeDto, SpectrumRowDto, SpectrumTableDto, bounded_text,
-    redact_absolute_paths, require_finite, require_finite_option,
+    RetentionTimeDto, RetentionTimeRangeDto, RunSummaryDto, SelectedSpectrumDto,
+    SelectedSpectrumOutcomeDto, SpectrumRowDto, SpectrumTableDto, WorkspaceAddOutcomeDto,
+    WorkspaceAddResultDto, WorkspaceRemoveResultDto, WorkspaceRosterDto, bounded_text,
+    redact_absolute_paths, require_finite, require_finite_option, workspace_full,
 };
 use super::installation::InstallationIdentity;
 use super::selection::{
-    AcceptedFile, DatasetId, DatasetRegistry, FileIdentity, RevocationReason, accept_mzml_file,
-    file_identity, lock_against_replacement, revalidate, selected_file_dto, unknown_dataset,
+    AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity, RevocationReason,
+    accept_mzml_file, candidate_display_name, file_identity, lock_against_replacement, revalidate,
+    selected_file_dto, unknown_dataset,
 };
 
 /// Everything the session knows about the datasets it holds.
@@ -99,6 +106,26 @@ impl Workspace {
         Some(state.request_epoch)
     }
 
+    /// Starts an open for one dataset: claims the epoch that names it, drops
+    /// what the previous open recorded, and hands back the file to read.
+    ///
+    /// The three happen under one lock because they are one decision. The
+    /// recorded preview is what a selected spectrum reconciles against, and it
+    /// describes the read that produced it; the moment a newer open begins,
+    /// that description is no longer the one the user is asking about. Left in
+    /// place it would outlive its own open -- a reopen that fails would leave
+    /// the previous open's rows silently usable, and a spectrum read afterwards
+    /// would be reconciled against a table nothing on screen came from.
+    ///
+    /// `None` when the dataset is not registered.
+    fn begin_open_request(&mut self, id: DatasetId) -> Option<(u64, AcceptedFile)> {
+        let file = self.registry.get(id)?.file().clone();
+        let state = self.runtime.entry(id).or_default();
+        state.request_epoch += 1;
+        state.preview = None;
+        Some((state.request_epoch, file))
+    }
+
     /// Whether this request is still the newest one for a dataset that is still
     /// there. Anything else means the user has moved on.
     fn request_is_current(&self, id: DatasetId, epoch: u64) -> bool {
@@ -107,6 +134,28 @@ impl Workspace {
                 .runtime
                 .get(&id)
                 .is_some_and(|state| state.request_epoch == epoch)
+    }
+}
+
+/// What the webview is told the session holds.
+///
+/// Built from the registry's own order, which is the only order there is. The
+/// capacity travels with it so the interface states the limit Rust enforces
+/// rather than one of its own.
+fn roster_of(workspace: &Workspace) -> WorkspaceRosterDto {
+    WorkspaceRosterDto {
+        datasets: workspace
+            .registry
+            .ids()
+            .iter()
+            .filter_map(|id| {
+                workspace
+                    .registry
+                    .get(*id)
+                    .map(|dataset| selected_file_dto(*id, dataset.file()))
+            })
+            .collect(),
+        capacity: MAX_WORKSPACE_DATASETS,
     }
 }
 
@@ -147,6 +196,15 @@ pub struct PreviewService {
     /// as long as a backend process takes, and the workspace has to stay
     /// answerable in the meantime.
     backend_gate: Mutex<()>,
+    /// Held for the length of one workspace mutation, so two of them cannot
+    /// interleave the rows of one batch.
+    ///
+    /// Distinct from the workspace lock and always taken before it. A batch
+    /// accepts each file in turn, which is filesystem work, and holding the
+    /// workspace across the whole batch would leave every other command waiting
+    /// on a picker's worth of inspections. This is what keeps a batch's order
+    /// contiguous without doing that.
+    workspace_mutation: Mutex<()>,
     /// How many times the installation in use has changed.
     ///
     /// Stamped onto every verdict under the same gate that serves it, so the
@@ -186,6 +244,7 @@ impl PreviewService {
             provider,
             workspace: Mutex::new(Workspace::default()),
             backend_gate: Mutex::new(()),
+            workspace_mutation: Mutex::new(()),
             installation_generation: AtomicU64::new(0),
             resolved: Mutex::new(ObservedBackend::default()),
         }
@@ -196,19 +255,6 @@ impl PreviewService {
         self.workspace
             .lock()
             .expect("the workspace lock is never poisoned by user code")
-    }
-
-    /// The file a handle names, as it was accepted, or the refusal for a handle
-    /// that names nothing this session holds.
-    ///
-    /// A clone rather than a borrow, so the lock is released before the file is
-    /// revalidated or read.
-    fn remembered_file(&self, id: DatasetId) -> Result<AcceptedFile, PreviewErrorDto> {
-        self.workspace()
-            .registry
-            .get(id)
-            .map(|dataset| dataset.file().clone())
-            .ok_or_else(unknown_dataset)
     }
 
     /// Reports whether a usable backend is installed.
@@ -275,14 +321,158 @@ impl PreviewService {
         self.installation_generation.load(Ordering::Relaxed)
     }
 
-    /// Accepts one already-chosen path and registers it for later operations.
+    /// Everything the session holds, in the order it was added.
     ///
-    /// The registry can hold several datasets; this entry point deliberately
-    /// keeps exactly one. Registering files the user cannot see, curate or
-    /// remove would hand the webview capabilities it never asked for and cannot
-    /// withdraw, which is what ADR 0005 refused and ADR 0006 keeps refusing
-    /// until the roster interface exists to make them visible.
-    pub fn accept_file(&self, path: &Path) -> Result<SelectedFileDto, PreviewErrorDto> {
+    /// Stored facts only. Nothing is revalidated here and no process is
+    /// launched: a roster read happens on every mount and after every mutation,
+    /// and rechecking a thousand paths each time would turn drawing a list into
+    /// a thousand filesystem inspections. Whether a row's file is still the file
+    /// it was is a question the next preview of it asks, and answers where the
+    /// user can see it.
+    pub fn roster(&self) -> WorkspaceRosterDto {
+        roster_of(&self.workspace())
+    }
+
+    /// Adds every chosen path, in picker order, and answers with what each one
+    /// did and the roster that resulted.
+    ///
+    /// One item's failure is its own. A batch is a list of files the user
+    /// pointed at, not a transaction: rolling back the ones that arrived
+    /// because a later one could not be read would punish them for choosing it.
+    ///
+    /// No preview is launched for any of them. Adding a file makes it something
+    /// the user can see and remove; reading one is a thing they ask for.
+    pub fn add_files(&self, paths: &[PathBuf]) -> WorkspaceAddResultDto {
+        // Held for the whole batch so two of these cannot interleave their
+        // rows. It is not the workspace lock and never becomes it: acceptance
+        // opens and inspects a file, which is filesystem work, and holding the
+        // workspace across it would stop every other command for the length of
+        // a batch.
+        let _batch = self.enter_workspace_mutation();
+        let mut outcomes = Vec::with_capacity(paths.len());
+        for path in paths {
+            // Taken before acceptance, because acceptance is what may fail and
+            // the user still has to be told which file it was.
+            let candidate = candidate_display_name(path);
+            let accepted = match accept_mzml_file(path) {
+                Ok(accepted) => accepted,
+                Err(error) => {
+                    outcomes.push(WorkspaceAddOutcomeDto::Rejected {
+                        candidate_name: candidate,
+                        error,
+                    });
+                    continue;
+                }
+            };
+            // Taken per item rather than once for the batch, so a long batch
+            // does not hold the workspace across the acceptance of every file
+            // in it.
+            let mut workspace = self.workspace();
+            let outcome = workspace.registry.add(accepted);
+            let described = outcome.registered_id().map(|id| {
+                selected_file_dto(
+                    id,
+                    workspace
+                        .registry
+                        .get(id)
+                        .expect("an outcome that names a dataset names a registered one")
+                        .file(),
+                )
+            });
+            drop(workspace);
+            outcomes.push(match (outcome, described) {
+                (AddDatasetOutcome::Added { .. }, Some(dataset)) => {
+                    WorkspaceAddOutcomeDto::Added { dataset }
+                }
+                (AddDatasetOutcome::Duplicate { .. }, Some(existing)) => {
+                    WorkspaceAddOutcomeDto::Duplicate { existing }
+                }
+                _ => WorkspaceAddOutcomeDto::Rejected {
+                    candidate_name: candidate,
+                    error: workspace_full(),
+                },
+            });
+        }
+        let roster = roster_of(&self.workspace());
+        WorkspaceAddResultDto { roster, outcomes }
+    }
+
+    /// Removes the rows these handles name, and says which named nothing.
+    ///
+    /// The source acquisitions are never touched. Removing a row removes a row
+    /// and releases the handle that row was holding.
+    pub fn remove_datasets(&self, handles: &[String]) -> WorkspaceRemoveResultDto {
+        let _batch = self.enter_workspace_mutation();
+        let mut removed = Vec::new();
+        let mut unknown = Vec::new();
+        // The same handle twice is one row to remove, not one removal and one
+        // stale handle. A selection can hold a row once; a caller assembling a
+        // request need not have been careful.
+        let mut seen = HashSet::new();
+        let mut workspace = self.workspace();
+        for handle in handles {
+            if !seen.insert(handle.as_str()) {
+                continue;
+            }
+            match DatasetId::parse(handle).filter(|id| workspace.registry.contains(*id)) {
+                Some(id) => {
+                    // Through the one atomic path, so the row, its identity
+                    // index entry, its lease, its request epoch and its preview
+                    // facts all go together.
+                    workspace.revoke(id, RevocationReason::Removed);
+                    removed.push(handle.clone());
+                }
+                None => unknown.push(handle.clone()),
+            }
+        }
+        let roster = roster_of(&workspace);
+        drop(workspace);
+        WorkspaceRemoveResultDto {
+            roster,
+            removed_handles: removed,
+            unknown_handles: unknown,
+        }
+    }
+
+    /// Empties the workspace, and answers with the empty roster that is now
+    /// authoritative.
+    ///
+    /// Every row through the same revocation a single removal uses, so emptying
+    /// the workspace cannot come to mean something different from removing
+    /// every row in it. The identifier allocator does not rewind: a reply still
+    /// in flight for one of the emptied datasets must not land on whatever is
+    /// added next.
+    pub fn clear_workspace(&self) -> WorkspaceRosterDto {
+        let _batch = self.enter_workspace_mutation();
+        let mut workspace = self.workspace();
+        workspace.clear(RevocationReason::Cleared);
+        roster_of(&workspace)
+    }
+
+    /// Serialises one workspace mutation against another.
+    ///
+    /// Short-lived and never taken while a backend process runs. Without it two
+    /// batches could interleave their rows, and the order the user picked files
+    /// in -- which is the order the roster is -- would depend on which thread
+    /// won each turn.
+    fn enter_workspace_mutation(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.workspace_mutation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// The behaviour the picker had before the roster replaced it.
+///
+/// Compiled out of the shipped binary. It is kept because the replacement
+/// semantics it implements -- accept and lease the new file before letting the
+/// previous one go -- have focused coverage worth keeping, and because most of
+/// this module's single-dataset tests are written against it. No command
+/// reaches it.
+#[cfg(test)]
+impl PreviewService {
+    /// Accepts one already-chosen path, replacing whatever the session held.
+    pub(super) fn accept_file(&self, path: &Path) -> Result<SelectedFileDto, PreviewErrorDto> {
         // The replacement is accepted -- and leased -- before the selection it
         // replaces is let go, and the order is the point rather than an
         // accident of where the line sits. Revoking first would close the old
@@ -301,7 +491,6 @@ impl PreviewService {
         // turn on it find out that nobody will look at the answer.
         workspace.clear(RevocationReason::ReplacedBySelection);
         let id = workspace.registry.add(accepted).id();
-        let held = workspace.registry.len();
         let dto = selected_file_dto(
             id,
             workspace
@@ -310,29 +499,9 @@ impl PreviewService {
                 .expect("the dataset was registered a line ago")
                 .file(),
         );
-        drop(workspace);
-        // Outside the lock. One session-wide lock now covers the registry and
-        // everything derived from it, so a panic inside it would take every
-        // later command with it -- and this assertion is about what the caller
-        // was handed, which is already decided.
-        debug_assert_eq!(
-            held, 1,
-            "the picker replaces the selection; the roster is what adds to it"
-        );
         Ok(dto)
     }
-}
 
-/// The workspace behaviour this slice builds and nothing in production reaches.
-///
-/// Compiled out of the shipped binary on purpose. The roster interface (M1.2)
-/// is what will add a second dataset for real; until a user can see, curate and
-/// remove what the session holds, a production path that accumulates files
-/// would hand the webview capabilities it never asked for and cannot withdraw.
-/// Keeping these behind `cfg(test)` is what makes that a fact about the build
-/// rather than a promise about the call sites.
-#[cfg(test)]
-impl PreviewService {
     /// Adds one accepted file without disturbing the datasets already held.
     ///
     /// Answers with the dataset the file is now known as. A file already in the
@@ -406,12 +575,29 @@ impl PreviewService {
     /// All three share a single discovery and capability probe, so opening a
     /// file resolves the backend once rather than once per panel.
     pub fn open_preview(&self, handle: &str) -> Result<PreviewDto, PreviewErrorDto> {
-        // Taken before anything is established about the file, so what is
-        // checked describes the moment the read actually begins rather than
-        // the moment the request arrived.
-        let running = self.enter_backend();
         let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
-        let file = revalidate(&self.remembered_file(id)?)?;
+        // Claimed before the wait, so a request that arrives after this one
+        // supersedes it -- and claimed by the same per-dataset counter a
+        // spectrum uses, because an open and a spectrum are both requests about
+        // the same dataset and the newer of the two is the one the user is
+        // waiting for. A roster is what makes two opens of one dataset
+        // something a user can cause: nothing stops them activating a row
+        // twice, or activating it again while the first read is still running.
+        let (epoch, remembered) = self
+            .workspace()
+            .begin_open_request(id)
+            .ok_or_else(unknown_dataset)?;
+        // Taken after the epoch and before anything is established about the
+        // file, so what is checked describes the moment the read actually
+        // begins rather than the moment the request arrived.
+        let running = self.enter_backend();
+        // Checked after the wait, not before it: what matters is whether the
+        // user has moved on by the time this would start. A request that is
+        // still waiting when a newer one arrives never launches a process.
+        if !self.workspace().request_is_current(id, epoch) {
+            return Err(superseded());
+        }
+        let file = revalidate(&remembered)?;
         let redactor = reporting_redactor(file.path());
         let operations = open_operations();
         // The three operations read the file separately. If it is rewritten
@@ -527,21 +713,24 @@ impl PreviewService {
         // generation this was read at, the backend that read it, and the rows a
         // later spectrum is reconciled against.
         let mut workspace = self.workspace();
-        // The dataset can have been revoked while this ran: the workspace stays
-        // answerable throughout, which is the point of not holding it. A reply
-        // that arrives then records nothing. Writing it would leave the session
-        // holding preview facts for a dataset that no longer exists, under an
-        // identifier nothing can reach and nothing will ever clear.
-        if workspace.registry.contains(id) {
-            workspace.runtime.entry(id).or_default().preview = Some(DatasetPreviewState {
-                opened: OpenedPreview {
-                    source: before,
-                    generation,
-                    installation,
-                },
-                table_rows,
-            });
+        // The dataset can have been revoked while this ran, and a newer request
+        // for it can have been made: the workspace stays answerable throughout,
+        // which is the point of not holding it. Either way this reply records
+        // nothing and says so. Writing it would leave the session holding
+        // preview facts for a dataset that no longer exists, or the older of two
+        // reads of one dataset deciding what a later spectrum is reconciled
+        // against -- the commit order of two opens is not their request order.
+        if !workspace.request_is_current(id, epoch) {
+            return Err(superseded());
         }
+        workspace.runtime.entry(id).or_default().preview = Some(DatasetPreviewState {
+            opened: OpenedPreview {
+                source: before,
+                generation,
+                installation,
+            },
+            table_rows,
+        });
         drop(workspace);
 
         Ok(PreviewDto {
@@ -913,15 +1102,19 @@ fn missing(what: &str) -> PreviewErrorDto {
     )
 }
 
-/// What a spectrum request answers with once the user has moved on from it.
+/// What a request answers with once the user has moved on from it.
 ///
-/// One kind for both ways that happens -- a newer spectrum chosen in the same
-/// dataset, and the dataset itself replaced -- because they are the same fact
-/// to the caller: the answer it asked for is no longer the one it wants.
+/// One kind for every way that happens -- a newer spectrum chosen in the same
+/// dataset, a newer open of it, and the dataset itself removed -- because they
+/// are the same fact to the caller: the answer it asked for is no longer the
+/// one it wants. The kind is the one the boundary already spoke; what widened
+/// is which requests can reach it, now that a roster lets the user activate one
+/// dataset twice.
 fn superseded() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "selection_superseded",
-        "A newer spectrum was selected before this one started, so it was not read.",
+        "A newer request for that file arrived before this one finished, so its result was not \
+         used.",
         false,
     )
 }

@@ -5,9 +5,22 @@ import { describe, expect, it } from "vitest";
 
 import type { PreviewApi } from "./api";
 import { PreviewApiProvider } from "./api";
-import type { BackendAvailability, Preview, SelectedFile, SelectedSpectrumOutcome } from "./contracts";
+import type {
+  BackendAvailability,
+  Preview,
+  SelectedSpectrumOutcome,
+  WorkspaceAddResult,
+  WorkspaceRemoveResult,
+  WorkspaceRoster,
+} from "./contracts";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
-import { buildPreview, deferred, previewError, selectedFile } from "../../test/previewFixtures";
+import {
+  FAKE_WORKSPACE_CAPACITY,
+  buildPreview,
+  deferred,
+  previewError,
+  selectedFile,
+} from "../../test/previewFixtures";
 
 /**
  * A stand-in that models the service's ordering semantics rather than fixed
@@ -158,11 +171,28 @@ function harness(
   } = {},
 ): Harness {
   const service = new ServiceModel();
+  // Only the installation commands are deferred: they are what this file is
+  // about. The workspace commands answer at once, and honestly — one row after
+  // the picker, none after a clear — so the ordering under test is the
+  // installation ordering and not an artefact of a roster that never settles.
+  const empty: WorkspaceRoster = { datasets: [], capacity: FAKE_WORKSPACE_CAPACITY };
   const api: PreviewApi = {
     inspectBackend: () => service.inspectBackend(),
     chooseInstallation: () => service.chooseInstallation(options.dismissPicker ?? false),
     useAutomaticDiscovery: () => service.useAutomaticDiscovery(),
-    chooseFile: () => Promise.resolve<SelectedFile | null>(selectedFile),
+    getRoster: () => Promise.resolve(empty),
+    chooseFiles: () =>
+      Promise.resolve<WorkspaceAddResult | null>({
+        roster: { datasets: [selectedFile], capacity: FAKE_WORKSPACE_CAPACITY },
+        outcomes: [{ outcome: "added", dataset: selectedFile }],
+      }),
+    removeDatasets: (handles) =>
+      Promise.resolve<WorkspaceRemoveResult>({
+        roster: empty,
+        removedHandles: [...handles],
+        unknownHandles: [],
+      }),
+    clearWorkspace: () => Promise.resolve(empty),
     openPreview:
       options.preview ?? (() => Promise.resolve(buildPreview(3, false, options.openGeneration ?? 0))),
     loadSpectrum: () =>
@@ -319,7 +349,7 @@ describe("backend installation generations", () => {
     const inspectionsBefore = h.service.inspections;
 
     act(() => {
-      result.current.openFile();
+      result.current.addFiles();
     });
     await waitFor(() => {
       expect(result.current.preview.status).toBe("opening");
@@ -355,7 +385,7 @@ describe("backend installation generations", () => {
     const inspectionsBefore = h.service.inspections;
 
     act(() => {
-      result.current.openFile();
+      result.current.addFiles();
     });
     await waitFor(() => {
       expect(result.current.preview.status).toBe("opening");
@@ -392,7 +422,7 @@ describe("discarding what a replaced installation read", () => {
     await h.deliver(0);
 
     act(() => {
-      result.current.openFile();
+      result.current.addFiles();
     });
     await waitFor(() => {
       expect(result.current.preview.status).toBe("loaded");
@@ -435,7 +465,7 @@ describe("discarding what a replaced installation read", () => {
     const inspectionsBefore = h.service.inspections;
 
     act(() => {
-      result.current.openFile();
+      result.current.addFiles();
     });
     await waitFor(() => {
       expect(result.current.preview.status).toBe("opening");
@@ -464,7 +494,7 @@ describe("discarding what a replaced installation read", () => {
     await h.deliver(0);
 
     act(() => {
-      result.current.openFile();
+      result.current.addFiles();
     });
     await waitFor(() => {
       expect(result.current.preview.status).toBe("opening");
@@ -484,7 +514,7 @@ describe("discarding what a replaced installation read", () => {
     });
 
     expect(result.current.preview.status).toBe("empty");
-    expect(result.current.selectedFileName).not.toBeNull();
+    expect(result.current.activeDataset).not.toBeNull();
   });
 
   it("discards a landed preview when the installation changes after it", async () => {
@@ -497,7 +527,7 @@ describe("discarding what a replaced installation read", () => {
     await h.deliver(0);
 
     act(() => {
-      result.current.openFile();
+      result.current.addFiles();
     });
     await waitFor(() => {
       expect(result.current.preview.status).toBe("loaded");
@@ -512,7 +542,7 @@ describe("discarding what a replaced installation read", () => {
       expect(resolvedOrigin(result.current.backend)).toBe("chosen");
     });
     expect(result.current.preview.status).toBe("empty");
-    expect(result.current.selectedFileName).not.toBeNull();
+    expect(result.current.activeDataset).not.toBeNull();
   });
 
   it("does not tear down an open that is still in flight", async () => {
@@ -526,7 +556,7 @@ describe("discarding what a replaced installation read", () => {
     await h.deliver(0);
 
     act(() => {
-      result.current.openFile();
+      result.current.addFiles();
     });
     await waitFor(() => {
       expect(result.current.preview.status).toBe("opening");
@@ -561,7 +591,7 @@ describe("discarding what a replaced installation read", () => {
     await h.deliver(0);
 
     act(() => {
-      result.current.openFile();
+      result.current.addFiles();
     });
     await waitFor(() => {
       expect(result.current.preview.status).toBe("opening");
@@ -587,7 +617,7 @@ describe("discarding what a replaced installation read", () => {
     // an open is in flight, so if this open did not end itself the workspace
     // would say "Reading the file…" for the rest of the session.
     expect(result.current.preview.status).toBe("empty");
-    expect(result.current.selectedFileName).not.toBeNull();
+    expect(result.current.activeDataset).not.toBeNull();
     expect(resolvedGeneration(result.current.backend)).toBe(1);
   });
 
@@ -603,7 +633,7 @@ describe("discarding what a replaced installation read", () => {
     await h.deliver(0);
 
     act(() => {
-      result.current.openFile();
+      result.current.addFiles();
     });
     await waitFor(() => {
       expect(result.current.preview.status).toBe("loaded");
@@ -634,7 +664,7 @@ describe("discarding what a replaced installation read", () => {
     await h.deliver(0);
 
     act(() => {
-      result.current.openFile();
+      result.current.addFiles();
     });
     await waitFor(() => {
       expect(result.current.preview.status).toBe("loaded");
@@ -658,11 +688,99 @@ describe("discarding what a replaced installation read", () => {
     expect(result.current.preview.status).toBe("empty");
     expect(result.current.spectrum.status).toBe("none");
     expect(result.current.selectedIndex).toBeNull();
-    expect(result.current.selectedFileName).toBe(selectedFile.fileName);
+    expect(result.current.activeDataset?.fileName).toBe(selectedFile.fileName);
 
     await h.deliver(1); // the change's own reply, superseded, changes nothing
     expect(result.current.preview.status).toBe("empty");
     expect(resolvedGeneration(result.current.backend)).toBe(1);
+  });
+
+  it("starts no second read while one is still running, whoever asks", async () => {
+    // The disabled action is the visible half of this rule. The other half is
+    // here, because a caller that reaches past the button -- Enter arriving
+    // between two renders, a dispatch from somewhere else -- must not queue a
+    // second process behind the single backend gate either.
+    const open = deferred<Preview>();
+    let reads = 0;
+    const h = harness({
+      preview: () => {
+        reads += 1;
+        return open.promise;
+      },
+    });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(h.api) });
+    await h.deliver(0);
+
+    act(() => {
+      result.current.addFiles();
+    });
+    await waitFor(() => {
+      expect(result.current.preview.status).toBe("opening");
+    });
+    expect(reads).toBe(1);
+    expect(result.current.previewBackendBusy).toBe(true);
+
+    act(() => {
+      result.current.activateDataset(selectedFile.handle);
+    });
+
+    expect(reads).toBe(1);
+
+    await act(async () => {
+      open.resolve(buildPreview(3));
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(result.current.previewBackendBusy).toBe(false);
+    });
+  });
+
+  it("keeps the viewer lane busy until every request it started has settled", async () => {
+    // Two spectrum reads can be outstanding at once: a newer selection
+    // supersedes the older one in Rust but does not cancel it. A flag would let
+    // the stale one report the lane idle and re-open activation while a process
+    // is still running; a count cannot.
+    const replies = [deferred<SelectedSpectrumOutcome>(), deferred<SelectedSpectrumOutcome>()];
+    let asked = 0;
+    const h = harness({
+      spectrum: () => {
+        const reply = replies[asked];
+        asked += 1;
+        return reply?.promise ?? Promise.reject(new Error("one reply per selection"));
+      },
+    });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(h.api) });
+    await h.deliver(0);
+    act(() => {
+      result.current.addFiles();
+    });
+    await waitFor(() => {
+      expect(result.current.preview.status).toBe("loaded");
+    });
+
+    act(() => {
+      result.current.selectSpectrum(0);
+    });
+    act(() => {
+      result.current.selectSpectrum(1);
+    });
+    expect(asked).toBe(2);
+    expect(result.current.previewBackendBusy).toBe(true);
+
+    // The abandoned read answers first. It owns one request and no more.
+    await act(async () => {
+      replies[0]?.resolve({ outcome: "unavailable", requestedIndex: 0 });
+      await Promise.resolve();
+    });
+    expect(result.current.previewBackendBusy).toBe(true);
+
+    await act(async () => {
+      replies[1]?.resolve({ outcome: "unavailable", requestedIndex: 1 });
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(result.current.previewBackendBusy).toBe(false);
+    });
   });
 
   it("reports a failed installation change that a later request superseded", async () => {

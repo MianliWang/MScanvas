@@ -8,7 +8,10 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use super::dto::{PreviewErrorDto, SelectedFileDto};
+use super::dto::{
+    MAX_CANDIDATE_NAME_CHARS, MAX_WORKSPACE_DATASETS, PreviewErrorDto, SelectedFileDto,
+    bounded_text,
+};
 
 /// What the filesystem itself calls one file, wide enough to be told apart from
 /// every other file on its volume.
@@ -637,21 +640,43 @@ impl fmt::Debug for RegisteredDataset {
 /// it resolved to and nothing else -- no path, no identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AddDatasetOutcome {
-    Added { id: DatasetId },
-    Duplicate { existing_id: DatasetId },
+    Added {
+        id: DatasetId,
+    },
+    Duplicate {
+        existing_id: DatasetId,
+    },
+    /// The workspace already holds `MAX_WORKSPACE_DATASETS`, so this file was
+    /// not added. Nothing was allocated and nothing was kept: the identifier
+    /// sequence does not advance for a file the session refused, and the
+    /// handle the candidate arrived holding is dropped with it.
+    Full,
 }
 
 impl AddDatasetOutcome {
-    /// The dataset the file is now known as, either way.
+    /// The dataset the file is now known as, where there is one.
     ///
-    /// For a caller that only needs to name the file it just added, both
-    /// outcomes answer the same question. Callers that must tell the two apart
-    /// -- the roster, which reports a duplicate rather than drawing a row --
-    /// match on the variants instead.
-    pub(super) const fn id(self) -> DatasetId {
+    /// For a caller that only needs to name the file it just added, adding and
+    /// finding a duplicate answer the same question. Callers that must tell
+    /// them apart -- the roster, which reports a duplicate rather than drawing
+    /// a row -- match on the variants instead. A full workspace registered
+    /// nothing, so there is nothing to name.
+    pub(super) const fn registered_id(self) -> Option<DatasetId> {
         match self {
-            Self::Added { id } | Self::Duplicate { existing_id: id } => id,
+            Self::Added { id } | Self::Duplicate { existing_id: id } => Some(id),
+            Self::Full => None,
         }
+    }
+
+    /// The dataset this outcome names, for the fixtures that cannot be full.
+    ///
+    /// Panics rather than defaulting, so a test that unexpectedly filled its
+    /// workspace fails where it happened instead of quietly asserting about a
+    /// dataset nothing registered.
+    #[cfg(test)]
+    pub(super) fn id(self) -> DatasetId {
+        self.registered_id()
+            .expect("this addition registered a dataset")
     }
 }
 
@@ -661,23 +686,20 @@ impl AddDatasetOutcome {
 /// and none of them may carry a path or an operating-system message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum RevocationReason {
-    /// The picker replaced the current selection, which is what it does until
-    /// the roster exists.
-    ReplacedBySelection,
-    /// The user removed this one dataset.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the roster interface (M1.2) removes rows")
-    )]
-    Removed,
-    /// The user emptied the workspace.
+    /// The picker replaced the current selection, which is what it did before
+    /// the roster existed. Retained for the focused regression coverage of that
+    /// behaviour and reached from nowhere else.
     #[cfg_attr(
         not(test),
         expect(
             dead_code,
-            reason = "the roster interface (M1.2) empties the workspace"
+            reason = "the roster replaced the picker's replacement semantics"
         )
     )]
+    ReplacedBySelection,
+    /// The user removed this one dataset.
+    Removed,
+    /// The user emptied the workspace.
     Cleared,
 }
 
@@ -717,16 +739,26 @@ impl fmt::Debug for DatasetRegistry {
 }
 
 impl DatasetRegistry {
-    /// Adds an accepted file, or reports the dataset it already is.
+    /// Adds an accepted file, or reports the dataset it already is, or refuses
+    /// it because the workspace is full.
     ///
     /// Takes the file by value, which is what keeps the handle count honest. A
     /// duplicate was accepted like any other file and arrived holding a lease
     /// of its own; returning here drops it, so the object ends up held once, by
     /// the row that already named it, rather than once per time the user
-    /// happened to add it.
+    /// happened to add it. A file refused for capacity is dropped the same way.
+    ///
+    /// Duplicates are decided before capacity, and the order is the point. A
+    /// file already in a full workspace is still in it: answering "full" would
+    /// tell the user to remove rows to make space for something that needs
+    /// none, and would report a row they already have as a file they failed to
+    /// add.
     pub(super) fn add(&mut self, file: AcceptedFile) -> AddDatasetOutcome {
         if let Some(&existing_id) = self.by_identity.get(&file.identity()) {
             return AddDatasetOutcome::Duplicate { existing_id };
+        }
+        if self.order.len() >= MAX_WORKSPACE_DATASETS {
+            return AddDatasetOutcome::Full;
         }
         let id = DatasetId(self.next_id);
         // Checked, so the invariant is absolute rather than nearly so. Wrapping
@@ -822,6 +854,24 @@ pub(super) fn unknown_dataset() -> PreviewErrorDto {
         "unknown_file_handle",
         "That file is no longer open. Open it again to continue.",
         false,
+    )
+}
+
+/// What may be said about a file that was never accepted.
+///
+/// The last component of the chosen path and nothing else. A rejected candidate
+/// has no dataset to name it by, and the user still has to be able to tell which
+/// of the files they picked did not arrive -- but the folder it sits in is
+/// exactly what this boundary keeps in Rust, and a rejection is no reason to
+/// give it up. A path with no final component reports nothing rather than
+/// inventing something.
+///
+/// `Path::file_name` is a single component by construction: neither Windows nor
+/// POSIX permits a separator inside one, so what comes back cannot be a path.
+pub(super) fn candidate_display_name(path: &Path) -> String {
+    path.file_name().map_or_else(
+        || "(unnamed file)".to_owned(),
+        |name| bounded_text(&name.to_string_lossy(), MAX_CANDIDATE_NAME_CHARS),
     )
 }
 

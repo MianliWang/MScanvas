@@ -1,12 +1,18 @@
 # ADR 0006 — Multi-dataset workspace boundary
 
-- Status: Accepted for the M1 workspace foundation; the roster interface and
-  everything after it separately gated
+- Status: Accepted for the M1 workspace foundation and its first interface;
+  search, sort, folder ingestion and drag-and-drop separately gated
 - Date: 2026-07-30
 - Amended: 2026-07-30 (M1.1.5) — identity lifetime. Every registered dataset now
   holds a live handle on its file, so a filesystem identity cannot be recycled
   while a row still names it. See *Identity lifetime* below; the paragraphs this
   replaces recorded the gap as an open M1.2 decision.
+- Amended: 2026-07-30 (M1.2) — the roster is reachable. Four typed commands make
+  the registry a list the user can see, add to, curate and empty; the session is
+  bounded; and an open claims the same per-dataset request epoch a spectrum
+  does. See *Session capacity*, *Frontend and Tauri boundary* and *Concurrency*
+  below; the paragraphs this replaces recorded the roster as unreachable and the
+  commit order of two opens as an open M1.2 decision.
 
 ## Context
 
@@ -148,8 +154,9 @@ uses to ask the operating system whether a lease is still held, so it is a
 property this decision knows it has. Narrowing the lease to an access mask the
 sharing rules exempt would remove it, at the price of no longer being the handle
 the identity was read through; that is a separate decision with its own evidence
-to gather, and M1.2 is where a roster of several held files makes it worth
-gathering.
+to gather. The roster now makes a session hold several of these at once, which is
+what would make the evidence worth gathering; nothing in that slice changed the
+lease, so none was gathered and the decision stands where it was.
 
 On Windows this is the whole guarantee: `FILE_ID_INFO` names an object, and an
 open handle keeps that object alive.
@@ -188,6 +195,53 @@ identifier it had before is gone for good.
 Search, sort and filtering are view work over the roster and belong to M1.3.
 The registry has one order.
 
+## Session capacity
+
+A session holds at most `MAX_WORKSPACE_DATASETS` = 1,024 datasets.
+
+The number is a resource contract, not a performance promise. Every Windows row
+owns a live identity lease for as long as it exists, and every mutation answers
+with the whole roster, so the session's cost in handles and in transfer size both
+rise with the number of rows. A thousand is far above what a batch of
+acquisitions looks like and far below where either of those becomes a question,
+which is what a bound is for.
+
+- Duplicates are decided before capacity. A file already in a full workspace is
+  still in it: answering "full" would tell the user to remove rows to make room
+  for something that needs none, and would report a row they already have as a
+  file they failed to add.
+- A valid, non-duplicate file the session cannot hold is refused per item with
+  the stable kind `workspace_full`. It is not retryable: reading again without
+  removing a row cannot succeed.
+- Nothing the session refuses spends an identifier. The allocator advances for
+  registered datasets only, so a full or rejected outcome leaves the sequence
+  where it was.
+- A batch is processed in picker order until the workspace is full, and the rest
+  of its valid non-duplicates are refused. One refusal does not roll back the
+  files that arrived before it.
+
+## Batch addition
+
+One picker operation is one batch, and a batch answers with the roster it
+produced and one outcome per file the user chose, in the order they chose them.
+
+- An outcome is `added`, `duplicate` or `rejected`. A duplicate names the row the
+  user already has, described as it was registered rather than as it was just
+  named. A rejection names the candidate by its final filename only — never a
+  folder, never a path — and carries the typed error that refused it.
+- A file that cannot be accepted is its own failure. The files accepted before it
+  stay accepted: a batch is a list of files the user pointed at, not a
+  transaction, and rolling them back would punish them for their company.
+- A dismissed picker answers `null`, which is not the same as a batch that added
+  nothing. Nothing was chosen, so nothing changed.
+- Nothing in a batch reads an acquisition. Adding a file makes it something the
+  user can see and remove; reading one is a thing they ask for.
+
+Two batches cannot interleave their rows. A short-lived mutation gate serialises
+add, remove and clear against each other; it is not the workspace lock and is
+never held while a file is being accepted from the filesystem for longer than
+that file needs, nor while any backend work runs.
+
 ## Revocation
 
 Removing a dataset is an explicit operation with a reason, and it is atomic
@@ -202,11 +256,11 @@ together.
   is recorded: a late reply cannot recreate registry or preview state, and
   cannot attach itself to another dataset. Identifiers never being reused is a
   second line of defence, not the mechanism.
-- Whether the caller is also *told* that its reply is stale is a roster
-  question, not this one. Until the roster exists the picker replaces the
-  selection, the webview has already let go of the handle it asked under, and
-  refusing an answer nobody is looking at would be a boundary change with no
-  user behind it.
+- The caller is told. A request whose dataset has gone, or which a newer request
+  for that dataset has replaced, answers with `selection_superseded` rather than
+  with a result: the roster is what makes it something the user can cause, and a
+  reply presented as current for a row the workspace no longer has is worse than
+  a refusal it can act on.
 
 ## Source mutation and replacement
 
@@ -216,14 +270,23 @@ backend derived from the earlier state.
 - The same object with a new source generation keeps its row; the preview facts
   recorded for it stop being usable and the existing refusal applies.
 - A different object behind the former name keeps its row too, and the roster
-  will show it in a typed replaced state. The registry never rebinds the
-  identifier to an object the user did not add: the file that arrives under a
-  familiar name is a different acquisition, and adopting it silently would put
-  measurements the user never chose under a name they recognise. Replacing it is
-  a removal and an addition, made by the user.
+  shows it in a typed replaced state. The registry never rebinds the identifier
+  to an object the user did not add: the file that arrives under a familiar name
+  is a different acquisition, and adopting it silently would put measurements the
+  user never chose under a name they recognise. Replacing it is a removal and an
+  addition, made by the user.
 
-The typed replaced state is a roster concept. This slice records the decision
-and keeps the current frontend-visible failure exactly as it is.
+A row's state is derived from what a read of it actually answered, and only from
+the kinds that describe the file rather than the attempt:
+`file_identity_changed` is *replaced* and `file_not_resolvable` is *missing*.
+Everything else is a failure of that read. `not_a_regular_file`, for instance,
+says the name now points at something this boundary never accepts, which is not
+a claim that the acquisition was replaced by another one.
+
+Nothing is rechecked on the user's behalf. A roster read returns stored facts, so
+drawing a list of a thousand rows is not a thousand filesystem inspections; the
+state of a row is established when it is read, where the user asked for it and
+can see the answer.
 
 ## Per-dataset preview ownership
 
@@ -255,14 +318,49 @@ rereading one is a thing the user asks for, one dataset at a time.
 ## Frontend and Tauri boundary
 
 No command accepts a path from the webview, and the main window's capability set
-stays empty. This slice adds no command, changes no command signature and
-changes no transfer object.
+stays empty.
 
-The current picker keeps its replacement semantics until the roster interface
-exists: choosing a file revokes the previous dataset and registers the new one,
-so the session holds exactly one dataset and the webview sees exactly one
-handle. Registering datasets the user cannot see or remove would be a capability
-they did not ask for and could not withdraw.
+Four commands make the registry reachable:
+
+- `get_workspace_roster` — the ordered, path-free list the session holds;
+- `choose_mzml_files` — show the native picker and add everything chosen;
+- `remove_workspace_datasets` — remove the rows these handles name;
+- `clear_workspace` — empty the session.
+
+The webview names a row by the handle it was given, or names nothing at all.
+Clearing takes no identifiers: it is one action over everything the session
+holds, and a list of rows to clear would be a second way to remove some of them.
+A handle the session no longer has is an ordinary reconciliation outcome — the
+interface asked about rows it believed it had, and the answer is the roster it
+actually has — rather than a refusal.
+
+The single-file picker command is retired rather than kept beside its
+replacement. Two registered pickers with opposite semantics, one that replaces
+the workspace and one that adds to it, is a boundary nobody can reason about.
+Its replacement behaviour survives as a `cfg(test)` helper because the focused
+coverage written against it is worth keeping; no command reaches it.
+
+## Active dataset
+
+The roster and the viewer answer different questions, and the interface keeps
+them apart:
+
+- the **selection** is the set `Remove selected` acts on, and may be none, one or
+  many rows;
+- the **focused** row is the single row the keyboard acts on;
+- the **active** row is the one whose preview is on screen or was explicitly
+  asked for.
+
+Only activation reads. Moving focus, changing the selection, adding files,
+removing rows and emptying the list all launch nothing, so walking a roster of a
+thousand rows costs nothing on the machine. Adding files reads at most the first
+row of a session that had nothing in it — which keeps one picker operation to one
+process while a first-run session still ends up looking at something — and never
+reads a row added beside a preview that is already open.
+
+The service stores no active dataset. Which row is being shown is presentation
+state and stays in the frontend; a second copy in Rust would be a second answer
+to the same question.
 
 ## Path and diagnostic privacy
 
@@ -292,20 +390,31 @@ and ADR.
 One backend process at a time remains the rule, enforced by one global gate;
 adding datasets does not add execution lanes.
 
-Supersession becomes per dataset. A newer request for a dataset supersedes an
-older one still waiting for it; work on one dataset does not supersede work on
-another, which under a single global ticket it would.
+Supersession is per dataset and covers every request about one. A dataset has one
+request epoch; an open claims it exactly as a selected spectrum does. A newer
+request for a dataset makes an older one stale at both ends — an open still
+waiting for the backend gate never launches, and one that had already started
+records nothing and answers with the existing `selection_superseded` refusal
+rather than returning a preview as though it were current. Work on one dataset
+supersedes nothing in another, which under a single global ticket it would.
+
+Beginning an open also drops whatever the previous open recorded for that
+dataset. Those rows are what a later spectrum is reconciled against, and after a
+reopen that fails nothing on screen came from them; left in place they would
+outlive their own open and a spectrum would be compared against a reading the
+user is no longer being shown.
 
 No workspace lock is held while waiting for the backend gate, while a backend
 process runs, or while its output is parsed. State is read under the lock,
 released, and taken again to commit — and what the commit rechecks is that the
-dataset is still registered, which is what stops a late reply recreating state.
-It does not check that this is still the newest read of that dataset: two opens
-of one dataset are serialised at the backend gate but not at the commit, so the
-later commit wins whether or not it ran last. The cost is a preview stamped with
-the earlier generation and a spurious refusal on the next spectrum, never mixed
-data, and the fix is an epoch for opens as well — M1.2, where a roster makes
-concurrent opens something a user can actually cause.
+dataset is still registered *and* that this is still its newest request. The
+commit order of two opens is not their request order, so without the second
+check the later commit would win whether or not it ran last.
+
+Nothing is reread on the user's behalf, ever. Changing the installation
+invalidates what a backend produced and rereads none of it; a workspace of a
+thousand datasets does not become a thousand queued jobs because the user pointed
+at another ProteoWizard, and it does not become one because they walked the list.
 
 ## Testing obligations
 
@@ -332,7 +441,22 @@ concurrent opens something a user can actually cause.
 - preview facts commit together or not at all;
 - a backend change rereads nothing;
 - registry operations never reach the provider, proven with one that panics;
-- no path, filename, raw identity or raw handle appears in any debug output.
+- no path, filename, raw identity or raw handle appears in any debug output;
+- a batch reports one outcome per chosen file, in picker order, and one item's
+  failure leaves the rest added;
+- a rejected candidate is named by its final filename and nothing else;
+- duplicates are decided before capacity, and a duplicate in a full workspace is
+  still a duplicate;
+- no identifier is spent on a duplicate, a rejection or a full workspace;
+- removal normalises a repeated handle and reports an unknown one;
+- an open still waiting for its turn never launches once a newer one arrives;
+- an open that had already started cannot commit after a newer one, proven by
+  asking which acquisition's rows the session kept;
+- beginning an open drops what the previous one recorded, so a failed reopen
+  leaves nothing to reconcile against;
+- the roster can be read and emptied while a backend process is running;
+- the registered command surface is exactly the one the frontend calls, the
+  retired picker is gone, and the capability set is still empty.
 
 ## Consequences
 
@@ -347,11 +471,11 @@ as the row exists. That is the price of the identity being the file's own rather
 than a number that used to be, and it is a small one: the handle is read-only,
 shares deletion, and goes when the row does.
 
-The deliberate cost is that none of it is reachable yet. Until the roster
-interface lands, production still registers one dataset at a time, and the
-multi-dataset paths are exercised only by tests. That is the safer half of the
-trade: an invisible workspace the user cannot see, curate or clear would be
-worse than no workspace.
+It is now reachable, and reachable on the terms this decision set: every dataset
+the session holds is a row the user chose, can see, and can remove, and the
+session is bounded. What the user gains is a workspace; what they do not gain is
+a way for MSCanvas to spend their machine on their behalf, because the only thing
+that reads an acquisition is asking for one to be read.
 
 ## Rejected alternatives
 
@@ -363,7 +487,18 @@ worse than no workspace.
   would also merge two acquisitions that are genuinely two.
 - **Registering datasets in production before the roster exists.** It would give
   the webview capabilities over files the user cannot see or withdraw, which is
-  exactly what ADR 0005 refused.
+  exactly what ADR 0005 refused. The roster is what lifts that refusal.
+- **Reading every file a picker returns.** One operation would then be one
+  ProteoWizard process per file against acquisitions of a couple of hundred
+  megabytes each, for results nobody asked to see, behind a gate that runs one at
+  a time. At most the first row of an otherwise empty session is read.
+- **An unbounded session.** Every Windows row holds a handle and every mutation
+  answers with the whole roster, so "as many as fit" is a promise about a
+  machine rather than about this application.
+- **Rechecking every row whenever the roster is drawn.** A list is read on every
+  mount and after every mutation; a thousand filesystem inspections each time
+  would make drawing a list the most expensive thing the application does, to
+  answer a question the next read of a row answers where the user can see it.
 - **Rechecking a registered file instead of holding it open.** Asking again
   whether the recorded path still resolves to the recorded identity cannot tell
   a recycled ID from a hard link that outlived one of its names: both are a row
@@ -382,8 +517,8 @@ worse than no workspace.
 
 ## Follow-up slices
 
-- **M1.2** — the first user-visible roster: add several files, ordered list,
-  deterministic duplicate feedback, focus a dataset, remove and clear.
+- **M1.2** — done: the first user-visible roster, recorded in the amendments
+  above.
 - **M1.3** — search and sort over the roster.
 - **M1.4** — folder ingestion, with its own traversal boundary.
 - **M1.5** — Explorer drag-and-drop, whose security boundary differs from the

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import { usePreviewApi } from "./api";
 import type {
   BackendAvailability,
   Preview,
   PreviewError,
+  SelectedFile,
   SelectedSpectrum,
 } from "./contracts";
 import { toPreviewError } from "./contracts";
@@ -14,6 +15,17 @@ import {
   type PreviewMeasurement,
   type PreviewMeasurementName,
 } from "./instrumentation";
+import {
+  describeAddResult,
+  describeClear,
+  describeRemoveResult,
+  initialRosterState,
+  rosterReducer,
+  rowStateForError,
+  type RosterAction,
+  type RosterState,
+  type WorkspaceNotice,
+} from "./rosterSelection";
 
 /**
  * Every typed failure that means the backend is not the one that read what is
@@ -50,6 +62,11 @@ export type SpectrumState =
   | { readonly status: "unavailable"; readonly requestedIndex: number }
   | { readonly status: "failed"; readonly index: number; readonly error: PreviewError };
 
+export type RosterLoadState =
+  | { readonly status: "loading" }
+  | { readonly status: "ready" }
+  | { readonly status: "failed"; readonly error: PreviewError };
+
 export interface PreviewWorkspace {
   readonly backend: BackendState;
   readonly preview: PreviewState;
@@ -65,11 +82,21 @@ export interface PreviewWorkspace {
    * start means acting on a verdict that is already being replaced.
    */
   readonly backendBusy: boolean;
+  /**
+   * Whether a preview or spectrum request initiated from here is unresolved.
+   *
+   * Curating the roster stays live throughout — focus, selection, adding,
+   * removing and clearing are not backend work — but a second explicit preview
+   * activation waits, so rapid activation cannot queue one process per row
+   * behind the single backend gate. Rust's per-dataset request epochs are the
+   * correctness boundary; this only stops the queue forming.
+   */
+  readonly previewBackendBusy: boolean;
+  /** Whether a picker is on screen, so a second one is not opened over it. */
+  readonly pickerBusy: boolean;
+  /** Whether a roster mutation is unresolved. */
+  readonly workspaceBusy: boolean;
   readonly checkBackend: () => void;
-  /** The file Rust still holds, whether or not a preview is on screen. */
-  readonly selectedFileName: string | null;
-  /** Reads the retained selection again, without going back to the picker. */
-  readonly reopenSelectedFile: () => void;
   /** Shows the folder picker and uses what is chosen, for this session only. */
   readonly chooseInstallation: () => void;
   /**
@@ -79,15 +106,38 @@ export interface PreviewWorkspace {
    * the session, with nothing able to undo it.
    */
   readonly useAutomaticDiscovery: () => void;
-  readonly openFile: () => void;
+
+  /** Everything the session holds, and which rows are focused, selected and shown. */
+  readonly roster: RosterState;
+  readonly rosterLoad: RosterLoadState;
+  readonly reloadRoster: () => void;
+  /** The row whose preview is on screen or was explicitly asked for. */
+  readonly activeDataset: SelectedFile | null;
+  /** Moves focus and selection without starting any backend work. */
+  readonly dispatchRoster: (action: RosterAction) => void;
+  /** Shows the native picker and adds every file chosen. */
+  readonly addFiles: () => void;
+  readonly removeSelected: () => void;
+  readonly clearList: () => void;
+  /** Explicitly reads one dataset. The only thing that starts a preview. */
+  readonly activateDataset: (handle: string) => void;
+  /** Reads the active dataset again, after a failure or a backend change. */
+  readonly previewActiveAgain: () => void;
+  /** A bounded account of the last workspace action, for display and for a live region. */
+  readonly workspaceNotice: WorkspaceNotice | null;
+  readonly dismissWorkspaceNotice: () => void;
+  /** Increments whenever focus should return to the `Add files…` action. */
+  readonly focusAddFilesToken: number;
+
   /**
    * A picker that failed to open. Kept apart from `preview` because failing to
-   * choose a new file is no reason to take away the file already on screen.
+   * choose new files is no reason to take away what is already on screen.
    */
   readonly pickerError: PreviewError | null;
   readonly dismissPickerError: () => void;
-  /** Re-reads the file already open. Reading again is idempotent. */
-  readonly retryOpen: () => void;
+  /** A workspace mutation that failed. The roster is left as Rust last said. */
+  readonly workspaceError: PreviewError | null;
+  readonly dismissWorkspaceError: () => void;
   readonly selectSpectrum: (index: number) => void;
   readonly retrySpectrum: () => void;
   /**
@@ -118,19 +168,41 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const [backend, setBackend] = useState<BackendState>({ status: "checking" });
   const [preview, setPreview] = useState<PreviewState>({ status: "empty" });
   const [pickerError, setPickerError] = useState<PreviewError | null>(null);
+  const [workspaceError, setWorkspaceError] = useState<PreviewError | null>(null);
   const [spectrum, setSpectrum] = useState<SpectrumState>({ status: "none" });
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [measurements, setMeasurements] = useState<readonly PreviewMeasurement[]>([]);
+
+  const [roster, dispatchRoster] = useReducer(rosterReducer, initialRosterState);
+  const [rosterLoad, setRosterLoad] = useState<RosterLoadState>({ status: "loading" });
+  const [workspaceNotice, setWorkspaceNotice] = useState<WorkspaceNotice | null>(null);
   /**
-   * The name of the file Rust is still holding, kept apart from `preview`.
+   * How many accounts of a workspace action there have been.
    *
-   * Changing the installation discards everything a backend read, but not the
-   * selection: Rust still holds that path and no backend decided it. Without
-   * the name there is nothing to offer reopening, and the user would have to
-   * find the same acquisition again -- which is exactly the workspace loss
-   * WF-001 says changing the backend must not cause.
+   * Two actions of the same shape say the same sentence, and a live region
+   * whose text does not change has nothing to announce. Stamping each account
+   * with its place in the sequence is what lets the spoken half differ when the
+   * words do not.
    */
-  const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
+  const noticeSequence = useRef(0);
+  const showWorkspaceNotice = useCallback((notice: WorkspaceNotice) => {
+    noticeSequence.current += 1;
+    setWorkspaceNotice({ ...notice, sequence: noticeSequence.current });
+  }, []);
+  const [focusAddFilesToken, setFocusAddFilesToken] = useState(0);
+  /**
+   * The roster where a promise handler can read it.
+   *
+   * A handler closing over the rendered value would see whatever it was when
+   * the closure was made, which for a request spanning a modal picker is
+   * exactly the wrong answer.
+   */
+  const rosterRef = useRef(roster);
+  // Written during the render whose value it mirrors, not in an effect. An
+  // effect would leave it one commit behind, and a picker reply landing in that
+  // gap would decide "was the workspace empty" from the workspace before the
+  // last change.
+  rosterRef.current = roster;
 
   const [backendBusy, setBackendBusy] = useState(true);
   /**
@@ -145,6 +217,21 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     backendBusyRef.current = busy;
     setBackendBusy(busy);
   }, []);
+  /**
+   * Whether the backend is positively known to be usable, where a promise
+   * handler can read it.
+   *
+   * Written with the state rather than after it. Derived in an effect this
+   * would be one commit behind, and the reply that decides whether to read the
+   * first file of a new session can arrive inside that gap.
+   */
+  const backendUsableRef = useRef(false);
+  const showBackend = useCallback((next: BackendState) => {
+    backendUsableRef.current =
+      next.status === "resolved" && next.availability.state === "available";
+    setBackend(next);
+  }, []);
+
   const backendToken = useRef(0);
   /**
    * The highest installation generation applied to the banner.
@@ -166,16 +253,43 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   /** A recovery check an installation change asked to wait its turn. */
   const deferredRecheck = useRef(false);
   /**
-   * Whether an open is between its request and its reply.
+   * The open between its request and its reply, named by token and by row.
    *
-   * A verdict that arrives meanwhile must not discard for it: the open has
-   * already cleared the screen and is about to fill it, and bumping the preview
-   * token would reject its reply and leave the workspace empty for a change the
-   * open itself may have been the one to notice.
+   * A boolean could only say that some open was in flight, so a reply for a row
+   * the user had left could clear the marker belonging to the one they were
+   * waiting for. What a verdict needs to know is whether an open is about to
+   * fill the screen — it has already emptied it — and what a removal needs to
+   * know is whether the open still belongs to a row that exists.
    */
-  const openInFlight = useRef(false);
+  const activeOpen = useRef<{ token: number; handle: string } | null>(null);
+  /**
+   * How many preview or spectrum requests have been started and not settled.
+   *
+   * A count rather than a flag, so a stale promise settling decrements its own
+   * request and never clears the marker a newer one is relying on. Removing the
+   * active row clears the screen at once but leaves this alone: the process is
+   * still running, and reporting the lane idle would let a second activation
+   * queue behind it — which is the fan-out the roster makes possible.
+   */
+  const viewerRequests = useRef(0);
+  const [previewBackendBusy, setPreviewBackendBusy] = useState(false);
+  const beginViewerRequest = useCallback(() => {
+    viewerRequests.current += 1;
+    setPreviewBackendBusy(true);
+  }, []);
+  const endViewerRequest = useCallback(() => {
+    viewerRequests.current = Math.max(0, viewerRequests.current - 1);
+    setPreviewBackendBusy(viewerRequests.current > 0);
+  }, []);
+
+  const [pickerBusy, setPickerBusy] = useState(false);
+  const pickerBusyRef = useRef(false);
+  const [workspaceBusy, setWorkspaceBusy] = useState(false);
+  const workspaceBusyRef = useRef(false);
+
   const previewToken = useRef(0);
   const spectrumToken = useRef(0);
+  const rosterToken = useRef(0);
   const inFlightSpectrum = useRef<{ index: number; token: number } | null>(null);
   const pendingSpectrumRender = useRef<{ index: number; startedAt: number } | null>(null);
   const pendingOpenRender = useRef<{ rowCount: number; startedAt: number } | null>(null);
@@ -197,6 +311,26 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   );
 
   /**
+   * Takes the current preview off the screen without claiming the backend has
+   * finished with it.
+   *
+   * The tokens move, so nothing still in flight can land; the outstanding count
+   * does not, because the process is still running and a second activation
+   * queued behind it would be the fan-out this bounds.
+   */
+  const clearVisiblePreview = useCallback(() => {
+    previewToken.current += 1;
+    spectrumToken.current += 1;
+    pendingSpectrumRender.current = null;
+    pendingOpenRender.current = null;
+    activeOpen.current = null;
+    openHandle.current = null;
+    setPreview({ status: "empty" });
+    setSpectrum({ status: "none" });
+    setSelectedIndex(null);
+  }, []);
+
+  /**
    * Drops everything on screen that a backend produced.
    *
    * Changing the installation makes every one of those readings the work of an
@@ -206,21 +340,20 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * rows read by the old one, and the honest answers to that comparison are a
    * wrong result or an invented conflict.
    *
-   * The file itself stays chosen -- it is a path Rust holds, and no backend
-   * decided it -- so opening it again is one click and reads nothing until the
-   * user asks. Re-reading it here would launch processes nobody asked for, and
-   * against an installation that may have just been reported unusable.
+   * The roster itself stays, and so does which row was active -- those are
+   * Rust's paths and the user's choice, and no backend decided either. Reading
+   * one again is one action, and reads nothing until the user asks. Re-reading
+   * here would launch a process per row nobody asked for, against an
+   * installation that may have just been reported unusable.
    */
   const discardBackendDerivedState = useCallback(() => {
-    previewToken.current += 1;
-    spectrumToken.current += 1;
-    inFlightSpectrum.current = null;
-    pendingSpectrumRender.current = null;
-    pendingOpenRender.current = null;
-    setPreview({ status: "empty" });
-    setSpectrum({ status: "none" });
-    setSelectedIndex(null);
-  }, []);
+    const handle = openHandle.current;
+    clearVisiblePreview();
+    // Kept, unlike everything a backend produced: it is the row an explicit
+    // "read this again" acts on.
+    openHandle.current = handle;
+    dispatchRoster({ type: "previewDiscarded" });
+  }, [clearVisiblePreview]);
 
   /**
    * The one rule for whether a reply may be shown. Every verdict goes through
@@ -265,12 +398,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       }
       const changed = generation > appliedGeneration.current && appliedGeneration.current >= 0;
       appliedGeneration.current = generation;
-      setBackend({ status: "resolved", availability });
+      showBackend({ status: "resolved", availability });
       // Not while an open is in flight. That open has already emptied the
       // screen and is about to fill it, and its reply is judged on its own
       // generation when it lands -- so discarding here would only reject a
       // reading that may well be the one that caused this verdict.
-      if (changed && !openInFlight.current) {
+      if (changed && activeOpen.current === null) {
         discardBackendDerivedState();
       }
       return true;
@@ -282,7 +415,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     backendToken.current += 1;
     const token = backendToken.current;
     markBackendBusy(true);
-    setBackend({ status: "checking" });
+    showBackend({ status: "checking" });
     void api
       .inspectBackend()
       .then((availability) => {
@@ -296,7 +429,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       })
       .catch((cause: unknown) => {
         if (mounted.current && token === backendToken.current) {
-          setBackend({ status: "failed", error: toPreviewError(cause) });
+          showBackend({ status: "failed", error: toPreviewError(cause) });
         }
       })
       .finally(() => {
@@ -304,10 +437,53 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           markBackendBusy(false);
         }
       });
-  }, [api, applyVerdict]);
+  }, [api, applyVerdict, markBackendBusy]);
 
   useEffect(checkBackend, [checkBackend]);
 
+  /**
+   * Reads what the session already holds.
+   *
+   * Run on mount because a webview can be reloaded while Rust keeps the
+   * workspace: the roster on screen has to be the roster that exists, not an
+   * empty list this window happens to start with. It launches nothing.
+   */
+  const reloadRoster = useCallback(() => {
+    rosterToken.current += 1;
+    const token = rosterToken.current;
+    setRosterLoad({ status: "loading" });
+    void api
+      .getRoster()
+      .then((loaded) => {
+        if (mounted.current && token === rosterToken.current) {
+          dispatchRoster({ type: "rosterLoaded", roster: loaded });
+          setRosterLoad({ status: "ready" });
+        }
+      })
+      .catch((cause: unknown) => {
+        if (mounted.current && token === rosterToken.current) {
+          setRosterLoad({ status: "failed", error: toPreviewError(cause) });
+        }
+      });
+  }, [api]);
+
+  useEffect(reloadRoster, [reloadRoster]);
+
+  /**
+   * Records that the workspace list is known again.
+   *
+   * Every mutation answers with the roster Rust now holds, which is a newer and
+   * more authoritative read than anything `reloadRoster` still has in flight —
+   * hence the token, which drops those older replies rather than letting one
+   * install a list from before the change. Clearing a failed load matters on
+   * its own: without it a read that failed on mount is permanent, and the
+   * workspace goes on reporting that its list could not be read long after an
+   * action has read it.
+   */
+  const rosterSettled = useCallback(() => {
+    rosterToken.current += 1;
+    setRosterLoad({ status: "ready" });
+  }, []);
 
   /**
    * Applies a verdict that comes back from changing which installation is used.
@@ -329,7 +505,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       const generationAtRequest = appliedGeneration.current;
       markBackendBusy(true);
       if (announceChecking) {
-        setBackend({ status: "checking" });
+        showBackend({ status: "checking" });
       }
       // Whether this change left the banner as it found it, which is what
       // decides a deferred recovery check below. A dismissed picker does;
@@ -348,7 +524,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         })
         .catch((cause: unknown) => {
           if (mounted.current && appliedGeneration.current <= generationAtRequest) {
-            setBackend({ status: "failed", error: toPreviewError(cause) });
+            showBackend({ status: "failed", error: toPreviewError(cause) });
             refreshed = true;
           }
         })
@@ -373,7 +549,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           }
         });
     },
-    [applyVerdict, checkBackend],
+    [applyVerdict, checkBackend, markBackendBusy],
   );
 
   /**
@@ -397,18 +573,23 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     (handle: string, startedAt: number) => {
       previewToken.current += 1;
       const token = previewToken.current;
-      // A new file invalidates any spectrum still in flight for the old one,
-      // including the guard that stops a row being read twice. Leaving that
-      // guard set would make the same row index unselectable in the new file
-      // until the abandoned read settled.
+      // A new read invalidates any spectrum still in flight, including the
+      // guard that stops a row being read twice: that guard is keyed by token,
+      // so an abandoned read cannot make the same row index unselectable in the
+      // dataset now on screen.
       spectrumToken.current += 1;
-      inFlightSpectrum.current = null;
       pendingSpectrumRender.current = null;
       pendingOpenRender.current = null;
       setPreview({ status: "opening" });
       setSpectrum({ status: "none" });
       setSelectedIndex(null);
-      openInFlight.current = true;
+      openHandle.current = handle;
+      activeOpen.current = { token, handle };
+      // Said here, where a read actually begins, rather than by whatever asked
+      // for one. A row is the row being read because it is being read.
+      dispatchRoster({ type: "activated", handle });
+      dispatchRoster({ type: "rowStateChanged", handle, state: "opening" });
+      beginViewerRequest();
       // Where the sequence stood when this read began. A failure carries no
       // generation of its own, so this is the only way to tell an answer about
       // the backend in use from an answer about one that has been replaced.
@@ -416,6 +597,13 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       void api
         .openPreview(handle)
         .then((loaded) => {
+          // Landed, so it is no longer a reply to protect. Cleared before any
+          // state is set rather than in a `finally`, which runs a microtask
+          // later: a verdict applied in that gap would skip the discard for a
+          // preview already on screen, and nothing would come back to it.
+          if (activeOpen.current?.token === token) {
+            activeOpen.current = null;
+          }
           if (!mounted.current || token !== previewToken.current) {
             return;
           }
@@ -424,18 +612,13 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           // while producing this very preview. Adopting that number here is
           // what stops the next verdict's higher number reading as a change
           // that happened afterwards and discarding a reading that is current.
+          //
           // Produced by a backend that has since been replaced. The gate is
           // released before a table of this size is converted and transferred,
           // so a folder switch can complete while this is still in flight, and
           // showing it would put the old backend's rows under the new one's
-          // banner.
-          //
-          // Discarded rather than merely dropped. Returning here left the
-          // workspace in `opening` with nothing else coming -- the switch
-          // deliberately does not discard while an open is in flight -- so it
-          // read "Reading the file…" for the rest of the session, with the open
-          // actions disabled and no way back. This ends the read and offers the
-          // retained file, which is a state the user can act on.
+          // banner. Discarded rather than merely dropped: returning here left
+          // the workspace reading "Reading the file…" with nothing else coming.
           if (loaded.installationGeneration < appliedGeneration.current) {
             discardBackendDerivedState();
             return;
@@ -445,6 +628,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
             appliedGeneration.current = loaded.installationGeneration;
           }
           setPreview({ status: "loaded", preview: loaded });
+          dispatchRoster({ type: "rowStateChanged", handle, state: "loaded" });
           if (noticedAChange) {
             // This open was the first thing to see the change, so the banner
             // still names the installation it replaced -- and would go on doing
@@ -470,76 +654,253 @@ export function usePreviewWorkspace(): PreviewWorkspace {
             rowCount: loaded.spectrumTable.rows.length,
             startedAt,
           };
-          // Landed, so it is no longer a reply to protect. Cleared here rather
-          // than in a `finally`, which runs a microtask later: a verdict
-          // applied in that gap would skip the discard for a preview already on
-          // screen, and nothing would come back to it.
-          openInFlight.current = false;
         })
         .catch((cause: unknown) => {
-          if (mounted.current && token === previewToken.current) {
-            // A failure from a backend that has since been replaced says
-            // nothing about the one in use, and showing it under the new
-            // banner strands the user: if it is not retryable, the loaded
-            // layout offers no way back to the retained file either.
-            if (appliedGeneration.current > generationAtRequest) {
-              discardBackendDerivedState();
-              openInFlight.current = false;
-              return;
-            }
-            setPreview({ status: "failed", error: toPreviewError(cause) });
-            // The installation may be the reason. Re-checking here keeps the
-            // banner from insisting a backend is present after it has gone,
-            // which would leave the user with no way back except a restart.
-            //
-            // Except while the user is changing the installation. This check is
-            // not a user action and so passes straight through `backendBusy`,
-            // which makes it the one thing that can race a change; and a change
-            // is already going to produce a fresh verdict, so racing it buys
-            // nothing. It waits, and runs only if the change turns out to leave
-            // the banner as stale as it found it.
-            if (installationChanges.current > 0) {
-              deferredRecheck.current = true;
-            } else {
-              checkBackend();
-            }
-            // Landed as a failure, which is still landed.
-            openInFlight.current = false;
+          if (activeOpen.current?.token === token) {
+            activeOpen.current = null;
           }
+          if (!mounted.current || token !== previewToken.current) {
+            return;
+          }
+          // A failure from a backend that has since been replaced says
+          // nothing about the one in use, and showing it under the new
+          // banner strands the user.
+          if (appliedGeneration.current > generationAtRequest) {
+            discardBackendDerivedState();
+            return;
+          }
+          const failure = toPreviewError(cause);
+          setPreview({ status: "failed", error: failure });
+          // What the failure says about the row rather than about the read:
+          // the name now points at a different acquisition, or at nothing.
+          dispatchRoster({
+            type: "rowStateChanged",
+            handle,
+            state: rowStateForError(failure.kind),
+          });
+          // The installation may be the reason. Re-checking here keeps the
+          // banner from insisting a backend is present after it has gone,
+          // which would leave the user with no way back except a restart.
+          //
+          // Except while the user is changing the installation. This check is
+          // not a user action and so passes straight through `backendBusy`,
+          // which makes it the one thing that can race a change; and a change
+          // is already going to produce a fresh verdict, so racing it buys
+          // nothing.
+          if (installationChanges.current > 0) {
+            deferredRecheck.current = true;
+          } else {
+            checkBackend();
+          }
+        })
+        .finally(() => {
+          // Exactly once per request, whatever happened to it, so a stale
+          // promise never reports a newer request's lane idle.
+          endViewerRequest();
         });
     },
-    [api, checkBackend],
+    [
+      api,
+      beginViewerRequest,
+      checkBackend,
+      discardBackendDerivedState,
+      endViewerRequest,
+    ],
   );
 
-  const openFile = useCallback(() => {
+  /**
+   * Reads one dataset, because the user asked for that dataset.
+   *
+   * The only thing in this hook that starts a preview. Moving around the roster
+   * does not, adding to it does not, and removing from it does not.
+   */
+  const activateDataset = useCallback(
+    (handle: string) => {
+      if (backendBusyRef.current || viewerRequests.current > 0) {
+        return;
+      }
+      if (!backendUsableRef.current) {
+        return;
+      }
+      loadPreview(handle, now());
+    },
+    [loadPreview],
+  );
+
+  const previewActiveAgain = useCallback(() => {
+    const handle = rosterRef.current.active;
+    if (handle !== null) {
+      activateDataset(handle);
+    }
+  }, [activateDataset]);
+
+  const addFiles = useCallback(() => {
+    // One workspace change at a time. Two in flight together let the older
+    // reply's roster snapshot overwrite the newer one's, and Rust serialises
+    // them behind one gate regardless, so this waits for a moment rather than
+    // for anything.
+    if (pickerBusyRef.current || workspaceBusyRef.current) {
+      return;
+    }
     const startedAt = now();
     setPickerError(null);
+    pickerBusyRef.current = true;
+    setPickerBusy(true);
     void api
-      .chooseFile()
-      .then((file) => {
+      .chooseFiles()
+      .then((result) => {
         if (!mounted.current) {
           return;
         }
         // A dismissed picker is not a failure and must leave the workspace
-        // exactly as the user left it.
-        if (file === null) {
+        // exactly as the user left it. It is deliberately not an empty batch.
+        if (result === null) {
           return;
         }
-        openHandle.current = file.handle;
-        setSelectedFileName(file.fileName);
-        loadPreview(file.handle, startedAt);
+        const added = result.outcomes.flatMap((outcome) =>
+          outcome.outcome === "added" ? [outcome.dataset.handle] : [],
+        );
+        // Whether the session was empty is Rust's answer, not this side's
+        // projection of it. A webview can reload while Rust still holds rows,
+        // and a first read that is slow or failed leaves the roster on screen
+        // empty while the session is not -- reading a file into a workspace
+        // that already had several, with nobody having asked for it. Every row
+        // in the reply being one this batch added is the same question asked of
+        // the only list that knows.
+        const wasEmpty = result.roster.datasets.length === added.length;
+        dispatchRoster({ type: "filesAdded", result });
+        rosterSettled();
+        showWorkspaceNotice(describeAddResult(result));
+        // At most one read, and only into a workspace that had nothing in it.
+        // This is what keeps one picker operation costing one process rather
+        // than one per file, while a first-run session still ends up looking at
+        // something.
+        const first = added[0];
+        if (
+          wasEmpty &&
+          first !== undefined &&
+          backendUsableRef.current &&
+          !backendBusyRef.current &&
+          viewerRequests.current === 0
+        ) {
+          loadPreview(first, startedAt);
+        }
       })
       .catch((cause: unknown) => {
-        // The workspace is left exactly as it was. The previously opened file
-        // is still open, in Rust and on screen.
+        // The workspace is left exactly as it was, and so is the preview: a
+        // picker that would not open is its own problem.
         if (mounted.current) {
           setPickerError(toPreviewError(cause));
         }
+      })
+      .finally(() => {
+        pickerBusyRef.current = false;
+        if (mounted.current) {
+          setPickerBusy(false);
+        }
       });
-  }, [api, loadPreview]);
+  }, [api, loadPreview, rosterSettled, showWorkspaceNotice]);
+
+  const removeSelected = useCallback(() => {
+    const handles = [...rosterRef.current.selected];
+    // `pickerBusyRef` as well, and for the same reason `addFiles` reads this
+    // one: an add holds it across the picker *and* the registration after it,
+    // and a removal answering inside that window carries a roster snapshot
+    // taken before the added rows existed.
+    if (handles.length === 0 || workspaceBusyRef.current || pickerBusyRef.current) {
+      return;
+    }
+    workspaceBusyRef.current = true;
+    setWorkspaceBusy(true);
+    setWorkspaceError(null);
+    void api
+      .removeDatasets(handles)
+      .then((result) => {
+        if (!mounted.current) {
+          return;
+        }
+        // The preview goes only when its own row does. Removing rows around it
+        // is not a reason to take away what the user is reading.
+        //
+        // Read here rather than captured before the request. Curating stays
+        // live while a removal is in flight, so the row the viewer belongs to
+        // can have changed since: a snapshot taken beforehand would name the
+        // row the user has already moved on from, and clearing for it would
+        // take away the reading they started instead.
+        const showing = openHandle.current;
+        if (showing !== null && result.removedHandles.includes(showing)) {
+          clearVisiblePreview();
+        }
+        dispatchRoster({ type: "datasetsRemoved", result });
+        rosterSettled();
+        showWorkspaceNotice(describeRemoveResult(result));
+        if (result.roster.datasets.length === 0) {
+          setFocusAddFilesToken((token) => token + 1);
+        }
+      })
+      .catch((cause: unknown) => {
+        if (mounted.current) {
+          setWorkspaceError(toPreviewError(cause));
+        }
+      })
+      .finally(() => {
+        workspaceBusyRef.current = false;
+        if (mounted.current) {
+          setWorkspaceBusy(false);
+        }
+      });
+  }, [api, clearVisiblePreview, rosterSettled, showWorkspaceNotice]);
+
+  const clearList = useCallback(() => {
+    // The count this action announces is read here, so an add still in flight
+    // would make it a count of the workspace before the added rows -- on top of
+    // being the second mutation in flight that `addFiles` refuses to be.
+    if (
+      workspaceBusyRef.current ||
+      pickerBusyRef.current ||
+      rosterRef.current.datasets.length === 0
+    ) {
+      return;
+    }
+    const removed = rosterRef.current.datasets.length;
+    workspaceBusyRef.current = true;
+    setWorkspaceBusy(true);
+    setWorkspaceError(null);
+    void api
+      .clearWorkspace()
+      .then((loaded) => {
+        if (!mounted.current) {
+          return;
+        }
+        clearVisiblePreview();
+        dispatchRoster({ type: "workspaceCleared", roster: loaded });
+        rosterSettled();
+        showWorkspaceNotice(describeClear(removed));
+        setFocusAddFilesToken((token) => token + 1);
+      })
+      .catch((cause: unknown) => {
+        if (mounted.current) {
+          setWorkspaceError(toPreviewError(cause));
+        }
+      })
+      .finally(() => {
+        workspaceBusyRef.current = false;
+        if (mounted.current) {
+          setWorkspaceBusy(false);
+        }
+      });
+  }, [api, clearVisiblePreview, rosterSettled, showWorkspaceNotice]);
 
   const dismissPickerError = useCallback(() => {
     setPickerError(null);
+  }, []);
+
+  const dismissWorkspaceError = useCallback(() => {
+    setWorkspaceError(null);
+  }, []);
+
+  const dismissWorkspaceNotice = useCallback(() => {
+    setWorkspaceNotice(null);
   }, []);
 
   const selectSpectrum = useCallback(
@@ -558,9 +919,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       }
       // A repeat of the row already being read is dropped. Every selection is
       // one backend process, and a double click should not be two of them.
-      // This is deduplication only: nothing is queued and nothing is
-      // cancelled, both of which are separately gated.
-      if (inFlightSpectrum.current?.index === index) {
+      // Judged against the current token, so a read abandoned by a new preview
+      // does not make its row index unselectable in the one now on screen.
+      const inFlight = inFlightSpectrum.current;
+      if (
+        inFlight !== null &&
+        inFlight.token === spectrumToken.current &&
+        inFlight.index === index
+      ) {
         return;
       }
       const startedAt = now();
@@ -569,6 +935,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       inFlightSpectrum.current = { index, token };
       setSelectedIndex(index);
       setSpectrum({ status: "loading", index });
+      beginViewerRequest();
       void api
         .loadSpectrum(handle, index)
         .then((outcome) => {
@@ -601,17 +968,13 @@ export function usePreviewWorkspace(): PreviewWorkspace {
             // opened, and a spectrum load is where that was noticed. Nothing
             // else is going to say so: the failure is not retryable, so the
             // table stays on screen looking current and every further row fails
-            // the same way until the user happens to press Check again. The
-            // readings go, the selection stays, and the banner is refreshed to
-            // describe what is installed now.
-            // Any failure that cannot be retried is a reason to ask whether
-            // the backend is still what the banner says. A replacement that
-            // keeps a file's metadata but no longer answers its help probe
-            // fails inside the provider's own resolution, so it never reaches
-            // the comparison that would name it a change -- and without this
-            // the table would stay on screen with every row failing the same
-            // way. Re-checking is cheap next to a launch, and discards nothing
-            // unless the backend really did change.
+            // the same way until the user happens to press Check again.
+            //
+            // Any failure that cannot be retried is a reason to ask whether the
+            // backend is still what the banner says. A replacement that keeps a
+            // file's metadata but no longer answers its help probe fails inside
+            // the provider's own resolution, so it never reaches the comparison
+            // that would name it a change.
             const definitelyChanged = BACKEND_CHANGED_KINDS.has(failure.kind);
             if (definitelyChanged || !failure.retryable) {
               if (definitelyChanged) {
@@ -620,8 +983,8 @@ export function usePreviewWorkspace(): PreviewWorkspace {
               // Deferred behind an outstanding installation change for the same
               // reason the open recovery is: this check is not a user action,
               // so it passes straight through the busy guard, and clearing that
-              // guard early would re-enable Open and the switch actions while a
-              // folder picker is still open.
+              // guard early would re-enable the actions while a folder picker is
+              // still open.
               if (installationChanges.current > 0) {
                 deferredRecheck.current = true;
               } else {
@@ -629,9 +992,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
               }
             }
           }
+        })
+        .finally(() => {
+          endViewerRequest();
         });
     },
-    [api],
+    [api, beginViewerRequest, checkBackend, discardBackendDerivedState, endViewerRequest],
   );
 
   const completeRenderMeasurements = useCallback(() => {
@@ -650,7 +1016,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       recordMeasurement(
         "rowSelectToRendered",
         now() - spectrumPending.startedAt,
-        `Selecting row ${spectrumPending.index} through that spectrum being in the document.`,
+        `Selecting row ${String(spectrumPending.index)} through that spectrum being in the document.`,
       );
     }
   }, [recordMeasurement]);
@@ -661,24 +1027,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     }
   }, [selectSpectrum, selectedIndex]);
 
-  /**
-   * Reads the retained selection again. Same work as a retry, offered for a
-   * different reason: nothing failed, the reading simply belongs to an
-   * installation no longer in use.
-   */
-  const reopenSelectedFile = useCallback(() => {
-    const handle = openHandle.current;
-    if (handle !== null) {
-      loadPreview(handle, now());
-    }
-  }, [loadPreview]);
-
-  const retryOpen = useCallback(() => {
-    const handle = openHandle.current;
-    if (handle !== null) {
-      loadPreview(handle, now());
-    }
-  }, [loadPreview]);
+  const activeDataset = useMemo(
+    () => roster.datasets.find((dataset) => dataset.handle === roster.active) ?? null,
+    [roster.active, roster.datasets],
+  );
 
   return {
     backend,
@@ -687,15 +1039,29 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     selectedIndex,
     measurements,
     backendBusy,
+    previewBackendBusy,
+    pickerBusy,
+    workspaceBusy,
     checkBackend,
     chooseInstallation,
     useAutomaticDiscovery,
-    selectedFileName,
-    reopenSelectedFile,
-    openFile,
+    roster,
+    rosterLoad,
+    reloadRoster,
+    activeDataset,
+    dispatchRoster,
+    addFiles,
+    removeSelected,
+    clearList,
+    activateDataset,
+    previewActiveAgain,
+    workspaceNotice,
+    dismissWorkspaceNotice,
+    focusAddFilesToken,
     pickerError,
     dismissPickerError,
-    retryOpen,
+    workspaceError,
+    dismissWorkspaceError,
     selectSpectrum,
     retrySpectrum,
     completeRenderMeasurements,
@@ -704,5 +1070,5 @@ export function usePreviewWorkspace(): PreviewWorkspace {
 }
 
 function formatRows(count: number): string {
-  return count === 1 ? "1 spectrum row" : `${count} spectrum rows`;
+  return count === 1 ? "1 spectrum row" : `${String(count)} spectrum rows`;
 }

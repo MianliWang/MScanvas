@@ -7,8 +7,8 @@ use tauri::async_runtime::spawn_blocking;
 use tauri::{Manager, State};
 
 use preview::dto::{
-    BackendAvailabilityDto, PreviewDto, PreviewErrorDto, SelectedFileDto,
-    SelectedSpectrumOutcomeDto,
+    BackendAvailabilityDto, PreviewDto, PreviewErrorDto, SelectedSpectrumOutcomeDto,
+    WorkspaceAddResultDto, WorkspaceRemoveResultDto, WorkspaceRosterDto,
 };
 use preview::{PreviewService, ProteoWizardProvider};
 
@@ -31,21 +31,39 @@ async fn inspect_backend(
     off_the_async_runtime(move || service.inspect_backend()).await
 }
 
-/// Shows the native picker and registers the chosen file.
+/// Reports every dataset the session holds, in the order they were added.
+///
+/// Reads what is already there. No file is revalidated and no process is
+/// launched, so drawing the roster costs nothing on the machine.
+#[tauri::command]
+async fn get_workspace_roster(
+    service: State<'_, SharedService>,
+) -> Result<WorkspaceRosterDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.roster()).await
+}
+
+/// Shows the native picker and adds every chosen file to the workspace.
 ///
 /// This runs asynchronously so the modal dialog can be dispatched onto the main
 /// thread without blocking the command dispatcher. Cancelling returns `None`,
-/// which is an ordinary outcome rather than an error.
+/// which is an ordinary outcome rather than an error: nothing was chosen, so
+/// nothing changed. It is deliberately not an empty result, which would be a
+/// batch that added nothing.
+///
+/// The webview names no path in either direction. It asks for a picker, Rust
+/// shows it, and what comes back is a roster and one outcome per chosen file.
+/// Nothing here reads an acquisition.
 #[tauri::command]
-async fn choose_mzml_file(
+async fn choose_mzml_files(
     app: tauri::AppHandle,
     service: State<'_, SharedService>,
-) -> Result<Option<SelectedFileDto>, PreviewErrorDto> {
+) -> Result<Option<WorkspaceAddResultDto>, PreviewErrorDto> {
     let owner = main_window_handle(&app);
     let service = Arc::clone(&service);
     let (sender, receiver) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
-        let _ = sender.send(preview::dialog::choose_mzml_file(owner));
+        let _ = sender.send(preview::dialog::choose_mzml_files(owner));
     })
     .map_err(|_| picker_unavailable())?;
 
@@ -54,9 +72,37 @@ async fn choose_mzml_file(
     // for.
     off_the_async_runtime(move || {
         let chosen = receiver.recv().map_err(|_| picker_unavailable())??;
-        chosen.map(|path| service.accept_file(&path)).transpose()
+        Ok(chosen.map(|paths| service.add_files(&paths)))
     })
     .await?
+}
+
+/// Removes the rows these handles name and answers with the roster that
+/// remains.
+///
+/// Handles only: the webview names a row it was given, never a path. A handle
+/// the session no longer holds is reported as an ordinary reconciliation
+/// outcome rather than refused. Source acquisitions are not touched.
+#[tauri::command]
+async fn remove_workspace_datasets(
+    handles: Vec<String>,
+    service: State<'_, SharedService>,
+) -> Result<WorkspaceRemoveResultDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.remove_datasets(&handles)).await
+}
+
+/// Empties the workspace and answers with the empty roster.
+///
+/// Takes no identifier: clearing is one action over everything the session
+/// holds, and a list of rows to clear would be a second way to remove some of
+/// them. Source acquisitions are not touched.
+#[tauri::command]
+async fn clear_workspace(
+    service: State<'_, SharedService>,
+) -> Result<WorkspaceRosterDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.clear_workspace()).await
 }
 
 fn picker_unavailable() -> PreviewErrorDto {
@@ -189,7 +235,10 @@ pub fn run() {
             inspect_backend,
             choose_backend_installation,
             use_automatic_backend_discovery,
-            choose_mzml_file,
+            get_workspace_roster,
+            choose_mzml_files,
+            remove_workspace_datasets,
+            clear_workspace,
             open_mzml_preview,
             load_selected_spectrum
         ])

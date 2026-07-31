@@ -17,6 +17,9 @@ import type {
   SelectedSpectrum,
   SelectedSpectrumOutcome,
   SpectrumRow,
+  WorkspaceAddOutcome,
+  WorkspaceRemoveResult,
+  WorkspaceRoster,
 } from "../features/mzml-preview/contracts";
 
 export const availableBackend: BackendAvailability = {
@@ -77,6 +80,31 @@ export const selectedFile: SelectedFile = {
   fileName: "QC_pool_01.mzML",
   byteLength: 208_408_454,
 };
+
+export const secondFile: SelectedFile = {
+  handle: "file-1",
+  fileName: "QC_pool_02.mzML",
+  byteLength: 191_004_112,
+};
+
+export const thirdFile: SelectedFile = {
+  handle: "file-2",
+  fileName: "Blank_03.mzML",
+  byteLength: 12_004_112,
+};
+
+/** The session capacity Rust enforces, restated here only for the fake. */
+export const FAKE_WORKSPACE_CAPACITY = 1_024;
+
+export function workspaceFullError(): PreviewError {
+  return {
+    kind: "workspace_full",
+    summary:
+      "This session already holds as many files as MSCanvas keeps in one workspace, so that one was not added. Remove some rows and add it again.",
+    detail: null,
+    retryable: false,
+  };
+}
 
 /**
  * Deterministic row generation. Values are arbitrary but stable, so a test can
@@ -211,6 +239,18 @@ export function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+/**
+ * One thing the picker handed back: a file the session can accept, or a
+ * candidate Rust refused.
+ *
+ * Modelled rather than canned, because the outcome of adding a file depends on
+ * what the workspace already holds. A fake that answered with fixed outcomes
+ * could not tell a correct duplicate rule from an incorrect one.
+ */
+export type PickedFile =
+  | SelectedFile
+  | { readonly rejected: string; readonly error?: PreviewError };
+
 export interface FakePreviewApiOptions {
   readonly availability?: BackendAvailability | (() => Promise<BackendAvailability>);
   /** What the folder picker resolves to. `null` stands for a dismissed picker. */
@@ -218,7 +258,23 @@ export interface FakePreviewApiOptions {
     | BackendAvailability
     | null
     | (() => Promise<BackendAvailability | null>);
-  readonly file?: SelectedFile | null | (() => Promise<SelectedFile | null>);
+  /** What the session already holds when the webview mounts. */
+  readonly initialDatasets?: readonly SelectedFile[];
+  /** Replaces the roster read entirely, for the cases where it fails. */
+  readonly roster?: () => Promise<WorkspaceRoster>;
+  /**
+   * What the multi-file picker hands back. `null` is a dismissed picker, which
+   * is deliberately not the same as an empty list.
+   */
+  readonly pickedFiles?:
+    | readonly PickedFile[]
+    | null
+    | (() => Promise<readonly PickedFile[] | null>);
+  readonly capacity?: number;
+  /** Replaces the removal entirely, for the cases where it fails. */
+  readonly removeDatasets?: (handles: readonly string[]) => Promise<WorkspaceRemoveResult>;
+  /** Replaces the clear entirely, for the cases where it fails. */
+  readonly clearWorkspace?: () => Promise<WorkspaceRoster>;
   readonly preview?: Preview | (() => Promise<Preview>);
   readonly spectrum?: (index: number) => Promise<SelectedSpectrumOutcome>;
 }
@@ -226,13 +282,34 @@ export interface FakePreviewApiOptions {
 export interface FakePreviewApi extends PreviewApi {
   readonly requestedSpectra: number[];
   readonly openCount: () => number;
+  /** Every handle this fake was asked to read, in order. */
+  readonly openedHandles: string[];
+  /** How many times the roster has been read. */
+  readonly rosterReads: () => number;
+  /** What the fake's session currently holds. */
+  readonly datasets: () => readonly SelectedFile[];
   /** Every verdict this fake has handed back, oldest first. */
   readonly deliveredVerdicts: BackendAvailability[];
 }
 
+/**
+ * A stand-in for the Tauri boundary that models the workspace rather than
+ * canning it.
+ *
+ * It keeps its own ordered list of datasets, decides duplicates by handle,
+ * enforces a capacity and answers every mutation with the roster that resulted
+ * — the same contract Rust has. Every method is present, so no test can pass by
+ * silently defaulting a mutation nobody set up.
+ */
 export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakePreviewApi {
   const requestedSpectra: number[] = [];
+  const openedHandles: string[] = [];
   let openCount = 0;
+  let rosterReads = 0;
+
+  const capacity = options.capacity ?? FAKE_WORKSPACE_CAPACITY;
+  let datasets: SelectedFile[] = [...(options.initialDatasets ?? [])];
+  const snapshot = (): WorkspaceRoster => ({ datasets: [...datasets], capacity });
 
   const deliveredVerdicts: BackendAvailability[] = [];
   // Counted here as the service counts it: a change advances it, a plain
@@ -250,9 +327,35 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     return deliver(verdict);
   };
 
+  const addOne = (picked: PickedFile): WorkspaceAddOutcome => {
+    if ("rejected" in picked) {
+      return {
+        outcome: "rejected",
+        candidateName: picked.rejected,
+        error: picked.error ?? previewError({ kind: "unsupported_extension", retryable: false }),
+      };
+    }
+    const existing = datasets.find((dataset) => dataset.handle === picked.handle);
+    if (existing !== undefined) {
+      return { outcome: "duplicate", existing };
+    }
+    if (datasets.length >= capacity) {
+      return {
+        outcome: "rejected",
+        candidateName: picked.fileName,
+        error: workspaceFullError(),
+      };
+    }
+    datasets = [...datasets, picked];
+    return { outcome: "added", dataset: picked };
+  };
+
   return {
     requestedSpectra,
+    openedHandles,
     openCount: () => openCount,
+    rosterReads: () => rosterReads,
+    datasets: () => datasets,
     deliveredVerdicts,
     inspectBackend: () =>
       (typeof options.availability === "function"
@@ -274,12 +377,48 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         ? options.availability()
         : Promise.resolve(options.availability ?? availableBackend)
       ).then(deliverChange),
-    chooseFile: () =>
-      typeof options.file === "function"
-        ? options.file()
-        : Promise.resolve(options.file === undefined ? selectedFile : options.file),
-    openPreview: () => {
+    getRoster: () => {
+      rosterReads += 1;
+      return options.roster === undefined ? Promise.resolve(snapshot()) : options.roster();
+    },
+    chooseFiles: () =>
+      (typeof options.pickedFiles === "function"
+        ? options.pickedFiles()
+        : Promise.resolve(
+            options.pickedFiles === undefined ? [selectedFile] : options.pickedFiles,
+          )
+      ).then((picked) => {
+        if (picked === null) {
+          return null;
+        }
+        // Every outcome first, then the roster they produced. Snapshotting
+        // before the batch would answer with the workspace as it was, which is
+        // the one thing a batch result must not do.
+        const outcomes = picked.map(addOne);
+        return { roster: snapshot(), outcomes };
+      }),
+    removeDatasets: (handles) => {
+      if (options.removeDatasets !== undefined) {
+        return options.removeDatasets(handles);
+      }
+      const requested = [...new Set(handles)];
+      const removedHandles = requested.filter((handle) =>
+        datasets.some((dataset) => dataset.handle === handle),
+      );
+      const unknownHandles = requested.filter((handle) => !removedHandles.includes(handle));
+      datasets = datasets.filter((dataset) => !removedHandles.includes(dataset.handle));
+      return Promise.resolve({ roster: snapshot(), removedHandles, unknownHandles });
+    },
+    clearWorkspace: () => {
+      if (options.clearWorkspace !== undefined) {
+        return options.clearWorkspace();
+      }
+      datasets = [];
+      return Promise.resolve(snapshot());
+    },
+    openPreview: (handle) => {
       openCount += 1;
+      openedHandles.push(handle);
       // Stamped with the generation this fake's service is currently at, as the
       // real one does. A preview that always claimed generation zero would be
       // rejected as stale by anything that had switched installation since --
@@ -288,7 +427,12 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         typeof options.preview === "function"
           ? options.preview()
           : Promise.resolve(options.preview ?? buildPreview())
-      ).then((preview) => ({ ...preview, installationGeneration: generation }));
+      ).then((preview) => ({
+        ...preview,
+        installationGeneration: generation,
+        // The preview describes the row that was asked for, as Rust's does.
+        file: datasets.find((dataset) => dataset.handle === handle) ?? preview.file,
+      }));
     },
     loadSpectrum: (_handle, index) => {
       requestedSpectra.push(index);
