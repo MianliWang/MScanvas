@@ -45,18 +45,29 @@ export function PreviewWorkspace() {
 
   // Curating the workspace is not backend work, so it stays available when no
   // ProteoWizard is installed. What it waits for is a picker already on screen,
-  // an installation request whose own modal dialog is open, and a workspace
-  // change that has not been answered yet -- the last because two mutations in
-  // flight at once let an older reply's roster snapshot overwrite a newer one's,
-  // and Rust serialises them anyway, so waiting costs a moment and no more.
-  const canAddFiles =
-    !workspace.backendBusy && !workspace.pickerBusy && !workspace.workspaceBusy;
+  // an installation request whose own modal dialog is open, a folder import
+  // that has not settled, and a workspace change that has not been answered yet
+  // -- the last three because two mutations in flight at once let an older
+  // reply's roster snapshot overwrite a newer one's, and Rust serialises them
+  // anyway, so waiting costs a moment and no more.
+  //
+  // One expression for both acquisition actions, so they cannot come to mean
+  // different things: they are mutually exclusive by construction, and each is
+  // refused for exactly the reasons the other is.
+  const canAcquire =
+    !workspace.backendBusy &&
+    !workspace.pickerBusy &&
+    !workspace.folderBusy &&
+    !workspace.workspaceBusy;
   // The same gate from the other side. An add holds `pickerBusy` for the whole
-  // of the picker *and* the registration that follows it, so a removal or a
-  // clear started in that window is the second mutation in flight that
-  // `canAddFiles` exists to prevent -- and it would answer with a roster
-  // snapshot taken before the added rows existed.
-  const canMutate = !workspace.workspaceBusy && !workspace.pickerBusy;
+  // of the picker *and* the registration that follows it, and a folder import
+  // holds its own flag for the picker, the scan and the commit, so a removal or
+  // a clear started in either window is the second mutation in flight that
+  // `canAcquire` exists to prevent -- and it would answer with a roster
+  // snapshot taken before the added rows existed. Reading the list back is the
+  // same kind of statement in Rust and is refused here for the same reason.
+  const canMutate =
+    !workspace.workspaceBusy && !workspace.pickerBusy && !workspace.folderBusy;
   // One viewer read at a time. Rust supersedes an older open of one dataset
   // anyway; this is what stops a queue of them forming behind the single
   // backend gate in the first place.
@@ -109,13 +120,37 @@ export function PreviewWorkspace() {
                 user their retry failed again. */}
             <button
               className="link-button"
-              disabled={!canAddFiles}
+              disabled={!canAcquire}
               onClick={workspace.addFiles}
               type="button"
             >
               Try choosing files again
             </button>
             <button className="link-button" onClick={workspace.dismissPickerError} type="button">
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {/* Its own notice, because it is its own outcome. A folder that could
+            not be scanned changed nothing about the workspace, so saying "the
+            workspace could not be changed" would be describing a mutation that
+            never began. The retry is a fresh choice of folder rather than a
+            repeat of the same one, which is the whole recovery for a link, a
+            network share or a folder that has since gone. */}
+        {workspace.folderError === null ? null : (
+          <div className="notice notice-danger" role="status">
+            <strong>The folder could not be added</strong>
+            <span>{workspace.folderError.summary}</span>
+            <button
+              className="link-button"
+              disabled={!canAcquire}
+              onClick={workspace.addFolder}
+              type="button"
+            >
+              Choose another folder
+            </button>
+            <button className="link-button" onClick={workspace.dismissFolderError} type="button">
               Dismiss
             </button>
           </div>
@@ -173,7 +208,17 @@ export function PreviewWorkspace() {
           <div className="notice notice-danger" role="status">
             <strong>The workspace list could not be read</strong>
             <span>{workspace.rosterLoad.error.summary}</span>
-            <button className="link-button" onClick={workspace.reloadRoster} type="button">
+            {/* Refused while a mutation is unresolved. In Rust a roster read is
+                itself a statement about the workspace -- it is what linearises a
+                reloaded window against a scan the window before it started --
+                so reading the list back mid-import would supersede the very
+                import the user is waiting for. */}
+            <button
+              className="link-button"
+              disabled={!canMutate}
+              onClick={workspace.reloadRoster}
+              type="button"
+            >
               Try reading it again
             </button>
           </div>
@@ -187,7 +232,11 @@ export function PreviewWorkspace() {
           last workspace action did, which is otherwise announced nowhere: with
           a preview loaded the viewer's sentence does not change when rows are
           added or removed. */}
-      <p aria-live="polite" className="visually-hidden">
+      {/* Each region is named, because there are now four of them and which one
+          said a thing is the whole question a test about announcements asks.
+          Reaching for "the last polite region" was a positional answer that a
+          fifth region silently changed the meaning of. */}
+      <p aria-live="polite" className="visually-hidden" data-live-region="viewer">
         {announce(workspace)}
       </p>
       {/* One expression, so the region holds one text node whose string
@@ -205,24 +254,38 @@ export function PreviewWorkspace() {
           repeating — and the sort has no sentence at all, because a native
           select announces its own value and a second voice saying the same
           thing is noise rather than access. */}
-      <p aria-live="polite" className="visually-hidden">
+      <p aria-live="polite" className="visually-hidden" data-live-region="search">
         {describeProjection(projection)}
       </p>
-      <p aria-live="polite" className="visually-hidden">
+      <p aria-live="polite" className="visually-hidden" data-live-region="workspace">
         {workspace.workspaceNotice === null ? "" : announceNotice(workspace.workspaceNotice)}
+      </p>
+      {/* A folder import is the one workspace action long enough that a user
+          can wonder whether anything is happening, and the only one whose end
+          they may be waiting for before doing something else. The visible half
+          is the action's own label; this is what a screen reader is told, and
+          it says plainly that the length is not known rather than inventing a
+          proportion of a tree nothing has finished counting. */}
+      <p aria-live="polite" className="visually-hidden" data-live-region="folder">
+        {workspace.folderBusy
+          ? "Scanning the chosen folder for .mzML files. How long it will take is not known."
+          : ""}
       </p>
 
       <main className="workspace-layout">
         <aside className="workspace-sidebar">
           <DatasetRoster
-            canAddFiles={canAddFiles}
+            canAddFiles={canAcquire}
+            canAddFolder={canAcquire}
             canMutate={canMutate}
             canPreview={canPreview}
             dispatch={workspace.dispatchRoster}
             focusAddFilesToken={workspace.focusAddFilesToken}
+            folderBusy={workspace.folderBusy}
             load={workspace.rosterLoad}
             onActivate={workspace.activateDataset}
             onAddFiles={workspace.addFiles}
+            onAddFolder={workspace.addFolder}
             onClearList={workspace.clearList}
             onReloadRoster={workspace.reloadRoster}
             onRemoveSelected={workspace.removeSelected}
@@ -292,7 +355,10 @@ export function PreviewWorkspace() {
                     Install ProteoWizard to read a file. The workspace list works without it.
                   </span>
                 ) : roster.datasets.length === 0 ? (
-                  <span>Use Add files… in the workspace list to choose one or several.</span>
+                  <span>
+                    Use Add files… in the workspace list to choose one or several, or Add mzML
+                    folder… to take every .mzML file under one folder.
+                  </span>
                 ) : (
                   <>
                     {/* Rust still holds every path, so reading one again is one

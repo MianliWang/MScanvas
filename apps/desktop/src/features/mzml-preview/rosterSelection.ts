@@ -29,6 +29,7 @@
  */
 
 import type {
+  FolderIngestionResult,
   SelectedFile,
   WorkspaceAddResult,
   WorkspaceRemoveResult,
@@ -97,7 +98,11 @@ export interface WorkspaceNotice {
 /** The most per-item details any one notice spells out. */
 export const MAX_NOTICE_DETAILS = 3;
 
-function plural(count: number, noun: string): string {
+/**
+ * `3 files`, `1 file`. Exported so the folder account counts the same way this
+ * one does: two spellings of the same sentence are free to drift apart.
+ */
+export function plural(count: number, noun: string): string {
   return `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
 }
 
@@ -192,6 +197,7 @@ export interface SelectionModifiers {
 export type RosterAction =
   | { readonly type: "rosterLoaded"; readonly roster: WorkspaceRoster }
   | { readonly type: "filesAdded"; readonly result: WorkspaceAddResult }
+  | { readonly type: "folderImported"; readonly result: FolderIngestionResult }
   | { readonly type: "datasetsRemoved"; readonly result: WorkspaceRemoveResult }
   | { readonly type: "workspaceCleared"; readonly roster: WorkspaceRoster }
   | {
@@ -538,6 +544,67 @@ function transition(state: RosterState, action: RosterAction): RosterState {
         anchor: survivingHandle(state.anchor, live),
         selected: keptIn(state.selected, live),
         active: survivingHandle(state.active, live),
+      };
+    }
+
+    case "folderImported": {
+      // The transition `filesAdded` cannot be, and the difference is time. A
+      // file picker is modal: the user cannot touch the roster while it is
+      // open, so replacing the selection with the batch is a safe answer to a
+      // question nothing else could have changed. A folder scan is not modal --
+      // searching, sorting and selecting all stay live for its whole length --
+      // so the selection this reply meets is one the user may have built while
+      // it ran, and it is theirs.
+      //
+      // Read from the state this transition is given rather than from anything
+      // captured when the scan began, which is the whole of what makes that
+      // true.
+      const { roster, outcomes } = action.result;
+      const live = handlesOf(roster.datasets);
+      const added = outcomes.flatMap((outcome) =>
+        outcome.outcome === "added" ? [outcome.dataset.handle] : [],
+      );
+      const base = {
+        datasets: roster.datasets,
+        capacity: roster.capacity,
+        // How the user is looking at the roster is theirs, not the scan's.
+        query: state.query,
+        sort: state.sort,
+        // Surviving rows keep what they were known to be. New rows have no
+        // entry, which `rowPresentation` already reads as `ready`: a row that
+        // has just arrived has had nothing said about it.
+        rowState: prunedRowState(state.rowState, live),
+        // Reading one row is not something a scan decides. A preview already on
+        // screen belongs to whichever row it was opened for, and that row
+        // surviving is the only thing that keeps it.
+        active: survivingHandle(state.active, live),
+      };
+      // Pruned against the authoritative roster: a row the user selected while
+      // the scan ran can have been removed by something else in the same
+      // window, and carrying a handle Rust no longer holds would arm
+      // `Remove selected` with a row that is not there.
+      const kept = keptIn(state.selected, live);
+      const first = added[0];
+      if (first === undefined) {
+        // A folder that added nothing changes nothing about where the user is.
+        const focused = survivingHandle(state.focused, live);
+        return {
+          ...base,
+          focused,
+          anchor: survivingHandle(state.anchor, live) ?? focused,
+          selected: kept,
+        };
+      }
+      return {
+        ...base,
+        focused: first,
+        // With focus, as on every focus move that is not a range extension:
+        // the next Shift action measures from where the keyboard now is.
+        anchor: first,
+        // Both, and in this order. What the user picked while waiting is still
+        // picked, and what arrived is picked too -- so the batch can be acted
+        // on as a batch without discarding the work they did meanwhile.
+        selected: new Set([...kept, ...added]),
       };
     }
 

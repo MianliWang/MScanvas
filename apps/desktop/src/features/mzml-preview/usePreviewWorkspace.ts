@@ -9,6 +9,7 @@ import type {
   SelectedSpectrum,
 } from "./contracts";
 import { toPreviewError } from "./contracts";
+import { describeFolderResult } from "./folderNotice";
 import {
   appendMeasurement,
   now,
@@ -94,6 +95,18 @@ export interface PreviewWorkspace {
   readonly previewBackendBusy: boolean;
   /** Whether a picker is on screen, so a second one is not opened over it. */
   readonly pickerBusy: boolean;
+  /**
+   * Whether a folder import is unresolved, from the picker opening to the reply
+   * settling.
+   *
+   * The whole operation, not the picker half of it: the dialog, the scan, the
+   * acceptance of every candidate, the commit, and the answer landing here.
+   * Deliberately not part of `canPreview` or `previewBackendBusy` — a scan
+   * launches no process, and taking the viewer away for the length of a folder
+   * walk would make the one thing the user is looking at hostage to a list
+   * operation.
+   */
+  readonly folderBusy: boolean;
   /** Whether a roster mutation is unresolved. */
   readonly workspaceBusy: boolean;
   readonly checkBackend: () => void;
@@ -117,6 +130,11 @@ export interface PreviewWorkspace {
   readonly dispatchRoster: (action: RosterAction) => void;
   /** Shows the native picker and adds every file chosen. */
   readonly addFiles: () => void;
+  /**
+   * Shows the native folder picker and adds every mzML file found beneath the
+   * folder chosen. Starts no backend work for any of them.
+   */
+  readonly addFolder: () => void;
   readonly removeSelected: () => void;
   readonly clearList: () => void;
   /** Explicitly reads one dataset. The only thing that starts a preview. */
@@ -135,6 +153,16 @@ export interface PreviewWorkspace {
    */
   readonly pickerError: PreviewError | null;
   readonly dismissPickerError: () => void;
+  /**
+   * A folder import that failed, at any point from the picker to the commit.
+   *
+   * Its own channel rather than the workspace one, because the roster was not
+   * changed: a folder that could not be scanned, or a scan a later decision
+   * superseded, leaves the session exactly as it was. Path-free, like every
+   * error that crosses this boundary.
+   */
+  readonly folderError: PreviewError | null;
+  readonly dismissFolderError: () => void;
   /** A workspace mutation that failed. The roster is left as Rust last said. */
   readonly workspaceError: PreviewError | null;
   readonly dismissWorkspaceError: () => void;
@@ -284,6 +312,25 @@ export function usePreviewWorkspace(): PreviewWorkspace {
 
   const [pickerBusy, setPickerBusy] = useState(false);
   const pickerBusyRef = useRef(false);
+  const [folderBusy, setFolderBusy] = useState(false);
+  /**
+   * The same flag where a promise handler and a start guard can read it.
+   *
+   * A folder import spans a modal dialog and a filesystem walk, so a callback
+   * closing over the rendered value would decide "is one already running" from
+   * whatever was true when the closure was made.
+   */
+  const folderBusyRef = useRef(false);
+  const [folderError, setFolderError] = useState<PreviewError | null>(null);
+  /**
+   * Which folder import owns the busy state, the notice and the error.
+   *
+   * The start guard above already makes two of these non-overlapping, so this
+   * is what keeps that true rather than what makes it true: settlement is
+   * claimed by the request that started it, so nothing an older request does on
+   * its way out can clear a newer one's marker or install its account.
+   */
+  const folderToken = useRef(0);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const workspaceBusyRef = useRef(false);
 
@@ -739,7 +786,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     // reply's roster snapshot overwrite the newer one's, and Rust serialises
     // them behind one gate regardless, so this waits for a moment rather than
     // for anything.
-    if (pickerBusyRef.current || workspaceBusyRef.current) {
+    //
+    // A folder import counts, and it is the longest of them: Rust advances its
+    // mutation generation for this batch, which is exactly what makes a scan
+    // started earlier find itself superseded and add nothing.
+    if (pickerBusyRef.current || folderBusyRef.current || workspaceBusyRef.current) {
       return;
     }
     const startedAt = now();
@@ -801,13 +852,115 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       });
   }, [api, loadPreview, rosterSettled, showWorkspaceNotice]);
 
+  /**
+   * Adds every mzML file under a folder the user picks.
+   *
+   * Longer than every other workspace action and deliberately less exclusive.
+   * The list stays live for the whole of it -- searching, sorting, selecting
+   * and reading a file already in the session all keep working -- because a
+   * scan is filesystem work rather than backend work and there is no honest
+   * reason to take the session away for it. What it does hold is the right to
+   * change the roster, which is what stops a second mutation answering with a
+   * list from before this one.
+   */
+  const addFolder = useCallback(() => {
+    // Read from refs, never from rendered state. This decision is made inside
+    // a handler that can be several commits older than the truth.
+    if (pickerBusyRef.current || folderBusyRef.current || workspaceBusyRef.current) {
+      return;
+    }
+    const startedAt = now();
+    folderToken.current += 1;
+    const token = folderToken.current;
+    setFolderError(null);
+    folderBusyRef.current = true;
+    setFolderBusy(true);
+    void api
+      .chooseFolder()
+      .then((result) => {
+        if (!mounted.current || token !== folderToken.current) {
+          return;
+        }
+        // A dismissed picker is not a failure and is deliberately not a folder
+        // that held nothing. Nothing changes and nothing is announced.
+        if (result === null) {
+          return;
+        }
+        const added = result.outcomes.flatMap((outcome) =>
+          outcome.outcome === "added" ? [outcome.dataset.handle] : [],
+        );
+        // Whether the session was empty is Rust's answer, not this side's
+        // projection of it. A webview can reload while Rust still holds rows,
+        // and a first read that is slow or failed leaves the roster on screen
+        // empty while the session is not. Every row in the reply being one this
+        // import added is the same question asked of the only list that knows,
+        // and it is a safe question only because a superseded import never
+        // reaches here -- it fails, and fails without adding anything.
+        const wasEmpty = result.roster.datasets.length === added.length;
+        // Through the reducer, which is where the selection the user built
+        // while the scan ran is reconciled with what arrived. Doing it here
+        // would mean holding selection rules in two places, and the one that
+        // matters -- keep theirs, add ours -- in the place that cannot see the
+        // current state.
+        dispatchRoster({ type: "folderImported", result });
+        // The reply is a newer and more authoritative read than any roster load
+        // still in flight, so this drops those older replies rather than
+        // letting one install a list from before the import.
+        rosterSettled();
+        showWorkspaceNotice(describeFolderResult(result));
+        // At most one read, and only into a session that had nothing in it.
+        // This is what keeps one folder of a thousand files costing one process
+        // rather than a thousand, while a first-run session still ends up
+        // looking at something.
+        const first = added[0];
+        if (
+          wasEmpty &&
+          first !== undefined &&
+          backendUsableRef.current &&
+          !backendBusyRef.current &&
+          viewerRequests.current === 0
+        ) {
+          loadPreview(first, startedAt);
+        }
+      })
+      .catch((cause: unknown) => {
+        // The workspace is left exactly as it was, and so is the preview. A
+        // folder that could not be scanned, and a scan a later decision
+        // superseded, both changed nothing.
+        if (mounted.current && token === folderToken.current) {
+          setFolderError(toPreviewError(cause));
+        }
+      })
+      .finally(() => {
+        // Claimed by the request that started it. An older one settling here
+        // must not report a newer one's operation finished.
+        if (token !== folderToken.current) {
+          return;
+        }
+        folderBusyRef.current = false;
+        if (mounted.current) {
+          setFolderBusy(false);
+        }
+      });
+  }, [api, loadPreview, rosterSettled, showWorkspaceNotice]);
+
   const removeSelected = useCallback(() => {
     const handles = [...rosterRef.current.selected];
     // `pickerBusyRef` as well, and for the same reason `addFiles` reads this
     // one: an add holds it across the picker *and* the registration after it,
     // and a removal answering inside that window carries a roster snapshot
     // taken before the added rows existed.
-    if (handles.length === 0 || workspaceBusyRef.current || pickerBusyRef.current) {
+    //
+    // `folderBusyRef` is the same argument over a longer window. It is also
+    // the one the user is most likely to reach for -- a scan they think is
+    // taking too long -- and removing rows under it would answer with a roster
+    // the scan's own reply then contradicts.
+    if (
+      handles.length === 0 ||
+      workspaceBusyRef.current ||
+      pickerBusyRef.current ||
+      folderBusyRef.current
+    ) {
       return;
     }
     workspaceBusyRef.current = true;
@@ -858,6 +1011,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     if (
       workspaceBusyRef.current ||
       pickerBusyRef.current ||
+      folderBusyRef.current ||
       rosterRef.current.datasets.length === 0
     ) {
       return;
@@ -893,6 +1047,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
 
   const dismissPickerError = useCallback(() => {
     setPickerError(null);
+  }, []);
+
+  const dismissFolderError = useCallback(() => {
+    setFolderError(null);
   }, []);
 
   const dismissWorkspaceError = useCallback(() => {
@@ -1041,6 +1199,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     backendBusy,
     previewBackendBusy,
     pickerBusy,
+    folderBusy,
     workspaceBusy,
     checkBackend,
     chooseInstallation,
@@ -1051,6 +1210,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     activeDataset,
     dispatchRoster,
     addFiles,
+    addFolder,
     removeSelected,
     clearList,
     activateDataset,
@@ -1060,6 +1220,8 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     focusAddFilesToken,
     pickerError,
     dismissPickerError,
+    folderError,
+    dismissFolderError,
     workspaceError,
     dismissWorkspaceError,
     selectSpectrum,

@@ -176,12 +176,18 @@ button:disabled {
    gives ground first.
 
    The arithmetic, because it is the whole reason for the number: 2px of panel
-   border, 55px of header, 39px of view controls and 87px of actions -- four
-   buttons that do not fit one line in this column and wrap to two, which is
-   what they already did before the view controls existed -- is 183px of chrome,
-   and `.dataset-roster-list` is the only child that can give ground. 183 plus
-   the 56px two-row floor below is 239, rounded up to 240 so a font that
-   measures a little differently does not spend the rounding.
+   border, 55px of header, 39px of view controls and 125px of actions -- five
+   buttons that wrap to three lines at this column's minimum width, being three
+   32px rows, two 6px gaps, 16px of padding and the 1px rule below them -- is
+   221px of chrome, and `.dataset-roster-list` is the only child that can give
+   ground. 221 plus the 56px two-row floor below is 277, rounded up to 280 so a
+   font that measures a little differently does not spend the rounding.
+
+   M1.4.1 moved this from 240 by exactly one wrapped line of actions. The
+   alternative was a shorter label for the folder action, and every shorter one
+   promised something this version does not do: `Add folder…` reads as a folder
+   of anything, including the directory-formatted acquisitions ADR 0007 leaves
+   out of scope.
 
    The search summary is deliberately not a row here. It lives in the header
    line, which exists either way and already truncates: given a row of its own
@@ -189,7 +195,7 @@ button:disabled {
    the actions wrap it was the list that paid. */
 .dataset-roster-panel {
   display: flex;
-  min-height: 240px;
+  min-height: 280px;
   flex: 1 1 40%;
   flex-direction: column;
 }
@@ -297,8 +303,42 @@ button:disabled {
   text-align: center;
 }
 
+/* The name and, only when two rows share one, where it came from. One grid
+   cell for both so the row keeps the five columns it has and the name keeps
+   the floor the track gives it. */
+.dataset-row-label {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+}
+
 .dataset-row-name {
+  /* Takes what is left after the context has had its share, and never less
+     than this: the file a row is about is the last thing on it that may
+     disappear. A context long enough to fill the cell would otherwise leave
+     the name at zero, which is the defect issue #24 fixed one column over. */
+  min-width: 48px;
+  flex: 1 1 auto;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Which of two identically named files this row is. Quieter than the name and
+   never instead of it: it is a fact about where the file was found, and the
+   filename remains what the row is about. Secondary rather than tertiary text,
+   because at 11px the tertiary colour does not reach 4.5:1 against the panel --
+   the same reason the search's own explanations take it.
+
+   Gives ground before the name does, and ellipsizes rather than wrapping: Rust
+   already bounds the string, and a row is one line tall. */
+.dataset-row-context {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -752,10 +792,11 @@ button:disabled {
        workspace column: measured at 896x475 CSS pixels the roster's list came
        out at zero height with four rows in it. The first track therefore has a
        floor, and the viewer below keeps the rest. The floor is the panel's own
-       minimum, raised in M1.3 by what the search and sort controls cost; the
-       two have to move together, because a track shorter than the panel's
-       minimum clamps it back to a height its chrome does not fit in. */
-    grid-template-rows: minmax(240px, 0.9fr) minmax(0, 1.6fr);
+       minimum, raised in M1.3 by what the search and sort controls cost and in
+       M1.4.1 by the third line the fifth action wraps to; the two have to move
+       together, because a track shorter than the panel's minimum clamps it
+       back to a height its chrome does not fit in. */
+    grid-template-rows: minmax(280px, 0.9fr) minmax(0, 1.6fr);
   }
 }
 

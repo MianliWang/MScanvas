@@ -29,6 +29,7 @@ export interface DatasetRosterProps {
   readonly onReloadRoster: () => void;
   readonly dispatch: (action: RosterAction) => void;
   readonly onAddFiles: () => void;
+  readonly onAddFolder: () => void;
   readonly onRemoveSelected: () => void;
   readonly onClearList: () => void;
   readonly onActivate: (handle: string) => void;
@@ -37,6 +38,18 @@ export interface DatasetRosterProps {
    * backend, so this is not about ProteoWizard being installed.
    */
   readonly canAddFiles: boolean;
+  /** The same question for the folder picker, which waits on the same things. */
+  readonly canAddFolder: boolean;
+  /**
+   * Whether a folder import is running, which is what the folder action says
+   * about itself while it is.
+   *
+   * Separate from `canAddFolder` because the two answer different questions:
+   * one is why the action is refused, which is often another operation
+   * entirely, and this one is whether the operation being waited on is this
+   * one.
+   */
+  readonly folderBusy: boolean;
   /** Whether an explicit preview may be started right now. */
   readonly canPreview: boolean;
   /** Whether the roster may be changed right now. */
@@ -68,10 +81,13 @@ export function DatasetRoster({
   onReloadRoster,
   dispatch,
   onAddFiles,
+  onAddFolder,
   onRemoveSelected,
   onClearList,
   onActivate,
   canAddFiles,
+  canAddFolder,
+  folderBusy,
   canPreview,
   canMutate,
   focusAddFilesToken,
@@ -80,8 +96,17 @@ export function DatasetRoster({
   const addFilesRef = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const seenFocusToken = useRef(focusAddFilesToken);
-  const pendingRestore = useRef<HTMLButtonElement | null>(null);
-  const restoreOutstanding = useRef(false);
+  /**
+   * Which acquisition action the keyboard has to be given back to, if any.
+   *
+   * One slot for both, because the two are mutually exclusive: neither picker
+   * can be opened while the other's request is unresolved, so there is never
+   * more than one restoration outstanding. Holding the element rather than a
+   * name is what lets the restoration ask the only questions that matter --
+   * is this control still in the document, and is it usable again.
+   */
+  const pendingPickerRestore = useRef<HTMLButtonElement | null>(null);
+  const pickerRestoreOutstanding = useRef(false);
   /**
    * The row that last took the keyboard, remembered by handle.
    *
@@ -175,52 +200,61 @@ export function DatasetRoster({
   }, [focusAddFilesToken]);
 
   /**
-   * Remembers `Add files…` so the keyboard can be given back to it.
+   * Starts an acquisition action, remembering where the keyboard was.
    *
    * Only what actually held the keyboard is remembered. A press that did not
    * focus the button has no place to return to, and taking focus the user never
    * put here would be a move of its own rather than a restoration.
+   *
+   * Shared by both pickers, and each restores to its own control: the element
+   * pressed is the element remembered, so `Add mzML folder…` can never hand the
+   * keyboard back to `Add files…` because it happened to run second.
    */
-  const startAdding = (event: MouseEvent<HTMLButtonElement>) => {
+  const startPicking = (event: MouseEvent<HTMLButtonElement>, run: () => void) => {
     const control = event.currentTarget;
-    pendingRestore.current = document.activeElement === control ? control : null;
-    restoreOutstanding.current = false;
-    onAddFiles();
+    pendingPickerRestore.current = document.activeElement === control ? control : null;
+    pickerRestoreOutstanding.current = false;
+    run();
   };
 
   /**
-   * Returns the keyboard to `Add files…` once the picker has settled.
+   * Returns the keyboard to whichever acquisition action was used, once its
+   * request has settled.
    *
-   * The action is disabled for the whole request, the picker's modal lifetime
-   * included, and disabling the focused button is what blurs it. The browser
-   * does not put focus back when it is enabled again, so cancelling the dialog
-   * or completing an ordinary addition left a keyboard user without their place
-   * in the tab order.
+   * The action is disabled for the whole request -- the picker's modal
+   * lifetime, and for a folder the scan and commit after it -- and disabling
+   * the focused button is what blurs it. The browser does not put focus back
+   * when it is enabled again, so cancelling the dialog or completing an
+   * ordinary addition left a keyboard user without their place in the tab
+   * order.
    *
-   * Deliberately not keyed on `canAddFiles`: a request begins and ends with it
-   * true, so an effect comparing that value alone would not run again if the
-   * two renders were ever batched into one. Running after every commit costs a
-   * null check, and what makes a settle a settle is stated here instead.
+   * Asked of the control itself rather than of a `canAdd…` prop. Both are true
+   * of one operation and false of the other's, so a shared boolean would
+   * restore the folder button the moment a file picker closed; and a request
+   * begins and ends with the prop true, so an effect comparing that value
+   * alone would not run again if the two renders were ever batched into one.
+   * Running after every commit costs a null check, and what makes a settle a
+   * settle is stated here instead.
    */
   useEffect(() => {
-    const control = pendingRestore.current;
+    const control = pendingPickerRestore.current;
     if (control === null) {
       return;
     }
-    if (!canAddFiles) {
+    if (control.disabled) {
       // Outstanding, so nothing is restored yet -- and having seen it is what
       // tells the end of this request from an effect queued before it began.
-      restoreOutstanding.current = true;
+      pickerRestoreOutstanding.current = true;
       return;
     }
-    if (!restoreOutstanding.current) {
+    if (!pickerRestoreOutstanding.current) {
       return;
     }
     // Settled, whatever the outcome. Held any longer it could fire on a later
     // request it says nothing about.
-    pendingRestore.current = null;
-    restoreOutstanding.current = false;
-    if (!control.isConnected || control.disabled) {
+    pendingPickerRestore.current = null;
+    pickerRestoreOutstanding.current = false;
+    if (!control.isConnected) {
       return;
     }
     // Never over a control the user has since chosen for themselves, including
@@ -389,11 +423,32 @@ export function DatasetRoster({
         <button
           className="primary-button"
           disabled={!canAddFiles}
-          onClick={startAdding}
+          onClick={(event) => {
+            startPicking(event, onAddFiles);
+          }}
           ref={addFilesRef}
           type="button"
         >
           Add files…
+        </button>
+        {/* Beside `Add files…` rather than anywhere else, because it answers
+            the same question with a different unit of choice: this file, or
+            everything under this folder. Its label says what it takes -- mzML
+            files -- because a folder of a vendor acquisition is not something
+            this version can read, and an action called "Add folder" would
+            promise otherwise. */}
+        <button
+          className="secondary-button"
+          disabled={!canAddFolder}
+          onClick={(event) => {
+            startPicking(event, onAddFolder);
+          }}
+          type="button"
+        >
+          {/* What is running, in the control that started it. A scan has no
+              known length -- nothing has counted the tree -- so there is no
+              proportion to show and none is invented. */}
+          {folderBusy ? "Scanning folder…" : "Add mzML folder…"}
         </button>
         <button
           className="secondary-button"
@@ -464,8 +519,8 @@ export function DatasetRoster({
             <>
               <strong>No files in this session yet</strong>
               <span>
-                Add one or many local .mzML files. MSCanvas only reads them, nothing is uploaded,
-                and nothing leaves this computer.
+                Add one or many local .mzML files, or a folder to take every .mzML file under it.
+                MSCanvas only reads them, nothing is uploaded, and nothing leaves this computer.
               </span>
             </>
           )}
@@ -551,8 +606,32 @@ export function DatasetRoster({
                   {selected ? "✓" : ""}
                 </span>
                 {showing ? <span className="visually-hidden">Showing, </span> : null}
-                <span className="dataset-row-name" title={dataset.fileName}>
-                  {dataset.fileName}
+                {/* The name, and only where two rows share one, where it sat
+                    under the folder it came from. Rust decides that over the
+                    whole live roster and bounds what it says, so this renders
+                    the string it was given and derives nothing: a context that
+                    appeared because a second `sample.mzML` arrived goes again
+                    when that row leaves, without this component being told.
+
+                    Inside the name's own cell rather than in a track of its
+                    own, so the row keeps the columns it has and the name keeps
+                    the floor it was given. */}
+                <span className="dataset-row-label">
+                  <span className="dataset-row-name" title={dataset.fileName}>
+                    {dataset.fileName}
+                  </span>
+                  {dataset.relativeContext === null ? null : (
+                    <>
+                      {/* A separator in the text, not only a gap in the
+                          layout: the option's accessible name is its text run
+                          together, and without this a reader hears
+                          "sample.mzMLbatch-2". */}
+                      <span className="visually-hidden">, </span>
+                      <span className="dataset-row-context" title={dataset.relativeContext}>
+                        {dataset.relativeContext}
+                      </span>
+                    </>
+                  )}
                 </span>
                 <span className="dataset-row-size">{formatByteLength(dataset.byteLength)}</span>
                 {/* One track for both, so the name keeps a column of its own.

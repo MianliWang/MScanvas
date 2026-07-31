@@ -40,6 +40,19 @@ export interface SelectedFile {
   readonly handle: string;
   readonly fileName: string;
   readonly byteLength: number;
+  /**
+   * Where this row sits below the folder it was found in, and only when two or
+   * more live rows share its final filename.
+   *
+   * `null` is the ordinary answer. Rust decides it over the whole roster every
+   * time one is built, so it appears when a colliding row arrives and goes
+   * again when that row leaves. It is display only: never searched, never a
+   * sort key, and never part of a dataset's identity.
+   *
+   * Never a drive, a UNC prefix, an absolute path, `..`, or the chosen folder's
+   * own name — the least that has to be said to tell identical names apart.
+   */
+  readonly relativeContext: string | null;
 }
 
 /**
@@ -77,6 +90,43 @@ export type WorkspaceAddOutcome =
 export interface WorkspaceAddResult {
   readonly roster: WorkspaceRoster;
   readonly outcomes: readonly WorkspaceAddOutcome[];
+}
+
+/** Which named traversal limit a folder scan reached. */
+export type FolderScanLimit = "depth" | "entries" | "directories" | "candidates";
+
+/**
+ * How a folder scan itself went, as distinct from what it added.
+ *
+ * Deliberately not a count of what was inspected: how many entries a folder
+ * holds and how many directories are under it describe the shape of the user's
+ * tree, and pointing at a folder is not permission to report that. What is here
+ * is what a reader needs in order to know whether the answer is the whole
+ * answer.
+ */
+export interface FolderDiscoverySummary {
+  /**
+   * Whether everything under the chosen folder was described.
+   *
+   * One answer rather than three, so an incomplete scan cannot be reported as
+   * complete by checking the wrong field. False whenever a limit was reached, a
+   * linked entry was skipped, or a subtree could not be read.
+   */
+  readonly complete: boolean;
+  /**
+   * Entries refused for carrying a reparse tag: junctions, symbolic links,
+   * mount points and cloud placeholders alike. MSCanvas follows none of them.
+   */
+  readonly skippedReparseCount: number;
+  readonly inaccessibleEntryCount: number;
+  readonly limitsReached: readonly FolderScanLimit[];
+}
+
+/** What one folder import did, per candidate and to the scan as a whole. */
+export interface FolderIngestionResult {
+  readonly roster: WorkspaceRoster;
+  readonly outcomes: readonly WorkspaceAddOutcome[];
+  readonly discovery: FolderDiscoverySummary;
 }
 
 export interface WorkspaceRemoveResult {

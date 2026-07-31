@@ -3,6 +3,7 @@ import { createContext, useContext } from "react";
 
 import type {
   BackendAvailability,
+  FolderIngestionResult,
   Preview,
   SelectedSpectrumOutcome,
   WorkspaceAddResult,
@@ -13,12 +14,16 @@ import type {
 /**
  * What the webview may ask the desktop backend.
  *
- * Three things about the installed backend, four about the workspace the
- * session holds, and two about one dataset in it. It cannot supply a command,
- * an executable path, a file path or an argument list, and it never receives
- * raw ProteoWizard output: choosing files is a request to show a picker, not a
- * path this side names. Naming the boundary as an interface also lets tests
- * drive the workspace deterministically without a WebView.
+ * Three kinds of question and nothing else: which ProteoWizard is in use, what
+ * the session's workspace holds and how it changes, and what one dataset in it
+ * contains. Deliberately not counted here — a number in a comment is a second
+ * thing to keep true, and this list is the authority on its own length.
+ *
+ * It cannot supply a command, an executable path, a file path or an argument
+ * list, and it never receives raw ProteoWizard output: choosing files or a
+ * folder is a request to show a picker, not a path this side names. Naming the
+ * boundary as an interface also lets tests drive the workspace deterministically
+ * without a WebView.
  */
 export interface PreviewApi {
   inspectBackend(): Promise<BackendAvailability>;
@@ -44,6 +49,15 @@ export interface PreviewApi {
    * nothing. Launches no preview.
    */
   chooseFiles(): Promise<WorkspaceAddResult | null>;
+  /**
+   * Shows the native folder picker and adds every mzML file found beneath the
+   * chosen folder. Resolves to `null` when the user dismissed the picker, which
+   * is not the same as a folder that held no mzML files.
+   *
+   * Launches no preview and no backend work at all: a folder of a thousand
+   * files costs a thousand filesystem inspections and no processes.
+   */
+  chooseFolder(): Promise<FolderIngestionResult | null>;
   /** Removes the rows these handles name. Source files are never touched. */
   removeDatasets(handles: readonly string[]): Promise<WorkspaceRemoveResult>;
   /** Empties the workspace. Source files are never touched. */
@@ -58,6 +72,7 @@ export const tauriPreviewApi: PreviewApi = {
   useAutomaticDiscovery: () => invoke<BackendAvailability>("use_automatic_backend_discovery"),
   getRoster: () => invoke<WorkspaceRoster>("get_workspace_roster"),
   chooseFiles: () => invoke<WorkspaceAddResult | null>("choose_mzml_files"),
+  chooseFolder: () => invoke<FolderIngestionResult | null>("choose_mzml_folder"),
   removeDatasets: (handles) =>
     invoke<WorkspaceRemoveResult>("remove_workspace_datasets", { handles }),
   clearWorkspace: () => invoke<WorkspaceRoster>("clear_workspace"),
