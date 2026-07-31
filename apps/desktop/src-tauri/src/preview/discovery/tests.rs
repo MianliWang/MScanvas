@@ -8,6 +8,7 @@
 //! the one claim a fake cannot make is that a junction planted in a real folder
 //! does not take the walk out of it.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -30,6 +31,8 @@ struct FakeSource {
     switched: Vec<FileIdentity>,
     /// A refusal the root open produces instead of succeeding.
     root_error: Option<DiscoveryErrorKind>,
+    /// Every entry allowance the walk asked this source to respect, in order.
+    limits_asked: RefCell<Vec<u64>>,
 }
 
 #[derive(Clone, Copy)]
@@ -92,17 +95,27 @@ impl DirectorySource for FakeSource {
         directory.identity
     }
 
-    fn entries(&self, directory: &Self::Directory) -> Result<Vec<DirectoryEntry>, DiscoveryError> {
+    fn entries(
+        &self,
+        directory: &Self::Directory,
+        limit: u64,
+    ) -> Result<Vec<DirectoryEntry>, DiscoveryError> {
         if self.unreadable.contains(&directory.identity) {
             return Err(DiscoveryError::new(
                 DiscoveryErrorKind::RootEnumerationFailed,
             ));
         }
-        Ok(self
+        self.limits_asked.borrow_mut().push(limit);
+        let mut entries = self
             .entries
             .get(&directory.identity)
             .cloned()
-            .unwrap_or_default())
+            .unwrap_or_default();
+        // Honoured rather than ignored, so a test that says "this directory
+        // holds a million names" costs the walk what the real adapter would
+        // charge it and not a byte more.
+        entries.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+        Ok(entries)
     }
 
     fn open_child(
@@ -202,9 +215,12 @@ fn only_mzml_files_become_candidates() {
 }
 
 #[test]
-fn the_extension_test_is_the_one_acceptance_uses() {
+fn discovery_offers_every_spelling_of_the_extension() {
     // Discovery proposes and acceptance decides, but the two must agree about
     // what an mzML name is or a folder would offer files the picker refuses.
+    // This half pins what discovery offers; the real-filesystem test named
+    // `what_discovery_offers_is_what_acceptance_takes` pins that acceptance
+    // answers the same way, by actually calling it.
     let result = walk(&FakeSource::new().directory(
         1,
         vec![
@@ -447,14 +463,26 @@ fn a_cycle_terminates() {
 
 #[test]
 fn two_directories_with_one_name_but_different_identities_are_both_walked() {
+    // The other half of the visited set. Keying it by name would make the
+    // second `data` a directory already seen and drop its subtree silently --
+    // and `data`, `raw` or `Blank` under two different parents is the ordinary
+    // shape of a real folder, not a corner case. So the two must share a name
+    // in different places, which is exactly what this builds.
     let result = walk(
         &FakeSource::new()
             .directory(1, vec![directory("A", 2), directory("B", 3)])
-            .directory(2, vec![file("a.mzML", 4)])
-            .directory(3, vec![file("b.mzML", 5)]),
+            .directory(2, vec![directory("data", 4)])
+            .directory(3, vec![directory("data", 5)])
+            .directory(4, vec![file("first.mzML", 6)])
+            .directory(5, vec![file("second.mzML", 7)]),
     );
 
-    assert_eq!(located(&result), vec!["A\\a.mzML", "B\\b.mzML"]);
+    assert_eq!(
+        located(&result),
+        vec!["A\\data\\first.mzML", "B\\data\\second.mzML"]
+    );
+    assert_eq!(result.summary().directories_entered, 5);
+    assert!(result.is_complete());
 }
 
 #[test]
@@ -564,15 +592,17 @@ fn chain(levels: u128) -> FakeSource {
 }
 
 #[test]
-fn a_tree_exactly_at_the_depth_limit_is_complete() {
+fn a_tree_under_and_exactly_at_the_depth_limit_is_complete() {
     // Depth 0 is the root, so three levels sit at depths 0, 1 and 2.
-    let result = discover(&chain(3), &root(), budget(2, 100, 100, 100)).expect("the root opens");
+    let expected = vec!["f1.mzML", "d1\\f2.mzML", "d1\\d2\\f3.mzML"];
 
-    assert_eq!(
-        located(&result),
-        vec!["f1.mzML", "d1\\f2.mzML", "d1\\d2\\f3.mzML"]
-    );
-    assert!(result.limits().is_empty());
+    let under = discover(&chain(3), &root(), budget(3, 100, 100, 100)).expect("the root opens");
+    assert_eq!(located(&under), expected);
+    assert!(under.limits().is_empty());
+
+    let at = discover(&chain(3), &root(), budget(2, 100, 100, 100)).expect("the root opens");
+    assert_eq!(located(&at), expected);
+    assert!(at.limits().is_empty());
 }
 
 #[test]
@@ -616,9 +646,17 @@ fn the_entry_limit_stops_the_walk_and_keeps_what_was_found() {
         vec![file("a.mzML", 2), file("b.mzML", 3), file("c.mzML", 4)],
     );
 
-    let below = discover(&source, &root(), budget(8, 3, 100, 100)).expect("opens");
-    assert_eq!(below.candidates().len(), 3);
-    assert!(below.limits().is_empty());
+    // One under the limit, exactly at it, and one past: the three cases that
+    // tell a correct comparison from an off-by-one, since a budget checked with
+    // the wrong operator still passes two of them.
+    let under = discover(&source, &root(), budget(8, 4, 100, 100)).expect("opens");
+    assert_eq!(under.candidates().len(), 3);
+    assert!(under.limits().is_empty());
+
+    let at = discover(&source, &root(), budget(8, 3, 100, 100)).expect("opens");
+    assert_eq!(at.candidates().len(), 3);
+    assert_eq!(at.summary().entries_inspected, 3);
+    assert!(at.limits().is_empty());
 
     let past = discover(&source, &root(), budget(8, 2, 100, 100)).expect("opens");
     assert_eq!(past.summary().entries_inspected, 2);
@@ -629,20 +667,53 @@ fn the_entry_limit_stops_the_walk_and_keeps_what_was_found() {
 }
 
 #[test]
-fn the_directory_limit_counts_the_root_and_stops_the_walk() {
+fn an_entry_allowance_is_what_the_source_is_asked_for_not_what_it_is_told_after() {
+    // A budget checked only after a directory has been read is a statement
+    // about counting, not about cost: the allocation has already happened. So
+    // the walk asks for what it can still afford, and the source is required to
+    // stop there -- which is the difference between a folder holding millions
+    // of names costing one allowance and costing all of them.
+    let many: Vec<DirectoryEntry> = (0..500)
+        .map(|index| file(&format!("f{index:03}.mzML"), 100 + index))
+        .collect();
+    let source = FakeSource::new().directory(1, many);
+
+    let result = discover(&source, &root(), budget(8, 4, 100, 100)).expect("opens");
+
+    let asked = source.limits_asked.borrow().clone();
+    // Five: the four still affordable, plus the one that proves there were more.
+    assert_eq!(asked, vec![5]);
+    assert_eq!(result.summary().entries_inspected, 4);
+    assert_eq!(result.limits(), [DiscoveryLimit::Entries]);
+    assert_eq!(result.candidates().len(), 4);
+}
+
+#[test]
+fn the_directory_limit_counts_the_root_and_enters_no_more() {
+    // Deliberately not "stops the walk": reaching this limit ends the *entering*
+    // of directories, and the ones already entered are still described. They
+    // were counted against this very budget, and discarding their work would
+    // spend the allowance on nothing.
     let source = FakeSource::new()
         .directory(1, vec![directory("A", 2), directory("B", 3)])
         .directory(2, vec![file("a.mzML", 4)])
         .directory(3, vec![file("b.mzML", 5)]);
 
+    let under = discover(&source, &root(), budget(8, 100, 4, 100)).expect("opens");
+    assert_eq!(located(&under), vec!["A\\a.mzML", "B\\b.mzML"]);
+    assert!(under.limits().is_empty());
+
     // Three: the root and both children.
-    let below = discover(&source, &root(), budget(8, 100, 3, 100)).expect("opens");
-    assert_eq!(located(&below), vec!["A\\a.mzML", "B\\b.mzML"]);
-    assert!(below.limits().is_empty());
+    let at = discover(&source, &root(), budget(8, 100, 3, 100)).expect("opens");
+    assert_eq!(located(&at), vec!["A\\a.mzML", "B\\b.mzML"]);
+    assert_eq!(at.summary().directories_entered, 3);
+    assert!(at.limits().is_empty());
 
     let past = discover(&source, &root(), budget(8, 100, 2, 100)).expect("opens");
     assert_eq!(located(&past), vec!["A\\a.mzML"]);
+    assert_eq!(past.summary().directories_entered, 2);
     assert_eq!(past.limits(), [DiscoveryLimit::Directories]);
+    assert!(!past.is_complete());
 }
 
 #[test]
@@ -651,6 +722,10 @@ fn the_candidate_limit_stops_the_walk_and_keeps_the_candidates() {
         1,
         vec![file("a.mzML", 2), file("b.mzML", 3), file("c.mzML", 4)],
     );
+
+    let under = discover(&source, &root(), budget(8, 100, 100, 4)).expect("opens");
+    assert_eq!(under.candidates().len(), 3);
+    assert!(under.limits().is_empty());
 
     let at = discover(&source, &root(), budget(8, 100, 100, 3)).expect("opens");
     assert_eq!(at.candidates().len(), 3);
@@ -752,17 +827,22 @@ fn nothing_path_bearing_prints_a_path() {
 
     let candidate = format!("{:?}", result.candidates().first().expect("one candidate"));
     let whole = format!("{result:?}");
+    // The entry too, and not only the candidate. An entry is where a filename
+    // out of the user's folder first exists, and it is the value most likely to
+    // end up in the first diagnostic anyone writes.
+    let entry = format!("{:?}", file("patient-name.mzML", 3));
     let error = format!(
         "{:?}",
         DiscoveryError::new(DiscoveryErrorKind::RootReparsePoint)
     );
 
-    for rendered in [&candidate, &whole] {
+    for rendered in [&candidate, &whole, &entry] {
         for leak in ["patient-name", "Secret", "escape", "R\\", "mzML"] {
             assert!(!rendered.contains(leak), "{leak} appeared in {rendered}");
         }
     }
     assert_eq!(candidate, "<opaque-discovered-candidate>");
+    assert_eq!(entry, "<opaque-directory-entry>");
     // An error says which refusal it is and nothing else.
     assert_eq!(error, "DiscoveryError(root_reparse_point)");
     assert!(!format!("{:?}", identity(3)).contains('3'));

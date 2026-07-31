@@ -13,7 +13,7 @@
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use super::super::windows::{WindowsDirectory, WindowsDirectorySource};
 use super::*;
@@ -70,6 +70,11 @@ impl TestTree {
             .args(["/c", "mklink", "/J"])
             .arg(&link_path)
             .arg(target)
+            // Silenced because it confirms itself by printing both real paths,
+            // and a suite whose subject is that nothing prints a path should
+            // not be the thing printing them into a CI log.
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()
             .expect("run the command processor to create a junction");
         // Deliberately loud. Skipping quietly here would silently retire the
@@ -108,6 +113,8 @@ fn remove_junctions(directory: &Path) {
             let _ = Command::new("cmd")
                 .args(["/c", "rmdir"])
                 .arg(entry.path())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
                 .status();
         } else {
             remove_junctions(&entry.path());
@@ -340,6 +347,8 @@ fn set_attributes(path: &Path, flag: &str) {
     let status = Command::new("cmd")
         .args(["/c", "attrib", flag])
         .arg(path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .expect("run the command processor to set an attribute");
     assert!(status.success(), "could not mark the fixture {flag}");
@@ -430,14 +439,16 @@ fn enumerate_real(
 ) {
     let source = WindowsDirectorySource;
     let directory = source.open_root(root).expect("a real root opens");
-    let entries = source.entries(&directory).expect("a real root enumerates");
+    let entries = source
+        .entries(&directory, u64::MAX)
+        .expect("a real root enumerates");
     (source, directory, entries)
 }
 
 fn entry_named<'a>(entries: &'a [DirectoryEntry], name: &str) -> &'a DirectoryEntry {
     entries
         .iter()
-        .find(|entry| entry.name == OsString::from(name))
+        .find(|entry| entry.name == name)
         .expect("the enumeration described the fixture")
 }
 
@@ -552,6 +563,81 @@ fn a_candidate_whose_file_disappears_after_the_walk_is_still_only_a_proposal() {
         fs::metadata(candidate.path()).is_err(),
         "the candidate names a file that is gone, and acceptance is what will say so"
     );
+}
+
+#[test]
+fn what_discovery_offers_is_what_acceptance_takes() {
+    // The agreement, asked of both sides rather than of the shared predicate.
+    // Discovery proposing a file the picker would refuse is a folder action
+    // that adds nothing and explains nothing, so this calls the real acceptance
+    // boundary on the real paths the real walk produced.
+    let tree = TestTree::new("agreement");
+    tree.file("upper.MZML", 4);
+    tree.file("mixed.MzMl", 4);
+    tree.file("lower.mzml", 4);
+    let refused = tree.file("run.mzXML", 4);
+
+    let result = walk_real(tree.path());
+
+    assert_eq!(
+        names(&result),
+        vec!["lower.mzml", "mixed.MzMl", "upper.MZML"]
+    );
+    for candidate in result.candidates() {
+        super::super::super::selection::accept_mzml_file(candidate.path())
+            .expect("acceptance takes what discovery offered");
+    }
+    // And the one it did not offer is the one acceptance would have refused.
+    let error = super::super::super::selection::accept_mzml_file(&refused)
+        .expect_err("acceptance refuses what discovery passed over");
+    assert_eq!(error.kind, "unsupported_extension");
+}
+
+#[test]
+fn a_real_walk_asks_for_no_more_entries_than_it_can_afford() {
+    // The budget has to bound what a directory costs, not only what it counts.
+    // A folder holding millions of names must not be read whole before the
+    // first entry is looked at, and the only way to see that from outside is
+    // that the walk stops having inspected exactly its allowance.
+    let tree = TestTree::new("allowance");
+    for index in 0..40 {
+        tree.file(&format!("f{index:02}.mzML"), 4);
+    }
+
+    let result = discover_mzml_candidates(
+        tree.path(),
+        DiscoveryBudget {
+            max_entries: 5,
+            ..DiscoveryBudget::default()
+        },
+    )
+    .expect("a real root opens");
+
+    assert_eq!(result.summary().entries_inspected, 5);
+    assert_eq!(result.candidates().len(), 5);
+    assert_eq!(result.limits(), [DiscoveryLimit::Entries]);
+    assert!(!result.is_complete());
+}
+
+#[test]
+fn a_real_local_root_is_not_mistaken_for_a_remote_one() {
+    // Half of the remote check, and the half this machine can answer. Asking
+    // the opened handle is only worth doing if it stays quiet about ordinary
+    // local folders; a check that refused those would refuse every walk.
+    //
+    // The other half -- that a genuine remote object *is* refused -- needs a
+    // share, and there is none here. It is recorded as unverified rather than
+    // covered by a test that would quietly skip when no share existed, since a
+    // test that skips silently retires the claim instead of checking it. The
+    // path-level refusal, which every UNC and device spelling still meets
+    // before a handle is ever opened, is separately tested above.
+    let tree = TestTree::new("local");
+    tree.file("sample.mzML", 4);
+
+    let result = walk_real(tree.path());
+
+    assert_eq!(names(&result), vec!["sample.mzML"]);
+    assert!(result.is_complete());
 }
 
 #[test]

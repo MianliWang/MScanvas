@@ -76,7 +76,19 @@ place a junction can point.
 - A root that is itself a reparse point is refused before anything is
   enumerated.
 - A root on a remote or mapped network drive is refused, because identity,
-  leases and consistency on one are unverified here.
+  leases and consistency on one are unverified here. Refused twice: once from
+  the path, which catches every UNC, verbatim and device spelling before a
+  network round trip is made, and once from the opened handle, which catches
+  what the path cannot show -- an ordinary-looking local path that reaches a
+  share through a linked directory somewhere along the way, or a relative path
+  resolved against a mapped drive. Only one direction of the second refusal is
+  tested here: that ordinary local folders are not mistaken for remote ones,
+  which every real-filesystem test in this repository depends on. That a
+  genuine remote object is refused needs a share, and this repository has none
+  to test against; deleting the handle check would return the code to the
+  path-only posture without failing a test, and that is recorded rather than
+  papered over. The cost of it being wrong is bounded: everything that names a
+  share outright is already refused by the path.
 - A child entry carrying `FILE_ATTRIBUTE_REPARSE_POINT` is not followed, not
   descended into, not offered as a candidate, and counted.
 - No link target is resolved at any point.
@@ -103,8 +115,13 @@ must say the scan was incomplete rather than report an empty folder.
 ## Traversal order
 
 Depth-first, with the files of a level before that level's subdirectories, each
-group ordered by the UTF-16 code-unit ordinal of the entry name and the full
-relative path as the final tie-break. The root is depth 0.
+group ordered by the UTF-16 code-unit ordinal of the entry name. The root is
+depth 0.
+
+The name alone is the whole key, and no tie-break follows it, because within one
+directory no tie can occur: Windows will not hold two entries whose names differ
+only in case, let alone two identical ones. A second key would be unreachable
+code dressed up as a guarantee.
 
 The ordering is deliberately ordinal rather than locale-aware, for the same
 reason M1.3 compares search text with a locale-independent lower-casing: which
@@ -137,10 +154,20 @@ The root counts as one entered directory. Every immediate child an enumeration
 returns counts as one inspected entry, counted before it is classified. A
 candidate counts once its classification is complete.
 
-Depth is the one limit that does not stop the scan: a child that would sit
-deeper than the limit is not entered, the subtree is skipped, and eligible
-siblings continue. Exhausting entries, directories or candidates stops the
-remaining traversal.
+Two of the four do not stop the scan. Reaching the depth limit skips the
+subtree that would sit past it and lets eligible siblings continue. Reaching the
+directory limit stops directories being *entered*, while the ones already
+entered are still walked -- they were counted against this very budget, and
+discarding their work would spend the allowance on nothing. Exhausting entries
+or candidates ends the remaining traversal, because past either point nothing
+further could be inspected or kept.
+
+The entry limit is a bound on what a scan costs and not only on what it counts.
+The walk asks its source for no more entries than it can still afford, one over
+so that it can tell a directory that ended from one that was cut short, and the
+source is required to stop there. A budget consulted only after a directory had
+been read whole would leave the largest dimension of the walk unbounded at
+precisely the moment it is most expensive.
 
 Reaching any limit makes the result incomplete and is recorded as the specific
 reason rather than a single boolean. It is not an error: the candidates already
@@ -173,8 +200,12 @@ Discovery proposes paths. It does not accept them.
 The future acceptance phase calls the existing complete `accept_mzml_file`,
 unchanged, once per candidate in discovery order. Discovery must not duplicate
 canonical acceptance, identity leasing, duplicate detection or capacity
-decisions, and it holds no lease of its own: it opens a directory handle while
-enumerating that directory and releases it before moving on.
+decisions, and it holds no lease of its own. It does hold a handle on every
+directory it has entered but not yet walked, because a child is opened -- and
+its identity checked -- while its parent is still the object being described.
+That is bounded by the directory budget rather than by the shape of the tree,
+and the handles are opened for full sharing, so holding one prevents nobody from
+renaming or deleting anything.
 
 The extension test discovery uses is the same predicate acceptance uses,
 extracted rather than reimplemented, so the two can never drift. It is only a
@@ -284,7 +315,9 @@ does not use it. It is untouched by this slice.
   returned and the junction is counted as skipped. It fails loudly if the
   junction cannot be created rather than skipping the claim.
 - A junction used as the chosen root is refused.
-- Every budget is tested exactly below, exactly at, and one past its limit.
+- Every budget is tested one under, exactly at, and one past its limit, and the
+  entry budget is additionally tested for what it is asked to spend rather than
+  only for what it counts.
 - Repeated scans of an unchanged tree return the same order, and a fake adapter
   returning its entries in different orders produces the same result.
 - Formatting a candidate, a result, an entry or an error contains no drive, root
@@ -305,6 +338,18 @@ honest consequence of refusing every reparse tag rather than guessing at one.
 
 The order a folder adds rows in is this ADR's order, not Explorer's, and users
 who expect Explorer's will see a difference.
+
+One consequence is worth stating on its own, because it is an obligation on the
+next slice rather than a property of this one. Containment is proved for the
+walk: every ancestor of a candidate was opened as a link-refusing handle and
+identity-matched, so a file outside the chosen folder cannot become a candidate.
+What leaves the walk is a path. If a verified subdirectory is replaced by a
+junction after the walk ends, that path resolves through it, and acceptance
+opens no-follow only on the final component. So a candidate is evidence that a
+file was inside the chosen folder when it was found, and is not evidence that it
+still is. The batch that consumes candidates must treat each one as a proposal
+that acceptance re-decides, and must not report "discovery returned it" as
+proof of where it lives.
 
 ## Rejected alternatives
 

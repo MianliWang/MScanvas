@@ -44,6 +44,12 @@ const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
 const FILE_ATTRIBUTE_TAG_INFO_CLASS: i32 = 9;
 /// `FileIdInfo`: volume serial and the whole 128-bit file ID.
 const FILE_ID_INFO_CLASS: i32 = 18;
+/// `FileRemoteProtocolInfo`: how a file is reached when it is reached remotely.
+///
+/// The point of asking is that it answers at all. Windows fails this class with
+/// `ERROR_INVALID_PARAMETER` for a local object, so a call that succeeds is
+/// itself the finding.
+const FILE_REMOTE_PROTOCOL_INFO_CLASS: i32 = 13;
 /// `FileIdExtdDirectoryRestartInfo`: begin an enumeration from the first entry.
 const FILE_ID_EXTD_DIRECTORY_RESTART_INFO_CLASS: i32 = 20;
 /// `FileIdExtdDirectoryInfo`: continue one.
@@ -81,6 +87,17 @@ struct FileIdInformation {
     volume_serial_number: u64,
     file_id: [u8; 16],
 }
+
+/// `FILE_REMOTE_PROTOCOL_INFO`, whose contents this file never reads.
+///
+/// Only the size is load-bearing: the call must be given the real buffer the
+/// class expects, and whether it succeeds is the whole answer. Declared as
+/// bytes rather than as fields because naming fields nothing reads would invite
+/// someone to trust them. `sizeof(FILE_REMOTE_PROTOCOL_INFO)` is 88 in the
+/// Windows SDK (`winbase.h`): six `USHORT`/`ULONG` header fields, then two
+/// 16-byte specific-info unions padded to `ULONG[16]`.
+#[repr(C, align(8))]
+struct FileRemoteProtocolInformation([u8; 88]);
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
@@ -122,6 +139,18 @@ impl DirectorySource for WindowsDirectorySource {
 
         let handle = open_no_follow(root)
             .map_err(|_| DiscoveryError::new(DiscoveryErrorKind::RootUnavailable))?;
+
+        // And now ask the object, because the test above only read text. A path
+        // whose own prefix is a drive letter still lands on a share if any
+        // directory along the way is a link to one, and a relative path names
+        // whichever drive the process happens to be sitting on. Neither is
+        // visible in the string; both are visible to the handle.
+        if is_remote_object(&handle) {
+            return Err(DiscoveryError::new(
+                DiscoveryErrorKind::RemoteRootUnsupported,
+            ));
+        }
+
         let attributes = attributes_of(&handle)
             .map_err(|()| DiscoveryError::new(DiscoveryErrorKind::RootUnavailable))?;
 
@@ -143,12 +172,24 @@ impl DirectorySource for WindowsDirectorySource {
         directory.identity
     }
 
-    fn entries(&self, directory: &Self::Directory) -> Result<Vec<DirectoryEntry>, DiscoveryError> {
+    fn entries(
+        &self,
+        directory: &Self::Directory,
+        limit: u64,
+    ) -> Result<Vec<DirectoryEntry>, DiscoveryError> {
         let mut entries = Vec::new();
         let mut buffer = vec![0_u8; ENUMERATION_BUFFER_BYTES];
         let mut class = FILE_ID_EXTD_DIRECTORY_RESTART_INFO_CLASS;
 
         loop {
+            // Asked before each read rather than only after, so a directory
+            // holding millions of names costs one buffer past the allowance
+            // instead of all of them. This is what makes the entry budget a
+            // bound on what the walk spends and not merely on what it counts.
+            if entries.len() as u64 >= limit {
+                return Ok(entries);
+            }
+
             // SAFETY: the handle outlives the call, and the buffer is a live
             // allocation whose length is passed with it. The API writes at most
             // that many bytes and reports the rest on the next call.
@@ -178,7 +219,12 @@ impl DirectorySource for WindowsDirectorySource {
             // entry in a directory is on that directory's volume. Supplying it
             // here is what makes an entry's identity a whole one, comparable
             // against the identity of the child once it is opened.
-            parse_entries(&buffer, directory.identity.volume_serial(), &mut entries)?;
+            parse_entries(
+                &buffer,
+                directory.identity.volume_serial(),
+                limit,
+                &mut entries,
+            )?;
             class = FILE_ID_EXTD_DIRECTORY_INFO_CLASS;
         }
     }
@@ -271,6 +317,32 @@ fn identity_of(handle: &File) -> Result<FileIdentity, ()> {
     ))
 }
 
+/// Whether an opened object is reached over a remote protocol.
+///
+/// `FileRemoteProtocolInfo` is documented to describe how a file is reached
+/// when it is reached remotely, and to fail with `ERROR_INVALID_PARAMETER`
+/// otherwise. So the answer is whether the call succeeds, not anything it
+/// wrote: nothing here reads the buffer. Treating a failure as "local" is the
+/// safe direction to be wrong in only because the path test already refused
+/// everything that names a share outright; this closes the case the path
+/// cannot see, where an ordinary-looking local path passes through a link to
+/// one.
+fn is_remote_object(handle: &File) -> bool {
+    let mut information = FileRemoteProtocolInformation([0; 88]);
+    // SAFETY: the handle outlives the call, and the out parameter is a live
+    // allocation of exactly the size the class is told about.
+    let answered = unsafe {
+        get_file_information_by_handle_ex(
+            handle.as_raw_handle().cast(),
+            FILE_REMOTE_PROTOCOL_INFO_CLASS,
+            (&raw mut information).cast(),
+            u32::try_from(std::mem::size_of::<FileRemoteProtocolInformation>())
+                .expect("FILE_REMOTE_PROTOCOL_INFO fits in a DWORD"),
+        )
+    };
+    answered != 0
+}
+
 /// Whether a root lives somewhere this slice makes no claims about.
 ///
 /// A UNC path is refused for what it is rather than for what a drive-type call
@@ -297,8 +369,10 @@ fn is_remote_root(root: &Path) -> bool {
             // produces, and this slice has nothing to say about one.
             Prefix::DeviceNS(..) | Prefix::Verbatim(..) => true,
         },
-        // A relative path names no volume, so there is no remote question to
-        // ask; the open below decides whether it exists at all.
+        // A relative or drive-rootless path does name a volume — whichever one
+        // the process is standing on — but not one that can be read out of the
+        // text. It is left to `is_remote_object`, which asks the opened handle
+        // and does not have to guess.
         _ => false,
     }
 }
@@ -312,12 +386,17 @@ fn is_remote_root(root: &Path) -> bool {
 fn parse_entries(
     buffer: &[u8],
     volume_serial: u64,
+    limit: u64,
     entries: &mut Vec<DirectoryEntry>,
 ) -> Result<(), DiscoveryError> {
     let invariant = || DiscoveryError::new(DiscoveryErrorKind::FilesystemInvariantFailed);
     let mut offset = 0_usize;
 
     loop {
+        if entries.len() as u64 >= limit {
+            return Ok(());
+        }
+
         let record = buffer.get(offset..).ok_or_else(invariant)?;
         if record.len() < ENTRY_HEADER_BYTES {
             return Err(invariant());
@@ -346,6 +425,17 @@ fn parse_entries(
             .checked_add(name_bytes)
             .ok_or_else(invariant)?;
         if name_end > record.len() {
+            return Err(invariant());
+        }
+        // A record must contain its own name, not merely reach into whatever
+        // the buffer holds after it. Checking against `record.len()` alone
+        // would let a name declared longer than the record read the beginning
+        // of the next one and call the result a filename; and a `next` shorter
+        // than a header would have this loop decode a second entry out of the
+        // middle of this one. Both come from the kernel, so neither is expected
+        // — which is exactly why an unexpected one must stop rather than be
+        // interpreted.
+        if next != 0 && next < name_end {
             return Err(invariant());
         }
 
@@ -448,7 +538,7 @@ mod tests {
 
     fn parse(buffer: &[u8]) -> Result<Vec<DirectoryEntry>, DiscoveryError> {
         let mut entries = Vec::new();
-        parse_entries(buffer, VOLUME, &mut entries)?;
+        parse_entries(buffer, VOLUME, u64::MAX, &mut entries)?;
         Ok(entries)
     }
 
@@ -594,14 +684,61 @@ mod tests {
 
     #[test]
     fn a_next_offset_into_the_middle_of_a_record_is_refused() {
+        // The second record is long on purpose. An earlier version of this test
+        // used a short one and passed for the wrong reason -- the remainder was
+        // simply smaller than a header -- which would have let a chain that
+        // lands inside a record go unnoticed.
         let mut first = Record::named("alpha.mzML");
         first.next = u32::try_from(first.build().len() + 40).expect("a test record fits");
         let mut buffer = first.build();
+        buffer.extend_from_slice(&Record::named("a-considerably-longer-name.mzML").build());
+        assert!(buffer.len() > usize::try_from(first.next).unwrap() + ENTRY_HEADER_BYTES);
+
+        // Landing mid-record would decode a name length out of the middle of a
+        // file ID and call whatever followed a filename.
+        assert_refused(&buffer);
+    }
+
+    #[test]
+    fn a_next_offset_shorter_than_a_header_is_refused() {
+        // Without this, the loop steps a few bytes into the record it is
+        // already reading and decodes a second, invented entry out of its
+        // middle.
+        let mut record = Record::named("alpha.mzML");
+        record.next = 8;
+
+        assert_refused(&record.build());
+    }
+
+    #[test]
+    fn a_name_that_runs_into_the_following_record_is_refused() {
+        // The name fits the buffer, so a length check against the buffer alone
+        // accepts it -- and 30 bytes of the next record become part of a
+        // filename. A record has to contain its own name.
+        let mut first = Record::named("aa");
+        let honest = first.build().len();
+        first.declared_name_bytes = Some(64);
+        first.next = u32::try_from(honest).expect("a test record fits");
+        let mut buffer = first.build();
         buffer.extend_from_slice(&Record::named("beta.mzML").build());
 
-        // The remainder is shorter than a header, so the walk stops rather than
-        // decoding a name length out of the middle of a file ID.
         assert_refused(&buffer);
+    }
+
+    #[test]
+    fn a_source_that_stops_at_the_allowance_is_not_an_error() {
+        // The parser is where the entry allowance is actually honoured, so
+        // stopping early has to be an ordinary return rather than a refusal.
+        let mut first = Record::named("alpha.mzML");
+        first.next = u32::try_from(first.build().len()).expect("a test record fits");
+        let mut buffer = first.build();
+        buffer.extend_from_slice(&Record::named("beta.mzML").build());
+
+        let mut entries = Vec::new();
+        parse_entries(&buffer, VOLUME, 1, &mut entries).expect("stopping early is not a failure");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, OsString::from("alpha.mzML"));
     }
 
     #[test]

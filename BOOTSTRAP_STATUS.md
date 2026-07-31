@@ -1496,15 +1496,20 @@ identity compared against what its parent enumerated, so a name re-pointed
 between those two moments is refused rather than descended into. Hidden, System
 and dot-prefixed *ordinary* entries are not skipped: a user who pointed at a
 folder asked for what is in it, and skipping by name or attribute would silently
-omit their data. UNC, mapped and remote roots are refused; this slice makes no
-claim about identity on one.
+omit their data. UNC, mapped and remote roots are refused twice — once from the
+path, before any network round trip, and once from the opened handle, which
+catches the case the path cannot show: an ordinary-looking local path that
+reaches a share through a linked directory along the way.
 
 **Budgets and order.** Four named limits bound the walk — depth 32, entries
 200,000, directories 20,000 and candidates 1,024 (the workspace capacity, so
 discovery never proposes more files than a session could hold). Reaching one
 truncates and says which, keeping what was already found; a result reports
 incompleteness once, covering limits, skipped reparse entries and unreadable
-subtrees together. Order is this application's rather than the filesystem's: a
+subtrees together. The entry limit bounds what a scan costs rather than only
+what it counts: the walk asks its source for no more entries than it can still
+afford, so a directory holding millions of names is not read whole before the
+first one is looked at. Order is this application's rather than the filesystem's: a
 level's own files precede the files below it, each group sorted by UTF-16 code
 unit, ordinal and not case-folded, so the same tree discovers the same way twice
 on any machine. The traversal is an explicit stack, not recursion — how much
@@ -1522,24 +1527,38 @@ counts. Each candidate keeps its location under the chosen root so that two
 files called `sample.mzML` can be told apart later — ADR 0007 approves showing
 that relative context only when names actually collide.
 
-**Tests.** 200 tests in the desktop crate, 71 of them discovery: 45 policy tests
-against a fake filesystem that can present a cycle, answer in a different order
-every time, or hand back a child that is no longer itself; 12 record-decoding
-tests over malformed `FILE_ID_EXTD_DIR_INFO` buffers; and 26 against real
-`%TEMP%` trees on NTFS. The central claim is one of those — a junction planted
-in the chosen folder, pointing at a directory outside it, yields the inside file
-only, one counted reparse skip and one directory entered. A junction as the root
-is refused. A child directory deleted and re-created under the same name between
-enumeration and open is refused by identity, as is one replaced by a junction or
-by a file. A 6,000-deep chain is walked to the bottom without a call stack. No
-real acquisition, vendor data or user folder was touched, and no ProteoWizard
-process was started: discovery never reaches the backend at all.
+**Tests.** 206 tests in the desktop crate, 76 of them discovery, counted with
+`cargo test --lib -- --list`: 35 policy tests against a fake filesystem that can
+present a cycle, answer in a different order every time, or hand back a child
+that is no longer itself; 16 record-decoding tests over malformed
+`FILE_ID_EXTD_DIR_INFO` buffers; and 25 against real `%TEMP%` trees on NTFS. The
+central claim is one of those — a junction planted in the chosen folder,
+pointing at a directory outside it, yields the inside file only, one counted
+reparse skip and one directory entered. A junction as the root is refused. A
+child directory deleted and re-created under the same name between enumeration
+and open is refused by identity, as is one replaced by a junction or by a file.
+Every budget is exercised one under, exactly at and one past its limit, and the
+entry budget additionally for what it makes the source spend rather than only
+for what it counts. A 6,000-deep chain is walked to the bottom without a call
+stack. What discovery offers is handed to the real `accept_mzml_file`, which
+takes all of it and refuses the one name discovery passed over. No real
+acquisition, vendor data or user folder was touched, and no ProteoWizard process
+was started: discovery never reaches the backend at all.
 
-**Mutations.** All 24 named mutations were introduced, run and restored; none
-was committed. Every one was caught by a discriminating test, including the four
-that only a real filesystem can answer — root reparse accepted, hidden directory
-skipped, System directory skipped and child identity mismatch ignored — and the
-recursive rewrite, which overflows its stack on the 6,000-deep chain.
+**Mutations.** All 24 named mutations were introduced, run and restored, along
+with four more written for the repairs that review produced; none was committed.
+Twenty-seven of the twenty-eight were caught by a discriminating test, including
+the four that only a real filesystem can answer — root reparse accepted, hidden
+directory skipped, System directory skipped and child identity mismatch ignored
+— and the recursive rewrite, which overflows its stack on the 6,000-deep chain.
+
+One survived, and is recorded rather than explained away: removing the
+handle-level remote check leaves every test passing, because proving that a
+genuine remote object is refused needs a network share this repository has none
+of. What is tested is the other direction, that ordinary local folders are not
+mistaken for remote ones. Deleting the check would return the code to refusing
+remote roots by path alone, which is what every UNC and device spelling still
+meets before a handle is opened.
 
 **Rendered QA was exempted, and honestly so.** This change has no rendered
 state to check: no pixel, no DOM node and no command changes. Every claim above

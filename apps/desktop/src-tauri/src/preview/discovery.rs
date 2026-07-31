@@ -246,12 +246,22 @@ impl fmt::Debug for DiscoveryError {
 ///
 /// Attributes and identity come from the same enumeration record as the name,
 /// so the three describe one entry rather than three separate lookups.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct DirectoryEntry {
     pub(super) name: OsString,
     pub(super) is_directory: bool,
     pub(super) is_reparse_point: bool,
     pub(super) identity: FileIdentity,
+}
+
+impl fmt::Debug for DirectoryEntry {
+    /// Opaque, for the same reason a candidate is. An entry holds a filename
+    /// out of the user's folder, and a derived `Debug` would put it in the
+    /// first log line or assertion message anyone adds. Nothing formats one
+    /// today; this is what stops the first one that does from leaking.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<opaque-directory-entry>")
+    }
 }
 
 /// What happened when the walk tried to open a child directory it had decided
@@ -280,8 +290,19 @@ pub(super) trait DirectorySource {
     /// The identity of an open directory, used as the visited key.
     fn identity(&self, directory: &Self::Directory) -> FileIdentity;
 
-    /// Every immediate child of an open directory, `.` and `..` excluded.
-    fn entries(&self, directory: &Self::Directory) -> Result<Vec<DirectoryEntry>, DiscoveryError>;
+    /// Every immediate child of an open directory, `.` and `..` excluded, up to
+    /// `limit` of them.
+    ///
+    /// The limit is not advice. A directory can hold millions of entries, and a
+    /// source that read them all before the caller looked at the first would
+    /// make the entry budget a statement about counting rather than about cost
+    /// — the allocation would already have happened. Returning fewer than
+    /// `limit` means the directory really had no more.
+    fn entries(
+        &self,
+        directory: &Self::Directory,
+        limit: u64,
+    ) -> Result<Vec<DirectoryEntry>, DiscoveryError>;
 
     /// Opens a child of an open directory, refusing anything that is no longer
     /// the entry the parent described.
@@ -366,7 +387,15 @@ pub(super) fn discover<S: DirectorySource>(
     visited.insert(source.identity(&stack[0].directory));
 
     'walk: while let Some(pending) = stack.pop() {
-        let entries = match source.entries(&pending.directory) {
+        // One more than the walk can still afford. The extra is what lets the
+        // loop below see that the directory had more to give and record the
+        // limit, without the source having to materialise the rest of a
+        // directory holding millions of names to prove it.
+        let affordable = budget
+            .max_entries
+            .saturating_sub(summary.entries_inspected)
+            .saturating_add(1);
+        let entries = match source.entries(&pending.directory, affordable) {
             Ok(entries) => entries,
             Err(error) => {
                 if pending.depth == 0 {
@@ -460,6 +489,16 @@ pub(super) fn discover<S: DirectorySource>(
                     // would re-enter a directory reached twice, and a cycle
                     // would never end. Every reparse entry is already refused,
                     // so this is the second lock on the same door.
+                    //
+                    // Skipping the second name is not incompleteness and is not
+                    // counted as any. One directory reached by two names holds
+                    // one set of files, and the first name already described
+                    // every one of them; the second would offer the same
+                    // acquisitions again under a different spelling, which
+                    // registration would refuse as duplicates anyway. On
+                    // Windows this is unreachable regardless: a second name for
+                    // a directory is a mount point or a link, and both carry a
+                    // reparse tag that was refused before this point.
                     if !visited.insert(source.identity(&directory)) {
                         continue;
                     }
