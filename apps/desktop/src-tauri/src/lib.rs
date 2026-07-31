@@ -7,8 +7,9 @@ use tauri::async_runtime::spawn_blocking;
 use tauri::{Manager, State};
 
 use preview::dto::{
-    BackendAvailabilityDto, PreviewDto, PreviewErrorDto, SelectedSpectrumOutcomeDto,
-    WorkspaceAddResultDto, WorkspaceRemoveResultDto, WorkspaceRosterDto,
+    BackendAvailabilityDto, FolderIngestionResultDto, PreviewDto, PreviewErrorDto,
+    SelectedSpectrumOutcomeDto, WorkspaceAddResultDto, WorkspaceRemoveResultDto,
+    WorkspaceRosterDto,
 };
 use preview::{PreviewService, ProteoWizardProvider};
 
@@ -73,6 +74,42 @@ async fn choose_mzml_files(
     off_the_async_runtime(move || {
         let chosen = receiver.recv().map_err(|_| picker_unavailable())??;
         Ok(chosen.map(|paths| service.add_files(&paths)))
+    })
+    .await?
+}
+
+/// Shows the native folder picker and adds every mzML file found beneath the
+/// chosen folder.
+///
+/// The webview names no folder in either direction: it asks for a picker, Rust
+/// shows one, and what comes back is a roster, one outcome per candidate, and
+/// how the scan itself went. Cancelling returns `None`, which is an ordinary
+/// outcome -- nothing was chosen, so nothing changed -- and is deliberately not
+/// an empty result, which would be a folder that held no mzML files.
+///
+/// Nothing here reads an acquisition. Scanning a folder of a thousand files
+/// costs a thousand filesystem inspections and no backend processes at all.
+#[tauri::command]
+async fn choose_mzml_folder(
+    app: tauri::AppHandle,
+    service: State<'_, SharedService>,
+) -> Result<Option<FolderIngestionResultDto>, PreviewErrorDto> {
+    let owner = main_window_handle(&app);
+    let service = Arc::clone(&service);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = sender.send(preview::dialog::choose_mzml_folder(owner));
+    })
+    .map_err(|_| folder_picker_unavailable())?;
+
+    // The wait spans the modal dialog and then the scan, either of which can
+    // last as long as the user's filesystem takes. Neither is something to
+    // hold an async worker for.
+    off_the_async_runtime(move || {
+        let chosen = receiver.recv().map_err(|_| folder_picker_unavailable())??;
+        chosen
+            .map(|root| service.add_mzml_folder(&root))
+            .transpose()
     })
     .await?
 }
@@ -237,6 +274,7 @@ pub fn run() {
             use_automatic_backend_discovery,
             get_workspace_roster,
             choose_mzml_files,
+            choose_mzml_folder,
             remove_workspace_datasets,
             clear_workspace,
             open_mzml_preview,

@@ -3528,6 +3528,7 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "use_automatic_backend_discovery",
             "get_workspace_roster",
             "choose_mzml_files",
+            "choose_mzml_folder",
             "remove_workspace_datasets",
             "clear_workspace",
             "open_mzml_preview",

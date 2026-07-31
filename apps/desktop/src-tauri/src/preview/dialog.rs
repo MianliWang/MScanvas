@@ -7,7 +7,7 @@
 use super::dto::PreviewErrorDto;
 
 #[cfg(windows)]
-pub use windows_dialog::{choose_installation_folder, choose_mzml_files};
+pub use windows_dialog::{choose_installation_folder, choose_mzml_files, choose_mzml_folder};
 
 #[cfg(not(windows))]
 pub fn choose_mzml_files(
@@ -22,6 +22,17 @@ pub fn choose_mzml_files(
 
 #[cfg(not(windows))]
 pub fn choose_installation_folder(
+    _owner: Option<isize>,
+) -> Result<Option<std::path::PathBuf>, PreviewErrorDto> {
+    Err(PreviewErrorDto::new(
+        "folder_picker_unavailable",
+        "The native folder picker is available on Windows in this version.",
+        false,
+    ))
+}
+
+#[cfg(not(windows))]
+pub fn choose_mzml_folder(
     _owner: Option<isize>,
 ) -> Result<Option<std::path::PathBuf>, PreviewErrorDto> {
     Err(PreviewErrorDto::new(
@@ -332,6 +343,50 @@ mod windows_dialog {
     pub fn choose_installation_folder(
         owner: Option<isize>,
     ) -> Result<Option<PathBuf>, PreviewErrorDto> {
+        browse_for_folder(
+            owner,
+            "Choose the ProteoWizard installation folder",
+            "folder_picker_failed",
+            "That choice could not be read as a folder on this computer.",
+        )
+    }
+
+    /// Shows the native folder picker and returns the folder of acquisitions to
+    /// scan, or `None` when the user cancelled.
+    ///
+    /// A separate operation from the installation picker rather than the same
+    /// one with a different caption. The two name different things -- where the
+    /// backend is installed, and where the user keeps their data -- and a
+    /// single "choose a folder" command that meant either would be a boundary
+    /// whose meaning depended on who called it.
+    ///
+    /// It asks for the folder, not for files inside it: what the user is
+    /// choosing is the authority boundary the scan runs under. What is in it is
+    /// discovery's question, and it is asked after this returns.
+    ///
+    /// Must be called from a thread that can run a modal message loop; the
+    /// Tauri command dispatches it onto the main thread.
+    pub fn choose_mzml_folder(owner: Option<isize>) -> Result<Option<PathBuf>, PreviewErrorDto> {
+        browse_for_folder(
+            owner,
+            "Choose a folder containing .mzML files",
+            "folder_picker_failed",
+            "That choice could not be read as a folder on this computer.",
+        )
+    }
+
+    /// The one native folder dialog, told what to ask for.
+    ///
+    /// Both public operations are this with a different title. Sharing the
+    /// implementation is what keeps the flags identical between them -- real
+    /// filesystem directories only, no new-folder button, and the caller's
+    /// window as the owner -- rather than two copies that drift.
+    fn browse_for_folder(
+        owner: Option<isize>,
+        title: &str,
+        failure_kind: &str,
+        failure_summary: &str,
+    ) -> Result<Option<PathBuf>, PreviewErrorDto> {
         // The resizable dialog style needs an initialised apartment. Tauri's
         // main thread already has one, so this is normally S_FALSE; it is called
         // anyway because the rule is that whoever needs COM initialises it, and
@@ -341,7 +396,7 @@ mod windows_dialog {
             unsafe { co_initialize_ex(std::ptr::null_mut(), COINIT_APARTMENTTHREADED) };
         let owns_apartment = initialised == S_OK || initialised == S_FALSE;
 
-        let title = wide("Choose the ProteoWizard installation folder");
+        let title = wide(title);
         let mut display_name = vec![0_u16; PATH_BUFFER_LENGTH];
         let mut arguments = BrowseInfoW {
             owner: owner.map_or(std::ptr::null_mut(), |handle| handle as *mut c_void),
@@ -393,11 +448,7 @@ mod windows_dialog {
         }
 
         if resolved == 0 {
-            return Err(PreviewErrorDto::new(
-                "folder_picker_failed",
-                "That choice could not be read as a folder on this computer.",
-                true,
-            ));
+            return Err(PreviewErrorDto::new(failure_kind, failure_summary, true));
         }
         let length = buffer.iter().position(|unit| *unit == 0).unwrap_or(0);
         if length == 0 {
