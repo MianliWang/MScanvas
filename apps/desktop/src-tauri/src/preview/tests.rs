@@ -4256,6 +4256,49 @@ fn nothing_a_folder_import_transfers_carries_a_path_a_root_name_or_an_identity()
 }
 
 #[test]
+fn the_folder_boundary_is_spelled_the_way_the_frontend_reads_it() {
+    // Serde renames these; the frontend declares them as a closed union and a
+    // field name. Neither side would fail to compile if the two disagreed, and
+    // the failure would be silent -- a limit that matched nothing, or a context
+    // that never rendered -- so the spellings are asserted against the file the
+    // frontend actually reads.
+    use super::dto::FolderScanLimitDto;
+
+    let contracts = include_str!("../../../src/features/mzml-preview/contracts.ts");
+    for limit in [
+        FolderScanLimitDto::Depth,
+        FolderScanLimitDto::Entries,
+        FolderScanLimitDto::Directories,
+        FolderScanLimitDto::Candidates,
+    ] {
+        let rendered = serde_json::to_string(&limit).expect("a limit serializes");
+        assert!(
+            contracts.contains(&rendered),
+            "the frontend does not name {rendered}"
+        );
+    }
+    for field in [
+        "relativeContext",
+        "skippedReparseCount",
+        "inaccessibleEntryCount",
+        "limitsReached",
+    ] {
+        assert!(
+            contracts.contains(field),
+            "the frontend does not read {field}"
+        );
+    }
+    // And the two counters that describe the user's tree are not sent at all,
+    // in either spelling.
+    for absent in ["entriesInspected", "directoriesEntered"] {
+        assert!(
+            !contracts.contains(absent),
+            "the boundary must not carry {absent}"
+        );
+    }
+}
+
+#[test]
 fn every_discovery_refusal_maps_to_a_visible_kind_of_its_own() {
     // One arm per kind, spelled out rather than defaulted, so a new traversal
     // refusal makes the mapping fail to compile instead of quietly arriving as
