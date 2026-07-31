@@ -1048,6 +1048,73 @@ nothing in this change is implicated by evidence; whether a second instance
 sharing a user-data directory can do that is a question about running two
 instances, not about the roster.
 
+### What review found in the roster, 2026-07-30
+
+Two whole-diff reviews — one on the security and boundary side, one on the
+interface, accessibility and async side — produced seven findings, each then put
+to two independent skeptics: one asked to refute it, one asked to write out a
+reproducing sequence and check every step against the code. Six survived and are
+repaired here; one was refuted by both, and the reason is recorded below.
+
+The blocking one. Removing rows decided whether to take the preview off the
+screen from the row it had captured *before* the request was sent. Curating
+stays live while a removal is in flight, so the user can start reading another
+file in that gap — and the reply then cleared the reading they had just started,
+leaving its row saying "Reading…" for the rest of the session, because the
+open's own reply was rejected on token order before it could say otherwise. It
+now asks what the viewer actually belongs to at the moment it is answered.
+
+Two were a row claiming a preview nobody can see. The reducer marked the first
+file of a newly filled session as the one being shown whether or not a read
+started, so on a machine with no ProteoWizard a row announced "Showing" beside a
+file nothing had opened, while the viewer beside it said to install
+ProteoWizard; the same marker also survived a backend change that had just
+discarded what that row read. Which row is being read is now said where a read
+begins, and the marker follows what the row actually holds — so the row keeps
+its place as the one an explicit re-read acts on without claiming anything is on
+screen for it.
+
+Three were about what is said and to whom. The account of a workspace action was
+announced only through a live region that arrived together with its text, which
+is the shape screen readers routinely miss, and with a preview loaded no other
+region's text changes when rows are added or removed — so a removal, including
+its statement that the files on disk were not changed, could be silent. It is
+now announced through a region mounted for the life of the application. The list
+of per-item details keyed on its own text, which two names for one acquisition
+make identical. And the roster stated "No files in this session yet" before it
+had asked what the session holds, which is the one claim it cannot make: Rust
+keeps the workspace across a reload of this window.
+
+The refuted one was a variant of the duplicate-key finding whose reproduction
+needed two files of the same name from two different folders in one batch. The
+picker's multi-selection answer is one directory followed by bare names, and the
+parser refuses anything else, so that batch cannot exist — the surviving variant
+reaches the same key collision through two names for one file in one folder,
+which can.
+
+Each repair is pinned by a test that fails without it, verified by mutation:
+the removal deciding from a handle captured before it was sent; the marker
+ignoring whether anything was read; a read no longer saying which row it belongs
+to; the notice list keying on its own text; the empty state claiming emptiness
+while the list is being read; and the summary announced nowhere that already
+existed. The duplicate-key repair is watched through the console, because
+rendering two children with one key is something React complains about rather
+than something a user sees.
+
+Validation after the repairs: `pnpm lint`, `pnpm typecheck`, `pnpm test` (161
+tests across ten files), `pnpm build`, `python -B scripts/check_repo.py`,
+`cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --locked --workspace --all-targets`.
+The rendered check was run again on the repaired head from a clean start: one
+picker operation with three files gave three rows and one `open_mzml_preview`;
+click, Ctrl-click, Home, Shift+Arrow and Ctrl+A issued no command at all; Enter
+issued exactly one; removing a row that was not being read left the preview up
+and removing the one that was took it away and read nothing in its place;
+clearing put the keyboard on `Add files…`; both polite regions were present with
+the workspace summary in the one that had been mounted all along; and no
+viewport overflowed the document in either axis. Console and page errors were
+empty.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.
