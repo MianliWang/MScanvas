@@ -6,6 +6,7 @@ import { PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel } from "./SelectedSpectrumPanel";
 import { SpectrumTable } from "./SpectrumTable";
 import { formatCount } from "./format";
+import type { WorkspaceNotice } from "./rosterSelection";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
 
 /** The session workspace: a curated roster of mzML files, and one open preview. */
@@ -110,6 +111,10 @@ export function PreviewWorkspace() {
             inside it. A summary that grows with the batch would otherwise take
             its height from the list it is describing, and at a short window the
             rows it announces would have nowhere left to be. */}
+        {/* Deliberately not a live region of its own. A region that appears
+            together with its text is the shape screen readers routinely miss,
+            so the announcement is made by the always-mounted region below and
+            this is the visible half. */}
         {workspace.workspaceNotice === null ? null : (
           <div
             className={
@@ -117,13 +122,15 @@ export function PreviewWorkspace() {
                 ? "notice notice-warning"
                 : "notice notice-neutral"
             }
-            role="status"
           >
             <span>{workspace.workspaceNotice.message}</span>
             {workspace.workspaceNotice.details.length === 0 ? null : (
               <ul className="workspace-notice-details">
-                {workspace.workspaceNotice.details.map((detail) => (
-                  <li key={detail}>{detail}</li>
+                {/* Keyed by position as well as by text: two names for one
+                    acquisition produce the same sentence, and Rust reports one
+                    outcome per file the user chose rather than one per row. */}
+                {workspace.workspaceNotice.details.map((detail, index) => (
+                  <li key={`${String(index)}-${detail}`}>{detail}</li>
                 ))}
                 {workspace.workspaceNotice.more === 0 ? null : (
                   <li key="more">
@@ -149,10 +156,18 @@ export function PreviewWorkspace() {
         ) : null}
       </div>
 
-      {/* One polite region so a screen reader hears state changes that happen
-          away from the keyboard focus. */}
+      {/* Two polite regions, both mounted for the life of the application so
+          that what they say is a change inside a region rather than a region
+          arriving with its text — the shape a screen reader is most likely to
+          miss. One carries what the viewer is doing; the other carries what the
+          last workspace action did, which is otherwise announced nowhere: with
+          a preview loaded the viewer's sentence does not change when rows are
+          added or removed. */}
       <p aria-live="polite" className="visually-hidden">
         {announce(workspace)}
+      </p>
+      <p aria-live="polite" className="visually-hidden">
+        {workspace.workspaceNotice === null ? "" : announceNotice(workspace.workspaceNotice)}
       </p>
 
       <main className="workspace-layout">
@@ -266,8 +281,22 @@ export function PreviewWorkspace() {
   );
 }
 
+/**
+ * What the last workspace action did, and what it did not do.
+ *
+ * The details are deliberately left out: the visible notice carries them, and a
+ * polite region that reads a list of file names aloud after every batch is
+ * noise rather than feedback.
+ */
+function announceNotice(notice: WorkspaceNotice): string {
+  const said = `Workspace: ${notice.message}`;
+  return notice.more === 0
+    ? said
+    : `${said} ${formatCount(notice.more)} more are listed on screen.`;
+}
+
 function announce(workspace: ReturnType<typeof usePreviewWorkspace>): string {
-  const { preview, roster, spectrum } = workspace;
+  const { preview, roster, rosterLoad, spectrum } = workspace;
   if (preview.status === "opening") {
     return "Reading the selected file.";
   }
@@ -275,6 +304,12 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>): string {
     return `The file could not be read. ${preview.error.summary}`;
   }
   if (preview.status === "empty") {
+    if (rosterLoad.status === "loading") {
+      // Not "the workspace is empty". Rust keeps the workspace across a reload
+      // of this window, so until the list has been read that is a claim this
+      // side cannot make.
+      return "Reading the workspace list.";
+    }
     return roster.datasets.length === 0
       ? "The workspace is empty."
       : `${formatCount(roster.datasets.length)} files in the workspace. No preview is open.`;

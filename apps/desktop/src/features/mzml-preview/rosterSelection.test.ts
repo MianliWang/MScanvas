@@ -96,7 +96,7 @@ describe("adopting what Rust holds", () => {
 });
 
 describe("adding files", () => {
-  it("selects every new row, focuses the first, and shows it when the session was empty", () => {
+  it("selects every new row and focuses the first, and shows none of them", () => {
     const state = rosterReducer(loaded(), {
       type: "filesAdded",
       result: addResult([added("file-0"), added("file-1")], "file-0", "file-1"),
@@ -105,17 +105,22 @@ describe("adding files", () => {
     expect(selection(state)).toEqual(["file-0", "file-1"]);
     expect(state.focused).toBe("file-0");
     expect(state.anchor).toBe("file-0");
-    // The first row of an otherwise empty session is what the user just did,
-    // so it is what they are looking at -- and it is the only one.
-    expect(state.active).toBe("file-0");
+    // Which row is being read is decided by a read starting, which depends on
+    // things this reducer cannot see -- whether a backend is usable, whether
+    // one is already running. Claiming it here said "Showing" beside a file
+    // nothing had opened.
+    expect(state.active).toBeNull();
   });
 
   it("leaves the row on screen alone when adding to a session that has one", () => {
     const before = rosterReducer(
-      rosterReducer(loaded(), {
-        type: "filesAdded",
-        result: addResult([added("file-0")], "file-0"),
-      }),
+      rosterReducer(
+        rosterReducer(loaded(), {
+          type: "filesAdded",
+          result: addResult([added("file-0")], "file-0"),
+        }),
+        { type: "activated", handle: "file-0" },
+      ),
       { type: "rowStateChanged", handle: "file-0", state: "loaded" },
     );
 

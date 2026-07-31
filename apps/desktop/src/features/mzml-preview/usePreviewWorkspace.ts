@@ -556,6 +556,9 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       setSelectedIndex(null);
       openHandle.current = handle;
       activeOpen.current = { token, handle };
+      // Said here, where a read actually begins, rather than by whatever asked
+      // for one. A row is the row being read because it is being read.
+      dispatchRoster({ type: "activated", handle });
       dispatchRoster({ type: "rowStateChanged", handle, state: "opening" });
       beginViewerRequest();
       // Where the sequence stood when this read began. A failure carries no
@@ -690,7 +693,6 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       if (!backendUsableRef.current) {
         return;
       }
-      dispatchRoster({ type: "activated", handle });
       loadPreview(handle, now());
     },
     [loadPreview],
@@ -763,7 +765,6 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     if (handles.length === 0 || workspaceBusyRef.current) {
       return;
     }
-    const activeHandle = rosterRef.current.active;
     workspaceBusyRef.current = true;
     setWorkspaceBusy(true);
     setWorkspaceError(null);
@@ -775,7 +776,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         }
         // The preview goes only when its own row does. Removing rows around it
         // is not a reason to take away what the user is reading.
-        if (activeHandle !== null && result.removedHandles.includes(activeHandle)) {
+        //
+        // Read here rather than captured before the request. Curating stays
+        // live while a removal is in flight, so the row the viewer belongs to
+        // can have changed since: a snapshot taken beforehand would name the
+        // row the user has already moved on from, and clearing for it would
+        // take away the reading they started instead.
+        const showing = openHandle.current;
+        if (showing !== null && result.removedHandles.includes(showing)) {
           clearVisiblePreview();
         }
         dispatchRoster({ type: "datasetsRemoved", result });

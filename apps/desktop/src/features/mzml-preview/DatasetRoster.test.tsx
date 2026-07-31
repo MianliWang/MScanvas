@@ -101,7 +101,10 @@ describe("the workspace roster as an accessible list", () => {
   });
 
   it("says which row is being shown without relying on colour", () => {
-    const state = rosterReducer(seeded(3), { type: "activated", handle: "file-1" });
+    const state = rosterReducer(
+      rosterReducer(seeded(3), { type: "activated", handle: "file-1" }),
+      { type: "rowStateChanged", handle: "file-1", state: "loaded" },
+    );
     render(
       <DatasetRoster
         canAddFiles
@@ -125,6 +128,49 @@ describe("the workspace roster as an accessible list", () => {
     expect(shown).toHaveTextContent("▸");
     expect(within(shown).getByText("Showing,")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /QC_pool_01\.mzML/ })).not.toHaveTextContent("▸");
+  });
+
+  it("says nothing is being shown for a row whose reading was discarded", () => {
+    // A row keeps its place as the one a read belongs to after a backend change
+    // empties the preview -- that is what makes reading it again one action --
+    // but nothing is on screen for it, and the hidden text is the whole of what
+    // a screen reader is told.
+    const shown = rosterReducer(
+      rosterReducer(seeded(3), { type: "activated", handle: "file-1" }),
+      { type: "rowStateChanged", handle: "file-1", state: "loaded" },
+    );
+    const discarded = rosterReducer(shown, { type: "previewDiscarded" });
+    render(
+      <DatasetRoster
+        canAddFiles
+        canMutate
+        canPreview
+        dispatch={() => undefined}
+        focusAddFilesToken={0}
+        load={{ status: "ready" }}
+        onActivate={() => undefined}
+        onAddFiles={() => undefined}
+        onClearList={() => undefined}
+        onReloadRoster={() => undefined}
+        onRemoveSelected={() => undefined}
+        state={discarded}
+      />,
+    );
+
+    const row = screen.getByRole("option", { name: /QC_pool_02\.mzML/ });
+    expect(row).not.toHaveTextContent("▸");
+    expect(within(row).queryByText("Showing,")).toBeNull();
+    expect(discarded.active).toBe("file-1");
+  });
+
+  it("does not claim the session is empty before the list has been read", () => {
+    // Rust keeps the workspace across a reload of this window, so until the
+    // list has been read, "there is nothing here" is a claim this side cannot
+    // make.
+    render(<Harness load={{ status: "loading" }} rows={0} />);
+
+    expect(screen.getByText("Reading the workspace list…")).toBeVisible();
+    expect(screen.queryByText("No files in this session yet")).toBeNull();
   });
 
   it("keeps its actions under stable accessible names", () => {

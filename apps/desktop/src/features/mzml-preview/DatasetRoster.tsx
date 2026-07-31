@@ -215,6 +215,14 @@ export function DatasetRoster({
                 Try reading it again
               </button>
             </>
+          ) : load.status === "loading" ? (
+            // Not "there is nothing here". Rust keeps the workspace across a
+            // reload of this window, so before the list has been read the one
+            // thing that cannot be said is that the session holds nothing.
+            <>
+              <strong>Reading the workspace list…</strong>
+              <span>MSCanvas is asking what this session already holds.</span>
+            </>
           ) : (
             <>
               <strong>No files in this session yet</strong>
@@ -236,13 +244,19 @@ export function DatasetRoster({
         >
           {state.datasets.map((dataset) => {
             const selected = state.selected.has(dataset.handle);
-            const active = state.active === dataset.handle;
             const presentation = rowPresentation(state, dataset.handle);
             const label = ROW_STATE_LABEL[presentation];
+            // Being the row a read belongs to is not the same as having
+            // something on screen. A row keeps that place after a backend
+            // change discards what it read, and the marker must not go on
+            // claiming a preview nobody can see -- least of all in the hidden
+            // text, which is the whole of what a screen reader is told.
+            const reading = state.active === dataset.handle && presentation === "opening";
+            const showing = state.active === dataset.handle && presentation === "loaded";
             return (
               <li
                 aria-selected={selected}
-                className={`dataset-row${selected ? " is-selected" : ""}${active ? " is-active" : ""}`}
+                className={`dataset-row${selected ? " is-selected" : ""}${reading || showing ? " is-active" : ""}`}
                 data-handle={dataset.handle}
                 key={dataset.handle}
                 onClick={(event) => {
@@ -260,12 +274,12 @@ export function DatasetRoster({
                     which rows are selected both survive greyscale, high
                     contrast and colour-blind viewing. */}
                 <span aria-hidden="true" className="dataset-row-marker">
-                  {active ? "▸" : ""}
+                  {showing ? "▸" : ""}
                 </span>
                 <span aria-hidden="true" className="dataset-row-marker">
                   {selected ? "✓" : ""}
                 </span>
-                {active ? <span className="visually-hidden">Showing, </span> : null}
+                {showing ? <span className="visually-hidden">Showing, </span> : null}
                 <span className="dataset-row-name" title={dataset.fileName}>
                   {dataset.fileName}
                 </span>

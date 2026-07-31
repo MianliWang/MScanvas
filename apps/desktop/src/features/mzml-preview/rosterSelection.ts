@@ -321,7 +321,6 @@ export function rosterReducer(state: RosterState, action: RosterAction): RosterS
 
     case "filesAdded": {
       const { roster, outcomes } = action.result;
-      const wasEmpty = state.datasets.length === 0;
       const live = handlesOf(roster.datasets);
       const added = outcomes.flatMap((outcome) =>
         outcome.outcome === "added" ? [outcome.dataset.handle] : [],
@@ -338,11 +337,12 @@ export function rosterReducer(state: RosterState, action: RosterAction): RosterS
           focused: first,
           anchor: first,
           selected: new Set(added),
-          // Adding into an empty workspace is the whole of what the user just
-          // did, so the first new row is what they are looking at. Adding to a
-          // workspace that already has an active preview is not a request to
-          // replace it.
-          active: wasEmpty ? first : survivingHandle(state.active, live),
+          // Not set here, even when the workspace was empty. Which row is being
+          // read is decided by a read actually starting, and whether one starts
+          // depends on things this reducer cannot see -- whether a backend is
+          // usable, whether one is already running. Claiming it here made the
+          // roster say "Showing" beside a file nothing had opened.
+          active: survivingHandle(state.active, live),
         };
       }
       const duplicate = outcomes.find((outcome) => outcome.outcome === "duplicate");
