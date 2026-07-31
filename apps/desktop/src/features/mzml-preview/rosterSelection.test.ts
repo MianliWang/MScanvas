@@ -1043,6 +1043,52 @@ describe("looking at the roster through a search and a sort", () => {
     expect(selection(answered)).toEqual(["file-1"]);
   });
 
+  it("offers it too when a query is typed but hides nothing", () => {
+    // What decides is whether the row the fallback would pick is one the query
+    // itself finds — not whether a query was typed. A whitespace-only query, or
+    // one every file matches, leaves the whole list on screen and must behave
+    // exactly as no query does.
+    for (const query of ["   ", ".mzML"]) {
+      const picked = press(search(view(...ROWS), query), "file-0");
+      expect(visible(picked)).toHaveLength(4);
+
+      const answered = rosterReducer(picked, {
+        type: "datasetsRemoved",
+        result: {
+          roster: { datasets: ROWS.slice(1), capacity: CAPACITY },
+          removedHandles: ["file-0"],
+          unknownHandles: [],
+        },
+      });
+
+      expect(selection(answered)).toEqual(["file-1"]);
+    }
+  });
+
+  it("offers it when the row beside the gap is itself a match", () => {
+    // The boundary of the rule. Removing a kept row leaves `sample-2` next in
+    // Rust's order, and that row is on screen whatever the selection says --
+    // so selecting it is the same "keep going" affordance rather than a row
+    // conjured into a view the user cannot check.
+    const picked = search(press(view(...ROWS), "file-1"), "sample");
+    expect(visible(picked)).toEqual(["file-0", "file-1", "file-2"]);
+
+    const answered = rosterReducer(picked, {
+      type: "datasetsRemoved",
+      result: {
+        roster: {
+          datasets: [ROWS[0] as SelectedFile, ROWS[2] as SelectedFile, ROWS[3] as SelectedFile],
+          capacity: CAPACITY,
+        },
+        removedHandles: ["file-1"],
+        unknownHandles: [],
+      },
+    });
+
+    expect(selection(answered)).toEqual(["file-2"]);
+    expect(visible(answered)).toContain("file-2");
+  });
+
   it("forgets the query and the sort when the last row goes", () => {
     // A filter over an empty workspace is a filter the next batch of files
     // would silently arrive behind.

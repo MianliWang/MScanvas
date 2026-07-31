@@ -99,6 +99,18 @@ export function normalizeForSearch(value: string): string {
 }
 
 /**
+ * Whether a name is one the query itself finds.
+ *
+ * An ordinary match, which is the one kind of row that is on screen whatever
+ * else is true of it. Asking this is how a caller can tell "a row the user can
+ * see" from "a row the projection is keeping for a reason that may end".
+ */
+export function matchesQuery(fileName: string, query: string): boolean {
+  const wanted = normalizeForSearch(query);
+  return wanted === "" || normalizeForSearch(fileName).includes(wanted);
+}
+
+/**
  * One collator for the life of the module.
  *
  * `numeric` so `sample-2` comes before `sample-10` rather than after it, which

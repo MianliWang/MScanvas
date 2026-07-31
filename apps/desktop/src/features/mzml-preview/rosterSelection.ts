@@ -34,7 +34,12 @@ import type {
   WorkspaceRemoveResult,
   WorkspaceRoster,
 } from "./contracts";
-import { projectRoster, type RosterProjection, type SortMode } from "./rosterView";
+import {
+  matchesQuery,
+  projectRoster,
+  type RosterProjection,
+  type SortMode,
+} from "./rosterView";
 
 /**
  * What a row is currently known to be.
@@ -550,13 +555,20 @@ function transition(state: RosterState, action: RosterAction): RosterState {
       // is theirs to keep; the row beside the gap is only what to fall back to
       // when the rows they had picked are the rows that went.
       const kept = keptIn(state.selected, live);
-      // The row beside the gap is a "keep going" affordance for a list the user
-      // can see all of. Under a search it is not: the nearest survivor by
-      // Rust's order is very often a row the query excludes, and selecting it
-      // would pin a row into the view that the user never picked and cannot
-      // see the point of. Better to select nothing and leave the view alone.
+      // The row beside the gap is a "keep going" affordance, and it is only
+      // that while the user can see the row. The nearest survivor by Rust's
+      // order is very often one the query excludes, and selecting it would pin
+      // a row into the view that the user never picked and cannot see the point
+      // of. The test is whether the query itself finds that row, not whether a
+      // query was typed: a whitespace-only one, or one like `.mzML` that every
+      // file matches, hides nothing and must behave exactly as no query does.
+      const survivorName = action.result.roster.datasets.find(
+        (dataset) => dataset.handle === survivor,
+      )?.fileName;
       const fallback =
-        state.query === "" && survivor !== null ? new Set([survivor]) : new Set<string>();
+        survivor !== null && survivorName !== undefined && matchesQuery(survivorName, state.query)
+          ? new Set([survivor])
+          : new Set<string>();
       return {
         datasets: action.result.roster.datasets,
         capacity: action.result.roster.capacity,
