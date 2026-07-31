@@ -176,14 +176,20 @@ button:disabled {
    gives ground first.
 
    The arithmetic, because it is the whole reason for the number: 2px of panel
-   border, 55px of header, 63px of view controls at their tallest (two control
-   rows plus the line that says how many files matched) and 52px of actions is
-   172px of chrome, and `.dataset-roster-list` is the only child that can give
-   ground. 172 + the 56px two-row floor below is 228. M1.2 shipped 176 for a
-   panel without the view controls; this is that number plus what they cost. */
+   border, 55px of header, 39px of view controls and 87px of actions -- four
+   buttons that do not fit one line in this column and wrap to two, which is
+   what they already did before the view controls existed -- is 183px of chrome,
+   and `.dataset-roster-list` is the only child that can give ground. 183 plus
+   the 56px two-row floor below is 239, rounded up to 240 so a font that
+   measures a little differently does not spend the rounding.
+
+   The search summary is deliberately not a row here. It lives in the header
+   line, which exists either way and already truncates: given a row of its own
+   it cost 24px in the one panel that is counting them, and at the widths where
+   the actions wrap it was the list that paid. */
 .dataset-roster-panel {
   display: flex;
-  min-height: 228px;
+  min-height: 240px;
   flex: 1 1 40%;
   flex-direction: column;
 }
@@ -211,9 +217,14 @@ button:disabled {
   gap: 6px;
 }
 
-.roster-field > span {
+.roster-field > label {
   flex: none;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.roster-field > .link-button {
+  flex: none;
   font-size: 11px;
 }
 
@@ -234,15 +245,6 @@ button:disabled {
 .roster-field > select:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 1px;
-}
-
-.dataset-roster-matches {
-  overflow: hidden;
-  margin: 0;
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .workspace-sidebar > .inspector-panel {
@@ -276,7 +278,7 @@ button:disabled {
   display: grid;
   align-items: center;
   gap: 8px;
-  grid-template-columns: 12px 12px minmax(0, 1fr) auto auto;
+  grid-template-columns: 12px 12px minmax(0, 1fr) auto minmax(0, auto);
   height: 28px;
   padding: 0 12px;
   font-size: 12px;
@@ -305,12 +307,27 @@ button:disabled {
   font-weight: 650;
 }
 
+/* What a row has to say about itself: its state, why the search kept it, or
+   both. One track, which can shrink to nothing -- an `auto` track takes its
+   max-content width before the name's `1fr` gets any, so a long reason beside a
+   long state could squeeze the file name out of a narrow panel entirely. */
+.dataset-row-notes {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
+}
+
 /* Why a row the search did not match is on screen anyway. Quieter than a row
    state, because it is a fact about the view rather than about the file -- but
-   still words, so it survives greyscale and reaches a screen reader. */
+   only quieter: this is the one thing on screen that explains a row the query
+   excludes, so it takes the secondary text colour rather than the tertiary one,
+   which does not reach 4.5:1 against the panel at this size. Words either way,
+   so it survives greyscale and reaches a screen reader. */
 .dataset-row-kept {
   overflow: hidden;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -711,7 +728,7 @@ button:disabled {
        minimum, raised in M1.3 by what the search and sort controls cost; the
        two have to move together, because a track shorter than the panel's
        minimum clamps it back to a height its chrome does not fit in. */
-    grid-template-rows: minmax(228px, 0.9fr) minmax(0, 1.6fr);
+    grid-template-rows: minmax(240px, 0.9fr) minmax(0, 1.6fr);
   }
 }
 

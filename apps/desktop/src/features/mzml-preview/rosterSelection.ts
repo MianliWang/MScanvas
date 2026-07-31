@@ -383,7 +383,22 @@ function reconciled(
 ): RosterState {
   const visible = rosterProjection(next);
   const live = visible.handles;
+  const first = visible.datasets[0]?.handle ?? null;
   const anchorSurvives = next.anchor !== null && live.has(next.anchor);
+  if (next.focused === null && first !== null) {
+    // Nothing is focused and there are rows to focus. The list already draws
+    // the first of them with the tab stop, so this is only the state agreeing
+    // with what is on screen -- and without it, everything the focused row is
+    // for is dead: `Preview focused` stays disabled, Enter reads nothing and
+    // Space toggles nothing, until the user presses an arrow or clicks a row.
+    // Reachable by clearing a search that matched nothing, which is exactly
+    // when a user is most likely to reach for the keyboard.
+    //
+    // The anchor goes with it, as it does on every focus move that is not an
+    // extension: with no focused row there is no range in progress for an
+    // anchor to be the far end of.
+    return { ...next, focused: first, anchor: first };
+  }
   if (next.focused === null || live.has(next.focused)) {
     // Nothing was lost. A hidden anchor still has to go: kept, the next Shift
     // action would measure a range from a row that is not on screen.
@@ -391,7 +406,6 @@ function reconciled(
       ? next
       : { ...next, anchor: next.focused };
   }
-  const first = visible.datasets[0]?.handle ?? null;
   const focused =
     prefer === "first"
       ? first
@@ -536,6 +550,13 @@ function transition(state: RosterState, action: RosterAction): RosterState {
       // is theirs to keep; the row beside the gap is only what to fall back to
       // when the rows they had picked are the rows that went.
       const kept = keptIn(state.selected, live);
+      // The row beside the gap is a "keep going" affordance for a list the user
+      // can see all of. Under a search it is not: the nearest survivor by
+      // Rust's order is very often a row the query excludes, and selecting it
+      // would pin a row into the view that the user never picked and cannot
+      // see the point of. Better to select nothing and leave the view alone.
+      const fallback =
+        state.query === "" && survivor !== null ? new Set([survivor]) : new Set<string>();
       return {
         datasets: action.result.roster.datasets,
         capacity: action.result.roster.capacity,
@@ -552,7 +573,7 @@ function transition(state: RosterState, action: RosterAction): RosterState {
         // or Shift+Arrow grow the selection from the wrong end of a range the
         // user built while the removal was unresolved.
         anchor: survivingHandle(state.anchor, live) ?? survivor,
-        selected: kept.size > 0 ? kept : survivor === null ? new Set() : new Set([survivor]),
+        selected: kept.size > 0 ? kept : fallback,
         // Removing the row a preview belongs to takes the preview with it, and
         // nothing else is opened in its place: reading another acquisition is
         // an action the user takes.

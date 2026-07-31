@@ -191,17 +191,49 @@ describe("narrow desktop layout markup", () => {
     const app = mountStyles(appStyles);
 
     expect(requireStyleRule(app, ".dataset-roster-panel").style.getPropertyValue("min-height")).toBe(
-      "228px",
+      "240px",
     );
     expect(
       requireMediaRule(app, "(max-width: 1120px)", ".workspace-layout").style.getPropertyValue(
         "grid-template-rows",
       ),
-    ).toBe("minmax(228px, 0.9fr) minmax(0, 1.6fr)");
+    ).toBe("minmax(240px, 0.9fr) minmax(0, 1.6fr)");
     // And what the column cannot fit is clipped here rather than pushing the
     // shell past the viewport.
     expect(requireStyleRule(app, ".workspace-sidebar").style.getPropertyValue("overflow")).toBe(
       "hidden",
+    );
+  });
+
+  it("lets a row's notes give ground so the file name keeps a column", () => {
+    // A grid `auto` track takes its max-content width before a flexible track
+    // gets any. With `Replaced` and `Selected — outside search` side by side in
+    // an `auto` track, a narrow panel had nothing left for the name and the row
+    // showed a size and two labels for a file it would not name.
+    const app = mountStyles(appStyles);
+
+    expect(requireStyleRule(app, ".dataset-row").style.getPropertyValue("grid-template-columns")).toBe(
+      "12px 12px minmax(0, 1fr) auto minmax(0, auto)",
+    );
+    const notes = requireStyleRule(app, ".dataset-row-notes").style;
+    expect(notes.getPropertyValue("min-width")).toBe("0px");
+    expect(notes.getPropertyValue("overflow")).toBe("hidden");
+  });
+
+  it("gives the search's own explanations a colour that can be read", () => {
+    // `Selected — outside search` is the only thing on screen that explains a
+    // row the query excludes, and the match count is the only thing that says
+    // how much of the session is hidden. The tertiary text colour is #7f8a9c on
+    // white, about 3.5:1, which is under AA for text this size; the secondary
+    // one is #5b677a, about 6.2:1. Quiet is a reason to use the quieter of two
+    // readable colours, not a reason to use an unreadable one.
+    const app = mountStyles(appStyles);
+
+    expect(requireStyleRule(app, ".dataset-row-kept").style.getPropertyValue("color")).toBe(
+      "var(--color-text-secondary)",
+    );
+    expect(requireStyleRule(app, ".roster-field > label").style.getPropertyValue("color")).toBe(
+      "var(--color-text-secondary)",
     );
   });
 

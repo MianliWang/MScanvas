@@ -1539,6 +1539,33 @@ describe("the session workspace roster", () => {
     expect(regions()).toHaveLength(3);
   });
 
+  it("says the search was cleared rather than falling silent", async () => {
+    // A live region whose text is removed announces nothing — the default
+    // `aria-relevant` is `additions text` — so clearing a search would be the
+    // one step of a search nobody was told about.
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile, secondFile, thirdFile],
+      availability: unavailableBackend,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    const spoken = () =>
+      [...document.querySelectorAll("[aria-live='polite']")]
+        .map((region) => region.textContent)
+        .join(" ");
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
+      target: { value: "QC" },
+    });
+    expect(spoken()).toContain("2 matches of 3 files.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+
+    expect(rosterRows()).toHaveLength(3);
+    expect(spoken()).toContain("All 3 files listed.");
+    expect(spoken()).not.toContain("2 matches of 3 files.");
+  });
+
   it("renders a roster at capacity through a search and a sort", async () => {
     // Not timed and not a benchmark: what it holds is that the size Rust
     // actually allows renders, matches and orders without falling over.

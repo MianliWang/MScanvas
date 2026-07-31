@@ -924,6 +924,35 @@ describe("looking at the roster through a search and a sort", () => {
     expect(visible(cleared)).toEqual(["file-0", "file-1", "file-2", "file-3"]);
   });
 
+  it("has a focused row again once rows come back", () => {
+    // A search that matches nothing leaves nothing to focus. Clearing it brings
+    // the rows back, and the list draws the first of them with the tab stop --
+    // but until the state says so too, everything the focused row is for is
+    // dead: `Preview focused` stays disabled, Enter reads nothing and Space
+    // toggles nothing, until the user presses an arrow or clicks a row.
+    const nothing = search(view(...ROWS), "zzz");
+    expect(nothing.focused).toBeNull();
+
+    const back = rosterReducer(nothing, { type: "searchCleared" });
+
+    expect(back.focused).toBe("file-0");
+    expect(back.anchor).toBe("file-0");
+    // And it is a row the keyboard can act on, not just a row that is drawn.
+    const toggled = rosterReducer(back, { type: "focusedToggled" });
+    expect(selection(toggled)).toEqual(["file-0"]);
+  });
+
+  it("finds a focused row again the moment one becomes visible", () => {
+    // The same hole reached one character at a time rather than by clearing.
+    const nothing = search(view(...ROWS), "blankx");
+    expect(nothing.focused).toBeNull();
+
+    const narrower = search(nothing, "blank");
+
+    expect(visible(narrower)).toEqual(["file-3"]);
+    expect(narrower.focused).toBe("file-3");
+  });
+
   it("keeps the query and the sort while the workspace stays non-empty", () => {
     const working = rosterReducer(search(view(...ROWS), "sample"), {
       type: "sortChanged",
@@ -974,6 +1003,44 @@ describe("looking at the roster through a search and a sort", () => {
     expect(added.focused).toBe("file-4");
     expect(visible(added)).toEqual(["file-0", "file-2", "file-4"]);
     expect(rosterProjection(added).pinned.get("file-4")).toBe("selected");
+  });
+
+  it("invents no selection under a search when everything picked was removed", () => {
+    // The row beside the gap is a "keep going" affordance for a list the user
+    // can see all of. Under a search it is the nearest survivor in Rust's
+    // order, which is very often a row the query excludes -- and selecting it
+    // would pin a row into the view that the user never picked.
+    const searched = search(view(...ROWS), "sample");
+    const picked = rosterReducer(searched, { type: "allSelected" });
+    expect(selection(picked)).toEqual(["file-0", "file-2"]);
+
+    const answered = rosterReducer(picked, {
+      type: "datasetsRemoved",
+      result: {
+        roster: { datasets: [ROWS[1] as SelectedFile, ROWS[3] as SelectedFile], capacity: CAPACITY },
+        removedHandles: ["file-0", "file-2"],
+        unknownHandles: [],
+      },
+    });
+
+    expect(selection(answered)).toEqual([]);
+    expect(visible(answered)).toEqual([]);
+  });
+
+  it("still offers the row beside the gap when no search is narrowing the view", () => {
+    // The affordance M1.2 shipped, unchanged where it makes sense.
+    const picked = press(view(...ROWS), "file-0");
+
+    const answered = rosterReducer(picked, {
+      type: "datasetsRemoved",
+      result: {
+        roster: { datasets: ROWS.slice(1), capacity: CAPACITY },
+        removedHandles: ["file-0"],
+        unknownHandles: [],
+      },
+    });
+
+    expect(selection(answered)).toEqual(["file-1"]);
   });
 
   it("forgets the query and the sort when the last row goes", () => {

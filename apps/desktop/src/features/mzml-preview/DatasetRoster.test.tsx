@@ -153,7 +153,11 @@ describe("looking at the roster through a search and a sort", () => {
     // Named by a real label rather than by placeholder text, which is gone the
     // moment anything is typed into it.
     expect(searchBox()).toHaveAttribute("type", "search");
-    expect(screen.getByText("Search files").tagName).toBe("SPAN");
+    // A real label associated by `for`, not a wrapper and not a placeholder:
+    // a label that wraps more than one control names all of them.
+    const label = screen.getByText("Search files");
+    expect(label.tagName).toBe("LABEL");
+    expect(label).toHaveAttribute("for", searchBox().id);
     const sort = screen.getByRole("combobox", { name: "Sort files" });
     expect(within(sort).getAllByRole("option").map((option) => option.textContent)).toEqual([
       "Added order",
@@ -179,7 +183,9 @@ describe("looking at the roster through a search and a sort", () => {
     type("qc_pool");
 
     expect(rowNames()).toEqual(["QC_pool_01.mzML", "QC_pool_02.mzML", "QC_pool_04.mzML"]);
-    expect(screen.getByText("3 matches of 4 files.")).toBeVisible();
+    // In the header line the panel already had, which already truncates and
+    // already carries the whole sentence in its `title`.
+    expect(screen.getByText(/3 matches of 4 files./)).toBeVisible();
   });
 
   it("says nothing about counts when the search narrows nothing", () => {
@@ -266,7 +272,7 @@ describe("looking at the roster through a search and a sort", () => {
     // than letting the visible length speak for the search.
     expect(rows()).toHaveLength(4);
     expect(
-      screen.getByText("3 matches of 4 files; 1 selected or active file kept visible."),
+      screen.getByText(/3 matches of 4 files; 1 selected or active file kept visible./),
     ).toBeVisible();
   });
 
@@ -365,6 +371,45 @@ describe("looking at the roster through a search and a sort", () => {
     expect(rows()).toHaveLength(3);
     expect(document.activeElement).not.toBe(document.body);
     expect(rows()).toContain(document.activeElement);
+  });
+
+  it("leaves the keyboard alone when a blur has nothing to do with the list", () => {
+    // `Add files…` is disabled for the picker's whole lifetime, and disabling
+    // the focused button blurs it to the body. Recovering on "the keyboard was
+    // in the list at some point" would fire then and pull it into the roster,
+    // taking the restoration away from the button that is waiting for it --
+    // which is the defect issue #25 fixed. The row that had the keyboard is
+    // still on screen, so nothing here has anything to recover.
+    const { rerender } = render(<Harness canAddFiles rows={4} />);
+    const row = rows()[1] as HTMLElement;
+    row.focus();
+    expect(document.activeElement).toBe(row);
+
+    const add = screen.getByRole("button", { name: "Add files…" });
+    add.focus();
+    fireEvent.click(add);
+    rerender(<Harness canAddFiles={false} rows={4} />);
+    blurAsABrowserWould(add);
+    rerender(<Harness canAddFiles={false} rows={4} />);
+
+    expect(document.activeElement).toBe(document.body);
+    expect(rows()).not.toContain(document.activeElement);
+  });
+
+  it("still reports a row's own state while a search is keeping it visible", () => {
+    // Two different things. That a file was replaced, is missing or could not
+    // be read is not a fact a search may suppress, and it was suppressed while
+    // both shared one slot.
+    const failed = rosterReducer(
+      rosterReducer(seeded(4), { type: "rowPressed", handle: "file-2", modifiers: { ctrl: false, shift: false } }),
+      { type: "rowStateChanged", handle: "file-2", state: "replaced" },
+    );
+    render(<Fixed state={rosterReducer(failed, { type: "searchChanged", query: "qc_pool" })} />);
+
+    const kept = screen.getByRole("option", { name: /Blank_03\.mzML/ });
+    expect(within(kept).getByText("Replaced")).toBeVisible();
+    expect(within(kept).getByText("Selected — outside search")).toBeVisible();
+    expect(kept).toHaveAccessibleName(/Replaced/);
   });
 
   it("moves the keyboard to the search box when no visible row survives", () => {

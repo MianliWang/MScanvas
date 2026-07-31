@@ -228,10 +228,16 @@ export function projectRoster(input: RosterProjectionInput): RosterProjection {
  * in would be describing a list the user is not looking at.
  */
 export function describeProjection(projection: RosterProjection): string {
-  if (!projection.searching) {
-    return "";
-  }
   const files = projection.total === 1 ? "file" : "files";
+  if (!projection.searching) {
+    // Not silence. A live region whose text is removed announces nothing --
+    // the default `aria-relevant` is `additions text` — so clearing a search
+    // would be the one step of a search nobody was told about. Empty only when
+    // there is no list to describe, which is when the roster says so itself.
+    return projection.total === 0
+      ? ""
+      : `All ${String(projection.total)} ${files} listed.`;
+  }
   const matches = `${String(projection.matchCount)} ${projection.matchCount === 1 ? "match" : "matches"} of ${String(projection.total)} ${files}`;
   if (projection.pinned.size === 0) {
     return `${matches}.`;

@@ -354,8 +354,15 @@ describe("saying what the search found", () => {
     dataset("file-2", "sample.mzML"),
   ];
 
-  it("says nothing at all when nothing is being searched", () => {
-    expect(describeProjection(projectRoster(input(rows())))).toBe("");
+  it("says the whole list is listed when nothing is being searched", () => {
+    // Not silence. A live region whose text is removed announces nothing, so
+    // clearing a search would be the one step of a search nobody was told
+    // about.
+    expect(describeProjection(projectRoster(input(rows())))).toBe("All 3 files listed.");
+  });
+
+  it("says nothing at all when there is no list to describe", () => {
+    expect(describeProjection(projectRoster(input([])))).toBe("");
   });
 
   it("counts matches against the whole session", () => {
