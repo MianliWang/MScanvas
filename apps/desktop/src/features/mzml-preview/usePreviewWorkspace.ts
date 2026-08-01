@@ -45,28 +45,6 @@ const BACKEND_CHANGED_KINDS = new Set([
   "backend_not_found_at_launch",
 ]);
 
-/**
- * What a folder import is told when its reply arrives after the user has
- * changed the workspace themselves.
- *
- * Built here rather than in Rust because Rust does not know it happened: from
- * its side the import either committed or was superseded, and both are complete
- * answers. What this side knows is that a newer answer about the same list has
- * already been applied, so this one is not going to be — which is what the
- * sentence says, and is true whichever way the two were ordered.
- */
-function importAnsweredLate(): PreviewError {
-  return {
-    kind: "import_answered_late",
-    summary:
-      "The workspace changed while MSCanvas was scanning that folder, so its answer was not " +
-      "applied to the list. What is shown is what this session holds now. Scan the folder " +
-      "again if you still want it.",
-    detail: null,
-    retryable: true,
-  };
-}
-
 export type BackendState =
   | { readonly status: "checking" }
   | { readonly status: "resolved"; readonly availability: BackendAvailability }
@@ -968,19 +946,18 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           return;
         }
         if (workspaceMutations.current !== mutationsAtStart) {
-          // A removal or a clear was started after this import. Rust has
-          // already settled which came first -- either it superseded this
-          // import, in which case this reply would be a rejection rather than a
-          // result, or this import committed and that mutation's roster already
-          // accounts for its rows. Either way the mutation's answer is the
-          // newer one, and installing this roster would put back exactly the
-          // rows the user asked to be rid of.
+          // A removal or a clear was started after this import, so this roster
+          // is not the newest answer about what the session holds and
+          // installing it would put back exactly the rows the user asked to be
+          // rid of.
           //
-          // Said rather than swallowed, because the user asked for this folder
-          // and is owed an answer about it. The wording is true whichever way
-          // Rust ordered the two: what was not applied is this reply, and what
-          // is on screen is what the session holds.
-          setFolderError(importAnsweredLate());
+          // Nothing is said, and that is not an omission. Reaching here with a
+          // result at all means Rust committed this import -- had the mutation
+          // won the gate, the command would have answered `import_superseded`
+          // and this would be a rejection. So the rows *are* in the session,
+          // and the mutation's own authoritative roster already accounts for
+          // them. Any message here would either claim a failure that did not
+          // happen or overwrite the account of what the user actually did.
           return;
         }
         const added = result.outcomes.flatMap((outcome) =>

@@ -1932,13 +1932,10 @@ describe("adding a folder of mzML files", () => {
     // The account of what the user actually did survives; the late reply does
     // not overwrite it.
     expect(screen.getByText(/Removed 1 file from the list\./, VISIBLE)).toBeVisible();
-    // The user asked for that folder, so they are told what happened to it --
-    // in words that are true whichever way Rust ordered the two, and with no
-    // path in them.
-    expect(await screen.findByText("The folder could not be added")).toBeVisible();
-    const said = screen.getByText(/its answer was not applied to the list/);
-    expect(said).toBeVisible();
-    expect(said.textContent).not.toContain("\\");
+    // And nothing is invented about the folder. Reaching here with a result at
+    // all means Rust committed the import, so claiming it could not be added
+    // would be a failure that did not happen.
+    expect(screen.queryByText("The folder could not be added")).toBeNull();
     expect(api.openCount()).toBe(0);
   });
 
