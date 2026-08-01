@@ -891,12 +891,12 @@ describe("the two ways of adding acquisitions", () => {
     expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
   });
 
-  it("keeps the escape actions and refuses only the roster read", () => {
+  it("keeps workspace mutation controls and refuses only the roster read", () => {
     // The three have different concurrency contracts and are three answers, not
-    // one boolean. Removing and emptying are the only ways out of a folder
-    // chosen by mistake and stay available; reading the list back is another
-    // statement about what the workspace is and would supersede the very import
-    // the user is waiting for.
+    // one boolean. Clearing is the reliable final-empty escape and removal still
+    // manages rows already on screen; reading the list back is another statement
+    // about what the workspace is and could win the gate and supersede the very
+    // import the user is waiting for.
     render(
       <Harness
         canAddFiles={false}

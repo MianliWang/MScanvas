@@ -55,16 +55,18 @@ export interface DatasetRosterProps {
   /**
    * Whether rows may be removed or the list emptied right now.
    *
-   * Deliberately true during a folder import: these two are the only ways out
-   * of a folder chosen by mistake, and an import has no cancellation.
+   * Deliberately true during a folder import. `Clear list` is the reliable way
+   * out of one, while `Remove selected` still has to manage the rows already
+   * on screen; an import has no cancellation.
    */
   readonly canMutate: boolean;
   /**
    * Whether the list may be read back right now.
    *
    * Its own answer rather than `canMutate`, because it is not an escape route:
-   * in Rust a roster read is another statement about the workspace, so pressing
-   * it mid-import would supersede the very import the user is waiting for.
+   * in Rust a roster read is another statement about the workspace. It could
+   * win the gate and supersede the import, or follow it and merely include its
+   * rows; neither outcome is a reason to race the operation the user awaits.
    */
   readonly canReloadRoster: boolean;
   /** Increments when focus should return to the `Add files…` action. */
@@ -119,8 +121,9 @@ export function DatasetRoster({
    * Whether the keyboard is on `Clear list`, which can go out from under it.
    *
    * A boolean rather than an element: the question is only ever "was the
-   * keyboard here when this disappeared", and removing a focused element fires
-   * no blur, so the record survives exactly as long as it needs to.
+   * keyboard here when this disappeared". WebView2 can report that removal as
+   * a `focusout` whose destination is null, which does not prove the user went
+   * anywhere; only a real destination clears the record.
    */
   const keyboardOnClearList = useRef(false);
   /**
@@ -150,9 +153,10 @@ export function DatasetRoster({
    * Whether `Clear list` has anything to do, which is when it is offered.
    *
    * Over rows it empties them. Over an empty list it is offered only while a
-   * folder import is unresolved, because there it is the escape from one: it
-   * supersedes the import so the scan commits nothing. With neither, it would
-   * be a control that cannot act.
+   * folder import is unresolved, because there it is the escape from one. If it
+   * wins the gate it supersedes the import; if the import committed first it
+   * clears the rows that arrived. With neither, it would be a control that
+   * cannot act.
    */
   const clearListOffered = state.datasets.length > 0 || folderBusy;
 
@@ -167,9 +171,11 @@ export function DatasetRoster({
    * The second job is what a projection makes possible. A row can leave the
    * list while the keyboard is on it -- deselect the kept row a search was
    * holding on screen, or let a read finish on a row the query does not match --
-   * and an unmounting element takes focus to the body silently, with no event
-   * and with `contains` no longer true of anything. The row that took its place
-   * if there is one, the search box if there is not, the body never.
+   * and an unmounting element takes focus to the body, with `contains` no
+   * longer true of anything. It may report a `focusout` whose destination is
+   * null first; that is still disappearance rather than a user-chosen
+   * destination. The row that took its place if there is one, the search box if
+   * there is not, the body never.
    *
    * What makes that safe is asking about the row rather than about the list.
    * Focus reaches the body for reasons that have nothing to do with this
@@ -229,8 +235,8 @@ export function DatasetRoster({
    * workspace.
    *
    * The debt outlives the commit that incurred it, because the row that had the
-   * keyboard can go while `Add files…` is disabled: emptying the list is one of
-   * the two ways out of a folder import, and acquiring more waits for that
+   * keyboard can go while `Add files…` is disabled: emptying the list is the
+   * reliable way out of a folder import, and acquiring more waits for that
    * import to settle. Focusing a disabled control does nothing, so without this
    * the keyboard would be left on `body` with no way back into the workspace --
    * the defect issue #25 exists for, reached by a route that only opened when
@@ -283,10 +289,12 @@ export function DatasetRoster({
    * nothing added takes it away again: a folder holding no mzML, a scan that
    * failed, an import a decision superseded, a dismissed picker.
    *
-   * Removing a focused element moves focus to the body and fires no blur, and
-   * nothing else here would recover it: the row rescue wants a row handle, and
-   * the picker restoration only exists when the import was started by a focused
-   * press of this component's own button -- which the shell's
+   * Removing a focused element moves focus to the body. WebView2 can first
+   * report a `focusout` whose destination is null, which is not evidence that
+   * the user chose somewhere else. Nothing else here would recover it: the row
+   * rescue wants a row handle, and the picker restoration only exists when the
+   * import was started by a focused press of this component's own button --
+   * which the shell's
    * `Choose another folder` retry is not. So the debt is minted here and paid
    * by the same machinery an emptied list uses, which already waits for
    * `Add files…` to become usable.
@@ -589,8 +597,10 @@ export function DatasetRoster({
             }
             className="secondary-button"
             disabled={!canMutate}
-            onBlur={() => {
-              keyboardOnClearList.current = false;
+            onBlur={(event) => {
+              if (event.relatedTarget instanceof Node) {
+                keyboardOnClearList.current = false;
+              }
             }}
             onFocus={() => {
               keyboardOnClearList.current = true;
@@ -633,8 +643,9 @@ export function DatasetRoster({
                   as the shell's copy of this action is. In Rust a roster read
                   is itself a statement about the workspace -- it is what
                   linearises a reloaded window against a scan the window before
-                  it started -- so reading the list back mid-import would
-                  supersede the very import the user is waiting for. */}
+                  it started -- so a mid-import read could win the gate and
+                  supersede the import, or follow it and merely include its
+                  rows. Neither outcome justifies that race. */}
               <button
                 className="secondary-button"
                 disabled={!canReloadRoster}

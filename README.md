@@ -32,10 +32,12 @@ Build a session workspace of local `.mzML` files and inspect one of them:
   so rather than reporting part of a folder as the whole of it. The list stays
   usable while it runs — searching, sorting, selecting and reading a file you
   already have all keep working — and a selection you make meanwhile survives.
-  If you picked the wrong folder you do not have to wait for it: removing rows
-  and clearing the list stay available, clearing works even over an empty list,
-  and either one stops the scan adding anything. If two files end up sharing a
-  name, each says where it was found for as long as they collide.
+  If you picked the wrong folder, `Clear list` stays available even over an
+  empty list and guarantees that the workspace is empty when the import settles.
+  `Remove selected` also stays available to manage rows already on screen, but
+  it is not cancellation: rows the import committed first can remain. A late
+  folder reply never overwrites either later workspace action. If two files end
+  up sharing a name, each says where it was found for as long as they collide.
   Directory-formatted vendor acquisitions are not recognized in this version.
 - Select rows with the pointer or the keyboard the way a file list works: click,
   Ctrl-click, Shift-click, arrows, Space, Home, End and Ctrl+A. Remove the

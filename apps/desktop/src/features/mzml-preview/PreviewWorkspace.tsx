@@ -75,10 +75,10 @@ export function PreviewWorkspace() {
     !workspace.workspaceBusy;
   // One thing more for the folder action, and only for it. A roster read is
   // itself a statement about the workspace in Rust, so an import started before
-  // the mount-time read answers would reserve its claim and then watch that
-  // older read take the next one -- failing with `import_superseded` while the
-  // user changed nothing. Adding files has no such window: it is one gated
-  // batch with nothing running unlocked inside it.
+  // the mount-time read answers would create a race: the read can win the gate
+  // and make the import fail with `import_superseded` while the user changed
+  // nothing, or the import can change what the read returns. Adding files has no
+  // such window: it is one gated batch with nothing running unlocked inside it.
   //
   // A failed read is the same answer for the same reason. This window has no
   // authoritative list, and the roster's own retry is the way out.
@@ -90,17 +90,18 @@ export function PreviewWorkspace() {
   // dialog *and* the registration after it, and a removal answering inside that
   // window carries a roster from before the added rows existed. They do **not**
   // wait on a folder import. A folder import has no cancellation and can run
-  // for as long as the user's filesystem takes, so these two are the only ways
-  // out of a folder chosen by mistake -- and taking them away for the length of
-  // the thing they are the escape from is the one refusal that leaves a user
-  // stuck. ADR 0007 says so, and Rust already makes it safe: either mutation
-  // advances the workspace mutation generation, so the older import finds its
-  // claim stale, commits nothing, leases nothing and spends no identifier.
+  // for as long as the user's filesystem takes. `Clear list` is the reliable
+  // final-empty escape, while `Remove selected` still manages rows already on
+  // screen. Rust linearises either action against the import: an action that
+  // reaches the gate first supersedes it; if the import commits first, the
+  // action's authoritative roster includes that fact. A late folder reply is
+  // never allowed to overwrite the later answer.
   const canMutate = !workspace.workspaceBusy && !workspace.pickerBusy;
   // Reading the list back is not an escape route; it is another statement about
-  // what the workspace is, and in Rust it advances the same generation. Pressing
-  // it mid-import would supersede the very import the user is waiting for and
-  // give them nothing in return, so unlike removing and clearing it waits.
+  // what the workspace is, and in Rust it advances the same generation. It
+  // could win the gate and supersede the import, or follow it and merely include
+  // its rows. Neither outcome is useful enough to introduce that race, so unlike
+  // removing and clearing it waits.
   const canReloadRoster = canMutate && !workspace.folderBusy;
   // One viewer read at a time. Rust supersedes an older open of one dataset
   // anyway; this is what stops a queue of them forming behind the single
@@ -256,8 +257,9 @@ export function PreviewWorkspace() {
             {/* Refused while a mutation or an import is unresolved. In Rust a
                 roster read is itself a statement about the workspace -- it is
                 what linearises a reloaded window against a scan the window
-                before it started -- so reading the list back mid-import would
-                supersede the very import the user is waiting for. */}
+                before it started -- so a mid-import read could win the gate
+                and supersede the import, or follow it and merely include its
+                rows. Neither outcome justifies that race. */}
             <button
               className="link-button"
               disabled={!canReloadRoster}

@@ -345,7 +345,8 @@ for minutes; a webview can reload or die inside that window, and the one that
 replaces it reads the roster and adopts it with no further read coming. Reserved
 after the picker answered, the import would be newer than that read, would
 commit, and would hand its rows to a window that no longer exists. Reserved
-first, the read supersedes it.
+first, a read that reaches the gate while the picker remains open supersedes the
+import; if the import commits first instead, the later read includes its rows.
 
 The token is spent by the import and cannot be copied, so one reservation is one
 import and a commit never claims the next state as well. It is never supplied or
@@ -360,12 +361,12 @@ spends no identifier. Generations are ordering facts and are never given back.
 
 **The window must know what the session holds before it may import.** The
 mount-time roster read is itself one of these decisions, so an import started
-before it answers would reserve its claim and then watch that older read take
-the next one — failing with `import_superseded` while the user changed nothing
-at all. `Add mzML folder…` therefore waits for that read to settle successfully,
-and a failed read keeps it unavailable until the roster's own retry succeeds.
-Adding files has no such window: it is one gated batch with nothing running
-unlocked inside it.
+before it answers would create a race: a read that reaches the gate first makes
+the import fail with `import_superseded` while the user changed nothing, while an
+import that reaches it first changes what the read returns. `Add mzML folder…`
+therefore waits for that read to settle successfully, and a failed read keeps it
+unavailable until the roster's own retry succeeds. Adding files has no such
+window: it is one gated batch with nothing running unlocked inside it.
 
 What advances the generation is every statement about what the workspace *is*:
 adding files, removing rows, emptying the list — and the product-facing roster
@@ -382,11 +383,12 @@ inspecting the backend or counting rows internally does not advance the
 generation, so a long scan does not fail for a reason the user cannot see.
 
 Holding the gate across a recursive scan is rejected. `Clear list` and
-`Remove selected` queue on that same gate, so a user who chose the wrong folder
-would find the only ways out blocked by the thing they want out of — the exact
-condition this repository already refuses for backend reads. Scanning outside
-the gate without a generation is rejected too: a scan that began before a
-`Clear list` would otherwise repopulate the workspace the user just emptied.
+`Remove selected` queue on that same gate, so holding it for the walk would take
+away both the reliable final-empty escape and ordinary management of the rows
+already on screen — the exact condition this repository already refuses for
+backend reads. Scanning outside the gate without a generation is rejected too:
+a scan that began before a `Clear list` would otherwise repopulate the workspace
+the user just emptied.
 
 ## Cancellation and progress
 
@@ -420,21 +422,24 @@ Because there is no cancellation, the scan deliberately does **not** make the
 session unusable while it runs. Searching, sorting, selecting and reading a file
 already in the workspace all stay live.
 
-**`Remove selected` and `Clear list` stay live too, and that is the point.**
-They are the only ways out of a folder chosen by mistake, so disabling them for
-the length of the thing they are the escape from is the one refusal that leaves
-a user stuck — the interface must not take away what the mutation-concurrency
-decision above went out of its way to keep. It is safe because the generation
-makes it safe: either mutation advances it, the older import finds its claim
-stale, and it commits nothing, leases nothing and spends no identifier.
+**`Remove selected` and `Clear list` stay live too, but make different
+promises.** `Clear list` is the reliable way out of a folder chosen by mistake:
+if it reaches the gate first, the older import is superseded; if the import
+commits first, the clear removes every row it added. The final workspace is
+empty in either linearisation. `Remove selected` remains live so the user can
+manage rows already on screen. If it reaches the gate first it also supersedes
+the import, but if the import commits first the removal acts only on the handles
+it was given, so its authoritative roster can retain newly imported rows. It is
+row management, not a cancellation guarantee.
 
 What still waits is acquiring more — `Add files…` and a second
 `Add mzML folder…` — because two batches in flight let an older reply's roster
 overwrite a newer one's. Reading the list back waits as well: it is not an
-escape route but another statement about what the workspace is, and it would
-supersede the very import the user is waiting for while giving them nothing in
-exchange. Three different concurrency contracts, and therefore three answers
-rather than one flag.
+escape route but another statement about what the workspace is. If it reached
+the gate first it would supersede the import the user is waiting for; if the
+import committed first, the read would merely include its rows. Neither outcome
+gives the user enough to justify introducing that race. Three different
+concurrency contracts, and therefore three answers rather than one flag.
 
 One consequence belongs to the interface rather than to Rust. Rust settles which
 of the two came first, but their *replies* need not arrive in that order, so a
@@ -451,8 +456,8 @@ claim a failure that did not happen or overwrite the account of what the user
 actually did. The superseded rejection is a different path and keeps its own
 typed explanation.
 
-Two consequences are about the keyboard, and both are the issue #25 class
-reached by routes that only the escape actions open.
+Two consequences are about the keyboard, both in the issue #25 class reached by
+keeping `Clear list` live during an import.
 
 Emptying the list during an import sends the keyboard back to `Add files…`,
 which is disabled until that import settles — and focusing a disabled control
@@ -466,8 +471,10 @@ anything to do; during a first import from an empty workspace it is also the
 only enabled control in the actions row, so it is exactly where a keyboard user
 lands. Every way that import can settle with nothing added — a folder holding no
 mzML, a failed scan, a superseded import, a dismissed picker — takes it away
-again, and removing a focused element moves focus to the body without firing a
-blur. So its disappearance mints the same debt, paid by the same rule.
+again. Removing a focused element moves focus to the body, and WebView2 can
+first report a `focusout` whose `relatedTarget` is null. That does not identify a
+user-chosen destination, so it preserves the record that mints the same debt,
+paid by the same rule. A real non-null destination clears the record instead.
 
 ## Tauri boundary
 
@@ -572,11 +579,12 @@ the point: the traversal boundary is settled and tested before a button depends
 on it. The cost is that M1.4.0 delivers nothing a user can see, and the feature
 catalogue said so until M1.4.1 made it visible.
 
-A scan the user has moved past adds nothing and says so, which means a user who
-starts a long scan and then changes the list has to start it again. That is the
-price of keeping the list usable throughout, and it is the right way round:
-losing a scan costs a repeat, while repopulating a list somebody just emptied
-costs their trust in the list.
+If a later workspace action reaches the mutation gate first, the scan is
+superseded, adds nothing and says so. If the scan commits first, the later
+action's roster is authoritative: a clear still leaves nothing, while a removal
+can retain imported rows it was never asked to remove. The webview never applies
+an older folder reply over that later roster. This preserves the action Rust
+actually linearised without letting reply order rewrite it.
 
 A folder full of cloud placeholders yields little or nothing until a tag
 decision is made. That is visible and counted rather than silent, and it is the
@@ -614,8 +622,8 @@ proof of where it lives.
   user meant that silently omits data they explicitly pointed at.
 - **Suffix-based directory-acquisition recognition.** A false positive hides
   every file inside an ordinary folder.
-- **Holding the workspace mutation gate across a scan.** It blocks the only ways
-  out of a mistaken folder choice.
+- **Holding the workspace mutation gate across a scan.** It blocks the reliable
+  final-empty escape and management of the rows already on screen.
 - **Recursion through the call stack.** A deep or adversarial tree decides how
   much stack the application uses.
 - **A `truncated: bool`.** Which limit stopped a scan is what tells a user

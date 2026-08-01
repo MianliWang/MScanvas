@@ -1865,11 +1865,10 @@ describe("adding a folder of mzML files", () => {
     // from before this one's rows existed.
     expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
-    // Getting out does not. A folder import has no cancellation, so these two
-    // are the only ways out of a folder chosen by mistake, and taking them away
-    // for the length of the thing they are the escape from is the one refusal
-    // that leaves a user stuck. Rust makes it safe rather than this side making
-    // it impossible.
+    // Workspace curation does not wait. `Clear list` is the reliable final-empty
+    // escape; `Remove selected` remains available to manage rows already shown,
+    // though imported rows can remain if the import committed first. Rust
+    // linearises either action rather than this side making it impossible.
     expect(screen.getByRole("button", { name: "Remove selected" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
     // And none of the ones that cost nothing. Curating what is on screen is
@@ -1889,16 +1888,22 @@ describe("adding a folder of mzML files", () => {
   });
 
   it("removes rows during an unresolved import, and the late reply cannot put them back", async () => {
-    // The escape route, end to end. Rust settles which came first -- either the
-    // removal superseded the import, or the import committed and the removal's
-    // roster already accounts for its rows -- but the replies need not arrive in
-    // that order, so a folder answer landing last must not install a list from
-    // before the removal.
+    // The import-first linearisation, end to end. Rust has already committed the
+    // discovered row when removal takes the gate, so removal's authoritative
+    // roster keeps that row and removes only the selected handle. The folder
+    // reply can still reach this window last, and must not reinstall its copy of
+    // the row the user removed.
     const stale = deferred<FolderIngestionResult | null>();
     const api = createFakePreviewApi({
       availability: unavailableBackend,
       initialDatasets: [selectedFile, secondFile],
       folderResult: () => stale.promise,
+      removeDatasets: (handles) =>
+        Promise.resolve({
+          roster: { datasets: [secondFile, thirdFile], capacity: 1_024 },
+          removedHandles: handles.filter((handle) => handle === selectedFile.handle),
+          unknownHandles: handles.filter((handle) => handle !== selectedFile.handle),
+        }),
     });
     renderApp(api);
     fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
@@ -1907,9 +1912,10 @@ describe("adding a folder of mzML files", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
 
     await waitFor(() => {
-      expect(rosterRows()).toHaveLength(1);
+      expect(rosterRows()).toHaveLength(2);
     });
     expect(screen.queryByRole("option", { name: /QC_pool_01\.mzML/ })).toBeNull();
+    expect(screen.getByRole("option", { name: /Blank_03\.mzML/ })).toBeVisible();
     expect(screen.getByText(/Removed 1 file from the list\./, VISIBLE)).toBeVisible();
 
     // The import answers afterwards, carrying the roster it saw -- which is the
@@ -1925,10 +1931,11 @@ describe("adding a folder of mzML files", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
     });
-    // The removed row stays removed and no discovered row is installed.
+    // The removed row stays removed, while the discovered row already present
+    // in removal's authoritative roster stays present.
     expect(screen.queryByRole("option", { name: /QC_pool_01\.mzML/ })).toBeNull();
-    expect(screen.queryByRole("option", { name: /Blank_03\.mzML/ })).toBeNull();
-    expect(rosterRows()).toHaveLength(1);
+    expect(screen.getByRole("option", { name: /Blank_03\.mzML/ })).toBeVisible();
+    expect(rosterRows()).toHaveLength(2);
     // The account of what the user actually did survives; the late reply does
     // not overwrite it.
     expect(screen.getByText(/Removed 1 file from the list\./, VISIBLE)).toBeVisible();
@@ -1944,10 +1951,11 @@ describe("adding a folder of mzML files", () => {
     // unresolved, and during a first import from an empty workspace it is the
     // only enabled control in the row -- so it is exactly where a keyboard user
     // lands. Every way the import can settle with nothing added takes it away
-    // again, and removing a focused element moves focus to the body and fires
-    // no blur. Nothing else here would recover it: the row rescue wants a row
-    // handle, and no picker restoration exists because the import was not
-    // started by a focused press of the roster's own button.
+    // again. WebView2 moves focus to the body and can first report a
+    // `focusout` whose destination is null. Nothing else here would recover it:
+    // the row rescue wants a row handle, and no picker restoration exists
+    // because the import was not started by a focused press of the roster's own
+    // button.
     const scan = deferred<FolderScan | null>();
     const api = createFakePreviewApi({
       availability: unavailableBackend,
@@ -1965,6 +1973,13 @@ describe("adding a folder of mzML files", () => {
     escape.focus();
     expect(escape).toHaveFocus();
 
+    // Unlike jsdom's node removal, WebView2 reports a production-like
+    // `focusout` with no destination before the focused control goes. That is
+    // disappearance, not a user choosing somewhere else, so it must not erase
+    // the record that catches the keyboard.
+    blurAsABrowserWould(escape);
+    expect(document.body).toHaveFocus();
+
     // The folder simply held no mzML, so nothing is added and the escape goes.
     scan.resolve({ files: [] });
 
@@ -1973,6 +1988,65 @@ describe("adding a folder of mzML files", () => {
     });
     expect(document.body).not.toHaveFocus();
     expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
+  });
+
+  it("does not steal focus when the user leaves a disappearing escape action", async () => {
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    const escape = screen.getByRole("button", { name: "Clear list" });
+    const destination = screen.getByRole("button", { name: "Check again" });
+    escape.focus();
+    destination.focus();
+    expect(destination).toHaveFocus();
+
+    scan.resolve({ files: [] });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Clear list" })).toBeNull();
+    });
+    expect(destination).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveFocus();
+  });
+
+  it("does not revive an old Clear list focus record after a real destination", async () => {
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    const escape = screen.getByRole("button", { name: "Clear list" });
+    const destination = screen.getByRole("button", { name: "Check again" });
+    escape.focus();
+    destination.focus();
+    expect(destination).toHaveFocus();
+
+    // The destination later losing focus is unrelated to `Clear list`. If the
+    // real destination above did not clear the old record, settlement would
+    // mistake this body focus for an orphaned Clear action and steal it.
+    blurAsABrowserWould(destination);
+    expect(document.body).toHaveFocus();
+    scan.resolve({ files: [] });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Clear list" })).toBeNull();
+    });
+    expect(document.body).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveFocus();
   });
 
   it("empties the list during an unresolved import, and the late reply cannot refill it", async () => {
@@ -2066,10 +2140,11 @@ describe("adding a folder of mzML files", () => {
 
   it("waits for this window to know what the session holds before it will import", async () => {
     // A roster read is itself a statement about the workspace in Rust, so an
-    // import started before the mount-time read answers would reserve its claim
-    // and then watch that older read take the next one -- failing with
-    // `import_superseded` while the user changed nothing at all. The operation
-    // is refused rather than allowed to invalidate itself.
+    // import started before the mount-time read answers would create a race: if
+    // the read reaches the gate first it makes that import fail with
+    // `import_superseded` while the user changed nothing, while an import that
+    // reaches it first changes what the read returns. The operation waits rather
+    // than creating either ordering by itself.
     const initial = deferred<WorkspaceRoster>();
     const api = createFakePreviewApi({
       availability: unavailableBackend,

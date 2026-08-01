@@ -1658,12 +1658,15 @@ before the native dialog opens and no folder has been chosen yet. No percentage
 is shown, because nothing has counted the tree.
 
 Adding files, adding a folder again and reading the list back all wait.
-**Removing rows and emptying the list do not**, and that is deliberate: an
-import cannot be cancelled, so those two are the only way out of a folder chosen
-by mistake, and the generation is what makes them safe rather than the interface
-making them impossible. `Clear list` is offered even over an empty list while an
-import is pending, because an import started from an empty workspace is exactly
-the case with nothing else to remove.
+**Removing rows and emptying the list do not**, but they make different
+promises. `Clear list` is the reliable way out of a folder chosen by mistake and
+is offered even over an empty list while an import is pending; whichever side
+reaches the gate first, the final workspace is empty. `Remove selected` remains
+usable to manage rows already on screen, but it is not cancellation. If removal
+wins the gate, the older import is superseded. If the import commits first, the
+removal acts only on the handles it was given and its authoritative roster can
+therefore retain newly imported rows. In neither order can a late folder reply
+overwrite the later mutation's roster.
 
 Searching, sorting, selecting and reading a file already in the session stay live
 too — a scan launches no process, and there is no honest reason to take the
@@ -1714,12 +1717,13 @@ evidence.
 **What review found.** Three findings, each repaired with its own commit and its
 own test. The workspace list's own `Try reading it again` was the one route to a
 roster read that stayed enabled during an import, and a roster read advances the
-mutation generation — so pressing it would have superseded the very import the
-user was waiting for. The shared folder dialog carried a failure kind and
-message as parameters that both callers passed identically, which suggested the
-two operations fail differently when they do not. And nothing pinned the wire
-spelling of the scan limits or the summary's fields between serde and the
-frontend's closed union, where a disagreement would be silent in the worst way.
+mutation generation — so pressing it could have won the gate and superseded the
+very import the user was waiting for. The shared folder dialog carried a failure
+kind and message as parameters that both callers passed identically, which
+suggested the two operations fail differently when they do not. And nothing
+pinned the wire spelling of the scan limits or the summary's fields between
+serde and the frontend's closed union, where a disagreement would be silent in
+the worst way.
 
 **Rendered Windows QA is still owed and is not claimed here.** Every statement
 above is an automated test on this machine. Driving a native modal folder dialog

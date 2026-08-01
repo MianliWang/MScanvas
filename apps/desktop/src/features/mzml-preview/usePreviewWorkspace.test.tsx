@@ -23,6 +23,7 @@ import {
   createFakePreviewApi,
   deferred,
   previewError,
+  secondFile,
   selectedFile,
   unavailableBackend,
 } from "../../test/previewFixtures";
@@ -840,9 +841,9 @@ describe("starting a folder import", () => {
 
   it("refuses while this window is still reading what the session holds", async () => {
     // A roster read is itself a statement about the workspace in Rust, so an
-    // import started before the mount-time read answers would reserve its claim
-    // and then watch that older read take the next one -- failing with
-    // `import_superseded` while the user changed nothing at all.
+    // import started before the mount-time read answers would create a race: the
+    // read can win the gate and fail it with `import_superseded` while the user
+    // changed nothing, or the import can change what the read returns.
     const pending = deferred<WorkspaceRoster>();
     const { api, result } = folderHarness(() => pending.promise);
     await waitFor(() => {
@@ -868,11 +869,12 @@ describe("starting a folder import", () => {
     });
   });
 
-  it("still lets the user out of a folder chosen by mistake", async () => {
-    // A folder import has no cancellation, so `Remove selected` and `Clear
-    // list` are the only ways out of one. Called directly rather than through
-    // the rendered buttons: a disabled button dispatches nothing, and the
-    // guards that matter are the ones inside the operations.
+  it("keeps row removal available while a folder import is unresolved", async () => {
+    // A folder import has no cancellation. `Clear list` is the reliable escape;
+    // removal still has to manage rows already on screen, even though imported
+    // rows can remain if the import committed first. Called directly rather
+    // than through the rendered buttons: a disabled button dispatches nothing,
+    // and the guards that matter are the ones inside the operations.
     const scan = deferred<FolderScan | null>();
     const api = createFakePreviewApi({
       availability: unavailableBackend,
@@ -896,8 +898,7 @@ describe("starting a folder import", () => {
       expect(result.current.folderBusy).toBe(true);
     });
 
-    // Selecting a row is free while the scan runs, and removing it is the way
-    // out.
+    // Selecting a row is free while the scan runs, and removing it stays live.
     act(() => {
       result.current.dispatchRoster({
         type: "rowPressed",
@@ -924,12 +925,69 @@ describe("starting a folder import", () => {
     expect(api.calls().filter((call) => call === "chooseFolder")).toHaveLength(1);
   });
 
+  it("keeps the folder answer when a mutation started during it failed", async () => {
+    // A mutation that never reached Rust, or that Rust refused, produced no
+    // newer answer about the list. Counting it as one would discard the folder
+    // reply on its behalf — and since a failed mutation leaves the load
+    // `ready`, no reload affordance is offered either, so the list would go on
+    // showing something the session does not hold with no way back.
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      initialDatasets: [selectedFile],
+      roster: () =>
+        Promise.resolve<WorkspaceRoster>({
+          datasets: [selectedFile],
+          capacity: FAKE_WORKSPACE_CAPACITY,
+        }),
+      removeDatasets: () => Promise.reject(previewError({ kind: "preview_worker_unavailable" })),
+      scannedFolder: () => scan.promise,
+    });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => {
+      expect(result.current.rosterLoad.status).toBe("ready");
+    });
+
+    act(() => {
+      result.current.addFolder();
+    });
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(true);
+    });
+
+    act(() => {
+      result.current.dispatchRoster({
+        type: "rowPressed",
+        handle: selectedFile.handle,
+        modifiers: { ctrl: false, shift: false },
+      });
+    });
+    act(() => {
+      result.current.removeSelected();
+    });
+    await waitFor(() => {
+      expect(result.current.workspaceError).not.toBeNull();
+    });
+    // The removal changed nothing, so the list still holds what it held.
+    expect(result.current.roster.datasets).toHaveLength(1);
+
+    scan.resolve({ files: [{ file: secondFile, parents: [] }] });
+
+    // The folder answer is the only newer one there is, so it is applied.
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(false);
+    });
+    expect(
+      result.current.roster.datasets.map((dataset) => dataset.handle),
+    ).toContain(secondFile.handle);
+  });
+
   it("refuses to read the list back while an import is unresolved", async () => {
     // The other half of the same rule, and the reason removing and clearing are
     // not simply "everything that is not acquiring". A roster read advances the
-    // same generation in Rust, so it would supersede the very import the user
-    // is waiting for -- and unlike removing or clearing, it gets them nothing
-    // in exchange.
+    // same generation in Rust: it can supersede the import if it wins the gate,
+    // or merely include the rows if it follows. Unlike removing or clearing,
+    // neither outcome gives the user anything worth introducing that race.
     const scan = deferred<FolderScan | null>();
     const api = createFakePreviewApi({
       availability: unavailableBackend,
