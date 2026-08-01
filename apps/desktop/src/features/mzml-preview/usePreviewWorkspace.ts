@@ -1045,11 +1045,22 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         }
       })
       .catch((cause: unknown) => {
+        const error = toPreviewError(cause);
         // The workspace is left exactly as it was, and so is the preview. A
-        // folder that could not be scanned, and a scan a later decision
-        // superseded, both changed nothing.
-        if (mounted.current && token === folderToken.current) {
-          setFolderError(toPreviewError(cause));
+        // folder that could not be scanned changed nothing and still needs a
+        // recovery path. A scan that a later workspace decision superseded is
+        // different: that decision is the reason Rust refused the import, and
+        // its own reply (or the reconciliation it owes after failure) is the
+        // authoritative account. Reporting the older refusal as a folder
+        // failure would turn the user's successful escape into an error.
+        // A genuine discovery or picker failure can precede Rust's generation
+        // check, so overlap alone is not enough to hide it. Only the typed
+        // refusal that says the newer decision won is expected settlement.
+        const supersededByThisWindow =
+          error.kind === "import_superseded" &&
+          workspaceMutations.current !== mutationsAtStart;
+        if (mounted.current && token === folderToken.current && !supersededByThisWindow) {
+          setFolderError(error);
         }
       })
       .finally(() => {

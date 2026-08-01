@@ -2178,8 +2178,44 @@ describe("adding a folder of mzML files", () => {
         VISIBLE,
       ),
     ).toBeVisible();
+    expect(screen.queryByText("The folder could not be added")).toBeNull();
+    expect(screen.queryByText(/workspace changed while MSCanvas was scanning/)).toBeNull();
     expect(document.body).not.toHaveFocus();
     expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
+  });
+
+  it("keeps a real folder failure visible when Clear list overlaps the scan", async () => {
+    const scan = deferred<FolderIngestionResult | null>();
+    const clearing = deferred<WorkspaceRoster>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      folderResult: () => scan.promise,
+      clearWorkspace: () => clearing.promise,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+    clearing.resolve({ datasets: [], capacity: 1_024 });
+    expect(
+      await screen.findByText(
+        "The workspace is empty. The pending folder import will not add files.",
+        VISIBLE,
+      ),
+    ).toBeVisible();
+
+    scan.reject(
+      previewError({
+        kind: "folder_scan_failed",
+        summary: "That folder could not be scanned safely.",
+        retryable: true,
+      }),
+    );
+
+    expect(await screen.findByText("The folder could not be added")).toBeVisible();
+    expect(screen.getByText("That folder could not be scanned safely.")).toBeVisible();
+    expect(rosterRows()).toHaveLength(0);
+    expect(screen.queryByText(/workspace changed while MSCanvas was scanning/)).toBeNull();
   });
 
   it("keeps a committed first import hidden while Clear list is still pending", async () => {

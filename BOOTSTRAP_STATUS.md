@@ -1599,6 +1599,17 @@ identifier or an ordering key, and the main window's capability set is still
 empty. The picker itself is now one shared helper with two callers, so the
 installation picker and the folder picker cannot drift apart in their flags.
 
+On Windows that helper is the Explorer-style Common Item Dialog,
+`IFileOpenDialog` with `FOS_PICKFOLDERS`, rather than the legacy tree picker. It
+accepts an absolute path pasted into its address bar, is owned by the main
+window, requires one existing filesystem folder, leaves shell links unresolved
+and does not add the choice to Recent. Only the exact Windows cancelled
+`HRESULT` becomes `None`; every other setup, display or result failure remains a
+typed, path-free error. COM initialization and task-allocated result storage are
+balanced on every exit. The selected path still exists only inside Rust. The
+target-specific direct dependency is the already-locked `windows = 0.61.3`, so
+this adds no crate version and no Tauri capability.
+
 **No backend fan-out, ever.** A folder of a thousand files costs a thousand
 filesystem inspections and no processes. Reading is still explicit and still at
 most one file — the first row of a session Rust says was empty. Whether it was
@@ -1692,9 +1703,11 @@ files were found in that folder" is said only by a scan that described the whole
 folder; a scan that stopped short says "No files were added, and the scan was
 incomplete" instead.
 
-**Tests.** 236 tests in the desktop crate, 234 passing and 2 ignored by default
-because they need the local administrative share, counted with
-`cargo test --lib -- --list`. The frontend has 334 tests across 12 files. The new
+**Tests.** The locked all-targets workspace suite lists 498 Rust tests: 491 pass
+by default and 7 are ignored entry points. The desktop library accounts for 258,
+with 256 passing and 2 ignored because they need the local administrative share;
+the other 5 ignored tests are controlled subprocess entry points in the
+ProteoWizard process harness. The frontend has 364 tests across 12 files. The new
 Rust coverage is the discovery-to-acceptance identity join, both reload
 orderings, a scan superseded by a roster read and by an emptied list, a scan
 that survives a look that decides nothing, collision context appearing and
@@ -1707,10 +1720,23 @@ concurrency tests are driven by channels around a controlled walk rather than by
 sleeping. No real acquisition, vendor data or user folder was touched, and no
 ProteoWizard process was started.
 
-**Mutations.** 36 named mutations were introduced, run and restored; none was
-committed. All 36 are caught by a discriminating test, and the whole set was run
-again on the delivered head after the review repairs rather than only on the
-head that existed when it was written.
+Nineteen Windows-dialog tests additionally cover the inherited/required/refused
+option policy, exact owner, ordered setup and result calls, exact cancel versus
+failure classification, missing and malformed result paths, path-free errors,
+and a production-call/legacy-retirement guard. The final frontend cases cover
+both sides of the overlapping-clear error rule: a typed superseded import stays
+silent, while an independent scan failure remains actionable.
+
+**Mutations.** 65 named mutations were introduced one at a time, run and
+restored; none was committed. The original 36, the 20 review and final-P2 repair
+mutations, and the final nine Common Item Dialog and rendered-QA repair
+mutations are all caught by discriminating tests. The last nine remove the
+folder mode, retain multiselect, misclassify a non-cancel `Show` failure, bypass
+the absolute-path check, bypass the option policy, disconnect production
+`GetOptions` or `SetOptions`, expose a superseded import as an error, or hide a
+real scan failure merely because `Clear list` overlapped it. Source SHA-256 was
+checked after every reverse patch, and the targeted tests were green again only
+after all touched source and test files were back at their baseline bytes.
 
 One survived its first run and is recorded here because the repair was to the
 test rather than to the product: folding the collision context into the name
@@ -1731,6 +1757,23 @@ suggested the two operations fail differently when they do not. And nothing
 pinned the wire spelling of the scan limits or the summary's fields between
 serde and the frontend's closed union, where a disagreement would be silent in
 the worst way.
+
+The final live P2 found the escape that mattered most: the empty roster hid
+`Clear list`, and the hook rejected the same action, while the first folder
+import was unresolved. The action is now present and enabled whenever a folder
+request is pending. A successful empty clear advances the authoritative
+workspace generation, leaves the final roster empty in either ordering, keeps
+its notice through settlement and returns keyboard focus to `Add files…` only
+when that control becomes usable.
+
+Rendered QA used both permitted repair rounds. The first found that the late
+typed `import_superseded` rejection still raised `The folder could not be added`
+after a successful clear. Suppressing every overlapping folder rejection would
+have hidden genuine discovery failures, however, because those can happen
+before Rust reaches the generation gate. The final rule therefore suppresses
+only `import_superseded` when this window has made a later workspace decision;
+an overlapping real scan failure remains visible. Opposite-order frontend tests
+and two separate mutations distinguish both sides of that rule.
 
 **Rendered Windows QA is still owed and is not claimed here.** Every statement
 above is an automated test on this machine. Driving a native modal folder dialog
