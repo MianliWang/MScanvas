@@ -3729,7 +3729,7 @@ fn a_folder_adds_every_mzml_below_it_in_discovery_order() {
     let service = PreviewService::new(Box::new(NoProcess));
 
     let result = service
-        .add_mzml_folder(tree.path())
+        .add_mzml_folder(tree.path(), service.reserve_folder_import())
         .expect("an ordinary folder is scanned");
 
     assert_eq!(
@@ -3774,7 +3774,7 @@ fn a_folder_of_many_files_costs_no_backend_process_at_all() {
     let service = PreviewService::new(Box::new(NoProcess));
 
     let result = service
-        .add_mzml_folder(tree.path())
+        .add_mzml_folder(tree.path(), service.reserve_folder_import())
         .expect("an ordinary folder is scanned");
 
     assert_eq!(result.roster.datasets.len(), 24);
@@ -3793,7 +3793,7 @@ fn a_candidate_replaced_between_the_walk_and_the_open_is_refused_and_the_batch_s
     let service = PreviewService::new(Box::new(NoProcess));
 
     let result = service
-        .import_folder(|| {
+        .import_folder(service.reserve_folder_import(), || {
             let found = walk(tree.path())?;
             // After the walk and before acceptance, which is the whole window
             // this defends. The path still resolves, the name is unchanged and
@@ -3836,11 +3836,15 @@ fn a_scan_the_user_moved_past_by_reading_the_list_adds_nothing_and_holds_nothing
     let (started, observe_start) = mpsc::channel();
     let (release, wait_for_release) = mpsc::channel();
 
+    // Reserved before the walk begins, exactly as the command reserves before
+    // the picker opens. What the thread carries is the claim, not the right to
+    // make a new one when it finally gets round to committing.
+    let token = service.reserve_folder_import();
     let scanning = {
         let service = Arc::clone(&service);
         let root = tree.path().to_path_buf();
         std::thread::spawn(move || {
-            service.import_folder(|| {
+            service.import_folder(token, || {
                 // Waited for rather than slept on: the test decides exactly
                 // when the workspace moves on, and it moves on while this call
                 // is provably inside the walk.
@@ -3891,11 +3895,15 @@ fn a_scan_the_user_moved_past_by_emptying_the_list_adds_nothing() {
     let (started, observe_start) = mpsc::channel();
     let (release, wait_for_release) = mpsc::channel();
 
+    // Reserved before the walk begins, exactly as the command reserves before
+    // the picker opens. What the thread carries is the claim, not the right to
+    // make a new one when it finally gets round to committing.
+    let token = service.reserve_folder_import();
     let scanning = {
         let service = Arc::clone(&service);
         let root = tree.path().to_path_buf();
         std::thread::spawn(move || {
-            service.import_folder(|| {
+            service.import_folder(token, || {
                 started.send(()).expect("the test is waiting for the walk");
                 wait_for_release.recv().expect("the test releases the walk");
                 walk(&root)
@@ -3935,11 +3943,15 @@ fn a_look_that_decides_nothing_about_the_workspace_does_not_supersede_a_scan() {
     let (started, observe_start) = mpsc::channel();
     let (release, wait_for_release) = mpsc::channel();
 
+    // Reserved before the walk begins, exactly as the command reserves before
+    // the picker opens. What the thread carries is the claim, not the right to
+    // make a new one when it finally gets round to committing.
+    let token = service.reserve_folder_import();
     let scanning = {
         let service = Arc::clone(&service);
         let root = tree.path().to_path_buf();
         std::thread::spawn(move || {
-            service.import_folder(|| {
+            service.import_folder(token, || {
                 started.send(()).expect("the test is waiting for the walk");
                 wait_for_release.recv().expect("the test releases the walk");
                 walk(&root)
@@ -3973,7 +3985,7 @@ fn a_window_that_reads_the_list_after_a_scan_commits_is_given_its_rows() {
     let service = PreviewService::new(Box::new(NoProcess));
 
     let result = service
-        .add_mzml_folder(tree.path())
+        .add_mzml_folder(tree.path(), service.reserve_folder_import())
         .expect("an ordinary folder is scanned");
 
     assert_eq!(service.roster(), result.roster);
@@ -3994,7 +4006,7 @@ fn two_files_of_one_name_say_where_they_came_from_and_no_other_row_does() {
     let service = PreviewService::new(Box::new(NoProcess));
 
     service
-        .add_mzml_folder(tree.path())
+        .add_mzml_folder(tree.path(), service.reserve_folder_import())
         .expect("an ordinary folder is scanned");
 
     assert_eq!(
@@ -4022,7 +4034,7 @@ fn an_outcome_names_its_row_exactly_as_the_roster_beside_it_does() {
     let service = PreviewService::new(Box::new(NoProcess));
 
     let result = service
-        .add_mzml_folder(tree.path())
+        .add_mzml_folder(tree.path(), service.reserve_folder_import())
         .expect("an ordinary folder is scanned");
 
     let described: Vec<&SelectedFileDto> = result
@@ -4056,7 +4068,7 @@ fn a_context_goes_when_the_row_that_made_it_necessary_does() {
     tree.file(r"batch-2\sample.mzML", b"<mzML> two </mzML>");
     let service = PreviewService::new(Box::new(NoProcess));
     service
-        .add_mzml_folder(tree.path())
+        .add_mzml_folder(tree.path(), service.reserve_folder_import())
         .expect("an ordinary folder is scanned");
     assert_eq!(
         roster_contexts(&service),
@@ -4089,7 +4101,7 @@ fn a_directly_added_file_and_a_discovered_one_of_one_name_are_told_apart() {
 
     service.add_files(std::slice::from_ref(&picked.path));
     service
-        .add_mzml_folder(tree.path())
+        .add_mzml_folder(tree.path(), service.reserve_folder_import())
         .expect("an ordinary folder is scanned");
 
     assert_eq!(
@@ -4145,7 +4157,7 @@ fn a_context_too_long_to_show_keeps_the_end_nearest_the_file() {
     let service = PreviewService::new(Box::new(NoProcess));
 
     service
-        .add_mzml_folder(tree.path())
+        .add_mzml_folder(tree.path(), service.reserve_folder_import())
         .expect("an ordinary folder is scanned");
 
     let deepest = service
@@ -4178,7 +4190,7 @@ fn a_scan_cut_short_by_a_limit_says_so_and_names_the_limit() {
     let service = PreviewService::new(Box::new(NoProcess));
 
     let result = service
-        .import_folder(|| {
+        .import_folder(service.reserve_folder_import(), || {
             super::discovery::discover_mzml_candidates(
                 tree.path(),
                 super::discovery::DiscoveryBudget {
@@ -4213,7 +4225,7 @@ fn a_junction_under_the_chosen_folder_is_counted_rather_than_followed() {
     let service = PreviewService::new(Box::new(NoProcess));
 
     let result = service
-        .add_mzml_folder(tree.path())
+        .add_mzml_folder(tree.path(), service.reserve_folder_import())
         .expect("a folder with a junction in it is still scanned");
 
     assert_eq!(roster_names(&service), vec!["inside.mzML"]);
@@ -4235,7 +4247,7 @@ fn nothing_a_folder_import_transfers_carries_a_path_a_root_name_or_an_identity()
     let service = PreviewService::new(Box::new(NoProcess));
 
     let result = service
-        .add_mzml_folder(tree.path())
+        .add_mzml_folder(tree.path(), service.reserve_folder_import())
         .expect("an ordinary folder is scanned");
 
     let rendered = serde_json::to_string(&result).expect("the folder result serializes");
@@ -4251,6 +4263,11 @@ fn nothing_a_folder_import_transfers_carries_a_path_a_root_name_or_an_identity()
     // holds and how many directories are under it describe the user's tree.
     assert!(!rendered.contains("entriesInspected"), "{rendered}");
     assert!(!rendered.contains("directoriesEntered"), "{rendered}");
+    // Nor the claim the import committed against. The token is a number this
+    // side allocated to order its own decisions; a caller that could see one
+    // could reason about it, and a caller that could send one could forge it.
+    assert!(!rendered.contains("token"), "{rendered}");
+    assert!(!rendered.contains("generation"), "{rendered}");
     // What may appear is the least that tells two identical names apart.
     assert!(rendered.contains("batch-1"), "{rendered}");
 }
@@ -4335,7 +4352,9 @@ fn every_discovery_refusal_maps_to_a_visible_kind_of_its_own() {
     let mut seen: Vec<String> = Vec::new();
     for (kind, expected_kind) in expected {
         let error = service
-            .import_folder(|| Err(DiscoveryError::new(kind)))
+            .import_folder(service.reserve_folder_import(), || {
+                Err(DiscoveryError::new(kind))
+            })
             .expect_err("a refused walk is a refused import");
         assert_eq!(error.kind, expected_kind, "{kind:?}");
         // Nothing an operating system said, and nothing a path could hide in.
@@ -4367,8 +4386,213 @@ fn a_refused_walk_leaves_the_workspace_exactly_as_it_was() {
     let before = service.roster();
 
     service
-        .import_folder(|| Err(DiscoveryError::new(DiscoveryErrorKind::RootUnavailable)))
+        .import_folder(service.reserve_folder_import(), || {
+            Err(DiscoveryError::new(DiscoveryErrorKind::RootUnavailable))
+        })
         .expect_err("a refused walk is a refused import");
 
     assert_eq!(service.roster(), before);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_window_that_reloads_while_the_picker_is_open_supersedes_the_import() {
+    // The race the reservation moved to cover. A modal dialog can stand open
+    // for minutes; a webview can reload or die inside that window, and the one
+    // that replaces it reads the roster, adopts it, and has no further read
+    // coming. Reserved after the picker answered, this import would be newer
+    // than that read, would commit, and would hand its rows to a window that is
+    // no longer there.
+    //
+    // Sequential rather than threaded on purpose: with the claim taken before
+    // the dialog, the whole race is expressible in the order it happens.
+    let tree = FolderTree::new("reload-during-picker");
+    let candidate = tree.file("sample.mzML", b"<mzML/>");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    // The command reserves, then shows the dialog.
+    let token = service.reserve_folder_import();
+    // The window goes and its replacement reads what the session holds.
+    assert!(service.roster().datasets.is_empty());
+    // The user finally chooses a folder in the dialog the old window opened.
+    let error = service
+        .add_mzml_folder(tree.path(), token)
+        .expect_err("an import the live window has already read past does not commit");
+
+    assert_eq!(error.kind, "import_superseded");
+    assert!(service.roster().datasets.is_empty());
+    assert!(
+        nothing_else_holds_open(&candidate),
+        "a superseded import holds no file it did not add"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn every_workspace_decision_taken_while_the_picker_is_open_supersedes_the_import() {
+    // Reading the list is one of four, and the other three are things the user
+    // does deliberately. Each of them says "this is the workspace now", and
+    // rows from a dialog opened before it would arrive from nowhere.
+    let elsewhere = TestFile::new("decisions-during-picker");
+    for decision in ["clear", "remove", "add"] {
+        let tree = FolderTree::new(&format!("picker-{decision}"));
+        // Named apart from the file the session already holds, so "the folder's
+        // row did not arrive" is a question about this row rather than about
+        // whichever `sample.mzML` happens to be in the list.
+        tree.file("folder-run.mzML", b"<mzML/>");
+        let service = PreviewService::new(Box::new(NoProcess));
+        service.add_files(std::slice::from_ref(&elsewhere.path));
+
+        let token = service.reserve_folder_import();
+        match decision {
+            "clear" => {
+                service.clear_workspace();
+            }
+            "remove" => {
+                service.remove_datasets(&["file-0".to_owned()]);
+            }
+            _ => {
+                service.add_files(std::slice::from_ref(&elsewhere.path));
+            }
+        }
+
+        assert_eq!(
+            service
+                .add_mzml_folder(tree.path(), token)
+                .expect_err("the decision the user made wins")
+                .kind,
+            "import_superseded",
+            "{decision}"
+        );
+        assert!(
+            !roster_names(&service)
+                .iter()
+                .any(|name| name == "folder-run.mzML"),
+            "{decision}"
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_newer_folder_command_supersedes_a_picker_that_is_still_open() {
+    // Two dialogs cannot be open at once through the interface, but the service
+    // may not rely on that: the guard is the frontend's, and the rule here is
+    // that the newest decision is the one that commits.
+    let tree = FolderTree::new("two-pickers");
+    tree.file("sample.mzML", b"<mzML/>");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let older = service.reserve_folder_import();
+    let newer = service.reserve_folder_import();
+
+    service
+        .add_mzml_folder(tree.path(), newer)
+        .expect("the newer command commits");
+    assert_eq!(roster_names(&service), vec!["sample.mzML"]);
+
+    assert_eq!(
+        service
+            .add_mzml_folder(tree.path(), older)
+            .expect_err("the older one does not")
+            .kind,
+        "import_superseded"
+    );
+    assert_eq!(
+        roster_names(&service),
+        vec!["sample.mzML"],
+        "and adds nothing on its way out"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_cancelled_picker_adds_nothing_and_still_answers_for_the_claim_it_took() {
+    // Cancelling drops the token. The generation stays advanced, which is
+    // deliberate: it supersedes anything older, it adds no row, it holds no
+    // lease and it spends no identifier. A generation is an ordering fact and
+    // is never given back.
+    let tree = FolderTree::new("cancelled-picker");
+    tree.file("sample.mzML", b"<mzML/>");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let older = service.reserve_folder_import();
+    // The user opens a second dialog and cancels it. Its claim was taken and is
+    // never spent, which is the whole of what cancelling costs.
+    let _cancelled = service.reserve_folder_import();
+
+    assert!(service.roster().datasets.is_empty());
+    assert_eq!(
+        service
+            .add_mzml_folder(tree.path(), older)
+            .expect_err("the cancelled dialog was still a decision about which import is current")
+            .kind,
+        "import_superseded"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn committing_an_import_does_not_claim_the_next_state_as_well() {
+    // The commit is the completion of the decision the token names, not a new
+    // one. Reserving again here would move the import forward past every
+    // decision the user made while the picker was open, which is the whole
+    // thing the token exists to prevent.
+    let tree = FolderTree::new("no-second-claim");
+    tree.file("sample.mzML", b"<mzML/>");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let before = service.reserve_folder_import();
+    let claimed = service.reserve_folder_import();
+    assert_eq!(claimed.generation(), before.generation() + 1);
+
+    service
+        .add_mzml_folder(tree.path(), claimed)
+        .expect("it commits");
+
+    assert_eq!(
+        service.reserve_folder_import().generation(),
+        before.generation() + 2,
+        "the commit advanced nothing of its own"
+    );
+}
+
+#[test]
+fn the_folder_command_takes_its_claim_before_it_opens_the_picker() {
+    // Asserted against the source, because the ordering inside a Tauri command
+    // is the one thing a unit test cannot ask the framework for -- and it is
+    // exactly where the reservation would drift back to after the dialog
+    // without anything noticing.
+    let host = include_str!("../lib.rs");
+    let body = host
+        .split_once("async fn choose_mzml_folder")
+        .expect("the host registers the folder command")
+        .1
+        .split_once("\n}\n")
+        .expect("the command body is closed")
+        .0;
+
+    let reserved = body
+        .find("reserve_folder_import")
+        .expect("the command reserves a generation");
+    let dispatched = body
+        .find("run_on_main_thread")
+        .expect("the command dispatches the picker");
+    let imported = body
+        .find("add_mzml_folder")
+        .expect("the command imports what was chosen");
+
+    assert!(
+        reserved < dispatched,
+        "the claim has to cover the dialog, not start after it"
+    );
+    assert!(dispatched < imported);
+    // And the webview supplies none of it: the command's parameters are the
+    // application handle and the service, and nothing else.
+    let signature = body
+        .split_once(')')
+        .expect("the command has a parameter list")
+        .0;
+    assert!(!signature.contains("token"), "{signature}");
+    assert!(!signature.contains("Token"), "{signature}");
 }

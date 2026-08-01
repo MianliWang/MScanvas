@@ -5,6 +5,7 @@
 //! without a WebView or a local ProteoWizard installation.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -500,20 +501,43 @@ impl PreviewService {
         WorkspaceAddResultDto { roster, outcomes }
     }
 
+    /// Claims the workspace's next state for a folder import that has not
+    /// started yet.
+    ///
+    /// Reserved by the command **before** the native picker opens, not after it
+    /// answers, and the difference is a whole class of race. A modal dialog can
+    /// stand open for minutes; a webview can reload or die in that time, and the
+    /// window that replaces it reads the roster and adopts it. Reserved
+    /// afterwards, the import would be newer than that read, would commit, and
+    /// would answer a window that no longer exists — leaving the live one
+    /// showing a list it has no reason to read again. Reserved beforehand, the
+    /// read supersedes it and nothing arrives from nowhere.
+    ///
+    /// The token is spent by `add_mzml_folder`. It cannot be copied, so one
+    /// reservation is one import; and a reservation that is dropped instead --
+    /// a cancelled picker, a dialog that would not open -- simply leaves the
+    /// generation advanced, which supersedes anything older and adds nothing.
+    /// Generations are ordering facts and are never given back.
+    pub fn reserve_folder_import(&self) -> FolderImportToken {
+        let (gate, generation) = self.begin_mutation();
+        drop(gate);
+        FolderImportToken { generation }
+    }
+
     /// Scans one chosen folder and adds every mzML file it proposes.
     ///
     /// The shape of this is the whole of what M1.4.1 adds, and every step is
     /// load-bearing:
     ///
-    /// 1. reserve a generation, so there is a name for "the workspace as it was
-    ///    when this scan was asked for";
+    /// 1. the caller reserved a generation before the picker opened, so there
+    ///    is a name for "the workspace as it was when this was asked for";
     /// 2. scan holding **no** lock -- not the workspace, not the mutation gate.
     ///    A tree can take as long as it takes, and a session frozen for the
     ///    length of it would be one the user could not remove a row from;
-    /// 3. take the gate back and refuse outright if anything has happened
-    ///    since. A user who cleared the list, added files, or reloaded the
-    ///    window has said what the workspace is, and rows from a scan they
-    ///    started before that would arrive from nowhere;
+    /// 3. take the gate and refuse outright if anything has happened since. A
+    ///    user who cleared the list, added files, or reloaded the window has
+    ///    said what the workspace is, and rows from an import they started
+    ///    before that would arrive from nowhere;
     /// 4. accept the candidates in discovery order, under the gate, so the
     ///    batch is one contiguous run;
     /// 5. recheck each candidate's identity against what discovery found,
@@ -525,35 +549,38 @@ impl PreviewService {
     pub fn add_mzml_folder(
         &self,
         root: &Path,
+        token: FolderImportToken,
     ) -> Result<FolderIngestionResultDto, PreviewErrorDto> {
-        self.import_folder(|| discover_mzml_candidates(root, DiscoveryBudget::default()))
+        self.import_folder(token, || {
+            discover_mzml_candidates(root, DiscoveryBudget::default())
+        })
     }
 
-    /// The reserve, scan and commit an import is made of, with the walk itself
-    /// left to the caller.
+    /// The scan and commit an import is made of, with the walk itself left to
+    /// the caller.
     ///
     /// Named as its own step because the walk is the one part that runs outside
     /// the gate, and that is both what makes a long scan safe and what makes it
     /// raceable. A test stands a controlled walk in its place and decides
     /// exactly what happens to the workspace while it runs — no sleep, no
     /// guess, and no tree the size of the case being described.
+    ///
+    /// It reserves nothing. The token is the reservation, and reserving a
+    /// second one here would move the import forward past every decision the
+    /// user made while the picker was open.
     pub(super) fn import_folder<S>(
         &self,
+        token: FolderImportToken,
         scan: S,
     ) -> Result<FolderIngestionResultDto, PreviewErrorDto>
     where
         S: FnOnce() -> Result<DiscoveryResult, DiscoveryError>,
     {
-        // Reserved before the scan and released immediately. What it buys is a
-        // number: everything that happens afterwards can be compared against
-        // it, and nothing has to be held for the comparison to be sound.
-        let (gate, reserved) = self.begin_mutation();
-        drop(gate);
-
+        let reserved = token.generation;
         let discovered = scan().map_err(|error| folder_error(error.kind()))?;
 
-        // Back under the gate, and deliberately without advancing it: this
-        // commit is the completion of the decision made above, not a new one.
+        // Under the gate, and deliberately without advancing it: this commit is
+        // the completion of the decision the token names, not a new one.
         let batch = self.enter_workspace_mutation();
         if batch.generation != reserved {
             // Nothing accepted, so nothing leased and no identifier spent. The
@@ -701,6 +728,37 @@ impl PreviewService {
         let mut gate = self.enter_workspace_mutation();
         let generation = gate.advance();
         (gate, generation)
+    }
+}
+
+/// One folder import's claim on the workspace's next state.
+///
+/// Opaque, unclonable and not serialisable. The webview neither supplies nor
+/// receives it: it is allocated by the command that shows the picker and spent
+/// by the import that follows, so what it represents — "the workspace as it was
+/// when the user asked for this" — cannot be forged, reused or moved across the
+/// boundary. Holding a number rather than a lock is what lets the native dialog
+/// stand open for as long as the user needs without freezing the session.
+pub struct FolderImportToken {
+    generation: u64,
+}
+
+impl FolderImportToken {
+    /// Which decision this token names. Test-only: nothing in the product needs
+    /// to look inside it, and the whole point is that the number is private.
+    #[cfg(test)]
+    pub(super) const fn generation(&self) -> u64 {
+        self.generation
+    }
+}
+
+impl fmt::Debug for FolderImportToken {
+    /// Opaque, like every other value in this boundary that names a moment in
+    /// the session's history. The number is meaningless outside the service and
+    /// printing it invites a reader of a log to treat it as something to
+    /// correlate.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<folder-import-token>")
     }
 }
 

@@ -355,7 +355,14 @@ export function DatasetRoster({
       } · removing a row never deletes a file`;
 
   return (
-    <section aria-labelledby="dataset-roster-heading" className="panel dataset-roster-panel">
+    // Marked busy for the whole import, because this is the region the import
+    // is about to change. It says the list is not settled without claiming to
+    // know which half of the operation is running.
+    <section
+      aria-busy={folderBusy}
+      aria-labelledby="dataset-roster-heading"
+      className="panel dataset-roster-panel"
+    >
       <header className="panel-header compact">
         <div>
           <h2 id="dataset-roster-heading">Workspace</h2>
@@ -437,7 +444,14 @@ export function DatasetRoster({
             files -- because a folder of a vendor acquisition is not something
             this version can read, and an action called "Add folder" would
             promise otherwise. */}
+        {/* The name never changes. An action's accessible identity is how a
+            user finds it again, and `Scanning folder…` was both a different
+            identity and a false one: the flag is set before the native dialog
+            opens, so for as long as the user spends navigating it -- or if they
+            cancel -- nothing was being scanned at all. What is running is said
+            once, by the shell, in words true of both phases. */}
         <button
+          aria-busy={folderBusy}
           className="secondary-button"
           disabled={!canAddFolder}
           onClick={(event) => {
@@ -445,10 +459,7 @@ export function DatasetRoster({
           }}
           type="button"
         >
-          {/* What is running, in the control that started it. A scan has no
-              known length -- nothing has counted the tree -- so there is no
-              proportion to show and none is invented. */}
-          {folderBusy ? "Scanning folder…" : "Add mzML folder…"}
+          Add mzML folder…
         </button>
         <button
           className="secondary-button"

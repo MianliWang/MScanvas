@@ -17,9 +17,11 @@ import { usePreviewWorkspace } from "./usePreviewWorkspace";
 import {
   FAKE_WORKSPACE_CAPACITY,
   buildPreview,
+  createFakePreviewApi,
   deferred,
   previewError,
   selectedFile,
+  unavailableBackend,
 } from "../../test/previewFixtures";
 
 /**
@@ -809,6 +811,92 @@ describe("discarding what a replaced installation read", () => {
 
     await waitFor(() => {
       expect(result.current.backend.status).toBe("failed");
+    });
+  });
+});
+
+describe("starting a folder import", () => {
+  /**
+   * The hook over a fake whose roster read the test finishes by hand.
+   *
+   * Driven directly rather than through the rendered button, because a disabled
+   * button dispatches nothing: the guard that matters is the one inside the
+   * operation, and only a direct call reaches it.
+   */
+  function folderHarness(roster: () => Promise<WorkspaceRoster>) {
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      roster,
+      scannedFolder: { files: [{ file: selectedFile, parents: [] }] },
+    });
+    return {
+      api,
+      ...renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) }),
+    };
+  }
+
+  it("refuses while this window is still reading what the session holds", async () => {
+    // A roster read is itself a statement about the workspace in Rust, so an
+    // import started before the mount-time read answers would reserve its claim
+    // and then watch that older read take the next one -- failing with
+    // `import_superseded` while the user changed nothing at all.
+    const pending = deferred<WorkspaceRoster>();
+    const { api, result } = folderHarness(() => pending.promise);
+    await waitFor(() => {
+      expect(result.current.rosterLoad.status).toBe("loading");
+    });
+
+    act(() => {
+      result.current.addFolder();
+    });
+
+    expect(api.calls().filter((call) => call === "chooseFolder")).toHaveLength(0);
+    expect(result.current.folderBusy).toBe(false);
+
+    pending.resolve({ datasets: [], capacity: FAKE_WORKSPACE_CAPACITY });
+    await waitFor(() => {
+      expect(result.current.rosterLoad.status).toBe("ready");
+    });
+    act(() => {
+      result.current.addFolder();
+    });
+    await waitFor(() => {
+      expect(api.calls().filter((call) => call === "chooseFolder")).toHaveLength(1);
+    });
+  });
+
+  it("refuses after a read that failed, until a retry has succeeded", async () => {
+    // The same answer for the same reason: this window has no authoritative
+    // list, and importing into a workspace it could not read is not something
+    // to start on a guess.
+    let attempts = 0;
+    const { api, result } = folderHarness(() => {
+      attempts += 1;
+      return attempts === 1
+        ? Promise.reject(new Error("the list could not be read"))
+        : Promise.resolve<WorkspaceRoster>({ datasets: [], capacity: FAKE_WORKSPACE_CAPACITY });
+    });
+    await waitFor(() => {
+      expect(result.current.rosterLoad.status).toBe("failed");
+    });
+
+    act(() => {
+      result.current.addFolder();
+    });
+    expect(api.calls().filter((call) => call === "chooseFolder")).toHaveLength(0);
+
+    act(() => {
+      result.current.reloadRoster();
+    });
+    await waitFor(() => {
+      expect(result.current.rosterLoad.status).toBe("ready");
+    });
+
+    act(() => {
+      result.current.addFolder();
+    });
+    await waitFor(() => {
+      expect(api.calls().filter((call) => call === "chooseFolder")).toHaveLength(1);
     });
   });
 });

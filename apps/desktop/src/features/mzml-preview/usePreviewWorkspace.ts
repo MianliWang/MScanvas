@@ -202,7 +202,20 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const [measurements, setMeasurements] = useState<readonly PreviewMeasurement[]>([]);
 
   const [roster, dispatchRoster] = useReducer(rosterReducer, initialRosterState);
-  const [rosterLoad, setRosterLoad] = useState<RosterLoadState>({ status: "loading" });
+  const [rosterLoad, setRosterLoadState] = useState<RosterLoadState>({ status: "loading" });
+  /**
+   * Whether this window has an authoritative list, where a start guard can read
+   * it.
+   *
+   * A ref rather than the rendered value, for the same reason every other guard
+   * here is one: the decision is made inside a handler that can be several
+   * commits older than the truth.
+   */
+  const rosterReadyRef = useRef(false);
+  const showRosterLoad = useCallback((next: RosterLoadState) => {
+    rosterReadyRef.current = next.status === "ready";
+    setRosterLoadState(next);
+  }, []);
   const [workspaceNotice, setWorkspaceNotice] = useState<WorkspaceNotice | null>(null);
   /**
    * How many accounts of a workspace action there have been.
@@ -498,21 +511,21 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const reloadRoster = useCallback(() => {
     rosterToken.current += 1;
     const token = rosterToken.current;
-    setRosterLoad({ status: "loading" });
+    showRosterLoad({ status: "loading" });
     void api
       .getRoster()
       .then((loaded) => {
         if (mounted.current && token === rosterToken.current) {
           dispatchRoster({ type: "rosterLoaded", roster: loaded });
-          setRosterLoad({ status: "ready" });
+          showRosterLoad({ status: "ready" });
         }
       })
       .catch((cause: unknown) => {
         if (mounted.current && token === rosterToken.current) {
-          setRosterLoad({ status: "failed", error: toPreviewError(cause) });
+          showRosterLoad({ status: "failed", error: toPreviewError(cause) });
         }
       });
-  }, [api]);
+  }, [api, showRosterLoad]);
 
   useEffect(reloadRoster, [reloadRoster]);
 
@@ -529,8 +542,8 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    */
   const rosterSettled = useCallback(() => {
     rosterToken.current += 1;
-    setRosterLoad({ status: "ready" });
-  }, []);
+    showRosterLoad({ status: "ready" });
+  }, [showRosterLoad]);
 
   /**
    * Applies a verdict that comes back from changing which installation is used.
@@ -867,6 +880,20 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     // Read from refs, never from rendered state. This decision is made inside
     // a handler that can be several commits older than the truth.
     if (pickerBusyRef.current || folderBusyRef.current || workspaceBusyRef.current) {
+      return;
+    }
+    // Not until this window knows what the session holds. The mount-time roster
+    // read is itself a statement about the workspace in Rust, so an import
+    // started before it answers would reserve its claim, then watch that older
+    // read take the next one and supersede it -- failing with
+    // `import_superseded` while the user changed nothing at all. Waiting costs
+    // one round trip that is already in flight; not waiting costs an operation
+    // that could only ever have failed.
+    //
+    // A failed read is the same answer: this window has no authoritative list,
+    // and importing into a workspace it could not read is not something to
+    // start on a guess. The roster's own retry is the way out.
+    if (!rosterReadyRef.current) {
       return;
     }
     const startedAt = now();

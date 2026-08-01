@@ -89,6 +89,15 @@ async fn choose_mzml_files(
 ///
 /// Nothing here reads an acquisition. Scanning a folder of a thousand files
 /// costs a thousand filesystem inspections and no backend processes at all.
+///
+/// The import's claim on the workspace is reserved **before** the dialog is
+/// dispatched, and the order is load-bearing. A modal picker can stand open for
+/// minutes, and a webview can reload or die inside that window; the window that
+/// replaces it reads the roster and adopts it, with no further read coming.
+/// Reserved after the picker answered, this import would be newer than that
+/// read, would commit, and would hand its rows to a window that no longer
+/// exists. Reserved first, the read supersedes it and the live window is never
+/// left holding a list it has no reason to question.
 #[tauri::command]
 async fn choose_mzml_folder(
     app: tauri::AppHandle,
@@ -96,6 +105,11 @@ async fn choose_mzml_folder(
 ) -> Result<Option<FolderIngestionResultDto>, PreviewErrorDto> {
     let owner = main_window_handle(&app);
     let service = Arc::clone(&service);
+    // Before the dialog, and never after it. Cancelling or failing simply drops
+    // the token: the generation stays advanced, which supersedes anything older
+    // and adds nothing, and a generation is an ordering fact that is never
+    // given back.
+    let token = service.reserve_folder_import();
     let (sender, receiver) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
         let _ = sender.send(preview::dialog::choose_mzml_folder(owner));
@@ -108,7 +122,7 @@ async fn choose_mzml_folder(
     off_the_async_runtime(move || {
         let chosen = receiver.recv().map_err(|_| folder_picker_unavailable())??;
         chosen
-            .map(|root| service.add_mzml_folder(&root))
+            .map(|root| service.add_mzml_folder(&root, token))
             .transpose()
     })
     .await?

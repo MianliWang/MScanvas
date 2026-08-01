@@ -843,18 +843,35 @@ describe("the two ways of adding acquisitions", () => {
     ]);
   });
 
-  it("says what is running in the control that started it, without inventing a proportion", () => {
+  it("keeps the folder action's name while an import runs, and marks it busy", () => {
+    // The name is how a user finds an action again, so it does not move. It
+    // also must not claim a folder is being scanned: the flag is set before the
+    // native dialog opens, so for as long as the user spends navigating it --
+    // or if they cancel -- nothing is being scanned at all.
     render(<Harness canAddFiles={false} canAddFolder={false} canMutate={false} folderBusy />);
 
-    const scanning = screen.getByRole("button", { name: "Scanning folder…" });
-    expect(scanning).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Add mzML folder…" })).toBeNull();
+    const folder = screen.getByRole("button", { name: "Add mzML folder…" });
+    expect(folder).toBeDisabled();
+    expect(folder).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByText(/Scanning folder/)).toBeNull();
     // No percentage anywhere: nothing has counted the tree, so there is no
     // proportion to report and none is made up.
-    expect(scanning.textContent).not.toMatch(/\d/);
+    expect(folder.textContent).not.toMatch(/\d/);
+    // And the region the import is about to change says it is not settled.
+    expect(screen.getByRole("region", { name: "Workspace" })).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
+  });
+
+  it("says nothing about a scan while the roster is idle", () => {
+    render(<Harness />);
+
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveAttribute(
+      "aria-busy",
+      "false",
+    );
+    expect(screen.getByRole("region", { name: "Workspace" })).toHaveAttribute("aria-busy", "false");
   });
 
   it("hands each acquisition action to its own callback", () => {

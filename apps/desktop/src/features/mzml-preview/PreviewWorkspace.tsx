@@ -10,6 +10,20 @@ import { rosterProjection, type WorkspaceNotice } from "./rosterSelection";
 import { describeProjection } from "./rosterView";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
 
+/**
+ * What a folder import is doing, said so that it is true throughout.
+ *
+ * The operation covers a modal dialog and then a filesystem walk, and the
+ * interface cannot see the moment between them: a native picker does not report
+ * closing, and adding an event protocol to learn it is a task model this
+ * milestone deliberately does not build. So the sentence names both phases
+ * rather than guessing which one is running, and says the length is unknown
+ * rather than inventing a proportion of a tree nothing has counted.
+ */
+const FOLDER_IMPORT_STATUS =
+  "Folder import in progress. MSCanvas is waiting for a folder selection or " +
+  "scanning the chosen folder. The duration is not known.";
+
 /** The session workspace: a curated roster of mzML files, and one open preview. */
 export function PreviewWorkspace() {
   const workspace = usePreviewWorkspace();
@@ -59,6 +73,16 @@ export function PreviewWorkspace() {
     !workspace.pickerBusy &&
     !workspace.folderBusy &&
     !workspace.workspaceBusy;
+  // One thing more for the folder action, and only for it. A roster read is
+  // itself a statement about the workspace in Rust, so an import started before
+  // the mount-time read answers would reserve its claim and then watch that
+  // older read take the next one -- failing with `import_superseded` while the
+  // user changed nothing. Adding files has no such window: it is one gated
+  // batch with nothing running unlocked inside it.
+  //
+  // A failed read is the same answer for the same reason. This window has no
+  // authoritative list, and the roster's own retry is the way out.
+  const canAddFolder = canAcquire && workspace.rosterLoad.status === "ready";
   // The same gate from the other side. An add holds `pickerBusy` for the whole
   // of the picker *and* the registration that follows it, and a folder import
   // holds its own flag for the picker, the scan and the commit, so a removal or
@@ -144,7 +168,7 @@ export function PreviewWorkspace() {
             <span>{workspace.folderError.summary}</span>
             <button
               className="link-button"
-              disabled={!canAcquire}
+              disabled={!canAddFolder}
               onClick={workspace.addFolder}
               type="button"
             >
@@ -155,6 +179,17 @@ export function PreviewWorkspace() {
             </button>
           </div>
         )}
+
+        {/* The visible half, in the shell rather than in the roster, so a
+            status that comes and goes never takes height from the list it is
+            about. Not a live region of its own: the permanently mounted one
+            below is what announces it, and a region that arrives with its text
+            is the shape screen readers routinely miss. */}
+        {workspace.folderBusy ? (
+          <div className="notice notice-neutral">
+            <span>Folder import in progress…</span>
+          </div>
+        ) : null}
 
         {workspace.workspaceError === null ? null : (
           <div className="notice notice-danger" role="status">
@@ -262,21 +297,25 @@ export function PreviewWorkspace() {
       </p>
       {/* A folder import is the one workspace action long enough that a user
           can wonder whether anything is happening, and the only one whose end
-          they may be waiting for before doing something else. The visible half
-          is the action's own label; this is what a screen reader is told, and
-          it says plainly that the length is not known rather than inventing a
-          proportion of a tree nothing has finished counting. */}
+          they may be waiting for before doing something else.
+
+          One sentence for the whole operation, and deliberately one that is
+          true at both ends of it. The flag is set before the native dialog
+          opens, because the operation begins there -- but at that moment no
+          folder has been chosen, and saying one is being scanned would be false
+          for as long as the user spends navigating, and false altogether if
+          they cancel. Telling the two phases apart would need the picker to
+          report closing, which is an event protocol this milestone does not
+          add; saying something true of both needs nothing. */}
       <p aria-live="polite" className="visually-hidden" data-live-region="folder">
-        {workspace.folderBusy
-          ? "Scanning the chosen folder for .mzML files. How long it will take is not known."
-          : ""}
+        {workspace.folderBusy ? FOLDER_IMPORT_STATUS : ""}
       </p>
 
       <main className="workspace-layout">
         <aside className="workspace-sidebar">
           <DatasetRoster
             canAddFiles={canAcquire}
-            canAddFolder={canAcquire}
+            canAddFolder={canAddFolder}
             canMutate={canMutate}
             canPreview={canPreview}
             dispatch={workspace.dispatchRoster}
