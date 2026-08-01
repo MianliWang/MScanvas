@@ -1659,14 +1659,21 @@ is shown, because nothing has counted the tree.
 
 Adding files, adding a folder again and reading the list back all wait.
 **Removing rows and emptying the list do not**, but they make different
-promises. `Clear list` is the reliable way out of a folder chosen by mistake and
-is offered even over an empty list while an import is pending; whichever side
-reaches the gate first, the final workspace is empty. `Remove selected` remains
+promises. `Clear list` is offered even over an empty list while an import is
+pending. When its command succeeds, it is the reliable way out of a folder
+chosen by mistake and the final workspace is empty whichever side reaches the
+gate first. `Remove selected` remains
 usable to manage rows already on screen, but it is not cancellation. If removal
 wins the gate, the older import is superseded. If the import commits first, the
 removal acts only on the handles it was given and its authoritative roster can
 therefore retain newly imported rows. In neither order can a late folder reply
-overwrite the later mutation's roster.
+overwrite the later mutation's roster. The request suppresses that reply as soon
+as it begins, so a committed import cannot transiently restore rows or launch a
+preview while the later action is still pending. If the action rejects, the
+webview does not infer that Rust was unchanged; it reads the authoritative roster
+after both operations settle, removes any preview whose row is no longer present,
+and keeps the typed action error visible. Beginning another mutation also
+invalidates any older roster read before its reply can reach the screen.
 
 Searching, sorting, selecting and reading a file already in the session stay live
 too — a scan launches no process, and there is no honest reason to take the

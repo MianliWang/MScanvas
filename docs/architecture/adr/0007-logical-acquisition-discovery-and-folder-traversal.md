@@ -423,14 +423,15 @@ session unusable while it runs. Searching, sorting, selecting and reading a file
 already in the workspace all stay live.
 
 **`Remove selected` and `Clear list` stay live too, but make different
-promises.** `Clear list` is the reliable way out of a folder chosen by mistake:
-if it reaches the gate first, the older import is superseded; if the import
-commits first, the clear removes every row it added. The final workspace is
-empty in either linearisation. `Remove selected` remains live so the user can
-manage rows already on screen. If it reaches the gate first it also supersedes
-the import, but if the import commits first the removal acts only on the handles
-it was given, so its authoritative roster can retain newly imported rows. It is
-row management, not a cancellation guarantee.
+promises.** When `Clear list` succeeds, it is the reliable way out of a folder
+chosen by mistake. If it reaches the gate first, the older import is superseded;
+if the import commits first, the clear removes every row it added. When the
+command succeeds, the final workspace is empty in either linearisation.
+`Remove selected` remains
+live so the user can manage rows already on screen. If it reaches the gate first
+it also supersedes the import, but if the import commits first the removal acts
+only on the handles it was given, so its authoritative roster can retain newly
+imported rows. It is row management, not a cancellation guarantee.
 
 What still waits is acquiring more — `Add files…` and a second
 `Add mzML folder…` — because two batches in flight let an older reply's roster
@@ -447,14 +448,17 @@ folder reply landing after a mutation would install a list from before it. An
 import that had a mutation begin after it therefore installs no roster at all,
 whichever way Rust ordered them.
 
-It says nothing either, and that is deliberate rather than an omission. Reaching
-that branch with a *result* means Rust committed the import — had the mutation
-won the gate, the command would have answered `import_superseded` and the reply
-would be a rejection. So the rows are in the session and the mutation's own
-authoritative roster already accounts for them: any message here would either
-claim a failure that did not happen or overwrite the account of what the user
-actually did. The superseded rejection is a different path and keeps its own
-typed explanation.
+It says nothing either, and that is deliberate rather than an omission. The
+later action is already the user's newer intent, so exposing the folder roster
+while that action is unresolved would transiently put rows back and, over an
+empty workspace, could launch a preview the user did not ask for. A successful
+action supplies the authoritative roster that accounts for whichever operation
+won the gate. A rejected action does not prove that Rust was unchanged, so the
+folder reply remains suppressed and the webview reads the authoritative roster
+after both operations settle. Any older roster read is invalidated when the
+action begins, and any preview whose row is absent from the reconciled roster is
+removed with it. The action's typed error stays visible. The superseded folder
+rejection is a different path and keeps its own typed explanation.
 
 Two consequences are about the keyboard, both in the issue #25 class reached by
 keeping `Clear list` live during an import.
@@ -583,8 +587,11 @@ If a later workspace action reaches the mutation gate first, the scan is
 superseded, adds nothing and says so. If the scan commits first, the later
 action's roster is authoritative: a clear still leaves nothing, while a removal
 can retain imported rows it was never asked to remove. The webview never applies
-an older folder reply over that later roster. This preserves the action Rust
-actually linearised without letting reply order rewrite it.
+an older folder reply over that later roster or while that action is unresolved.
+If the action rejects, a fresh roster read after both operations settle
+reconciles the webview without assuming where the failure occurred. This
+preserves the state Rust actually linearised without letting reply order rewrite
+it.
 
 A folder full of cloud placeholders yields little or nothing until a tag
 decision is made. That is visible and counted rather than silent, and it is the

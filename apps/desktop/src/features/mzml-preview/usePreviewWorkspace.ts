@@ -347,29 +347,21 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const workspaceBusyRef = useRef(false);
   /**
-   * How many removals and clears have been *answered*.
+   * How many removal and clear requests have begun.
    *
    * `Remove selected` and `Clear list` stay available for the length of a
-   * folder import, which means an import's reply can arrive after one of them.
-   * Rust settles what the session holds -- either the mutation superseded the
-   * import, or the import committed first and the mutation's roster already
-   * includes its rows -- but the *replies* do not have to arrive in that order,
-   * and a folder reply landing last would install a list from before the
-   * mutation and put back the very rows the user asked to be rid of.
+   * folder import, so their user intent has to hide that import's reply as soon
+   * as the request starts. Waiting for the mutation's answer would let a folder
+   * reply install transient rows -- and, in an empty workspace, start a preview
+   * for one -- after the user had already asked to remove them.
    *
-   * So an import that had one of these answered after it began does not install
-   * its roster at all. Whichever way Rust ordered them, the mutation's answer is
-   * the newer one.
-   *
-   * Counted on the answer rather than on the request, and the difference is a
-   * defect: a removal or a clear that never reached Rust, or that Rust refused,
-   * produced no newer answer at all. Counted at the request, such a failure
-   * would discard a folder reply on behalf of a mutation that changed nothing —
-   * and since a failed mutation leaves the load `ready`, no reload affordance
-   * would be offered either, so the list would go on showing something the
-   * session does not hold with no way back.
+   * A rejected mutation has no authoritative roster to replace the hidden
+   * folder reply, and rejection does not prove that Rust was unchanged. Such a
+   * request records a reconciliation debt instead; after both operations have
+   * settled a fresh roster read restores the one state Rust actually holds.
    */
   const workspaceMutations = useRef(0);
+  const workspaceReconcileOwed = useRef(false);
 
   const previewToken = useRef(0);
   const spectrumToken = useRef(0);
@@ -553,8 +545,26 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       .getRoster()
       .then((loaded) => {
         if (mounted.current && token === rosterToken.current) {
+          const hadRows = rosterRef.current.datasets.length > 0;
+          const showing = openHandle.current;
+          if (
+            showing !== null &&
+            !loaded.datasets.some((dataset) => dataset.handle === showing)
+          ) {
+            // A failed mutation can still have changed Rust before its reply
+            // was lost. If reconciliation says the shown row no longer exists,
+            // every reading derived from it has to leave with it.
+            clearVisiblePreview();
+          }
           dispatchRoster({ type: "rosterLoaded", roster: loaded });
           showRosterLoad({ status: "ready" });
+          if (hadRows && loaded.datasets.length === 0) {
+            // A reconciliation can establish that a failed removal actually
+            // removed the last row. Reuse the same deferred focus recovery as a
+            // successful emptying action; it waits for Add files to be enabled
+            // and never overrides a destination the user chose meanwhile.
+            setFocusAddFilesToken((token) => token + 1);
+          }
         }
       })
       .catch((cause: unknown) => {
@@ -562,7 +572,36 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           showRosterLoad({ status: "failed", error: toPreviewError(cause) });
         }
       });
-  }, [api, showRosterLoad]);
+  }, [api, clearVisiblePreview, showRosterLoad]);
+
+  /** Starts an owed reconciliation only after both competing operations end. */
+  const drainWorkspaceReconciliation = useCallback(() => {
+    if (
+      !mounted.current ||
+      !workspaceReconcileOwed.current ||
+      folderBusyRef.current ||
+      workspaceBusyRef.current
+    ) {
+      return;
+    }
+    workspaceReconcileOwed.current = false;
+    reloadRoster();
+  }, [reloadRoster]);
+
+  /**
+   * Recovers the authoritative list after a workspace mutation rejects.
+   *
+   * The folder reply remains suppressed: applying it could expose a snapshot
+   * from before a mutation that actually reached Rust but whose reply failed.
+   * Rejection records a debt; whichever of the folder and mutation settles last
+   * drains it, then lets Rust state the answer directly. Doing this for every
+   * rejection also supersedes an older reconciliation read that may have
+   * observed the workspace before this request reached Rust.
+   */
+  const reconcileAfterFailedWorkspaceMutation = useCallback(() => {
+    workspaceReconcileOwed.current = true;
+    drainWorkspaceReconciliation();
+  }, [drainWorkspaceReconciliation]);
 
   useEffect(reloadRoster, [reloadRoster]);
 
@@ -938,7 +977,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     const token = folderToken.current;
     // Where the workspace's own decisions stood when this began. Removing rows
     // and emptying the list stay available throughout, so one of them can be
-    // started -- and answered -- while this is still out there.
+    // started while this is still out there.
     const mutationsAtStart = workspaceMutations.current;
     setFolderError(null);
     folderBusyRef.current = true;
@@ -960,13 +999,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           // installing it would put back exactly the rows the user asked to be
           // rid of.
           //
-          // Nothing is said, and that is not an omission. Reaching here with a
-          // result at all means Rust committed this import -- had the mutation
-          // won the gate, the command would have answered `import_superseded`
-          // and this would be a rejection. So the rows *are* in the session,
-          // and the mutation's own authoritative roster already accounts for
-          // them. Any message here would either claim a failure that did not
-          // happen or overwrite the account of what the user actually did.
+          // Nothing is said, and that is not an omission. A successful mutation
+          // supplies the authoritative roster that accounts for the import; a
+          // rejected mutation instead causes a fresh roster read after both
+          // operations settle. Applying or describing this result while the
+          // later request is unresolved would expose a snapshot that may already
+          // be obsolete.
           return;
         }
         const added = result.outcomes.flatMap((outcome) =>
@@ -1023,9 +1061,19 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         folderBusyRef.current = false;
         if (mounted.current) {
           setFolderBusy(false);
+          // A second workspace mutation can start after the failure that left
+          // this debt. Its own answer must settle first; the shared drain waits
+          // for both busy flags whichever callback happens to run last.
+          drainWorkspaceReconciliation();
         }
       });
-  }, [api, loadPreview, rosterSettled, showWorkspaceNotice]);
+  }, [
+    api,
+    drainWorkspaceReconciliation,
+    loadPreview,
+    rosterSettled,
+    showWorkspaceNotice,
+  ]);
 
   const removeSelected = useCallback(() => {
     const handles = [...rosterRef.current.selected];
@@ -1035,15 +1083,20 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     // taken before the added rows existed.
     //
     // Deliberately **not** `folderBusyRef`. A folder import has no cancellation
-    // and can run for as long as the user's filesystem takes. `Clear list` is
-    // the reliable final-empty escape; removal stays available to manage the
-    // rows already on screen. Rust linearises this action against the import: a
-    // removal that reaches the gate first supersedes it, while one that follows
+    // and can run for as long as the user's filesystem takes. A successful
+    // `Clear list` is the reliable final-empty escape; removal stays available
+    // to manage the rows already on screen. Rust linearises this action against
+    // the import: a removal that reaches the gate first supersedes it, while one that follows
     // the import acts only on these handles and can retain newly imported rows.
     if (handles.length === 0 || workspaceBusyRef.current || pickerBusyRef.current) {
       return;
     }
     workspaceBusyRef.current = true;
+    workspaceMutations.current += 1;
+    // A roster read already in flight may have been served before this request
+    // reached Rust. Suppress that reply immediately; success supplies its own
+    // roster, while failure starts a newer authoritative read.
+    rosterToken.current += 1;
     setWorkspaceBusy(true);
     setWorkspaceError(null);
     void api
@@ -1064,13 +1117,9 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         if (showing !== null && result.removedHandles.includes(showing)) {
           clearVisiblePreview();
         }
-        // Counted here rather than where the request was made. The count means
-        // "a newer authoritative answer about this list has been applied", and
-        // a request that never reached Rust -- or that Rust refused -- produced
-        // no such answer. Counted at the start, a failed removal would make a
-        // folder reply be discarded for a mutation that changed nothing, and
-        // nothing newer would ever arrive to correct the list.
-        workspaceMutations.current += 1;
+        // This authoritative roster pays any reconciliation debt left by an
+        // earlier failed request during the same import.
+        workspaceReconcileOwed.current = false;
         dispatchRoster({ type: "datasetsRemoved", result });
         rosterSettled();
         showWorkspaceNotice(describeRemoveResult(result));
@@ -1081,25 +1130,35 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       .catch((cause: unknown) => {
         if (mounted.current) {
           setWorkspaceError(toPreviewError(cause));
+          reconcileAfterFailedWorkspaceMutation();
         }
       })
       .finally(() => {
         workspaceBusyRef.current = false;
         if (mounted.current) {
           setWorkspaceBusy(false);
+          drainWorkspaceReconciliation();
         }
       });
-  }, [api, clearVisiblePreview, rosterSettled, showWorkspaceNotice]);
+  }, [
+    api,
+    clearVisiblePreview,
+    drainWorkspaceReconciliation,
+    reconcileAfterFailedWorkspaceMutation,
+    rosterSettled,
+    showWorkspaceNotice,
+  ]);
 
   const clearList = useCallback(() => {
     // The count this action announces is read here, so an add still in flight
     // would make it a count of the workspace before the added rows -- on top of
     // being the second mutation in flight that `addFiles` refuses to be.
     //
-    // Deliberately not `folderBusyRef`: this is the reliable way out of a folder
-    // chosen by mistake, and a folder import has no cancellation. If clear wins
-    // the gate it supersedes the import; if the import committed first, clear
-    // removes every row it added. The authoritative reply is empty either way.
+    // Deliberately not `folderBusyRef`: a successful clear is the reliable way
+    // out of a folder chosen by mistake, and a folder import has no cancellation.
+    // If clear wins the gate it supersedes the import; if the import committed
+    // first, clear removes every row it added. The authoritative reply is empty
+    // either way.
     const folderImportPending = folderBusyRef.current;
     const rosterHasRows = rosterRef.current.datasets.length > 0;
     if (
@@ -1115,6 +1174,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     // authoritative answer either way.
     const removed = rosterRef.current.datasets.length;
     workspaceBusyRef.current = true;
+    workspaceMutations.current += 1;
+    // The same request-time barrier as removal: an older roster read must not
+    // become visible while Clear is still waiting for its authoritative reply.
+    rosterToken.current += 1;
     setWorkspaceBusy(true);
     setWorkspaceError(null);
     void api
@@ -1124,11 +1187,9 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           return;
         }
         clearVisiblePreview();
-        // Counted on the answer, not on the request, for the reason
-        // `removeSelected` gives: a clear that never reached Rust produced no
-        // newer answer, and discarding a folder reply for it would leave the
-        // list showing something the session does not hold.
-        workspaceMutations.current += 1;
+        // This authoritative roster pays any reconciliation debt left by an
+        // earlier failed request during the same import.
+        workspaceReconcileOwed.current = false;
         dispatchRoster({ type: "workspaceCleared", roster: loaded });
         rosterSettled();
         showWorkspaceNotice(describeClear(removed, folderImportPending));
@@ -1137,15 +1198,24 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       .catch((cause: unknown) => {
         if (mounted.current) {
           setWorkspaceError(toPreviewError(cause));
+          reconcileAfterFailedWorkspaceMutation();
         }
       })
       .finally(() => {
         workspaceBusyRef.current = false;
         if (mounted.current) {
           setWorkspaceBusy(false);
+          drainWorkspaceReconciliation();
         }
       });
-  }, [api, clearVisiblePreview, rosterSettled, showWorkspaceNotice]);
+  }, [
+    api,
+    clearVisiblePreview,
+    drainWorkspaceReconciliation,
+    reconcileAfterFailedWorkspaceMutation,
+    rosterSettled,
+    showWorkspaceNotice,
+  ]);
 
   const dismissPickerError = useCallback(() => {
     setPickerError(null);

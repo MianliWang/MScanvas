@@ -55,9 +55,9 @@ export interface DatasetRosterProps {
   /**
    * Whether rows may be removed or the list emptied right now.
    *
-   * Deliberately true during a folder import. `Clear list` is the reliable way
-   * out of one, while `Remove selected` still has to manage the rows already
-   * on screen; an import has no cancellation.
+   * Deliberately true during a folder import. A successful `Clear list` is the
+   * reliable way out of one, while `Remove selected` still has to manage the
+   * rows already on screen; an import has no cancellation.
    */
   readonly canMutate: boolean;
   /**

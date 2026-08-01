@@ -1162,6 +1162,50 @@ describe("the session workspace roster", () => {
     expect(rosterRow(/QC_pool_02\.mzML/)).not.toHaveTextContent("Reading…");
   });
 
+  it("drops an active preview when a failed mutation reconciles without its row", async () => {
+    // A rejected invoke is not proof that Rust left the workspace unchanged: a
+    // task or transport can fail after removal took effect. The authoritative
+    // read then removes the row, and the viewer must leave with it rather than
+    // showing an acquisition the session no longer holds.
+    let rosterRead = 0;
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      roster: () => {
+        rosterRead += 1;
+        return Promise.resolve(
+          rosterRead === 1
+            ? { datasets: [selectedFile], capacity: 1_024 }
+            : { datasets: [], capacity: 1_024 },
+        );
+      },
+      removeDatasets: () =>
+        Promise.reject(previewError({ kind: "preview_worker_unavailable" })),
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    expect(await screen.findByRole("grid", { name: "Spectra" })).toBeVisible();
+
+    const remove = screen.getByRole("button", { name: "Remove selected" });
+    remove.focus();
+    fireEvent.click(remove);
+    // WebView2 blurs a button when the request disables it. jsdom keeps a
+    // disabled element focused, so model the production focusout explicitly.
+    blurAsABrowserWould(remove);
+    expect(document.body).toHaveFocus();
+
+    await waitFor(() => {
+      expect(api.rosterReads()).toBe(2);
+      expect(rosterRows()).toHaveLength(0);
+    });
+    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    expect(screen.getByText("No files in this session yet")).toBeVisible();
+    expect(api.openCount()).toBe(1);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
+    });
+  });
+
   it("says no row is being shown when nothing was read", async () => {
     // Adding into an empty session used to mark the first row as the one being
     // shown whether or not a read started. With no usable backend none does,
@@ -1985,9 +2029,9 @@ describe("adding a folder of mzML files", () => {
 
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "Clear list" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
     });
     expect(document.body).not.toHaveFocus();
-    expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
   });
 
   it("does not steal focus when the user leaves a disappearing escape action", async () => {
@@ -2136,6 +2180,49 @@ describe("adding a folder of mzML files", () => {
     ).toBeVisible();
     expect(document.body).not.toHaveFocus();
     expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
+  });
+
+  it("keeps a committed first import hidden while Clear list is still pending", async () => {
+    // Rust may commit the import before Clear reaches its gate while the two
+    // replies arrive in the opposite order. The click is already the newer
+    // user intent: exposing the folder roster while Clear is unresolved would
+    // make a row reappear after the escape, and an empty workspace would also
+    // start an implicit preview for a row Clear is about to remove.
+    const imported = deferred<FolderIngestionResult | null>();
+    const clearing = deferred<WorkspaceRoster>();
+    const api = createFakePreviewApi({
+      folderResult: () => imported.promise,
+      clearWorkspace: () => clearing.promise,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+
+    imported.resolve({
+      roster: { datasets: [thirdFile], capacity: 1_024 },
+      outcomes: [{ outcome: "added", dataset: thirdFile }],
+      discovery: COMPLETE_SCAN,
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("Folder import in progress…")).toBeNull();
+    });
+
+    // Clear has not answered. The folder result must remain unobservable for
+    // that entire window, including at the process boundary.
+    expect(rosterRows()).toHaveLength(0);
+    expect(screen.queryByRole("option", { name: /Blank_03\.mzML/ })).toBeNull();
+    expect(screen.getByText("No files in this session yet")).toBeVisible();
+    expect(api.openCount()).toBe(0);
+
+    clearing.resolve({ datasets: [], capacity: 1_024 });
+    expect(
+      await screen.findByText(
+        "The workspace is empty. The pending folder import will not add files.",
+        VISIBLE,
+      ),
+    ).toBeVisible();
+    expect(rosterRows()).toHaveLength(0);
+    expect(api.openCount()).toBe(0);
   });
 
   it("waits for this window to know what the session holds before it will import", async () => {

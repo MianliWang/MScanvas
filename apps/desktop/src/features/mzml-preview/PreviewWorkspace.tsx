@@ -90,11 +90,11 @@ export function PreviewWorkspace() {
   // dialog *and* the registration after it, and a removal answering inside that
   // window carries a roster from before the added rows existed. They do **not**
   // wait on a folder import. A folder import has no cancellation and can run
-  // for as long as the user's filesystem takes. `Clear list` is the reliable
-  // final-empty escape, while `Remove selected` still manages rows already on
-  // screen. Rust linearises either action against the import: an action that
-  // reaches the gate first supersedes it; if the import commits first, the
-  // action's authoritative roster includes that fact. A late folder reply is
+  // for as long as the user's filesystem takes. A successful `Clear list` is
+  // the reliable final-empty escape, while `Remove selected` still manages rows
+  // already on screen. Rust linearises either action against the import: an
+  // action that reaches the gate first supersedes it; if the import commits
+  // first, the action's authoritative roster includes that fact. A late folder reply is
   // never allowed to overwrite the later answer.
   const canMutate = !workspace.workspaceBusy && !workspace.pickerBusy;
   // Reading the list back is not an escape route; it is another statement about
