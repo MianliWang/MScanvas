@@ -81,6 +81,9 @@ const ROW_STATE_LABEL: Record<RowPresentation, string> = {
   failed: "Could not be read",
 };
 
+const CLEAR_DURING_FOLDER_IMPORT_DESCRIPTION =
+  "Clear list also prevents the pending folder import from adding files.";
+
 /**
  * The session's workspace: every file it holds, and the actions that curate it.
  *
@@ -534,8 +537,11 @@ export function DatasetRoster({
         >
           Remove selected
         </button>
-        {rowCount === 0 ? null : (
+        {rowCount === 0 && !folderBusy ? null : (
           <button
+            aria-describedby={
+              folderBusy ? "clear-during-folder-import-description" : undefined
+            }
             className="secondary-button"
             disabled={!canMutate}
             onClick={onClearList}
@@ -544,6 +550,11 @@ export function DatasetRoster({
             Clear list
           </button>
         )}
+        {folderBusy ? (
+          <span className="visually-hidden" id="clear-during-folder-import-description">
+            {CLEAR_DURING_FOLDER_IMPORT_DESCRIPTION}
+          </span>
+        ) : null}
       </div>
 
       {rowCount > 0 && visible.length === 0 ? (

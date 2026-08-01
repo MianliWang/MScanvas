@@ -165,10 +165,13 @@ export function describeRemoveResult(result: WorkspaceRemoveResult): WorkspaceNo
   };
 }
 
-export function describeClear(removed: number): WorkspaceNotice {
+export function describeClear(removed: number, pendingFolderImport = false): WorkspaceNotice {
   return {
     tone: "info",
-    message: `Cleared ${plural(removed, "file")} from the list. The files on disk were not changed.`,
+    message:
+      removed === 0 && pendingFolderImport
+        ? "The workspace is empty. The pending folder import will not add files."
+        : `Cleared ${plural(removed, "file")} from the list. The files on disk were not changed.`,
     details: [],
     more: 0,
     sequence: 0,

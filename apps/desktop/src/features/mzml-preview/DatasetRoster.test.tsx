@@ -606,6 +606,26 @@ describe("the workspace roster as an accessible list", () => {
     expect(screen.queryByRole("button", { name: "Clear list" })).toBeNull();
   });
 
+  it("offers an accessible escape from an unresolved first folder import", () => {
+    render(
+      <Harness
+        canAddFiles={false}
+        canAddFolder={false}
+        canMutate
+        folderBusy
+        rows={0}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+    const clear = screen.getByRole("button", { name: "Clear list" });
+    expect(clear).toBeEnabled();
+    expect(clear).toHaveAccessibleDescription(
+      "Clear list also prevents the pending folder import from adding files.",
+    );
+  });
+
   it("offers a way back when the list itself could not be read", () => {
     const retry = vi.fn();
     render(

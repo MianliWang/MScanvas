@@ -704,6 +704,11 @@ describe("saying what a workspace action did", () => {
     const cleared = describeClear(3);
     expect(cleared.message).toContain("Cleared 3 files from the list.");
     expect(cleared.message).toContain("The files on disk were not changed.");
+
+    const emptyDuringImport = describeClear(0, true);
+    expect(emptyDuringImport.message).toBe(
+      "The workspace is empty. The pending folder import will not add files.",
+    );
   });
 });
 

@@ -1973,6 +1973,61 @@ describe("adding a folder of mzML files", () => {
     expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
   });
 
+  it("keeps an empty workspace empty when Clear list supersedes its first import", async () => {
+    const stale = deferred<FolderIngestionResult | null>();
+    const clearing = deferred<WorkspaceRoster>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      folderResult: () => stale.promise,
+      clearWorkspace: () => clearing.promise,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+
+    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+    const clear = screen.getByRole("button", { name: "Clear list" });
+    expect(clear).toBeEnabled();
+    expect(clear).toHaveAccessibleDescription(
+      "Clear list also prevents the pending folder import from adding files.",
+    );
+    clear.focus();
+    fireEvent.click(clear);
+    expect(api.calls().filter((call) => call === "clearWorkspace")).toHaveLength(1);
+
+    clearing.resolve({ datasets: [], capacity: 1_024 });
+    expect(
+      await screen.findByText(
+        "The workspace is empty. The pending folder import will not add files.",
+        VISIBLE,
+      ),
+    ).toBeVisible();
+    expect(screen.getByText("No files in this session yet")).toBeVisible();
+    expect(screen.getByText("Folder import in progress…", VISIBLE)).toBeVisible();
+
+    stale.reject(
+      previewError({
+        kind: "import_superseded",
+        summary:
+          "The workspace changed while MSCanvas was scanning that folder, so none of its files were added. Scan the folder again.",
+        retryable: true,
+      }),
+    );
+    await waitFor(() => {
+      expect(screen.queryByText("Folder import in progress…")).toBeNull();
+    });
+    expect(rosterRows()).toHaveLength(0);
+    expect(screen.getByText("No files in this session yet")).toBeVisible();
+    expect(
+      screen.getByText(
+        "The workspace is empty. The pending folder import will not add files.",
+        VISIBLE,
+      ),
+    ).toBeVisible();
+    expect(document.body).not.toHaveFocus();
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
+  });
+
   it("waits for this window to know what the session holds before it will import", async () => {
     // A roster read is itself a statement about the workspace in Rust, so an
     // import started before the mount-time read answers would reserve its claim

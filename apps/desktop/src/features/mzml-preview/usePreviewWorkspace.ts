@@ -1087,10 +1087,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     // this is one of the two ways out of a folder chosen by mistake, and a
     // folder import has no cancellation. Rust makes it safe by superseding the
     // older import rather than this side making it impossible.
+    const folderImportPending = folderBusyRef.current;
+    const rosterHasRows = rosterRef.current.datasets.length > 0;
     if (
       workspaceBusyRef.current ||
       pickerBusyRef.current ||
-      rosterRef.current.datasets.length === 0
+      (!rosterHasRows && !folderImportPending)
     ) {
       return;
     }
@@ -1112,7 +1114,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         clearVisiblePreview();
         dispatchRoster({ type: "workspaceCleared", roster: loaded });
         rosterSettled();
-        showWorkspaceNotice(describeClear(removed));
+        showWorkspaceNotice(describeClear(removed, folderImportPending));
         setFocusAddFilesToken((token) => token + 1);
       })
       .catch((cause: unknown) => {

@@ -7,6 +7,7 @@ import type { PreviewApi } from "./api";
 import { PreviewApiProvider } from "./api";
 import type {
   BackendAvailability,
+  FolderIngestionResult,
   Preview,
   SelectedSpectrumOutcome,
   WorkspaceAddResult,
@@ -16,6 +17,7 @@ import type {
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
 import type { FolderScan } from "../../test/previewFixtures";
 import {
+  COMPLETE_SCAN,
   FAKE_WORKSPACE_CAPACITY,
   buildPreview,
   createFakePreviewApi,
@@ -999,6 +1001,64 @@ describe("starting a folder import", () => {
     expect(api.calls().filter((call) => call === "clearWorkspace")).toHaveLength(1);
     // And the import is still out there, holding nothing up.
     expect(result.current.folderBusy).toBe(true);
+  });
+
+  it("lets an empty workspace supersede its first unresolved folder import", async () => {
+    const stale = deferred<FolderIngestionResult | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      folderResult: () => stale.promise,
+    });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => {
+      expect(result.current.rosterLoad.status).toBe("ready");
+    });
+
+    act(() => {
+      result.current.addFolder();
+    });
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(true);
+    });
+
+    act(() => {
+      result.current.clearList();
+    });
+    await waitFor(() => {
+      expect(api.calls().filter((call) => call === "clearWorkspace")).toHaveLength(1);
+      expect(result.current.workspaceNotice?.message).toBe(
+        "The workspace is empty. The pending folder import will not add files.",
+      );
+    });
+    expect(result.current.roster.datasets).toHaveLength(0);
+    const clearNotice = result.current.workspaceNotice;
+
+    // Both acquisition paths stay refused until the older request settles.
+    act(() => {
+      result.current.addFiles();
+      result.current.addFolder();
+    });
+    expect(api.calls().filter((call) => call === "chooseFiles")).toHaveLength(0);
+    expect(api.calls().filter((call) => call === "chooseFolder")).toHaveLength(1);
+
+    // Model a reply that was already on its way back when the clear completed.
+    // It is older than the clear even though it carries an added row.
+    await act(async () => {
+      stale.resolve({
+        roster: { datasets: [selectedFile], capacity: FAKE_WORKSPACE_CAPACITY },
+        outcomes: [{ outcome: "added", dataset: selectedFile }],
+        discovery: COMPLETE_SCAN,
+      });
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(false);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.roster.datasets).toHaveLength(0);
+    expect(result.current.workspaceNotice).toEqual(clearNotice);
   });
 
   it("refuses after a read that failed, until a retry has succeeded", async () => {
