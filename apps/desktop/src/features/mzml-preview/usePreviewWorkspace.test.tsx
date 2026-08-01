@@ -1005,9 +1005,11 @@ describe("starting a folder import", () => {
 
   it("lets an empty workspace supersede its first unresolved folder import", async () => {
     const stale = deferred<FolderIngestionResult | null>();
+    const clearedCapacity = FAKE_WORKSPACE_CAPACITY - 1;
     const api = createFakePreviewApi({
       availability: unavailableBackend,
       folderResult: () => stale.promise,
+      clearWorkspace: () => Promise.resolve({ datasets: [], capacity: clearedCapacity }),
     });
     const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
     await waitFor(() => {
@@ -1031,6 +1033,7 @@ describe("starting a folder import", () => {
       );
     });
     expect(result.current.roster.datasets).toHaveLength(0);
+    expect(result.current.roster.capacity).toBe(clearedCapacity);
     const clearNotice = result.current.workspaceNotice;
 
     // Both acquisition paths stay refused until the older request settles.
