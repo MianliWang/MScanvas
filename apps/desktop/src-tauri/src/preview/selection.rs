@@ -1016,33 +1016,48 @@ pub(super) fn relative_contexts(registry: &DatasetRegistry) -> HashMap<DatasetId
         if ids.len() < 2 {
             continue;
         }
-        // What each colliding row would say on its own. Two rows can still land
-        // on the same words -- two folders with one `data` subdirectory, or two
-        // files added directly -- so the group is checked before it is trusted.
-        let described: Vec<(DatasetId, String)> = ids
+        // What each colliding row would say on its own, already bounded.
+        //
+        // Bounded *before* the group is checked, and that order is the point.
+        // Uniqueness is a property of what the user reads, not of what was
+        // computed: two locations that differ only near the root are distinct
+        // descriptions and truncate onto one visible string, because what
+        // truncation keeps is the deep end. Checked before bounding, the group
+        // looks settled and both rows render one filename and one identical
+        // context, which is exactly the ambiguity this whole function exists to
+        // remove.
+        let described: Vec<(DatasetId, String, String)> = ids
             .iter()
             .filter_map(|id| {
-                registry
-                    .get(*id)
-                    .map(|d| (*id, describe_origin(d.origin())))
+                registry.get(*id).map(|dataset| {
+                    let raw = describe_origin(dataset.origin());
+                    let shown = bounded_context(&raw, 0);
+                    (*id, raw, shown)
+                })
             })
             .collect();
         let mut seen: HashMap<&str, usize> = HashMap::new();
-        for (_, description) in &described {
-            *seen.entry(description.as_str()).or_default() += 1;
+        for (_, _, shown) in &described {
+            *seen.entry(shown.as_str()).or_default() += 1;
         }
-        for (id, description) in &described {
+        for (id, raw, shown) in &described {
             // The fallback names the row rather than the filesystem. It is the
             // session's own identifier, which is already the handle the webview
             // holds, so it reveals nothing a caller does not have -- and it is
             // stable for as long as the row is, so the same roster read twice
             // says the same thing.
-            let context = if seen.get(description.as_str()).copied().unwrap_or(0) > 1 {
-                format!("{description} · workspace item {}", id.0)
+            let context = if seen.get(shown.as_str()).copied().unwrap_or(0) > 1 {
+                let suffix = format!(" · workspace item {}", id.0);
+                // Re-bounded with the suffix's room kept back, so the thing
+                // that tells the two rows apart survives. Appended to an
+                // already-full context it would be cut straight off again, and
+                // the fallback would have done nothing at all.
+                let base = bounded_context(raw, suffix.chars().count());
+                format!("{base}{suffix}")
             } else {
-                description.clone()
+                shown.clone()
             };
-            contexts.insert(*id, bounded_context(&context));
+            contexts.insert(*id, context);
         }
     }
     contexts
@@ -1071,16 +1086,25 @@ fn describe_origin(origin: &DatasetOrigin) -> String {
 /// Truncating from the end would drop the very components that disambiguate,
 /// since the deepest one is the one closest to the file. What is lost is the
 /// shallow end, and the ellipsis leads so a reader can see that something was.
-fn bounded_context(value: &str) -> String {
-    if value.chars().count() <= MAX_RELATIVE_CONTEXT_CHARS {
+///
+/// `reserved` is how many characters the caller still has to add afterwards.
+/// A tie-break appended to an already-full context would be cut off by the very
+/// bound it was added to satisfy, so the room for it is kept back here rather
+/// than hoped for later.
+fn bounded_context(value: &str, reserved: usize) -> String {
+    let budget = MAX_RELATIVE_CONTEXT_CHARS.saturating_sub(reserved);
+    if budget == 0 {
+        // The suffix alone fills the bound. It is the half that actually tells
+        // two rows apart, so it is the half that survives.
+        return String::new();
+    }
+    let length = value.chars().count();
+    if length <= budget {
         return value.to_owned();
     }
     // One character of the budget is the ellipsis itself.
-    let keep = MAX_RELATIVE_CONTEXT_CHARS.saturating_sub(1);
-    let tail: String = value
-        .chars()
-        .skip(value.chars().count().saturating_sub(keep))
-        .collect();
+    let keep = budget.saturating_sub(1);
+    let tail: String = value.chars().skip(length.saturating_sub(keep)).collect();
     format!("…{tail}")
 }
 
@@ -1317,6 +1341,156 @@ mod tests {
                 .expect("the surviving name is accepted")
                 .identity(),
             original.identity()
+        );
+    }
+
+    /// A location deep enough that what the user reads is a truncation of it.
+    ///
+    /// Every one of these differs from the next only in its first character, so
+    /// the descriptions are distinct and their retained deep ends are not. The
+    /// components are fabricated rather than walked: `add_discovered` takes the
+    /// parents as values, and a tree this deep would exceed what Windows
+    /// resolves without a long-path opt-in. What is under test is the naming
+    /// rule, and the naming rule never touches a filesystem.
+    fn long_parents(first: char) -> Vec<OsString> {
+        vec![
+            OsString::from(format!("{first}{}", "p".repeat(49))),
+            OsString::from("q".repeat(50)),
+            OsString::from("r".repeat(50)),
+        ]
+    }
+
+    /// Every context one roster would show, in registry order.
+    fn shown(registry: &DatasetRegistry) -> Vec<String> {
+        let contexts = relative_contexts(registry);
+        registry
+            .ids()
+            .iter()
+            .filter_map(|id| contexts.get(id).cloned())
+            .collect()
+    }
+
+    /// One same-named row per fabricated location, each in a directory of its
+    /// own so the filesystem lets them share a name.
+    fn collided(locations: &[Vec<OsString>]) -> (Vec<TestDirectory>, DatasetRegistry) {
+        let mut directories = Vec::new();
+        let mut registry = DatasetRegistry::default();
+        for (index, parents) in locations.iter().enumerate() {
+            let directory = TestDirectory::new(&format!("collide-{index}"));
+            let file = accepted(
+                &directory,
+                "sample.mzML",
+                format!("<mzML> {index} </mzML>").as_bytes(),
+            );
+            registry.add_discovered(file, parents.clone());
+            directories.push(directory);
+        }
+        (directories, registry)
+    }
+
+    #[test]
+    fn two_locations_that_truncate_alike_are_still_told_apart() {
+        // The defect this repairs. Two distinct descriptions, unique before the
+        // bound and identical after it, because what truncation keeps is the
+        // deep end and these differ only near the root. Decided before
+        // bounding, the group looks settled, no tie-break is added, and the
+        // roster renders one filename beside one identical context twice --
+        // which is precisely the ambiguity relative context exists to remove.
+        let (_directories, registry) = collided(&[long_parents('X'), long_parents('Y')]);
+
+        let contexts = shown(&registry);
+
+        assert_eq!(contexts.len(), 2);
+        assert_ne!(
+            contexts[0], contexts[1],
+            "two rows the user has to choose between say two different things"
+        );
+        for context in &contexts {
+            assert!(
+                context.chars().count() <= MAX_RELATIVE_CONTEXT_CHARS,
+                "{}",
+                context.chars().count()
+            );
+            assert!(context.contains(" · workspace item "), "{context}");
+            assert!(context.starts_with('…'), "{context}");
+        }
+    }
+
+    #[test]
+    fn three_locations_that_truncate_alike_each_get_their_own_answer() {
+        let (_directories, registry) =
+            collided(&[long_parents('X'), long_parents('Y'), long_parents('Z')]);
+
+        let contexts = shown(&registry);
+
+        assert_eq!(contexts.len(), 3);
+        let mut unique = contexts.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), 3, "{contexts:?}");
+    }
+
+    #[test]
+    fn a_row_whose_visible_context_is_already_its_own_says_nothing_more() {
+        // The tie-break is for rows that would otherwise read alike. A group
+        // whose bounded contexts already differ gets no identifier appended,
+        // because a session number beside an unambiguous location is noise.
+        let (_directories, registry) = collided(&[
+            vec![OsString::from("batch-1")],
+            vec![OsString::from("batch-2")],
+        ]);
+
+        assert_eq!(shown(&registry), vec!["batch-1", "batch-2"]);
+    }
+
+    #[test]
+    fn a_context_is_bounded_and_keeps_the_deep_end() {
+        let bounded = bounded_context(&"z".repeat(400), 0);
+
+        assert_eq!(bounded.chars().count(), MAX_RELATIVE_CONTEXT_CHARS);
+        assert!(bounded.starts_with('…'));
+    }
+
+    #[test]
+    fn a_tie_break_keeps_its_own_room_inside_the_bound() {
+        // Appended to an already-full context the suffix would be cut off by
+        // the very bound it was added to satisfy, and the fallback would have
+        // done nothing at all. Measured at the widest identifier a session can
+        // reach rather than at a convenient one.
+        let suffix = format!(" · workspace item {}", u64::MAX);
+        let base = bounded_context(&"z".repeat(400), suffix.chars().count());
+
+        assert_eq!(
+            base.chars().count() + suffix.chars().count(),
+            MAX_RELATIVE_CONTEXT_CHARS
+        );
+        assert!(base.starts_with('…'));
+    }
+
+    #[test]
+    fn the_bound_counts_what_a_reader_sees_rather_than_bytes() {
+        // Every component here is three bytes and one scalar. Counting bytes
+        // would cut a third of the way through the budget and, worse, could cut
+        // inside a scalar.
+        let bounded = bounded_context(&"漢".repeat(400), 0);
+
+        assert_eq!(bounded.chars().count(), MAX_RELATIVE_CONTEXT_CHARS);
+        assert!(bounded.starts_with('…'));
+        assert!(bounded.chars().skip(1).all(|scalar| scalar == '漢'));
+    }
+
+    #[test]
+    fn a_suffix_that_fills_the_bound_leaves_the_half_that_disambiguates() {
+        // Unreachable with real identifiers -- the widest suffix is 38
+        // characters -- and stated anyway, because if either half has to go it
+        // is the location rather than the thing that tells two rows apart.
+        assert_eq!(
+            bounded_context("anything at all", MAX_RELATIVE_CONTEXT_CHARS),
+            ""
+        );
+        assert_eq!(
+            bounded_context("anything at all", MAX_RELATIVE_CONTEXT_CHARS + 10),
+            ""
         );
     }
 
