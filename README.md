@@ -25,7 +25,9 @@ Build a session workspace of local `.mzML` files and inspect one of them:
   of listing it twice. Files that could not be read are named individually and do
   not affect the ones that arrived.
 - Or choose a folder, and MSCanvas adds every regular `.mzML` file beneath it in
-  one operation. The scan stays inside the folder you chose: junctions, symbolic
+  one operation. On Windows, the Explorer-style folder picker accepts an
+  absolute path pasted into its address bar. The scan stays inside the folder
+  you chose: junctions, symbolic
   links, mount points and cloud placeholders are never followed, and are counted
   and reported instead. It is bounded by four named limits, and a scan that
   stopped at one of them, skipped a linked entry or could not read a subtree says

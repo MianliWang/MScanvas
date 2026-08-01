@@ -4,6 +4,8 @@
   for the visible `Add mzML folder…` workflow over it (M1.4.1);
   directory-formatted acquisitions remain separately gated
 - Date: 2026-07-31
+- Amended: 2026-08-01 (M1.4.1) — both folder choices use the Windows Common
+  Item Dialog; the Rust-only path and cancellation boundaries are unchanged.
 
 ## Context
 
@@ -492,6 +494,14 @@ summary — or `None` for a dismissed picker, which is an ordinary outcome and
 deliberately not an empty result. The webview supplies and receives no path, no
 parent, no folder identifier and no ordering key, and the capability set stays
 empty.
+
+Both folder choices use the Rust-owned Windows Common Item Dialog through
+`IFileDialog` with `FOS_PICKFOLDERS`. This is the Explorer-style folder surface,
+so an absolute path can be pasted into its address bar without walking a legacy
+tree. The dialog is owned by the main window, requires one existing filesystem
+folder, leaves shell links unresolved and does not add the choice to Recent.
+The selected path still exists only inside Rust: this changes no command,
+transfer object or webview capability, and cancellation remains `None`.
 
 Every discovery refusal maps to a stable visible kind, one arm per kind and no
 default, so a new traversal refusal fails to compile rather than arriving as one

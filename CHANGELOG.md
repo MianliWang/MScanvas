@@ -15,8 +15,10 @@ All notable changes will be documented here once versioned releases begin.
   session holds up to 1,024 files.
 - Adding a folder of mzML files. `Add mzML folder…` scans one folder you choose
   and adds every regular `.mzML` file beneath it in a single operation, in a
-  deterministic order, without launching any ProteoWizard process. The scan stays
-  inside the folder you chose: junctions, symbolic links, mount points and cloud
+  deterministic order, without launching any ProteoWizard process. On Windows,
+  the Explorer-style folder picker accepts an absolute path pasted into its
+  address bar. The scan stays inside the folder you chose: junctions, symbolic
+  links, mount points and cloud
   placeholders are never followed, and are counted and reported instead of being
   silently skipped. Four named limits bound how deep, how wide and how far it
   goes, and a scan that reached one of them, refused a linked entry or could not
