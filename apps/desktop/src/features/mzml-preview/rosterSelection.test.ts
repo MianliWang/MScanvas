@@ -1282,18 +1282,27 @@ describe("importing a folder", () => {
     };
   }
 
-  it("keeps a selection the user built while the scan was running", () => {
+  it("keeps the focus, anchor and selection the user built while the scan was running", () => {
     // The difference between this and `filesAdded`, and it is time. A file
     // picker is modal, so replacing the selection answers a question nothing
     // else could have changed. A folder scan is not: searching, sorting and
     // selecting all stay live for its whole length, so the selection this reply
     // meets is one the user may have built while it ran.
-    const before = rosterReducer(loaded("file-0", "file-1"), {
-      type: "rowPressed",
-      handle: "file-1",
-      modifiers: { ctrl: false, shift: false },
-    });
-    expect(selection(before)).toEqual(["file-1"]);
+    const before = rosterReducer(
+      rosterReducer(loaded("file-0", "file-1"), {
+        type: "rowPressed",
+        handle: "file-0",
+        modifiers: { ctrl: false, shift: false },
+      }),
+      {
+        type: "rowPressed",
+        handle: "file-1",
+        modifiers: { ctrl: false, shift: true },
+      },
+    );
+    expect(selection(before)).toEqual(["file-0", "file-1"]);
+    expect(before.focused).toBe("file-1");
+    expect(before.anchor).toBe("file-0");
 
     const state = rosterReducer(before, {
       type: "folderImported",
@@ -1306,10 +1315,67 @@ describe("importing a folder", () => {
       ),
     });
 
-    // Theirs, and the batch's. Not one instead of the other.
-    expect(selection(state)).toEqual(["file-1", "file-2", "file-3"]);
+    // Theirs, and the batch's. Not one instead of the other. The row the user
+    // is still navigating survives too, so the scan has no reason to move the
+    // roving focus or reset the range anchor underneath them.
+    expect(selection(state)).toEqual(["file-0", "file-1", "file-2", "file-3"]);
+    expect(state.focused).toBe("file-1");
+    expect(state.anchor).toBe("file-0");
+  });
+
+  it("uses the first imported row when the old focused row no longer exists", () => {
+    const before = rosterReducer(
+      rosterReducer(loaded("file-0", "file-1"), {
+        type: "rowPressed",
+        handle: "file-0",
+        modifiers: { ctrl: false, shift: false },
+      }),
+      {
+        type: "rowPressed",
+        handle: "file-1",
+        modifiers: { ctrl: false, shift: true },
+      },
+    );
+    expect(before.focused).toBe("file-1");
+    expect(before.anchor).toBe("file-0");
+
+    const state = rosterReducer(before, {
+      type: "folderImported",
+      result: folderResult([added("file-2"), added("file-3")], "file-0", "file-2", "file-3"),
+    });
+
     expect(state.focused).toBe("file-2");
     expect(state.anchor).toBe("file-2");
+    expect(selection(state)).toEqual(["file-0", "file-2", "file-3"]);
+  });
+
+  it("establishes a roving focus when a folder fills an empty workspace", () => {
+    const state = rosterReducer(initialRosterState, {
+      type: "folderImported",
+      result: folderResult([added("file-0"), added("file-1")], "file-0", "file-1"),
+    });
+
+    expect(state.focused).toBe("file-0");
+    expect(state.anchor).toBe("file-0");
+    expect(selection(state)).toEqual(["file-0", "file-1"]);
+  });
+
+  it("retires a missing range anchor without moving a surviving focus", () => {
+    const before: RosterState = {
+      ...loaded("file-0", "file-1"),
+      focused: "file-1",
+      anchor: "file-0",
+      selected: new Set(["file-0", "file-1"]),
+    };
+
+    const state = rosterReducer(before, {
+      type: "folderImported",
+      result: folderResult([added("file-2")], "file-1", "file-2"),
+    });
+
+    expect(state.focused).toBe("file-1");
+    expect(state.anchor).toBe("file-1");
+    expect(selection(state)).toEqual(["file-1", "file-2"]);
   });
 
   it("drops a row the user selected that the authoritative result no longer holds", () => {

@@ -598,12 +598,21 @@ function transition(state: RosterState, action: RosterAction): RosterState {
           selected: kept,
         };
       }
+      const survivingFocus = survivingHandle(state.focused, live);
+      const focused = survivingFocus ?? first;
       return {
         ...base,
-        focused: first,
-        // With focus, as on every focus move that is not a range extension:
-        // the next Shift action measures from where the keyboard now is.
-        anchor: first,
+        // Completing a non-modal scan is not a keyboard move. Keep the row the
+        // user is still navigating and its live range anchor; DatasetRoster
+        // follows a changed roving focus while the keyboard is in the list, so
+        // pointing this at the batch would move the keyboard underneath them.
+        // Only a missing focus falls back to the first new row, which also
+        // establishes the tab stop when the import filled an empty workspace.
+        focused,
+        anchor:
+          survivingFocus === null
+            ? focused
+            : (survivingHandle(state.anchor, live) ?? focused),
         // Both, and in this order. What the user picked while waiting is still
         // picked, and what arrived is picked too -- so the batch can be acted
         // on as a batch without discarding the work they did meanwhile.

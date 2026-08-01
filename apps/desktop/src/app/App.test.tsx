@@ -1831,7 +1831,7 @@ describe("adding a folder of mzML files", () => {
     expect(api.openCount()).toBe(0);
   });
 
-  it("keeps a selection the user made while the scan was running, and adds the new rows to it", async () => {
+  it("keeps the keyboard row and selection the user made while the scan was running", async () => {
     // The whole reason a folder import is not modal. The list stays live for
     // the length of the walk, so the selection the reply meets is one the user
     // may have built while waiting -- and it is theirs.
@@ -1847,7 +1847,10 @@ describe("adding a folder of mzML files", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
     // Chosen while the scan is unresolved, which is exactly what a captured
     // selection would throw away.
-    fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
+    const workingRow = rosterRow(/QC_pool_02\.mzML/);
+    fireEvent.click(workingRow);
+    workingRow.focus();
+    expect(workingRow).toHaveFocus();
     expect(selectedRowNames()).toHaveLength(1);
 
     scan.resolve({ files: [{ file: thirdFile, parents: ["nested"] }] });
@@ -1860,6 +1863,11 @@ describe("adding a folder of mzML files", () => {
     expect(selected).toContain("QC_pool_02.mzML");
     expect(selected).toContain("Blank_03.mzML");
     expect(selected).not.toContain("QC_pool_01.mzML");
+    // Settlement must not make DatasetRoster follow a reducer-created focus
+    // move to the imported row while the keyboard is still inside the list.
+    expect(workingRow).toHaveFocus();
+    expect(workingRow).toHaveAttribute("tabindex", "0");
+    expect(rosterRow(/Blank_03\.mzML/)).toHaveAttribute("tabindex", "-1");
   });
 
   it("leaves the search, the sort and the preview on screen exactly as they were", async () => {
