@@ -1939,6 +1939,42 @@ describe("adding a folder of mzML files", () => {
     expect(api.openCount()).toBe(0);
   });
 
+  it("catches the keyboard when the escape action goes out from under it", async () => {
+    // `Clear list` exists over an empty list only while an import is
+    // unresolved, and during a first import from an empty workspace it is the
+    // only enabled control in the row -- so it is exactly where a keyboard user
+    // lands. Every way the import can settle with nothing added takes it away
+    // again, and removing a focused element moves focus to the body and fires
+    // no blur. Nothing else here would recover it: the row rescue wants a row
+    // handle, and no picker restoration exists because the import was not
+    // started by a focused press of the roster's own button.
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    // Started with the pointer, so nothing is owed to the folder button.
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    const escape = screen.getByRole("button", { name: "Clear list" });
+    expect(escape).toBeEnabled();
+    escape.focus();
+    expect(escape).toHaveFocus();
+
+    // The folder simply held no mzML, so nothing is added and the escape goes.
+    scan.resolve({ files: [] });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Clear list" })).toBeNull();
+    });
+    expect(document.body).not.toHaveFocus();
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
+  });
+
   it("empties the list during an unresolved import, and the late reply cannot refill it", async () => {
     const scan = deferred<FolderScan | null>();
     const api = createFakePreviewApi({

@@ -116,6 +116,14 @@ export function DatasetRoster({
   /** Whether the keyboard is still owed to `Add files…` from an emptied list. */
   const focusAddFilesOwed = useRef(false);
   /**
+   * Whether the keyboard is on `Clear list`, which can go out from under it.
+   *
+   * A boolean rather than an element: the question is only ever "was the
+   * keyboard here when this disappeared", and removing a focused element fires
+   * no blur, so the record survives exactly as long as it needs to.
+   */
+  const keyboardOnClearList = useRef(false);
+  /**
    * Which acquisition action the keyboard has to be given back to, if any.
    *
    * One slot for both, because the two are mutually exclusive: neither picker
@@ -137,6 +145,16 @@ export function DatasetRoster({
   const keyboardOn = useRef<string | null>(null);
   /** The focused handle the roving tab stop was last moved to follow. */
   const followed = useRef(state.focused);
+
+  /**
+   * Whether `Clear list` has anything to do, which is when it is offered.
+   *
+   * Over rows it empties them. Over an empty list it is offered only while a
+   * folder import is unresolved, because there it is the escape from one: it
+   * supersedes the import so the scan commits nothing. With neither, it would
+   * be a control that cannot act.
+   */
+  const clearListOffered = state.datasets.length > 0 || folderBusy;
 
   /**
    * Keeps the keyboard on the row that has the tab stop, and never on nothing.
@@ -254,6 +272,33 @@ export function DatasetRoster({
   useEffect(() => {
     payAddFilesDebt();
   }, [canAddFiles, payAddFilesDebt]);
+
+  /**
+   * Catches the keyboard when `Clear list` goes out from under it.
+   *
+   * That action exists over an empty list only while a folder import is
+   * unresolved -- it is the escape from one -- and during a first import from
+   * an empty workspace it is the only enabled control in the row, so it is
+   * exactly where a keyboard user lands. Every way the import can settle with
+   * nothing added takes it away again: a folder holding no mzML, a scan that
+   * failed, an import a decision superseded, a dismissed picker.
+   *
+   * Removing a focused element moves focus to the body and fires no blur, and
+   * nothing else here would recover it: the row rescue wants a row handle, and
+   * the picker restoration only exists when the import was started by a focused
+   * press of this component's own button -- which the shell's
+   * `Choose another folder` retry is not. So the debt is minted here and paid
+   * by the same machinery an emptied list uses, which already waits for
+   * `Add files…` to become usable.
+   */
+  useEffect(() => {
+    if (clearListOffered || !keyboardOnClearList.current) {
+      return;
+    }
+    keyboardOnClearList.current = false;
+    focusAddFilesOwed.current = true;
+    payAddFilesDebt();
+  }, [clearListOffered, payAddFilesDebt]);
 
   /**
    * Starts an acquisition action, remembering where the keyboard was.
@@ -537,19 +582,25 @@ export function DatasetRoster({
         >
           Remove selected
         </button>
-        {rowCount === 0 && !folderBusy ? null : (
+        {clearListOffered ? (
           <button
             aria-describedby={
               folderBusy ? "clear-during-folder-import-description" : undefined
             }
             className="secondary-button"
             disabled={!canMutate}
+            onBlur={() => {
+              keyboardOnClearList.current = false;
+            }}
+            onFocus={() => {
+              keyboardOnClearList.current = true;
+            }}
             onClick={onClearList}
             type="button"
           >
             Clear list
           </button>
-        )}
+        ) : null}
         {folderBusy ? (
           <span className="visually-hidden" id="clear-during-folder-import-description">
             {CLEAR_DURING_FOLDER_IMPORT_DESCRIPTION}
