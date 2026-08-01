@@ -71,6 +71,11 @@ export interface DatasetRosterProps {
   readonly canReloadRoster: boolean;
   /** Increments when focus should return to the `Add files…` action. */
   readonly focusAddFilesToken: number;
+  /**
+   * Increments when a focused shell retry should return to the durable
+   * `Add mzML folder…` action after its folder request settles.
+   */
+  readonly restoreAddFolderFocusToken: number;
 }
 
 /** What a row says about itself when it is not simply listed. */
@@ -110,11 +115,14 @@ export function DatasetRoster({
   canMutate,
   canReloadRoster,
   focusAddFilesToken,
+  restoreAddFolderFocusToken,
 }: DatasetRosterProps) {
   const listRef = useRef<HTMLUListElement | null>(null);
   const addFilesRef = useRef<HTMLButtonElement | null>(null);
+  const addFolderRef = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const seenFocusToken = useRef(focusAddFilesToken);
+  const seenRestoreAddFolderFocusToken = useRef(restoreAddFolderFocusToken);
   /** Whether the keyboard is still owed to `Add files…` from an emptied list. */
   const focusAddFilesOwed = useRef(false);
   /**
@@ -292,12 +300,10 @@ export function DatasetRoster({
    * Removing a focused element moves focus to the body. WebView2 can first
    * report a `focusout` whose destination is null, which is not evidence that
    * the user chose somewhere else. Nothing else here would recover it: the row
-   * rescue wants a row handle, and the picker restoration only exists when the
-   * import was started by a focused press of this component's own button --
-   * which the shell's
-   * `Choose another folder` retry is not. So the debt is minted here and paid
-   * by the same machinery an emptied list uses, which already waits for
-   * `Add files…` to become usable.
+   * rescue wants a row handle, while acquisition-picker restoration belongs to
+   * the acquisition action that started the request. So this debt is minted
+   * here and paid by the same machinery an emptied list uses, which already
+   * waits for `Add files…` to become usable.
    */
   useEffect(() => {
     if (clearListOffered || !keyboardOnClearList.current) {
@@ -325,6 +331,29 @@ export function DatasetRoster({
     pickerRestoreOutstanding.current = false;
     run();
   };
+
+  /**
+   * Carries keyboard ownership from the transient shell retry to the durable
+   * folder action before the retry disappears.
+   *
+   * The token is minted only when `Choose another folder` held focus. Its click
+   * starts the request before this effect runs, so the durable action is already
+   * disabled here. Marking the restoration outstanding explicitly also covers
+   * a dismissed picker whose promise settles before an intermediate disabled
+   * commit can be observed.
+   */
+  useEffect(() => {
+    if (restoreAddFolderFocusToken === seenRestoreAddFolderFocusToken.current) {
+      return;
+    }
+    seenRestoreAddFolderFocusToken.current = restoreAddFolderFocusToken;
+    const control = addFolderRef.current;
+    if (control === null) {
+      return;
+    }
+    pendingPickerRestore.current = control;
+    pickerRestoreOutstanding.current = true;
+  }, [restoreAddFolderFocusToken]);
 
   /**
    * Returns the keyboard to whichever acquisition action was used, once its
@@ -566,6 +595,7 @@ export function DatasetRoster({
           onClick={(event) => {
             startPicking(event, onAddFolder);
           }}
+          ref={addFolderRef}
           type="button"
         >
           Add mzML folder…

@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo } from "react";
+import { useCallback, useLayoutEffect, useMemo, useState } from "react";
 
 import { BackendStatus } from "./BackendStatus";
 import { DatasetRoster } from "./DatasetRoster";
@@ -28,6 +28,7 @@ const FOLDER_IMPORT_STATUS =
 export function PreviewWorkspace() {
   const workspace = usePreviewWorkspace();
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
+  const [restoreAddFolderFocusToken, setRestoreAddFolderFocusToken] = useState(0);
 
   // Derived once per roster change and handed down, so the rows the list
   // renders are the same list the reducer ranges over rather than a second
@@ -180,7 +181,16 @@ export function PreviewWorkspace() {
             <button
               className="link-button"
               disabled={!canAddFolder}
-              onClick={workspace.addFolder}
+              onClick={(event) => {
+                // This retry is transient: starting it clears the notice and
+                // removes the button that owns the keyboard. Hand that ownership
+                // to the stable folder action before the request begins, but
+                // only when there is keyboard focus to restore.
+                if (document.activeElement === event.currentTarget) {
+                  setRestoreAddFolderFocusToken((token) => token + 1);
+                }
+                workspace.addFolder();
+              }}
               type="button"
             >
               Choose another folder
@@ -342,6 +352,7 @@ export function PreviewWorkspace() {
             onReloadRoster={workspace.reloadRoster}
             onRemoveSelected={workspace.removeSelected}
             projection={projection}
+            restoreAddFolderFocusToken={restoreAddFolderFocusToken}
             state={roster}
           />
           {preview.status === "loaded" ? (

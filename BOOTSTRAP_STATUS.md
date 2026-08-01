@@ -1707,7 +1707,7 @@ incomplete" instead.
 by default and 7 are ignored entry points. The desktop library accounts for 258,
 with 256 passing and 2 ignored because they need the local administrative share;
 the other 5 ignored tests are controlled subprocess entry points in the
-ProteoWizard process harness. The frontend has 364 tests across 12 files. The new
+ProteoWizard process harness. The frontend has 368 tests across 12 files. The new
 Rust coverage is the discovery-to-acceptance identity join, both reload
 orderings, a scan superseded by a roster read and by an emptied list, a scan
 that survives a look that decides nothing, collision context appearing and
@@ -1725,18 +1725,25 @@ option policy, exact owner, ordered setup and result calls, exact cancel versus
 failure classification, missing and malformed result paths, path-free errors,
 and a production-call/legacy-retirement guard. The final frontend cases cover
 both sides of the overlapping-clear error rule: a typed superseded import stays
-silent, while an independent scan failure remains actionable.
+silent, while an independent scan failure remains actionable. Four more pin the
+transient folder-retry focus handoff: keyboard activation returns to the durable
+folder action after settlement without waiting for an observable disabled
+commit, an activation that did not own keyboard focus takes none, and a
+destination chosen meanwhile keeps it without leaving a stale debt.
 
-**Mutations.** 65 named mutations were introduced one at a time, run and
+**Mutations.** 71 named mutations were introduced one at a time, run and
 restored; none was committed. The original 36, the 20 review and final-P2 repair
-mutations, and the final nine Common Item Dialog and rendered-QA repair
-mutations are all caught by discriminating tests. The last nine remove the
-folder mode, retain multiselect, misclassify a non-cancel `Show` failure, bypass
-the absolute-path check, bypass the option policy, disconnect production
-`GetOptions` or `SetOptions`, expose a superseded import as an error, or hide a
-real scan failure merely because `Clear list` overlapped it. Source SHA-256 was
-checked after every reverse patch, and the targeted tests were green again only
-after all touched source and test files were back at their baseline bytes.
+mutations, the nine Common Item Dialog and rendered-QA repair mutations, and six
+folder-retry focus mutations are all caught by discriminating tests. The last
+fifteen remove the folder mode, retain multiselect, misclassify a non-cancel
+`Show` failure, bypass the absolute-path check, bypass the option policy,
+disconnect production `GetOptions` or `SetOptions`, expose a superseded import
+as an error, hide a real scan failure merely because `Clear list` overlapped it,
+drop or over-broaden the retry focus token, target the wrong acquisition action,
+depend on observing an intermediate disabled commit, retain a declined debt, or
+drop `preventScroll`. Source SHA-256 was checked after every reverse patch, and
+the targeted tests were green again only after all touched source and test files
+were back at their baseline bytes.
 
 One survived its first run and is recorded here because the repair was to the
 test rather than to the product: folding the collision context into the name
@@ -1765,6 +1772,15 @@ request is pending. A successful empty clear advances the authoritative
 workspace generation, leaves the final roster empty in either ordering, keeps
 its notice through settlement and returns keyboard focus to `Add files…` only
 when that control becomes usable.
+
+A later live P2 found the one acquisition action outside the roster's focus
+restoration path. Starting `Choose another folder` clears its error notice and
+therefore removes the focused retry button. The shell now mints a one-shot token
+before that removal only when the retry owns keyboard focus. The roster bridges
+the token into its existing picker-restoration state machine, targets the
+durable `Add mzML folder…` action, waits for it to become usable, restores with
+`preventScroll`, and retires the debt without moving focus if the user chose
+another destination meanwhile.
 
 Rendered QA used both permitted repair rounds. The first found that the late
 typed `import_superseded` rejection still raised `The folder could not be added`

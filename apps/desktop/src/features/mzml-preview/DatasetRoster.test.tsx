@@ -46,6 +46,7 @@ interface HarnessProps {
   readonly canMutate?: boolean;
   readonly load?: RosterLoadState;
   readonly focusAddFilesToken?: number;
+  readonly restoreAddFolderFocusToken?: number;
 }
 
 /** Blurs the way a browser does when a focused control is disabled. */
@@ -70,6 +71,7 @@ function Harness({
   canMutate = true,
   load = { status: "ready" },
   focusAddFilesToken = 0,
+  restoreAddFolderFocusToken = 0,
 }: HarnessProps) {
   const [state, dispatch] = useReducer(rosterReducer, seeded(rows));
   return (
@@ -90,6 +92,7 @@ function Harness({
       onReloadRoster={() => undefined}
       onRemoveSelected={onRemoveSelected}
       projection={rosterProjection(state)}
+      restoreAddFolderFocusToken={restoreAddFolderFocusToken}
       state={state}
     />
   );
@@ -121,6 +124,7 @@ function Fixed({
       onReloadRoster={() => undefined}
       onRemoveSelected={() => undefined}
       projection={rosterProjection(state)}
+      restoreAddFolderFocusToken={0}
       state={state}
     />
   );
@@ -523,6 +527,7 @@ describe("the workspace roster as an accessible list", () => {
         onReloadRoster={() => undefined}
         onRemoveSelected={() => undefined}
         projection={rosterProjection(state)}
+        restoreAddFolderFocusToken={0}
         state={state}
       />,
     );
@@ -563,6 +568,7 @@ describe("the workspace roster as an accessible list", () => {
         onReloadRoster={() => undefined}
         onRemoveSelected={() => undefined}
         projection={rosterProjection(discarded)}
+        restoreAddFolderFocusToken={0}
         state={discarded}
       />,
     );
@@ -654,6 +660,7 @@ describe("the workspace roster as an accessible list", () => {
         onReloadRoster={retry}
         onRemoveSelected={() => undefined}
         projection={rosterProjection(initialRosterState)}
+        restoreAddFolderFocusToken={0}
         state={initialRosterState}
       />,
     );
@@ -850,6 +857,20 @@ describe("driving the roster from the keyboard alone", () => {
     rerender(<Harness canAddFiles rows={2} />);
 
     expect(document.activeElement).toBe(chosen);
+  });
+
+  it("pays a settled shell retry debt without needing an observed disabled commit", () => {
+    const { rerender } = render(<Harness restoreAddFolderFocusToken={0} rows={0} />);
+    const folder = screen.getByRole("button", { name: "Add mzML folder…" });
+    const focusing = vi.spyOn(folder, "focus");
+    expect(document.body).toHaveFocus();
+
+    // A native dismissal can settle before React commits an intermediate busy
+    // state. The token is the request edge, so the debt must still be payable.
+    rerender(<Harness restoreAddFolderFocusToken={1} rows={0} />);
+
+    expect(folder).toHaveFocus();
+    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
   });
 });
 

@@ -2717,6 +2717,141 @@ describe("giving the keyboard back after an acquisition picker", () => {
     });
   });
 
+  it("returns a focused folder retry to the durable folder action after dismissal", async () => {
+    const retry = deferred<FolderScan | null>();
+    let requests = 0;
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () => {
+        requests += 1;
+        return requests === 1
+          ? Promise.reject(
+              previewError({
+                kind: "folder_scan_failed",
+                summary: "That folder could not be scanned safely.",
+                retryable: true,
+              }),
+            )
+          : retry.promise;
+      },
+    });
+    renderApp(api);
+    const durable = await screen.findByRole("button", { name: "Add mzML folder…" });
+
+    // The first attempt creates the transient shell recovery action. It starts
+    // with the pointer, so no restoration from the durable action is pending.
+    fireEvent.click(durable);
+    const retryButton = await screen.findByRole("button", { name: "Choose another folder" });
+    retryButton.focus();
+    expect(retryButton).toHaveFocus();
+    const focusing = vi.spyOn(durable, "focus");
+
+    fireEvent.click(retryButton);
+    // Starting the retry clears its error and removes the focused button. A real
+    // browser leaves focus on the body; jsdom needs that behaviour reproduced.
+    blurAsABrowserWould(retryButton);
+    expect(screen.queryByRole("button", { name: "Choose another folder" })).toBeNull();
+    expect(durable).toBeDisabled();
+    expect(document.body).toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+
+    retry.resolve(null);
+
+    await waitFor(() => {
+      expect(durable).toHaveFocus();
+    });
+    expect(durable).toBeEnabled();
+    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
+    expect(requests).toBe(2);
+  });
+
+  it("takes no focus when the transient folder retry did not own the keyboard", async () => {
+    const retry = deferred<FolderScan | null>();
+    let requests = 0;
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () => {
+        requests += 1;
+        return requests === 1
+          ? Promise.reject(
+              previewError({
+                kind: "folder_scan_failed",
+                summary: "That folder could not be scanned safely.",
+                retryable: true,
+              }),
+            )
+          : retry.promise;
+      },
+    });
+    renderApp(api);
+    const durable = await screen.findByRole("button", { name: "Add mzML folder…" });
+    fireEvent.click(durable);
+    const retryButton = await screen.findByRole("button", { name: "Choose another folder" });
+    const focusing = vi.spyOn(durable, "focus");
+
+    // `fireEvent.click` does not focus a button first, which models an
+    // activation that never owned the keyboard and therefore has no debt.
+    expect(document.body).toHaveFocus();
+    fireEvent.click(retryButton);
+    retry.resolve(null);
+
+    await waitFor(() => {
+      expect(durable).toBeEnabled();
+    });
+    expect(document.body).toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+    expect(requests).toBe(2);
+  });
+
+  it("does not steal a focused folder retry debt from a later destination", async () => {
+    const retry = deferred<FolderScan | null>();
+    let requests = 0;
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      initialDatasets: [selectedFile],
+      scannedFolder: () => {
+        requests += 1;
+        return requests === 1
+          ? Promise.reject(
+              previewError({
+                kind: "folder_scan_failed",
+                summary: "That folder could not be scanned safely.",
+                retryable: true,
+              }),
+            )
+          : retry.promise;
+      },
+    });
+    renderApp(api);
+    const durable = await screen.findByRole("button", { name: "Add mzML folder…" });
+    fireEvent.click(durable);
+    const retryButton = await screen.findByRole("button", { name: "Choose another folder" });
+    retryButton.focus();
+    const focusing = vi.spyOn(durable, "focus");
+
+    fireEvent.click(retryButton);
+    blurAsABrowserWould(retryButton);
+    const search = screen.getByRole("searchbox", { name: "Search files" });
+    search.focus();
+    retry.resolve(null);
+
+    await waitFor(() => {
+      expect(durable).toBeEnabled();
+    });
+    expect(search).toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+
+    // Settlement retires the one-shot debt even when it declines to move focus.
+    // A later body focus and unrelated render must not revive it.
+    search.blur();
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+      target: { value: "name-desc" },
+    });
+    expect(document.body).toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+    expect(requests).toBe(2);
+  });
+
   it("returns it to Add files… and never to the other acquisition action", async () => {
     // Two actions, two restorations. A single remembered control would give the
     // keyboard back to whichever one the code happened to name.
