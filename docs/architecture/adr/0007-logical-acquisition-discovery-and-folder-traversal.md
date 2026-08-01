@@ -292,6 +292,14 @@ What M1.4.1 settled beyond the rule itself:
 - Bounded at 128 characters, truncated **from the shallow end** with a leading
   ellipsis. The deepest component is the one nearest the file and the one that
   actually disambiguates; truncating from the end would drop exactly that.
+- Uniqueness is decided on the **bounded visible strings**, not on the raw
+  descriptions. Two locations that differ only near the root are distinct
+  descriptions and truncate onto one visible string, so a group checked before
+  bounding looks settled, gains no tie-break, and renders one filename beside
+  one identical context twice — which is the ambiguity the whole rule exists to
+  remove. When a bounded string is shared, the tie-break is added and the base
+  is re-bounded with the tie-break's own room kept back, so the half that
+  actually tells the rows apart is the half that survives.
 - Display only. It is never searched, never a sort key, never part of identity,
   and its `title` says exactly what the row already shows.
 
@@ -325,10 +333,39 @@ it.
 ## Mutation concurrency
 
 Implemented in M1.4.1 as recorded: the scan runs outside the workspace mutation
-gate, a monotonic workspace mutation generation is reserved before scanning, and
+gate, a monotonic workspace mutation generation is reserved for the import, and
 the batch commits only if that generation is unchanged. Otherwise the command
 returns a typed `import_superseded`, accepts nothing, leases nothing and spends
 no identifier.
+
+**The claim covers the native dialog, not only the scan.** The generation is
+reserved by the command *before* the picker is dispatched, and carried through
+it as an opaque, unclonable `FolderImportToken`. A modal dialog can stand open
+for minutes; a webview can reload or die inside that window, and the one that
+replaces it reads the roster and adopts it with no further read coming. Reserved
+after the picker answered, the import would be newer than that read, would
+commit, and would hand its rows to a window that no longer exists. Reserved
+first, the read supersedes it.
+
+The token is spent by the import and cannot be copied, so one reservation is one
+import and a commit never claims the next state as well. It is never supplied or
+received by the webview: it is a number this side allocated to order its own
+decisions, and a caller that could see one could reason about it while a caller
+that could send one could forge it.
+
+A reservation that is dropped rather than spent — a cancelled picker, a dialog
+that would not open — leaves the generation advanced. That is deliberate and is
+not rolled back: it supersedes anything older, adds no row, holds no lease and
+spends no identifier. Generations are ordering facts and are never given back.
+
+**The window must know what the session holds before it may import.** The
+mount-time roster read is itself one of these decisions, so an import started
+before it answers would reserve its claim and then watch that older read take
+the next one — failing with `import_superseded` while the user changed nothing
+at all. `Add mzML folder…` therefore waits for that read to settle successfully,
+and a failed read keeps it unavailable until the roster's own retry succeeds.
+Adding files has no such window: it is one gated batch with nothing running
+unlocked inside it.
 
 What advances the generation is every statement about what the workspace *is*:
 adding files, removing rows, emptying the list — and the product-facing roster
@@ -353,12 +390,31 @@ the gate without a generation is rejected too: a scan that began before a
 
 ## Cancellation and progress
 
-As recorded: no cancellation task model, no percentage, and a visible
-`Scanning folder…` while a scan is outstanding — carried by the folder action's
-own label, with a permanently mounted live region saying that the length is not
-known. The budgets are what bound the worst case. A percentage without a known
-total is a number the application would be inventing, and a task/cancellation
-protocol overlaps the future conversion queue and needs its own decision.
+As recorded: no cancellation task model, no percentage, and a visible status
+while an import is outstanding, with a permanently mounted live region carrying
+the same claim. The budgets are what bound the worst case. A percentage without
+a known total is a number the application would be inventing, and a
+task/cancellation protocol overlaps the future conversion queue and needs its
+own decision.
+
+**The status names both phases rather than guessing which is running.** The
+operation begins when the action is pressed, which is before the native dialog
+opens — and at that moment no folder has been chosen. `Scanning folder…` was
+therefore false for as long as the user spent navigating the dialog, and false
+altogether if they cancelled. Telling the two phases apart would need the picker
+to report closing, which is exactly the event protocol this section declines to
+add; saying something true of both needs nothing:
+
+```text
+Folder import in progress. MSCanvas is waiting for a folder selection or
+scanning the chosen folder. The duration is not known.
+```
+
+The action keeps one accessible name, `Add mzML folder…`, throughout. An
+action's name is how a user finds it again, and a control that renames itself
+mid-operation is a second control as far as assistive technology is concerned.
+It carries `aria-busy` instead, as does the roster region the import is about to
+change.
 
 Because there is no cancellation, the scan deliberately does **not** make the
 session unusable while it runs. Searching, sorting, selecting and reading a file
