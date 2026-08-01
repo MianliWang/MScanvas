@@ -2773,6 +2773,72 @@ describe("giving the keyboard back after an acquisition picker", () => {
     expect(requests).toBe(2);
   });
 
+  it("returns a focused folder-error dismissal to the durable folder action", async () => {
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () =>
+        Promise.reject(
+          previewError({
+            kind: "folder_scan_failed",
+            summary: "That folder could not be scanned safely.",
+            retryable: true,
+          }),
+        ),
+    });
+    renderApp(api);
+    const durable = await screen.findByRole("button", { name: "Add mzML folder…" });
+
+    fireEvent.click(durable);
+    const noticeHeading = await screen.findByText("The folder could not be added");
+    const notice = noticeHeading.closest<HTMLElement>('[role="status"]');
+    expect(notice).not.toBeNull();
+    const dismiss = within(notice as HTMLElement).getByRole("button", { name: "Dismiss" });
+    dismiss.focus();
+    expect(dismiss).toHaveFocus();
+    const focusing = vi.spyOn(durable, "focus");
+
+    fireEvent.click(dismiss);
+
+    await waitFor(() => {
+      expect(durable).toHaveFocus();
+    });
+    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveFocus();
+    expect(screen.queryByText("The folder could not be added")).toBeNull();
+    expect(api.calls().filter((call) => call === "chooseFolder")).toHaveLength(1);
+  });
+
+  it("takes no focus when folder-error Dismiss did not own the keyboard", async () => {
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () =>
+        Promise.reject(
+          previewError({
+            kind: "folder_scan_failed",
+            summary: "That folder could not be scanned safely.",
+            retryable: true,
+          }),
+        ),
+    });
+    renderApp(api);
+    const durable = await screen.findByRole("button", { name: "Add mzML folder…" });
+    fireEvent.click(durable);
+    const noticeHeading = await screen.findByText("The folder could not be added");
+    const notice = noticeHeading.closest<HTMLElement>('[role="status"]');
+    expect(notice).not.toBeNull();
+    const dismiss = within(notice as HTMLElement).getByRole("button", { name: "Dismiss" });
+    const focusing = vi.spyOn(durable, "focus");
+
+    // `fireEvent.click` without first focusing the target models a press that
+    // never owned the keyboard. Dismissing its notice must not invent a debt.
+    expect(document.body).toHaveFocus();
+    fireEvent.click(dismiss);
+
+    expect(document.body).toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+    expect(screen.queryByText("The folder could not be added")).toBeNull();
+  });
+
   it("takes no focus when the transient folder retry did not own the keyboard", async () => {
     const retry = deferred<FolderScan | null>();
     let requests = 0;

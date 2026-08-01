@@ -72,8 +72,8 @@ export interface DatasetRosterProps {
   /** Increments when focus should return to the `Add files…` action. */
   readonly focusAddFilesToken: number;
   /**
-   * Increments when a focused shell retry should return to the durable
-   * `Add mzML folder…` action after its folder request settles.
+   * Increments when a focused transient folder-error action should return to
+   * the durable `Add mzML folder…` action, immediately or after a retry settles.
    */
   readonly restoreAddFolderFocusToken: number;
 }
@@ -333,14 +333,15 @@ export function DatasetRoster({
   };
 
   /**
-   * Carries keyboard ownership from the transient shell retry to the durable
-   * folder action before the retry disappears.
+   * Carries keyboard ownership from a transient folder-error action to the
+   * durable folder action before the notice disappears.
    *
-   * The token is minted only when `Choose another folder` held focus. Its click
-   * starts the request before this effect runs, so the durable action is already
-   * disabled here. Marking the restoration outstanding explicitly also covers
-   * a dismissed picker whose promise settles before an intermediate disabled
-   * commit can be observed.
+   * The token is minted only when `Choose another folder` or its adjacent
+   * `Dismiss` action held focus. A retry has already disabled the destination
+   * by the time this effect runs; a dismissal may pay immediately while it is
+   * still enabled. Marking the restoration outstanding explicitly covers both,
+   * including a dismissed picker whose promise settles before an intermediate
+   * disabled commit can be observed.
    */
   useEffect(() => {
     if (restoreAddFolderFocusToken === seenRestoreAddFolderFocusToken.current) {
@@ -356,15 +357,13 @@ export function DatasetRoster({
   }, [restoreAddFolderFocusToken]);
 
   /**
-   * Returns the keyboard to whichever acquisition action was used, once its
-   * request has settled.
+   * Returns the keyboard to the durable acquisition action when it is usable.
    *
-   * The action is disabled for the whole request -- the picker's modal
-   * lifetime, and for a folder the scan and commit after it -- and disabling
-   * the focused button is what blurs it. The browser does not put focus back
-   * when it is enabled again, so cancelling the dialog or completing an
-   * ordinary addition left a keyboard user without their place in the tab
-   * order.
+   * A picker action is disabled for the whole request -- the modal lifetime,
+   * and for a folder the scan and commit after it -- and disabling the focused
+   * button is what blurs it. A transient folder-error action instead disappears
+   * immediately. The browser puts neither back, so both paths carry an explicit
+   * destination rather than leaving a keyboard user outside the workflow.
    *
    * Asked of the control itself rather than of a `canAdd…` prop. Both are true
    * of one operation and false of the other's, so a shared boolean would
@@ -388,8 +387,8 @@ export function DatasetRoster({
     if (!pickerRestoreOutstanding.current) {
       return;
     }
-    // Settled, whatever the outcome. Held any longer it could fire on a later
-    // request it says nothing about.
+    // Ready now: either an immediate dismissal or a request that settled.
+    // Held any longer it could fire on a later interaction it says nothing about.
     pendingPickerRestore.current = null;
     pickerRestoreOutstanding.current = false;
     if (!control.isConnected) {

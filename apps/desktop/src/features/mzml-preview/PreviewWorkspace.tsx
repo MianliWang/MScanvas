@@ -195,7 +195,20 @@ export function PreviewWorkspace() {
             >
               Choose another folder
             </button>
-            <button className="link-button" onClick={workspace.dismissFolderError} type="button">
+            <button
+              className="link-button"
+              onClick={(event) => {
+                // Dismissing removes this focused recovery action just as
+                // starting the adjacent retry does. Carry its keyboard place
+                // to the durable folder action before the notice disappears;
+                // an activation that did not own keyboard focus creates no debt.
+                if (document.activeElement === event.currentTarget) {
+                  setRestoreAddFolderFocusToken((token) => token + 1);
+                }
+                workspace.dismissFolderError();
+              }}
+              type="button"
+            >
               Dismiss
             </button>
           </div>
