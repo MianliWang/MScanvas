@@ -1,7 +1,7 @@
 # ADR 0006 — Multi-dataset workspace boundary
 
-- Status: Accepted for the M1 workspace foundation, its first interface and the
-  view projection over it; folder ingestion and drag-and-drop separately gated
+- Status: Accepted for the M1 workspace foundation, its first interface, the
+  view projection over it and folder ingestion; drag-and-drop separately gated
 - Date: 2026-07-30
 - Amended: 2026-07-30 (M1.1.5) — identity lifetime. Every registered dataset now
   holds a live handle on its file, so a filesystem identity cannot be recycled
@@ -18,6 +18,13 @@
   frontend and at the cost of no command; the registry's order, contents and
   identity are untouched. See *Roster view projection* below; the paragraph this
   replaces recorded search and sort as work that belonged to M1.3.
+- Amended: 2026-07-31 (M1.4.1) — a folder can be added. A fifth command reaches
+  the registry, a row may say where it was found when another row shares its
+  filename, and the mutation gate carries a generation so a scan holding no lock
+  cannot commit into a workspace the user has moved on from. See *Path and
+  diagnostic privacy*, *Frontend and Tauri boundary*, *Active dataset* and
+  *Concurrency* below; the paragraphs this replaces recorded folder ingestion as
+  gated apart from this decision.
 
 ## Context
 
@@ -626,6 +633,9 @@ that reads an acquisition is asking for one to be read.
   above.
 - **M1.3** — done: search and sort as a view projection, recorded in the
   amendments above.
-- **M1.4** — folder ingestion, with its own traversal boundary.
+- **M1.4** — done: folder ingestion, with its own traversal boundary in
+  [ADR 0007](0007-logical-acquisition-discovery-and-folder-traversal.md) and the
+  amendment above. Directory-formatted acquisitions stay gated on evidence, as
+  *Unsupported formats* requires.
 - **M1.5** — Explorer drag-and-drop, whose security boundary differs from the
   folder picker's and is therefore separate.

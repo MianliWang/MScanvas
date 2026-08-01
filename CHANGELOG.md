@@ -23,7 +23,9 @@ All notable changes will be documented here once versioned releases begin.
   read a subtree says so — "no mzML files were found in that folder" is said only
   by a scan that described the whole folder. The list stays usable while it runs;
   a selection you build meanwhile survives the scan and the new rows join it. If
-  the workspace changes while a scan is running, the scan adds nothing and says
+  you picked the wrong folder you can get out without waiting for it: removing
+  rows and clearing the list both stay available, and clearing works even when
+  the list is empty. Either one stops the scan adding anything, and the scan says
   so rather than repopulating a list you have moved on from.
 - Where a row was found, shown only when two rows in the session share a
   filename, and only for as long as they do. It is a fragment of where the file

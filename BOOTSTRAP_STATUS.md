@@ -1649,17 +1649,30 @@ accepted, and that is the same fact from the other side: the second
 `sample.mzML` is the reason the first one has a context at all, so an outcome
 described mid-batch would carry none while the roster beside it carried one.
 
-**What the interface does while a scan runs.** The folder action says
-`Scanning folder…`, a permanently mounted live region says the length is not
-known, and no percentage is shown because nothing has counted the tree. Adding
-files, adding a folder, removing rows, emptying the list and retrying the roster
-read all wait. Searching, sorting, selecting and reading a file already in the
-session do not — a scan launches no process, and there is no honest reason to
-take the viewer away for a filesystem walk. A selection built while the scan
-runs survives it, is pruned against the authoritative roster, and the new rows
-join it rather than replacing it. Keyboard focus returns to whichever
-acquisition action was used, never to the other one, and never over a control
-the user reached for meanwhile.
+**What the interface does while an import runs.** The folder action keeps its
+own name, `Add mzML folder…`, and carries `aria-busy`; the shell shows
+`Folder import in progress…` and a permanently mounted live region says MSCanvas
+is waiting for a folder selection *or* scanning the chosen folder and that the
+duration is not known. One sentence for both phases, because the flag is set
+before the native dialog opens and no folder has been chosen yet. No percentage
+is shown, because nothing has counted the tree.
+
+Adding files, adding a folder again and reading the list back all wait.
+**Removing rows and emptying the list do not**, and that is deliberate: an
+import cannot be cancelled, so those two are the only way out of a folder chosen
+by mistake, and the generation is what makes them safe rather than the interface
+making them impossible. `Clear list` is offered even over an empty list while an
+import is pending, because an import started from an empty workspace is exactly
+the case with nothing else to remove.
+
+Searching, sorting, selecting and reading a file already in the session stay live
+too — a scan launches no process, and there is no honest reason to take the
+viewer away for a filesystem walk. A selection built while the scan runs survives
+it, is pruned against the authoritative roster, and the new rows join it rather
+than replacing it. Keyboard focus returns to whichever acquisition action was
+used, never to the other one, and never over a control the user reached for
+meanwhile; emptying the list mid-import holds that debt until `Add files…` is
+usable again rather than paying it into a disabled control.
 
 **Honest incompleteness.** The transferred summary carries `complete`, the
 skipped-reparse count, the inaccessible-entry count and which named limits were

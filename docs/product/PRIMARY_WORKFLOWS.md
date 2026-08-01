@@ -43,8 +43,10 @@ the selected file: it stays one click from being reopened.
 - The scan is recursive over one folder the user chose in a native picker, and finds regular `.mzML` files only. Nothing else is offered, and no ProteoWizard process is launched for any of them.
 - Linked and special filesystem entries — junctions, symbolic links, mount points, cloud placeholders — are never followed, so the scan cannot leave the folder the user pointed at. They are counted and reported.
 - A scan that stopped at one of its four named limits, skipped a linked entry, or could not read a subtree says so. "No mzML files were found in that folder" is said only by a scan that described the whole folder.
-- The list stays usable throughout: searching, sorting, selecting and reading a file already in the session all keep working, and a selection made while a scan runs survives it. What waits is changing the roster.
-- If the workspace changes while a scan is running — files added, rows removed, the list cleared, or the window reloaded — the scan adds nothing and says so, rather than repopulating a list the user has moved on from.
+- The list stays usable throughout: searching, sorting, selecting and reading a file already in the session all keep working, and a selection made while a scan runs survives it.
+- **Getting out stays available.** A scan cannot be cancelled, so `Remove selected` and `Clear list` are the way out of a folder chosen by mistake and are deliberately *not* disabled while one runs. `Clear list` is offered even when the list is empty, because a scan started from an empty workspace is exactly the case with nothing else to remove; it then says that the pending import will not add files.
+- What waits is acquiring more — `Add files…` and a second `Add mzML folder…` — and reading the list back, which would supersede the very scan the user is waiting for and give them nothing in exchange.
+- If the workspace changes while a scan is running — files added, rows removed, the list cleared, or the window reloaded — the scan adds nothing and says so, rather than repopulating a list the user has moved on from. That is what makes the two escape actions safe rather than merely permitted.
 - Two rows that end up sharing a filename show where each was found, and only for as long as they collide.
 
 **Planned follow-ups**, neither of which the application does yet: Explorer drag-and-drop (M1.5), and directory-formatted acquisition discovery, which stays gated until this repository can convert one.

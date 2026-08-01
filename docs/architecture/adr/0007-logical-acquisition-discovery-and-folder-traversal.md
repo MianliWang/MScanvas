@@ -440,13 +440,34 @@ One consequence belongs to the interface rather than to Rust. Rust settles which
 of the two came first, but their *replies* need not arrive in that order, so a
 folder reply landing after a mutation would install a list from before it. An
 import that had a mutation begin after it therefore installs no roster at all,
-whichever way Rust ordered them, and says so in words that are true either way.
+whichever way Rust ordered them.
 
-A second consequence is about the keyboard. Emptying the list during an import
-sends the keyboard back to `Add files…`, which is disabled until that import
-settles — and focusing a disabled control does nothing. The debt is held and
-paid on the commit that makes the control usable, rather than leaving a keyboard
-user on `body` with no way back into the workspace.
+It says nothing either, and that is deliberate rather than an omission. Reaching
+that branch with a *result* means Rust committed the import — had the mutation
+won the gate, the command would have answered `import_superseded` and the reply
+would be a rejection. So the rows are in the session and the mutation's own
+authoritative roster already accounts for them: any message here would either
+claim a failure that did not happen or overwrite the account of what the user
+actually did. The superseded rejection is a different path and keeps its own
+typed explanation.
+
+Two consequences are about the keyboard, and both are the issue #25 class
+reached by routes that only the escape actions open.
+
+Emptying the list during an import sends the keyboard back to `Add files…`,
+which is disabled until that import settles — and focusing a disabled control
+does nothing. The debt is held and paid on the commit that makes the control
+usable, rather than leaving a keyboard user on `body` with no way back into the
+workspace.
+
+And `Clear list` itself can go out from under the keyboard. Over an empty list it
+is offered only while an import is unresolved, because only then does it have
+anything to do; during a first import from an empty workspace it is also the
+only enabled control in the actions row, so it is exactly where a keyboard user
+lands. Every way that import can settle with nothing added — a folder holding no
+mzML, a failed scan, a superseded import, a dismissed picker — takes it away
+again, and removing a focused element moves focus to the body without firing a
+blur. So its disappearance mints the same debt, paid by the same rule.
 
 ## Tauri boundary
 
