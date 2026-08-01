@@ -41,6 +41,7 @@ interface HarnessProps {
   readonly canPreview?: boolean;
   readonly canAddFiles?: boolean;
   readonly canAddFolder?: boolean;
+  readonly canReloadRoster?: boolean;
   readonly folderBusy?: boolean;
   readonly canMutate?: boolean;
   readonly load?: RosterLoadState;
@@ -64,6 +65,7 @@ function Harness({
   canPreview = true,
   canAddFiles = true,
   canAddFolder = true,
+  canReloadRoster = true,
   folderBusy = false,
   canMutate = true,
   load = { status: "ready" },
@@ -76,6 +78,7 @@ function Harness({
       canAddFolder={canAddFolder}
       canMutate={canMutate}
       canPreview={canPreview}
+      canReloadRoster={canReloadRoster}
       dispatch={dispatch}
       focusAddFilesToken={focusAddFilesToken}
       folderBusy={folderBusy}
@@ -106,6 +109,7 @@ function Fixed({
       canAddFolder
       canMutate
       canPreview
+      canReloadRoster
       dispatch={() => undefined}
       focusAddFilesToken={0}
       folderBusy={false}
@@ -507,6 +511,7 @@ describe("the workspace roster as an accessible list", () => {
         canAddFolder
         canMutate
         canPreview
+        canReloadRoster
         dispatch={() => undefined}
         focusAddFilesToken={0}
         folderBusy={false}
@@ -546,6 +551,7 @@ describe("the workspace roster as an accessible list", () => {
         canAddFolder
         canMutate
         canPreview
+        canReloadRoster
         dispatch={() => undefined}
         focusAddFilesToken={0}
         folderBusy={false}
@@ -608,6 +614,7 @@ describe("the workspace roster as an accessible list", () => {
         canAddFolder
         canMutate
         canPreview
+        canReloadRoster
         dispatch={() => undefined}
         focusAddFilesToken={0}
         folderBusy={false}
@@ -862,6 +869,53 @@ describe("the two ways of adding acquisitions", () => {
     expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
+  });
+
+  it("keeps the escape actions and refuses only the roster read", () => {
+    // The three have different concurrency contracts and are three answers, not
+    // one boolean. Removing and emptying are the only ways out of a folder
+    // chosen by mistake and stay available; reading the list back is another
+    // statement about what the workspace is and would supersede the very import
+    // the user is waiting for.
+    render(
+      <Harness
+        canAddFiles={false}
+        canAddFolder={false}
+        canMutate
+        canReloadRoster={false}
+        folderBusy
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
+    // `Remove selected` still needs a selected row, which is its own condition
+    // and not this one.
+    fireEvent.click(rows()[0] as HTMLElement);
+    expect(screen.getByRole("button", { name: "Remove selected" })).toBeEnabled();
+  });
+
+  it("refuses the roster read while an import is unresolved", () => {
+    render(
+      <Harness
+        canMutate
+        canReloadRoster={false}
+        folderBusy
+        load={{
+          status: "failed",
+          error: {
+            kind: "preview_worker_unavailable",
+            summary: "MSCanvas could not run that request.",
+            detail: null,
+            retryable: true,
+          },
+        }}
+        rows={0}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Try reading it again" })).toBeDisabled();
   });
 
   it("says nothing about a scan while the roster is idle", () => {

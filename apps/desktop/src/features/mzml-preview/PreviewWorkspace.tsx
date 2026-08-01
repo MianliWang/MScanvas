@@ -83,15 +83,25 @@ export function PreviewWorkspace() {
   // A failed read is the same answer for the same reason. This window has no
   // authoritative list, and the roster's own retry is the way out.
   const canAddFolder = canAcquire && workspace.rosterLoad.status === "ready";
-  // The same gate from the other side. An add holds `pickerBusy` for the whole
-  // of the picker *and* the registration that follows it, and a folder import
-  // holds its own flag for the picker, the scan and the commit, so a removal or
-  // a clear started in either window is the second mutation in flight that
-  // `canAcquire` exists to prevent -- and it would answer with a roster
-  // snapshot taken before the added rows existed. Reading the list back is the
-  // same kind of statement in Rust and is refused here for the same reason.
-  const canMutate =
-    !workspace.workspaceBusy && !workspace.pickerBusy && !workspace.folderBusy;
+  // Removing rows and emptying the list are a different concurrency contract
+  // from acquiring more, and are deliberately not the same boolean.
+  //
+  // They wait on an add's picker, because that holds `pickerBusy` across the
+  // dialog *and* the registration after it, and a removal answering inside that
+  // window carries a roster from before the added rows existed. They do **not**
+  // wait on a folder import. A folder import has no cancellation and can run
+  // for as long as the user's filesystem takes, so these two are the only ways
+  // out of a folder chosen by mistake -- and taking them away for the length of
+  // the thing they are the escape from is the one refusal that leaves a user
+  // stuck. ADR 0007 says so, and Rust already makes it safe: either mutation
+  // advances the workspace mutation generation, so the older import finds its
+  // claim stale, commits nothing, leases nothing and spends no identifier.
+  const canMutate = !workspace.workspaceBusy && !workspace.pickerBusy;
+  // Reading the list back is not an escape route; it is another statement about
+  // what the workspace is, and in Rust it advances the same generation. Pressing
+  // it mid-import would supersede the very import the user is waiting for and
+  // give them nothing in return, so unlike removing and clearing it waits.
+  const canReloadRoster = canMutate && !workspace.folderBusy;
   // One viewer read at a time. Rust supersedes an older open of one dataset
   // anyway; this is what stops a queue of them forming behind the single
   // backend gate in the first place.
@@ -243,14 +253,14 @@ export function PreviewWorkspace() {
           <div className="notice notice-danger" role="status">
             <strong>The workspace list could not be read</strong>
             <span>{workspace.rosterLoad.error.summary}</span>
-            {/* Refused while a mutation is unresolved. In Rust a roster read is
-                itself a statement about the workspace -- it is what linearises a
-                reloaded window against a scan the window before it started --
-                so reading the list back mid-import would supersede the very
-                import the user is waiting for. */}
+            {/* Refused while a mutation or an import is unresolved. In Rust a
+                roster read is itself a statement about the workspace -- it is
+                what linearises a reloaded window against a scan the window
+                before it started -- so reading the list back mid-import would
+                supersede the very import the user is waiting for. */}
             <button
               className="link-button"
-              disabled={!canMutate}
+              disabled={!canReloadRoster}
               onClick={workspace.reloadRoster}
               type="button"
             >
@@ -318,6 +328,7 @@ export function PreviewWorkspace() {
             canAddFolder={canAddFolder}
             canMutate={canMutate}
             canPreview={canPreview}
+            canReloadRoster={canReloadRoster}
             dispatch={workspace.dispatchRoster}
             focusAddFilesToken={workspace.focusAddFilesToken}
             folderBusy={workspace.folderBusy}

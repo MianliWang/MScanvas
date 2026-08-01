@@ -418,8 +418,35 @@ change.
 
 Because there is no cancellation, the scan deliberately does **not** make the
 session unusable while it runs. Searching, sorting, selecting and reading a file
-already in the workspace all stay live; what waits is only the right to change
-the roster.
+already in the workspace all stay live.
+
+**`Remove selected` and `Clear list` stay live too, and that is the point.**
+They are the only ways out of a folder chosen by mistake, so disabling them for
+the length of the thing they are the escape from is the one refusal that leaves
+a user stuck — the interface must not take away what the mutation-concurrency
+decision above went out of its way to keep. It is safe because the generation
+makes it safe: either mutation advances it, the older import finds its claim
+stale, and it commits nothing, leases nothing and spends no identifier.
+
+What still waits is acquiring more — `Add files…` and a second
+`Add mzML folder…` — because two batches in flight let an older reply's roster
+overwrite a newer one's. Reading the list back waits as well: it is not an
+escape route but another statement about what the workspace is, and it would
+supersede the very import the user is waiting for while giving them nothing in
+exchange. Three different concurrency contracts, and therefore three answers
+rather than one flag.
+
+One consequence belongs to the interface rather than to Rust. Rust settles which
+of the two came first, but their *replies* need not arrive in that order, so a
+folder reply landing after a mutation would install a list from before it. An
+import that had a mutation begin after it therefore installs no roster at all,
+whichever way Rust ordered them, and says so in words that are true either way.
+
+A second consequence is about the keyboard. Emptying the list during an import
+sends the keyboard back to `Add files…`, which is disabled until that import
+settles — and focusing a disabled control does nothing. The debt is held and
+paid on the commit that makes the control usable, rather than leaving a keyboard
+user on `body` with no way back into the workspace.
 
 ## Tauri boundary
 

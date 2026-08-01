@@ -14,6 +14,7 @@ import type {
   WorkspaceRoster,
 } from "./contracts";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
+import type { FolderScan } from "../../test/previewFixtures";
 import {
   FAKE_WORKSPACE_CAPACITY,
   buildPreview,
@@ -863,6 +864,141 @@ describe("starting a folder import", () => {
     await waitFor(() => {
       expect(api.calls().filter((call) => call === "chooseFolder")).toHaveLength(1);
     });
+  });
+
+  it("still lets the user out of a folder chosen by mistake", async () => {
+    // A folder import has no cancellation, so `Remove selected` and `Clear
+    // list` are the only ways out of one. Called directly rather than through
+    // the rendered buttons: a disabled button dispatches nothing, and the
+    // guards that matter are the ones inside the operations.
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      initialDatasets: [selectedFile],
+      roster: () =>
+        Promise.resolve<WorkspaceRoster>({
+          datasets: [selectedFile],
+          capacity: FAKE_WORKSPACE_CAPACITY,
+        }),
+      scannedFolder: () => scan.promise,
+    });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => {
+      expect(result.current.rosterLoad.status).toBe("ready");
+    });
+
+    act(() => {
+      result.current.addFolder();
+    });
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(true);
+    });
+
+    // Selecting a row is free while the scan runs, and removing it is the way
+    // out.
+    act(() => {
+      result.current.dispatchRoster({
+        type: "rowPressed",
+        handle: selectedFile.handle,
+        modifiers: { ctrl: false, shift: false },
+      });
+    });
+    act(() => {
+      result.current.removeSelected();
+    });
+    await waitFor(() => {
+      expect(api.calls().filter((call) => call === "removeDatasets")).toHaveLength(1);
+    });
+
+    // Acquiring more still waits, because two batches in flight let an older
+    // reply's roster overwrite a newer one's.
+    act(() => {
+      result.current.addFiles();
+    });
+    act(() => {
+      result.current.addFolder();
+    });
+    expect(api.calls().filter((call) => call === "chooseFiles")).toHaveLength(0);
+    expect(api.calls().filter((call) => call === "chooseFolder")).toHaveLength(1);
+  });
+
+  it("refuses to read the list back while an import is unresolved", async () => {
+    // The other half of the same rule, and the reason removing and clearing are
+    // not simply "everything that is not acquiring". A roster read advances the
+    // same generation in Rust, so it would supersede the very import the user
+    // is waiting for -- and unlike removing or clearing, it gets them nothing
+    // in exchange.
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () => scan.promise,
+    });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => {
+      expect(result.current.rosterLoad.status).toBe("ready");
+    });
+    const readsBefore = api.rosterReads();
+
+    act(() => {
+      result.current.addFolder();
+    });
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(true);
+    });
+
+    act(() => {
+      result.current.reloadRoster();
+    });
+    expect(api.rosterReads()).toBe(readsBefore);
+
+    scan.resolve({ files: [] });
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(false);
+    });
+    act(() => {
+      result.current.reloadRoster();
+    });
+    await waitFor(() => {
+      expect(api.rosterReads()).toBe(readsBefore + 1);
+    });
+  });
+
+  it("still lets the user empty the list during an unresolved import", async () => {
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      initialDatasets: [selectedFile],
+      roster: () =>
+        Promise.resolve<WorkspaceRoster>({
+          datasets: [selectedFile],
+          capacity: FAKE_WORKSPACE_CAPACITY,
+        }),
+      scannedFolder: () => scan.promise,
+    });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => {
+      expect(result.current.rosterLoad.status).toBe("ready");
+    });
+
+    act(() => {
+      result.current.addFolder();
+    });
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(true);
+    });
+
+    act(() => {
+      result.current.clearList();
+    });
+
+    // Waited on the list rather than on the call, so this is the reply having
+    // been applied rather than the request having been made.
+    await waitFor(() => {
+      expect(result.current.roster.datasets).toHaveLength(0);
+    });
+    expect(api.calls().filter((call) => call === "clearWorkspace")).toHaveLength(1);
+    // And the import is still out there, holding nothing up.
+    expect(result.current.folderBusy).toBe(true);
   });
 
   it("refuses after a read that failed, until a retry has succeeded", async () => {

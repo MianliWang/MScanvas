@@ -45,6 +45,28 @@ const BACKEND_CHANGED_KINDS = new Set([
   "backend_not_found_at_launch",
 ]);
 
+/**
+ * What a folder import is told when its reply arrives after the user has
+ * changed the workspace themselves.
+ *
+ * Built here rather than in Rust because Rust does not know it happened: from
+ * its side the import either committed or was superseded, and both are complete
+ * answers. What this side knows is that a newer answer about the same list has
+ * already been applied, so this one is not going to be — which is what the
+ * sentence says, and is true whichever way the two were ordered.
+ */
+function importAnsweredLate(): PreviewError {
+  return {
+    kind: "import_answered_late",
+    summary:
+      "The workspace changed while MSCanvas was scanning that folder, so its answer was not " +
+      "applied to the list. What is shown is what this session holds now. Scan the folder " +
+      "again if you still want it.",
+    detail: null,
+    retryable: true,
+  };
+}
+
 export type BackendState =
   | { readonly status: "checking" }
   | { readonly status: "resolved"; readonly availability: BackendAvailability }
@@ -346,6 +368,22 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const folderToken = useRef(0);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const workspaceBusyRef = useRef(false);
+  /**
+   * How many removals and clears have been started.
+   *
+   * `Remove selected` and `Clear list` stay available for the length of a
+   * folder import, which means an import's reply can arrive after one of them.
+   * Rust settles what the session holds -- either the mutation superseded the
+   * import, or the import committed first and the mutation's roster already
+   * includes its rows -- but the *replies* do not have to arrive in that order,
+   * and a folder reply landing last would install a list from before the
+   * mutation and put back the very rows the user asked to be rid of.
+   *
+   * So an import that had one of these begin after it does not install its
+   * roster at all. Whichever way Rust ordered them, the mutation's answer is
+   * the newer one.
+   */
+  const workspaceMutations = useRef(0);
 
   const previewToken = useRef(0);
   const spectrumToken = useRef(0);
@@ -509,6 +547,18 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * empty list this window happens to start with. It launches nothing.
    */
   const reloadRoster = useCallback(() => {
+    // Reading the list back is not an escape route, unlike removing and
+    // clearing. In Rust it is another statement about what the workspace is and
+    // advances the same generation, so pressing it mid-import would supersede
+    // the very import the user is waiting for and give them nothing in return.
+    //
+    // The visible action is disabled too, but only where it is rendered at all
+    // -- the empty state offers it after a failed read, and a failed read is
+    // itself what stops an import starting. This is the rule rather than a
+    // rendering of it.
+    if (folderBusyRef.current) {
+      return;
+    }
     rosterToken.current += 1;
     const token = rosterToken.current;
     showRosterLoad({ status: "loading" });
@@ -899,6 +949,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     const startedAt = now();
     folderToken.current += 1;
     const token = folderToken.current;
+    // Where the workspace's own decisions stood when this began. Removing rows
+    // and emptying the list stay available throughout, so one of them can be
+    // started -- and answered -- while this is still out there.
+    const mutationsAtStart = workspaceMutations.current;
     setFolderError(null);
     folderBusyRef.current = true;
     setFolderBusy(true);
@@ -911,6 +965,22 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         // A dismissed picker is not a failure and is deliberately not a folder
         // that held nothing. Nothing changes and nothing is announced.
         if (result === null) {
+          return;
+        }
+        if (workspaceMutations.current !== mutationsAtStart) {
+          // A removal or a clear was started after this import. Rust has
+          // already settled which came first -- either it superseded this
+          // import, in which case this reply would be a rejection rather than a
+          // result, or this import committed and that mutation's roster already
+          // accounts for its rows. Either way the mutation's answer is the
+          // newer one, and installing this roster would put back exactly the
+          // rows the user asked to be rid of.
+          //
+          // Said rather than swallowed, because the user asked for this folder
+          // and is owed an answer about it. The wording is true whichever way
+          // Rust ordered the two: what was not applied is this reply, and what
+          // is on screen is what the session holds.
+          setFolderError(importAnsweredLate());
           return;
         }
         const added = result.outcomes.flatMap((outcome) =>
@@ -978,18 +1048,18 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     // and a removal answering inside that window carries a roster snapshot
     // taken before the added rows existed.
     //
-    // `folderBusyRef` is the same argument over a longer window. It is also
-    // the one the user is most likely to reach for -- a scan they think is
-    // taking too long -- and removing rows under it would answer with a roster
-    // the scan's own reply then contradicts.
-    if (
-      handles.length === 0 ||
-      workspaceBusyRef.current ||
-      pickerBusyRef.current ||
-      folderBusyRef.current
-    ) {
+    // Deliberately **not** `folderBusyRef`. A folder import has no cancellation
+    // and can run for as long as the user's filesystem takes, so this and
+    // `Clear list` are the only ways out of a folder chosen by mistake --
+    // taking them away for the length of the thing they are the escape from is
+    // the one refusal that leaves a user stuck. Rust makes it safe rather than
+    // this side making it impossible: a removal advances the workspace mutation
+    // generation, so the older import finds its claim stale and commits
+    // nothing.
+    if (handles.length === 0 || workspaceBusyRef.current || pickerBusyRef.current) {
       return;
     }
+    workspaceMutations.current += 1;
     workspaceBusyRef.current = true;
     setWorkspaceBusy(true);
     setWorkspaceError(null);
@@ -1035,15 +1105,24 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     // The count this action announces is read here, so an add still in flight
     // would make it a count of the workspace before the added rows -- on top of
     // being the second mutation in flight that `addFiles` refuses to be.
+    //
+    // Deliberately not `folderBusyRef`, for the reason `removeSelected` gives:
+    // this is one of the two ways out of a folder chosen by mistake, and a
+    // folder import has no cancellation. Rust makes it safe by superseding the
+    // older import rather than this side making it impossible.
     if (
       workspaceBusyRef.current ||
       pickerBusyRef.current ||
-      folderBusyRef.current ||
       rosterRef.current.datasets.length === 0
     ) {
       return;
     }
+    // What this window can see, which during a folder import may be fewer rows
+    // than Rust holds. The count is an account of the action rather than a
+    // claim about the registry, and the roster that comes back is the
+    // authoritative answer either way.
     const removed = rosterRef.current.datasets.length;
+    workspaceMutations.current += 1;
     workspaceBusyRef.current = true;
     setWorkspaceBusy(true);
     setWorkspaceError(null);

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { PreviewApi } from "../features/mzml-preview/api";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
 import type {
+  FolderIngestionResult,
   SelectedFile,
   SelectedSpectrumOutcome,
   WorkspaceRemoveResult,
@@ -12,6 +13,7 @@ import type {
 import { blurAsABrowserWould } from "../test/browserFocus";
 import type { FolderScan, PickedFile } from "../test/previewFixtures";
 import {
+  COMPLETE_SCAN,
   availableBackend,
   buildPreview,
   chosenBackend,
@@ -1569,7 +1571,12 @@ describe("the session workspace roster", () => {
     expect(spoken()).not.toContain("2 matches of 3 files.");
   });
 
-  it("renders a roster at capacity through a search and a sort", async () => {
+  // Given its own allowance rather than the suite's default. The assertion is
+  // that a session at Rust's capacity renders, matches and orders correctly --
+  // not that it does so within five seconds of a shared, loaded machine. Left
+  // on the default this passes or fails by how busy the runner is, which is a
+  // flake dressed up as a scale test.
+  it("renders a roster at capacity through a search and a sort", { timeout: 60_000 }, async () => {
     // Not timed and not a benchmark: what it holds is that the size Rust
     // actually allows renders, matches and orders without falling over.
     const many = Array.from({ length: 1_024 }, (_, index) => ({
@@ -1843,7 +1850,7 @@ describe("adding a folder of mzML files", () => {
     expect(api.openCount()).toBe(readsBefore);
   });
 
-  it("refuses the other workspace actions while a folder is being scanned", async () => {
+  it("refuses more acquisitions while a folder is being scanned, and nothing else", async () => {
     const scan = deferred<FolderScan | null>();
     const api = createFakePreviewApi({
       initialDatasets: [selectedFile, secondFile],
@@ -1854,11 +1861,17 @@ describe("adding a folder of mzML files", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
 
-    // Every action that would change the roster, including a second folder.
+    // Acquiring more waits: a second batch in flight would answer with a roster
+    // from before this one's rows existed.
     expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
+    // Getting out does not. A folder import has no cancellation, so these two
+    // are the only ways out of a folder chosen by mistake, and taking them away
+    // for the length of the thing they are the escape from is the one refusal
+    // that leaves a user stuck. Rust makes it safe rather than this side making
+    // it impossible.
+    expect(screen.getByRole("button", { name: "Remove selected" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
     // And none of the ones that cost nothing. Curating what is on screen is
     // this side's own work, and a filesystem walk is no reason to stop it.
     expect(screen.getByRole("searchbox", { name: "Search files" })).toBeEnabled();
@@ -1873,7 +1886,94 @@ describe("adding a folder of mzML files", () => {
       expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
     });
     expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
+  });
+
+  it("removes rows during an unresolved import, and the late reply cannot put them back", async () => {
+    // The escape route, end to end. Rust settles which came first -- either the
+    // removal superseded the import, or the import committed and the removal's
+    // roster already accounts for its rows -- but the replies need not arrive in
+    // that order, so a folder answer landing last must not install a list from
+    // before the removal.
+    const stale = deferred<FolderIngestionResult | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      initialDatasets: [selectedFile, secondFile],
+      folderResult: () => stale.promise,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+
+    await waitFor(() => {
+      expect(rosterRows()).toHaveLength(1);
+    });
+    expect(screen.queryByRole("option", { name: /QC_pool_01\.mzML/ })).toBeNull();
+    expect(screen.getByText(/Removed 1 file from the list\./, VISIBLE)).toBeVisible();
+
+    // The import answers afterwards, carrying the roster it saw -- which is the
+    // list from before the removal, plus the row it added. A modelled scan
+    // cannot produce that, because it snapshots when it resolves; this is the
+    // one case the option exists for.
+    stale.resolve({
+      roster: { datasets: [selectedFile, secondFile, thirdFile], capacity: 1_024 },
+      outcomes: [{ outcome: "added", dataset: thirdFile }],
+      discovery: COMPLETE_SCAN,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    // The removed row stays removed and no discovered row is installed.
+    expect(screen.queryByRole("option", { name: /QC_pool_01\.mzML/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /Blank_03\.mzML/ })).toBeNull();
+    expect(rosterRows()).toHaveLength(1);
+    // The account of what the user actually did survives; the late reply does
+    // not overwrite it.
+    expect(screen.getByText(/Removed 1 file from the list\./, VISIBLE)).toBeVisible();
+    // The user asked for that folder, so they are told what happened to it --
+    // in words that are true whichever way Rust ordered the two, and with no
+    // path in them.
+    expect(await screen.findByText("The folder could not be added")).toBeVisible();
+    const said = screen.getByText(/its answer was not applied to the list/);
+    expect(said).toBeVisible();
+    expect(said.textContent).not.toContain("\\");
+    expect(api.openCount()).toBe(0);
+  });
+
+  it("empties the list during an unresolved import, and the late reply cannot refill it", async () => {
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      initialDatasets: [selectedFile, secondFile],
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+
+    expect(await screen.findByText("No files in this session yet")).toBeVisible();
+    expect(screen.getByText(/Cleared 2 files from the list/, VISIBLE)).toBeVisible();
+    // The keyboard is owed to `Add files…`, which is still disabled because the
+    // import has not settled. Focusing a disabled control does nothing, so the
+    // debt is held rather than paid into nowhere.
+    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveFocus();
+
+    scan.resolve({ files: [{ file: thirdFile, parents: [] }] });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    expect(rosterRows()).toHaveLength(0);
+    expect(screen.getByText("No files in this session yet")).toBeVisible();
+    expect(api.openCount()).toBe(0);
+    // And paid on the commit that makes the control usable, rather than leaving
+    // a keyboard user on the body with no way back into the workspace.
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
   });
 
   it("waits for this window to know what the session holds before it will import", async () => {
@@ -1935,34 +2035,6 @@ describe("adding a folder of mzML files", () => {
     expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
   });
 
-  it("refuses to read the list back while an import is unresolved", async () => {
-    // The other direction of the same rule. Reading the list back mid-import
-    // would supersede the very import the user is waiting for, so both copies
-    // of that action wait.
-    const scan = deferred<FolderScan | null>();
-    const api = createFakePreviewApi({
-      availability: unavailableBackend,
-      initialDatasets: [selectedFile],
-      roster: () =>
-        Promise.resolve<WorkspaceRoster>({ datasets: [selectedFile], capacity: 1_024 }),
-      scannedFolder: () => scan.promise,
-    });
-    renderApp(api);
-    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
-
-    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
-
-    // Only the shell's copy exists with rows present, and it is only rendered
-    // after a failed read -- so what is asserted here is the pair of actions
-    // that would advance the generation.
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
-
-    scan.resolve({ files: [] });
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
-    });
-  });
 
   it("does not let a folder scan take the viewer away", async () => {
     // A scan launches no process, so nothing about it is a reason to disable

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { ChangeEvent, KeyboardEvent, MouseEvent } from "react";
 
 import { formatByteLength, formatCount } from "./format";
@@ -52,8 +52,21 @@ export interface DatasetRosterProps {
   readonly folderBusy: boolean;
   /** Whether an explicit preview may be started right now. */
   readonly canPreview: boolean;
-  /** Whether the roster may be changed right now. */
+  /**
+   * Whether rows may be removed or the list emptied right now.
+   *
+   * Deliberately true during a folder import: these two are the only ways out
+   * of a folder chosen by mistake, and an import has no cancellation.
+   */
   readonly canMutate: boolean;
+  /**
+   * Whether the list may be read back right now.
+   *
+   * Its own answer rather than `canMutate`, because it is not an escape route:
+   * in Rust a roster read is another statement about the workspace, so pressing
+   * it mid-import would supersede the very import the user is waiting for.
+   */
+  readonly canReloadRoster: boolean;
   /** Increments when focus should return to the `Add files…` action. */
   readonly focusAddFilesToken: number;
 }
@@ -90,12 +103,15 @@ export function DatasetRoster({
   folderBusy,
   canPreview,
   canMutate,
+  canReloadRoster,
   focusAddFilesToken,
 }: DatasetRosterProps) {
   const listRef = useRef<HTMLUListElement | null>(null);
   const addFilesRef = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const seenFocusToken = useRef(focusAddFilesToken);
+  /** Whether the keyboard is still owed to `Add files…` from an emptied list. */
+  const focusAddFilesOwed = useRef(false);
   /**
    * Which acquisition action the keyboard has to be given back to, if any.
    *
@@ -190,14 +206,51 @@ export function DatasetRoster({
    * Keyed on a counter rather than on the roster being empty, so it fires for
    * the action that emptied it and not for every later render of an empty
    * workspace.
+   *
+   * The debt outlives the commit that incurred it, because the row that had the
+   * keyboard can go while `Add files…` is disabled: emptying the list is one of
+   * the two ways out of a folder import, and acquiring more waits for that
+   * import to settle. Focusing a disabled control does nothing, so without this
+   * the keyboard would be left on `body` with no way back into the workspace --
+   * the defect issue #25 exists for, reached by a route that only opened when
+   * clearing became available during discovery.
    */
+  const payAddFilesDebt = useCallback(() => {
+    if (!focusAddFilesOwed.current) {
+      return;
+    }
+    const control = addFilesRef.current;
+    if (control === null || control.disabled) {
+      // Still owed. Focusing a disabled control does nothing, so the debt is
+      // held rather than paid into nowhere.
+      return;
+    }
+    // Never over a control the user has since chosen for themselves. The row
+    // that held the keyboard has gone, so focus is on the body until something
+    // else claims it.
+    const active = document.activeElement;
+    focusAddFilesOwed.current = false;
+    if (active === null || active === document.body) {
+      control.focus({ preventScroll: true });
+    }
+  }, []);
+
   useEffect(() => {
     if (focusAddFilesToken === seenFocusToken.current) {
       return;
     }
     seenFocusToken.current = focusAddFilesToken;
-    addFilesRef.current?.focus({ preventScroll: true });
-  }, [focusAddFilesToken]);
+    focusAddFilesOwed.current = true;
+    payAddFilesDebt();
+  }, [focusAddFilesToken, payAddFilesDebt]);
+
+  // The other half, keyed on the one thing that can pay an outstanding debt.
+  // Deliberately not a per-commit effect: this component renders a thousand
+  // rows, and work that runs after every one of them for a debt that is almost
+  // never outstanding is a cost paid a thousand times for nothing.
+  useEffect(() => {
+    payAddFilesDebt();
+  }, [canAddFiles, payAddFilesDebt]);
 
   /**
    * Starts an acquisition action, remembering where the keyboard was.
@@ -514,15 +567,15 @@ export function DatasetRoster({
             <>
               <strong>The workspace list could not be read</strong>
               <span>{load.error.summary}</span>
-              {/* Refused while a mutation is unresolved, exactly as the shell's
-                  copy of this action is. In Rust a roster read is itself a
-                  statement about the workspace -- it is what linearises a
-                  reloaded window against a scan the window before it started --
-                  so reading the list back mid-import would supersede the very
-                  import the user is waiting for. */}
+              {/* Refused while a mutation or an import is unresolved, exactly
+                  as the shell's copy of this action is. In Rust a roster read
+                  is itself a statement about the workspace -- it is what
+                  linearises a reloaded window against a scan the window before
+                  it started -- so reading the list back mid-import would
+                  supersede the very import the user is waiting for. */}
               <button
                 className="secondary-button"
-                disabled={!canMutate}
+                disabled={!canReloadRoster}
                 onClick={onReloadRoster}
                 type="button"
               >

@@ -410,6 +410,17 @@ export interface FakePreviewApiOptions {
    * finishes by hand.
    */
   readonly scannedFolder?: FolderScan | null | (() => Promise<FolderScan | null>);
+  /**
+   * Replaces the folder import entirely, for the cases the modelled one cannot
+   * produce.
+   *
+   * The model always answers with the roster as it is when the scan resolves,
+   * which is the honest thing for an import that ran alone. It cannot produce
+   * the one case that matters when removing and clearing stay available
+   * throughout: a reply carrying a roster from *before* a mutation the user
+   * made while it was out there.
+   */
+  readonly folderResult?: () => Promise<FolderIngestionResult | null>;
   readonly capacity?: number;
   /** Replaces the removal entirely, for the cases where it fails. */
   readonly removeDatasets?: (handles: readonly string[]) => Promise<WorkspaceRemoveResult>;
@@ -610,12 +621,16 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         const pending = picked.map(addOne);
         return { roster: snapshot(), outcomes: describeAll(pending) };
       }),
-    chooseFolder: () =>
-      (typeof options.scannedFolder === "function"
-        ? options.scannedFolder()
-        : Promise.resolve(
-            options.scannedFolder === undefined ? DEFAULT_FOLDER_SCAN : options.scannedFolder,
-          )
+    chooseFolder: () => {
+      if (options.folderResult !== undefined) {
+        return options.folderResult();
+      }
+      return (
+        typeof options.scannedFolder === "function"
+          ? options.scannedFolder()
+          : Promise.resolve(
+              options.scannedFolder === undefined ? DEFAULT_FOLDER_SCAN : options.scannedFolder,
+            )
       ).then((scan): FolderIngestionResult | null => {
         if (scan === null) {
           return null;
@@ -626,7 +641,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
           outcomes: describeAll(pending),
           discovery: { ...COMPLETE_SCAN, ...scan.discovery },
         };
-      }),
+      });
+    },
     removeDatasets: (handles) => {
       if (options.removeDatasets !== undefined) {
         return options.removeDatasets(handles);
