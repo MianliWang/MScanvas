@@ -255,6 +255,11 @@ describe("narrow desktop layout markup", () => {
         "grid-template-rows",
       ),
     ).toBe("minmax(342px, 0.9fr) minmax(0, 1.6fr)");
+    expect(
+      requireMediaRule(app, "(max-width: 1120px)", ".viewer-stack").style.getPropertyValue(
+        "grid-template-rows",
+      ),
+    ).toBe("minmax(108px, 1.15fr) minmax(54px, 1fr)");
   });
 
   it("lets a row's notes give ground so the file name keeps a column", () => {
