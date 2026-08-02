@@ -840,10 +840,9 @@ describe("starting a folder import", () => {
   }
 
   it("refuses while this window is still reading what the session holds", async () => {
-    // A roster read is itself a statement about the workspace in Rust, so an
-    // import started before the mount-time read answers would create a race: the
-    // read can win the gate and fail it with `import_superseded` while the user
-    // changed nothing, or the import can change what the read returns.
+    // Native page-load start already owns reload ordering, and the roster read
+    // is a pure, gate-linearized snapshot. The import still waits because this
+    // document must adopt one authoritative roster before it can add to it.
     const pending = deferred<WorkspaceRoster>();
     const { api, result } = folderHarness(() => pending.promise);
     await waitFor(() => {
@@ -866,6 +865,235 @@ describe("starting a folder import", () => {
     });
     await waitFor(() => {
       expect(api.calls().filter((call) => call === "chooseFolder")).toHaveLength(1);
+    });
+  });
+
+  it("holds Clear list until Rust acknowledges the folder reservation", async () => {
+    const scan = deferred<FolderIngestionResult | null>();
+    let acknowledgeReservation: (() => void) | undefined;
+    let clearCalls = 0;
+    const base = createFakePreviewApi({ availability: unavailableBackend });
+    const api: PreviewApi = {
+      ...base,
+      chooseFolder: (onReserved?: () => void) => {
+        acknowledgeReservation = onReserved;
+        return scan.promise;
+      },
+      clearWorkspace: () => {
+        clearCalls += 1;
+        return Promise.resolve({ datasets: [], capacity: FAKE_WORKSPACE_CAPACITY });
+      },
+    };
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+
+    await waitFor(() => {
+      expect(result.current.rosterLoad.status).toBe("ready");
+    });
+    act(() => {
+      result.current.addFolder();
+    });
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(true);
+      expect(result.current.folderReservationPending).toBe(true);
+    });
+
+    let started = true;
+    act(() => {
+      started = result.current.clearList();
+    });
+    expect(started).toBe(false);
+    expect(clearCalls).toBe(0);
+
+    expect(acknowledgeReservation).toBeTypeOf("function");
+    act(() => {
+      acknowledgeReservation?.();
+    });
+    expect(result.current.folderReservationPending).toBe(false);
+    act(() => {
+      started = result.current.clearList();
+    });
+    expect(started).toBe(true);
+    expect(clearCalls).toBe(1);
+    expect(result.current.folderBusy).toBe(true);
+
+    scan.resolve(null);
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(false);
+      expect(result.current.folderReservationPending).toBe(false);
+    });
+  });
+
+  it("holds row removal until Rust acknowledges the folder reservation", async () => {
+    const scan = deferred<FolderIngestionResult | null>();
+    let acknowledgeReservation: (() => void) | undefined;
+    let removeCalls = 0;
+    const base = createFakePreviewApi({
+      availability: unavailableBackend,
+      initialDatasets: [selectedFile],
+    });
+    const api: PreviewApi = {
+      ...base,
+      chooseFolder: (onReserved?: () => void) => {
+        acknowledgeReservation = onReserved;
+        return scan.promise;
+      },
+      removeDatasets: (handles) => {
+        removeCalls += 1;
+        return Promise.resolve({
+          roster: { datasets: [], capacity: FAKE_WORKSPACE_CAPACITY },
+          removedHandles: [...handles],
+          unknownHandles: [],
+        });
+      },
+    };
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+
+    await waitFor(() => {
+      expect(result.current.rosterLoad.status).toBe("ready");
+    });
+    act(() => {
+      result.current.dispatchRoster({
+        type: "rowPressed",
+        handle: selectedFile.handle,
+        modifiers: { ctrl: false, shift: false },
+      });
+      result.current.addFolder();
+    });
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(true);
+      expect(result.current.folderReservationPending).toBe(true);
+    });
+
+    act(() => {
+      result.current.removeSelected();
+    });
+    expect(removeCalls).toBe(0);
+
+    expect(acknowledgeReservation).toBeTypeOf("function");
+    act(() => {
+      acknowledgeReservation?.();
+    });
+    expect(result.current.folderReservationPending).toBe(false);
+    act(() => {
+      result.current.removeSelected();
+    });
+    expect(removeCalls).toBe(1);
+    expect(result.current.folderBusy).toBe(true);
+
+    scan.resolve(null);
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(false);
+      expect(result.current.folderReservationPending).toBe(false);
+    });
+  });
+
+  it("does not let a settled folder command's late acknowledgement release a newer one", async () => {
+    const scans = [
+      deferred<FolderIngestionResult | null>(),
+      deferred<FolderIngestionResult | null>(),
+    ];
+    const acknowledgements: (() => void)[] = [];
+    let invocation = 0;
+    let clearCalls = 0;
+    const base = createFakePreviewApi({ availability: unavailableBackend });
+    const api: PreviewApi = {
+      ...base,
+      chooseFolder: (onReserved?: () => void) => {
+        if (onReserved !== undefined) {
+          acknowledgements.push(onReserved);
+        }
+        const scan = scans[invocation];
+        invocation += 1;
+        if (scan === undefined) {
+          return Promise.reject(new Error("unexpected folder invocation"));
+        }
+        return scan.promise;
+      },
+      clearWorkspace: () => {
+        clearCalls += 1;
+        return Promise.resolve({ datasets: [], capacity: FAKE_WORKSPACE_CAPACITY });
+      },
+    };
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+
+    await waitFor(() => {
+      expect(result.current.rosterLoad.status).toBe("ready");
+    });
+    act(() => {
+      result.current.addFolder();
+    });
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(true);
+      expect(result.current.folderReservationPending).toBe(true);
+    });
+    scans[0]?.resolve(null);
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(false);
+      expect(result.current.folderReservationPending).toBe(false);
+    });
+
+    act(() => {
+      result.current.addFolder();
+    });
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(true);
+      expect(result.current.folderReservationPending).toBe(true);
+      expect(acknowledgements).toHaveLength(2);
+    });
+
+    act(() => {
+      acknowledgements[0]?.();
+    });
+    expect(result.current.folderReservationPending).toBe(true);
+    let started = true;
+    act(() => {
+      started = result.current.clearList();
+    });
+    expect(started).toBe(false);
+    expect(clearCalls).toBe(0);
+
+    act(() => {
+      acknowledgements[1]?.();
+    });
+    expect(result.current.folderReservationPending).toBe(false);
+    act(() => {
+      started = result.current.clearList();
+    });
+    expect(started).toBe(true);
+    expect(clearCalls).toBe(1);
+
+    scans[1]?.resolve(null);
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(false);
+      expect(result.current.folderReservationPending).toBe(false);
+    });
+  });
+
+  it("releases the reservation barrier when begin fails before acknowledgement", async () => {
+    const begin = deferred<FolderIngestionResult | null>();
+    const base = createFakePreviewApi({ availability: unavailableBackend });
+    const api: PreviewApi = {
+      ...base,
+      chooseFolder: () => begin.promise,
+    };
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+
+    await waitFor(() => {
+      expect(result.current.rosterLoad.status).toBe("ready");
+    });
+    act(() => {
+      result.current.addFolder();
+    });
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(true);
+      expect(result.current.folderReservationPending).toBe(true);
+    });
+
+    begin.reject(previewError({ kind: "preview_worker_unavailable" }));
+    await waitFor(() => {
+      expect(result.current.folderBusy).toBe(false);
+      expect(result.current.folderReservationPending).toBe(false);
+      expect(result.current.folderError?.kind).toBe("preview_worker_unavailable");
     });
   });
 
@@ -1205,17 +1433,18 @@ describe("starting a folder import", () => {
       });
     });
 
-    // The next mounted webview will read its own roster. This one must not move
-    // Rust's workspace generation after it has ceased to exist.
+    // The next mounted webview will read its own roster. This one must not
+    // launch another stale reconciliation after it has ceased to exist.
     expect(api.rosterReads()).toBe(1);
   });
 
   it("refuses to read the list back while an import is unresolved", async () => {
     // The other half of the same rule, and the reason removing and clearing are
-    // not simply "everything that is not acquiring". A roster read advances the
-    // same generation in Rust: it can supersede the import if it wins the gate,
-    // or merely include the rows if it follows. Unlike removing or clearing,
-    // neither outcome gives the user anything worth introducing that race.
+    // not simply "everything that is not acquiring". A roster read is pure but
+    // would add a loading state and a snapshot whose usefulness depends on
+    // whether the scan committed before or after it. Unlike removing or
+    // clearing, it adds no useful escape path; the folder result or owed
+    // reconciliation already supplies the authoritative answer.
     const scan = deferred<FolderScan | null>();
     const api = createFakePreviewApi({
       availability: unavailableBackend,
@@ -1388,6 +1617,52 @@ describe("starting a folder import", () => {
     expect(result.current.roster.datasets).toHaveLength(0);
     expect(result.current.workspaceNotice).toEqual(clearNotice);
   });
+
+  it.each(["import_superseded", "invalid_folder_import_reservation"] as const)(
+    "silently settles %s after empty-workspace Clear list wins",
+    async (kind) => {
+      const folder = deferred<FolderIngestionResult | null>();
+      const clearedCapacity = FAKE_WORKSPACE_CAPACITY - 1;
+      const api = createFakePreviewApi({
+        availability: unavailableBackend,
+        folderResult: () => folder.promise,
+        clearWorkspace: () =>
+          Promise.resolve({ datasets: [], capacity: clearedCapacity }),
+      });
+      const { result } = renderHook(() => usePreviewWorkspace(), {
+        wrapper: wrapper(api),
+      });
+      await waitFor(() => {
+        expect(result.current.rosterLoad.status).toBe("ready");
+      });
+
+      act(() => {
+        result.current.addFolder();
+      });
+      await waitFor(() => {
+        expect(result.current.folderBusy).toBe(true);
+      });
+      act(() => {
+        result.current.clearList();
+      });
+      await waitFor(() => {
+        expect(result.current.workspaceNotice?.message).toBe(
+          "The workspace is empty. The pending folder import will not add files.",
+        );
+      });
+      const clearNotice = result.current.workspaceNotice;
+
+      folder.reject(previewError({ kind }));
+      await waitFor(() => {
+        expect(result.current.folderBusy).toBe(false);
+      });
+
+      expect(result.current.folderError).toBeNull();
+      expect(result.current.roster.datasets).toHaveLength(0);
+      expect(result.current.roster.capacity).toBe(clearedCapacity);
+      expect(result.current.workspaceNotice).toEqual(clearNotice);
+    },
+  );
 
   it("refuses after a read that failed, until a retry has succeeded", async () => {
     // The same answer for the same reason: this window has no authoritative

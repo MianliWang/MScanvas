@@ -74,12 +74,11 @@ export function PreviewWorkspace() {
     !workspace.pickerBusy &&
     !workspace.folderBusy &&
     !workspace.workspaceBusy;
-  // One thing more for the folder action, and only for it. A roster read is
-  // itself a statement about the workspace in Rust, so an import started before
-  // the mount-time read answers would create a race: the read can win the gate
-  // and make the import fail with `import_superseded` while the user changed
-  // nothing, or the import can change what the read returns. Adding files has no
-  // such window: it is one gated batch with nothing running unlocked inside it.
+  // One thing more for the folder action, and only for it. Native page-load
+  // start has already superseded work owned by the previous document; the
+  // mount-time roster answer is what lets this document begin from a list it
+  // has actually adopted. Adding files has no unlocked scan window: it is one
+  // gated batch.
   //
   // A failed read is the same answer for the same reason. This window has no
   // authoritative list, and the roster's own retry is the way out.
@@ -89,20 +88,24 @@ export function PreviewWorkspace() {
   //
   // They wait on an add's picker, because that holds `pickerBusy` across the
   // dialog *and* the registration after it, and a removal answering inside that
-  // window carries a roster from before the added rows existed. They do **not**
-  // wait on a folder import. A folder import has no cancellation and can run
-  // for as long as the user's filesystem takes. A successful `Clear list` is
-  // the reliable final-empty escape, while `Remove selected` still manages rows
-  // already on screen. Rust linearises either action against the import: an
-  // action that reaches the gate first supersedes it; if the import commits
-  // first, the action's authoritative roster includes that fact. A late folder reply is
-  // never allowed to overwrite the later answer.
-  const canMutate = !workspace.workspaceBusy && !workspace.pickerBusy;
-  // Reading the list back is not an escape route; it is another statement about
-  // what the workspace is, and in Rust it advances the same generation. It
-  // could win the gate and supersede the import, or follow it and merely include
-  // its rows. Neither outcome is useful enough to introduce that race, so unlike
-  // removing and clearing it waits.
+  // window carries a roster from before the added rows existed. A folder import
+  // adds one much shorter wait: until Rust returns the baseline reservation and
+  // the exact claim request is dispatched. After that edge they stay available
+  // for the whole native picker and scan. A successful `Clear list` is the
+  // reliable final-empty escape, while `Remove selected` still manages rows
+  // already on screen. Rust linearises either action against the claim: if the
+  // action reaches the gate first the picker never opens; if it follows the
+  // claim it supersedes the eventual commit. A late folder reply is never
+  // allowed to overwrite the later answer.
+  const canMutate =
+    !workspace.workspaceBusy &&
+    !workspace.pickerBusy &&
+    !workspace.folderReservationPending;
+  // Reading the list back is not an escape route. It is a pure, gate-linearized
+  // snapshot, but during a scan it would add a loading state and a projection
+  // whose usefulness depends on whether the scan committed before or after it.
+  // The folder reply or owed reconciliation already supplies the authoritative
+  // way out, so unlike removing and clearing it waits.
   const canReloadRoster = canMutate && !workspace.folderBusy;
   // One viewer read at a time. Rust supersedes an older open of one dataset
   // anyway; this is what stops a queue of them forming behind the single
@@ -277,12 +280,12 @@ export function PreviewWorkspace() {
           <div className="notice notice-danger" role="status">
             <strong>The workspace list could not be read</strong>
             <span>{workspace.rosterLoad.error.summary}</span>
-            {/* Refused while a mutation or an import is unresolved. In Rust a
-                roster read is itself a statement about the workspace -- it is
-                what linearises a reloaded window against a scan the window
-                before it started -- so a mid-import read could win the gate
-                and supersede the import, or follow it and merely include its
-                rows. Neither outcome justifies that race. */}
+            {/* Refused while a mutation or an import is unresolved. Rust returns
+                a pure, gate-linearized snapshot; native page-load start owns
+                reload ordering. During an import the folder reply or
+                reconciliation already supplies the authoritative answer,
+                without another loading state whose usefulness depends on
+                commit order. */}
             <button
               className="link-button"
               disabled={!canReloadRoster}

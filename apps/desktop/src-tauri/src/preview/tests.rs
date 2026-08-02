@@ -3528,6 +3528,7 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "use_automatic_backend_discovery",
             "get_workspace_roster",
             "choose_mzml_files",
+            "begin_mzml_folder_import",
             "choose_mzml_folder",
             "remove_workspace_datasets",
             "clear_workspace",
@@ -3822,14 +3823,13 @@ fn a_candidate_replaced_between_the_walk_and_the_open_is_refused_and_the_batch_s
 
 #[cfg(windows)]
 #[test]
-fn a_scan_the_user_moved_past_by_reading_the_list_adds_nothing_and_holds_nothing() {
+fn a_scan_owned_by_the_previous_webview_document_adds_nothing_and_holds_nothing() {
     use std::sync::mpsc;
 
-    // The reload race, in the order that makes it dangerous. A window that
-    // reloads reads the roster, adopts it, and has no further read coming; a
-    // scan the *previous* window started is still out there holding no lock. It
-    // must not arrive afterwards, because nothing would ever tell the new
-    // window it had.
+    // The reload race, in the order that makes it dangerous. Tauri reports the
+    // new document at page-load start; a scan the *previous* window started is
+    // still out there holding no lock. It must not arrive afterwards, because
+    // nothing would ever tell the new window it had.
     let tree = FolderTree::new("superseded-by-read");
     let candidate = tree.file("sample.mzML", b"<mzML/>");
     let service = Arc::new(PreviewService::new(Box::new(NoProcess)));
@@ -3858,8 +3858,10 @@ fn a_scan_the_user_moved_past_by_reading_the_list_adds_nothing_and_holds_nothing
         .recv_timeout(std::time::Duration::from_secs(10))
         .expect("the scan reached its walk");
 
-    // The reloaded window's read. That it returns at all is the other half of
-    // this: a scan does not hold the workspace, so the list stays answerable.
+    // The native start of the replacement document is the linearization point.
+    // Its later roster read is pure and remains answerable while the scan is
+    // unresolved.
+    service.begin_webview_document();
     assert!(service.roster().datasets.is_empty());
     release.send(()).expect("the scan is still waiting");
 
@@ -4394,6 +4396,190 @@ fn a_refused_walk_leaves_the_workspace_exactly_as_it_was() {
     assert_eq!(service.roster(), before);
 }
 
+#[test]
+fn a_folder_reservation_is_exact_and_single_use() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let reservation = service.begin_folder_import();
+
+    let token = service
+        .claim_folder_import(&reservation.reservation_id)
+        .expect("the exact reservation is claimable once");
+    assert_eq!(token.generation(), 1);
+    assert_eq!(
+        service
+            .claim_folder_import(&reservation.reservation_id)
+            .expect_err("a consumed reservation cannot be replayed")
+            .kind,
+        "invalid_folder_import_reservation"
+    );
+}
+
+#[test]
+fn a_wrong_folder_reservation_does_not_consume_the_live_one() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let reservation = service.begin_folder_import();
+
+    assert_eq!(
+        service
+            .claim_folder_import("folder-import-reservation-999")
+            .expect_err("an identifier Rust did not issue names nothing")
+            .kind,
+        "invalid_folder_import_reservation"
+    );
+    service
+        .claim_folder_import(&reservation.reservation_id)
+        .expect("the wrong claim left the exact one available");
+}
+
+#[test]
+fn a_delayed_begin_at_the_same_baseline_reuses_the_live_reservation() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let current = service.begin_folder_import();
+    // This can be an old document's fetch reaching Rust after the replacement
+    // document already began. Arrival order cannot make it a newer workspace
+    // decision: both saw the same baseline, so both name the one bounded slot.
+    let delayed = service.begin_folder_import();
+
+    assert_eq!(delayed.reservation_id, current.reservation_id);
+    assert_eq!(
+        service
+            .claim_folder_import(&current.reservation_id)
+            .expect("the current document claims the shared baseline")
+            .generation(),
+        1
+    );
+    assert_eq!(
+        service
+            .claim_folder_import(&delayed.reservation_id)
+            .expect_err("the delayed document cannot replay the consumed claim")
+            .kind,
+        "invalid_folder_import_reservation"
+    );
+}
+
+#[test]
+fn a_delayed_begin_after_clear_replaces_only_the_stale_slot() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let current = service.begin_folder_import();
+
+    service.clear_workspace();
+    // The old document's begin reaches Rust after Clear and replaces the stale
+    // slot at the new baseline. The current document's now-wrong identifier
+    // must not consume that replacement.
+    let delayed = service.begin_folder_import();
+    assert_ne!(delayed.reservation_id, current.reservation_id);
+    assert_eq!(
+        service
+            .claim_folder_import(&current.reservation_id)
+            .expect_err("Clear made the original reservation unavailable")
+            .kind,
+        "invalid_folder_import_reservation"
+    );
+    assert_eq!(
+        service
+            .claim_folder_import(&delayed.reservation_id)
+            .expect("a wrong old claim leaves the replacement available")
+            .generation(),
+        2
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_delayed_begin_after_claim_does_not_supersede_the_active_import() {
+    let tree = FolderTree::new("delayed-begin-after-claim");
+    tree.file("sample.mzML", b"<mzML/>");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    let current = service.begin_folder_import();
+    let token = service
+        .claim_folder_import(&current.reservation_id)
+        .expect("the current document claimed before its picker");
+
+    // The old document's begin reaches Rust only now. It may occupy the one
+    // pending slot, but begin is not a workspace decision and cannot advance
+    // beyond the live token.
+    let delayed = service.begin_folder_import();
+    assert_ne!(delayed.reservation_id, current.reservation_id);
+
+    service
+        .add_mzml_folder(tree.path(), token)
+        .expect("a ghost begin cannot cancel the current document's import");
+    assert_eq!(roster_names(&service), vec!["sample.mzML"]);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_delayed_roster_read_from_the_old_document_does_not_supersede_the_new_import() {
+    let tree = FolderTree::new("delayed-old-roster");
+    tree.file("sample.mzML", b"<mzML/>");
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    service.begin_webview_document();
+    let current = service.begin_folder_import();
+    let token = service
+        .claim_folder_import(&current.reservation_id)
+        .expect("the replacement document claimed its import");
+
+    // An IPC roster request sent by the old document reaches Rust only now.
+    // It is a pure snapshot: native page-load start, not request arrival order,
+    // already declared which document owns the workspace.
+    assert!(service.roster().datasets.is_empty());
+    service
+        .add_mzml_folder(tree.path(), token)
+        .expect("the old document's delayed read cannot cancel new work");
+    assert_eq!(roster_names(&service), vec!["sample.mzML"]);
+}
+
+#[test]
+fn folder_import_reservations_use_one_bounded_pending_slot() {
+    // A document can disappear after `begin` replies but before it claims the
+    // identifier. Retaining every abandoned reply would turn reloads into an
+    // unbounded Rust-side registry, so the storage shape is part of the IPC
+    // contract rather than an implementation detail.
+    let source = include_str!("service.rs");
+    let mutation_state = source
+        .split_once("struct WorkspaceMutationState {")
+        .expect("the workspace mutation state is declared")
+        .1
+        .split_once("\n}")
+        .expect("the workspace mutation state is closed")
+        .0;
+
+    assert!(
+        mutation_state.contains("pending_folder_import: Option<PendingFolderImport>"),
+        "one replaceable Option bounds abandoned folder reservations"
+    );
+    for unbounded in ["Vec<PendingFolderImport>", "HashMap<", "BTreeMap<"] {
+        assert!(!mutation_state.contains(unbounded), "{mutation_state}");
+    }
+}
+
+#[test]
+fn a_reload_between_begin_and_claim_refuses_before_a_picker_can_use_the_token() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let reservation = service.begin_folder_import();
+
+    // Native page-load start advances before the replacement document can ask
+    // for its pure roster snapshot.
+    service.begin_webview_document();
+    assert!(service.roster().datasets.is_empty());
+    assert_eq!(
+        service
+            .claim_folder_import(&reservation.reservation_id)
+            .expect_err("the old document cannot start a picker after the reload read")
+            .kind,
+        "import_superseded"
+    );
+    assert_eq!(
+        service
+            .claim_folder_import(&reservation.reservation_id)
+            .expect_err("the stale claim was consumed on refusal")
+            .kind,
+        "invalid_folder_import_reservation"
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn a_window_that_reloads_while_the_picker_is_open_supersedes_the_import() {
@@ -4412,7 +4598,9 @@ fn a_window_that_reloads_while_the_picker_is_open_supersedes_the_import() {
 
     // The command reserves, then shows the dialog.
     let token = service.reserve_folder_import();
-    // The window goes and its replacement reads what the session holds.
+    // The window goes; native page-load start supersedes its token, and the
+    // replacement then reads what the session holds without moving it again.
+    service.begin_webview_document();
     assert!(service.roster().datasets.is_empty());
     // The user finally chooses a folder in the dialog the old window opened.
     let error = service
@@ -4430,9 +4618,9 @@ fn a_window_that_reloads_while_the_picker_is_open_supersedes_the_import() {
 #[cfg(windows)]
 #[test]
 fn every_workspace_decision_taken_while_the_picker_is_open_supersedes_the_import() {
-    // Reading the list is one of four, and the other three are things the user
-    // does deliberately. Each of them says "this is the workspace now", and
-    // rows from a dialog opened before it would arrive from nowhere.
+    // Each deliberate mutation says "this is the workspace now", and rows from
+    // a dialog opened before it would arrive from nowhere. Webview replacement
+    // is covered separately by the native page-load tests above.
     let elsewhere = TestFile::new("decisions-during-picker");
     for decision in ["clear", "remove", "add"] {
         let tree = FolderTree::new(&format!("picker-{decision}"));
@@ -4558,23 +4746,97 @@ fn committing_an_import_does_not_claim_the_next_state_as_well() {
 }
 
 #[test]
-fn the_folder_command_takes_its_claim_before_it_opens_the_picker() {
-    // Asserted against the source, because the ordering inside a Tauri command
-    // is the one thing a unit test cannot ask the framework for -- and it is
-    // exactly where the reservation would drift back to after the dialog
-    // without anything noticing.
+fn the_folder_reservation_handle_carries_no_path_or_internal_generation() {
+    let rendered = serde_json::to_string(&super::dto::FolderImportReservationDto {
+        reservation_id: "folder-import-reservation-17".to_owned(),
+    })
+    .expect("the reservation serialises");
+
+    assert_eq!(
+        rendered,
+        "{\"reservationId\":\"folder-import-reservation-17\"}"
+    );
+    for private in ["path", "root", "generation", "token"] {
+        assert!(!rendered.contains(private), "{rendered}");
+    }
+}
+
+#[test]
+fn the_folder_begin_command_is_synchronous_and_cannot_open_a_picker() {
     let host = include_str!("../lib.rs");
     let body = host
-        .split_once("async fn choose_mzml_folder")
-        .expect("the host registers the folder command")
+        .split_once("fn begin_mzml_folder_import")
+        .expect("the host registers the reservation command")
         .1
         .split_once("\n}\n")
         .expect("the command body is closed")
         .0;
 
-    let reserved = body
-        .find("reserve_folder_import")
-        .expect("the command reserves a generation");
+    assert!(!host.contains("async fn begin_mzml_folder_import"));
+    assert!(body.contains("service.begin_folder_import()"));
+    assert!(!body.contains("run_on_main_thread"));
+    assert!(!body.contains("choose_mzml_folder(owner)"));
+    assert!(!body.contains("add_mzml_folder"));
+}
+
+#[test]
+fn the_native_page_load_start_supersedes_work_from_the_replaced_document() {
+    let host = include_str!("../lib.rs");
+    let hook = host
+        .split_once(".on_page_load(")
+        .expect("the host observes native webview navigation")
+        .1
+        .split_once(".invoke_handler")
+        .expect("the page-load hook is closed before command registration")
+        .0;
+
+    assert!(hook.contains("webview.label() == \"main\""));
+    assert!(hook.contains("payload.event() == PageLoadEvent::Started"));
+    assert!(hook.contains("begin_webview_document()"));
+}
+
+#[test]
+fn roster_reads_are_gate_linearized_without_advancing_the_generation() {
+    let source = include_str!("service.rs");
+    let body = source
+        .split_once("pub fn roster(&self) -> WorkspaceRosterDto {")
+        .expect("the service exposes the stored roster")
+        .1
+        .split_once("\n    }\n\n    /// Adds")
+        .expect("the roster body is closed before file addition")
+        .0;
+
+    let gated = body
+        .find("enter_workspace_mutation()")
+        .expect("a roster snapshot waits for an in-flight batch");
+    let snapshot = body
+        .find("roster_of(&self.workspace())")
+        .expect("the roster is copied while it owns the ordering gate");
+    assert!(gated < snapshot);
+    assert!(
+        !body.contains("begin_mutation"),
+        "a roster read is not a decision"
+    );
+    assert!(
+        !body.contains("advance()"),
+        "a roster read is not a decision"
+    );
+}
+
+#[test]
+fn the_folder_chooser_claims_one_reservation_before_it_opens_the_picker() {
+    let host = include_str!("../lib.rs");
+    let body = host
+        .split_once("async fn choose_mzml_folder")
+        .expect("the host registers the folder chooser")
+        .1
+        .split_once("\n}\n")
+        .expect("the command body is closed")
+        .0;
+
+    let claimed = body
+        .find("claim_folder_import(&reservation_id)")
+        .expect("the command consumes and validates the reservation");
     let dispatched = body
         .find("run_on_main_thread")
         .expect("the command dispatches the picker");
@@ -4583,16 +4845,16 @@ fn the_folder_command_takes_its_claim_before_it_opens_the_picker() {
         .expect("the command imports what was chosen");
 
     assert!(
-        reserved < dispatched,
-        "the claim has to cover the dialog, not start after it"
+        claimed < dispatched,
+        "a stale claim must fail before the picker"
     );
     assert!(dispatched < imported);
-    // And the webview supplies none of it: the command's parameters are the
-    // application handle and the service, and nothing else.
     let signature = body
         .split_once(')')
         .expect("the command has a parameter list")
         .0;
+    assert!(signature.contains("reservation_id: String"));
     assert!(!signature.contains("token"), "{signature}");
     assert!(!signature.contains("Token"), "{signature}");
+    assert!(!signature.contains("Path"), "{signature}");
 }

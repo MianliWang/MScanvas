@@ -18,13 +18,15 @@
   frontend and at the cost of no command; the registry's order, contents and
   identity are untouched. See *Roster view projection* below; the paragraph this
   replaces recorded search and sort as work that belonged to M1.3.
-- Amended: 2026-07-31 (M1.4.1) — a folder can be added. A fifth command reaches
-  the registry, a row may say where it was found when another row shares its
-  filename, and the mutation gate carries a generation so a scan holding no lock
-  cannot commit into a workspace the user has moved on from. See *Path and
-  diagnostic privacy*, *Frontend and Tauri boundary*, *Active dataset* and
-  *Concurrency* below; the paragraphs this replaces recorded folder ingestion as
-  gated apart from this decision.
+- Amended: 2026-08-02 (M1.4.1) — a folder can be added. Two narrow commands
+  reach the registry through a path-free begin/claim protocol, a row may say
+  where it was found when another row shares its filename, and the mutation
+  gate carries a generation so a scan holding no lock cannot commit into a
+  workspace the user has moved on from. Native main-webview page-load start is
+  the reload linearisation point; reading the roster is a pure, gate-linearised
+  snapshot. See *Path and diagnostic privacy*, *Frontend and Tauri boundary*,
+  *Active dataset* and *Concurrency* below; the paragraphs this replaces
+  recorded folder ingestion as gated apart from this decision.
 
 ## Context
 
@@ -378,21 +380,28 @@ rereading one is a thing the user asks for, one dataset at a time.
 No command accepts a path from the webview, and the main window's capability set
 stays empty.
 
-Five commands make the registry reachable:
+Six commands within the twelve-command registered surface make the registry
+reachable:
 
 - `get_workspace_roster` — the ordered, path-free list the session holds;
 - `choose_mzml_files` — show the native picker and add everything chosen;
-- `choose_mzml_folder` — show the native folder picker and add every mzML file
-  found beneath the folder chosen (added by M1.4.1; see ADR 0007);
+- `begin_mzml_folder_import` — synchronously retain one current-generation
+  baseline and return its path-free correlation identifier;
+- `choose_mzml_folder` — consume and validate that exact identifier before
+  showing the native folder picker, then add every mzML file found beneath the
+  folder chosen (the two-command protocol was added by M1.4.1; see ADR 0007);
 - `remove_workspace_datasets` — remove the rows these handles name;
 - `clear_workspace` — empty the session.
 
-The webview names a row by the handle it was given, or names nothing at all.
-Clearing takes no identifiers: it is one action over everything the session
-holds, and a list of rows to clear would be a second way to remove some of them.
-A handle the session no longer has is an ordinary reconciliation outcome — the
-interface asked about rows it believed it had, and the answer is the roster it
-actually has — rather than a refusal.
+For workspace contents the webview names a row by the handle it was given, or
+names nothing at all. The folder handshake additionally echoes a
+session-scoped, opaque-but-not-secret identifier issued by Rust. That identifier
+is single-use correlation, not a path, filesystem capability, mutation
+generation or internal token. Clearing takes no identifiers: it is one action
+over everything the session holds, and a list of rows to clear would be a second
+way to remove some of them. A handle the session no longer has is an ordinary
+reconciliation outcome — the interface asked about rows it believed it had,
+and the answer is the roster it actually has — rather than a refusal.
 
 The single-file picker command is retired rather than kept beside its
 replacement. Two registered pickers with opposite semantics, one that replaces
@@ -512,16 +521,31 @@ at another ProteoWizard, and it does not become one because they walked the list
 
 **Amended by M1.4.1: the workspace mutation generation.** The gate that
 serialises one workspace mutation against another now carries a monotonic
-counter, advanced by every operation that is a statement about what the
-workspace *is* — adding files, adding a folder, removing rows, emptying the
-list, and the product-facing roster read. Its only purpose is folder ingestion,
-which is the one operation long enough that the user can decide something else
-while it runs: the scan reserves a generation, runs holding no lock at all, and
-commits only if the generation is still the one it reserved.
+counter. Adding files, removing rows, emptying the list, a successful exact
+folder claim, and native main-webview `PageLoadEvent::Started` advance it.
+Folder scanning is the one operation long enough that the user can decide
+something else while it runs: it carries the token created by its claim, scans
+holding no lock at all, and commits only if that token still names the current
+generation.
 
-The roster read advancing it is deliberate and is the reload race. See ADR 0007's
-mutation-concurrency section for why, and for what deliberately does not advance
-it.
+The two-command start is deliberately independent of IPC arrival order.
+Synchronous `begin_mzml_folder_import` records the current generation only as a
+baseline in one bounded `Option` slot and returns a path-free correlation ID. It
+does not advance the generation. Another begin at the same generation
+idempotently returns the same ID. `choose_mzml_folder` must claim that exact ID
+before dispatching the picker: the claim consumes it, validates its baseline,
+then atomically advances the generation and creates the Rust-only,
+unclonable token. An exact stale claim is consumed and refused; an unknown,
+replaced or replayed ID does not consume the live slot.
+
+Reload authority comes from Tauri's native page-load-started hook, which runs
+before the replacement document can issue IPC. It advances the generation and
+therefore supersedes work owned by the previous document without assuming FIFO
+delivery of commands. A delayed old begin has no generation side effect, and a
+delayed old roster request is only a pure snapshot. `get_workspace_roster`
+still takes the mutation gate so it observes a complete batch either before or
+after its commit, but it does not advance the generation. See ADR 0007's
+mutation-concurrency section for the complete state machine.
 
 ## Testing obligations
 
@@ -567,8 +591,14 @@ it.
 - relative context appears only for exact filename collisions and disappears
   when the row that caused it does, is never searched and is never a sort key,
   and a directly added row is told apart from a discovered one;
-- a folder import commits only against the generation it reserved, and a
-  superseded one accepts nothing and holds nothing.
+- folder begin is current-generation-idempotent in one bounded pending slot,
+  exact claim is single-use and advances before the picker, and wrong or
+  replayed claims do not consume the live slot;
+- native page-load start, rather than a roster IPC request, supersedes work from
+  the replaced document; delayed old begin and roster requests cannot cancel a
+  newer import;
+- a folder import commits only against the generation its successful claim
+  created, and a superseded one accepts nothing and holds nothing.
 
 ## Consequences
 
@@ -633,7 +663,8 @@ that reads an acquisition is asking for one to be read.
   above.
 - **M1.3** — done: search and sort as a view projection, recorded in the
   amendments above.
-- **M1.4** — done: folder ingestion, with its own traversal boundary in
+- **M1.4** — implementation complete; final M1.4.1 rendered QA pending: folder
+  ingestion, with its own traversal boundary in
   [ADR 0007](0007-logical-acquisition-discovery-and-folder-traversal.md) and the
   amendment above. Directory-formatted acquisitions stay gated on evidence, as
   *Unsupported formats* requires.

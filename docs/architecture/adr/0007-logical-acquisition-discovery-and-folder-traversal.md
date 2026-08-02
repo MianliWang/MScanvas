@@ -6,6 +6,9 @@
 - Date: 2026-07-31
 - Amended: 2026-08-01 (M1.4.1) — both folder choices use the Windows Common
   Item Dialog; the Rust-only path and cancellation boundaries are unchanged.
+- Amended: 2026-08-02 (M1.4.1) — folder ingestion uses a path-free two-command
+  begin/claim protocol, and native main-webview page-load start rather than a
+  roster IPC request is the authoritative reload linearisation point.
 
 ## Context
 
@@ -35,10 +38,11 @@ folder. It adds no command, no transfer object, no picker and no interface: the
 engine is private to the preview module and nothing in the product can reach it.
 
 M1.4.1 makes exactly that engine reachable, and nothing else: one native folder
-picker, one command, one transfer object, and one visible action. The traversal
-is unchanged — the same budgets, the same ordering, the same refusal of every
-reparse entry — and what M1.4.1 adds is the commit around it: whose decision the
-scan is still answering, and what a candidate has to prove at acceptance.
+picker, two narrow commands, a path-free reservation transfer followed by the
+ingestion result, and one visible action. The traversal is unchanged — the same
+budgets, the same ordering, the same refusal of every reparse entry — and what
+M1.4.1 adds is the commit around it: whose decision the scan is still answering,
+and what a candidate has to prove at acceptance.
 
 Out of scope here, each for its own reason: vendor formats and
 directory-formatted acquisitions (no evidence), Explorer drag-and-drop (a
@@ -335,54 +339,60 @@ it.
 ## Mutation concurrency
 
 Implemented in M1.4.1 as recorded: the scan runs outside the workspace mutation
-gate, a monotonic workspace mutation generation is reserved for the import, and
-the batch commits only if that generation is unchanged. Otherwise the command
-returns a typed `import_superseded`, accepts nothing, leases nothing and spends
-no identifier.
+gate and the batch commits only while the generation created by its accepted
+claim remains current. Otherwise the chooser returns typed
+`import_superseded`, accepts nothing, leases nothing and spends no dataset
+identifier.
 
-**The claim covers the native dialog, not only the scan.** The generation is
-reserved by the command *before* the picker is dispatched, and carried through
-it as an opaque, unclonable `FolderImportToken`. A modal dialog can stand open
-for minutes; a webview can reload or die inside that window, and the one that
-replaces it reads the roster and adopts it with no further read coming. Reserved
-after the picker answered, the import would be newer than that read, would
-commit, and would hand its rows to a window that no longer exists. Reserved
-first, a read that reaches the gate while the picker remains open supersedes the
-import; if the import commits first instead, the later read includes its rows.
+**Begin records a baseline; exact claim creates the generation.** The
+synchronous `begin_mzml_folder_import` command takes the mutation gate, records
+the current generation as a baseline in one bounded pending `Option`, and
+returns a session-scoped, path-free correlation ID. The ID is opaque but not a
+secret: it conveys no path, filesystem authority, generation or internal token.
+A second begin at the same generation is idempotent and returns the same ID. A
+begin after another workspace decision replaces only the stale pending slot.
+It never advances the generation itself.
 
-The token is spent by the import and cannot be copied, so one reservation is one
-import and a commit never claims the next state as well. It is never supplied or
-received by the webview: it is a number this side allocated to order its own
-decisions, and a caller that could see one could reason about it while a caller
-that could send one could forge it.
+The asynchronous `choose_mzml_folder(reservationId)` command claims before it
+dispatches the native picker. Under the same gate it requires the exact live ID,
+consumes it, checks that its baseline is still current, then atomically advances
+the generation and creates the opaque, unclonable Rust-only
+`FolderImportToken`. An exact stale claim is consumed and returns
+`import_superseded`; an unknown, replaced or replayed ID returns
+`invalid_folder_import_reservation` without consuming the live slot. The token
+crosses neither IPC direction and is spent by at most one import. Cancellation
+or a dialog failure drops the claimed token but does not roll its generation
+back; generations are ordering facts and are never given back.
 
-A reservation that is dropped rather than spent — a cancelled picker, a dialog
-that would not open — leaves the generation advanced. That is deliberate and is
-not rolled back: it supersedes anything older, adds no row, holds no lease and
-spends no identifier. Generations are ordering facts and are never given back.
+This split lets `Clear list` and `Remove selected` wait only until Rust has
+stored the baseline. If either mutation reaches the gate before exact claim,
+the baseline becomes stale and no picker opens. If claim reaches the gate first,
+the mutation advances beyond the token and the later commit is refused. The
+same gate makes both orders linear without holding it across either the modal
+dialog or the recursive scan.
 
-**The window must know what the session holds before it may import.** The
-mount-time roster read is itself one of these decisions, so an import started
-before it answers would create a race: a read that reaches the gate first makes
-the import fail with `import_superseded` while the user changed nothing, while an
-import that reaches it first changes what the read returns. `Add mzML folder…`
-therefore waits for that read to settle successfully, and a failed read keeps it
-unavailable until the roster's own retry succeeds. Adding files has no such
-window: it is one gated batch with nothing running unlocked inside it.
+**Navigation, not roster IPC arrival, owns reload ordering.** Tauri's native
+main-webview `PageLoadEvent::Started` hook advances the generation before the
+replacement document can issue commands. Work claimed by the previous document
+is therefore stale even when its async command is polled later. The protocol
+does not assume FIFO fetch delivery: a delayed old begin cannot advance the
+generation, replaces no live same-generation reservation, and cannot supersede
+an already claimed import. A delayed old roster request is a pure snapshot and
+has no mutation side effect.
 
-What advances the generation is every statement about what the workspace *is*:
-adding files, removing rows, emptying the list — and the product-facing roster
-read. That last one is the reload race and is the reason the read is a mutation
-at all. A webview that reloads adopts the roster it is given and has no further
-read coming; a scan the previous window started is still out there holding no
-lock. Going through the gate linearises the two: either the scan commits first
-and the read includes its rows, or the read wins and the scan finds its
-generation stale and adds nothing. What cannot happen is a new window adopting a
-roster and then being given rows nothing will ever tell it about.
+`get_workspace_roster` still takes the mutation gate, so its stored-fact
+snapshot is wholly before or wholly after a batch rather than partway through
+one. It does not advance the generation. The window still waits for its
+mount-time roster response before enabling `Add mzML folder…`, not because the
+read owns reload ordering, but because this document must adopt an authoritative
+list before importing into it. A failed read keeps folder ingestion unavailable
+until the roster's own retry succeeds. Adding files has no unlocked scan window:
+it is one gated batch.
 
-Looking at the session is not deciding what it holds. Reading a preview,
-inspecting the backend or counting rows internally does not advance the
-generation, so a long scan does not fail for a reason the user cannot see.
+What advances the generation is adding files, removing rows, emptying the list,
+a successful exact folder claim, and native main-webview page-load start.
+Reading a roster or preview, inspecting the backend and counting rows do not, so
+a long scan cannot fail merely because an independently scheduled read arrived.
 
 Holding the gate across a recursive scan is rejected. `Clear list` and
 `Remove selected` queue on that same gate, so holding it for the walk would take
@@ -426,22 +436,23 @@ already in the workspace all stay live.
 
 **`Remove selected` and `Clear list` stay live too, but make different
 promises.** When `Clear list` succeeds, it is the reliable way out of a folder
-chosen by mistake. If it reaches the gate first, the older import is superseded;
-if the import commits first, the clear removes every row it added. When the
-command succeeds, the final workspace is empty in either linearisation.
-`Remove selected` remains
-live so the user can manage rows already on screen. If it reaches the gate first
-it also supersedes the import, but if the import commits first the removal acts
-only on the handles it was given, so its authoritative roster can retain newly
-imported rows. It is row management, not a cancellation guarantee.
+chosen by mistake. If it reaches the gate before claim, the baseline becomes
+stale and the picker does not open; if it follows claim but precedes commit, the
+token becomes stale; if the import commits first, the clear removes every row it
+added. When the command succeeds, the final workspace is empty in every
+linearisation. `Remove selected` remains live so the user can manage rows
+already on screen. The same pre-claim and pre-commit rules supersede the import,
+but if the import commits first the removal acts only on the handles it was
+given, so its authoritative roster can retain newly imported rows. It is row
+management, not a cancellation guarantee.
 
 What still waits is acquiring more — `Add files…` and a second
 `Add mzML folder…` — because two batches in flight let an older reply's roster
-overwrite a newer one's. Reading the list back waits as well: it is not an
-escape route but another statement about what the workspace is. If it reached
-the gate first it would supersede the import the user is waiting for; if the
-import committed first, the read would merely include its rows. Neither outcome
-gives the user enough to justify introducing that race. Three different
+overwrite a newer one's. Explicitly reading the list back waits as well, even
+though it is now a pure, gate-linearised snapshot: during a scan it would add an
+unnecessary loading state and a projection whose usefulness depends on whether
+the scan committed before or after it. The folder result or an owed
+reconciliation already supplies the authoritative way out. Three different
 concurrency contracts, and therefore three answers rather than one flag.
 
 One consequence belongs to the interface rather than to Rust. Rust settles which
@@ -457,10 +468,12 @@ empty workspace, could launch a preview the user did not ask for. A successful
 action supplies the authoritative roster that accounts for whichever operation
 won the gate. A rejected action does not prove that Rust was unchanged, so the
 folder reply remains suppressed and the webview reads the authoritative roster
-after both operations settle. Any older roster read is invalidated when the
-action begins, and any preview whose row is absent from the reconciled roster is
-removed with it. The action's typed error stays visible. The superseded folder
-rejection is a different path and keeps its own typed explanation.
+after both operations settle. Any older roster reply is invalidated in the
+frontend when the action begins, and any preview whose row is absent from the
+reconciled roster is removed with it. The action's typed error stays visible.
+When this window made the later mutation, both `import_superseded` and the
+claim-stage `invalid_folder_import_reservation` caused by a delayed old begin
+settle silently; an independent picker or discovery failure remains visible.
 
 Two consequences are about the keyboard, both in the issue #25 class reached by
 keeping `Clear list` live during an import.
@@ -487,21 +500,27 @@ paid by the same rule. A real non-null destination clears the record instead.
 M1.4.0 adds no command. The engine is private to `preview::discovery`, mounted
 privately, and reachable only from within that module.
 
-M1.4.1 adds exactly one command, `choose_mzml_folder`, the eleventh and last. It
-takes no argument beyond the application handle, shows the native picker on the
-main thread, and answers with a roster, one outcome per candidate and the scan
-summary — or `None` for a dismissed picker, which is an ordinary outcome and
-deliberately not an empty result. The webview supplies and receives no path, no
-parent, no folder identifier and no ordering key, and the capability set stays
-empty.
+M1.4.1 adds exactly two commands, bringing the registered surface to twelve.
+Synchronous `begin_mzml_folder_import` records or reuses one current-generation
+baseline and returns its path-free reservation DTO. Asynchronous
+`choose_mzml_folder(reservationId)` consumes and validates that exact ID before
+showing the native picker on the main thread, then answers with a roster, one
+outcome per candidate and the scan summary — or `None` for a dismissed picker,
+which is an ordinary outcome and deliberately not an empty result. The webview
+supplies and receives no path or parent. The only additional value exchanged
+with it is a session-scoped, opaque-but-not-secret, single-use reservation
+correlation ID. Its monotonic
+spelling may expose issuance order, but it is not used as the workspace ordering
+authority; that remains the private generation. It grants no filesystem
+capability, and the main window's Tauri capability set stays empty.
 
 Both folder choices use the Rust-owned Windows Common Item Dialog through
 `IFileDialog` with `FOS_PICKFOLDERS`. This is the Explorer-style folder surface,
 so an absolute path can be pasted into its address bar without walking a legacy
 tree. The dialog is owned by the main window, requires one existing filesystem
 folder, leaves shell links unresolved and does not add the choice to Recent.
-The selected path still exists only inside Rust: this changes no command,
-transfer object or webview capability, and cancellation remains `None`.
+The selected path still exists only inside Rust: the correlation DTO carries
+none of it, grants no webview capability, and cancellation remains `None`.
 
 Every discovery refusal maps to a stable visible kind, one arm per kind and no
 default, so a new traversal refusal fails to compile rather than arriving as one
@@ -517,10 +536,12 @@ of the old ones:
 | `RootEnumerationFailed` | `folder_scan_unreadable` |
 | `FilesystemInvariantFailed` | `folder_scan_failed` |
 
-Two more kinds belong to the commit rather than to the walk:
-`folder_candidate_changed` for a candidate whose object changed, and
-`import_superseded` for a scan the workspace moved past. None of them carries a
-path, a root name or an operating-system message.
+Three more kinds belong to the reservation/commit boundary rather than to the
+walk: `folder_candidate_changed` for a candidate whose object changed,
+`import_superseded` for a claim or scan the workspace moved past, and
+`invalid_folder_import_reservation` for an unknown, replaced or replayed
+correlation ID. None of them carries a path, a root name or an operating-system
+message.
 
 ## Platform posture
 
@@ -567,12 +588,19 @@ Added for M1.4.1, all of them deterministic and none of them timed:
 
 - A candidate whose object is replaced between the walk and acceptance is
   refused with its own kind, and the rest of the batch still arrives.
-- A scan that spans a product roster read, or an emptying of the list, commits
-  nothing, holds no lease and answers `import_superseded`; a scan that spans a
-  look that decides nothing still commits. The interleaving is driven by
-  channels around a controlled walk rather than by sleeping.
-- Both reload orderings: a read after a commit sees the committed rows, and a
-  read before a commit supersedes it.
+- A scan that spans an emptying or removal of the list commits nothing, holds no
+  lease and answers `import_superseded`; a scan that spans a pure roster
+  snapshot still commits. The interleaving is driven by channels around a
+  controlled walk rather than by sleeping.
+- Native page-load start supersedes a claim owned by the previous document,
+  while a delayed roster request from that document has no side effect.
+- Folder reservations are exact and single-use; wrong and replayed IDs do not
+  consume the live slot; same-generation begin is idempotent; stale begin state
+  is replaced in one bounded `Option`; and delayed old begins before or after a
+  new claim cannot cancel the new import.
+- Both reload/commit orderings: a commit before page-load start is visible to
+  the replacement snapshot, and page-load start before commit supersedes the
+  old token.
 - Collision context appears only for exact filename collisions, distinguishes a
   directly added row from a discovered one, falls back to the session
   identifier when two rows would say the same words, disappears when the row
@@ -584,7 +612,7 @@ Added for M1.4.1, all of them deterministic and none of them timed:
   side, is counted, and makes the scan incomplete.
 - Nothing a folder import transfers contains the chosen root's name, a drive, a
   separator, an identity, or either private counter.
-- The command list is exactly eleven, in order, and the capability set is empty.
+- The command list is exactly twelve, in order, and the capability set is empty.
 
 ## Consequences
 
@@ -593,11 +621,12 @@ the point: the traversal boundary is settled and tested before a button depends
 on it. The cost is that M1.4.0 delivers nothing a user can see, and the feature
 catalogue said so until M1.4.1 made it visible.
 
-If a later workspace action reaches the mutation gate first, the scan is
-superseded, adds nothing and says so. If the scan commits first, the later
-action's roster is authoritative: a clear still leaves nothing, while a removal
-can retain imported rows it was never asked to remove. The webview never applies
-an older folder reply over that later roster or while that action is unresolved.
+If a later workspace action reaches the mutation gate before claim, no picker
+opens; if it follows claim but precedes commit, the scan is superseded, adds
+nothing and says so. If the scan commits first, the later action's roster is
+authoritative: a clear still leaves nothing, while a removal can retain imported
+rows it was never asked to remove. The webview never applies an older folder
+reply over that later roster or while that action is unresolved.
 If the action rejects, a fresh roster read after both operations settle
 reconciles the webview without assuming where the failure occurred. This
 preserves the state Rust actually linearised without letting reply order rewrite
@@ -648,8 +677,10 @@ proof of where it lives.
 
 ## Follow-up slices
 
-- **M1.4.1 — delivered.** The visible `Add mzML folder…` workflow: the picker,
-  one command, the transfer object, the interface and rendered Windows QA.
-- **M1.5** — Explorer drag-and-drop over this same discovery boundary.
+- **M1.4.1 — implementation delivered; final rendered QA still owed.** The
+  visible `Add mzML folder…` workflow: the picker, two commands, the
+  reservation/result transfer objects and the interface.
+- **M1.5 — not started.** Explorer drag-and-drop over this same discovery
+  boundary.
 - **Later** — evidence-backed directory-acquisition families, behind the gate
   recorded above.

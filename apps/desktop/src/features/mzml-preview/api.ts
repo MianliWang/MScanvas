@@ -11,6 +11,10 @@ import type {
   WorkspaceRoster,
 } from "./contracts";
 
+interface FolderImportReservation {
+  readonly reservationId: string;
+}
+
 /**
  * What the webview may ask the desktop backend.
  *
@@ -54,10 +58,16 @@ export interface PreviewApi {
    * chosen folder. Resolves to `null` when the user dismissed the picker, which
    * is not the same as a folder that held no mzML files.
    *
+   * `onReserved` is called only after Rust has returned the reservation and
+   * the exact claim request has been dispatched. Clear and Remove must wait for
+   * that boundary, but not for the native picker or scan to finish. If one of
+   * them reaches Rust before the claim, the claim is refused before the picker;
+   * if it follows the claim, it supersedes the eventual commit.
+   *
    * Launches no preview and no backend work at all: a folder of a thousand
    * files costs a thousand filesystem inspections and no processes.
    */
-  chooseFolder(): Promise<FolderIngestionResult | null>;
+  chooseFolder(onReserved: () => void): Promise<FolderIngestionResult | null>;
   /** Removes the rows these handles name. Source files are never touched. */
   removeDatasets(handles: readonly string[]): Promise<WorkspaceRemoveResult>;
   /** Empties the workspace. Source files are never touched. */
@@ -72,7 +82,14 @@ export const tauriPreviewApi: PreviewApi = {
   useAutomaticDiscovery: () => invoke<BackendAvailability>("use_automatic_backend_discovery"),
   getRoster: () => invoke<WorkspaceRoster>("get_workspace_roster"),
   chooseFiles: () => invoke<WorkspaceAddResult | null>("choose_mzml_files"),
-  chooseFolder: () => invoke<FolderIngestionResult | null>("choose_mzml_folder"),
+  chooseFolder: (onReserved) =>
+    invoke<FolderImportReservation>("begin_mzml_folder_import").then((reservation) => {
+      const chosen = invoke<FolderIngestionResult | null>("choose_mzml_folder", {
+        reservationId: reservation.reservationId,
+      });
+      onReserved();
+      return chosen;
+    }),
   removeDatasets: (handles) =>
     invoke<WorkspaceRemoveResult>("remove_workspace_datasets", { handles }),
   clearWorkspace: () => invoke<WorkspaceRoster>("clear_workspace"),

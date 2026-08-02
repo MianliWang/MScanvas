@@ -107,6 +107,14 @@ export interface PreviewWorkspace {
    * operation.
    */
   readonly folderBusy: boolean;
+  /**
+   * Whether the baseline-reservation request has been dispatched but its reply
+   * has not yet let the exact claim request be dispatched.
+   *
+   * Clear and Remove wait only for this short edge. Once it arrives they are
+   * available throughout the native picker and scan.
+   */
+  readonly folderReservationPending: boolean;
   /** Whether a roster mutation is unresolved. */
   readonly workspaceBusy: boolean;
   readonly checkBackend: () => void;
@@ -343,6 +351,16 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * whatever was true when the closure was made.
    */
   const folderBusyRef = useRef(false);
+  const [folderReservationPending, setFolderReservationPending] = useState(false);
+  /**
+   * The synchronous half of the reservation acknowledgement barrier.
+   *
+   * A rendered disabled state cannot close the interval between a click and
+   * React's next commit. Clear and Remove read this ref inside their own
+   * handlers, so neither can cross IPC until the begin reply has dispatched
+   * the exact claim.
+   */
+  const folderReservationPendingRef = useRef(false);
   const [folderError, setFolderError] = useState<PreviewError | null>(null);
   /**
    * Which folder import owns the busy state, the notice and the error.
@@ -536,10 +554,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    */
   const reloadRoster = useCallback(() => {
     // Reading the list back is not the final-empty escape `Clear list` is, nor
-    // does it manage known rows as `Remove selected` does. In Rust it is another
-    // statement about what the workspace is and advances the same generation.
-    // It could win the gate and supersede the import, or follow it and merely
-    // include its rows. Neither outcome is useful enough to introduce that race.
+    // does it manage known rows as `Remove selected` does. Although the command
+    // is now a pure read, starting one during a scan would add an unnecessary
+    // loading state and a snapshot whose usefulness depends on whether the scan
+    // committed before or after it. The folder result or the owed
+    // reconciliation already provides the authoritative way out.
     //
     // The visible action is disabled too, but only where it is rendered at all
     // -- the empty state offers it after a failed read, and a failed read is
@@ -971,12 +990,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     if (pickerBusyRef.current || folderBusyRef.current || workspaceBusyRef.current) {
       return;
     }
-    // Not until this window knows what the session holds. The mount-time roster
-    // read is itself a statement about the workspace in Rust, so starting an
-    // import before it answers would create a race: the read can win the gate
-    // and fail the import with `import_superseded` while the user changed
-    // nothing, or the import can change what the read returns. Waiting costs one
-    // round trip that is already in flight and avoids inventing either ordering.
+    // Not until this window knows what the session holds. The native page-load
+    // event has already superseded work owned by the previous document, but the
+    // roster answer is what lets this document begin from an authoritative
+    // list. Waiting costs one round trip that is already in flight and avoids
+    // importing into a workspace this window has not adopted.
     //
     // A failed read is the same answer: this window has no authoritative list,
     // and importing into a workspace it could not read is not something to
@@ -993,9 +1011,24 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     const mutationsAtStart = workspaceMutations.current;
     setFolderError(null);
     folderBusyRef.current = true;
+    folderReservationPendingRef.current = true;
     setFolderBusy(true);
+    setFolderReservationPending(true);
     void api
-      .chooseFolder()
+      .chooseFolder(() => {
+        // Reservation replies, terminal settlement and a later invocation can
+        // overtake one another. Only the request that still owns folder busy
+        // may release the current barrier.
+        if (
+          !mounted.current ||
+          token !== folderToken.current ||
+          !folderBusyRef.current
+        ) {
+          return;
+        }
+        folderReservationPendingRef.current = false;
+        setFolderReservationPending(false);
+      })
       .then((result) => {
         if (!mounted.current || token !== folderToken.current) {
           return;
@@ -1067,11 +1100,16 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         // failure would turn the user's successful escape into an error.
         // A genuine discovery or picker failure can precede Rust's generation
         // check, so overlap alone is not enough to hide it. Only the typed
-        // refusal that says the newer decision won is expected settlement.
-        const supersededByThisWindow =
-          error.kind === "import_superseded" &&
-          workspaceMutations.current !== mutationsAtStart;
-        if (mounted.current && token === folderToken.current && !supersededByThisWindow) {
+        // refusals that say the newer decision won are expected settlement. A
+        // delayed begin from the previous document can replace this stale
+        // claim after Clear or Remove; `invalid_folder_import_reservation` is
+        // equally safe to hide in that overlap because claim fails before the
+        // picker is dispatched.
+        const settledByThisWindow =
+          workspaceMutations.current !== mutationsAtStart &&
+          (error.kind === "import_superseded" ||
+            error.kind === "invalid_folder_import_reservation");
+        if (mounted.current && token === folderToken.current && !settledByThisWindow) {
           setFolderError(error);
         }
       })
@@ -1082,8 +1120,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           return;
         }
         folderBusyRef.current = false;
+        folderReservationPendingRef.current = false;
         if (mounted.current) {
           setFolderBusy(false);
+          setFolderReservationPending(false);
           // A second workspace mutation can start after the failure that left
           // this debt. Its own answer must settle first; the shared drain waits
           // for both busy flags whichever callback happens to run last.
@@ -1111,7 +1151,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     // to manage the rows already on screen. Rust linearises this action against
     // the import: a removal that reaches the gate first supersedes it, while one that follows
     // the import acts only on these handles and can retain newly imported rows.
-    if (handles.length === 0 || workspaceBusyRef.current || pickerBusyRef.current) {
+    if (
+      handles.length === 0 ||
+      workspaceBusyRef.current ||
+      pickerBusyRef.current ||
+      folderReservationPendingRef.current
+    ) {
       return;
     }
     workspaceBusyRef.current = true;
@@ -1187,6 +1232,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     if (
       workspaceBusyRef.current ||
       pickerBusyRef.current ||
+      folderReservationPendingRef.current ||
       (!rosterHasRows && !folderImportPending)
     ) {
       return false;
@@ -1396,6 +1442,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     previewBackendBusy,
     pickerBusy,
     folderBusy,
+    folderReservationPending,
     workspaceBusy,
     checkBackend,
     chooseInstallation,

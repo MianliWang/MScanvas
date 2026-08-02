@@ -2498,12 +2498,9 @@ describe("adding a folder of mzML files", () => {
   });
 
   it("waits for this window to know what the session holds before it will import", async () => {
-    // A roster read is itself a statement about the workspace in Rust, so an
-    // import started before the mount-time read answers would create a race: if
-    // the read reaches the gate first it makes that import fail with
-    // `import_superseded` while the user changed nothing, while an import that
-    // reaches it first changes what the read returns. The operation waits rather
-    // than creating either ordering by itself.
+    // Native page-load start already owns reload ordering, and the roster read
+    // is a pure, gate-linearized snapshot. The operation still waits because
+    // this document must adopt one authoritative roster before it can add to it.
     const initial = deferred<WorkspaceRoster>();
     const api = createFakePreviewApi({
       availability: unavailableBackend,

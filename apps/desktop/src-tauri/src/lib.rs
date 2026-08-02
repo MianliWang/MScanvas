@@ -4,11 +4,12 @@ use std::sync::Arc;
 
 use mscanvas_core::BootstrapStatus;
 use tauri::async_runtime::spawn_blocking;
+use tauri::webview::PageLoadEvent;
 use tauri::{Manager, State};
 
 use preview::dto::{
-    BackendAvailabilityDto, FolderIngestionResultDto, PreviewDto, PreviewErrorDto,
-    SelectedSpectrumOutcomeDto, WorkspaceAddResultDto, WorkspaceRemoveResultDto,
+    BackendAvailabilityDto, FolderImportReservationDto, FolderIngestionResultDto, PreviewDto,
+    PreviewErrorDto, SelectedSpectrumOutcomeDto, WorkspaceAddResultDto, WorkspaceRemoveResultDto,
     WorkspaceRosterDto,
 };
 use preview::{PreviewService, ProteoWizardProvider};
@@ -78,38 +79,41 @@ async fn choose_mzml_files(
     .await?
 }
 
-/// Shows the native folder picker and adds every mzML file found beneath the
-/// chosen folder.
+/// Reserves one folder import without opening a picker.
 ///
-/// The webview names no folder in either direction: it asks for a picker, Rust
-/// shows one, and what comes back is a roster, one outcome per candidate, and
-/// how the scan itself went. Cancelling returns `None`, which is an ordinary
-/// outcome -- nothing was chosen, so nothing changed -- and is deliberately not
-/// an empty result, which would be a folder that held no mzML files.
+/// Deliberately synchronous and deliberately separate from choosing. Tauri
+/// dispatches Windows invokes as independent fetches, so requests from a
+/// reloaded document can overtake requests from the one it replaced. If this
+/// response reaches its document, Rust already holds the returned single-use
+/// reservation. If it does not, that document cannot issue the matching
+/// chooser. Begin is idempotent at the current workspace generation, so a
+/// delayed request from that document can neither replace the live reservation
+/// nor supersede a claimed scan.
+#[tauri::command]
+fn begin_mzml_folder_import(service: State<'_, SharedService>) -> FolderImportReservationDto {
+    service.begin_folder_import()
+}
+
+/// Shows the native folder picker for one exact reservation and adds every
+/// mzML file found beneath the chosen folder.
 ///
-/// Nothing here reads an acquisition. Scanning a folder of a thousand files
-/// costs a thousand filesystem inspections and no backend processes at all.
+/// The webview names no folder: it returns only the opaque reservation Rust
+/// issued. Rust consumes and validates that claim **before** dispatching the
+/// dialog. A replacement document, Clear or Remove that overtook it therefore
+/// makes it fail without opening a picker; one that follows the claim
+/// supersedes the eventual commit through the same generation check.
 ///
-/// The import's claim on the workspace is reserved **before** the dialog is
-/// dispatched, and the order is load-bearing. A modal picker can stand open for
-/// minutes, and a webview can reload or die inside that window; the window that
-/// replaces it reads the roster and adopts it, with no further read coming.
-/// Reserved after the picker answered, this import would be newer than that
-/// read, would commit, and would hand its rows to a window that no longer
-/// exists. Reserved first, the read supersedes it and the live window is never
-/// left holding a list it has no reason to question.
+/// Cancelling returns `None`, which is an ordinary outcome rather than an empty
+/// scan. Nothing here reads an acquisition or launches a backend process.
 #[tauri::command]
 async fn choose_mzml_folder(
+    reservation_id: String,
     app: tauri::AppHandle,
     service: State<'_, SharedService>,
 ) -> Result<Option<FolderIngestionResultDto>, PreviewErrorDto> {
     let owner = main_window_handle(&app);
     let service = Arc::clone(&service);
-    // Before the dialog, and never after it. Cancelling or failing simply drops
-    // the token: the generation stays advanced, which supersedes anything older
-    // and adds nothing, and a generation is an ordering fact that is never
-    // given back.
-    let token = service.reserve_folder_import();
+    let token = service.claim_folder_import(&reservation_id)?;
     let (sender, receiver) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
         let _ = sender.send(preview::dialog::choose_mzml_folder(owner));
@@ -281,6 +285,11 @@ pub fn run() {
         .manage(SharedService::new(PreviewService::new(Box::new(
             ProteoWizardProvider::new(),
         ))))
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main" && payload.event() == PageLoadEvent::Started {
+                webview.state::<SharedService>().begin_webview_document();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             get_bootstrap_status,
             inspect_backend,
@@ -288,6 +297,7 @@ pub fn run() {
             use_automatic_backend_discovery,
             get_workspace_roster,
             choose_mzml_files,
+            begin_mzml_folder_import,
             choose_mzml_folder,
             remove_workspace_datasets,
             clear_workspace,

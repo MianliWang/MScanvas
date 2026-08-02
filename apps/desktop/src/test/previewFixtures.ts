@@ -421,6 +421,13 @@ export interface FakePreviewApiOptions {
    * made while it was out there.
    */
   readonly folderResult?: () => Promise<FolderIngestionResult | null>;
+  /**
+   * Controls the edge after Rust returned the baseline reservation and the
+   * exact claim request was dispatched. By default the fake acknowledges
+   * synchronously, before the picker/scan result; a test can retain the callback
+   * to model the narrow begin-response window explicitly.
+   */
+  readonly acknowledgeFolderReservation?: (onReserved: () => void) => void;
   readonly capacity?: number;
   /** Replaces the removal entirely, for the cases where it fails. */
   readonly removeDatasets?: (handles: readonly string[]) => Promise<WorkspaceRemoveResult>;
@@ -621,7 +628,12 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         const pending = picked.map(addOne);
         return { roster: snapshot(), outcomes: describeAll(pending) };
       }),
-    chooseFolder: () => {
+    chooseFolder: (onReserved) => {
+      if (options.acknowledgeFolderReservation === undefined) {
+        onReserved();
+      } else {
+        options.acknowledgeFolderReservation(onReserved);
+      }
       if (options.folderResult !== undefined) {
         return options.folderResult();
       }

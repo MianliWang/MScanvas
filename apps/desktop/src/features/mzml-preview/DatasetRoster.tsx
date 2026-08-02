@@ -64,10 +64,11 @@ export interface DatasetRosterProps {
   /**
    * Whether the list may be read back right now.
    *
-   * Its own answer rather than `canMutate`, because it is not an escape route:
-   * in Rust a roster read is another statement about the workspace. It could
-   * win the gate and supersede the import, or follow it and merely include its
-   * rows; neither outcome is a reason to race the operation the user awaits.
+   * Its own answer rather than `canMutate`, because it is not an escape route.
+   * Rust returns a pure, gate-linearized snapshot, but during an import that
+   * snapshot's usefulness depends on whether commit happened before or after
+   * it. The folder reply or reconciliation already supplies the authoritative
+   * answer without adding another loading state.
    */
   readonly canReloadRoster: boolean;
   /**
@@ -868,12 +869,11 @@ export function DatasetRoster({
               <strong>The workspace list could not be read</strong>
               <span>{load.error.summary}</span>
               {/* Refused while a mutation or an import is unresolved, exactly
-                  as the shell's copy of this action is. In Rust a roster read
-                  is itself a statement about the workspace -- it is what
-                  linearises a reloaded window against a scan the window before
-                  it started -- so a mid-import read could win the gate and
-                  supersede the import, or follow it and merely include its
-                  rows. Neither outcome justifies that race. */}
+                  as the shell's copy of this action is. Rust returns a pure,
+                  gate-linearized snapshot; native page-load start owns reload
+                  ordering. During an import the folder reply or reconciliation
+                  already supplies the authoritative answer, without another
+                  loading state whose usefulness depends on commit order. */}
               <button
                 className="secondary-button"
                 disabled={!canReloadRoster}

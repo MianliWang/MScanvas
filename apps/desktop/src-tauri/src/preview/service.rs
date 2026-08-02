@@ -34,8 +34,8 @@ use super::dto::{
     redact_absolute_paths, require_finite, require_finite_option, workspace_full,
 };
 use super::dto::{
-    FolderDiscoverySummaryDto, FolderIngestionResultDto, FolderScanLimitDto, SelectedFileDto,
-    import_superseded,
+    FolderDiscoverySummaryDto, FolderImportReservationDto, FolderIngestionResultDto,
+    FolderScanLimitDto, SelectedFileDto, import_superseded, invalid_folder_import_reservation,
 };
 use super::installation::InstallationIdentity;
 use super::selection::{
@@ -421,27 +421,35 @@ impl PreviewService {
         self.installation_generation.load(Ordering::Relaxed)
     }
 
+    /// Declares the start of a new webview document.
+    ///
+    /// Called by Tauri's native page-load-started hook, not by an IPC command.
+    /// That distinction is load-bearing: a request from the document being
+    /// replaced can reach Rust after the replacement document's requests, but
+    /// it cannot arrive before the native event that started the replacement.
+    /// Advancing here supersedes a picker or scan owned by the old document
+    /// without letting one of that document's delayed roster reads supersede a
+    /// new document's later import.
+    pub fn begin_webview_document(&self) {
+        let (gate, _) = self.begin_mutation();
+        drop(gate);
+    }
+
     /// Everything the session holds, in the order it was added.
     ///
-    /// Stored facts only. Nothing is revalidated here and no process is
-    /// launched: a roster read happens on every mount and after every mutation,
-    /// and rechecking a thousand paths each time would turn drawing a list into
-    /// a thousand filesystem inspections. Whether a row's file is still the file
-    /// it was is a question the next preview of it asks, and answers where the
-    /// user can see it.
+    /// Stored facts only. Nothing is revalidated here, no process is launched
+    /// and the workspace generation is not changed. Navigation itself, rather
+    /// than this independently scheduled IPC read, is what supersedes work from
+    /// the previous document. Rechecking a thousand paths on every mount or
+    /// mutation would turn drawing a list into a thousand filesystem
+    /// inspections. Whether a row's file is still the file it was is a question
+    /// the next preview of it asks, and answers where the user can see it.
     pub fn roster(&self) -> WorkspaceRosterDto {
-        // Advancing the generation is a side effect, and it is the point. This
-        // is the read a webview makes when it mounts, which is also what a
-        // reloaded window does -- and a folder scan started by the window
-        // before it may still be running, holding no lock and about to commit
-        // rows the new window has never heard of.
-        //
-        // Going through the gate linearises the two. Either the scan commits
-        // first and this read includes its rows, or this read wins and the scan
-        // finds its generation stale and adds nothing. What cannot happen is
-        // the new window adopting a roster and then being given rows it never
-        // asked about, with no read left to discover them.
-        let (gate, _) = self.begin_mutation();
+        // Pure does not mean unordered. A batch holds this gate across all of
+        // its short workspace writes, so taking it here makes the snapshot
+        // either wholly before or wholly after that batch rather than a
+        // partial list observed between two accepted files.
+        let gate = self.enter_workspace_mutation();
         let roster = roster_of(&self.workspace());
         drop(gate);
         roster
@@ -501,24 +509,84 @@ impl PreviewService {
         WorkspaceAddResultDto { roster, outcomes }
     }
 
-    /// Claims the workspace's next state for a folder import that has not
-    /// started yet.
+    /// Reserves the right to claim the workspace's next state without opening
+    /// a picker.
     ///
-    /// Reserved by the command **before** the native picker opens, not after it
-    /// answers, and the difference is a whole class of race. A modal dialog can
-    /// stand open for minutes; a webview can reload or die in that time, and the
-    /// window that replaces it reads the roster and adopts it. Reserved
-    /// afterwards, the import would be newer than that read, would commit, and
-    /// would answer a window that no longer exists — leaving the live one
-    /// showing a list it has no reason to read again. Reserved beforehand, the
-    /// read supersedes it and nothing arrives from nowhere.
+    /// This is the synchronous half of the two-command boundary. A webview can
+    /// reload between any two IPC fetches, so the reservation is retained in
+    /// Rust under a session-scoped, single-use identifier. If the reply
+    /// disappears with the old document, no picker can start because that
+    /// document never receives the identifier.
     ///
-    /// The token is spent by `add_mzml_folder`. It cannot be copied, so one
-    /// reservation is one import; and a reservation that is dropped instead --
-    /// a cancelled picker, a dialog that would not open -- simply leaves the
-    /// generation advanced, which supersedes anything older and adds nothing.
-    /// Generations are ordering facts and are never given back.
-    pub fn reserve_folder_import(&self) -> FolderImportToken {
+    /// Begin itself is deliberately idempotent at one workspace generation. A
+    /// delayed begin from a document that has reloaded therefore cannot replace
+    /// a newer document's reservation or supersede a scan it already claimed.
+    /// The next begin after any other workspace decision replaces the one stale
+    /// slot, so abandoned replies cannot grow an unbounded registry.
+    pub fn begin_folder_import(&self) -> FolderImportReservationDto {
+        let mut gate = self.enter_workspace_mutation();
+        let generation = gate.generation;
+        if let Some(reservation_id) = gate
+            .pending_folder_import
+            .as_ref()
+            .filter(|pending| pending.baseline_generation == generation)
+            .map(|pending| pending.reservation_id)
+        {
+            return FolderImportReservationDto {
+                reservation_id: reservation_id.handle(),
+            };
+        }
+        let reservation_id = gate.allocate_folder_import_reservation();
+        gate.pending_folder_import = Some(PendingFolderImport {
+            reservation_id,
+            baseline_generation: generation,
+        });
+        drop(gate);
+        FolderImportReservationDto {
+            reservation_id: reservation_id.handle(),
+        }
+    }
+
+    /// Consumes one exact reservation before its picker is dispatched.
+    ///
+    /// An unknown, replaced or replayed identifier never consumes the active
+    /// slot. An exact identifier whose baseline was superseded by Clear, Remove
+    /// or a reloaded window is consumed but refused, so it cannot be retried
+    /// after the workspace moves again. A live exact claim advances the
+    /// generation and creates the internal token atomically. The token itself
+    /// never crosses IPC and remains unclonable.
+    pub fn claim_folder_import(
+        &self,
+        reservation_id: &str,
+    ) -> Result<FolderImportToken, PreviewErrorDto> {
+        let requested = FolderImportReservationId::parse(reservation_id)
+            .ok_or_else(invalid_folder_import_reservation)?;
+        let mut gate = self.enter_workspace_mutation();
+        let matches = gate
+            .pending_folder_import
+            .as_ref()
+            .is_some_and(|pending| pending.reservation_id == requested);
+        if !matches {
+            return Err(invalid_folder_import_reservation());
+        }
+        let pending = gate
+            .pending_folder_import
+            .take()
+            .expect("the exact pending folder reservation was present");
+        if pending.baseline_generation != gate.generation {
+            return Err(import_superseded());
+        }
+        let generation = gate.advance();
+        Ok(FolderImportToken { generation })
+    }
+
+    /// Direct token allocation for deterministic service tests.
+    ///
+    /// Product code uses the begin/claim pair above; tests that exercise the
+    /// unlocked scan and gated commit need the internal token without an IPC
+    /// protocol obscuring the ordering they control.
+    #[cfg(test)]
+    pub(super) fn reserve_folder_import(&self) -> FolderImportToken {
         let (gate, generation) = self.begin_mutation();
         drop(gate);
         FolderImportToken { generation }
@@ -529,8 +597,8 @@ impl PreviewService {
     /// The shape of this is the whole of what M1.4.1 adds, and every step is
     /// load-bearing:
     ///
-    /// 1. the caller reserved a generation before the picker opened, so there
-    ///    is a name for "the workspace as it was when this was asked for";
+    /// 1. the exact claim advanced the generation before the picker opened, so
+    ///    there is a name for "the workspace when this picker was accepted";
     /// 2. scan holding **no** lock -- not the workspace, not the mutation gate.
     ///    A tree can take as long as it takes, and a session frozen for the
     ///    length of it would be one the user could not remove a row from;
@@ -714,11 +782,10 @@ impl PreviewService {
 
     /// Takes the gate and declares a new state of the workspace.
     ///
-    /// Every immediate mutation goes through here, and so does the roster read
-    /// the product uses. What they have in common is that each one is a
-    /// statement about the workspace from that moment on, which is exactly what
-    /// makes an older folder scan's answer no longer the one the user is
-    /// waiting for.
+    /// Every immediate mutation goes through here, as does the native start of
+    /// a replacement webview document. Each one is a statement about the
+    /// workspace from that moment on, which is exactly what makes an older
+    /// folder scan's answer no longer the one the user is waiting for.
     ///
     /// It advances even when the operation ends up changing nothing. Removing
     /// zero rows is still the user saying "this is the workspace now", and a
@@ -731,12 +798,46 @@ impl PreviewService {
     }
 }
 
+const FOLDER_IMPORT_RESERVATION_PREFIX: &str = "folder-import-reservation-";
+
+/// Correlates a pending reservation with exactly one later picker command.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FolderImportReservationId(u64);
+
+impl FolderImportReservationId {
+    fn handle(self) -> String {
+        format!("{FOLDER_IMPORT_RESERVATION_PREFIX}{}", self.0)
+    }
+
+    fn parse(handle: &str) -> Option<Self> {
+        let id = Self(
+            handle
+                .strip_prefix(FOLDER_IMPORT_RESERVATION_PREFIX)?
+                .parse()
+                .ok()?,
+        );
+        (id.handle() == handle).then_some(id)
+    }
+}
+
+impl fmt::Debug for FolderImportReservationId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<folder-import-reservation-id>")
+    }
+}
+
+struct PendingFolderImport {
+    reservation_id: FolderImportReservationId,
+    baseline_generation: u64,
+}
+
 /// One folder import's claim on the workspace's next state.
 ///
 /// Opaque, unclonable and not serialisable. The webview neither supplies nor
-/// receives it: it is allocated by the command that shows the picker and spent
-/// by the import that follows, so what it represents — "the workspace as it was
-/// when the user asked for this" — cannot be forged, reused or moved across the
+/// receives it: begin stores only a baseline behind a session claim identifier,
+/// the chooser consumes that identifier and creates this token, and the import
+/// spends it. What the token represents — "the workspace as it was when the
+/// picker claim was accepted" — cannot be forged, reused or moved across the
 /// boundary. Holding a number rather than a lock is what lets the native dialog
 /// stand open for as long as the user needs without freezing the session.
 pub struct FolderImportToken {
@@ -767,9 +868,11 @@ impl fmt::Debug for FolderImportToken {
 /// A single counter behind the mutation gate. It is not a lock and it is not a
 /// version of the contents: it is the answer to "has anything happened that
 /// makes a scan started earlier no longer the thing the user is waiting for".
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct WorkspaceMutationState {
     generation: u64,
+    next_folder_import_reservation: u64,
+    pending_folder_import: Option<PendingFolderImport>,
 }
 
 impl WorkspaceMutationState {
@@ -786,6 +889,15 @@ impl WorkspaceMutationState {
             .checked_add(1)
             .expect("a session cannot make more than u64::MAX workspace decisions");
         self.generation
+    }
+
+    fn allocate_folder_import_reservation(&mut self) -> FolderImportReservationId {
+        let reservation = FolderImportReservationId(self.next_folder_import_reservation);
+        self.next_folder_import_reservation = self
+            .next_folder_import_reservation
+            .checked_add(1)
+            .expect("a session cannot begin more than u64::MAX folder imports");
+        reservation
     }
 }
 

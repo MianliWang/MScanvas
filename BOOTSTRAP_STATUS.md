@@ -1588,19 +1588,25 @@ walk, its budgets, its ordering and its refusal of every reparse entry are
 unchanged. What this slice adds is the commit around that walk, the boundary it
 answers across, and the interface over it.
 
-**One command, no path in either direction.** `choose_mzml_folder` is the
-eleventh and last registered command. It takes no argument beyond the
-application handle, shows the native picker on the main thread with the title
-`Choose a folder containing .mzML files`, and answers with a roster, one outcome
+**Two commands, no path in either direction.** Folder ingestion brings the
+registered surface to twelve commands. Synchronous
+`begin_mzml_folder_import` records or reuses one current-generation baseline
+and returns its path-free reservation DTO. Asynchronous
+`choose_mzml_folder(reservationId)` consumes and validates that exact ID before
+showing the native picker on the main thread with the title
+`Choose a folder containing .mzML files`; it answers with a roster, one outcome
 per candidate in discovery order, and how the scan itself went. A dismissed
 picker answers `None`, which is an ordinary outcome and deliberately not an
-empty result. The webview never supplies or receives a path, a parent, a folder
-identifier or an ordering key, and the main window's capability set is still
-empty. The picker itself is now one shared helper with two callers, so the
-installation picker and the folder picker cannot drift apart in their flags.
+empty result. The webview never supplies or receives a path or parent. The only
+additional value exchanged with it is a session-scoped, opaque-but-not-secret,
+single-use reservation correlation ID — not a filesystem capability,
+generation or internal token —
+and the main window's capability set is still empty. The picker itself is now
+one shared helper with two callers, so the installation picker and the folder
+picker cannot drift apart in their flags.
 
-On Windows that helper is the Explorer-style Common Item Dialog,
-`IFileOpenDialog` with `FOS_PICKFOLDERS`, rather than the legacy tree picker. It
+On Windows that helper is the Explorer-style Common Item Dialog, `IFileDialog`
+with `FOS_PICKFOLDERS`, rather than the legacy tree picker. It
 accepts an absolute path pasted into its address bar, is owned by the main
 window, requires one existing filesystem folder, leaves shell links unresolved
 and does not add the choice to Recent. Only the exact Windows cancelled
@@ -1617,21 +1623,28 @@ empty is decided from the authoritative reply rather than from the list on
 screen, because a reloaded window can show nothing while Rust still holds rows.
 
 **The scan holds no lock, and cannot arrive late.** A workspace mutation
-generation now lives behind the gate that already serialised one mutation
-against another. An import reserves a generation, scans holding nothing, takes
-the gate back without advancing it, and commits only if the generation is still
-the one it reserved; otherwise it answers `import_superseded`, accepts nothing,
-leases nothing and spends no identifier. Adding files, adding a folder, removing
-rows, emptying the list and the product-facing roster read all advance it.
+generation lives behind the gate that already serialised one mutation against
+another. The synchronous begin command records the current generation only as
+a baseline in one bounded pending `Option`; it does not advance it, and another
+begin at the same generation idempotently returns the same correlation ID. The
+asynchronous chooser consumes and validates that exact ID before the picker,
+then atomically advances the generation and creates the Rust-only import token.
+The scan carries that token while holding nothing, takes the gate back without
+advancing it, and commits only if the token still names the current generation;
+otherwise it answers `import_superseded`, accepts nothing, leases nothing and
+spends no dataset identifier.
 
-That last one is the reload race and is the reason the read is a mutation at
-all. A reloaded window reads the roster, adopts it, and has no further read
-coming; a scan the previous window started is still out there. Going through the
-gate linearises the two, so either the scan commits first and the read includes
-its rows, or the read wins and the scan adds nothing. What cannot happen is a
-window adopting a roster and then being given rows nothing will ever tell it
-about. Looking at the session — counting rows, inspecting the backend — is not
-deciding what it holds and does not advance it.
+Adding files, a successful folder claim, removing rows, emptying the list and
+native main-webview `PageLoadEvent::Started` advance the generation. The native
+event is the reload authority because it occurs before the replacement document
+can issue IPC; no FIFO ordering between old and new fetches is assumed. A
+delayed old begin cannot advance the generation, replace a live
+same-generation reservation or supersede a token already claimed by the new
+document. A delayed old roster request is a pure snapshot and has no side
+effect. `get_workspace_roster` still takes the mutation gate so it sees a batch
+wholly before or wholly after commit, but it does not advance the generation.
+What cannot happen is a window adopting a roster and then receiving rows owned
+by the document it replaced.
 
 **A candidate is a proposal, and acceptance re-decides it.** Each candidate now
 carries the 128-bit identity its parent directory reported in the same
@@ -1668,23 +1681,29 @@ duration is not known. One sentence for both phases, because the flag is set
 before the native dialog opens and no folder has been chosen yet. No percentage
 is shown, because nothing has counted the tree.
 
-Adding files, adding a folder again and reading the list back all wait.
+Adding files, adding a folder again and explicitly reading the list back all
+wait. The roster command is now a pure, gate-linearised snapshot rather than a
+workspace decision; it waits because a mid-scan loading state and a snapshot
+whose usefulness depends on commit order add no recovery path. The folder reply
+or an owed reconciliation already supplies the authoritative answer.
 **Removing rows and emptying the list do not**, but they make different
 promises. `Clear list` is offered even over an empty list while an import is
 pending. When its command succeeds, it is the reliable way out of a folder
-chosen by mistake and the final workspace is empty whichever side reaches the
-gate first. `Remove selected` remains
+chosen by mistake and the final workspace is empty whether it linearises before
+claim, after claim but before commit, or after commit. `Remove selected` remains
 usable to manage rows already on screen, but it is not cancellation. If removal
-wins the gate, the older import is superseded. If the import commits first, the
-removal acts only on the handles it was given and its authoritative roster can
-therefore retain newly imported rows. In neither order can a late folder reply
-overwrite the later mutation's roster. The request suppresses that reply as soon
-as it begins, so a committed import cannot transiently restore rows or launch a
-preview while the later action is still pending. If the action rejects, the
-webview does not infer that Rust was unchanged; it reads the authoritative roster
-after both operations settle, removes any preview whose row is no longer present,
-and keeps the typed action error visible. Beginning another mutation also
-invalidates any older roster read before its reply can reach the screen.
+reaches the gate before exact claim, the baseline becomes stale and the picker
+does not open. If claim wins first, removal advances beyond the token and the
+older import cannot commit. If the import commits first, the removal acts only
+on the handles it was given and its authoritative roster can therefore retain
+newly imported rows. In no order can a late folder reply overwrite the later
+mutation's roster. The request suppresses that reply as soon as it begins, so a
+committed import cannot transiently restore rows or launch a preview while the
+later action is still pending. If the action rejects, the webview does not infer
+that Rust was unchanged; it reads the authoritative roster after both operations
+settle, removes any preview whose row is no longer present, and keeps the typed
+action error visible. Beginning another mutation also invalidates any older
+roster reply before it can reach the screen.
 
 Searching, sorting, selecting and reading a file already in the session stay live
 too — a scan launches no process, and there is no honest reason to take the
@@ -1703,47 +1722,62 @@ files were found in that folder" is said only by a scan that described the whole
 folder; a scan that stopped short says "No files were added, and the scan was
 incomplete" instead.
 
-**Tests.** The locked all-targets workspace suite lists 498 Rust tests: 491 pass
-by default and 7 are ignored entry points. The desktop library accounts for 258,
-with 256 passing and 2 ignored because they need the local administrative share;
-the other 5 ignored tests are controlled subprocess entry points in the
-ProteoWizard process harness. The frontend has 368 tests across 12 files. The new
-Rust coverage is the discovery-to-acceptance identity join, both reload
-orderings, a scan superseded by a roster read and by an emptied list, a scan
-that survives a look that decides nothing, collision context appearing and
+**Tests.** The default workspace library suite lists 493 Rust tests: 486 pass
+and 7 are ignored entry points. The required `--all-targets` run additionally
+executes 17 passing example-harness tests, for 510 listed tests in total: 503
+pass and 7 are ignored. The core crate accounts for 2 passing tests; the
+desktop library for 270, with 268 passing and 2 ignored because they need the
+local administrative share; plot-spec for 1 passing test; and ProteoWizard for
+220, with 215 passing and 5 ignored controlled subprocess entry points. The
+frontend has 407 passing tests across 14 files. The new Rust coverage is the
+discovery-to-acceptance identity join, both native page-load/commit orderings, a
+scan superseded by page-load start or an emptied list, a scan that survives a
+pure roster snapshot, exact single-use reservation claiming,
+same-generation begin reuse, stale-slot replacement, delayed old begin and
+roster requests, the bounded pending `Option`, collision context appearing and
 disappearing, the shallow-end truncation, every discovery refusal mapping to a
 kind of its own, a real junction under a real chosen folder yielding nothing
-from the other side, the eleven-command boundary, and that the scan limits and summary fields are
-spelled on the Rust side the way the frontend's contract file reads them — in
-both directions, including the two private counters that must not be there. The
-concurrency tests are driven by channels around a controlled walk rather than by
-sleeping. No real acquisition, vendor data or user folder was touched, and no
-ProteoWizard process was started.
+from the other side, the twelve-command boundary, and that the scan limits and
+summary fields are spelled on the Rust side the way the frontend's contract
+file reads them — in both directions, including the private values that must
+not be there. The concurrency tests are driven by channels around a controlled
+walk rather than by sleeping. No real acquisition, vendor data or user folder
+was touched, and no ProteoWizard process was started.
 
 Nineteen Windows-dialog tests additionally cover the inherited/required/refused
 option policy, exact owner, ordered setup and result calls, exact cancel versus
 failure classification, missing and malformed result paths, path-free errors,
 and a production-call/legacy-retirement guard. The final frontend cases cover
-both sides of the overlapping-clear error rule: a typed superseded import stays
-silent, while an independent scan failure remains actionable. Four more pin the
-transient folder-retry focus handoff: keyboard activation returns to the durable
-folder action after settlement without waiting for an observable disabled
-commit, an activation that did not own keyboard focus takes none, and a
-destination chosen meanwhile keeps it without leaving a stale debt.
+the dispatch-to-reservation barrier for both Clear and Remove, terminal cleanup,
+stale acknowledgement ownership, exact correlation payload, begin failure, and
+out-of-order callers sharing one live reservation. They also cover all sides of
+the overlapping-clear error rule: `import_superseded` and claim-stage
+`invalid_folder_import_reservation` stay silent after this window's later
+mutation, while an independent scan failure remains actionable. Four more pin
+the transient folder-retry focus handoff: keyboard activation returns to the
+durable folder action after settlement without waiting for an observable
+disabled commit, an activation that did not own keyboard focus takes none, and
+a destination chosen meanwhile keeps it without leaving a stale debt.
 
-**Mutations.** 71 named mutations were introduced one at a time, run and
-restored; none was committed. The original 36, the 20 review and final-P2 repair
-mutations, the nine Common Item Dialog and rendered-QA repair mutations, and six
-folder-retry focus mutations are all caught by discriminating tests. The last
-fifteen remove the folder mode, retain multiselect, misclassify a non-cancel
-`Show` failure, bypass the absolute-path check, bypass the option policy,
-disconnect production `GetOptions` or `SetOptions`, expose a superseded import
-as an error, hide a real scan failure merely because `Clear list` overlapped it,
-drop or over-broaden the retry focus token, target the wrong acquisition action,
-depend on observing an intermediate disabled commit, retain a declined debt, or
-drop `preventScroll`. Source SHA-256 was checked after every reverse patch, and
-the targeted tests were green again only after all touched source and test files
-were back at their baseline bytes.
+**Mutations.** The cumulative total is 144 named mutations, each introduced,
+run and restored; none was committed. The final concurrency work added 28 to
+the prior 116. Eight exercise the frontend reservation barrier: Clear and Remove
+guards, rendered `canMutate`, the synchronous pending ref, acknowledgement state
+and ref release, terminal cleanup, and stale-ack ownership. Twenty exercise the
+two-command and reload boundary: early, missing or terminal-only acknowledgement;
+wrong correlation payload; asynchronous begin; claim after picker; wrong-ID or
+replay slot consumption; missing baseline validation; same-generation begin
+replacement; ghost begin generation advance; claim without generation advance;
+missing invalid-overlap suppression; missing page hook; using
+`PageLoadEvent::Finished`; a roster read that advances or omits the gate;
+missing command registration; generation serialization; and an unbounded
+reservation registry. Every new mutant was killed by a discriminating test,
+restored, and followed by the final full suite. This statement does not claim a
+per-mutant SHA check for the new batch.
+
+Final validation passed `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`,
+`cargo fmt --all --check`, workspace Clippy with warnings denied, the workspace
+Rust tests, and `python scripts/check_repo.py`.
 
 One survived its first run and is recorded here because the repair was to the
 test rather than to the product: folding the collision context into the name
@@ -1754,16 +1788,18 @@ mutation is caught. Three further anchors had drifted after `rustfmt` reflowed
 the lines they named; they were re-anchored and re-run rather than reported as
 evidence.
 
-**What review found.** Three findings, each repaired with its own commit and its
-own test. The workspace list's own `Try reading it again` was the one route to a
-roster read that stayed enabled during an import, and a roster read advances the
-mutation generation — so pressing it could have won the gate and superseded the
-very import the user was waiting for. The shared folder dialog carried a failure
-kind and message as parameters that both callers passed identically, which
-suggested the two operations fail differently when they do not. And nothing
-pinned the wire spelling of the scan limits or the summary's fields between
-serde and the frontend's closed union, where a disagreement would be silent in
-the worst way.
+**What review found.** The first review found three findings, each repaired with
+its own test. The workspace list's own `Try reading it again` was the one route
+to a roster snapshot that stayed enabled during an import. The read is now pure
+and cannot supersede the scan, but the action still waits because an additional
+loading state and commit-order-dependent snapshot provide no recovery the
+folder result or reconciliation does not already provide. Reload ordering now
+belongs solely to native page-load start. The shared folder dialog carried a
+failure kind and message as parameters that both callers passed identically,
+which suggested the two operations fail differently when they do not. And
+nothing pinned the wire spelling of the scan limits or the summary's fields
+between serde and the frontend's closed union, where a disagreement would be
+silent in the worst way.
 
 The final live P2 found the escape that mattered most: the empty roster hid
 `Clear list`, and the hook rejected the same action, while the first folder
@@ -1782,19 +1818,32 @@ durable `Add mzML folder…` action, waits for it to become usable, restores wit
 `preventScroll`, and retires the debt without moving focus if the user chose
 another destination meanwhile.
 
-Rendered QA used both permitted repair rounds. The first found that the late
+The final concurrency review found that dispatching one asynchronous folder
+command did not prove Rust had polled it before the frontend re-enabled Clear or
+Remove. The final protocol splits that boundary: synchronous begin stores a
+current-generation baseline and returns its correlation ID; exact asynchronous
+claim consumes and validates it, advances the generation and creates the
+Rust-only token before dispatching the picker. Same-generation begins reuse one
+bounded slot, so a delayed old begin cannot cancel a new import, and a delayed
+old roster request is side-effect-free. Native main-webview
+`PageLoadEvent::Started` is the authoritative reload edge, so no correctness
+claim depends on FIFO delivery of old and new IPC fetches.
+
+Earlier rendered QA used both permitted repair rounds. The first found that the late
 typed `import_superseded` rejection still raised `The folder could not be added`
 after a successful clear. Suppressing every overlapping folder rejection would
 have hidden genuine discovery failures, however, because those can happen
-before Rust reaches the generation gate. The final rule therefore suppresses
-only `import_superseded` when this window has made a later workspace decision;
-an overlapping real scan failure remains visible. Opposite-order frontend tests
-and two separate mutations distinguish both sides of that rule.
+before Rust reaches the generation gate. The final rule suppresses only typed
+claim/commit refusals when this window made the later decision:
+`import_superseded`, plus `invalid_folder_import_reservation` when a delayed old
+begin replaced the now-stale slot. Both fail before an unsafe commit, while an
+overlapping real picker or scan failure remains visible. Opposite-order and
+ghost-begin frontend tests distinguish all sides of that rule.
 
-**Rendered Windows QA is still owed and is not claimed here.** Every statement
-above is an automated test on this machine. Driving a native modal folder dialog
-needs a human at an unlocked, exclusive desktop session, and this repository
-refuses synthetic foreground injection to fake one.
+**Final rendered Windows QA for the current begin/claim implementation is still
+owed and is not claimed here.** The current protocol claims above are backed by
+automated tests; earlier rendered QA exercised its predecessor. Completion
+requires an unlocked, exclusive interactive desktop session.
 
 ## Validation completed during repository initialization
 

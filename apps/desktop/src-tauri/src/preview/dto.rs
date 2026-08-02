@@ -259,6 +259,18 @@ pub struct FolderIngestionResultDto {
     pub discovery: FolderDiscoverySummaryDto,
 }
 
+/// A path-free, single-use claim on one pending folder import.
+///
+/// The identifier correlates the two narrow commands needed to survive a
+/// webview reload. It is not the workspace generation or the internal token,
+/// and it grants no filesystem access: Rust accepts it only once and only while
+/// the reservation it names is still current.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderImportReservationDto {
+    pub reservation_id: String,
+}
+
 /// What a folder import answers with when the workspace moved on beneath it.
 ///
 /// Scanning holds no lock, which is what keeps the workspace usable while a
@@ -271,6 +283,15 @@ pub fn import_superseded() -> PreviewErrorDto {
         "import_superseded",
         "The workspace changed while MSCanvas was scanning that folder, so none of its files \
          were added. Scan the folder again.",
+        true,
+    )
+}
+
+/// What an unknown, replaced or already-spent folder reservation answers with.
+pub fn invalid_folder_import_reservation() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "invalid_folder_import_reservation",
+        "That folder import is no longer available. Start it again.",
         true,
     )
 }
