@@ -809,7 +809,14 @@ button:disabled {
        identity header inside its two 1px borders: 280 + 8 + 54 = 342. Its
        details may scroll, but the acquisition they describe is never clipped
        away. */
-    grid-template-rows: minmax(342px, 0.9fr) minmax(0, 1.6fr);
+    grid-template-rows: minmax(342px, 0.9fr) minmax(178px, 1.6fr);
+    /* Two in-flow notices leave about 520px for this box at 960x640, while the
+       complete narrow evidence contract needs 544px: 16px padding, 342px for
+       the sidebar, its 8px gap, and 178px for the viewer below. The document
+       deliberately does not scroll, so this is the surface that must own that
+       small overflow. Without it the bottom Selected spectrum panel is simply
+       clipped outside the window while a folder import is in progress. */
+    overflow-y: auto;
   }
 
   .workspace-sidebar > .inspector-panel {
@@ -824,7 +831,8 @@ button:disabled {
        viewer remainder. Reserve 116px for the rendered Spectra header, the
        30px sticky table header, one complete 30px data row and the panel
        borders. The selected-spectrum panel keeps its 52px header and borders.
-       Any extra height still follows the established 1.15:1 ratio. */
+       Their 8px gap makes this stack's outer floor 178px above. Any extra
+       height still follows the established 1.15:1 ratio. */
     grid-template-rows: minmax(116px, 1.15fr) minmax(54px, 1fr);
   }
 }
