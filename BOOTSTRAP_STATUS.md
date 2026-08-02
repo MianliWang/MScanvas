@@ -1731,7 +1731,7 @@ because they need the local administrative share; plot-spec for 1 passing test;
 and ProteoWizard for 220, with 215 passing and 5 ignored controlled subprocess
 entry points. A controlled subprocess self-call that reports 1 passed and 219
 filtered is part of that run and is not counted a second time. The frontend has
-412 passing tests across 14 files. The new Rust coverage is the
+414 passing tests across 14 files. The new Rust coverage is the
 discovery-to-acceptance identity join, both native page-load/commit orderings, a
 scan superseded by page-load start or an emptied list, a scan that survives a
 pure roster snapshot, exact single-use reservation claiming,
@@ -1761,7 +1761,7 @@ durable folder action after settlement without waiting for an observable
 disabled commit, an activation that did not own keyboard focus takes none, and
 a destination chosen meanwhile keeps it without leaving a stale debt.
 
-**Mutations.** The cumulative total is 153 named mutations, each introduced,
+**Mutations.** The cumulative total is 154 named mutations, each introduced,
 run and restored; none was committed. The final concurrency work added 28 to
 the prior 116. Eight exercise the frontend reservation barrier: Clear and Remove
 guards, rendered `canMutate`, the synchronous pending ref, acknowledgement state
@@ -1794,15 +1794,19 @@ dual-notice repair adds two more: removing the narrow workspace's internal
 vertical scroll makes its new exact contract test fail, while restoring the
 loaded-viewer outer floor from 178px to zero makes three constrained-layout
 tests fail. Both were restored, bringing the cumulative total to 153. At final
-application-code head `238722ade4e073dfec7eef4e1c28696d0d95c7bf`, the
-frontend suite passed all 412 tests and the required all-targets Rust run passed
-504 with 7 ignored and none failed, 511 listed in total. The final rendered
-measurements for that head are recorded below.
+application-code head `e49cc7922c81a3d426fce7d60915542699c32653`, the
+direct-add duplicate-feedback repair adds one more: replacing the shared
+dataset label with the bare filename makes the exact collision-context test
+fail while the ordinary no-context case remains protected. It was restored,
+bringing the cumulative total to 154. The frontend suite then passed all 414
+tests and the required all-targets Rust run passed 504 with 7 ignored and none
+failed, 511 listed in total. The last native rendered measurements, which the
+later text-only projection does not invalidate or repeat, are recorded below.
 
-Validation through the stale-token preflight repair passed `pnpm lint`, `pnpm
-typecheck`, `pnpm test`, `pnpm build`, `cargo fmt --all --check`, workspace
-Clippy with warnings denied, the workspace Rust tests, and `python
-scripts/check_repo.py`.
+Final validation at that head passed `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build`, `cargo fmt --all --check`, workspace Clippy with warnings denied,
+the workspace Rust tests, `python -B scripts/check_repo.py` and `git diff
+--check`.
 
 One survived its first run and is recorded here because the repair was to the
 test rather than to the product: folding the collision context into the name
@@ -1892,6 +1896,18 @@ both notices visible, gives the loaded viewer's outer track the complete 178px
 floor (116px table, 8px gap and 54px selected-spectrum panel), and makes only
 the narrow workspace the internal vertical recovery surface. It changes no
 picker, folder traversal, backend, DTO or scientific state.
+
+A later live P2 found that direct-file duplicate feedback discarded a context
+Rust had already supplied. When two live rows were both called `sample.mzML`,
+the duplicate outcome named the correct existing row and carried its
+`relativeContext`, but `describeAddResult` rendered only `fileName`. Direct-add
+details now use the same dataset-label formatter as the Run identity and
+retained Preview action, so the notice identifies `sample.mzML, batch-2` while
+the ordinary no-context sentence is unchanged. One pure formatter-path test
+and one rendered App test drive a fake two-row roster through mocked Add files,
+assert the exact context, keep the roster at two rows and start no preview.
+This changes no Rust, API, filesystem or picker behavior; no native dialog was
+reopened.
 
 Earlier rendered QA used both permitted repair rounds. The first found that the late
 typed `import_superseded` rejection still raised `The folder could not be added`
@@ -2050,6 +2066,14 @@ or errors, zero page errors, zero visible path leaks and no framework overlay.
 Its one-shot route was removed and the application clean-reloaded with no
 synthetic handle retained. No acquisition content was read, ProteoWizard was
 not started and no native picker was opened.
+
+The later direct-add duplicate-label repair at
+`e49cc7922c81a3d426fce7d60915542699c32653` changes only the bounded notice
+text. Its App test renders the complete notice from a fake two-row roster and a
+mocked Add files result; the pure-function test independently pins the exact
+label, and restoring the old bare-filename expression kills that test. Because
+neither the native command path nor layout changed, the accepted Tauri runs
+above remain the native and layout evidence, and the picker was not reopened.
 
 ## Validation completed during repository initialization
 

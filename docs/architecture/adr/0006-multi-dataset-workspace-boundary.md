@@ -628,6 +628,9 @@ mutation-concurrency section for the complete state machine.
 - the Run identity and retained Preview affordance use the current active
   roster label, gain or lose collision context as that roster changes, and do
   so without another acquisition read;
+- direct-add duplicate feedback names the existing row with that same supplied
+  roster label, rather than dropping its collision context or deriving one from
+  a path the webview does not have;
 - at the constrained stacked viewport, that Run identity remains fully visible
   alongside two complete roster rows, both viewer headers and one complete
   spectrum-table row beneath its sticky header;
