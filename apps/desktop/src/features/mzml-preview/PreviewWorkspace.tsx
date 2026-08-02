@@ -366,6 +366,7 @@ export function PreviewWorkspace() {
             onRemoveSelected={workspace.removeSelected}
             projection={projection}
             restoreAddFolderFocusToken={restoreAddFolderFocusToken}
+            rosterSettlementToken={workspace.rosterSettlementToken}
             state={roster}
           />
           {preview.status === "loaded" ? (

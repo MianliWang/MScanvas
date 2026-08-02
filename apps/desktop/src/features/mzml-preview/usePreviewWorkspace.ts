@@ -123,6 +123,14 @@ export interface PreviewWorkspace {
   /** Everything the session holds, and which rows are focused, selected and shown. */
   readonly roster: RosterState;
   readonly rosterLoad: RosterLoadState;
+  /**
+   * Increments only after an authoritative roster answer has been applied.
+   *
+   * A rejected mutation may have changed Rust before its reply was lost, so
+   * becoming idle is not settlement. Focus recovery uses this edge to wait for
+   * the owed reconciliation instead of deciding against a stale roster.
+   */
+  readonly rosterSettlementToken: number;
   readonly reloadRoster: () => void;
   /** The row whose preview is on screen or was explicitly asked for. */
   readonly activeDataset: SelectedFile | null;
@@ -346,6 +354,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const folderToken = useRef(0);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const workspaceBusyRef = useRef(false);
+  const [rosterSettlementToken, setRosterSettlementToken] = useState(0);
   /**
    * How many removal and clear requests have begun.
    *
@@ -557,6 +566,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
             clearVisiblePreview();
           }
           dispatchRoster({ type: "rosterLoaded", roster: loaded });
+          setRosterSettlementToken((token) => token + 1);
           showRosterLoad({ status: "ready" });
           if (hadRows && loaded.datasets.length === 0) {
             // A reconciliation can establish that a failed removal actually
@@ -618,6 +628,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    */
   const rosterSettled = useCallback(() => {
     rosterToken.current += 1;
+    setRosterSettlementToken((token) => token + 1);
     showRosterLoad({ status: "ready" });
   }, [showRosterLoad]);
 
@@ -1389,6 +1400,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     useAutomaticDiscovery,
     roster,
     rosterLoad,
+    rosterSettlementToken,
     reloadRoster,
     activeDataset,
     dispatchRoster,

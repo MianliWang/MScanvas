@@ -1058,6 +1058,119 @@ describe("the session workspace roster", () => {
     expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
   });
 
+  it("waits for failed removal reconciliation before restoring focus", async () => {
+    const removal = deferred<WorkspaceRemoveResult>();
+    const reconciliation = deferred<WorkspaceRoster>();
+    const initialRoster: WorkspaceRoster = {
+      datasets: [selectedFile, secondFile, thirdFile],
+      capacity: 1_024,
+    };
+    let rosterReads = 0;
+    const api = createFakePreviewApi({
+      initialDatasets: initialRoster.datasets,
+      removeDatasets: () => removal.promise,
+      roster: () => {
+        rosterReads += 1;
+        return rosterReads === 1 ? Promise.resolve(initialRoster) : reconciliation.promise;
+      },
+    });
+    renderApp(api);
+    const removed = await screen.findByRole("option", { name: /QC_pool_02\.mzML/ });
+    fireEvent.click(removed);
+    const survivor = rosterRow(/QC_pool_01\.mzML/);
+    const focusing = vi.spyOn(survivor, "focus");
+    const remove = screen.getByRole("button", { name: "Remove selected" });
+    remove.focus();
+    fireEvent.click(remove);
+
+    await waitFor(() => {
+      expect(remove).toBeDisabled();
+    });
+    blurAsABrowserWould(remove);
+    removal.reject(previewError({ kind: "preview_worker_unavailable" }));
+
+    await waitFor(() => {
+      expect(api.rosterReads()).toBe(2);
+      expect(remove).toBeEnabled();
+    });
+    // The request settling did not say whether Rust changed the workspace.
+    // Keep the debt until its owed authoritative read answers rather than
+    // paying it against the stale row that is still on screen.
+    expect(document.body).toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+
+    reconciliation.resolve({
+      datasets: [selectedFile, thirdFile],
+      capacity: 1_024,
+    });
+
+    await waitFor(() => {
+      expect(survivor).toHaveFocus();
+    });
+    expect(survivor).toHaveAttribute("tabindex", "0");
+    expect(survivor).toHaveAttribute("aria-selected", "false");
+    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it("keeps removal focus debt through a failed reconciliation and its retry", async () => {
+    const removal = deferred<WorkspaceRemoveResult>();
+    const failedReconciliation = deferred<WorkspaceRoster>();
+    const retry = deferred<WorkspaceRoster>();
+    const initialRoster: WorkspaceRoster = {
+      datasets: [selectedFile, secondFile, thirdFile],
+      capacity: 1_024,
+    };
+    let rosterReads = 0;
+    const api = createFakePreviewApi({
+      initialDatasets: initialRoster.datasets,
+      removeDatasets: () => removal.promise,
+      roster: () => {
+        rosterReads += 1;
+        if (rosterReads === 1) {
+          return Promise.resolve(initialRoster);
+        }
+        return rosterReads === 2 ? failedReconciliation.promise : retry.promise;
+      },
+    });
+    renderApp(api);
+    const removed = await screen.findByRole("option", { name: /QC_pool_02\.mzML/ });
+    fireEvent.click(removed);
+    const remove = screen.getByRole("button", { name: "Remove selected" });
+    const focusing = vi.spyOn(remove, "focus");
+    remove.focus();
+    focusing.mockClear();
+    fireEvent.click(remove);
+
+    await waitFor(() => {
+      expect(remove).toBeDisabled();
+    });
+    blurAsABrowserWould(remove);
+    removal.reject(previewError({ kind: "preview_worker_unavailable" }));
+    await waitFor(() => {
+      expect(api.rosterReads()).toBe(2);
+    });
+    failedReconciliation.reject(previewError({ kind: "preview_worker_unavailable" }));
+
+    const retryControl = await screen.findByRole("button", {
+      name: "Try reading it again",
+    });
+    expect(remove).toBeEnabled();
+    expect(document.body).toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+
+    retryControl.focus();
+    fireEvent.click(retryControl);
+    await waitFor(() => {
+      expect(api.rosterReads()).toBe(3);
+    });
+    retry.resolve(initialRoster);
+
+    await waitFor(() => {
+      expect(remove).toHaveFocus();
+    });
+    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
   it("empties the list without a restart and gives the keyboard back to Add files", async () => {
     const api = createFakePreviewApi({ pickedFiles: [selectedFile, secondFile] });
     await openTheFile(api);

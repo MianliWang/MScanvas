@@ -45,6 +45,7 @@ interface HarnessProps {
   readonly folderBusy?: boolean;
   readonly canMutate?: boolean;
   readonly load?: RosterLoadState;
+  readonly rosterSettlementToken?: number;
   readonly focusAddFilesToken?: number;
   readonly restoreAddFolderFocusToken?: number;
 }
@@ -70,6 +71,7 @@ function Harness({
   folderBusy = false,
   canMutate = true,
   load = { status: "ready" },
+  rosterSettlementToken = 0,
   focusAddFilesToken = 0,
   restoreAddFolderFocusToken = 0,
 }: HarnessProps) {
@@ -93,6 +95,7 @@ function Harness({
       onRemoveSelected={onRemoveSelected}
       projection={rosterProjection(state)}
       restoreAddFolderFocusToken={restoreAddFolderFocusToken}
+      rosterSettlementToken={rosterSettlementToken}
       state={state}
     />
   );
@@ -104,11 +107,13 @@ function Fixed({
   canAddFiles = true,
   canMutate = true,
   onRemoveSelected = () => undefined,
+  rosterSettlementToken = 0,
 }: {
   readonly state: RosterState;
   readonly canAddFiles?: boolean;
   readonly canMutate?: boolean;
   readonly onRemoveSelected?: () => void;
+  readonly rosterSettlementToken?: number;
 }) {
   return (
     <DatasetRoster
@@ -129,6 +134,7 @@ function Fixed({
       onRemoveSelected={onRemoveSelected}
       projection={rosterProjection(state)}
       restoreAddFolderFocusToken={0}
+      rosterSettlementToken={rosterSettlementToken}
       state={state}
     />
   );
@@ -534,7 +540,18 @@ describe("returning the keyboard after removal", () => {
       <Fixed canMutate={false} onRemoveSelected={onRemoveSelected} state={before} />,
     );
     blurAsABrowserWould(remove);
-    rerender(<Fixed onRemoveSelected={onRemoveSelected} state={after} />);
+    rerender(<Fixed onRemoveSelected={onRemoveSelected} state={before} />);
+
+    expect(document.body).toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+
+    rerender(
+      <Fixed
+        onRemoveSelected={onRemoveSelected}
+        rosterSettlementToken={1}
+        state={after}
+      />,
+    );
 
     expect(onRemoveSelected).toHaveBeenCalledTimes(1);
     expect(survivor).toHaveFocus();
@@ -555,10 +572,89 @@ describe("returning the keyboard after removal", () => {
     blurAsABrowserWould(remove);
     const destination = searchBox();
     destination.focus();
-    rerender(<Fixed state={after} />);
+    rerender(<Fixed rosterSettlementToken={1} state={after} />);
 
     expect(destination).toHaveFocus();
     expect(screen.getByRole("option", { name: /Blank_03\.mzML/ })).not.toHaveFocus();
+  });
+
+  it("gives a later focused picker ownership after removal reconciliation", () => {
+    const before = selectedMiddle();
+    const after = removeFrom(before, "file-1");
+    const { rerender } = render(<Fixed state={before} />);
+    const remove = screen.getByRole("button", { name: "Remove selected" });
+    const survivor = screen.getByRole("option", { name: /Blank_03\.mzML/ });
+    const survivorFocusing = vi.spyOn(survivor, "focus");
+    remove.focus();
+
+    fireEvent.click(remove);
+    rerender(<Fixed canAddFiles={false} canMutate={false} state={before} />);
+    blurAsABrowserWould(remove);
+    // The rejected request is idle, but its authoritative roster has not
+    // answered yet. Acquisition is available again in this interval.
+    rerender(<Fixed state={before} />);
+
+    const addFiles = screen.getByRole("button", { name: "Add files…" });
+    const addFilesFocusing = vi.spyOn(addFiles, "focus");
+    addFiles.focus();
+    addFilesFocusing.mockClear();
+    fireEvent.click(addFiles);
+    rerender(<Fixed canAddFiles={false} canMutate={false} state={before} />);
+    blurAsABrowserWould(addFiles);
+
+    // Reconciliation may answer while the later picker still owns the
+    // keyboard debt. The old removal must not use that temporary body focus.
+    rerender(
+      <Fixed
+        canAddFiles={false}
+        canMutate={false}
+        rosterSettlementToken={1}
+        state={after}
+      />,
+    );
+    expect(document.body).toHaveFocus();
+    expect(survivorFocusing).not.toHaveBeenCalled();
+
+    rerender(<Fixed rosterSettlementToken={1} state={after} />);
+
+    expect(addFiles).toHaveFocus();
+    expect(addFilesFocusing).toHaveBeenCalledWith({ preventScroll: true });
+    expect(survivorFocusing).not.toHaveBeenCalled();
+  });
+
+  it("keeps removal focus recovery when a later picker did not own the keyboard", () => {
+    const before = selectedMiddle();
+    const after = removeFrom(before, "file-1");
+    const { rerender } = render(<Fixed state={before} />);
+    const remove = screen.getByRole("button", { name: "Remove selected" });
+    remove.focus();
+
+    fireEvent.click(remove);
+    rerender(<Fixed canAddFiles={false} canMutate={false} state={before} />);
+    blurAsABrowserWould(remove);
+    rerender(<Fixed state={before} />);
+
+    const addFiles = screen.getByRole("button", { name: "Add files…" });
+    const addFilesFocusing = vi.spyOn(addFiles, "focus");
+    const survivor = screen.getByRole("option", { name: /Blank_03\.mzML/ });
+    const survivorFocusing = vi.spyOn(survivor, "focus");
+    // This press never held keyboard focus, so it has no later keyboard
+    // destination and must not erase the older removal recovery.
+    fireEvent.click(addFiles);
+    rerender(<Fixed canAddFiles={false} canMutate={false} state={before} />);
+    rerender(
+      <Fixed
+        canAddFiles={false}
+        canMutate={false}
+        rosterSettlementToken={1}
+        state={after}
+      />,
+    );
+    rerender(<Fixed rosterSettlementToken={1} state={after} />);
+
+    expect(survivor).toHaveFocus();
+    expect(survivorFocusing).toHaveBeenCalledWith({ preventScroll: true });
+    expect(addFilesFocusing).not.toHaveBeenCalled();
   });
 
   it("takes no keyboard focus from an unfocused removal activation", () => {
@@ -569,7 +665,7 @@ describe("returning the keyboard after removal", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
     rerender(<Fixed canMutate={false} state={before} />);
-    rerender(<Fixed state={after} />);
+    rerender(<Fixed rosterSettlementToken={1} state={after} />);
 
     expect(document.body).toHaveFocus();
   });
@@ -585,7 +681,7 @@ describe("returning the keyboard after removal", () => {
     fireEvent.click(remove);
     rerender(<Fixed canMutate={false} state={state} />);
     blurAsABrowserWould(remove);
-    rerender(<Fixed state={state} />);
+    rerender(<Fixed rosterSettlementToken={1} state={state} />);
 
     expect(remove).toHaveFocus();
     expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
@@ -629,6 +725,7 @@ describe("the workspace roster as an accessible list", () => {
         onRemoveSelected={() => undefined}
         projection={rosterProjection(state)}
         restoreAddFolderFocusToken={0}
+        rosterSettlementToken={0}
         state={state}
       />,
     );
@@ -670,6 +767,7 @@ describe("the workspace roster as an accessible list", () => {
         onRemoveSelected={() => undefined}
         projection={rosterProjection(discarded)}
         restoreAddFolderFocusToken={0}
+        rosterSettlementToken={0}
         state={discarded}
       />,
     );
@@ -762,6 +860,7 @@ describe("the workspace roster as an accessible list", () => {
         onRemoveSelected={() => undefined}
         projection={rosterProjection(initialRosterState)}
         restoreAddFolderFocusToken={0}
+        rosterSettlementToken={0}
         state={initialRosterState}
       />,
     );

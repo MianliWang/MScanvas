@@ -69,6 +69,12 @@ export interface DatasetRosterProps {
    * rows; neither outcome is a reason to race the operation the user awaits.
    */
   readonly canReloadRoster: boolean;
+  /**
+   * Increments only when an authoritative roster answer reaches this window.
+   * Removal focus recovery waits for this edge because a rejected request can
+   * become idle before its reconciliation read has answered.
+   */
+  readonly rosterSettlementToken: number;
   /** Increments when focus should return to the `Add files…` action. */
   readonly focusAddFilesToken: number;
   /**
@@ -114,6 +120,7 @@ export function DatasetRoster({
   canPreview,
   canMutate,
   canReloadRoster,
+  rosterSettlementToken,
   focusAddFilesToken,
   restoreAddFolderFocusToken,
 }: DatasetRosterProps) {
@@ -158,6 +165,7 @@ export function DatasetRoster({
    */
   const removeFocusDebt = useRef<{
     readonly requestedHandles: readonly string[];
+    readonly rosterSettlementToken: number;
     sawDisabled: boolean;
   } | null>(null);
   /**
@@ -270,6 +278,9 @@ export function DatasetRoster({
       return;
     }
     if (!debt.sawDisabled) {
+      return;
+    }
+    if (rosterSettlementToken === debt.rosterSettlementToken) {
       return;
     }
     removeFocusDebt.current = null;
@@ -394,8 +405,15 @@ export function DatasetRoster({
    */
   const startPicking = (event: MouseEvent<HTMLButtonElement>, run: () => void) => {
     const control = event.currentTarget;
-    pendingPickerRestore.current = document.activeElement === control ? control : null;
+    const ownsKeyboard = document.activeElement === control;
+    pendingPickerRestore.current = ownsKeyboard ? control : null;
     pickerRestoreOutstanding.current = false;
+    if (ownsKeyboard) {
+      // This picker is a later destination chosen while an older removal may
+      // still be waiting for reconciliation. Its own disabled lifetime can
+      // move focus to `body`, but that must not revive the older destination.
+      removeFocusDebt.current = null;
+    }
     run();
   };
 
@@ -687,6 +705,7 @@ export function DatasetRoster({
               document.activeElement === control
                 ? {
                     requestedHandles: [...state.selected],
+                    rosterSettlementToken,
                     sawDisabled: false,
                   }
                 : null;
