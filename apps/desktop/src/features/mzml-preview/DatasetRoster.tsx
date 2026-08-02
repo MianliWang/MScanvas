@@ -31,7 +31,8 @@ export interface DatasetRosterProps {
   readonly onAddFiles: () => void;
   readonly onAddFolder: () => void;
   readonly onRemoveSelected: () => void;
-  readonly onClearList: () => void;
+  /** Starts Clear and reports whether this activation acquired the mutation gate. */
+  readonly onClearList: () => boolean;
   readonly onActivate: (handle: string) => void;
   /**
    * Whether the picker may be opened. Curating a workspace does not need a
@@ -128,7 +129,10 @@ export function DatasetRoster({
   const addFilesRef = useRef<HTMLButtonElement | null>(null);
   const addFolderRef = useRef<HTMLButtonElement | null>(null);
   const removeSelectedRef = useRef<HTMLButtonElement | null>(null);
+  const clearListRef = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  /** Advances whenever a real control becomes the keyboard's newer destination. */
+  const focusOwnershipToken = useRef(0);
   const seenFocusToken = useRef(focusAddFilesToken);
   const seenRestoreAddFolderFocusToken = useRef(restoreAddFolderFocusToken);
   /** Whether the keyboard is still owed to `Add files…` from an emptied list. */
@@ -169,6 +173,19 @@ export function DatasetRoster({
     sawDisabled: boolean;
   } | null>(null);
   /**
+   * A focused `Clear list` action whose failed request still owes a roster read.
+   *
+   * During a first folder import the action can move seamlessly from being the
+   * escape for an unresolved import to managing rows found by reconciliation.
+   * Its presence alone therefore cannot say the request settled. The callback
+   * reports that this activation acquired the mutation gate; the roster token
+   * proves Rust has since supplied the authoritative destination.
+   */
+  const clearFocusDebt = useRef<{
+    focusOwnershipToken: number;
+    readonly rosterSettlementToken: number;
+  } | null>(null);
+  /**
    * The row that last took the keyboard, remembered by handle.
    *
    * Not a boolean "the keyboard was in here somewhere": that cannot tell a row
@@ -190,6 +207,24 @@ export function DatasetRoster({
    * cannot act.
    */
   const clearListOffered = state.datasets.length > 0 || folderBusy;
+
+  useEffect(() => {
+    const recordDestination = (event: FocusEvent) => {
+      if (event.target instanceof HTMLElement && event.target !== document.body) {
+        focusOwnershipToken.current += 1;
+        if (event.target === clearListRef.current && clearFocusDebt.current !== null) {
+          // Returning to the same re-enabled action renews its ownership. A
+          // different destination still leaves a mismatch that permanently
+          // cancels this debt, even if that destination later disappears.
+          clearFocusDebt.current.focusOwnershipToken = focusOwnershipToken.current;
+        }
+      }
+    };
+    document.addEventListener("focusin", recordDestination);
+    return () => {
+      document.removeEventListener("focusin", recordDestination);
+    };
+  }, []);
 
   /**
    * Keeps the keyboard on the row that has the tab stop, and never on nothing.
@@ -366,6 +401,48 @@ export function DatasetRoster({
   }, [canAddFiles, payAddFilesDebt]);
 
   /**
+   * Pays the focus debt created when Clear disables its focused action.
+   *
+   * A rejected Clear request cannot be reconciled against the roster still on
+   * screen: Rust may have changed it before the reply was lost, and an older
+   * folder reply is deliberately hidden. Wait for that import to finish and
+   * for a newer authoritative roster token. Rows return to the re-enabled
+   * Clear action; an authoritative empty roster returns to Add files.
+   */
+  useEffect(() => {
+    const debt = clearFocusDebt.current;
+    if (debt === null) {
+      return;
+    }
+    if (
+      !canMutate ||
+      folderBusy ||
+      rosterSettlementToken === debt.rosterSettlementToken
+    ) {
+      return;
+    }
+    if (focusOwnershipToken.current !== debt.focusOwnershipToken) {
+      clearFocusDebt.current = null;
+      keyboardOnClearList.current = false;
+      return;
+    }
+    clearFocusDebt.current = null;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body) {
+      keyboardOnClearList.current = false;
+      return;
+    }
+    const control = clearListRef.current;
+    if (control !== null && control.isConnected && !control.disabled) {
+      control.focus({ preventScroll: true });
+      return;
+    }
+    keyboardOnClearList.current = false;
+    focusAddFilesOwed.current = true;
+    payAddFilesDebt();
+  }, [canMutate, folderBusy, payAddFilesDebt, rosterSettlementToken]);
+
+  /**
    * Catches the keyboard when `Clear list` goes out from under it.
    *
    * That action exists over an empty list only while a folder import is
@@ -384,7 +461,11 @@ export function DatasetRoster({
    * waits for `Add files…` to become usable.
    */
   useEffect(() => {
-    if (clearListOffered || !keyboardOnClearList.current) {
+    if (
+      clearFocusDebt.current !== null ||
+      clearListOffered ||
+      !keyboardOnClearList.current
+    ) {
       return;
     }
     keyboardOnClearList.current = false;
@@ -409,10 +490,12 @@ export function DatasetRoster({
     pendingPickerRestore.current = ownsKeyboard ? control : null;
     pickerRestoreOutstanding.current = false;
     if (ownsKeyboard) {
-      // This picker is a later destination chosen while an older removal may
+      // This picker is a later destination chosen while an older mutation may
       // still be waiting for reconciliation. Its own disabled lifetime can
-      // move focus to `body`, but that must not revive the older destination.
+      // move focus to `body`, but that must not revive either older action.
       removeFocusDebt.current = null;
+      clearFocusDebt.current = null;
+      keyboardOnClearList.current = false;
     }
     run();
   };
@@ -701,14 +784,19 @@ export function DatasetRoster({
           disabled={!canMutate || state.selected.size === 0}
           onClick={(event) => {
             const control = event.currentTarget;
+            const ownsKeyboard = document.activeElement === control;
             removeFocusDebt.current =
-              document.activeElement === control
+              ownsKeyboard
                 ? {
                     requestedHandles: [...state.selected],
                     rosterSettlementToken,
                     sawDisabled: false,
                   }
                 : null;
+            if (ownsKeyboard) {
+              clearFocusDebt.current = null;
+              keyboardOnClearList.current = false;
+            }
             onRemoveSelected();
           }}
           ref={removeSelectedRef}
@@ -726,12 +814,26 @@ export function DatasetRoster({
             onBlur={(event) => {
               if (event.relatedTarget instanceof Node) {
                 keyboardOnClearList.current = false;
+                clearFocusDebt.current = null;
               }
             }}
             onFocus={() => {
               keyboardOnClearList.current = true;
             }}
-            onClick={onClearList}
+            onClick={(event) => {
+              const ownsKeyboard = document.activeElement === event.currentTarget;
+              const started = onClearList();
+              clearFocusDebt.current = ownsKeyboard && started
+                ? {
+                    focusOwnershipToken: focusOwnershipToken.current,
+                    rosterSettlementToken,
+                  }
+                : null;
+              if (ownsKeyboard && started) {
+                removeFocusDebt.current = null;
+              }
+            }}
+            ref={clearListRef}
             type="button"
           >
             Clear list

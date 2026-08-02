@@ -2147,6 +2147,85 @@ describe("adding a folder of mzML files", () => {
     expect(api.openCount()).toBe(0);
   });
 
+  it.each(["clear failure first", "folder answer first"] as const)(
+    "returns a failed focused Clear list after authoritative folder reconciliation (%s)",
+    async (order) => {
+      const folder = deferred<FolderIngestionResult | null>();
+      const clearing = deferred<WorkspaceRoster>();
+      const reconciliation = deferred<WorkspaceRoster>();
+      let rosterReads = 0;
+      const api = createFakePreviewApi({
+        availability: unavailableBackend,
+        clearWorkspace: () => clearing.promise,
+        folderResult: () => folder.promise,
+        roster: () => {
+          rosterReads += 1;
+          return rosterReads === 1
+            ? Promise.resolve({ datasets: [], capacity: 1_024 })
+            : reconciliation.promise;
+        },
+      });
+      renderApp(api);
+      const addFolder = await screen.findByRole("button", {
+        name: "Add mzML folder…",
+      });
+      await waitFor(() => {
+        expect(addFolder).toBeEnabled();
+      });
+
+      // Pointer-start the folder import, so it owns no keyboard restoration.
+      fireEvent.click(addFolder);
+      const clear = screen.getByRole("button", { name: "Clear list" });
+      clear.focus();
+      fireEvent.click(clear);
+      await waitFor(() => {
+        expect(clear).toBeDisabled();
+      });
+      blurAsABrowserWould(clear);
+
+      const clearFailure = previewError({ kind: "preview_worker_unavailable" });
+      const folderResult: FolderIngestionResult = {
+        roster: { datasets: [thirdFile], capacity: 1_024 },
+        outcomes: [{ outcome: "added", dataset: thirdFile }],
+        discovery: COMPLETE_SCAN,
+      };
+      if (order === "clear failure first") {
+        clearing.reject(clearFailure);
+        await waitFor(() => {
+          expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
+        });
+        expect(document.body).toHaveFocus();
+        folder.resolve(folderResult);
+      } else {
+        folder.resolve(folderResult);
+        await waitFor(() => {
+          expect(screen.queryByRole("button", { name: "Clear list" })).toBeNull();
+        });
+        expect(document.body).toHaveFocus();
+        clearing.reject(clearFailure);
+      }
+
+      await waitFor(() => {
+        expect(api.rosterReads()).toBe(2);
+      });
+      // The folder reply is older than the failed Clear request and is hidden.
+      // Until Rust answers the owed roster read, neither transient emptiness nor
+      // the re-enabled action is an authoritative focus destination.
+      expect(rosterRows()).toHaveLength(0);
+      expect(document.body).toHaveFocus();
+      expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveFocus();
+
+      reconciliation.resolve({ datasets: [thirdFile], capacity: 1_024 });
+
+      const restored = await screen.findByRole("button", { name: "Clear list" });
+      await waitFor(() => {
+        expect(restored).toHaveFocus();
+      });
+      expect(screen.getByRole("option", { name: /Blank_03\.mzML/ })).toBeVisible();
+      expect(rosterRows()).toHaveLength(1);
+    },
+  );
+
   it("catches the keyboard when the escape action goes out from under it", async () => {
     // `Clear list` exists over an empty list only while an import is
     // unresolved, and during a first import from an empty workspace it is the

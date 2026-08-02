@@ -144,7 +144,8 @@ export interface PreviewWorkspace {
    */
   readonly addFolder: () => void;
   readonly removeSelected: () => void;
-  readonly clearList: () => void;
+  /** Clears the roster and reports whether this call acquired the mutation gate. */
+  readonly clearList: () => boolean;
   /** Explicitly reads one dataset. The only thing that starts a preview. */
   readonly activateDataset: (handle: string) => void;
   /** Reads the active dataset again, after a failure or a backend change. */
@@ -1188,7 +1189,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       pickerBusyRef.current ||
       (!rosterHasRows && !folderImportPending)
     ) {
-      return;
+      return false;
     }
     // What this window can see, which during a folder import may be fewer rows
     // than Rust holds. The count is an account of the action rather than a
@@ -1230,6 +1231,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           drainWorkspaceReconciliation();
         }
       });
+    return true;
   }, [
     api,
     clearVisiblePreview,

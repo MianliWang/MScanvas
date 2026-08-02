@@ -1251,6 +1251,45 @@ describe("starting a folder import", () => {
     });
   });
 
+  it("reports whether Clear list acquired the workspace mutation gate", async () => {
+    const clearing = deferred<WorkspaceRoster>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      initialDatasets: [selectedFile],
+      clearWorkspace: () => clearing.promise,
+    });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => {
+      expect(result.current.rosterLoad.status).toBe("ready");
+    });
+
+    let started = false;
+    act(() => {
+      started = result.current.clearList();
+    });
+    expect(started).toBe(true);
+    expect(api.calls().filter((call) => call === "clearWorkspace")).toHaveLength(1);
+
+    // The unresolved request owns the gate; a second activation started no
+    // request and therefore owns no later keyboard restoration either.
+    act(() => {
+      started = result.current.clearList();
+    });
+    expect(started).toBe(false);
+    expect(api.calls().filter((call) => call === "clearWorkspace")).toHaveLength(1);
+
+    clearing.resolve({ datasets: [], capacity: FAKE_WORKSPACE_CAPACITY });
+    await waitFor(() => {
+      expect(result.current.workspaceBusy).toBe(false);
+      expect(result.current.roster.datasets).toHaveLength(0);
+    });
+    act(() => {
+      started = result.current.clearList();
+    });
+    expect(started).toBe(false);
+    expect(api.calls().filter((call) => call === "clearWorkspace")).toHaveLength(1);
+  });
+
   it("still lets the user empty the list during an unresolved import", async () => {
     const scan = deferred<FolderScan | null>();
     const api = createFakePreviewApi({

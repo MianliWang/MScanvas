@@ -37,7 +37,7 @@ interface HarnessProps {
   readonly onAddFiles?: () => void;
   readonly onAddFolder?: () => void;
   readonly onRemoveSelected?: () => void;
-  readonly onClearList?: () => void;
+  readonly onClearList?: () => boolean;
   readonly canPreview?: boolean;
   readonly canAddFiles?: boolean;
   readonly canAddFolder?: boolean;
@@ -63,7 +63,7 @@ function Harness({
   onAddFiles = () => undefined,
   onAddFolder = () => undefined,
   onRemoveSelected = () => undefined,
-  onClearList = () => undefined,
+  onClearList = () => true,
   canPreview = true,
   canAddFiles = true,
   canAddFolder = true,
@@ -106,12 +106,18 @@ function Fixed({
   state,
   canAddFiles = true,
   canMutate = true,
+  folderBusy = false,
+  onAddFiles = () => undefined,
+  onClearList = () => true,
   onRemoveSelected = () => undefined,
   rosterSettlementToken = 0,
 }: {
   readonly state: RosterState;
   readonly canAddFiles?: boolean;
   readonly canMutate?: boolean;
+  readonly folderBusy?: boolean;
+  readonly onAddFiles?: () => void;
+  readonly onClearList?: () => boolean;
   readonly onRemoveSelected?: () => void;
   readonly rosterSettlementToken?: number;
 }) {
@@ -124,12 +130,12 @@ function Fixed({
       canReloadRoster
       dispatch={() => undefined}
       focusAddFilesToken={0}
-      folderBusy={false}
+      folderBusy={folderBusy}
       load={{ status: "ready" }}
       onActivate={() => undefined}
-      onAddFiles={() => undefined}
+      onAddFiles={onAddFiles}
       onAddFolder={() => undefined}
-      onClearList={() => undefined}
+      onClearList={onClearList}
       onReloadRoster={() => undefined}
       onRemoveSelected={onRemoveSelected}
       projection={rosterProjection(state)}
@@ -688,6 +694,421 @@ describe("returning the keyboard after removal", () => {
   });
 });
 
+describe("returning the keyboard after Clear list reconciliation", () => {
+  it("returns a failed focused Clear list to the re-enabled action after rows arrive", () => {
+    const onClearList = vi.fn(() => true);
+    const focusing = vi.spyOn(HTMLElement.prototype, "focus");
+    try {
+      const { rerender } = render(
+        <Fixed
+          canAddFiles={false}
+          folderBusy
+          onClearList={onClearList}
+          state={initialRosterState}
+        />,
+      );
+      const clear = screen.getByRole("button", { name: "Clear list" });
+      clear.focus();
+      fireEvent.click(clear);
+      rerender(
+        <Fixed
+          canAddFiles={false}
+          canMutate={false}
+          folderBusy
+          onClearList={onClearList}
+          state={initialRosterState}
+        />,
+      );
+      blurAsABrowserWould(clear);
+
+      // The rejected request is idle, but the overlapping folder operation is
+      // not. Neither re-enabling Clear nor body focus says what Rust now holds.
+      rerender(
+        <Fixed
+          canAddFiles={false}
+          folderBusy
+          onClearList={onClearList}
+          state={initialRosterState}
+        />,
+      );
+      expect(document.body).toHaveFocus();
+
+      focusing.mockClear();
+      rerender(
+        <Fixed
+          onClearList={onClearList}
+          rosterSettlementToken={1}
+          state={seeded(1)}
+        />,
+      );
+
+      expect(onClearList).toHaveBeenCalledTimes(1);
+      const restored = screen.getByRole("button", { name: "Clear list" });
+      expect(restored).toHaveFocus();
+      expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
+
+      // The paid debt is gone. A later roster settlement cannot revive it just
+      // because the restored action subsequently lost focus to the body.
+      blurAsABrowserWould(restored);
+      focusing.mockClear();
+      rerender(
+        <Fixed
+          onClearList={onClearList}
+          rosterSettlementToken={2}
+          state={seeded(1)}
+        />,
+      );
+      expect(document.body).toHaveFocus();
+      expect(focusing).not.toHaveBeenCalledWith({ preventScroll: true });
+    } finally {
+      focusing.mockRestore();
+    }
+  });
+
+  it("does not mistake a transient empty roster for settled Clear list failure", () => {
+    const { rerender } = render(
+      <Fixed canAddFiles={false} folderBusy state={initialRosterState} />,
+    );
+    const clear = screen.getByRole("button", { name: "Clear list" });
+    clear.focus();
+    fireEvent.click(clear);
+    rerender(
+      <Fixed
+        canAddFiles={false}
+        canMutate={false}
+        folderBusy
+        state={initialRosterState}
+      />,
+    );
+    blurAsABrowserWould(clear);
+    rerender(<Fixed canAddFiles={false} folderBusy state={initialRosterState} />);
+
+    // The folder settles before the owed authoritative read. Clear disappears
+    // for this intermediate commit, but Add files is not the final answer.
+    rerender(<Fixed state={initialRosterState} />);
+    expect(screen.queryByRole("button", { name: "Clear list" })).toBeNull();
+    expect(document.body).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveFocus();
+
+    rerender(<Fixed rosterSettlementToken={1} state={seeded(1)} />);
+
+    expect(screen.getByRole("button", { name: "Clear list" })).toHaveFocus();
+  });
+
+  it("renews the debt when the user returns to the re-enabled Clear list", () => {
+    const { rerender } = render(
+      <Fixed canAddFiles={false} folderBusy state={initialRosterState} />,
+    );
+    const clear = screen.getByRole("button", { name: "Clear list" });
+    clear.focus();
+    fireEvent.click(clear);
+    rerender(
+      <Fixed
+        canAddFiles={false}
+        canMutate={false}
+        folderBusy
+        state={initialRosterState}
+      />,
+    );
+    blurAsABrowserWould(clear);
+
+    rerender(<Fixed canAddFiles={false} folderBusy state={initialRosterState} />);
+    const revisited = screen.getByRole("button", { name: "Clear list" });
+    revisited.focus();
+    blurAsABrowserWould(revisited);
+    rerender(<Fixed state={initialRosterState} />);
+    expect(document.body).toHaveFocus();
+
+    rerender(<Fixed rosterSettlementToken={1} state={seeded(1)} />);
+
+    expect(screen.getByRole("button", { name: "Clear list" })).toHaveFocus();
+  });
+
+  it("waits for the folder as well as settlement before restoring a successful clear", () => {
+    const { rerender } = render(
+      <Fixed canAddFiles={false} folderBusy state={initialRosterState} />,
+    );
+    const clear = screen.getByRole("button", { name: "Clear list" });
+    const focusing = vi.spyOn(clear, "focus");
+    clear.focus();
+    focusing.mockClear();
+    fireEvent.click(clear);
+    rerender(
+      <Fixed
+        canAddFiles={false}
+        canMutate={false}
+        folderBusy
+        state={initialRosterState}
+      />,
+    );
+    blurAsABrowserWould(clear);
+
+    // Clear can answer before the import it superseded. Its token alone must
+    // not restore to the still-temporary escape action.
+    rerender(
+      <Fixed
+        canAddFiles={false}
+        folderBusy
+        rosterSettlementToken={1}
+        state={initialRosterState}
+      />,
+    );
+    expect(document.body).toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+
+    rerender(<Fixed rosterSettlementToken={1} state={initialRosterState} />);
+
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
+  });
+
+  it("waits for the mutation to become idle after the roster settles", () => {
+    const state = seeded(1);
+    const { rerender } = render(<Fixed state={state} />);
+    const clear = screen.getByRole("button", { name: "Clear list" });
+    clear.focus();
+    fireEvent.click(clear);
+    rerender(<Fixed canMutate={false} state={state} />);
+    blurAsABrowserWould(clear);
+
+    // Rust's roster answer can render before the request's finally handler
+    // releases the mutation gate. A disabled destination cannot receive focus.
+    rerender(
+      <Fixed canMutate={false} rosterSettlementToken={1} state={state} />,
+    );
+    expect(document.body).toHaveFocus();
+
+    rerender(<Fixed rosterSettlementToken={1} state={state} />);
+
+    expect(clear).toHaveFocus();
+  });
+
+  it("does not take the keyboard from a destination chosen during reconciliation", () => {
+    const destination = document.createElement("button");
+    destination.textContent = "Chosen destination";
+    document.body.append(destination);
+    try {
+      const { rerender } = render(
+        <Fixed canAddFiles={false} folderBusy state={initialRosterState} />,
+      );
+      const clear = screen.getByRole("button", { name: "Clear list" });
+      clear.focus();
+      fireEvent.click(clear);
+      rerender(
+        <Fixed
+          canAddFiles={false}
+          canMutate={false}
+          folderBusy
+          state={initialRosterState}
+        />,
+      );
+      blurAsABrowserWould(clear);
+      destination.focus();
+
+      rerender(<Fixed rosterSettlementToken={1} state={seeded(1)} />);
+
+      expect(destination).toHaveFocus();
+      expect(screen.getByRole("button", { name: "Clear list" })).not.toHaveFocus();
+      blurAsABrowserWould(destination);
+      // A later, unrelated disappearance must not revive the old Clear record.
+      rerender(<Fixed rosterSettlementToken={2} state={initialRosterState} />);
+      expect(document.body).toHaveFocus();
+      expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveFocus();
+    } finally {
+      destination.remove();
+    }
+  });
+
+  it("does not revive Clear after a newer destination disappears before settlement", () => {
+    const destination = document.createElement("button");
+    destination.textContent = "Temporary destination";
+    document.body.append(destination);
+    try {
+      const { rerender } = render(
+        <Fixed canAddFiles={false} folderBusy state={initialRosterState} />,
+      );
+      const clear = screen.getByRole("button", { name: "Clear list" });
+      clear.focus();
+      fireEvent.click(clear);
+      rerender(
+        <Fixed
+          canAddFiles={false}
+          canMutate={false}
+          folderBusy
+          state={initialRosterState}
+        />,
+      );
+      blurAsABrowserWould(clear);
+
+      destination.focus();
+      blurAsABrowserWould(destination);
+      rerender(<Fixed rosterSettlementToken={1} state={seeded(1)} />);
+
+      expect(document.body).toHaveFocus();
+      expect(screen.getByRole("button", { name: "Clear list" })).not.toHaveFocus();
+    } finally {
+      destination.remove();
+    }
+  });
+
+  it("keeps current Clear ownership when an older removal debt settles", () => {
+    const selected = rosterReducer(seeded(1), {
+      type: "rowPressed",
+      handle: "file-0",
+      modifiers: { ctrl: false, shift: false },
+    });
+    const { rerender } = render(<Fixed state={selected} />);
+    const remove = screen.getByRole("button", { name: "Remove selected" });
+    remove.focus();
+    fireEvent.click(remove);
+    rerender(<Fixed canMutate={false} state={selected} />);
+    blurAsABrowserWould(remove);
+    rerender(<Fixed state={selected} />);
+
+    const clear = screen.getByRole("button", { name: "Clear list" });
+    clear.focus();
+    rerender(<Fixed rosterSettlementToken={1} state={selected} />);
+    expect(clear).toHaveFocus();
+
+    blurAsABrowserWould(clear);
+    rerender(<Fixed rosterSettlementToken={1} state={initialRosterState} />);
+
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
+  });
+
+  it("gives a later focused picker ownership after Clear list reconciliation", () => {
+    const { rerender } = render(
+      <Fixed canAddFiles={false} folderBusy state={initialRosterState} />,
+    );
+    const clear = screen.getByRole("button", { name: "Clear list" });
+    clear.focus();
+    fireEvent.click(clear);
+    rerender(
+      <Fixed
+        canAddFiles={false}
+        canMutate={false}
+        folderBusy
+        state={initialRosterState}
+      />,
+    );
+    blurAsABrowserWould(clear);
+    rerender(<Fixed canAddFiles={false} folderBusy state={initialRosterState} />);
+    rerender(<Fixed state={initialRosterState} />);
+    expect(document.body).toHaveFocus();
+
+    const addFiles = screen.getByRole("button", { name: "Add files…" });
+    const focusing = vi.spyOn(addFiles, "focus");
+    addFiles.focus();
+    focusing.mockClear();
+    fireEvent.click(addFiles);
+    rerender(<Fixed canAddFiles={false} state={initialRosterState} />);
+    blurAsABrowserWould(addFiles);
+
+    // The old Clear debt must not use the body's temporary picker focus when
+    // reconciliation answers during the later action.
+    rerender(
+      <Fixed canAddFiles={false} rosterSettlementToken={1} state={seeded(1)} />,
+    );
+    expect(document.body).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Clear list" })).not.toHaveFocus();
+
+    rerender(<Fixed rosterSettlementToken={1} state={seeded(1)} />);
+
+    expect(addFiles).toHaveFocus();
+    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it("keeps Clear list ownership when a later picker never held the keyboard", () => {
+    const { rerender } = render(
+      <Fixed canAddFiles={false} folderBusy state={initialRosterState} />,
+    );
+    const clear = screen.getByRole("button", { name: "Clear list" });
+    clear.focus();
+    fireEvent.click(clear);
+    rerender(
+      <Fixed
+        canAddFiles={false}
+        canMutate={false}
+        folderBusy
+        state={initialRosterState}
+      />,
+    );
+    blurAsABrowserWould(clear);
+    rerender(<Fixed canAddFiles={false} folderBusy state={initialRosterState} />);
+    rerender(<Fixed state={initialRosterState} />);
+    expect(document.body).toHaveFocus();
+
+    // This is a pointer activation: Add files never owned keyboard focus, so
+    // its picker has no keyboard destination and cannot erase the older one.
+    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    rerender(
+      <Fixed canAddFiles={false} canMutate={false} state={initialRosterState} />,
+    );
+    rerender(
+      <Fixed
+        canAddFiles={false}
+        canMutate={false}
+        rosterSettlementToken={1}
+        state={seeded(1)}
+      />,
+    );
+    expect(document.body).toHaveFocus();
+
+    rerender(<Fixed rosterSettlementToken={1} state={seeded(1)} />);
+
+    expect(screen.getByRole("button", { name: "Clear list" })).toHaveFocus();
+  });
+
+  it("takes no keyboard focus from an unfocused Clear list activation", () => {
+    const { rerender } = render(
+      <Fixed canAddFiles={false} folderBusy state={initialRosterState} />,
+    );
+    expect(document.body).toHaveFocus();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+    rerender(
+      <Fixed
+        canAddFiles={false}
+        canMutate={false}
+        folderBusy
+        state={initialRosterState}
+      />,
+    );
+    rerender(<Fixed rosterSettlementToken={1} state={seeded(1)} />);
+
+    expect(document.body).toHaveFocus();
+  });
+
+  it("does not arm a Clear list activation that acquired no mutation gate", () => {
+    const { rerender } = render(
+      <Fixed
+        canAddFiles={false}
+        folderBusy
+        onClearList={() => false}
+        state={initialRosterState}
+      />,
+    );
+    const clear = screen.getByRole("button", { name: "Clear list" });
+    clear.focus();
+    fireEvent.click(clear);
+    // The callback did not acquire the mutation gate, so this activation owns
+    // no request and no later keyboard restoration.
+    blurAsABrowserWould(clear);
+
+    rerender(<Fixed rosterSettlementToken={1} state={seeded(1)} />);
+
+    expect(document.body).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Clear list" })).not.toHaveFocus();
+
+    // A later mutation has its own disabled lifetime and settlement edge. It
+    // must not retroactively arm the earlier activation that acquired no gate.
+    rerender(
+      <Fixed canMutate={false} rosterSettlementToken={1} state={seeded(1)} />,
+    );
+    rerender(<Fixed rosterSettlementToken={2} state={seeded(1)} />);
+    expect(document.body).toHaveFocus();
+  });
+});
+
 describe("the workspace roster as an accessible list", () => {
   it("is one multi-selectable listbox with one roving tab stop", () => {
     render(<Harness />);
@@ -720,7 +1141,7 @@ describe("the workspace roster as an accessible list", () => {
         onActivate={() => undefined}
         onAddFiles={() => undefined}
         onAddFolder={() => undefined}
-        onClearList={() => undefined}
+        onClearList={() => true}
         onReloadRoster={() => undefined}
         onRemoveSelected={() => undefined}
         projection={rosterProjection(state)}
@@ -762,7 +1183,7 @@ describe("the workspace roster as an accessible list", () => {
         onActivate={() => undefined}
         onAddFiles={() => undefined}
         onAddFolder={() => undefined}
-        onClearList={() => undefined}
+        onClearList={() => true}
         onReloadRoster={() => undefined}
         onRemoveSelected={() => undefined}
         projection={rosterProjection(discarded)}
@@ -855,7 +1276,7 @@ describe("the workspace roster as an accessible list", () => {
         onActivate={() => undefined}
         onAddFiles={() => undefined}
         onAddFolder={() => undefined}
-        onClearList={() => undefined}
+        onClearList={() => true}
         onReloadRoster={retry}
         onRemoveSelected={() => undefined}
         projection={rosterProjection(initialRosterState)}
