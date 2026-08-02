@@ -24,9 +24,12 @@
   gate carries a generation so a scan holding no lock cannot commit into a
   workspace the user has moved on from. Native main-webview page-load start is
   the reload linearisation point; reading the roster is a pure, gate-linearised
-  snapshot. See *Path and diagnostic privacy*, *Frontend and Tauri boundary*,
-  *Active dataset* and *Concurrency* below; the paragraphs this replaces
-  recorded folder ingestion as gated apart from this decision.
+  snapshot. A notice-constrained narrow workspace owns its small vertical
+  recovery scroll so the Run identity and loaded viewer evidence remain
+  reachable without moving notices or the document. See *Path and diagnostic
+  privacy*, *Frontend and Tauri boundary*, *Active dataset* and *Concurrency*
+  below; the paragraphs this replaces recorded folder ingestion as gated apart
+  from this decision.
 
 ## Context
 
@@ -486,6 +489,18 @@ header; the viewer below keeps both panel headers and a table viewport tall
 enough to contain its sticky header and one complete data row. A layout rect
 that exists only outside a clipped ancestor does not satisfy this contract.
 
+The recovery owner is explicit when in-flow shell notices shorten that viewport.
+At 960x640, the narrow workspace's complete internal budget is 544px: 16px of
+padding, a 342px sidebar, the 8px row gap and a 178px loaded-viewer row. The
+viewer row is itself 116px for the spectrum table, an 8px gap and 54px for the
+Selected spectrum panel. If the persistent backend notice and a transient
+folder-import notice leave less than that budget, neither notice moves or
+collapses and the document and body still do not scroll. The narrow workspace
+alone owns the bounded vertical overflow, so one internal scroll reaches the
+complete Selected spectrum header while the table header and one complete data
+row remain available. Shrinking the viewer row to fit instead is not recovery:
+it recreates the clipped evidence this contract refuses.
+
 The registry's own origin record stays private and stays out of identity: two
 names for one acquisition are one row whichever route each arrived by, and a
 duplicate addition never rewrites where the existing row came from. Its debug
@@ -616,6 +631,10 @@ mutation-concurrency section for the complete state machine.
 - at the constrained stacked viewport, that Run identity remains fully visible
   alongside two complete roster rows, both viewer headers and one complete
   spectrum-table row beneath its sticky header;
+- with persistent backend and transient folder-import notices both present at
+  960x640, the narrow workspace reserves its 544px internal budget and owns the
+  resulting bounded vertical scroll; recovery reaches the complete 178px
+  viewer without document/body overflow or a clipped Selected spectrum panel;
 - folder begin is current-generation-idempotent in one bounded pending slot,
   exact claim is single-use and advances before the picker, and wrong or
   replayed claims do not consume the live slot;

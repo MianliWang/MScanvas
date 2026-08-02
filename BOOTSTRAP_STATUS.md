@@ -1731,7 +1731,7 @@ because they need the local administrative share; plot-spec for 1 passing test;
 and ProteoWizard for 220, with 215 passing and 5 ignored controlled subprocess
 entry points. A controlled subprocess self-call that reports 1 passed and 219
 filtered is part of that run and is not counted a second time. The frontend has
-411 passing tests across 14 files. The new Rust coverage is the
+412 passing tests across 14 files. The new Rust coverage is the
 discovery-to-acceptance identity join, both native page-load/commit orderings, a
 scan superseded by page-load start or an emptied list, a scan that survives a
 pure roster snapshot, exact single-use reservation claiming,
@@ -1761,7 +1761,7 @@ durable folder action after settlement without waiting for an observable
 disabled commit, an activation that did not own keyboard focus takes none, and
 a destination chosen meanwhile keeps it without leaving a stale debt.
 
-**Mutations.** The cumulative total is 151 named mutations, each introduced,
+**Mutations.** The cumulative total is 153 named mutations, each introduced,
 run and restored; none was committed. The final concurrency work added 28 to
 the prior 116. Eight exercise the frontend reservation barrier: Clear and Remove
 guards, rendered `canMutate`, the synchronous pending ref, acknowledgement state
@@ -1786,15 +1786,18 @@ walk.
 
 Three further frontend mutants cover the later preview-identity repair, bringing
 the cumulative total to 148. Each was killed by a discriminating test and
-restored. The constrained-layout repair adds the final three: the Run-panel
-floor, the narrow workspace track and the narrow viewer tracks each have a
-mutant that removes or under-allocates their minimum. All three were killed by
-their CSSOM contract tests and restored, bringing the cumulative total to 151.
-At final application-code head
-`2a075ab9ff53ab2197989e1c340d677a08d64100`, the frontend suite passed all
-411 tests and the required all-targets Rust run passed 504 with 7 ignored and
-none failed, 511 listed in total. The final rendered measurements for that head
-are recorded below.
+restored. The first constrained-layout repair adds three: the Run-panel floor,
+the narrow workspace track and the narrow viewer tracks each have a mutant that
+removes or under-allocates their minimum. All three were killed by their CSSOM
+contract tests and restored, bringing the interim total to 151. The final
+dual-notice repair adds two more: removing the narrow workspace's internal
+vertical scroll makes its new exact contract test fail, while restoring the
+loaded-viewer outer floor from 178px to zero makes three constrained-layout
+tests fail. Both were restored, bringing the cumulative total to 153. At final
+application-code head `238722ade4e073dfec7eef4e1c28696d0d95c7bf`, the
+frontend suite passed all 412 tests and the required all-targets Rust run passed
+504 with 7 ignored and none failed, 511 listed in total. The final rendered
+measurements for that head are recorded below.
 
 Validation through the stale-token preflight repair passed `pnpm lint`, `pnpm
 typecheck`, `pnpm test`, `pnpm build`, `cargo fmt --all --check`, workspace
@@ -1865,7 +1868,7 @@ The preview-identity P2 found a presentation gap in a contract Rust already
 fulfilled. `PreviewDto.file` carried the collision-only `relativeContext`, but
 the Run header rendered only `fileName` and size, so either of two acquisitions
 called `sample.mzML`, when active, could still look like the other in the panel
-that described its measurements. At final application-code head
+that described its measurements. At preview-identity application-code head
 `2a075ab9ff53ab2197989e1c340d677a08d64100`, the header and the retained
 one-action Preview affordance use one shared dataset label. The header prefers
 the current active roster row over the older preview snapshot, so adding the
@@ -1876,6 +1879,19 @@ Three discriminating frontend tests cover the live-roster transition, the
 shared recovery label and the scoped colour rule. This is a frontend projection
 repair: it changes no picker, traversal, command or DTO. The native dialog was
 not reopened for it. Its final routed rendered evidence is recorded below.
+
+A final live P2 combined two states that the earlier constrained-layout run had
+measured separately. At 960x640, a loaded preview kept the persistent backend
+notice while an unresolved folder import added a second approximately 31px
+notice. After the 58px top bar, those notices left about 520px for a workspace
+whose complete narrow evidence contract needs 544px: 16px of padding, the
+342px sidebar, the 8px row gap and a 178px viewer. Because the document and body
+deliberately do not scroll, the bottom Selected spectrum panel was outside a
+clipped ancestor even though its own 54px floor still existed. The repair keeps
+both notices visible, gives the loaded viewer's outer track the complete 178px
+floor (116px table, 8px gap and 54px selected-spectrum panel), and makes only
+the narrow workspace the internal vertical recovery surface. It changes no
+picker, folder traversal, backend, DTO or scientific state.
 
 Earlier rendered QA used both permitted repair rounds. The first found that the late
 typed `import_superseded` rejection still raised `The folder could not be added`
@@ -2000,6 +2016,40 @@ contrast was 5.728:1 in the light theme and 8.064:1 in the dark theme. At
 The accepted run ended with zero console warnings or errors, zero page errors,
 zero path leaks and no framework overlay. The one-shot route was removed, the
 application was clean-reloaded, and no QA marker or synthetic handle remained.
+
+### Final dual-notice constrained-workspace rendered evidence, 2026-08-02
+
+The final typed run was `m141-notice-238722a-final2` at application-code head
+`238722ade4e073dfec7eef4e1c28696d0d95c7bf`, in the Windows Tauri executable
+whose SHA-256 was
+`1a1b418effc486a988576dcad1aa0bde7cf8b9cc09897ec11a49000aef46b9f6`.
+The bounded helper SHA-256 was
+`6aaa298709ea26fae4120aaacfbfa6a70b172b3e316282e217b18d6c308262f6`;
+the evidence JSON SHA-256 was
+`39e3a706628a8813681a7cd96e5d6ee04d0ee37938be00b3031252e60d706137`.
+This run adds the combined backend-notice/folder-progress state to the prior
+preview-context evidence. It does not supersede or repeat the real native-picker
+evidence from `m141-859e2ed-final2`: no native dialog was reopened.
+
+At 960x640, with the loaded preview, persistent backend notice and unresolved
+folder-import notice all present, the narrow workspace measured a 521px client
+height and a 544px scroll height. Its measured maximum recovery scroll was
+23.33px, and setting that exact scroll position exposed the complete internal
+contract: a 178px viewer containing a 116px table panel and a 54px Selected
+spectrum panel around their 8px gap. The table viewport remained 60px, with its
+30px sticky header and one complete 30px row both contained, and the Run
+identity remained complete. The workspace, document and body had no horizontal
+overflow before or after recovery. The initial screenshot SHA-256 was
+`13b9e1174902087335622a5d84be925d9c08278cc0817ecac1236acb86e838bf`;
+the recovered screenshot SHA-256 was
+`b86140fabd7980fc2fcaa8f3272f5553758fa15ee04cbfde69f7bab821a0e4ce`.
+
+The routed command counts were `inspect=2`, `roster=2`, `open=1`, `begin=1`,
+`choose=0`, `picker=0` and `refused=0`. The run ended with zero console warnings
+or errors, zero page errors, zero visible path leaks and no framework overlay.
+Its one-shot route was removed and the application clean-reloaded with no
+synthetic handle retained. No acquisition content was read, ProteoWizard was
+not started and no native picker was opened.
 
 ## Validation completed during repository initialization
 
