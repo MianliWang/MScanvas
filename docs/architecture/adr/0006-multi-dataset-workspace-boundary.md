@@ -479,6 +479,13 @@ without deriving any location in the frontend. The Run identity alone uses the
 secondary text token because this context can be the only visible distinction
 between two acquisitions; the generic panel-header note rule remains unchanged.
 
+That identity is semantic evidence rather than optional inspector detail. At
+the constrained stacked viewport it remains fully contained while the roster
+keeps two complete rows. The Run details may scroll, but not the identity
+header; the viewer below keeps both panel headers and a table viewport tall
+enough to contain its sticky header and one complete data row. A layout rect
+that exists only outside a clipped ancestor does not satisfy this contract.
+
 The registry's own origin record stays private and stays out of identity: two
 names for one acquisition are one row whichever route each arrived by, and a
 duplicate addition never rewrites where the existing row came from. Its debug
@@ -606,6 +613,9 @@ mutation-concurrency section for the complete state machine.
 - the Run identity and retained Preview affordance use the current active
   roster label, gain or lose collision context as that roster changes, and do
   so without another acquisition read;
+- at the constrained stacked viewport, that Run identity remains fully visible
+  alongside two complete roster rows, both viewer headers and one complete
+  spectrum-table row beneath its sticky header;
 - folder begin is current-generation-idempotent in one bounded pending slot,
   exact claim is single-use and advances before the picker, and wrong or
   replayed claims do not consume the live slot;

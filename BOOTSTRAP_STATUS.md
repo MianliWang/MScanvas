@@ -1731,7 +1731,7 @@ because they need the local administrative share; plot-spec for 1 passing test;
 and ProteoWizard for 220, with 215 passing and 5 ignored controlled subprocess
 entry points. A controlled subprocess self-call that reports 1 passed and 219
 filtered is part of that run and is not counted a second time. The frontend has
-410 passing tests across 14 files. The new Rust coverage is the
+411 passing tests across 14 files. The new Rust coverage is the
 discovery-to-acceptance identity join, both native page-load/commit orderings, a
 scan superseded by page-load start or an emptied list, a scan that survives a
 pure roster snapshot, exact single-use reservation claiming,
@@ -1761,7 +1761,7 @@ durable folder action after settlement without waiting for an observable
 disabled commit, an activation that did not own keyboard focus takes none, and
 a destination chosen meanwhile keeps it without leaving a stale debt.
 
-**Mutations.** The cumulative total is 148 named mutations, each introduced,
+**Mutations.** The cumulative total is 151 named mutations, each introduced,
 run and restored; none was committed. The final concurrency work added 28 to
 the prior 116. Eight exercise the frontend reservation barrier: Clear and Remove
 guards, rendered `canMutate`, the synchronous pending ref, acknowledgement state
@@ -1786,11 +1786,15 @@ walk.
 
 Three further frontend mutants cover the later preview-identity repair, bringing
 the cumulative total to 148. Each was killed by a discriminating test and
-restored. At application commit
-`0893af14d68821420e3fb9a7be82212dcb38ade5`, the frontend suite passed all
-410 tests and the required all-targets Rust run passed 504 with 7 ignored and
-none failed, 511 listed in total. This record makes no claim about a rendered
-measurement that has not yet been taken on that application commit.
+restored. The constrained-layout repair adds the final three: the Run-panel
+floor, the narrow workspace track and the narrow viewer tracks each have a
+mutant that removes or under-allocates their minimum. All three were killed by
+their CSSOM contract tests and restored, bringing the cumulative total to 151.
+At final application-code head
+`2a075ab9ff53ab2197989e1c340d677a08d64100`, the frontend suite passed all
+411 tests and the required all-targets Rust run passed 504 with 7 ignored and
+none failed, 511 listed in total. The final rendered measurements for that head
+are recorded below.
 
 Validation through the stale-token preflight repair passed `pnpm lint`, `pnpm
 typecheck`, `pnpm test`, `pnpm build`, `cargo fmt --all --check`, workspace
@@ -1861,8 +1865,8 @@ The preview-identity P2 found a presentation gap in a contract Rust already
 fulfilled. `PreviewDto.file` carried the collision-only `relativeContext`, but
 the Run header rendered only `fileName` and size, so either of two acquisitions
 called `sample.mzML`, when active, could still look like the other in the panel
-that described its measurements. At application commit
-`0893af14d68821420e3fb9a7be82212dcb38ade5`, the header and the retained
+that described its measurements. At final application-code head
+`2a075ab9ff53ab2197989e1c340d677a08d64100`, the header and the retained
 one-action Preview affordance use one shared dataset label. The header prefers
 the current active roster row over the older preview snapshot, so adding the
 second same-named row gives the open Run its context and removing that row takes
@@ -1871,7 +1875,7 @@ uses the secondary text token; the generic panel-header rule remains unchanged.
 Three discriminating frontend tests cover the live-roster transition, the
 shared recovery label and the scoped colour rule. This is a frontend projection
 repair: it changes no picker, traversal, command or DTO. The native dialog was
-not reopened for it, and no new rendered-QA measurement is claimed here.
+not reopened for it. Its final routed rendered evidence is recorded below.
 
 Earlier rendered QA used both permitted repair rounds. The first found that the late
 typed `import_superseded` rejection still raised `The folder could not be added`
@@ -1949,6 +1953,53 @@ reloaded after instrumentation; the real backend projection was again empty,
 both acquisition actions were enabled, `aria-busy` was false and no QA marker
 remained in the page. No real acquisition content was read; the routed folder
 and preview commands did not reach ProteoWizard.
+
+### Final preview-context and constrained-layout rendered evidence, 2026-08-02
+
+The final projection/layout run was `m141-preview-2a075ab-final1` at
+application-code head `2a075ab9ff53ab2197989e1c340d677a08d64100`, in the
+Windows Tauri executable whose SHA-256 was
+`1a1b418effc486a988576dcad1aa0bde7cf8b9cc09897ec11a49000aef46b9f6`.
+The evidence JSON SHA-256 was
+`7b124e5c5d505c38f6a0bd199a7fc4acddba6b60fd054edbaf232105fa68dcef`;
+the bounded rendered helper SHA-256 was
+`d6fce971fc340d8e2bbab590ee6c1e403b9bbdf6f1c56f9aefd1bf906863adc9`.
+This run supersedes the earlier unmeasured preview-context projection and the
+intermediate narrow-viewer allocation only. It neither supersedes nor repeats
+the native-picker evidence from `m141-859e2ed-final2`: the picker was not
+reopened.
+
+The routed `PreviewDto.file.relativeContext` was `null`, while the current
+active roster row carried `batch-1`. The Run identity's visible text and title
+therefore read `sample.mzML, batch-1`. Focusing and selecting the same-named
+`batch-2` row did not change that active Run. Removing `batch-2` made the Run
+title `sample.mzML`, retained the populated spectrum grid and left the preview
+open count at one. The routed command counts were two StrictMode-safe backend
+inspections, two roster reads, one preview and one remove; the picker and
+refused-call counts were both zero. No native dialog opened, no acquisition
+content was read and ProteoWizard was not started.
+
+The first 960x640 rendered inspection found a real pre-repair regression: the
+280px narrow workspace track was already consumed by the roster's 280px floor,
+and the 8px inter-panel gap left the Run panel only 1.33px high. The minimal
+identity repair raised that track to 342px and gave the Run panel a 54px floor,
+which contains its 52px header inside the panel's two 1px borders. The first
+viewer repair used 108px/54px floors, but rendered measurement showed a 52px
+table viewport: not enough to contain its 30px sticky header and one complete
+30px row together. That intermediate result is diagnosis, not accepted
+evidence. The final narrow viewer floors are 116px/54px.
+
+At the final 960x640 light-theme state, the Run panel measured 54px and its
+header 52px; the roster measured 280px and its scrolling list 134.33px; and the
+viewer measured 185.33px. Within it, the table panel measured 116px, its
+viewport 60px, its fully contained sticky header 30px and its fully contained
+first row 30px. The selected-spectrum panel measured 61.32px. The Run identity
+contrast was 5.728:1 in the light theme and 8.064:1 in the dark theme. At
+1366x768 and 1920x1080 there was no horizontal document or body overflow.
+
+The accepted run ended with zero console warnings or errors, zero page errors,
+zero path leaks and no framework overlay. The one-shot route was removed, the
+application was clean-reloaded, and no QA marker or synthetic handle remained.
 
 ## Validation completed during repository initialization
 
