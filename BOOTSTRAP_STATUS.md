@@ -1422,13 +1422,14 @@ later reviewer found the gap and was right about the facts. Unsearched, the same
 line still reads at 3.49:1 in the light theme, and it is not redundant text: it
 carries the session's capacity, which appears nowhere else, and the only
 statement that removing a row leaves the file alone that a user sees *before*
-pressing the button. But `.panel-header p` is tertiary across the whole
-application — the preview summary, the spectrum panel, the spectrum table's
-caption — and it is tertiary on `main` exactly as it is here. That is one
-decision about one token affecting several panels, not this panel's to make on
-its own while a search happens to be running, and it wants a change that can
-weigh every panel it moves and check each one rendered. This milestone fixed the
-text it added and left the rest recorded rather than quietly implied to be fine.
+pressing the button. The generic `.panel-header p` rule remains tertiary for
+that line, the spectrum panel and the spectrum table's caption. A later M1.4.1
+preview-identity repair adds one deliberately scoped exception:
+`.preview-file-identity` uses the secondary token because it identifies which
+acquisition every value in the Run panel describes. Tests pin both the exception
+and the unchanged generic rule. That exception does not imply the other
+non-redundant tertiary text is readable; this milestone fixed the text it added
+and leaves the remaining debt recorded rather than quietly implied to be fine.
 
 Nine reducer tests hold the first — built on rows whose insertion, name and size
 orders disagree everywhere, so every one of them fails outright if the lookup
@@ -1579,6 +1580,500 @@ that the path test is designed to let through.
 state to check: no pixel, no DOM node and no command changes. Every claim above
 is a Rust test on this machine. The rendered evidence for folder ingestion is
 owed by M1.4.1, when there is finally a button to press.
+
+## Visible mzML folder ingestion, 2026-07-31
+
+**MSCanvas can now add a folder.** `Add mzML folder…` is the fifth workspace
+action, and it is the M1.4.0 traversal made reachable and nothing else: the
+walk, its budgets, its ordering and its refusal of every reparse entry are
+unchanged. What this slice adds is the commit around that walk, the boundary it
+answers across, and the interface over it.
+
+**Two commands, no path in either direction.** Folder ingestion brings the
+registered surface to twelve commands. Synchronous
+`begin_mzml_folder_import` records or reuses one current-generation baseline
+and returns its path-free reservation DTO. Asynchronous
+`choose_mzml_folder(reservationId)` consumes and validates that exact ID before
+showing the native picker on the main thread with the title
+`Choose a folder containing .mzML files`; it answers with a roster, one outcome
+per candidate in discovery order, and how the scan itself went. A dismissed
+picker answers `None`, which is an ordinary outcome and deliberately not an
+empty result. The webview never supplies or receives a path or parent. The only
+additional value exchanged with it is a session-scoped, opaque-but-not-secret,
+single-use reservation correlation ID — not a filesystem capability,
+generation or internal token —
+and the main window's capability set is still empty. The picker itself is now
+one shared helper with two callers, so the installation picker and the folder
+picker cannot drift apart in their flags.
+
+On Windows that helper is the Explorer-style Common Item Dialog, `IFileDialog`
+with `FOS_PICKFOLDERS`, rather than the legacy tree picker. It
+accepts an absolute path pasted into its address bar, is owned by the main
+window, requires one existing filesystem folder, leaves shell links unresolved
+and does not add the choice to Recent. Only the exact Windows cancelled
+`HRESULT` becomes `None`; every other setup, display or result failure remains a
+typed, path-free error. COM initialization and task-allocated result storage are
+balanced on every exit. The selected path still exists only inside Rust. The
+target-specific direct dependency is the already-locked `windows = 0.61.3`, so
+this adds no crate version and no Tauri capability.
+
+**No backend fan-out, ever.** A folder of a thousand files costs a thousand
+filesystem inspections and no processes. Reading is still explicit and still at
+most one file — the first row of a session Rust says was empty. Whether it was
+empty is decided from the authoritative reply rather than from the list on
+screen, because a reloaded window can show nothing while Rust still holds rows.
+
+**The scan holds no lock, and cannot arrive late.** A workspace mutation
+generation lives behind the gate that already serialised one mutation against
+another. The synchronous begin command records the current generation only as
+a baseline in one bounded pending `Option`; it does not advance it, and another
+begin at the same generation idempotently returns the same correlation ID. The
+asynchronous chooser consumes and validates that exact ID before the picker,
+then atomically advances the generation and creates the Rust-only import token.
+The scan carries that token while holding nothing, takes the gate back without
+advancing it, and commits only if the token still names the current generation;
+otherwise it answers `import_superseded`, accepts nothing, leases nothing and
+spends no dataset identifier.
+
+Adding files, a successful folder claim, removing rows, emptying the list and
+native main-webview `PageLoadEvent::Started` advance the generation. The native
+event is the reload authority because it occurs before the replacement document
+can issue IPC; no FIFO ordering between old and new fetches is assumed. A
+delayed old begin cannot advance the generation, replace a live
+same-generation reservation or supersede a token already claimed by the new
+document. A delayed old roster request is a pure snapshot and has no side
+effect. `get_workspace_roster` still takes the mutation gate so it sees a batch
+wholly before or wholly after commit, but it does not advance the generation.
+What cannot happen is a window adopting a roster and then receiving rows owned
+by the document it replaced.
+
+**A candidate is a proposal, and acceptance re-decides it.** Each candidate now
+carries the 128-bit identity its parent directory reported in the same
+enumeration record as its name, and ingestion compares that against the identity
+acceptance resolves. A mismatch is refused with `folder_candidate_changed` and
+the rest of the batch continues. This is what carries the walk's containment
+proof across to the object being registered: containment was proved for the
+object discovery found, and between the walk and acceptance a name can be made
+to mean a different file.
+
+**Two files of one name say where they are, and only then.** ADR 0006's
+path-privacy section is amended deliberately for exactly one case. A row carries
+a relative context only while two or more live rows share its final filename;
+it is recomputed over the whole roster every time one is built, so it appears
+when a colliding row arrives and goes when that row leaves. It never contains a
+drive, a UNC prefix, an absolute path, `..` or the chosen root's own name; it is
+bounded at 128 characters and truncated from the shallow end, because the
+deepest component is the one that disambiguates. A directly picked file says
+`Added directly` rather than being given an invented location. Two rows that
+would say the same words are told apart by the session's own identifier, which
+is already the handle the webview holds. It is display only: never searched,
+never a sort key, never part of identity, never persisted.
+
+Outcomes are described after the whole batch rather than as each file is
+accepted, and that is the same fact from the other side: the second
+`sample.mzML` is the reason the first one has a context at all, so an outcome
+described mid-batch would carry none while the roster beside it carried one.
+
+**What the interface does while an import runs.** The folder action keeps its
+own name, `Add mzML folder…`, and carries `aria-busy`; the shell shows
+`Folder import in progress…` and a permanently mounted live region says MSCanvas
+is waiting for a folder selection *or* scanning the chosen folder and that the
+duration is not known. One sentence for both phases, because the flag is set
+before the native dialog opens and no folder has been chosen yet. No percentage
+is shown, because nothing has counted the tree.
+
+Adding files, adding a folder again and explicitly reading the list back all
+wait. The roster command is now a pure, gate-linearised snapshot rather than a
+workspace decision; it waits because a mid-scan loading state and a snapshot
+whose usefulness depends on commit order add no recovery path. The folder reply
+or an owed reconciliation already supplies the authoritative answer.
+**Removing rows and emptying the list do not**, but they make different
+promises. `Clear list` is offered even over an empty list while an import is
+pending. When its command succeeds, it is the reliable way out of a folder
+chosen by mistake and the final workspace is empty whether it linearises before
+claim, after claim but before commit, or after commit. `Remove selected` remains
+usable to manage rows already on screen, but it is not cancellation. If removal
+reaches the gate before exact claim, the baseline becomes stale and the picker
+does not open. If claim wins first, removal advances beyond the token and the
+older import cannot commit. If the import commits first, the removal acts only
+on the handles it was given and its authoritative roster can therefore retain
+newly imported rows. In no order can a late folder reply overwrite the later
+mutation's roster. The request suppresses that reply as soon as it begins, so a
+committed import cannot transiently restore rows or launch a preview while the
+later action is still pending. If the action rejects, the webview does not infer
+that Rust was unchanged; it reads the authoritative roster after both operations
+settle, removes any preview whose row is no longer present, and keeps the typed
+action error visible. Beginning another mutation also invalidates any older
+roster reply before it can reach the screen.
+
+Searching, sorting, selecting and reading a file already in the session stay live
+too — a scan launches no process, and there is no honest reason to take the
+viewer away for a filesystem walk. A selection built while the scan runs survives
+it, is pruned against the authoritative roster, and the new rows join it rather
+than replacing it. Keyboard focus returns to whichever acquisition action was
+used, never to the other one, and never over a control the user reached for
+meanwhile; emptying the list mid-import holds that debt until `Add files…` is
+usable again rather than paying it into a disabled control.
+
+**Honest incompleteness.** The transferred summary carries `complete`, the
+skipped-reparse count, the inaccessible-entry count and which named limits were
+reached — and deliberately not how many entries were inspected or how many
+directories were entered, which describe the shape of the user's tree. "No mzML
+files were found in that folder" is said only by a scan that described the whole
+folder; a scan that stopped short says "No files were added, and the scan was
+incomplete" instead.
+
+**Tests.** The required `--all-targets` workspace run lists 511 Rust tests: 504
+pass, 7 are ignored and none fail. Seventeen are passing example-harness tests;
+the remaining 494 are the workspace libraries. The core crate accounts for 2
+passing tests; the desktop library for 271, with 269 passing and 2 ignored
+because they need the local administrative share; plot-spec for 1 passing test;
+and ProteoWizard for 220, with 215 passing and 5 ignored controlled subprocess
+entry points. A controlled subprocess self-call that reports 1 passed and 219
+filtered is part of that run and is not counted a second time. The frontend has
+414 passing tests across 14 files. The new Rust coverage is the
+discovery-to-acceptance identity join, both native page-load/commit orderings, a
+scan superseded by page-load start or an emptied list, a scan that survives a
+pure roster snapshot, exact single-use reservation claiming,
+same-generation begin reuse, stale-slot replacement, delayed old begin and
+roster requests, the bounded pending `Option`, collision context appearing and
+disappearing, the shallow-end truncation, every discovery refusal mapping to a
+kind of its own, a real junction under a real chosen folder yielding nothing
+from the other side, the twelve-command boundary, and that the scan limits and
+summary fields are spelled on the Rust side the way the frontend's contract
+file reads them — in both directions, including the private values that must
+not be there. The concurrency tests are driven by channels around a controlled
+walk rather than by sleeping. No real acquisition, vendor data or user folder
+was touched, and no ProteoWizard process was started.
+
+Nineteen Windows-dialog tests additionally cover the inherited/required/refused
+option policy, exact owner, ordered setup and result calls, exact cancel versus
+failure classification, missing and malformed result paths, path-free errors,
+and a production-call/legacy-retirement guard. The final frontend cases cover
+the dispatch-to-reservation barrier for both Clear and Remove, terminal cleanup,
+stale acknowledgement ownership, exact correlation payload, begin failure, and
+out-of-order callers sharing one live reservation. They also cover all sides of
+the overlapping-clear error rule: `import_superseded` and claim-stage
+`invalid_folder_import_reservation` stay silent after this window's later
+mutation, while an independent scan failure remains actionable. Four more pin
+the transient folder-retry focus handoff: keyboard activation returns to the
+durable folder action after settlement without waiting for an observable
+disabled commit, an activation that did not own keyboard focus takes none, and
+a destination chosen meanwhile keeps it without leaving a stale debt.
+
+**Mutations.** The cumulative total is 154 named mutations, each introduced,
+run and restored; none was committed. The final concurrency work added 28 to
+the prior 116. Eight exercise the frontend reservation barrier: Clear and Remove
+guards, rendered `canMutate`, the synchronous pending ref, acknowledgement state
+and ref release, terminal cleanup, and stale-ack ownership. Twenty exercise the
+two-command and reload boundary: early, missing or terminal-only acknowledgement;
+wrong correlation payload; asynchronous begin; claim after picker; wrong-ID or
+replay slot consumption; missing baseline validation; same-generation begin
+replacement; ghost begin generation advance; claim without generation advance;
+missing invalid-overlap suppression; missing page hook; using
+`PageLoadEvent::Finished`; a roster read that advances or omits the gate;
+missing command registration; generation serialization; and an unbounded
+reservation registry. Every new mutant was killed by a discriminating test,
+restored, and followed by the final full suite. This statement does not claim a
+per-mutant SHA check for the new batch.
+
+The later stale-token preflight repair adds the 145th mutation: removing the
+pre-scan generation guard makes the direct service test invoke its controlled
+walk and return `folder_not_readable` instead of refusing with
+`import_superseded`. Restoring the guard makes that test pass again while the
+existing post-scan checks continue to cover mutations that arrive during the
+walk.
+
+Three further frontend mutants cover the later preview-identity repair, bringing
+the cumulative total to 148. Each was killed by a discriminating test and
+restored. The first constrained-layout repair adds three: the Run-panel floor,
+the narrow workspace track and the narrow viewer tracks each have a mutant that
+removes or under-allocates their minimum. All three were killed by their CSSOM
+contract tests and restored, bringing the interim total to 151. The final
+dual-notice repair adds two more: removing the narrow workspace's internal
+vertical scroll makes its new exact contract test fail, while restoring the
+loaded-viewer outer floor from 178px to zero makes three constrained-layout
+tests fail. Both were restored, bringing the cumulative total to 153. At final
+application-code head `e49cc7922c81a3d426fce7d60915542699c32653`, the
+direct-add duplicate-feedback repair adds one more: replacing the shared
+dataset label with the bare filename makes the exact collision-context test
+fail while the ordinary no-context case remains protected. It was restored,
+bringing the cumulative total to 154. The frontend suite then passed all 414
+tests and the required all-targets Rust run passed 504 with 7 ignored and none
+failed, 511 listed in total. The last native rendered measurements, which the
+later text-only projection does not invalidate or repeat, are recorded below.
+
+Final validation at that head passed `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build`, `cargo fmt --all --check`, workspace Clippy with warnings denied,
+the workspace Rust tests, `python -B scripts/check_repo.py` and `git diff
+--check`.
+
+One survived its first run and is recorded here because the repair was to the
+test rather than to the product: folding the collision context into the name
+sort produced the same order as the correct comparator, because the fixture's
+contexts happened to sort the same way the session held them. The fixture now
+holds them in the opposite order, so the two comparators disagree and the
+mutation is caught. Three further anchors had drifted after `rustfmt` reflowed
+the lines they named; they were re-anchored and re-run rather than reported as
+evidence.
+
+**What review found.** The first review found three findings, each repaired with
+its own test. The workspace list's own `Try reading it again` was the one route
+to a roster snapshot that stayed enabled during an import. The read is now pure
+and cannot supersede the scan, but the action still waits because an additional
+loading state and commit-order-dependent snapshot provide no recovery the
+folder result or reconciliation does not already provide. Reload ordering now
+belongs solely to native page-load start. The shared folder dialog carried a
+failure kind and message as parameters that both callers passed identically,
+which suggested the two operations fail differently when they do not. And
+nothing pinned the wire spelling of the scan limits or the summary's fields
+between serde and the frontend's closed union, where a disagreement would be
+silent in the worst way.
+
+The empty-roster escape P2 found the path that mattered most: the roster hid
+`Clear list`, and the hook rejected the same action, while the first folder
+import was unresolved. The action is now present and enabled whenever a folder
+request is pending. A successful empty clear advances the authoritative
+workspace generation, leaves the final roster empty in either ordering, keeps
+its notice through settlement and returns keyboard focus to `Add files…` only
+when that control becomes usable.
+
+A later live P2 found the one acquisition action outside the roster's focus
+restoration path. Starting `Choose another folder` clears its error notice and
+therefore removes the focused retry button. The shell now mints a one-shot token
+before that removal only when the retry owns keyboard focus. The roster bridges
+the token into its existing picker-restoration state machine, targets the
+durable `Add mzML folder…` action, waits for it to become usable, restores with
+`preventScroll`, and retires the debt without moving focus if the user chose
+another destination meanwhile.
+
+The reservation-ordering review found that dispatching one asynchronous folder
+command did not prove Rust had polled it before the frontend re-enabled Clear or
+Remove. The final protocol splits that boundary: synchronous begin stores a
+current-generation baseline and returns its correlation ID; exact asynchronous
+claim consumes and validates it, advances the generation and creates the
+Rust-only token before dispatching the picker. Same-generation begins reuse one
+bounded slot, so a delayed old begin cannot cancel a new import, and a delayed
+old roster request is side-effect-free. Native main-webview
+`PageLoadEvent::Started` is the authoritative reload edge, so no correctness
+claim depends on FIFO delivery of old and new IPC fetches.
+
+A subsequent live P2 found one avoidable cost after that ordering was already
+safe: a token superseded while its picker was open still entered the bounded
+folder walk before the commit-time generation check refused it. `import_folder`
+now checks the token under the short mutation gate before touching the
+filesystem, releases the gate for a live scan, and keeps the original check
+afterward for decisions made during that scan. A direct old-webview test proves
+that an already-stale token never invokes its controlled scan closure. This is
+a Rust-only fail-closed path owned by a document that no longer exists; it
+changes no picker or live rendered state, so the native dialog was not reopened.
+
+The preview-identity P2 found a presentation gap in a contract Rust already
+fulfilled. `PreviewDto.file` carried the collision-only `relativeContext`, but
+the Run header rendered only `fileName` and size, so either of two acquisitions
+called `sample.mzML`, when active, could still look like the other in the panel
+that described its measurements. At preview-identity application-code head
+`2a075ab9ff53ab2197989e1c340d677a08d64100`, the header and the retained
+one-action Preview affordance use one shared dataset label. The header prefers
+the current active roster row over the older preview snapshot, so adding the
+second same-named row gives the open Run its context and removing that row takes
+the context away without rereading the acquisition. The identity line alone
+uses the secondary text token; the generic panel-header rule remains unchanged.
+Three discriminating frontend tests cover the live-roster transition, the
+shared recovery label and the scoped colour rule. This is a frontend projection
+repair: it changes no picker, traversal, command or DTO. The native dialog was
+not reopened for it. Its final routed rendered evidence is recorded below.
+
+A final live P2 combined two states that the earlier constrained-layout run had
+measured separately. At 960x640, a loaded preview kept the persistent backend
+notice while an unresolved folder import added a second approximately 31px
+notice. After the 58px top bar, those notices left about 520px for a workspace
+whose complete narrow evidence contract needs 544px: 16px of padding, the
+342px sidebar, the 8px row gap and a 178px viewer. Because the document and body
+deliberately do not scroll, the bottom Selected spectrum panel was outside a
+clipped ancestor even though its own 54px floor still existed. The repair keeps
+both notices visible, gives the loaded viewer's outer track the complete 178px
+floor (116px table, 8px gap and 54px selected-spectrum panel), and makes only
+the narrow workspace the internal vertical recovery surface. It changes no
+picker, folder traversal, backend, DTO or scientific state.
+
+A later live P2 found that direct-file duplicate feedback discarded a context
+Rust had already supplied. When two live rows were both called `sample.mzML`,
+the duplicate outcome named the correct existing row and carried its
+`relativeContext`, but `describeAddResult` rendered only `fileName`. Direct-add
+details now use the same dataset-label formatter as the Run identity and
+retained Preview action, so the notice identifies `sample.mzML, batch-2` while
+the ordinary no-context sentence is unchanged. One pure formatter-path test
+and one rendered App test drive a fake two-row roster through mocked Add files,
+assert the exact context, keep the roster at two rows and start no preview.
+This changes no Rust, API, filesystem or picker behavior; no native dialog was
+reopened.
+
+Earlier rendered QA used both permitted repair rounds. The first found that the late
+typed `import_superseded` rejection still raised `The folder could not be added`
+after a successful clear. Suppressing every overlapping folder rejection would
+have hidden genuine discovery failures, however, because those can happen
+before Rust reaches the generation gate. The final rule suppresses only typed
+claim/commit refusals when this window made the later decision:
+`import_superseded`, plus `invalid_folder_import_reservation` when a delayed old
+begin replaced the now-stale slot. Both fail before an unsafe commit, while an
+overlapping real picker or scan failure remains visible. Opposite-order and
+ghost-begin frontend tests distinguish all sides of that rule.
+
+**Final rendered Windows QA is complete for the current begin/claim
+implementation.** The bound run was `m141-859e2ed-final2` at
+`859e2ed36d3c699bc7e7c6f562127ad2a4c8db2b`, in the Windows Tauri executable
+whose SHA-256 was
+`746adde83594d500f6563194d86bdcfc2c3fec4bfa5ebf3089675a205f9cc59c`.
+The real PID-owned Common Item Dialog was opened once from the keyboard and
+once from a trusted pointer activation. Minimal native assistance consisted
+only of pressing Esc in the modal. Both cancellations completed the exact
+path-free pair -- `begin_mzml_folder_import {}` followed by
+`choose_mzml_folder { reservationId }` -- with matching single-use IDs; all
+four IPC records settled, neither request nor reply contained a path, both
+chooser replies were `null`, and the empty workspace remained unchanged. The
+keyboard path returned visible 2px focus to `Add mzML folder…`. No further
+native-dialog repetition was used.
+
+The states after the picker were exercised in that same exact-head rendered
+application through one-shot, typed Playwright routes at the live Tauri IPC
+origin. Those routes are deliberately recorded as deterministic projection and
+ordering evidence, not as another filesystem traversal: the real traversal,
+identity and generation orders are the Rust tests above, while the route makes
+the frontend receive each reviewed DTO/error ordering without opening the
+native dialog again. The current empty-workspace escape was observed from both
+sides of the acknowledgement barrier: `Clear list` was present but disabled
+while begin was unresolved, became keyboard-reachable immediately after the
+exact claim was dispatched, kept its 2px focus ring, and reported
+`The workspace is empty. The pending folder import will not add files.` A stale
+non-empty folder result released afterwards installed no row; `Add files…`
+became the visible focused destination only when the import settled.
+
+The remaining rendered states passed as a bounded set of checks:
+
+- A five-row folder result rendered one incomplete-scan warning, one counted
+  linked/special entry, and collision-only `batch-a` / `batch-b` context for the
+  two `sample.mzML` rows. No context appeared on another row.
+- The whole page had no horizontal document/body overflow, horizontally
+  clipped control or framework overlay at the required 960x640, 1366x768 and
+  1920x1080 rendered CSS viewports. The deterministic 128-row production
+  `SpectrumTable` was also
+  stressed at 760x768: its nine headers and cells had zero x-coordinate drift,
+  the sticky header stayed at top, both internal scroll axes were exercised,
+  rows remained virtualized with one roving tab stop, and neither scroll axis
+  escaped to the document.
+- Relative context matched neither search nor sort. A selected non-matching row
+  remained pinned with its `outside search` explanation; all five sort modes
+  stayed local and issued no IPC; equal filenames retained added order.
+- A typed removal reply removed exactly its opaque handle, removed the obsolete
+  collision context, moved visible keyboard focus to the surviving row at that
+  position, and said that disk files were unchanged. Keyboard `Clear list`
+  then emptied the authoritative roster and returned visible focus to
+  `Add files…`.
+- A typed folder failure exposed `Choose another folder` and `Dismiss`.
+  Keyboard Dismiss restored the durable folder action; keyboard retry did not
+  restore it while its exact chooser request was pending, then restored it on
+  settlement.
+- A failed Clear held its typed workspace error while the older import settled,
+  suppressed the stale folder roster, waited for exactly one authoritative
+  `get_workspace_roster {}` response, and restored `Add files…` focus only after
+  that empty reconciliation arrived.
+
+Every accepted rendered phase ended with zero warning/error console events,
+zero page errors, zero visible path leaks and no framework overlay. The app was
+reloaded after instrumentation; the real backend projection was again empty,
+both acquisition actions were enabled, `aria-busy` was false and no QA marker
+remained in the page. No real acquisition content was read; the routed folder
+and preview commands did not reach ProteoWizard.
+
+### Final preview-context and constrained-layout rendered evidence, 2026-08-02
+
+The final projection/layout run was `m141-preview-2a075ab-final1` at
+application-code head `2a075ab9ff53ab2197989e1c340d677a08d64100`, in the
+Windows Tauri executable whose SHA-256 was
+`1a1b418effc486a988576dcad1aa0bde7cf8b9cc09897ec11a49000aef46b9f6`.
+The evidence JSON SHA-256 was
+`7b124e5c5d505c38f6a0bd199a7fc4acddba6b60fd054edbaf232105fa68dcef`;
+the bounded rendered helper SHA-256 was
+`d6fce971fc340d8e2bbab590ee6c1e403b9bbdf6f1c56f9aefd1bf906863adc9`.
+This run supersedes the earlier unmeasured preview-context projection and the
+intermediate narrow-viewer allocation only. It neither supersedes nor repeats
+the native-picker evidence from `m141-859e2ed-final2`: the picker was not
+reopened.
+
+The routed `PreviewDto.file.relativeContext` was `null`, while the current
+active roster row carried `batch-1`. The Run identity's visible text and title
+therefore read `sample.mzML, batch-1`. Focusing and selecting the same-named
+`batch-2` row did not change that active Run. Removing `batch-2` made the Run
+title `sample.mzML`, retained the populated spectrum grid and left the preview
+open count at one. The routed command counts were two StrictMode-safe backend
+inspections, two roster reads, one preview and one remove; the picker and
+refused-call counts were both zero. No native dialog opened, no acquisition
+content was read and ProteoWizard was not started.
+
+The first 960x640 rendered inspection found a real pre-repair regression: the
+280px narrow workspace track was already consumed by the roster's 280px floor,
+and the 8px inter-panel gap left the Run panel only 1.33px high. The minimal
+identity repair raised that track to 342px and gave the Run panel a 54px floor,
+which contains its 52px header inside the panel's two 1px borders. The first
+viewer repair used 108px/54px floors, but rendered measurement showed a 52px
+table viewport: not enough to contain its 30px sticky header and one complete
+30px row together. That intermediate result is diagnosis, not accepted
+evidence. The final narrow viewer floors are 116px/54px.
+
+At the final 960x640 light-theme state, the Run panel measured 54px and its
+header 52px; the roster measured 280px and its scrolling list 134.33px; and the
+viewer measured 185.33px. Within it, the table panel measured 116px, its
+viewport 60px, its fully contained sticky header 30px and its fully contained
+first row 30px. The selected-spectrum panel measured 61.32px. The Run identity
+contrast was 5.728:1 in the light theme and 8.064:1 in the dark theme. At
+1366x768 and 1920x1080 there was no horizontal document or body overflow.
+
+The accepted run ended with zero console warnings or errors, zero page errors,
+zero path leaks and no framework overlay. The one-shot route was removed, the
+application was clean-reloaded, and no QA marker or synthetic handle remained.
+
+### Final dual-notice constrained-workspace rendered evidence, 2026-08-02
+
+The final typed run was `m141-notice-238722a-final2` at application-code head
+`238722ade4e073dfec7eef4e1c28696d0d95c7bf`, in the Windows Tauri executable
+whose SHA-256 was
+`1a1b418effc486a988576dcad1aa0bde7cf8b9cc09897ec11a49000aef46b9f6`.
+The bounded helper SHA-256 was
+`6aaa298709ea26fae4120aaacfbfa6a70b172b3e316282e217b18d6c308262f6`;
+the evidence JSON SHA-256 was
+`39e3a706628a8813681a7cd96e5d6ee04d0ee37938be00b3031252e60d706137`.
+This run adds the combined backend-notice/folder-progress state to the prior
+preview-context evidence. It does not supersede or repeat the real native-picker
+evidence from `m141-859e2ed-final2`: no native dialog was reopened.
+
+At 960x640, with the loaded preview, persistent backend notice and unresolved
+folder-import notice all present, the narrow workspace measured a 521px client
+height and a 544px scroll height. Its measured maximum recovery scroll was
+23.33px, and setting that exact scroll position exposed the complete internal
+contract: a 178px viewer containing a 116px table panel and a 54px Selected
+spectrum panel around their 8px gap. The table viewport remained 60px, with its
+30px sticky header and one complete 30px row both contained, and the Run
+identity remained complete. The workspace, document and body had no horizontal
+overflow before or after recovery. The initial screenshot SHA-256 was
+`13b9e1174902087335622a5d84be925d9c08278cc0817ecac1236acb86e838bf`;
+the recovered screenshot SHA-256 was
+`b86140fabd7980fc2fcaa8f3272f5553758fa15ee04cbfde69f7bab821a0e4ce`.
+
+The routed command counts were `inspect=2`, `roster=2`, `open=1`, `begin=1`,
+`choose=0`, `picker=0` and `refused=0`. The run ended with zero console warnings
+or errors, zero page errors, zero visible path leaks and no framework overlay.
+Its one-shot route was removed and the application clean-reloaded with no
+synthetic handle retained. No acquisition content was read, ProteoWizard was
+not started and no native picker was opened.
+
+The later direct-add duplicate-label repair at
+`e49cc7922c81a3d426fce7d60915542699c32653` changes only the bounded notice
+text. Its App test renders the complete notice from a fake two-row roster and a
+mocked Add files result; the pure-function test independently pins the exact
+label, and restoring the old bare-filename expression kills that test. Because
+neither the native command path nor layout changed, the accepted Tauri runs
+above remain the native and layout evidence, and the picker was not reopened.
 
 ## Validation completed during repository initialization
 

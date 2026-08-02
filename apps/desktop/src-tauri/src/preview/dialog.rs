@@ -7,7 +7,7 @@
 use super::dto::PreviewErrorDto;
 
 #[cfg(windows)]
-pub use windows_dialog::{choose_installation_folder, choose_mzml_files};
+pub use windows_dialog::{choose_installation_folder, choose_mzml_files, choose_mzml_folder};
 
 #[cfg(not(windows))]
 pub fn choose_mzml_files(
@@ -31,13 +31,37 @@ pub fn choose_installation_folder(
     ))
 }
 
+#[cfg(not(windows))]
+pub fn choose_mzml_folder(
+    _owner: Option<isize>,
+) -> Result<Option<std::path::PathBuf>, PreviewErrorDto> {
+    Err(PreviewErrorDto::new(
+        "folder_picker_unavailable",
+        "The native folder picker is available on Windows in this version.",
+        false,
+    ))
+}
+
 #[cfg(windows)]
 mod windows_dialog {
+    use std::ffi::OsString;
     use std::ffi::c_void;
     use std::os::windows::ffi::OsStringExt;
     use std::path::{Path, PathBuf};
 
     use super::PreviewErrorDto;
+    use windows::Win32::Foundation::{ERROR_CANCELLED, HWND};
+    use windows::Win32::System::Com::{
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+        CoTaskMemFree, CoUninitialize,
+    };
+    use windows::Win32::UI::Shell::{
+        FILEOPENDIALOGOPTIONS, FOS_ALLNONSTORAGEITEMS, FOS_ALLOWMULTISELECT, FOS_CREATEPROMPT,
+        FOS_DONTADDTORECENT, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_NOCHANGEDIR,
+        FOS_NODEREFERENCELINKS, FOS_NOVALIDATE, FOS_PATHMUSTEXIST, FOS_PICKFOLDERS, FileOpenDialog,
+        IFileOpenDialog, SIGDN_FILESYSPATH,
+    };
+    use windows::core::{HRESULT, PCWSTR, PWSTR};
 
     const OFN_PATHMUSTEXIST: u32 = 0x0000_0800;
     const OFN_FILEMUSTEXIST: u32 = 0x0000_1000;
@@ -53,10 +77,6 @@ mod windows_dialog {
     /// `OFN_ALLOWMULTISELECT` the buffer then holds a required size rather than
     /// a path, and reading it as one would invent a selection.
     const FNERR_BUFFERTOOSMALL: u32 = 0x3003;
-
-    /// `MAX_PATH` is not enough for a long path, so the buffer is generous and
-    /// the dialog is told the exact capacity.
-    const PATH_BUFFER_LENGTH: usize = 32_768;
 
     /// The room one multi-selection answer is given.
     ///
@@ -275,47 +295,181 @@ mod windows_dialog {
         )
     }
 
-    const BIF_RETURNONLYFSDIRS: u32 = 0x0000_0001;
-    const BIF_NEWDIALOGSTYLE: u32 = 0x0000_0040;
-    const BIF_NONEWFOLDERBUTTON: u32 = 0x0000_0200;
+    /// The modern common dialog still inherits useful shell defaults. These
+    /// are the decisions MSCanvas adds to them: choose exactly one existing
+    /// filesystem folder, do not resolve a shell link behind the user's back,
+    /// and do not write the choice into Windows' recent-items list.
+    const REQUIRED_FOLDER_DIALOG_OPTIONS: FILEOPENDIALOGOPTIONS = FILEOPENDIALOGOPTIONS(
+        FOS_PICKFOLDERS.0
+            | FOS_FORCEFILESYSTEM.0
+            | FOS_PATHMUSTEXIST.0
+            | FOS_FILEMUSTEXIST.0
+            | FOS_NOCHANGEDIR.0
+            | FOS_NODEREFERENCELINKS.0
+            | FOS_DONTADDTORECENT.0,
+    );
+    const REFUSED_FOLDER_DIALOG_OPTIONS: FILEOPENDIALOGOPTIONS = FILEOPENDIALOGOPTIONS(
+        FOS_ALLOWMULTISELECT.0 | FOS_ALLNONSTORAGEITEMS.0 | FOS_NOVALIDATE.0 | FOS_CREATEPROMPT.0,
+    );
 
-    const COINIT_APARTMENTTHREADED: u32 = 0x2;
-    const S_OK: i32 = 0;
-    const S_FALSE: i32 = 1;
-
-    #[repr(C)]
-    struct BrowseInfoW {
-        owner: *mut c_void,
-        root: *const c_void,
-        display_name: *mut u16,
-        title: *const u16,
-        flags: u32,
-        callback: *mut c_void,
-        parameter: isize,
-        image: i32,
+    fn folder_dialog_options(mut inherited: FILEOPENDIALOGOPTIONS) -> FILEOPENDIALOGOPTIONS {
+        // These inherited modes contradict one existing filesystem folder or
+        // weaken validation. Clear them before adding MSCanvas' requirements.
+        inherited.0 &= !REFUSED_FOLDER_DIALOG_OPTIONS.0;
+        inherited |= REQUIRED_FOLDER_DIALOG_OPTIONS;
+        inherited
     }
 
-    #[link(name = "shell32")]
-    unsafe extern "system" {
-        #[link_name = "SHBrowseForFolderW"]
-        fn sh_browse_for_folder_w(arguments: *mut BrowseInfoW) -> *mut c_void;
-        #[link_name = "SHGetPathFromIDListEx"]
-        fn sh_get_path_from_id_list_ex(
-            list: *const c_void,
-            path: *mut u16,
-            length: u32,
-            options: u32,
-        ) -> i32;
+    struct ComApartment;
+
+    impl ComApartment {
+        fn initialise() -> Result<Self, PreviewErrorDto> {
+            // SAFETY: this call supplies the documented null reserved pointer
+            // and requests the apartment model required by the common dialog.
+            // Every successful call, including S_FALSE, is balanced by Drop.
+            let result = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+            if result.is_err() {
+                return Err(folder_picker_unavailable());
+            }
+            Ok(Self)
+        }
     }
 
-    #[link(name = "ole32")]
-    unsafe extern "system" {
-        #[link_name = "CoTaskMemFree"]
-        fn co_task_mem_free(block: *mut c_void);
-        #[link_name = "CoInitializeEx"]
-        fn co_initialize_ex(reserved: *mut c_void, model: u32) -> i32;
-        #[link_name = "CoUninitialize"]
-        fn co_uninitialize();
+    impl Drop for ComApartment {
+        fn drop(&mut self) {
+            // SAFETY: paired with the one successful CoInitializeEx call that
+            // constructed this guard, on the same main thread.
+            unsafe { CoUninitialize() };
+        }
+    }
+
+    /// Owns the task-allocator string returned by IShellItem. Keeping the
+    /// allocator pair in Drop prevents a new return path from leaking it.
+    struct TaskAllocatedWide(PWSTR);
+
+    impl TaskAllocatedWide {
+        fn is_null(&self) -> bool {
+            self.0.is_null()
+        }
+
+        fn to_os_string(&self) -> OsString {
+            // SAFETY: the only constructor site receives this pointer from a
+            // successful GetDisplayName(SIGDN_FILESYSPATH), whose contract is a
+            // live NUL-terminated UTF-16 string owned by the caller.
+            OsString::from_wide(unsafe { self.0.as_wide() })
+        }
+    }
+
+    impl Drop for TaskAllocatedWide {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                // SAFETY: this is the documented allocator pair for the one
+                // GetDisplayName allocation wrapped by this value.
+                unsafe { CoTaskMemFree(Some(self.0.as_ptr().cast())) };
+            }
+        }
+    }
+
+    fn folder_picker_cancelled(code: HRESULT) -> bool {
+        code == HRESULT::from_win32(ERROR_CANCELLED.0)
+    }
+
+    fn folder_dialog_owner(owner: Option<isize>) -> Option<HWND> {
+        owner
+            .filter(|handle| *handle != 0)
+            .map(|handle| HWND(handle as *mut c_void))
+    }
+
+    fn validated_folder_path(path: PathBuf) -> Result<PathBuf, PreviewErrorDto> {
+        if path.as_os_str().is_empty() || !path.is_absolute() {
+            return Err(folder_choice_unreadable());
+        }
+        Ok(path)
+    }
+
+    /// The part of the Common Item Dialog whose ordering and classifications
+    /// are MSCanvas policy rather than COM resource management.
+    ///
+    /// Keeping this adapter private makes the real interface the only
+    /// production implementation, while letting tests prove the whole
+    /// `GetOptions` -> `SetOptions` -> `SetTitle` -> `Show` -> result sequence
+    /// without opening a modal desktop window.
+    trait FolderDialogBackend {
+        fn inherited_options(&self) -> Result<FILEOPENDIALOGOPTIONS, ()>;
+        fn apply_options(&self, options: FILEOPENDIALOGOPTIONS) -> Result<(), ()>;
+        fn apply_title(&self, title: &str) -> Result<(), ()>;
+        fn show(&self, owner: Option<HWND>) -> Result<(), HRESULT>;
+        fn selected_path(&self) -> Result<PathBuf, ()>;
+    }
+
+    impl FolderDialogBackend for IFileOpenDialog {
+        fn inherited_options(&self) -> Result<FILEOPENDIALOGOPTIONS, ()> {
+            // SAFETY: `self` is a live interface and the options are copied by
+            // value rather than retained through a borrowed pointer.
+            unsafe { self.GetOptions() }.map_err(|_| ())
+        }
+
+        fn apply_options(&self, options: FILEOPENDIALOGOPTIONS) -> Result<(), ()> {
+            // SAFETY: this changes only this dialog instance before Show.
+            unsafe { self.SetOptions(options) }.map_err(|_| ())
+        }
+
+        fn apply_title(&self, title: &str) -> Result<(), ()> {
+            let title = wide(title);
+            // SAFETY: `title` is NUL-terminated and remains live through the
+            // call; IFileDialog copies it rather than retaining the pointer.
+            unsafe { self.SetTitle(PCWSTR(title.as_ptr())) }.map_err(|_| ())
+        }
+
+        fn show(&self, owner: Option<HWND>) -> Result<(), HRESULT> {
+            // SAFETY: the optional HWND is the Tauri main window, and the
+            // caller runs this modal operation on that window's main thread.
+            unsafe { self.Show(owner) }.map_err(|error| error.code())
+        }
+
+        fn selected_path(&self) -> Result<PathBuf, ()> {
+            // SAFETY: Show succeeded, so the dialog owns one result. The
+            // returned IShellItem keeps it alive while its filesystem name is
+            // copied into Rust-owned storage.
+            let chosen = unsafe { self.GetResult() }.map_err(|_| ())?;
+            // SAFETY: FOS_FORCEFILESYSTEM requests a filesystem item. The
+            // shell allocates this NUL-terminated name with the task allocator.
+            let display_name = TaskAllocatedWide(
+                unsafe { chosen.GetDisplayName(SIGDN_FILESYSPATH) }.map_err(|_| ())?,
+            );
+            if display_name.is_null() {
+                return Err(());
+            }
+            Ok(PathBuf::from(display_name.to_os_string()))
+        }
+    }
+
+    fn show_folder_dialog(
+        dialog: &impl FolderDialogBackend,
+        owner: Option<isize>,
+        title: &str,
+    ) -> Result<Option<PathBuf>, PreviewErrorDto> {
+        let inherited = dialog
+            .inherited_options()
+            .map_err(|_| folder_picker_unavailable())?;
+        dialog
+            .apply_options(folder_dialog_options(inherited))
+            .map_err(|_| folder_picker_unavailable())?;
+        dialog
+            .apply_title(title)
+            .map_err(|_| folder_picker_unavailable())?;
+
+        if let Err(code) = dialog.show(folder_dialog_owner(owner)) {
+            if folder_picker_cancelled(code) {
+                return Ok(None);
+            }
+            return Err(folder_picker_unavailable());
+        }
+
+        let path = dialog
+            .selected_path()
+            .map_err(|_| folder_choice_unreadable())?;
+        Ok(Some(validated_folder_path(path)?))
     }
 
     /// Shows the native folder picker and returns the chosen directory, or
@@ -332,86 +486,150 @@ mod windows_dialog {
     pub fn choose_installation_folder(
         owner: Option<isize>,
     ) -> Result<Option<PathBuf>, PreviewErrorDto> {
-        // The resizable dialog style needs an initialised apartment. Tauri's
-        // main thread already has one, so this is normally S_FALSE; it is called
-        // anyway because the rule is that whoever needs COM initialises it, and
-        // it is undone only when this call is what established it.
-        // SAFETY: no arguments, and the result decides whether to undo it.
-        let initialised =
-            unsafe { co_initialize_ex(std::ptr::null_mut(), COINIT_APARTMENTTHREADED) };
-        let owns_apartment = initialised == S_OK || initialised == S_FALSE;
+        browse_for_folder(owner, "Choose the ProteoWizard installation folder")
+    }
 
-        let title = wide("Choose the ProteoWizard installation folder");
-        let mut display_name = vec![0_u16; PATH_BUFFER_LENGTH];
-        let mut arguments = BrowseInfoW {
-            owner: owner.map_or(std::ptr::null_mut(), |handle| handle as *mut c_void),
-            root: std::ptr::null(),
-            display_name: display_name.as_mut_ptr(),
-            title: title.as_ptr(),
-            // Only real filesystem directories, and no way to create one: the
-            // point of this dialog is to name an installation that already
-            // exists, and an empty new folder can only fail.
-            flags: BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_NONEWFOLDERBUTTON,
-            callback: std::ptr::null_mut(),
-            parameter: 0,
-            image: 0,
+    /// Shows the native folder picker and returns the folder of acquisitions to
+    /// scan, or `None` when the user cancelled.
+    ///
+    /// A separate operation from the installation picker rather than the same
+    /// one with a different caption. The two name different things -- where the
+    /// backend is installed, and where the user keeps their data -- and a
+    /// single "choose a folder" command that meant either would be a boundary
+    /// whose meaning depended on who called it.
+    ///
+    /// It asks for the folder, not for files inside it: what the user is
+    /// choosing is the authority boundary the scan runs under. What is in it is
+    /// discovery's question, and it is asked after this returns.
+    ///
+    /// Must be called from a thread that can run a modal message loop; the
+    /// Tauri command dispatches it onto the main thread.
+    pub fn choose_mzml_folder(owner: Option<isize>) -> Result<Option<PathBuf>, PreviewErrorDto> {
+        browse_for_folder(owner, "Choose a folder containing .mzML files")
+    }
+
+    /// The one native folder dialog, told what to ask for.
+    ///
+    /// The title is the only thing that differs between the two operations, and
+    /// deliberately the only thing: sharing the implementation is what keeps
+    /// their flags identical -- one existing filesystem directory, shell links
+    /// left unresolved, no recent-items write, and the caller's window as the
+    /// owner -- rather than two copies that drift. A failure here is the same
+    /// failure either way, because it is the shell declining to resolve a choice
+    /// to a filesystem path, which says nothing about what the caller wanted the
+    /// folder for.
+    fn browse_for_folder(
+        owner: Option<isize>,
+        title: &str,
+    ) -> Result<Option<PathBuf>, PreviewErrorDto> {
+        let _apartment = ComApartment::initialise()?;
+
+        // SAFETY: FileOpenDialog is the documented in-process COM class for an
+        // IFileOpenDialog. The apartment guard remains alive for every use.
+        let dialog: IFileOpenDialog = unsafe {
+            CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)
+                .map_err(|_| folder_picker_unavailable())?
         };
+        show_folder_dialog(&dialog, owner, title)
+    }
 
-        // SAFETY: every pointer field references a live buffer that outlives the
-        // call. The returned item list is owned by the caller.
-        let chosen = unsafe { sh_browse_for_folder_w(&raw mut arguments) };
-        if chosen.is_null() {
-            if owns_apartment {
-                // SAFETY: paired with the successful initialisation above.
-                unsafe { co_uninitialize() };
-            }
-            // This dialog reports cancellation and failure the same way, so
-            // there is nothing to distinguish and cancelling is the reading
-            // that does not invent an error.
-            return Ok(None);
-        }
+    fn folder_picker_unavailable() -> PreviewErrorDto {
+        PreviewErrorDto::new(
+            "folder_picker_failed",
+            "The folder picker could not be opened.",
+            true,
+        )
+    }
 
-        let mut buffer = vec![0_u16; PATH_BUFFER_LENGTH];
-        // `Ex` rather than `SHGetPathFromIDListW`, which writes into a caller
-        // buffer it assumes is `MAX_PATH` and cannot express a longer path.
-        // SAFETY: `chosen` is the live list just returned, and the length
-        // describes `buffer` exactly.
-        let resolved = unsafe {
-            sh_get_path_from_id_list_ex(
-                chosen,
-                buffer.as_mut_ptr(),
-                u32::try_from(buffer.len()).expect("path buffer fits in DWORD"),
-                0,
-            )
-        };
-        // SAFETY: the documented way to release what the dialog returned, and
-        // it is released on every path out of here.
-        unsafe { co_task_mem_free(chosen) };
-        if owns_apartment {
-            // SAFETY: paired with the successful initialisation above.
-            unsafe { co_uninitialize() };
-        }
-
-        if resolved == 0 {
-            return Err(PreviewErrorDto::new(
-                "folder_picker_failed",
-                "That choice could not be read as a folder on this computer.",
-                true,
-            ));
-        }
-        let length = buffer.iter().position(|unit| *unit == 0).unwrap_or(0);
-        if length == 0 {
-            return Ok(None);
-        }
-        Ok(Some(PathBuf::from(std::ffi::OsString::from_wide(
-            &buffer[..length],
-        ))))
+    fn folder_choice_unreadable() -> PreviewErrorDto {
+        PreviewErrorDto::new(
+            "folder_picker_failed",
+            "That choice could not be read as a folder on this computer.",
+            true,
+        )
     }
 
     #[cfg(test)]
     mod tests {
-        use super::{malformed_selection, parse_selection, selection_too_large};
+        use super::{
+            FolderDialogBackend, folder_choice_unreadable, folder_dialog_options,
+            folder_dialog_owner, folder_picker_cancelled, folder_picker_unavailable,
+            malformed_selection, parse_selection, selection_too_large, show_folder_dialog,
+            validated_folder_path,
+        };
+        use std::cell::{Cell, RefCell};
         use std::path::PathBuf;
+        use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_CANCELLED, HWND};
+        use windows::Win32::UI::Shell::{
+            FILEOPENDIALOGOPTIONS, FOS_ALLNONSTORAGEITEMS, FOS_ALLOWMULTISELECT, FOS_CREATEPROMPT,
+            FOS_DONTADDTORECENT, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_NOCHANGEDIR,
+            FOS_NODEREFERENCELINKS, FOS_NOVALIDATE, FOS_OVERWRITEPROMPT, FOS_PATHMUSTEXIST,
+            FOS_PICKFOLDERS,
+        };
+        use windows::core::HRESULT;
+
+        struct FakeFolderDialog {
+            inherited: Result<FILEOPENDIALOGOPTIONS, ()>,
+            options_succeed: bool,
+            title_succeeds: bool,
+            show_result: Result<(), HRESULT>,
+            selected: Result<PathBuf, ()>,
+            events: RefCell<Vec<&'static str>>,
+            applied_options: RefCell<Vec<FILEOPENDIALOGOPTIONS>>,
+            titles: RefCell<Vec<String>>,
+            owners: RefCell<Vec<Option<isize>>>,
+            selected_calls: Cell<usize>,
+        }
+
+        impl FakeFolderDialog {
+            fn successful(path: impl Into<PathBuf>) -> Self {
+                Self {
+                    inherited: Ok(FILEOPENDIALOGOPTIONS(0)),
+                    options_succeed: true,
+                    title_succeeds: true,
+                    show_result: Ok(()),
+                    selected: Ok(path.into()),
+                    events: RefCell::new(Vec::new()),
+                    applied_options: RefCell::new(Vec::new()),
+                    titles: RefCell::new(Vec::new()),
+                    owners: RefCell::new(Vec::new()),
+                    selected_calls: Cell::new(0),
+                }
+            }
+        }
+
+        impl FolderDialogBackend for FakeFolderDialog {
+            fn inherited_options(&self) -> Result<FILEOPENDIALOGOPTIONS, ()> {
+                self.events.borrow_mut().push("options");
+                self.inherited
+            }
+
+            fn apply_options(&self, options: FILEOPENDIALOGOPTIONS) -> Result<(), ()> {
+                self.events.borrow_mut().push("set-options");
+                self.applied_options.borrow_mut().push(options);
+                self.options_succeed.then_some(()).ok_or(())
+            }
+
+            fn apply_title(&self, title: &str) -> Result<(), ()> {
+                self.events.borrow_mut().push("title");
+                self.titles.borrow_mut().push(title.to_owned());
+                self.title_succeeds.then_some(()).ok_or(())
+            }
+
+            fn show(&self, owner: Option<HWND>) -> Result<(), HRESULT> {
+                self.events.borrow_mut().push("show");
+                self.owners
+                    .borrow_mut()
+                    .push(owner.map(|handle| handle.0 as isize));
+                self.show_result
+            }
+
+            fn selected_path(&self) -> Result<PathBuf, ()> {
+                self.events.borrow_mut().push("result");
+                self.selected_calls.set(self.selected_calls.get() + 1);
+                self.selected.clone()
+            }
+        }
 
         /// The buffer the dialog leaves behind: each string NUL-terminated, the
         /// empty string that ends the list, then the untouched zeros of the
@@ -420,6 +638,230 @@ mod windows_dialog {
             let mut buffer = truncated_answer(segments);
             buffer.resize(buffer.len() + 16, 0);
             buffer
+        }
+
+        #[test]
+        fn folder_dialog_orchestration_applies_policy_in_order_and_preserves_the_owner() {
+            let mut dialog = FakeFolderDialog::successful(r"D:\MS Data\batch");
+            dialog.inherited = Ok(FILEOPENDIALOGOPTIONS(
+                FOS_ALLOWMULTISELECT.0 | FOS_NOVALIDATE.0 | FOS_OVERWRITEPROMPT.0,
+            ));
+
+            let chosen = show_folder_dialog(
+                &dialog,
+                Some(0x1234_isize),
+                "Choose a folder containing .mzML files",
+            )
+            .expect("the fake dialog succeeds")
+            .expect("the fake dialog chose a folder");
+
+            assert_eq!(chosen, PathBuf::from(r"D:\MS Data\batch"));
+            assert_eq!(
+                dialog.events.borrow().as_slice(),
+                ["options", "set-options", "title", "show", "result"]
+            );
+            let applied = dialog.applied_options.borrow();
+            assert_eq!(applied.len(), 1);
+            assert!(applied[0].contains(FOS_PICKFOLDERS));
+            assert!(applied[0].contains(FOS_FORCEFILESYSTEM));
+            assert!(applied[0].contains(FOS_PATHMUSTEXIST));
+            assert!(applied[0].contains(FOS_FILEMUSTEXIST));
+            assert!(applied[0].contains(FOS_NOCHANGEDIR));
+            assert!(applied[0].contains(FOS_NODEREFERENCELINKS));
+            assert!(applied[0].contains(FOS_DONTADDTORECENT));
+            assert!(!applied[0].contains(FOS_ALLOWMULTISELECT));
+            assert!(!applied[0].contains(FOS_NOVALIDATE));
+            assert!(applied[0].contains(FOS_OVERWRITEPROMPT));
+            assert_eq!(
+                dialog.titles.borrow().as_slice(),
+                ["Choose a folder containing .mzML files"]
+            );
+            assert_eq!(dialog.owners.borrow().as_slice(), [Some(0x1234_isize)]);
+            assert_eq!(dialog.selected_calls.get(), 1);
+        }
+
+        #[test]
+        fn folder_dialog_orchestration_reads_no_result_after_cancel_or_show_failure() {
+            let mut cancelled = FakeFolderDialog::successful(r"D:\ignored");
+            cancelled.show_result = Err(HRESULT::from_win32(ERROR_CANCELLED.0));
+            assert!(
+                show_folder_dialog(&cancelled, None, "Choose a folder")
+                    .expect("cancel is an ordinary outcome")
+                    .is_none()
+            );
+            assert_eq!(
+                cancelled.events.borrow().as_slice(),
+                ["options", "set-options", "title", "show"]
+            );
+            assert_eq!(cancelled.selected_calls.get(), 0);
+
+            let mut denied = FakeFolderDialog::successful(r"D:\ignored");
+            denied.show_result = Err(HRESULT::from_win32(ERROR_ACCESS_DENIED.0));
+            let error = show_folder_dialog(&denied, None, "Choose a folder")
+                .expect_err("a non-cancel Show failure stays a failure");
+            assert_eq!(error.kind, "folder_picker_failed");
+            assert_eq!(denied.selected_calls.get(), 0);
+        }
+
+        #[test]
+        fn folder_dialog_orchestration_rejects_missing_or_malformed_results() {
+            let mut missing = FakeFolderDialog::successful(r"D:\ignored");
+            missing.selected = Err(());
+            let missing_error = show_folder_dialog(&missing, None, "Choose a folder")
+                .expect_err("a result that cannot be read is not cancellation");
+            assert_eq!(missing_error.kind, "folder_picker_failed");
+            assert_eq!(missing.selected_calls.get(), 1);
+
+            for malformed in [
+                PathBuf::new(),
+                PathBuf::from("relative"),
+                PathBuf::from(".."),
+            ] {
+                let dialog = FakeFolderDialog::successful(malformed);
+                let error = show_folder_dialog(&dialog, None, "Choose a folder")
+                    .expect_err("a successful Show must still return one absolute folder");
+                assert_eq!(error.kind, "folder_picker_failed");
+                assert_eq!(dialog.selected_calls.get(), 1);
+            }
+        }
+
+        #[test]
+        fn folder_dialog_orchestration_stops_at_the_failed_setup_step() {
+            let mut options = FakeFolderDialog::successful(r"D:\ignored");
+            options.inherited = Err(());
+            assert!(show_folder_dialog(&options, None, "Choose a folder").is_err());
+            assert_eq!(options.events.borrow().as_slice(), ["options"]);
+
+            let mut applying = FakeFolderDialog::successful(r"D:\ignored");
+            applying.options_succeed = false;
+            assert!(show_folder_dialog(&applying, None, "Choose a folder").is_err());
+            assert_eq!(
+                applying.events.borrow().as_slice(),
+                ["options", "set-options"]
+            );
+
+            let mut title = FakeFolderDialog::successful(r"D:\ignored");
+            title.title_succeeds = false;
+            assert!(show_folder_dialog(&title, None, "Choose a folder").is_err());
+            assert_eq!(
+                title.events.borrow().as_slice(),
+                ["options", "set-options", "title"]
+            );
+        }
+
+        #[test]
+        fn folder_dialog_is_one_existing_filesystem_folder_without_shell_side_effects() {
+            let inherited = FILEOPENDIALOGOPTIONS(
+                FOS_ALLOWMULTISELECT.0
+                    | FOS_ALLNONSTORAGEITEMS.0
+                    | FOS_NOVALIDATE.0
+                    | FOS_CREATEPROMPT.0
+                    | FOS_OVERWRITEPROMPT.0,
+            );
+            let options = folder_dialog_options(inherited);
+
+            for required in [
+                FOS_PICKFOLDERS,
+                FOS_FORCEFILESYSTEM,
+                FOS_PATHMUSTEXIST,
+                FOS_FILEMUSTEXIST,
+                FOS_NOCHANGEDIR,
+                FOS_NODEREFERENCELINKS,
+                FOS_DONTADDTORECENT,
+            ] {
+                assert!(options.contains(required), "missing {required:?}");
+            }
+            for refused in [
+                FOS_ALLOWMULTISELECT,
+                FOS_ALLNONSTORAGEITEMS,
+                FOS_NOVALIDATE,
+                FOS_CREATEPROMPT,
+            ] {
+                assert!(!options.contains(refused), "retained {refused:?}");
+            }
+            assert!(
+                options.contains(FOS_OVERWRITEPROMPT),
+                "unrelated shell defaults stay intact"
+            );
+        }
+
+        #[test]
+        fn only_the_windows_cancel_result_is_a_dismissed_picker() {
+            assert!(folder_picker_cancelled(HRESULT::from_win32(
+                ERROR_CANCELLED.0
+            )));
+            assert!(!folder_picker_cancelled(HRESULT::from_win32(
+                ERROR_ACCESS_DENIED.0
+            )));
+            assert!(!folder_picker_cancelled(HRESULT(0)));
+        }
+
+        #[test]
+        fn the_main_window_handle_is_neither_replaced_nor_invented() {
+            let sentinel = 0x1234_isize;
+            let owner = folder_dialog_owner(Some(sentinel)).expect("one owner remains one owner");
+
+            assert_eq!(owner.0 as isize, sentinel);
+            assert!(folder_dialog_owner(None).is_none());
+            assert!(folder_dialog_owner(Some(0)).is_none());
+        }
+
+        #[test]
+        fn a_successful_dialog_must_still_name_one_absolute_folder() {
+            for absolute in [r"D:\MS Data\batch", r"C:\データ\样本"] {
+                let path = PathBuf::from(absolute);
+                assert_eq!(
+                    validated_folder_path(path.clone()).expect("an absolute path is valid"),
+                    path
+                );
+            }
+
+            for malformed in [
+                PathBuf::new(),
+                PathBuf::from("relative"),
+                PathBuf::from(".."),
+            ] {
+                let error = validated_folder_path(malformed)
+                    .expect_err("a successful Show does not turn a malformed result into cancel");
+                assert_eq!(error.kind, "folder_picker_failed");
+                let rendered = serde_json::to_string(&error).expect("the error serializes");
+                assert!(!rendered.contains("relative"), "{rendered}");
+            }
+        }
+
+        #[test]
+        fn the_legacy_folder_picker_stays_retired_and_the_production_adapter_stays_wired() {
+            let source = include_str!("dialog.rs");
+
+            for legacy in [
+                concat!("SHBrowse", "ForFolderW"),
+                concat!("SHGetPath", "FromIDListEx"),
+                concat!("Browse", "InfoW"),
+                concat!("BIF", "_"),
+            ] {
+                assert!(!source.contains(legacy), "legacy API returned: {legacy}");
+            }
+            for required in [
+                concat!("CoInitialize", "Ex(None, COINIT_APARTMENTTHREADED)"),
+                concat!("CoUn", "initialize()"),
+                concat!(
+                    "CoCreate",
+                    "Instance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)"
+                ),
+                concat!("unsafe { self.", "GetOptions() }"),
+                concat!("unsafe { self.", "SetOptions(options) }"),
+                concat!("unsafe { self.", "SetTitle(PCWSTR(title.as_ptr())) }"),
+                concat!("unsafe { self.", "Show(owner) }"),
+                concat!("IFile", "OpenDialog"),
+                concat!("show_folder_", "dialog(&dialog, owner, title)"),
+                concat!("unsafe { self.", "GetResult() }"),
+                concat!("unsafe { chosen.", "GetDisplayName(SIGDN_FILESYSPATH) }"),
+                concat!("FOS_PICK", "FOLDERS"),
+                concat!("SIGDN_FILE", "SYSPATH"),
+                concat!("CoTaskMem", "Free(Some(self.0.as_ptr().cast()))"),
+            ] {
+                assert!(source.contains(required), "modern API missing: {required}");
+            }
         }
 
         /// The same answer cut off the moment its last string ends, which is
@@ -576,6 +1018,8 @@ mod windows_dialog {
                 .expect_err("a malformed answer is refused"),
                 malformed_selection(),
                 selection_too_large(),
+                folder_picker_unavailable(),
+                folder_choice_unreadable(),
             ] {
                 let rendered = serde_json::to_string(&error).expect("the error serializes");
                 assert!(!rendered.contains("MSData"), "{rendered}");

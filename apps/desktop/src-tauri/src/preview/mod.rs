@@ -14,9 +14,9 @@ pub mod backend;
 pub mod dialog;
 /// Bounded, private discovery of mzML candidates under a chosen folder.
 ///
-/// Nothing outside the preview module can reach it, and nothing inside it is
-/// wired to a command yet: the traversal boundary is settled and tested before
-/// a folder action depends on it. See ADR 0007.
+/// Private to this module and reached only by the folder-import service: the
+/// webview asks for a picker, Rust chooses the root, and what comes back is a
+/// roster. No path crosses the boundary in either direction. See ADR 0007.
 mod discovery;
 pub mod dto;
 mod installation;

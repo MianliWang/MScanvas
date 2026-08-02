@@ -24,6 +24,26 @@ Build a session workspace of local `.mzML` files and inspect one of them:
   second name, or by picking it twice — reports the row you already have instead
   of listing it twice. Files that could not be read are named individually and do
   not affect the ones that arrived.
+- Or choose a folder, and MSCanvas adds every regular `.mzML` file beneath it in
+  one operation. On Windows, the Explorer-style folder picker accepts an
+  absolute path pasted into its address bar. The scan stays inside the folder
+  you chose: junctions, symbolic
+  links, mount points and cloud placeholders are never followed, and are counted
+  and reported instead. It is bounded by four named limits, and a scan that
+  stopped at one of them, skipped a linked entry or could not read a subtree says
+  so rather than reporting part of a folder as the whole of it. The list stays
+  usable while it runs — searching, sorting, selecting and reading a file you
+  already have all keep working — and a selection you make meanwhile survives.
+  If you picked the wrong folder, `Clear list` stays available even over an
+  empty list. When its command succeeds, the workspace is empty after both it
+  and the import settle.
+  `Remove selected` also stays available to manage rows already on screen, but
+  it is not cancellation: rows the import committed first can remain. A late
+  folder reply never overwrites either later workspace action. If that action
+  fails, MSCanvas reads the authoritative roster after both operations settle
+  rather than exposing the uncertain folder snapshot. If two files end up
+  sharing a name, each says where it was found for as long as they collide.
+  Directory-formatted vendor acquisitions are not recognized in this version.
 - Select rows with the pointer or the keyboard the way a file list works: click,
   Ctrl-click, Shift-click, arrows, Space, Home, End and Ctrl+A. Remove the
   selected rows, or clear the list, without restarting. Neither ever deletes,
@@ -42,16 +62,18 @@ Build a session workspace of local `.mzML` files and inspect one of them:
 - Reading is explicit and one at a time. Moving around the list costs nothing;
   previewing the focused row reads acquisition metadata, a run summary and a
   spectrum table for that one file, and selecting a table row loads that one
-  spectrum. Adding files reads at most the first file of a session that had
-  nothing in it, so choosing ten files does not start ten reads.
+  spectrum. Adding files or a folder reads at most the first file of a session
+  that had nothing in it, so choosing ten files does not start ten reads and a
+  folder of a thousand does not start a thousand.
 - The spectrum is drawn as a repository-owned SVG stick plot with no charting
   dependency. The retention-time unit, the profile/centroid representation and
   array units are shown as unreported rather than guessed, because the backend
   output this preview reads does not carry them. That says nothing about whether
   the acquisition itself records them.
 
-Not implemented yet: vendor RAW preview; TIC, BPC and chromatogram views; folder
-ingestion and Explorer drag-and-drop; filtering the workspace by anything other
+Not implemented yet: vendor RAW preview; TIC, BPC and chromatogram views;
+directory-formatted acquisition recognition and Explorer drag-and-drop; filtering
+the workspace by anything other
 than filename, and grouping it; a workspace that outlives the session, which
 includes remembering a search or a sort; the conversion workflow with
 its queue, progress and cancellation; and figure export. mzXML output stays
@@ -63,8 +85,8 @@ them yet.
 ## Product scope
 
 The first usable product is the target below, not a description of today. A
-session file workspace exists, built from the file picker rather than from
-drag-and-drop or folders. Of the second item, metadata, spectrum and scan-table
+session file workspace exists, built from the file and folder pickers rather than
+from drag-and-drop. Of the second item, metadata, spectrum and scan-table
 exploration are built and TIC/BPC are not; nothing else in this list is built
 yet. See [What works today](#what-works-today).
 

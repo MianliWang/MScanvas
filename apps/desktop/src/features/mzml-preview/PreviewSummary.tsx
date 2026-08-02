@@ -1,6 +1,12 @@
 import type { Metadata, RunSummary, SelectedFile } from "./contracts";
-import { formatByteLength, formatCount, formatMsLevel, formatRetentionTime } from "./format";
-import { formatDuration } from "./format";
+import {
+  formatByteLength,
+  formatCount,
+  formatDatasetLabel,
+  formatDuration,
+  formatMsLevel,
+  formatRetentionTime,
+} from "./format";
 import { latestMeasurement, type PreviewMeasurement } from "./instrumentation";
 
 export interface PreviewSummaryProps {
@@ -23,14 +29,17 @@ export function PreviewSummary({
   // file. When they disagree, showing one number here and a different one over
   // the table would present a single acquisition with two sizes.
   const countsDisagree = runSummary.totalSpectrumCount !== spectrumListTotal;
+  const fileLabel = formatDatasetLabel(file);
   return (
     <section aria-labelledby="preview-summary-heading" className="panel inspector-panel">
       <header className="panel-header">
         <div>
           <h2 id="preview-summary-heading">Run</h2>
-          {/* The file name only. The backend never sends the folder it sits in. */}
-          <p title={file.fileName}>
-            {file.fileName} · {formatByteLength(file.byteLength)}
+          {/* The filename plus only the bounded context Rust says the current
+              roster needs. No absolute path crosses, and no location is
+              reconstructed here. */}
+          <p className="preview-file-identity" title={fileLabel}>
+            {fileLabel} · {formatByteLength(file.byteLength)}
           </p>
         </div>
       </header>

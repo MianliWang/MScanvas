@@ -112,6 +112,14 @@ pub struct BackendFailureDto {
     pub corrective_action: String,
 }
 
+/// The longest disambiguating context one row may carry.
+///
+/// It is a fragment of a path under a folder the user chose, so it is bounded
+/// like every other value that crosses this boundary. A deep tree can nest far
+/// enough that the whole location would be a paragraph rather than a label, and
+/// a roster of a thousand rows would carry a thousand of them.
+pub const MAX_RELATIVE_CONTEXT_CHARS: usize = 128;
+
 /// One accepted local file. The absolute path stays in Rust; the webview
 /// receives an opaque handle and the display name only.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -120,6 +128,15 @@ pub struct SelectedFileDto {
     pub handle: String,
     pub file_name: String,
     pub byte_length: u64,
+    /// Where this row sits below the folder it was found in, and only when two
+    /// or more live rows share its final filename.
+    ///
+    /// `None` is the ordinary answer. It is never the chosen root's own name,
+    /// never a drive, never a UNC prefix, never absolute and never contains
+    /// `..`: it is the least that has to be said to tell identical names apart,
+    /// which is the only reason ADR 0006 permits saying anything at all. It is
+    /// display only -- not searched, not sorted by, and not part of identity.
+    pub relative_context: Option<String>,
 }
 
 /// Every dataset the session holds, in the order they were added.
@@ -185,6 +202,98 @@ pub struct WorkspaceRemoveResultDto {
     pub roster: WorkspaceRosterDto,
     pub removed_handles: Vec<String>,
     pub unknown_handles: Vec<String>,
+}
+
+/// Which named traversal limit a folder scan reached.
+///
+/// Named rather than counted, because which one ran out is what tells a user
+/// whether choosing a narrower folder would help. The order is ADR 0007's
+/// declaration order and is stable, so two scans that hit the same limits
+/// describe themselves identically.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum FolderScanLimitDto {
+    Depth,
+    Entries,
+    Directories,
+    Candidates,
+}
+
+/// What a folder scan saw, in facts that name no file and no directory.
+///
+/// Deliberately not everything the private summary holds. How many entries were
+/// inspected and how many directories were entered describe the shape of the
+/// user's tree, which is not something a folder's contents give this boundary
+/// leave to report. What is here is what a reader needs in order to know
+/// whether the answer is the whole answer.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderDiscoverySummaryDto {
+    /// Whether everything under the chosen folder was described.
+    ///
+    /// False whenever a limit was reached, a linked entry was skipped or a
+    /// subtree could not be read. One answer rather than three, so a caller
+    /// cannot report a partial scan as a complete one by checking the wrong
+    /// field.
+    pub complete: bool,
+    /// Entries refused for carrying a reparse tag: junctions, symbolic links,
+    /// mount points and cloud placeholders alike. MSCanvas follows none of
+    /// them, so a folder full of them yields little and says so.
+    pub skipped_reparse_count: u64,
+    /// Entries and subtrees the filesystem would not describe.
+    pub inaccessible_entry_count: u64,
+    pub limits_reached: Vec<FolderScanLimitDto>,
+}
+
+/// What one folder import did.
+///
+/// The roster is authoritative as always, the outcomes are one per candidate in
+/// discovery order, and the summary is how the scan itself went. A scan that
+/// found nothing is an ordinary result with no outcomes; a scan that was cut
+/// short is a result that says so.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderIngestionResultDto {
+    pub roster: WorkspaceRosterDto,
+    pub outcomes: Vec<WorkspaceAddOutcomeDto>,
+    pub discovery: FolderDiscoverySummaryDto,
+}
+
+/// A path-free, single-use claim on one pending folder import.
+///
+/// The identifier correlates the two narrow commands needed to survive a
+/// webview reload. It is not the workspace generation or the internal token,
+/// and it grants no filesystem access: Rust accepts it only once and only while
+/// the reservation it names is still current.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderImportReservationDto {
+    pub reservation_id: String,
+}
+
+/// What a folder import answers with when the workspace moved on beneath it.
+///
+/// Scanning holds no lock, which is what keeps the workspace usable while a
+/// large tree is read. The cost is that the user can decide something else
+/// meanwhile -- add files, remove rows, empty the list, or reload the window --
+/// and this is what that costs: nothing is added, and the scan is worth
+/// repeating if they still want it.
+pub fn import_superseded() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "import_superseded",
+        "The workspace changed while MSCanvas was scanning that folder, so none of its files \
+         were added. Scan the folder again.",
+        true,
+    )
+}
+
+/// What an unknown, replaced or already-spent folder reservation answers with.
+pub fn invalid_folder_import_reservation() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "invalid_folder_import_reservation",
+        "That folder import is no longer available. Start it again.",
+        true,
+    )
 }
 
 /// What a valid, non-duplicate file is refused with when the session is full.

@@ -9,6 +9,7 @@ import type {
   SelectedSpectrum,
 } from "./contracts";
 import { toPreviewError } from "./contracts";
+import { describeFolderResult } from "./folderNotice";
 import {
   appendMeasurement,
   now,
@@ -94,6 +95,26 @@ export interface PreviewWorkspace {
   readonly previewBackendBusy: boolean;
   /** Whether a picker is on screen, so a second one is not opened over it. */
   readonly pickerBusy: boolean;
+  /**
+   * Whether a folder import is unresolved, from the picker opening to the reply
+   * settling.
+   *
+   * The whole operation, not the picker half of it: the dialog, the scan, the
+   * acceptance of every candidate, the commit, and the answer landing here.
+   * Deliberately not part of `canPreview` or `previewBackendBusy` — a scan
+   * launches no process, and taking the viewer away for the length of a folder
+   * walk would make the one thing the user is looking at hostage to a list
+   * operation.
+   */
+  readonly folderBusy: boolean;
+  /**
+   * Whether the baseline-reservation request has been dispatched but its reply
+   * has not yet let the exact claim request be dispatched.
+   *
+   * Clear and Remove wait only for this short edge. Once it arrives they are
+   * available throughout the native picker and scan.
+   */
+  readonly folderReservationPending: boolean;
   /** Whether a roster mutation is unresolved. */
   readonly workspaceBusy: boolean;
   readonly checkBackend: () => void;
@@ -110,6 +131,14 @@ export interface PreviewWorkspace {
   /** Everything the session holds, and which rows are focused, selected and shown. */
   readonly roster: RosterState;
   readonly rosterLoad: RosterLoadState;
+  /**
+   * Increments only after an authoritative roster answer has been applied.
+   *
+   * A rejected mutation may have changed Rust before its reply was lost, so
+   * becoming idle is not settlement. Focus recovery uses this edge to wait for
+   * the owed reconciliation instead of deciding against a stale roster.
+   */
+  readonly rosterSettlementToken: number;
   readonly reloadRoster: () => void;
   /** The row whose preview is on screen or was explicitly asked for. */
   readonly activeDataset: SelectedFile | null;
@@ -117,8 +146,14 @@ export interface PreviewWorkspace {
   readonly dispatchRoster: (action: RosterAction) => void;
   /** Shows the native picker and adds every file chosen. */
   readonly addFiles: () => void;
+  /**
+   * Shows the native folder picker and adds every mzML file found beneath the
+   * folder chosen. Starts no backend work for any of them.
+   */
+  readonly addFolder: () => void;
   readonly removeSelected: () => void;
-  readonly clearList: () => void;
+  /** Clears the roster and reports whether this call acquired the mutation gate. */
+  readonly clearList: () => boolean;
   /** Explicitly reads one dataset. The only thing that starts a preview. */
   readonly activateDataset: (handle: string) => void;
   /** Reads the active dataset again, after a failure or a backend change. */
@@ -135,6 +170,16 @@ export interface PreviewWorkspace {
    */
   readonly pickerError: PreviewError | null;
   readonly dismissPickerError: () => void;
+  /**
+   * A folder import that failed, at any point from the picker to the commit.
+   *
+   * Its own channel rather than the workspace one, because the roster was not
+   * changed: a folder that could not be scanned, or a scan a later decision
+   * superseded, leaves the session exactly as it was. Path-free, like every
+   * error that crosses this boundary.
+   */
+  readonly folderError: PreviewError | null;
+  readonly dismissFolderError: () => void;
   /** A workspace mutation that failed. The roster is left as Rust last said. */
   readonly workspaceError: PreviewError | null;
   readonly dismissWorkspaceError: () => void;
@@ -174,7 +219,20 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const [measurements, setMeasurements] = useState<readonly PreviewMeasurement[]>([]);
 
   const [roster, dispatchRoster] = useReducer(rosterReducer, initialRosterState);
-  const [rosterLoad, setRosterLoad] = useState<RosterLoadState>({ status: "loading" });
+  const [rosterLoad, setRosterLoadState] = useState<RosterLoadState>({ status: "loading" });
+  /**
+   * Whether this window has an authoritative list, where a start guard can read
+   * it.
+   *
+   * A ref rather than the rendered value, for the same reason every other guard
+   * here is one: the decision is made inside a handler that can be several
+   * commits older than the truth.
+   */
+  const rosterReadyRef = useRef(false);
+  const showRosterLoad = useCallback((next: RosterLoadState) => {
+    rosterReadyRef.current = next.status === "ready";
+    setRosterLoadState(next);
+  }, []);
   const [workspaceNotice, setWorkspaceNotice] = useState<WorkspaceNotice | null>(null);
   /**
    * How many accounts of a workspace action there have been.
@@ -284,8 +342,54 @@ export function usePreviewWorkspace(): PreviewWorkspace {
 
   const [pickerBusy, setPickerBusy] = useState(false);
   const pickerBusyRef = useRef(false);
+  const [folderBusy, setFolderBusy] = useState(false);
+  /**
+   * The same flag where a promise handler and a start guard can read it.
+   *
+   * A folder import spans a modal dialog and a filesystem walk, so a callback
+   * closing over the rendered value would decide "is one already running" from
+   * whatever was true when the closure was made.
+   */
+  const folderBusyRef = useRef(false);
+  const [folderReservationPending, setFolderReservationPending] = useState(false);
+  /**
+   * The synchronous half of the reservation acknowledgement barrier.
+   *
+   * A rendered disabled state cannot close the interval between a click and
+   * React's next commit. Clear and Remove read this ref inside their own
+   * handlers, so neither can cross IPC until the begin reply has dispatched
+   * the exact claim.
+   */
+  const folderReservationPendingRef = useRef(false);
+  const [folderError, setFolderError] = useState<PreviewError | null>(null);
+  /**
+   * Which folder import owns the busy state, the notice and the error.
+   *
+   * The start guard above already makes two of these non-overlapping, so this
+   * is what keeps that true rather than what makes it true: settlement is
+   * claimed by the request that started it, so nothing an older request does on
+   * its way out can clear a newer one's marker or install its account.
+   */
+  const folderToken = useRef(0);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const workspaceBusyRef = useRef(false);
+  const [rosterSettlementToken, setRosterSettlementToken] = useState(0);
+  /**
+   * How many removal and clear requests have begun.
+   *
+   * `Remove selected` and `Clear list` stay available for the length of a
+   * folder import, so their user intent has to hide that import's reply as soon
+   * as the request starts. Waiting for the mutation's answer would let a folder
+   * reply install transient rows -- and, in an empty workspace, start a preview
+   * for one -- after the user had already asked to remove them.
+   *
+   * A rejected mutation has no authoritative roster to replace the hidden
+   * folder reply, and rejection does not prove that Rust was unchanged. Such a
+   * request records a reconciliation debt instead; after both operations have
+   * settled a fresh roster read restores the one state Rust actually holds.
+   */
+  const workspaceMutations = useRef(0);
+  const workspaceReconcileOwed = useRef(false);
 
   const previewToken = useRef(0);
   const spectrumToken = useRef(0);
@@ -449,23 +553,85 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * empty list this window happens to start with. It launches nothing.
    */
   const reloadRoster = useCallback(() => {
+    // Reading the list back is not the final-empty escape `Clear list` is, nor
+    // does it manage known rows as `Remove selected` does. Although the command
+    // is now a pure read, starting one during a scan would add an unnecessary
+    // loading state and a snapshot whose usefulness depends on whether the scan
+    // committed before or after it. The folder result or the owed
+    // reconciliation already provides the authoritative way out.
+    //
+    // The visible action is disabled too, but only where it is rendered at all
+    // -- the empty state offers it after a failed read, and a failed read is
+    // itself what stops an import starting. This is the rule rather than a
+    // rendering of it.
+    if (folderBusyRef.current) {
+      return;
+    }
     rosterToken.current += 1;
     const token = rosterToken.current;
-    setRosterLoad({ status: "loading" });
+    showRosterLoad({ status: "loading" });
     void api
       .getRoster()
       .then((loaded) => {
         if (mounted.current && token === rosterToken.current) {
+          const hadRows = rosterRef.current.datasets.length > 0;
+          const showing = openHandle.current;
+          if (
+            showing !== null &&
+            !loaded.datasets.some((dataset) => dataset.handle === showing)
+          ) {
+            // A failed mutation can still have changed Rust before its reply
+            // was lost. If reconciliation says the shown row no longer exists,
+            // every reading derived from it has to leave with it.
+            clearVisiblePreview();
+          }
           dispatchRoster({ type: "rosterLoaded", roster: loaded });
-          setRosterLoad({ status: "ready" });
+          setRosterSettlementToken((token) => token + 1);
+          showRosterLoad({ status: "ready" });
+          if (hadRows && loaded.datasets.length === 0) {
+            // A reconciliation can establish that a failed removal actually
+            // removed the last row. Reuse the same deferred focus recovery as a
+            // successful emptying action; it waits for Add files to be enabled
+            // and never overrides a destination the user chose meanwhile.
+            setFocusAddFilesToken((token) => token + 1);
+          }
         }
       })
       .catch((cause: unknown) => {
         if (mounted.current && token === rosterToken.current) {
-          setRosterLoad({ status: "failed", error: toPreviewError(cause) });
+          showRosterLoad({ status: "failed", error: toPreviewError(cause) });
         }
       });
-  }, [api]);
+  }, [api, clearVisiblePreview, showRosterLoad]);
+
+  /** Starts an owed reconciliation only after both competing operations end. */
+  const drainWorkspaceReconciliation = useCallback(() => {
+    if (
+      !mounted.current ||
+      !workspaceReconcileOwed.current ||
+      folderBusyRef.current ||
+      workspaceBusyRef.current
+    ) {
+      return;
+    }
+    workspaceReconcileOwed.current = false;
+    reloadRoster();
+  }, [reloadRoster]);
+
+  /**
+   * Recovers the authoritative list after a workspace mutation rejects.
+   *
+   * The folder reply remains suppressed: applying it could expose a snapshot
+   * from before a mutation that actually reached Rust but whose reply failed.
+   * Rejection records a debt; whichever of the folder and mutation settles last
+   * drains it, then lets Rust state the answer directly. Doing this for every
+   * rejection also supersedes an older reconciliation read that may have
+   * observed the workspace before this request reached Rust.
+   */
+  const reconcileAfterFailedWorkspaceMutation = useCallback(() => {
+    workspaceReconcileOwed.current = true;
+    drainWorkspaceReconciliation();
+  }, [drainWorkspaceReconciliation]);
 
   useEffect(reloadRoster, [reloadRoster]);
 
@@ -482,8 +648,9 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    */
   const rosterSettled = useCallback(() => {
     rosterToken.current += 1;
-    setRosterLoad({ status: "ready" });
-  }, []);
+    setRosterSettlementToken((token) => token + 1);
+    showRosterLoad({ status: "ready" });
+  }, [showRosterLoad]);
 
   /**
    * Applies a verdict that comes back from changing which installation is used.
@@ -739,7 +906,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     // reply's roster snapshot overwrite the newer one's, and Rust serialises
     // them behind one gate regardless, so this waits for a moment rather than
     // for anything.
-    if (pickerBusyRef.current || workspaceBusyRef.current) {
+    //
+    // A folder import counts, and it is the longest of them. This batch advances
+    // Rust's mutation generation: if it reaches the gate before an older scan,
+    // that scan is superseded; if the scan committed first, this batch's roster
+    // includes its rows. Either way only the later authoritative reply is used.
+    if (pickerBusyRef.current || folderBusyRef.current || workspaceBusyRef.current) {
       return;
     }
     const startedAt = now();
@@ -801,16 +973,198 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       });
   }, [api, loadPreview, rosterSettled, showWorkspaceNotice]);
 
+  /**
+   * Adds every mzML file under a folder the user picks.
+   *
+   * Longer than every other workspace action and deliberately less exclusive.
+   * The list stays live for the whole of it -- searching, sorting, selecting
+   * and reading a file already in the session all keep working -- because a
+   * scan is filesystem work rather than backend work and there is no honest
+   * reason to take the session away for it. What it does hold is the right to
+   * change the roster, which is what stops a second mutation answering with a
+   * list from before this one.
+   */
+  const addFolder = useCallback(() => {
+    // Read from refs, never from rendered state. This decision is made inside
+    // a handler that can be several commits older than the truth.
+    if (pickerBusyRef.current || folderBusyRef.current || workspaceBusyRef.current) {
+      return;
+    }
+    // Not until this window knows what the session holds. The native page-load
+    // event has already superseded work owned by the previous document, but the
+    // roster answer is what lets this document begin from an authoritative
+    // list. Waiting costs one round trip that is already in flight and avoids
+    // importing into a workspace this window has not adopted.
+    //
+    // A failed read is the same answer: this window has no authoritative list,
+    // and importing into a workspace it could not read is not something to
+    // start on a guess. The roster's own retry is the way out.
+    if (!rosterReadyRef.current) {
+      return;
+    }
+    const startedAt = now();
+    folderToken.current += 1;
+    const token = folderToken.current;
+    // Where the workspace's own decisions stood when this began. Removing rows
+    // and emptying the list stay available throughout, so one of them can be
+    // started while this is still out there.
+    const mutationsAtStart = workspaceMutations.current;
+    setFolderError(null);
+    folderBusyRef.current = true;
+    folderReservationPendingRef.current = true;
+    setFolderBusy(true);
+    setFolderReservationPending(true);
+    void api
+      .chooseFolder(() => {
+        // Reservation replies, terminal settlement and a later invocation can
+        // overtake one another. Only the request that still owns folder busy
+        // may release the current barrier.
+        if (
+          !mounted.current ||
+          token !== folderToken.current ||
+          !folderBusyRef.current
+        ) {
+          return;
+        }
+        folderReservationPendingRef.current = false;
+        setFolderReservationPending(false);
+      })
+      .then((result) => {
+        if (!mounted.current || token !== folderToken.current) {
+          return;
+        }
+        // A dismissed picker is not a failure and is deliberately not a folder
+        // that held nothing. Nothing changes and nothing is announced.
+        if (result === null) {
+          return;
+        }
+        if (workspaceMutations.current !== mutationsAtStart) {
+          // A removal or a clear was started after this import, so this roster
+          // is not the newest answer about what the session holds and
+          // installing it would put back exactly the rows the user asked to be
+          // rid of.
+          //
+          // Nothing is said, and that is not an omission. A successful mutation
+          // supplies the authoritative roster that accounts for the import; a
+          // rejected mutation instead causes a fresh roster read after both
+          // operations settle. Applying or describing this result while the
+          // later request is unresolved would expose a snapshot that may already
+          // be obsolete.
+          return;
+        }
+        const added = result.outcomes.flatMap((outcome) =>
+          outcome.outcome === "added" ? [outcome.dataset.handle] : [],
+        );
+        // Whether the session was empty is Rust's answer, not this side's
+        // projection of it. A webview can reload while Rust still holds rows,
+        // and a first read that is slow or failed leaves the roster on screen
+        // empty while the session is not. Every row in the reply being one this
+        // import added is the same question asked of the only list that knows,
+        // and it is a safe question only because a superseded import never
+        // reaches here -- it fails, and fails without adding anything.
+        const wasEmpty = result.roster.datasets.length === added.length;
+        // Through the reducer, which is where the selection the user built
+        // while the scan ran is reconciled with what arrived. Doing it here
+        // would mean holding selection rules in two places, and the one that
+        // matters -- keep theirs, add ours -- in the place that cannot see the
+        // current state.
+        dispatchRoster({ type: "folderImported", result });
+        // The reply is a newer and more authoritative read than any roster load
+        // still in flight, so this drops those older replies rather than
+        // letting one install a list from before the import.
+        rosterSettled();
+        showWorkspaceNotice(describeFolderResult(result));
+        // At most one read, and only into a session that had nothing in it.
+        // This is what keeps one folder of a thousand files costing one process
+        // rather than a thousand, while a first-run session still ends up
+        // looking at something.
+        const first = added[0];
+        if (
+          wasEmpty &&
+          first !== undefined &&
+          backendUsableRef.current &&
+          !backendBusyRef.current &&
+          viewerRequests.current === 0
+        ) {
+          loadPreview(first, startedAt);
+        }
+      })
+      .catch((cause: unknown) => {
+        const error = toPreviewError(cause);
+        // The workspace is left exactly as it was, and so is the preview. A
+        // folder that could not be scanned changed nothing and still needs a
+        // recovery path. A scan that a later workspace decision superseded is
+        // different: that decision is the reason Rust refused the import, and
+        // its own reply (or the reconciliation it owes after failure) is the
+        // authoritative account. Reporting the older refusal as a folder
+        // failure would turn the user's successful escape into an error.
+        // A genuine discovery or picker failure can precede Rust's generation
+        // check, so overlap alone is not enough to hide it. Only the typed
+        // refusals that say the newer decision won are expected settlement. A
+        // delayed begin from the previous document can replace this stale
+        // claim after Clear or Remove; `invalid_folder_import_reservation` is
+        // equally safe to hide in that overlap because claim fails before the
+        // picker is dispatched.
+        const settledByThisWindow =
+          workspaceMutations.current !== mutationsAtStart &&
+          (error.kind === "import_superseded" ||
+            error.kind === "invalid_folder_import_reservation");
+        if (mounted.current && token === folderToken.current && !settledByThisWindow) {
+          setFolderError(error);
+        }
+      })
+      .finally(() => {
+        // Claimed by the request that started it. An older one settling here
+        // must not report a newer one's operation finished.
+        if (token !== folderToken.current) {
+          return;
+        }
+        folderBusyRef.current = false;
+        folderReservationPendingRef.current = false;
+        if (mounted.current) {
+          setFolderBusy(false);
+          setFolderReservationPending(false);
+          // A second workspace mutation can start after the failure that left
+          // this debt. Its own answer must settle first; the shared drain waits
+          // for both busy flags whichever callback happens to run last.
+          drainWorkspaceReconciliation();
+        }
+      });
+  }, [
+    api,
+    drainWorkspaceReconciliation,
+    loadPreview,
+    rosterSettled,
+    showWorkspaceNotice,
+  ]);
+
   const removeSelected = useCallback(() => {
     const handles = [...rosterRef.current.selected];
     // `pickerBusyRef` as well, and for the same reason `addFiles` reads this
     // one: an add holds it across the picker *and* the registration after it,
     // and a removal answering inside that window carries a roster snapshot
     // taken before the added rows existed.
-    if (handles.length === 0 || workspaceBusyRef.current || pickerBusyRef.current) {
+    //
+    // Deliberately **not** `folderBusyRef`. A folder import has no cancellation
+    // and can run for as long as the user's filesystem takes. A successful
+    // `Clear list` is the reliable final-empty escape; removal stays available
+    // to manage the rows already on screen. Rust linearises this action against
+    // the import: a removal that reaches the gate first supersedes it, while one that follows
+    // the import acts only on these handles and can retain newly imported rows.
+    if (
+      handles.length === 0 ||
+      workspaceBusyRef.current ||
+      pickerBusyRef.current ||
+      folderReservationPendingRef.current
+    ) {
       return;
     }
     workspaceBusyRef.current = true;
+    workspaceMutations.current += 1;
+    // A roster read already in flight may have been served before this request
+    // reached Rust. Suppress that reply immediately; success supplies its own
+    // roster, while failure starts a newer authoritative read.
+    rosterToken.current += 1;
     setWorkspaceBusy(true);
     setWorkspaceError(null);
     void api
@@ -831,6 +1185,9 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         if (showing !== null && result.removedHandles.includes(showing)) {
           clearVisiblePreview();
         }
+        // This authoritative roster pays any reconciliation debt left by an
+        // earlier failed request during the same import.
+        workspaceReconcileOwed.current = false;
         dispatchRoster({ type: "datasetsRemoved", result });
         rosterSettled();
         showWorkspaceNotice(describeRemoveResult(result));
@@ -841,29 +1198,55 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       .catch((cause: unknown) => {
         if (mounted.current) {
           setWorkspaceError(toPreviewError(cause));
+          reconcileAfterFailedWorkspaceMutation();
         }
       })
       .finally(() => {
         workspaceBusyRef.current = false;
         if (mounted.current) {
           setWorkspaceBusy(false);
+          drainWorkspaceReconciliation();
         }
       });
-  }, [api, clearVisiblePreview, rosterSettled, showWorkspaceNotice]);
+  }, [
+    api,
+    clearVisiblePreview,
+    drainWorkspaceReconciliation,
+    reconcileAfterFailedWorkspaceMutation,
+    rosterSettled,
+    showWorkspaceNotice,
+  ]);
 
   const clearList = useCallback(() => {
     // The count this action announces is read here, so an add still in flight
     // would make it a count of the workspace before the added rows -- on top of
     // being the second mutation in flight that `addFiles` refuses to be.
+    //
+    // Deliberately not `folderBusyRef`: a successful clear is the reliable way
+    // out of a folder chosen by mistake, and a folder import has no cancellation.
+    // If clear wins the gate it supersedes the import; if the import committed
+    // first, clear removes every row it added. The authoritative reply is empty
+    // either way.
+    const folderImportPending = folderBusyRef.current;
+    const rosterHasRows = rosterRef.current.datasets.length > 0;
     if (
       workspaceBusyRef.current ||
       pickerBusyRef.current ||
-      rosterRef.current.datasets.length === 0
+      folderReservationPendingRef.current ||
+      (!rosterHasRows && !folderImportPending)
     ) {
-      return;
+      return false;
     }
+    // What this window can see, which during a folder import may be fewer rows
+    // than Rust holds. The count is an account of the action rather than a
+    // claim about the registry, and the roster that comes back is the
+    // authoritative answer either way.
     const removed = rosterRef.current.datasets.length;
     workspaceBusyRef.current = true;
+    workspaceMutations.current += 1;
+    // The same request-time barrier as removal: an older roster read must not
+    // become visible while Clear is still waiting for its authoritative reply.
+    rosterToken.current += 1;
     setWorkspaceBusy(true);
     setWorkspaceError(null);
     void api
@@ -873,26 +1256,43 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           return;
         }
         clearVisiblePreview();
+        // This authoritative roster pays any reconciliation debt left by an
+        // earlier failed request during the same import.
+        workspaceReconcileOwed.current = false;
         dispatchRoster({ type: "workspaceCleared", roster: loaded });
         rosterSettled();
-        showWorkspaceNotice(describeClear(removed));
+        showWorkspaceNotice(describeClear(removed, folderImportPending));
         setFocusAddFilesToken((token) => token + 1);
       })
       .catch((cause: unknown) => {
         if (mounted.current) {
           setWorkspaceError(toPreviewError(cause));
+          reconcileAfterFailedWorkspaceMutation();
         }
       })
       .finally(() => {
         workspaceBusyRef.current = false;
         if (mounted.current) {
           setWorkspaceBusy(false);
+          drainWorkspaceReconciliation();
         }
       });
-  }, [api, clearVisiblePreview, rosterSettled, showWorkspaceNotice]);
+    return true;
+  }, [
+    api,
+    clearVisiblePreview,
+    drainWorkspaceReconciliation,
+    reconcileAfterFailedWorkspaceMutation,
+    rosterSettled,
+    showWorkspaceNotice,
+  ]);
 
   const dismissPickerError = useCallback(() => {
     setPickerError(null);
+  }, []);
+
+  const dismissFolderError = useCallback(() => {
+    setFolderError(null);
   }, []);
 
   const dismissWorkspaceError = useCallback(() => {
@@ -1041,16 +1441,20 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     backendBusy,
     previewBackendBusy,
     pickerBusy,
+    folderBusy,
+    folderReservationPending,
     workspaceBusy,
     checkBackend,
     chooseInstallation,
     useAutomaticDiscovery,
     roster,
     rosterLoad,
+    rosterSettlementToken,
     reloadRoster,
     activeDataset,
     dispatchRoster,
     addFiles,
+    addFolder,
     removeSelected,
     clearList,
     activateDataset,
@@ -1060,6 +1464,8 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     focusAddFilesToken,
     pickerError,
     dismissPickerError,
+    folderError,
+    dismissFolderError,
     workspaceError,
     dismissWorkspaceError,
     selectSpectrum,

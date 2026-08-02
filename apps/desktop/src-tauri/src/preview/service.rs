@@ -5,6 +5,7 @@
 //! without a WebView or a local ProteoWizard installation.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,11 +19,11 @@ use mscanvas_proteowizard::{
 use super::backend::{
     PreviewProvider, open_operations, reporting_redactor, selected_spectrum_operation,
 };
+use super::discovery::{
+    DiscoveryBudget, DiscoveryError, DiscoveryErrorKind, DiscoveryLimit, DiscoveryResult,
+    discover_mzml_candidates,
+};
 use super::dto::MAX_WORKSPACE_DATASETS;
-/// Named only by what the retired picker's replacement semantics still answer
-/// with, which is compiled out of the shipped binary.
-#[cfg(test)]
-use super::dto::SelectedFileDto;
 use super::dto::{
     BackendAvailabilityDto, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES, MAX_METADATA_LINE_CHARS,
     MAX_MS_LEVELS, MAX_PRECURSORS, MAX_SPECTRUM_POINTS, MAX_SPECTRUM_TABLE_ROWS, MetadataDto,
@@ -32,11 +33,15 @@ use super::dto::{
     WorkspaceAddResultDto, WorkspaceRemoveResultDto, WorkspaceRosterDto, bounded_text,
     redact_absolute_paths, require_finite, require_finite_option, workspace_full,
 };
+use super::dto::{
+    FolderDiscoverySummaryDto, FolderImportReservationDto, FolderIngestionResultDto,
+    FolderScanLimitDto, SelectedFileDto, import_superseded, invalid_folder_import_reservation,
+};
 use super::installation::InstallationIdentity;
 use super::selection::{
     AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity, RevocationReason,
-    accept_mzml_file, candidate_display_name, file_identity, lock_against_replacement, revalidate,
-    selected_file_dto, unknown_dataset,
+    accept_mzml_file, candidate_display_name, file_identity, lock_against_replacement,
+    relative_contexts, revalidate, selected_file_dto, unknown_dataset,
 };
 
 /// Everything the session knows about the datasets it holds.
@@ -142,21 +147,108 @@ impl Workspace {
 /// Built from the registry's own order, which is the only order there is. The
 /// capacity travels with it so the interface states the limit Rust enforces
 /// rather than one of its own.
+///
+/// The disambiguating contexts are computed here, over the whole registry,
+/// every time. Whether a filename is ambiguous is a property of the roster
+/// rather than of a row: adding a second `sample.mzML` gives both of them
+/// context and removing one takes it away again, so an answer stored per row
+/// would be an answer to a question that had since changed.
 fn roster_of(workspace: &Workspace) -> WorkspaceRosterDto {
+    let contexts = relative_contexts(&workspace.registry);
     WorkspaceRosterDto {
         datasets: workspace
             .registry
             .ids()
             .iter()
             .filter_map(|id| {
-                workspace
-                    .registry
-                    .get(*id)
-                    .map(|dataset| selected_file_dto(*id, dataset.file()))
+                workspace.registry.get(*id).map(|dataset| {
+                    selected_file_dto(*id, dataset.file(), contexts.get(id).cloned())
+                })
             })
             .collect(),
         capacity: MAX_WORKSPACE_DATASETS,
     }
+}
+
+/// One dataset, described as the roster it belongs to would describe it.
+///
+/// Used wherever an outcome names a row, so the dataset in an outcome and the
+/// same dataset in the roster beside it can never disagree about its context.
+fn dataset_dto(workspace: &Workspace, id: DatasetId) -> Option<SelectedFileDto> {
+    let contexts = relative_contexts(&workspace.registry);
+    workspace
+        .registry
+        .get(id)
+        .map(|dataset| selected_file_dto(id, dataset.file(), contexts.get(&id).cloned()))
+}
+
+/// What happened to one candidate, before it is described.
+///
+/// Held back because describing a row is a question about the finished roster,
+/// and a batch is not finished until its last file has been accepted. The
+/// candidate name travels with both variants because a rejection has no dataset
+/// to be named by, and the user still has to be told which file it was.
+enum PendingOutcome {
+    Registered {
+        candidate_name: String,
+        outcome: AddDatasetOutcome,
+    },
+    Rejected {
+        candidate_name: String,
+        error: PreviewErrorDto,
+    },
+}
+
+/// Turns a batch's registry outcomes into what the webview is told.
+///
+/// Run once, after the whole batch, against the roster it produced. Every
+/// dataset named in an outcome is therefore described exactly as the roster
+/// beside it describes the same dataset -- including its disambiguating
+/// context, which cannot be known until every row that might collide with it
+/// has arrived.
+fn describe_outcomes(
+    workspace: &Workspace,
+    pending: Vec<PendingOutcome>,
+) -> Vec<WorkspaceAddOutcomeDto> {
+    let contexts = relative_contexts(&workspace.registry);
+    let describe = |id: DatasetId| {
+        workspace
+            .registry
+            .get(id)
+            .map(|dataset| selected_file_dto(id, dataset.file(), contexts.get(&id).cloned()))
+    };
+    pending
+        .into_iter()
+        .map(|item| match item {
+            PendingOutcome::Rejected {
+                candidate_name,
+                error,
+            } => WorkspaceAddOutcomeDto::Rejected {
+                candidate_name,
+                error,
+            },
+            PendingOutcome::Registered {
+                candidate_name,
+                outcome,
+            } => match (outcome, outcome.registered_id().and_then(describe)) {
+                (AddDatasetOutcome::Added { .. }, Some(dataset)) => {
+                    WorkspaceAddOutcomeDto::Added { dataset }
+                }
+                (AddDatasetOutcome::Duplicate { .. }, Some(existing)) => {
+                    WorkspaceAddOutcomeDto::Duplicate { existing }
+                }
+                // Either the workspace was full, or -- unreachably -- a row
+                // named by an outcome had gone by the time it was described.
+                // A batch holds the mutation gate throughout, so the second
+                // cannot happen; reporting it as full rather than asserting
+                // keeps one command from taking a session down.
+                _ => WorkspaceAddOutcomeDto::Rejected {
+                    candidate_name,
+                    error: workspace_full(),
+                },
+            },
+        })
+        .collect()
 }
 
 /// What one dataset's session state is.
@@ -197,14 +289,22 @@ pub struct PreviewService {
     /// answerable in the meantime.
     backend_gate: Mutex<()>,
     /// Held for the length of one workspace mutation, so two of them cannot
-    /// interleave the rows of one batch.
+    /// interleave the rows of one batch, and carrying the generation that says
+    /// which decision about the workspace is the current one.
     ///
     /// Distinct from the workspace lock and always taken before it. A batch
     /// accepts each file in turn, which is filesystem work, and holding the
     /// workspace across the whole batch would leave every other command waiting
     /// on a picker's worth of inspections. This is what keeps a batch's order
     /// contiguous without doing that.
-    workspace_mutation: Mutex<()>,
+    ///
+    /// A folder scan cannot hold it: scanning is filesystem work that lasts as
+    /// long as the tree takes, and a workspace frozen for the length of it would
+    /// be a workspace nobody could remove a row from. So the generation exists.
+    /// A scan reserves one before it starts and commits only while it is still
+    /// current; anything the user does that says "the workspace state from here
+    /// on" advances it, and the abandoned scan then adds nothing.
+    workspace_mutation: Mutex<WorkspaceMutationState>,
     /// How many times the installation in use has changed.
     ///
     /// Stamped onto every verdict under the same gate that serves it, so the
@@ -244,7 +344,7 @@ impl PreviewService {
             provider,
             workspace: Mutex::new(Workspace::default()),
             backend_gate: Mutex::new(()),
-            workspace_mutation: Mutex::new(()),
+            workspace_mutation: Mutex::new(WorkspaceMutationState::default()),
             installation_generation: AtomicU64::new(0),
             resolved: Mutex::new(ObservedBackend::default()),
         }
@@ -321,16 +421,38 @@ impl PreviewService {
         self.installation_generation.load(Ordering::Relaxed)
     }
 
+    /// Declares the start of a new webview document.
+    ///
+    /// Called by Tauri's native page-load-started hook, not by an IPC command.
+    /// That distinction is load-bearing: a request from the document being
+    /// replaced can reach Rust after the replacement document's requests, but
+    /// it cannot arrive before the native event that started the replacement.
+    /// Advancing here supersedes a picker or scan owned by the old document
+    /// without letting one of that document's delayed roster reads supersede a
+    /// new document's later import.
+    pub fn begin_webview_document(&self) {
+        let (gate, _) = self.begin_mutation();
+        drop(gate);
+    }
+
     /// Everything the session holds, in the order it was added.
     ///
-    /// Stored facts only. Nothing is revalidated here and no process is
-    /// launched: a roster read happens on every mount and after every mutation,
-    /// and rechecking a thousand paths each time would turn drawing a list into
-    /// a thousand filesystem inspections. Whether a row's file is still the file
-    /// it was is a question the next preview of it asks, and answers where the
-    /// user can see it.
+    /// Stored facts only. Nothing is revalidated here, no process is launched
+    /// and the workspace generation is not changed. Navigation itself, rather
+    /// than this independently scheduled IPC read, is what supersedes work from
+    /// the previous document. Rechecking a thousand paths on every mount or
+    /// mutation would turn drawing a list into a thousand filesystem
+    /// inspections. Whether a row's file is still the file it was is a question
+    /// the next preview of it asks, and answers where the user can see it.
     pub fn roster(&self) -> WorkspaceRosterDto {
-        roster_of(&self.workspace())
+        // Pure does not mean unordered. A batch holds this gate across all of
+        // its short workspace writes, so taking it here makes the snapshot
+        // either wholly before or wholly after that batch rather than a
+        // partial list observed between two accepted files.
+        let gate = self.enter_workspace_mutation();
+        let roster = roster_of(&self.workspace());
+        drop(gate);
+        roster
     }
 
     /// Adds every chosen path, in picker order, and answers with what each one
@@ -348,7 +470,7 @@ impl PreviewService {
         // opens and inspects a file, which is filesystem work, and holding the
         // workspace across it would stop every other command for the length of
         // a batch.
-        let _batch = self.enter_workspace_mutation();
+        let (_batch, _generation) = self.begin_mutation();
         let mut outcomes = Vec::with_capacity(paths.len());
         for path in paths {
             // Taken before acceptance, because acceptance is what may fail and
@@ -357,7 +479,7 @@ impl PreviewService {
             let accepted = match accept_mzml_file(path) {
                 Ok(accepted) => accepted,
                 Err(error) => {
-                    outcomes.push(WorkspaceAddOutcomeDto::Rejected {
+                    outcomes.push(PendingOutcome::Rejected {
                         candidate_name: candidate,
                         error,
                     });
@@ -368,33 +490,238 @@ impl PreviewService {
             // does not hold the workspace across the acceptance of every file
             // in it.
             let mut workspace = self.workspace();
-            let outcome = workspace.registry.add(accepted);
-            let described = outcome.registered_id().map(|id| {
-                selected_file_dto(
-                    id,
-                    workspace
-                        .registry
-                        .get(id)
-                        .expect("an outcome that names a dataset names a registered one")
-                        .file(),
-                )
-            });
+            let outcome = workspace.registry.add_direct(accepted);
             drop(workspace);
-            outcomes.push(match (outcome, described) {
-                (AddDatasetOutcome::Added { .. }, Some(dataset)) => {
-                    WorkspaceAddOutcomeDto::Added { dataset }
-                }
-                (AddDatasetOutcome::Duplicate { .. }, Some(existing)) => {
-                    WorkspaceAddOutcomeDto::Duplicate { existing }
-                }
-                _ => WorkspaceAddOutcomeDto::Rejected {
-                    candidate_name: candidate,
-                    error: workspace_full(),
-                },
+            // The dataset each outcome names is described after the batch, not
+            // here: a row's context depends on what else the roster holds, and
+            // the second file of a colliding pair is what gives the first one
+            // its context. Described mid-batch, the earlier outcome would carry
+            // no context while the roster beside it carried one.
+            outcomes.push(PendingOutcome::Registered {
+                candidate_name: candidate,
+                outcome,
             });
         }
-        let roster = roster_of(&self.workspace());
+        let workspace = self.workspace();
+        let roster = roster_of(&workspace);
+        let outcomes = describe_outcomes(&workspace, outcomes);
+        drop(workspace);
         WorkspaceAddResultDto { roster, outcomes }
+    }
+
+    /// Reserves the right to claim the workspace's next state without opening
+    /// a picker.
+    ///
+    /// This is the synchronous half of the two-command boundary. A webview can
+    /// reload between any two IPC fetches, so the reservation is retained in
+    /// Rust under a session-scoped, single-use identifier. If the reply
+    /// disappears with the old document, no picker can start because that
+    /// document never receives the identifier.
+    ///
+    /// Begin itself is deliberately idempotent at one workspace generation. A
+    /// delayed begin from a document that has reloaded therefore cannot replace
+    /// a newer document's reservation or supersede a scan it already claimed.
+    /// The next begin after any other workspace decision replaces the one stale
+    /// slot, so abandoned replies cannot grow an unbounded registry.
+    pub fn begin_folder_import(&self) -> FolderImportReservationDto {
+        let mut gate = self.enter_workspace_mutation();
+        let generation = gate.generation;
+        if let Some(reservation_id) = gate
+            .pending_folder_import
+            .as_ref()
+            .filter(|pending| pending.baseline_generation == generation)
+            .map(|pending| pending.reservation_id)
+        {
+            return FolderImportReservationDto {
+                reservation_id: reservation_id.handle(),
+            };
+        }
+        let reservation_id = gate.allocate_folder_import_reservation();
+        gate.pending_folder_import = Some(PendingFolderImport {
+            reservation_id,
+            baseline_generation: generation,
+        });
+        drop(gate);
+        FolderImportReservationDto {
+            reservation_id: reservation_id.handle(),
+        }
+    }
+
+    /// Consumes one exact reservation before its picker is dispatched.
+    ///
+    /// An unknown, replaced or replayed identifier never consumes the active
+    /// slot. An exact identifier whose baseline was superseded by Clear, Remove
+    /// or a reloaded window is consumed but refused, so it cannot be retried
+    /// after the workspace moves again. A live exact claim advances the
+    /// generation and creates the internal token atomically. The token itself
+    /// never crosses IPC and remains unclonable.
+    pub fn claim_folder_import(
+        &self,
+        reservation_id: &str,
+    ) -> Result<FolderImportToken, PreviewErrorDto> {
+        let requested = FolderImportReservationId::parse(reservation_id)
+            .ok_or_else(invalid_folder_import_reservation)?;
+        let mut gate = self.enter_workspace_mutation();
+        let matches = gate
+            .pending_folder_import
+            .as_ref()
+            .is_some_and(|pending| pending.reservation_id == requested);
+        if !matches {
+            return Err(invalid_folder_import_reservation());
+        }
+        let pending = gate
+            .pending_folder_import
+            .take()
+            .expect("the exact pending folder reservation was present");
+        if pending.baseline_generation != gate.generation {
+            return Err(import_superseded());
+        }
+        let generation = gate.advance();
+        Ok(FolderImportToken { generation })
+    }
+
+    /// Direct token allocation for deterministic service tests.
+    ///
+    /// Product code uses the begin/claim pair above; tests that exercise the
+    /// unlocked scan and gated commit need the internal token without an IPC
+    /// protocol obscuring the ordering they control.
+    #[cfg(test)]
+    pub(super) fn reserve_folder_import(&self) -> FolderImportToken {
+        let (gate, generation) = self.begin_mutation();
+        drop(gate);
+        FolderImportToken { generation }
+    }
+
+    /// Scans one chosen folder and adds every mzML file it proposes.
+    ///
+    /// The shape of this is the whole of what M1.4.1 adds, and every step is
+    /// load-bearing:
+    ///
+    /// 1. the exact claim advanced the generation before the picker opened, so
+    ///    there is a name for "the workspace when this picker was accepted";
+    /// 2. reject an already-superseded token before touching the filesystem;
+    /// 3. scan holding **no** lock -- not the workspace, not the mutation gate.
+    ///    A tree can take as long as it takes, and a session frozen for the
+    ///    length of it would be one the user could not remove a row from;
+    /// 4. take the gate again and refuse outright if anything has happened
+    ///    since. A user who cleared the list, added files, or reloaded the
+    ///    window has said what the workspace is, and rows from an import they
+    ///    started before that would arrive from nowhere;
+    /// 5. accept the candidates in discovery order, under the gate, so the
+    ///    batch is one contiguous run;
+    /// 6. recheck each candidate's identity against what discovery found,
+    ///    because a path is a proposal and the object behind it can be
+    ///    replaced between the walk and the open.
+    ///
+    /// No backend is launched, for any candidate, ever. A folder of a thousand
+    /// files costs a thousand filesystem inspections and no processes.
+    pub fn add_mzml_folder(
+        &self,
+        root: &Path,
+        token: FolderImportToken,
+    ) -> Result<FolderIngestionResultDto, PreviewErrorDto> {
+        self.import_folder(token, || {
+            discover_mzml_candidates(root, DiscoveryBudget::default())
+        })
+    }
+
+    /// The scan and commit an import is made of, with the walk itself left to
+    /// the caller.
+    ///
+    /// Named as its own step because the walk is the one part that runs outside
+    /// the gate, and that is both what makes a long scan safe and what makes it
+    /// raceable. A test stands a controlled walk in its place and decides
+    /// exactly what happens to the workspace while it runs — no sleep, no
+    /// guess, and no tree the size of the case being described.
+    ///
+    /// It reserves nothing. The token is the reservation, and reserving a
+    /// second one here would move the import forward past every decision the
+    /// user made while the picker was open.
+    pub(super) fn import_folder<S>(
+        &self,
+        token: FolderImportToken,
+        scan: S,
+    ) -> Result<FolderIngestionResultDto, PreviewErrorDto>
+    where
+        S: FnOnce() -> Result<DiscoveryResult, DiscoveryError>,
+    {
+        let reserved = token.generation;
+        // A picker can remain open while another workspace decision supersedes
+        // its token. Refuse that known-stale work before paying for a tree walk.
+        // This is only a preflight: the generation must still be checked again
+        // after the unlocked scan to cover a decision made while it runs.
+        let preflight = self.enter_workspace_mutation();
+        if preflight.generation != reserved {
+            return Err(import_superseded());
+        }
+        drop(preflight);
+
+        let discovered = scan().map_err(|error| folder_error(error.kind()))?;
+
+        // Under the gate, and deliberately without advancing it: this commit is
+        // the completion of the decision the token names, not a new one.
+        let batch = self.enter_workspace_mutation();
+        if batch.generation != reserved {
+            // Nothing accepted, so nothing leased and no identifier spent. The
+            // candidates are dropped here, which is also where the files they
+            // named stop being held.
+            return Err(import_superseded());
+        }
+
+        let mut outcomes = Vec::with_capacity(discovered.candidates().len());
+        for candidate in discovered.candidates() {
+            let candidate_name = candidate_display_name(candidate.path());
+            let accepted = match accept_mzml_file(candidate.path()) {
+                Ok(accepted) => accepted,
+                Err(error) => {
+                    outcomes.push(PendingOutcome::Rejected {
+                        candidate_name,
+                        error,
+                    });
+                    continue;
+                }
+            };
+            // The recheck. Acceptance resolved the path again, and between the
+            // walk finding this name and that resolution the name can have been
+            // made to mean a different file -- one outside the folder the user
+            // chose, in the case worth worrying about. Containment was proved
+            // for the object discovery found; this is what carries that proof
+            // across to the object being registered.
+            if accepted.identity() != candidate.identity() {
+                outcomes.push(PendingOutcome::Rejected {
+                    candidate_name,
+                    error: folder_candidate_changed(),
+                });
+                continue;
+            }
+            let relative_parents = parent_components(candidate.relative_components());
+            let mut workspace = self.workspace();
+            let outcome = workspace
+                .registry
+                .add_discovered(accepted, relative_parents);
+            drop(workspace);
+            outcomes.push(PendingOutcome::Registered {
+                candidate_name,
+                outcome,
+            });
+        }
+
+        let workspace = self.workspace();
+        let roster = roster_of(&workspace);
+        let outcomes = describe_outcomes(&workspace, outcomes);
+        drop(workspace);
+        drop(batch);
+
+        Ok(FolderIngestionResultDto {
+            roster,
+            outcomes,
+            discovery: FolderDiscoverySummaryDto {
+                complete: discovered.is_complete(),
+                skipped_reparse_count: discovered.summary().skipped_reparse_count,
+                inaccessible_entry_count: discovered.summary().inaccessible_entry_count,
+                limits_reached: discovered.limits().iter().copied().map(limit_dto).collect(),
+            },
+        })
     }
 
     /// Removes the rows these handles name, and says which named nothing.
@@ -402,7 +729,10 @@ impl PreviewService {
     /// The source acquisitions are never touched. Removing a row removes a row
     /// and releases the handle that row was holding.
     pub fn remove_datasets(&self, handles: &[String]) -> WorkspaceRemoveResultDto {
-        let _batch = self.enter_workspace_mutation();
+        // Advances the generation even when every handle names nothing. The
+        // user said "this is the workspace now", and a folder scan that
+        // committed across that would repopulate a list they had just pruned.
+        let (_batch, _generation) = self.begin_mutation();
         let mut removed = Vec::new();
         let mut unknown = Vec::new();
         // The same handle twice is one row to remove, not one removal and one
@@ -443,7 +773,7 @@ impl PreviewService {
     /// in flight for one of the emptied datasets must not land on whatever is
     /// added next.
     pub fn clear_workspace(&self) -> WorkspaceRosterDto {
-        let _batch = self.enter_workspace_mutation();
+        let (_batch, _generation) = self.begin_mutation();
         let mut workspace = self.workspace();
         workspace.clear(RevocationReason::Cleared);
         roster_of(&workspace)
@@ -455,10 +785,130 @@ impl PreviewService {
     /// batches could interleave their rows, and the order the user picked files
     /// in -- which is the order the roster is -- would depend on which thread
     /// won each turn.
-    fn enter_workspace_mutation(&self) -> std::sync::MutexGuard<'_, ()> {
+    fn enter_workspace_mutation(&self) -> std::sync::MutexGuard<'_, WorkspaceMutationState> {
         self.workspace_mutation
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Takes the gate and declares a new state of the workspace.
+    ///
+    /// Every immediate mutation goes through here, as does the native start of
+    /// a replacement webview document. Each one is a statement about the
+    /// workspace from that moment on, which is exactly what makes an older
+    /// folder scan's answer no longer the one the user is waiting for.
+    ///
+    /// It advances even when the operation ends up changing nothing. Removing
+    /// zero rows is still the user saying "this is the workspace now", and a
+    /// scan that committed across it would add rows to a list that had already
+    /// been answered for.
+    fn begin_mutation(&self) -> (std::sync::MutexGuard<'_, WorkspaceMutationState>, u64) {
+        let mut gate = self.enter_workspace_mutation();
+        let generation = gate.advance();
+        (gate, generation)
+    }
+}
+
+const FOLDER_IMPORT_RESERVATION_PREFIX: &str = "folder-import-reservation-";
+
+/// Correlates a pending reservation with exactly one later picker command.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FolderImportReservationId(u64);
+
+impl FolderImportReservationId {
+    fn handle(self) -> String {
+        format!("{FOLDER_IMPORT_RESERVATION_PREFIX}{}", self.0)
+    }
+
+    fn parse(handle: &str) -> Option<Self> {
+        let id = Self(
+            handle
+                .strip_prefix(FOLDER_IMPORT_RESERVATION_PREFIX)?
+                .parse()
+                .ok()?,
+        );
+        (id.handle() == handle).then_some(id)
+    }
+}
+
+impl fmt::Debug for FolderImportReservationId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<folder-import-reservation-id>")
+    }
+}
+
+struct PendingFolderImport {
+    reservation_id: FolderImportReservationId,
+    baseline_generation: u64,
+}
+
+/// One folder import's claim on the workspace's next state.
+///
+/// Opaque, unclonable and not serialisable. The webview neither supplies nor
+/// receives it: begin stores only a baseline behind a session claim identifier,
+/// the chooser consumes that identifier and creates this token, and the import
+/// spends it. What the token represents — "the workspace as it was when the
+/// picker claim was accepted" — cannot be forged, reused or moved across the
+/// boundary. Holding a number rather than a lock is what lets the native dialog
+/// stand open for as long as the user needs without freezing the session.
+pub struct FolderImportToken {
+    generation: u64,
+}
+
+impl FolderImportToken {
+    /// Which decision this token names. Test-only: nothing in the product needs
+    /// to look inside it, and the whole point is that the number is private.
+    #[cfg(test)]
+    pub(super) const fn generation(&self) -> u64 {
+        self.generation
+    }
+}
+
+impl fmt::Debug for FolderImportToken {
+    /// Opaque, like every other value in this boundary that names a moment in
+    /// the session's history. The number is meaningless outside the service and
+    /// printing it invites a reader of a log to treat it as something to
+    /// correlate.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<folder-import-token>")
+    }
+}
+
+/// Which decision about the workspace is the current one.
+///
+/// A single counter behind the mutation gate. It is not a lock and it is not a
+/// version of the contents: it is the answer to "has anything happened that
+/// makes a scan started earlier no longer the thing the user is waiting for".
+#[derive(Default)]
+struct WorkspaceMutationState {
+    generation: u64,
+    next_folder_import_reservation: u64,
+    pending_folder_import: Option<PendingFolderImport>,
+}
+
+impl WorkspaceMutationState {
+    /// Moves to the next generation and reports it.
+    ///
+    /// Checked, so the invariant is absolute rather than nearly so: a wrapped
+    /// counter would hand a stale scan the token it needed to commit, and a
+    /// release build wraps silently. A session cannot reach this in practice --
+    /// it counts user actions -- which is exactly why the failure would be
+    /// invisible if it ever did.
+    fn advance(&mut self) -> u64 {
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .expect("a session cannot make more than u64::MAX workspace decisions");
+        self.generation
+    }
+
+    fn allocate_folder_import_reservation(&mut self) -> FolderImportReservationId {
+        let reservation = FolderImportReservationId(self.next_folder_import_reservation);
+        self.next_folder_import_reservation = self
+            .next_folder_import_reservation
+            .checked_add(1)
+            .expect("a session cannot begin more than u64::MAX folder imports");
+        reservation
     }
 }
 
@@ -490,15 +940,8 @@ impl PreviewService {
         // own, and the request epoch that lets a spectrum still waiting for its
         // turn on it find out that nobody will look at the answer.
         workspace.clear(RevocationReason::ReplacedBySelection);
-        let id = workspace.registry.add(accepted).id();
-        let dto = selected_file_dto(
-            id,
-            workspace
-                .registry
-                .get(id)
-                .expect("the dataset was registered a line ago")
-                .file(),
-        );
+        let id = workspace.registry.add_direct(accepted).id();
+        let dto = dataset_dto(&workspace, id).expect("the dataset was registered a line ago");
         Ok(dto)
     }
 
@@ -511,12 +954,8 @@ impl PreviewService {
     pub(super) fn add_dataset(&self, path: &Path) -> Result<SelectedFileDto, PreviewErrorDto> {
         let accepted = accept_mzml_file(path)?;
         let mut workspace = self.workspace();
-        let id = workspace.registry.add(accepted).id();
-        let dataset = workspace
-            .registry
-            .get(id)
-            .expect("the dataset was registered a line ago");
-        Ok(selected_file_dto(id, dataset.file()))
+        let id = workspace.registry.add_direct(accepted).id();
+        Ok(dataset_dto(&workspace, id).expect("the dataset was registered a line ago"))
     }
 
     /// How many datasets the session holds.
@@ -731,11 +1170,23 @@ impl PreviewService {
             },
             table_rows,
         });
+        // Described as the roster describes it, so a preview header and the row
+        // it belongs to cannot disagree about which of two identically named
+        // files this is. Read from the lock that is already held rather than
+        // taking it again: the workspace mutex is not reentrant, and asking for
+        // it a second time inside an expression still holding the first is a
+        // deadlock that stops the whole session.
+        //
+        // The fallback is not decoration. `request_is_current` above proves the
+        // request has not been superseded, not that the row is still there --
+        // and the accepted file is what the read was actually of.
+        let described =
+            dataset_dto(&workspace, id).unwrap_or_else(|| selected_file_dto(id, &file, None));
         drop(workspace);
 
         Ok(PreviewDto {
             installation_generation: generation,
-            file: selected_file_dto(id, &file),
+            file: described,
             metadata,
             run_summary,
             spectrum_table,
@@ -1073,6 +1524,99 @@ struct OpenedPreview {
     /// none, which compares equal to nothing and so refuses rather than
     /// assumes.
     installation: Option<InstallationIdentity>,
+}
+
+/// The parents of a discovered candidate, which is its location without its
+/// name.
+///
+/// Discovery's components end in the filename, because that is what makes them
+/// a location *of a file*. What a display context needs is where the file is,
+/// and repeating the name inside the thing that disambiguates the name would
+/// say it twice.
+fn parent_components(relative: &[std::ffi::OsString]) -> Vec<std::ffi::OsString> {
+    relative
+        .split_last()
+        .map(|(_, parents)| parents.to_vec())
+        .unwrap_or_default()
+}
+
+fn limit_dto(limit: DiscoveryLimit) -> FolderScanLimitDto {
+    match limit {
+        DiscoveryLimit::Depth => FolderScanLimitDto::Depth,
+        DiscoveryLimit::Entries => FolderScanLimitDto::Entries,
+        DiscoveryLimit::Directories => FolderScanLimitDto::Directories,
+        DiscoveryLimit::Candidates => FolderScanLimitDto::Candidates,
+    }
+}
+
+/// What a candidate is refused with when the file behind its name changed.
+///
+/// Its own kind rather than the acceptance failures beside it, because it is
+/// the one refusal that is not about the file being unreadable: the path
+/// resolved, the file opened, and it simply is not the file that was found.
+fn folder_candidate_changed() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "folder_candidate_changed",
+        "That file changed while MSCanvas was scanning the folder, so it was not added. Scan \
+         the folder again to pick up what is there now.",
+        true,
+    )
+}
+
+/// Turns a private discovery refusal into something the webview may see.
+///
+/// One arm per kind, spelled out rather than defaulted, so adding a kind to the
+/// traversal makes this fail to compile instead of silently reporting the new
+/// refusal as one of the old ones. Nothing here carries a path, a root name or
+/// an operating-system message.
+fn folder_error(kind: DiscoveryErrorKind) -> PreviewErrorDto {
+    match kind {
+        DiscoveryErrorKind::PlatformUnavailable => PreviewErrorDto::new(
+            "folder_discovery_unavailable",
+            "Adding a folder of mzML files is available on Windows in this version.",
+            false,
+        ),
+        DiscoveryErrorKind::RootUnavailable => PreviewErrorDto::new(
+            "folder_not_readable",
+            "MSCanvas could not read that folder. Check that it still exists and that you can \
+             open it, or choose another one.",
+            true,
+        ),
+        DiscoveryErrorKind::RootNotDirectory => PreviewErrorDto::new(
+            "folder_not_directory",
+            "That choice is not a folder. Choose the folder that holds the .mzML files.",
+            true,
+        ),
+        // Not retryable for the same choice, and the message says what to
+        // choose instead rather than inviting the user to try the same thing.
+        DiscoveryErrorKind::RootReparsePoint => PreviewErrorDto::new(
+            "folder_link_unsupported",
+            "That is a shortcut or link to a folder rather than a folder. MSCanvas does not \
+             follow links when scanning, so choose the folder it points at.",
+            false,
+        ),
+        DiscoveryErrorKind::RemoteRootUnsupported => PreviewErrorDto::new(
+            "network_folder_unsupported",
+            "MSCanvas scans folders on this computer in this version. Choose a folder on a \
+             local drive.",
+            false,
+        ),
+        DiscoveryErrorKind::RootEnumerationFailed => PreviewErrorDto::new(
+            "folder_scan_unreadable",
+            "MSCanvas could not list what is in that folder. Check that you can open it, or \
+             choose another one.",
+            true,
+        ),
+        // Deliberately says nothing about what the filesystem answered. The
+        // detail is a Win32 record layout, which is neither actionable nor
+        // safe to forward.
+        DiscoveryErrorKind::FilesystemInvariantFailed => PreviewErrorDto::new(
+            "folder_scan_failed",
+            "MSCanvas stopped scanning that folder because the filesystem described it in a \
+             way it could not read. Nothing was added.",
+            true,
+        ),
+    }
 }
 
 fn installation_changed_since_preview() -> PreviewErrorDto {

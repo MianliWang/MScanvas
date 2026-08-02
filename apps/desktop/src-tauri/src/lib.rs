@@ -4,11 +4,13 @@ use std::sync::Arc;
 
 use mscanvas_core::BootstrapStatus;
 use tauri::async_runtime::spawn_blocking;
+use tauri::webview::PageLoadEvent;
 use tauri::{Manager, State};
 
 use preview::dto::{
-    BackendAvailabilityDto, PreviewDto, PreviewErrorDto, SelectedSpectrumOutcomeDto,
-    WorkspaceAddResultDto, WorkspaceRemoveResultDto, WorkspaceRosterDto,
+    BackendAvailabilityDto, FolderImportReservationDto, FolderIngestionResultDto, PreviewDto,
+    PreviewErrorDto, SelectedSpectrumOutcomeDto, WorkspaceAddResultDto, WorkspaceRemoveResultDto,
+    WorkspaceRosterDto,
 };
 use preview::{PreviewService, ProteoWizardProvider};
 
@@ -73,6 +75,59 @@ async fn choose_mzml_files(
     off_the_async_runtime(move || {
         let chosen = receiver.recv().map_err(|_| picker_unavailable())??;
         Ok(chosen.map(|paths| service.add_files(&paths)))
+    })
+    .await?
+}
+
+/// Reserves one folder import without opening a picker.
+///
+/// Deliberately synchronous and deliberately separate from choosing. Tauri
+/// dispatches Windows invokes as independent fetches, so requests from a
+/// reloaded document can overtake requests from the one it replaced. If this
+/// response reaches its document, Rust already holds the returned single-use
+/// reservation. If it does not, that document cannot issue the matching
+/// chooser. Begin is idempotent at the current workspace generation, so a
+/// delayed request from that document can neither replace the live reservation
+/// nor supersede a claimed scan.
+#[tauri::command]
+fn begin_mzml_folder_import(service: State<'_, SharedService>) -> FolderImportReservationDto {
+    service.begin_folder_import()
+}
+
+/// Shows the native folder picker for one exact reservation and adds every
+/// mzML file found beneath the chosen folder.
+///
+/// The webview names no folder: it returns only the opaque reservation Rust
+/// issued. Rust consumes and validates that claim **before** dispatching the
+/// dialog. A replacement document, Clear or Remove that overtook it therefore
+/// makes it fail without opening a picker; one that follows the claim
+/// supersedes the eventual commit through the same generation check.
+///
+/// Cancelling returns `None`, which is an ordinary outcome rather than an empty
+/// scan. Nothing here reads an acquisition or launches a backend process.
+#[tauri::command]
+async fn choose_mzml_folder(
+    reservation_id: String,
+    app: tauri::AppHandle,
+    service: State<'_, SharedService>,
+) -> Result<Option<FolderIngestionResultDto>, PreviewErrorDto> {
+    let owner = main_window_handle(&app);
+    let service = Arc::clone(&service);
+    let token = service.claim_folder_import(&reservation_id)?;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = sender.send(preview::dialog::choose_mzml_folder(owner));
+    })
+    .map_err(|_| folder_picker_unavailable())?;
+
+    // The wait spans the modal dialog and then the scan, either of which can
+    // last as long as the user's filesystem takes. Neither is something to
+    // hold an async worker for.
+    off_the_async_runtime(move || {
+        let chosen = receiver.recv().map_err(|_| folder_picker_unavailable())??;
+        chosen
+            .map(|root| service.add_mzml_folder(&root, token))
+            .transpose()
     })
     .await?
 }
@@ -230,6 +285,11 @@ pub fn run() {
         .manage(SharedService::new(PreviewService::new(Box::new(
             ProteoWizardProvider::new(),
         ))))
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main" && payload.event() == PageLoadEvent::Started {
+                webview.state::<SharedService>().begin_webview_document();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             get_bootstrap_status,
             inspect_backend,
@@ -237,6 +297,8 @@ pub fn run() {
             use_automatic_backend_discovery,
             get_workspace_roster,
             choose_mzml_files,
+            begin_mzml_folder_import,
+            choose_mzml_folder,
             remove_workspace_datasets,
             clear_workspace,
             open_mzml_preview,

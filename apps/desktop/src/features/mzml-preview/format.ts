@@ -6,7 +6,21 @@
  * every test run.
  */
 
-import type { RetentionTime } from "./contracts";
+import type { RetentionTime, SelectedFile } from "./contracts";
+
+/**
+ * Names one dataset without deriving or exposing any more location than Rust
+ * already decided the live roster needs to disambiguate it.
+ *
+ * The context is roster-relative and can change as same-named rows arrive or
+ * leave, so callers should pass the current roster row when one is available;
+ * a dataset copied into an older preview response is only a defensive fallback.
+ */
+export function formatDatasetLabel(dataset: SelectedFile): string {
+  return dataset.relativeContext === null
+    ? dataset.fileName
+    : `${dataset.fileName}, ${dataset.relativeContext}`;
+}
 
 /** Groups integer digits without consulting the host locale. */
 export function formatCount(value: number): string {

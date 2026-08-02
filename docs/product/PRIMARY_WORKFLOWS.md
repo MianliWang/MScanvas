@@ -30,7 +30,7 @@ the selected file: it stays one click from being reopened.
 
 ## WF-002 — Add and curate a batch
 
-1. Use `Add files…` to choose one or many mzML files.
+1. Use `Add files…` to choose one or many mzML files, or `Add mzML folder…` to take every `.mzML` file found beneath one folder.
 2. Discovery represents each logical acquisition once.
 3. Rows progressively show format, size and readiness.
 4. User searches, sorts, selects/removes items or activates Clear workspace.
@@ -38,7 +38,21 @@ the selected file: it stays one click from being reopened.
 **Success:** the intended logical batch is visible.
 **Invariant:** removal and clearing never delete source data.
 
-**Planned follow-ups**, none of which the application does yet: `Add mzML folder…`, Explorer drag-and-drop, and directory-formatted acquisition discovery. The private traversal foundation the first of those needs exists as of M1.4.0; see [ADR 0007](../architecture/adr/0007-logical-acquisition-discovery-and-folder-traversal.md).
+**Adding a folder**, as of M1.4.1 and bounded by [ADR 0007](../architecture/adr/0007-logical-acquisition-discovery-and-folder-traversal.md):
+
+- The scan is recursive over one folder the user chose in a native picker, and finds regular `.mzML` files only. Nothing else is offered, and no ProteoWizard process is launched for any of them.
+- Linked and special filesystem entries — junctions, symbolic links, mount points, cloud placeholders — are never followed, so the scan cannot leave the folder the user pointed at. They are counted and reported.
+- A scan that stopped at one of its four named limits, skipped a linked entry, or could not read a subtree says so. "No mzML files were found in that folder" is said only by a scan that described the whole folder.
+- Starting the picker is a path-free two-command handshake. Rust first records or reuses one current-generation baseline and returns a session-scoped, opaque-but-not-secret correlation ID. The chooser must consume and validate that exact ID before the picker opens; only that successful claim advances the generation and creates the internal import token.
+- The list stays usable throughout: searching, sorting, selecting and reading a file already in the session all keep working, and a selection made while a scan runs survives it.
+- **Getting out stays available.** A scan cannot be cancelled, so `Clear list` is deliberately *not* disabled while one runs and is offered even when the list is empty. Clear and Remove wait only for the short begin response that proves Rust retained the baseline; after that they remain available throughout the picker and scan. When the Clear command succeeds, it is the reliable way out of a folder chosen by mistake and the final workspace is empty. `Remove selected` also stays available to manage rows already on screen, but it does not promise to cancel the import.
+- What waits is acquiring more — `Add files…` and a second `Add mzML folder…` — and explicitly reading the list back. The roster command is a pure, mutation-gate-linearised snapshot and cannot supersede an import. It still waits during a scan because another loading state and a snapshot whose usefulness depends on commit order add no recovery path; the folder result or an owed reconciliation already supplies the authoritative answer.
+- Rust linearises an import against a later workspace action at both claim and commit. If Clear or Remove reaches the gate before claim, the baseline is stale and the picker does not open. If claim comes first, the later action advances beyond its token and prevents its eventual commit. If the import commits first, the later action's roster is authoritative: `Clear list` still empties every row, while `Remove selected` removes only the handles it was given and can therefore retain newly imported rows. In no order may a late folder reply overwrite that later action.
+- A workspace action that fails while the import is unresolved does not make the older folder reply safe to display: the failure may have happened after Rust changed state. Once both operations settle, MSCanvas reads the authoritative roster again, removes any preview whose row is no longer present, and keeps the typed action error visible.
+- Main-webview native page-load start, not roster-request arrival, supersedes work owned by a replaced document. A delayed old begin cannot advance the generation or cancel a newer claimed import, and a delayed old roster request is only a snapshot. When this window made a later Clear or Remove, its resulting `import_superseded` or claim-stage `invalid_folder_import_reservation` settles silently; independent picker and discovery failures remain actionable.
+- Two rows that end up sharing a filename show where each was found, and only for as long as they collide.
+
+**Planned follow-ups**, neither of which the application does yet: Explorer drag-and-drop (M1.5), and directory-formatted acquisition discovery, which stays gated until this repository can convert one.
 
 ## WF-003 — Inspect an acquisition
 

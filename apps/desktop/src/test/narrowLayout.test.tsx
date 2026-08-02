@@ -95,6 +95,22 @@ describe("narrow desktop layout rules", () => {
     expect(header.getPropertyValue("text-overflow")).toBe("ellipsis");
   });
 
+  it("gives the Run file identity a readable colour without changing every header note", () => {
+    // Same 11px contrast boundary as collision context in the roster: this can
+    // be the only text that distinguishes two same-named acquisitions, while
+    // other panel notes retain their quieter established hierarchy.
+    const app = mountStyles(appStyles);
+
+    expect(
+      requireStyleRule(app, ".panel-header p.preview-file-identity").style.getPropertyValue(
+        "color",
+      ),
+    ).toBe("var(--color-text-secondary)");
+    expect(requireStyleRule(app, ".panel-header p").style.getPropertyValue("color")).toBe(
+      "var(--color-text-tertiary)",
+    );
+  });
+
   it("lets an empty-state action break a file name it cannot fit", () => {
     // The action that offers the retained file says its name, and a name can
     // arrive with nothing in it a line may break at. Centred in a panel that
@@ -162,6 +178,7 @@ describe("narrow desktop layout markup", () => {
     );
 
     expect(await screen.findAllByRole("button", { name: "Add files…" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Add mzML folder…" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Preview focused" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Remove selected" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Check again" })).toHaveLength(1);
@@ -190,25 +207,86 @@ describe("narrow desktop layout markup", () => {
     // with four rows in it: rows that exist, are announced, and cannot be
     // reached. The track has a floor and the panel has a minimum.
     //
-    // M1.3 raised both by what the search and sort controls cost. The two are
-    // pinned together because they are one decision: a track shorter than the
-    // panel's own minimum clamps the panel back to a height its chrome does
-    // not fit in, which is the original defect by another route.
+    // M1.3 raised both by what the search and sort controls cost, and M1.4.1
+    // by the third line five actions wrap to at this column's minimum width.
+    // The two are pinned together because they are one decision: a track
+    // shorter than the panel's own minimum clamps the panel back to a height
+    // its chrome does not fit in, which is the original defect by another
+    // route.
     const app = mountStyles(appStyles);
 
     expect(requireStyleRule(app, ".dataset-roster-panel").style.getPropertyValue("min-height")).toBe(
-      "240px",
+      "280px",
     );
     expect(
       requireMediaRule(app, "(max-width: 1120px)", ".workspace-layout").style.getPropertyValue(
         "grid-template-rows",
       ),
-    ).toBe("minmax(240px, 0.9fr) minmax(0, 1.6fr)");
+    ).toBe("minmax(342px, 0.9fr) minmax(178px, 1.6fr)");
     // And what the column cannot fit is clipped here rather than pushing the
     // shell past the viewport.
     expect(requireStyleRule(app, ".workspace-sidebar").style.getPropertyValue("overflow")).toBe(
       "hidden",
     );
+  });
+
+  it("keeps the loaded Run identity visible below the roster at the app minimum", () => {
+    // The roster's two-row floor consumes the old 280px narrow track by
+    // itself. Without a separate Run floor and the matching 8px-gap-plus-52px
+    // track budget, the inspector collapses to about one CSS pixel and clips
+    // the acquisition identity even though its header still has a layout rect.
+    const app = mountStyles(appStyles);
+
+    expect(requireStyleRule(app, ".workspace-sidebar").style.getPropertyValue("gap")).toBe(
+      "8px",
+    );
+    expect(requireStyleRule(app, ".panel-header").style.getPropertyValue("min-height")).toBe(
+      "52px",
+    );
+    expect(
+      requireMediaRule(
+        app,
+        "(max-width: 1120px)",
+        ".workspace-sidebar > .inspector-panel",
+      ).style.getPropertyValue("min-height"),
+    ).toBe("54px");
+    expect(
+      requireMediaRule(app, "(max-width: 1120px)", ".workspace-layout").style.getPropertyValue(
+        "grid-template-rows",
+      ),
+    ).toBe("minmax(342px, 0.9fr) minmax(178px, 1.6fr)");
+    expect(
+      requireMediaRule(app, "(max-width: 1120px)", ".viewer-stack").style.getPropertyValue(
+        "grid-template-rows",
+      ),
+    ).toBe("minmax(116px, 1.15fr) minmax(54px, 1fr)");
+  });
+
+  it("keeps the complete loaded viewer reachable when shell notices shorten the workspace", () => {
+    // At 960x640 the persistent backend notice and a folder-import notice take
+    // two approximately 31px lines. After the 58px toolbar, only about 520px
+    // remains for a workspace whose complete narrow evidence is 544px tall:
+    // 16px padding + 342px sidebar + 8px gap + (116px table + 8px gap +
+    // 54px selected-spectrum header). The document intentionally cannot
+    // scroll, so the narrow workspace must both reserve the complete viewer
+    // stack and own the resulting small vertical overflow.
+    const app = mountStyles(appStyles);
+    const workspace = requireMediaRule(
+      app,
+      "(max-width: 1120px)",
+      ".workspace-layout",
+    ).style;
+
+    expect(workspace.getPropertyValue("grid-template-rows")).toBe(
+      "minmax(342px, 0.9fr) minmax(178px, 1.6fr)",
+    );
+    expect(workspace.getPropertyValue("overflow-y")).toBe("auto");
+    expect(
+      requireMediaRule(app, "(max-width: 1120px)", ".viewer-stack").style.getPropertyValue(
+        "grid-template-rows",
+      ),
+    ).toBe("minmax(116px, 1.15fr) minmax(54px, 1fr)");
+    expect(requireStyleRule(app, ".viewer-stack").style.getPropertyValue("gap")).toBe("8px");
   });
 
   it("lets a row's notes give ground so the file name keeps a column", () => {
@@ -229,6 +307,58 @@ describe("narrow desktop layout markup", () => {
     const notes = requireStyleRule(app, ".dataset-row-notes").style;
     expect(notes.getPropertyValue("min-width")).toBe("0px");
     expect(notes.getPropertyValue("overflow")).toBe("hidden");
+  });
+
+  it("lets five actions wrap rather than widening the column they sit in", () => {
+    // The fifth action is what raised the panel's floor by one wrapped line.
+    // What must not happen instead is the row refusing to wrap and pushing the
+    // sidebar -- and the document -- wider than the window.
+    const app = mountStyles(appStyles);
+    const actions = requireStyleRule(app, ".dataset-roster-actions").style;
+
+    expect(actions.getPropertyValue("display")).toBe("flex");
+    expect(actions.getPropertyValue("flex-wrap")).toBe("wrap");
+  });
+
+  it("lets a row's collision context give ground before the file name does", () => {
+    // The name and its context share one grid cell, so the cell needs the same
+    // treatment the notes track got: a minimum of zero for the part that may
+    // disappear, and a floor for the part that may not. A context long enough
+    // to fill the cell would otherwise leave the name at zero, which is issue
+    // #24's defect one column over.
+    const app = mountStyles(appStyles);
+    const label = requireStyleRule(app, ".dataset-row-label").style;
+    const name = requireStyleRule(app, ".dataset-row-name").style;
+    const context = requireStyleRule(app, ".dataset-row-context").style;
+
+    expect(label.getPropertyValue("display")).toBe("flex");
+    expect(label.getPropertyValue("min-width")).toBe("0px");
+    // The file a row is about is the last thing on it that may disappear.
+    expect(name.getPropertyValue("min-width")).toBe("48px");
+    expect(name.getPropertyValue("flex")).toBe("1 1 auto");
+    // The context gives ground first, and ellipsizes rather than wrapping: a
+    // row is one line tall and Rust already bounds the string.
+    expect(context.getPropertyValue("min-width")).toBe("0px");
+    expect(context.getPropertyValue("flex")).toBe("0 1 auto");
+    expect(context.getPropertyValue("overflow")).toBe("hidden");
+    expect(context.getPropertyValue("text-overflow")).toBe("ellipsis");
+    expect(context.getPropertyValue("white-space")).toBe("nowrap");
+    // And it keeps the row's five tracks exactly as they were: the context
+    // lives inside the name's cell rather than taking one of its own.
+    expect(
+      requireStyleRule(app, ".dataset-row").style.getPropertyValue("grid-template-columns"),
+    ).toBe("12px 12px minmax(72px, 1fr) auto minmax(0, auto)");
+  });
+
+  it("gives a row's collision context a colour that can be read", () => {
+    // 11px secondary text, for the same reason the search's explanations take
+    // it: the tertiary colour is about 3.5:1 on white, which is under AA at
+    // this size.
+    const app = mountStyles(appStyles);
+
+    expect(requireStyleRule(app, ".dataset-row-context").style.getPropertyValue("color")).toBe(
+      "var(--color-text-secondary)",
+    );
   });
 
   it("gives the search's own explanations a colour that can be read", () => {

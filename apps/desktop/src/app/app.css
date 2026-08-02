@@ -176,12 +176,18 @@ button:disabled {
    gives ground first.
 
    The arithmetic, because it is the whole reason for the number: 2px of panel
-   border, 55px of header, 39px of view controls and 87px of actions -- four
-   buttons that do not fit one line in this column and wrap to two, which is
-   what they already did before the view controls existed -- is 183px of chrome,
-   and `.dataset-roster-list` is the only child that can give ground. 183 plus
-   the 56px two-row floor below is 239, rounded up to 240 so a font that
-   measures a little differently does not spend the rounding.
+   border, 55px of header, 39px of view controls and 125px of actions -- five
+   buttons that wrap to three lines at this column's minimum width, being three
+   32px rows, two 6px gaps, 16px of padding and the 1px rule below them -- is
+   221px of chrome, and `.dataset-roster-list` is the only child that can give
+   ground. 221 plus the 56px two-row floor below is 277, rounded up to 280 so a
+   font that measures a little differently does not spend the rounding.
+
+   M1.4.1 moved this from 240 by exactly one wrapped line of actions. The
+   alternative was a shorter label for the folder action, and every shorter one
+   promised something this version does not do: `Add folder…` reads as a folder
+   of anything, including the directory-formatted acquisitions ADR 0007 leaves
+   out of scope.
 
    The search summary is deliberately not a row here. It lives in the header
    line, which exists either way and already truncates: given a row of its own
@@ -189,7 +195,7 @@ button:disabled {
    the actions wrap it was the list that paid. */
 .dataset-roster-panel {
   display: flex;
-  min-height: 240px;
+  min-height: 280px;
   flex: 1 1 40%;
   flex-direction: column;
 }
@@ -297,8 +303,42 @@ button:disabled {
   text-align: center;
 }
 
+/* The name and, only when two rows share one, where it came from. One grid
+   cell for both so the row keeps the five columns it has and the name keeps
+   the floor the track gives it. */
+.dataset-row-label {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+}
+
 .dataset-row-name {
+  /* Takes what is left after the context has had its share, and never less
+     than this: the file a row is about is the last thing on it that may
+     disappear. A context long enough to fill the cell would otherwise leave
+     the name at zero, which is the defect issue #24 fixed one column over. */
+  min-width: 48px;
+  flex: 1 1 auto;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Which of two identically named files this row is. Quieter than the name and
+   never instead of it: it is a fact about where the file was found, and the
+   filename remains what the row is about. Secondary rather than tertiary text,
+   because at 11px the tertiary colour does not reach 4.5:1 against the panel --
+   the same reason the search's own explanations take it.
+
+   Gives ground before the name does, and ellipsizes rather than wrapping: Rust
+   already bounds the string, and a row is one line tall. */
+.dataset-row-context {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -427,6 +467,15 @@ button:disabled {
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* This line identifies which acquisition every number below belongs to. A
+   collision context can be the only visible difference between two runs, so
+   at 11px it takes the quieter readable text colour rather than the tertiary
+   token used as the established generic panel-note colour. Scoped here so
+   unrelated headers keep their established hierarchy. */
+.panel-header p.preview-file-identity {
+  color: var(--color-text-secondary);
 }
 
 /* While a query is hiding rows this line stops being a note about the panel and
@@ -752,10 +801,39 @@ button:disabled {
        workspace column: measured at 896x475 CSS pixels the roster's list came
        out at zero height with four rows in it. The first track therefore has a
        floor, and the viewer below keeps the rest. The floor is the panel's own
-       minimum, raised in M1.3 by what the search and sort controls cost; the
-       two have to move together, because a track shorter than the panel's
-       minimum clamps it back to a height its chrome does not fit in. */
-    grid-template-rows: minmax(240px, 0.9fr) minmax(0, 1.6fr);
+       minimum, raised in M1.3 by what the search and sort controls cost and in
+       M1.4.1 by the third line the fifth action wraps to; the two have to move
+       together, because a track shorter than the panel's minimum clamps it
+       back to a height its chrome does not fit in. With a preview loaded the
+       track also pays for the 8px panel gap and the Run panel's complete 52px
+       identity header inside its two 1px borders: 280 + 8 + 54 = 342. Its
+       details may scroll, but the acquisition they describe is never clipped
+       away. */
+    grid-template-rows: minmax(342px, 0.9fr) minmax(178px, 1.6fr);
+    /* Two in-flow notices leave about 520px for this box at 960x640, while the
+       complete narrow evidence contract needs 544px: 16px padding, 342px for
+       the sidebar, its 8px gap, and 178px for the viewer below. The document
+       deliberately does not scroll, so this is the surface that must own that
+       small overflow. Without it the bottom Selected spectrum panel is simply
+       clipped outside the window while a folder import is in progress. */
+    overflow-y: auto;
+  }
+
+  .workspace-sidebar > .inspector-panel {
+    /* The Run header is the identity for every value in the viewer. It may
+       give all of its scrollable detail space to the roster at the minimum
+       window, but its 52px header plus the panel borders must remain visible. */
+    min-height: 54px;
+  }
+
+  .viewer-stack {
+    /* At the minimum-height window the taller workspace row leaves a bounded
+       viewer remainder. Reserve 116px for the rendered Spectra header, the
+       30px sticky table header, one complete 30px data row and the panel
+       borders. The selected-spectrum panel keeps its 52px header and borders.
+       Their 8px gap makes this stack's outer floor 178px above. Any extra
+       height still follows the established 1.15:1 ratio. */
+    grid-template-rows: minmax(116px, 1.15fr) minmax(54px, 1fr);
   }
 }
 

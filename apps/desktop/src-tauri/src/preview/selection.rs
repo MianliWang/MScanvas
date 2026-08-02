@@ -4,13 +4,14 @@
 //! name, never an absolute path, and the file itself is only ever read.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::dto::{
-    MAX_CANDIDATE_NAME_CHARS, MAX_WORKSPACE_DATASETS, PreviewErrorDto, SelectedFileDto,
-    bounded_text,
+    MAX_CANDIDATE_NAME_CHARS, MAX_RELATIVE_CONTEXT_CHARS, MAX_WORKSPACE_DATASETS, PreviewErrorDto,
+    SelectedFileDto, bounded_text,
 };
 
 /// What the filesystem itself calls one file, wide enough to be told apart from
@@ -640,11 +641,46 @@ impl fmt::Debug for DatasetId {
     }
 }
 
+/// How a dataset came to be in the session.
+///
+/// Private, never serialized, and not part of a dataset's identity: two names
+/// for one acquisition are one row whichever route each name arrived by. It
+/// exists for exactly one visible purpose -- telling two rows with the same
+/// final filename apart -- and ADR 0006 permits that and nothing else.
+#[derive(Clone, PartialEq, Eq)]
+pub(super) enum DatasetOrigin {
+    /// Named directly in the file picker. There is nowhere else to say it came
+    /// from: the user pointed at the file, not at a tree containing it.
+    Direct,
+    /// Found under a folder the user chose, at these components below it.
+    ///
+    /// The *parent* components only, root name excluded and filename excluded.
+    /// The filename is already on the accepted file, and repeating it here
+    /// would make a display context that ends in the name it is disambiguating.
+    /// Empty means the file sat at the top of the chosen folder.
+    Folder { relative_parents: Vec<OsString> },
+}
+
+impl fmt::Debug for DatasetOrigin {
+    /// Opaque about the folder half. Components under the user's chosen root
+    /// are the one path-shaped thing this type holds, and a derived `Debug`
+    /// would put them into the first log line or panic that touched a dataset.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Direct => formatter.write_str("<direct>"),
+            Self::Folder { relative_parents } => {
+                write!(formatter, "<folder depth {}>", relative_parents.len())
+            }
+        }
+    }
+}
+
 /// One accepted file, and the dataset the session knows it as.
 #[derive(Clone)]
 pub(super) struct RegisteredDataset {
     id: DatasetId,
     file: AcceptedFile,
+    origin: DatasetOrigin,
 }
 
 impl RegisteredDataset {
@@ -654,6 +690,10 @@ impl RegisteredDataset {
 
     pub(super) const fn file(&self) -> &AcceptedFile {
         &self.file
+    }
+
+    pub(super) const fn origin(&self) -> &DatasetOrigin {
+        &self.origin
     }
 }
 
@@ -784,8 +824,32 @@ impl DatasetRegistry {
     /// tell the user to remove rows to make space for something that needs
     /// none, and would report a row they already have as a file they failed to
     /// add.
-    pub(super) fn add(&mut self, file: AcceptedFile) -> AddDatasetOutcome {
+    pub(super) fn add_direct(&mut self, file: AcceptedFile) -> AddDatasetOutcome {
+        self.add(file, DatasetOrigin::Direct)
+    }
+
+    /// Adds a file found under a folder the user chose, remembering where.
+    ///
+    /// The components are the parents below the chosen root, which is the only
+    /// thing that can tell two rows with one filename apart. They are recorded
+    /// even when nothing collides yet: whether a name is ambiguous is a
+    /// property of the whole roster and changes as rows arrive and leave, so
+    /// deciding it at insertion would be deciding it once for a question that
+    /// keeps being asked.
+    pub(super) fn add_discovered(
+        &mut self,
+        file: AcceptedFile,
+        relative_parents: Vec<OsString>,
+    ) -> AddDatasetOutcome {
+        self.add(file, DatasetOrigin::Folder { relative_parents })
+    }
+
+    fn add(&mut self, file: AcceptedFile, origin: DatasetOrigin) -> AddDatasetOutcome {
         if let Some(&existing_id) = self.by_identity.get(&file.identity()) {
+            // The existing row keeps the origin it was registered with. The
+            // second name for one acquisition is not a second acquisition, and
+            // rewriting where the row "came from" would move a user's row
+            // under them because they happened to point at it twice.
             return AddDatasetOutcome::Duplicate { existing_id };
         }
         if self.order.len() >= MAX_WORKSPACE_DATASETS {
@@ -800,7 +864,8 @@ impl DatasetRegistry {
             .checked_add(1)
             .expect("a session cannot allocate more than u64::MAX datasets");
         self.by_identity.insert(file.identity(), id);
-        self.datasets.insert(id, RegisteredDataset { id, file });
+        self.datasets
+            .insert(id, RegisteredDataset { id, file, origin });
         self.order.push(id);
         AddDatasetOutcome::Added { id }
     }
@@ -907,12 +972,140 @@ pub(super) fn candidate_display_name(path: &Path) -> String {
 }
 
 /// What the boundary is told about one accepted file.
-pub(super) fn selected_file_dto(id: DatasetId, file: &AcceptedFile) -> SelectedFileDto {
+///
+/// `relative_context` is the caller's, because whether a name is ambiguous is a
+/// property of the whole roster rather than of one row. `None` is the ordinary
+/// answer and the one every non-colliding row gets.
+pub(super) fn selected_file_dto(
+    id: DatasetId,
+    file: &AcceptedFile,
+    relative_context: Option<String>,
+) -> SelectedFileDto {
     SelectedFileDto {
         handle: id.handle(),
         file_name: file.file_name().to_owned(),
         byte_length: file.byte_length(),
+        relative_context,
     }
+}
+
+/// What each row must say about itself so that no two rows read alike.
+///
+/// Computed over the whole live registry, every time a roster is built, because
+/// the answer changes as rows arrive and leave: adding a second `sample.mzML`
+/// gives both of them context, and removing one takes it away from the survivor.
+/// Deciding it once at insertion would freeze an answer to a question that keeps
+/// being asked.
+///
+/// Only exact final-filename collisions produce anything. A unique name needs no
+/// help, and a folder location shown beside one would be a path fragment on
+/// screen for no reason -- which is the whole of what ADR 0006 permits here.
+pub(super) fn relative_contexts(registry: &DatasetRegistry) -> HashMap<DatasetId, String> {
+    let mut by_name: HashMap<&str, Vec<DatasetId>> = HashMap::new();
+    for id in registry.ids() {
+        if let Some(dataset) = registry.get(*id) {
+            by_name
+                .entry(dataset.file().file_name())
+                .or_default()
+                .push(*id);
+        }
+    }
+
+    let mut contexts = HashMap::new();
+    for ids in by_name.into_values() {
+        if ids.len() < 2 {
+            continue;
+        }
+        // What each colliding row would say on its own, already bounded.
+        //
+        // Bounded *before* the group is checked, and that order is the point.
+        // Uniqueness is a property of what the user reads, not of what was
+        // computed: two locations that differ only near the root are distinct
+        // descriptions and truncate onto one visible string, because what
+        // truncation keeps is the deep end. Checked before bounding, the group
+        // looks settled and both rows render one filename and one identical
+        // context, which is exactly the ambiguity this whole function exists to
+        // remove.
+        let described: Vec<(DatasetId, String, String)> = ids
+            .iter()
+            .filter_map(|id| {
+                registry.get(*id).map(|dataset| {
+                    let raw = describe_origin(dataset.origin());
+                    let shown = bounded_context(&raw, 0);
+                    (*id, raw, shown)
+                })
+            })
+            .collect();
+        let mut seen: HashMap<&str, usize> = HashMap::new();
+        for (_, _, shown) in &described {
+            *seen.entry(shown.as_str()).or_default() += 1;
+        }
+        for (id, raw, shown) in &described {
+            // The fallback names the row rather than the filesystem. It is the
+            // session's own identifier, which is already the handle the webview
+            // holds, so it reveals nothing a caller does not have -- and it is
+            // stable for as long as the row is, so the same roster read twice
+            // says the same thing.
+            let context = if seen.get(shown.as_str()).copied().unwrap_or(0) > 1 {
+                let suffix = format!(" · workspace item {}", id.0);
+                // Re-bounded with the suffix's room kept back, so the thing
+                // that tells the two rows apart survives. Appended to an
+                // already-full context it would be cut straight off again, and
+                // the fallback would have done nothing at all.
+                let base = bounded_context(raw, suffix.chars().count());
+                format!("{base}{suffix}")
+            } else {
+                shown.clone()
+            };
+            contexts.insert(*id, context);
+        }
+    }
+    contexts
+}
+
+/// What one row's origin says about where it is, before any tie-break.
+fn describe_origin(origin: &DatasetOrigin) -> String {
+    match origin {
+        // Not a location, and deliberately not phrased as one. A picked file
+        // has no place under a chosen folder to describe, and inventing one --
+        // "top level", say -- would put it in a tree the user never named.
+        DatasetOrigin::Direct => "Added directly".to_owned(),
+        DatasetOrigin::Folder { relative_parents } if relative_parents.is_empty() => {
+            "Top level".to_owned()
+        }
+        DatasetOrigin::Folder { relative_parents } => relative_parents
+            .iter()
+            .map(|component| component.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("\\"),
+    }
+}
+
+/// Bounds a context, keeping the components nearest the filename.
+///
+/// Truncating from the end would drop the very components that disambiguate,
+/// since the deepest one is the one closest to the file. What is lost is the
+/// shallow end, and the ellipsis leads so a reader can see that something was.
+///
+/// `reserved` is how many characters the caller still has to add afterwards.
+/// A tie-break appended to an already-full context would be cut off by the very
+/// bound it was added to satisfy, so the room for it is kept back here rather
+/// than hoped for later.
+fn bounded_context(value: &str, reserved: usize) -> String {
+    let budget = MAX_RELATIVE_CONTEXT_CHARS.saturating_sub(reserved);
+    if budget == 0 {
+        // The suffix alone fills the bound. It is the half that actually tells
+        // two rows apart, so it is the half that survives.
+        return String::new();
+    }
+    let length = value.chars().count();
+    if length <= budget {
+        return value.to_owned();
+    }
+    // One character of the budget is the ellipsis itself.
+    let keep = budget.saturating_sub(1);
+    let tail: String = value.chars().skip(length.saturating_sub(keep)).collect();
+    format!("…{tail}")
 }
 
 #[cfg(test)]
@@ -1151,6 +1344,156 @@ mod tests {
         );
     }
 
+    /// A location deep enough that what the user reads is a truncation of it.
+    ///
+    /// Every one of these differs from the next only in its first character, so
+    /// the descriptions are distinct and their retained deep ends are not. The
+    /// components are fabricated rather than walked: `add_discovered` takes the
+    /// parents as values, and a tree this deep would exceed what Windows
+    /// resolves without a long-path opt-in. What is under test is the naming
+    /// rule, and the naming rule never touches a filesystem.
+    fn long_parents(first: char) -> Vec<OsString> {
+        vec![
+            OsString::from(format!("{first}{}", "p".repeat(49))),
+            OsString::from("q".repeat(50)),
+            OsString::from("r".repeat(50)),
+        ]
+    }
+
+    /// Every context one roster would show, in registry order.
+    fn shown(registry: &DatasetRegistry) -> Vec<String> {
+        let contexts = relative_contexts(registry);
+        registry
+            .ids()
+            .iter()
+            .filter_map(|id| contexts.get(id).cloned())
+            .collect()
+    }
+
+    /// One same-named row per fabricated location, each in a directory of its
+    /// own so the filesystem lets them share a name.
+    fn collided(locations: &[Vec<OsString>]) -> (Vec<TestDirectory>, DatasetRegistry) {
+        let mut directories = Vec::new();
+        let mut registry = DatasetRegistry::default();
+        for (index, parents) in locations.iter().enumerate() {
+            let directory = TestDirectory::new(&format!("collide-{index}"));
+            let file = accepted(
+                &directory,
+                "sample.mzML",
+                format!("<mzML> {index} </mzML>").as_bytes(),
+            );
+            registry.add_discovered(file, parents.clone());
+            directories.push(directory);
+        }
+        (directories, registry)
+    }
+
+    #[test]
+    fn two_locations_that_truncate_alike_are_still_told_apart() {
+        // The defect this repairs. Two distinct descriptions, unique before the
+        // bound and identical after it, because what truncation keeps is the
+        // deep end and these differ only near the root. Decided before
+        // bounding, the group looks settled, no tie-break is added, and the
+        // roster renders one filename beside one identical context twice --
+        // which is precisely the ambiguity relative context exists to remove.
+        let (_directories, registry) = collided(&[long_parents('X'), long_parents('Y')]);
+
+        let contexts = shown(&registry);
+
+        assert_eq!(contexts.len(), 2);
+        assert_ne!(
+            contexts[0], contexts[1],
+            "two rows the user has to choose between say two different things"
+        );
+        for context in &contexts {
+            assert!(
+                context.chars().count() <= MAX_RELATIVE_CONTEXT_CHARS,
+                "{}",
+                context.chars().count()
+            );
+            assert!(context.contains(" · workspace item "), "{context}");
+            assert!(context.starts_with('…'), "{context}");
+        }
+    }
+
+    #[test]
+    fn three_locations_that_truncate_alike_each_get_their_own_answer() {
+        let (_directories, registry) =
+            collided(&[long_parents('X'), long_parents('Y'), long_parents('Z')]);
+
+        let contexts = shown(&registry);
+
+        assert_eq!(contexts.len(), 3);
+        let mut unique = contexts.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), 3, "{contexts:?}");
+    }
+
+    #[test]
+    fn a_row_whose_visible_context_is_already_its_own_says_nothing_more() {
+        // The tie-break is for rows that would otherwise read alike. A group
+        // whose bounded contexts already differ gets no identifier appended,
+        // because a session number beside an unambiguous location is noise.
+        let (_directories, registry) = collided(&[
+            vec![OsString::from("batch-1")],
+            vec![OsString::from("batch-2")],
+        ]);
+
+        assert_eq!(shown(&registry), vec!["batch-1", "batch-2"]);
+    }
+
+    #[test]
+    fn a_context_is_bounded_and_keeps_the_deep_end() {
+        let bounded = bounded_context(&"z".repeat(400), 0);
+
+        assert_eq!(bounded.chars().count(), MAX_RELATIVE_CONTEXT_CHARS);
+        assert!(bounded.starts_with('…'));
+    }
+
+    #[test]
+    fn a_tie_break_keeps_its_own_room_inside_the_bound() {
+        // Appended to an already-full context the suffix would be cut off by
+        // the very bound it was added to satisfy, and the fallback would have
+        // done nothing at all. Measured at the widest identifier a session can
+        // reach rather than at a convenient one.
+        let suffix = format!(" · workspace item {}", u64::MAX);
+        let base = bounded_context(&"z".repeat(400), suffix.chars().count());
+
+        assert_eq!(
+            base.chars().count() + suffix.chars().count(),
+            MAX_RELATIVE_CONTEXT_CHARS
+        );
+        assert!(base.starts_with('…'));
+    }
+
+    #[test]
+    fn the_bound_counts_what_a_reader_sees_rather_than_bytes() {
+        // Every component here is three bytes and one scalar. Counting bytes
+        // would cut a third of the way through the budget and, worse, could cut
+        // inside a scalar.
+        let bounded = bounded_context(&"漢".repeat(400), 0);
+
+        assert_eq!(bounded.chars().count(), MAX_RELATIVE_CONTEXT_CHARS);
+        assert!(bounded.starts_with('…'));
+        assert!(bounded.chars().skip(1).all(|scalar| scalar == '漢'));
+    }
+
+    #[test]
+    fn a_suffix_that_fills_the_bound_leaves_the_half_that_disambiguates() {
+        // Unreachable with real identifiers -- the widest suffix is 38
+        // characters -- and stated anyway, because if either half has to go it
+        // is the location rather than the thing that tells two rows apart.
+        assert_eq!(
+            bounded_context("anything at all", MAX_RELATIVE_CONTEXT_CHARS),
+            ""
+        );
+        assert_eq!(
+            bounded_context("anything at all", MAX_RELATIVE_CONTEXT_CHARS + 10),
+            ""
+        );
+    }
+
     /// Writes an mzML fixture and accepts it, which is the only way into the
     /// registry.
     fn accepted(directory: &TestDirectory, name: &str, body: &[u8]) -> AcceptedFile {
@@ -1165,8 +1508,8 @@ mod tests {
         let file = accepted(&directory, "sample.mzML", b"<mzML/>");
         let mut registry = DatasetRegistry::default();
 
-        let id = registry.add(file.clone()).id();
-        let dto = selected_file_dto(id, &file);
+        let id = registry.add_direct(file.clone()).id();
+        let dto = selected_file_dto(id, &file, None);
 
         assert_eq!(dto.file_name, "sample.mzML");
         let rendered = serde_json::to_string(&dto).expect("the handle serializes");
@@ -1257,8 +1600,8 @@ mod tests {
         let first = accepted(&directory, "first.mzML", b"<mzML/>");
         let second = accepted(&directory, "second.mzML", b"<mzML/>");
         let mut registry = DatasetRegistry::default();
-        let first_id = registry.add(first.clone()).id();
-        let second_id = registry.add(second).id();
+        let first_id = registry.add_direct(first.clone()).id();
+        let second_id = registry.add_direct(second).id();
 
         let removed = registry.revoke(first_id, RevocationReason::Removed);
 
@@ -1280,7 +1623,7 @@ mod tests {
         // The identity index goes with it: without that, adding the file again
         // would be called a duplicate of a dataset that no longer exists.
         assert_eq!(
-            registry.add(first).id(),
+            registry.add_direct(first).id(),
             DatasetId(2),
             "a re-added file is a new dataset, not the one that was removed"
         );
@@ -1292,8 +1635,8 @@ mod tests {
         let first = accepted(&directory, "first.mzML", b"<mzML/>");
         let second = accepted(&directory, "second.mzML", b"<mzML/>");
         let mut registry = DatasetRegistry::default();
-        let first_id = registry.add(first.clone()).id();
-        let second_id = registry.add(second).id();
+        let first_id = registry.add_direct(first.clone()).id();
+        let second_id = registry.add_direct(second).id();
 
         for id in registry.ids().to_vec() {
             registry.revoke(id, RevocationReason::Cleared);
@@ -1303,7 +1646,7 @@ mod tests {
         assert!(registry.ids().is_empty());
         // The allocator does not rewind. A reply still in flight for one of the
         // emptied datasets cannot land on whatever is added next.
-        let after_clear = registry.add(first).id();
+        let after_clear = registry.add_direct(first).id();
         assert_ne!(after_clear, first_id);
         assert_ne!(after_clear, second_id);
     }
@@ -1320,9 +1663,9 @@ mod tests {
              names for one file are one dataset",
         );
         let mut registry = DatasetRegistry::default();
-        let first = registry.add(accept_mzml_file(&target).expect("the target is accepted"));
+        let first = registry.add_direct(accept_mzml_file(&target).expect("the target is accepted"));
 
-        let again = registry.add(accept_mzml_file(&link).expect("the link is accepted"));
+        let again = registry.add_direct(accept_mzml_file(&link).expect("the link is accepted"));
 
         let AddDatasetOutcome::Added { id } = first else {
             panic!("the first addition is a new dataset");
@@ -1352,8 +1695,8 @@ mod tests {
         assert_eq!(original.byte_length(), copy.byte_length());
         let mut registry = DatasetRegistry::default();
 
-        let first = registry.add(original).id();
-        let second = registry.add(copy).id();
+        let first = registry.add_direct(original).id();
+        let second = registry.add_direct(copy).id();
 
         assert_ne!(first, second);
         assert_eq!(registry.ids(), [first, second]);
@@ -1365,12 +1708,16 @@ mod tests {
         let mut registry = DatasetRegistry::default();
         let ids: Vec<DatasetId> = ["a.mzML", "b.mzML", "c.mzML"]
             .iter()
-            .map(|name| registry.add(accepted(&directory, name, b"<mzML/>")).id())
+            .map(|name| {
+                registry
+                    .add_direct(accepted(&directory, name, b"<mzML/>"))
+                    .id()
+            })
             .collect();
 
         registry.revoke(ids[1], RevocationReason::Removed);
         let readded = registry
-            .add(accepted(&directory, "d.mzML", b"<mzML/>"))
+            .add_direct(accepted(&directory, "d.mzML", b"<mzML/>"))
             .id();
 
         assert_eq!(registry.ids(), [ids[0], ids[2], readded]);
@@ -1385,7 +1732,7 @@ mod tests {
         let file = accepted(&directory, "sample.mzML", b"<mzML/>");
         let path = file.path().display().to_string();
         let mut registry = DatasetRegistry::default();
-        let id = registry.add(file.clone()).id();
+        let id = registry.add_direct(file.clone()).id();
         let dataset = registry.get(id).expect("registered");
 
         let rendered = format!("{registry:?} {dataset:?} {id:?} {file:?}");
@@ -1431,7 +1778,7 @@ mod tests {
         let file = accepted(&directory, "sample.mzML", b"<mzML/>");
         let held = file.lease_witness();
         let mut registry = DatasetRegistry::default();
-        let id = registry.add(file).id();
+        let id = registry.add_direct(file).id();
 
         assert!(!held.is_released(), "a registered dataset holds its file");
 
@@ -1460,7 +1807,7 @@ mod tests {
         );
         let mut registry = DatasetRegistry::default();
         let id = registry
-            .add(accept_mzml_file(&path).expect("accepted"))
+            .add_direct(accept_mzml_file(&path).expect("accepted"))
             .id();
 
         assert!(
@@ -1488,7 +1835,7 @@ mod tests {
         fs::write(&chosen, b"<mzML/>").expect("write the first acquisition");
         let mut registry = DatasetRegistry::default();
         let first = registry
-            .add(accept_mzml_file(&chosen).expect("accepted"))
+            .add_direct(accept_mzml_file(&chosen).expect("accepted"))
             .id();
         let pinned = registry
             .get(first)
@@ -1513,7 +1860,7 @@ mod tests {
         // Two objects alive at the same moment cannot share an identity, and
         // the first is alive because a row still names it.
         assert_ne!(replacement.identity(), pinned);
-        let AddDatasetOutcome::Added { id } = registry.add(replacement) else {
+        let AddDatasetOutcome::Added { id } = registry.add_direct(replacement) else {
             panic!("a file that arrives under a familiar name is not the file that left");
         };
         assert_ne!(id, first);
@@ -1564,7 +1911,7 @@ mod tests {
         );
         let mut registry = DatasetRegistry::default();
         let first = registry
-            .add(accept_mzml_file(&target).expect("the target is accepted"))
+            .add_direct(accept_mzml_file(&target).expect("the target is accepted"))
             .id();
 
         // Accepted like any other file, so it arrives holding a lease of its
@@ -1573,7 +1920,7 @@ mod tests {
         let temporary = again.lease_witness();
 
         assert_eq!(
-            registry.add(again),
+            registry.add_direct(again),
             AddDatasetOutcome::Duplicate { existing_id: first }
         );
 

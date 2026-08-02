@@ -4,12 +4,16 @@ import { describe, expect, it, vi } from "vitest";
 import type { PreviewApi } from "../features/mzml-preview/api";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
 import type {
+  FolderIngestionResult,
+  SelectedFile,
   SelectedSpectrumOutcome,
   WorkspaceRemoveResult,
   WorkspaceRoster,
 } from "../features/mzml-preview/contracts";
-import type { PickedFile } from "../test/previewFixtures";
+import { blurAsABrowserWould } from "../test/browserFocus";
+import type { FolderScan, PickedFile } from "../test/previewFixtures";
 import {
+  COMPLETE_SCAN,
   availableBackend,
   buildPreview,
   chosenBackend,
@@ -921,6 +925,38 @@ describe("the session workspace roster", () => {
     expect(api.openCount()).toBe(1);
   });
 
+  it("identifies which same-named acquisition a direct add found again", async () => {
+    const first = {
+      handle: "collision-0",
+      fileName: "sample.mzML",
+      byteLength: 4_096,
+      relativeContext: null,
+    };
+    const second = {
+      handle: "collision-1",
+      fileName: "sample.mzML",
+      byteLength: 8_192,
+      relativeContext: null,
+    };
+    const api = createFakePreviewApi({
+      initialDatasets: [
+        { file: first, parents: ["batch-1"] },
+        { file: second, parents: ["batch-2"] },
+      ],
+      pickedFiles: [second],
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /sample\.mzML.*batch-2/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+
+    expect(
+      await screen.findByText("sample.mzML, batch-2 is already in the workspace.", VISIBLE),
+    ).toBeVisible();
+    expect(rosterRows()).toHaveLength(2);
+    expect(api.openCount()).toBe(0);
+  });
+
   it("says what a batch did above the list rather than inside it", async () => {
     // A summary that grows with the batch must not take its height from the
     // list it is describing: at a short window that leaves the rows it just
@@ -1016,6 +1052,155 @@ describe("the session workspace roster", () => {
     // still has somewhere to be.
     expect(rosterRow(/QC_pool_02\.mzML/)).toHaveAttribute("tabindex", "0");
     expect(rosterRow(/QC_pool_02\.mzML/)).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("returns a focused removal action to the survivor beside the gap", async () => {
+    const removal = deferred<WorkspaceRemoveResult>();
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile, secondFile, thirdFile],
+      removeDatasets: () => removal.promise,
+    });
+    renderApp(api);
+    const removed = await screen.findByRole("option", { name: /QC_pool_02\.mzML/ });
+    fireEvent.click(removed);
+    const survivor = rosterRow(/Blank_03\.mzML/);
+    const focusing = vi.spyOn(survivor, "focus");
+    const remove = screen.getByRole("button", { name: "Remove selected" });
+    remove.focus();
+    fireEvent.click(remove);
+
+    await waitFor(() => {
+      expect(remove).toBeDisabled();
+    });
+    // WebView2 blurs the action when the request disables it. jsdom keeps a
+    // disabled element focused, so reproduce the production transition.
+    blurAsABrowserWould(remove);
+    expect(document.body).toHaveFocus();
+    removal.resolve({
+      roster: { datasets: [selectedFile, thirdFile], capacity: 1_024 },
+      removedHandles: [secondFile.handle],
+      unknownHandles: [],
+    });
+
+    await waitFor(() => {
+      expect(survivor).toHaveFocus();
+    });
+    expect(survivor).toHaveAttribute("tabindex", "0");
+    expect(survivor).toHaveAttribute("aria-selected", "true");
+    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it("waits for failed removal reconciliation before restoring focus", async () => {
+    const removal = deferred<WorkspaceRemoveResult>();
+    const reconciliation = deferred<WorkspaceRoster>();
+    const initialRoster: WorkspaceRoster = {
+      datasets: [selectedFile, secondFile, thirdFile],
+      capacity: 1_024,
+    };
+    let rosterReads = 0;
+    const api = createFakePreviewApi({
+      initialDatasets: initialRoster.datasets,
+      removeDatasets: () => removal.promise,
+      roster: () => {
+        rosterReads += 1;
+        return rosterReads === 1 ? Promise.resolve(initialRoster) : reconciliation.promise;
+      },
+    });
+    renderApp(api);
+    const removed = await screen.findByRole("option", { name: /QC_pool_02\.mzML/ });
+    fireEvent.click(removed);
+    const survivor = rosterRow(/QC_pool_01\.mzML/);
+    const focusing = vi.spyOn(survivor, "focus");
+    const remove = screen.getByRole("button", { name: "Remove selected" });
+    remove.focus();
+    fireEvent.click(remove);
+
+    await waitFor(() => {
+      expect(remove).toBeDisabled();
+    });
+    blurAsABrowserWould(remove);
+    removal.reject(previewError({ kind: "preview_worker_unavailable" }));
+
+    await waitFor(() => {
+      expect(api.rosterReads()).toBe(2);
+      expect(remove).toBeEnabled();
+    });
+    // The request settling did not say whether Rust changed the workspace.
+    // Keep the debt until its owed authoritative read answers rather than
+    // paying it against the stale row that is still on screen.
+    expect(document.body).toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+
+    reconciliation.resolve({
+      datasets: [selectedFile, thirdFile],
+      capacity: 1_024,
+    });
+
+    await waitFor(() => {
+      expect(survivor).toHaveFocus();
+    });
+    expect(survivor).toHaveAttribute("tabindex", "0");
+    expect(survivor).toHaveAttribute("aria-selected", "false");
+    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it("keeps removal focus debt through a failed reconciliation and its retry", async () => {
+    const removal = deferred<WorkspaceRemoveResult>();
+    const failedReconciliation = deferred<WorkspaceRoster>();
+    const retry = deferred<WorkspaceRoster>();
+    const initialRoster: WorkspaceRoster = {
+      datasets: [selectedFile, secondFile, thirdFile],
+      capacity: 1_024,
+    };
+    let rosterReads = 0;
+    const api = createFakePreviewApi({
+      initialDatasets: initialRoster.datasets,
+      removeDatasets: () => removal.promise,
+      roster: () => {
+        rosterReads += 1;
+        if (rosterReads === 1) {
+          return Promise.resolve(initialRoster);
+        }
+        return rosterReads === 2 ? failedReconciliation.promise : retry.promise;
+      },
+    });
+    renderApp(api);
+    const removed = await screen.findByRole("option", { name: /QC_pool_02\.mzML/ });
+    fireEvent.click(removed);
+    const remove = screen.getByRole("button", { name: "Remove selected" });
+    const focusing = vi.spyOn(remove, "focus");
+    remove.focus();
+    focusing.mockClear();
+    fireEvent.click(remove);
+
+    await waitFor(() => {
+      expect(remove).toBeDisabled();
+    });
+    blurAsABrowserWould(remove);
+    removal.reject(previewError({ kind: "preview_worker_unavailable" }));
+    await waitFor(() => {
+      expect(api.rosterReads()).toBe(2);
+    });
+    failedReconciliation.reject(previewError({ kind: "preview_worker_unavailable" }));
+
+    const retryControl = await screen.findByRole("button", {
+      name: "Try reading it again",
+    });
+    expect(remove).toBeEnabled();
+    expect(document.body).toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+
+    retryControl.focus();
+    fireEvent.click(retryControl);
+    await waitFor(() => {
+      expect(api.rosterReads()).toBe(3);
+    });
+    retry.resolve(initialRoster);
+
+    await waitFor(() => {
+      expect(remove).toHaveFocus();
+    });
+    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
   });
 
   it("empties the list without a restart and gives the keyboard back to Add files", async () => {
@@ -1158,6 +1343,50 @@ describe("the session workspace roster", () => {
     expect(rosterRow(/QC_pool_02\.mzML/)).not.toHaveTextContent("Reading…");
   });
 
+  it("drops an active preview when a failed mutation reconciles without its row", async () => {
+    // A rejected invoke is not proof that Rust left the workspace unchanged: a
+    // task or transport can fail after removal took effect. The authoritative
+    // read then removes the row, and the viewer must leave with it rather than
+    // showing an acquisition the session no longer holds.
+    let rosterRead = 0;
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      roster: () => {
+        rosterRead += 1;
+        return Promise.resolve(
+          rosterRead === 1
+            ? { datasets: [selectedFile], capacity: 1_024 }
+            : { datasets: [], capacity: 1_024 },
+        );
+      },
+      removeDatasets: () =>
+        Promise.reject(previewError({ kind: "preview_worker_unavailable" })),
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    expect(await screen.findByRole("grid", { name: "Spectra" })).toBeVisible();
+
+    const remove = screen.getByRole("button", { name: "Remove selected" });
+    remove.focus();
+    fireEvent.click(remove);
+    // WebView2 blurs a button when the request disables it. jsdom keeps a
+    // disabled element focused, so model the production focusout explicitly.
+    blurAsABrowserWould(remove);
+    expect(document.body).toHaveFocus();
+
+    await waitFor(() => {
+      expect(api.rosterReads()).toBe(2);
+      expect(rosterRows()).toHaveLength(0);
+    });
+    expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
+    expect(screen.getByText("No files in this session yet")).toBeVisible();
+    expect(api.openCount()).toBe(1);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
+    });
+  });
+
   it("says no row is being shown when nothing was read", async () => {
     // Adding into an empty session used to mark the first row as the one being
     // shown whether or not a read started. With no usable backend none does,
@@ -1186,9 +1415,10 @@ describe("the session workspace roster", () => {
     renderApp(api);
     const regions = () => [...document.querySelectorAll("[aria-live='polite']")];
     await screen.findByRole("button", { name: "Add files…" });
-    // Three, all mounted for the life of the application: what the viewer is
-    // doing, what the search found, and what the last workspace action did.
-    expect(regions()).toHaveLength(3);
+    // Four, all mounted for the life of the application: what the viewer is
+    // doing, what the search found, what the last workspace action did, and
+    // whether a folder scan is running.
+    expect(regions()).toHaveLength(4);
 
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
@@ -1197,8 +1427,8 @@ describe("the session workspace roster", () => {
         "Workspace: Added 2 files.",
       );
     });
-    // The same three regions, with new text in one of them.
-    expect(regions()).toHaveLength(3);
+    // The same four regions, with new text in one of them.
+    expect(regions()).toHaveLength(4);
   });
 
   it("does not claim the session is empty before its list has been read", async () => {
@@ -1283,7 +1513,7 @@ describe("the session workspace roster", () => {
     // a count that falls with each removal, so comparing both together would
     // pass whether or not this region changed at all.
     const spoken = () =>
-      [...document.querySelectorAll("[aria-live='polite']")].at(-1)?.textContent ?? "";
+      document.querySelector("[data-live-region='workspace']")?.textContent ?? "";
 
     fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
     fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
@@ -1307,7 +1537,7 @@ describe("the session workspace roster", () => {
     // node whose own string changed: two nodes would leave the sentence node
     // untouched and make the difference an added or removed sibling instead,
     // which is not what the default `aria-relevant` announces in one direction.
-    const region = [...document.querySelectorAll("[aria-live='polite']")].at(-1);
+    const region = document.querySelector("[data-live-region='workspace']");
     expect(region?.childNodes).toHaveLength(1);
     expect(region?.firstChild?.nodeType).toBe(Node.TEXT_NODE);
     // And it must differ by a character CSS keeps. A trailing ordinary space is
@@ -1523,7 +1753,7 @@ describe("the session workspace roster", () => {
     renderApp(api);
     await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
     const regions = () => [...document.querySelectorAll("[aria-live='polite']")];
-    expect(regions()).toHaveLength(3);
+    expect(regions()).toHaveLength(4);
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC" },
@@ -1536,7 +1766,7 @@ describe("the session workspace roster", () => {
     // A search that found nothing is not an empty workspace, and the two must
     // not sound alike.
     expect(spoken).not.toContain("The workspace is empty.");
-    expect(regions()).toHaveLength(3);
+    expect(regions()).toHaveLength(4);
   });
 
   it("says the search was cleared rather than falling silent", async () => {
@@ -1566,13 +1796,19 @@ describe("the session workspace roster", () => {
     expect(spoken()).not.toContain("2 matches of 3 files.");
   });
 
-  it("renders a roster at capacity through a search and a sort", async () => {
+  // Given its own allowance rather than the suite's default. The assertion is
+  // that a session at Rust's capacity renders, matches and orders correctly --
+  // not that it does so within five seconds of a shared, loaded machine. Left
+  // on the default this passes or fails by how busy the runner is, which is a
+  // flake dressed up as a scale test.
+  it("renders a roster at capacity through a search and a sort", { timeout: 60_000 }, async () => {
     // Not timed and not a benchmark: what it holds is that the size Rust
     // actually allows renders, matches and orders without falling over.
     const many = Array.from({ length: 1_024 }, (_, index) => ({
       handle: `file-${String(index)}`,
       fileName: `${index % 2 === 0 ? "QC" : "blank"}_run-${String(index)}.mzML`,
       byteLength: (index % 7) * 1_000,
+      relativeContext: null,
     }));
     const api = createFakePreviewApi({
       initialDatasets: many,
@@ -1685,5 +1921,1554 @@ describe("the session workspace roster", () => {
     // The row stays. What the name now points at is a question for the next
     // read of it, and removing it is the user's decision.
     expect(rosterRows()).toHaveLength(1);
+  });
+});
+
+/** The row handles the workspace list currently reports as selected. */
+function selectedRowNames(): string[] {
+  return rosterRows()
+    .filter((row) => row.getAttribute("aria-selected") === "true")
+    .map((row) => row.textContent ?? "");
+}
+
+function folderAction(): HTMLElement {
+  return screen.getByRole("button", { name: /Add mzML folder…|Scanning folder…/ });
+}
+
+/** Two acquisitions of one name, which is the case relative context exists for. */
+const NESTED_ONE: SelectedFile = {
+  handle: "folder-0",
+  fileName: "sample.mzML",
+  byteLength: 4_000_000,
+  relativeContext: null,
+};
+
+const NESTED_TWO: SelectedFile = {
+  handle: "folder-1",
+  fileName: "sample.mzML",
+  byteLength: 6_000_000,
+  relativeContext: null,
+};
+
+const NESTED_UNIQUE: SelectedFile = {
+  handle: "folder-2",
+  fileName: "unique.mzML",
+  byteLength: 1_000_000,
+  relativeContext: null,
+};
+
+describe("adding a folder of mzML files", () => {
+  it("adds everything the scan found and reads only the first, into an empty session", async () => {
+    // One folder is one picker operation, and a picker operation costs one
+    // read. A folder of a thousand files costing a thousand process launches is
+    // the fan-out this milestone exists not to become.
+    const api = createFakePreviewApi({
+      scannedFolder: {
+        files: [
+          { file: selectedFile, parents: [] },
+          { file: secondFile, parents: ["batch-2"] },
+        ],
+      },
+    });
+    renderApp(api);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+
+    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(screen.getByRole("option", { name: /QC_pool_02\.mzML/ })).toBeVisible();
+    await waitFor(() => {
+      expect(api.openCount()).toBe(1);
+    });
+    expect(api.openedHandles).toEqual([selectedFile.handle]);
+    // One command for the whole import: the picker, the walk and the commit are
+    // one call, and nothing is asked per file.
+    expect(api.calls().filter((call) => call === "chooseFolder")).toHaveLength(1);
+  });
+
+  it("reads nothing into a session that already holds rows", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [thirdFile],
+      scannedFolder: { files: [{ file: selectedFile, parents: [] }] },
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /Blank_03\.mzML/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(api.openCount()).toBe(0);
+  });
+
+  it("reads nothing when the backend cannot read anything", async () => {
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: { files: [{ file: selectedFile, parents: [] }] },
+    });
+    renderApp(api);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+
+    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(api.openCount()).toBe(0);
+  });
+
+  it("keeps the keyboard row and selection the user made while the scan was running", async () => {
+    // The whole reason a folder import is not modal. The list stays live for
+    // the length of the walk, so the selection the reply meets is one the user
+    // may have built while waiting -- and it is theirs.
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      initialDatasets: [selectedFile, secondFile],
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+    // Chosen while the scan is unresolved, which is exactly what a captured
+    // selection would throw away.
+    const workingRow = rosterRow(/QC_pool_02\.mzML/);
+    fireEvent.click(workingRow);
+    workingRow.focus();
+    expect(workingRow).toHaveFocus();
+    expect(selectedRowNames()).toHaveLength(1);
+
+    scan.resolve({ files: [{ file: thirdFile, parents: ["nested"] }] });
+
+    expect(await screen.findByRole("option", { name: /Blank_03\.mzML/ })).toBeVisible();
+    await waitFor(() => {
+      expect(selectedRowNames()).toHaveLength(2);
+    });
+    const selected = selectedRowNames().join(" ");
+    expect(selected).toContain("QC_pool_02.mzML");
+    expect(selected).toContain("Blank_03.mzML");
+    expect(selected).not.toContain("QC_pool_01.mzML");
+    // Settlement must not make DatasetRoster follow a reducer-created focus
+    // move to the imported row while the keyboard is still inside the list.
+    expect(workingRow).toHaveFocus();
+    expect(workingRow).toHaveAttribute("tabindex", "0");
+    expect(rosterRow(/Blank_03\.mzML/)).toHaveAttribute("tabindex", "-1");
+  });
+
+  it("leaves the search, the sort and the preview on screen exactly as they were", async () => {
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile, secondFile],
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    await screen.findByRole("grid", { name: "Spectra" });
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+      target: { value: "name-desc" },
+    });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
+      target: { value: "QC" },
+    });
+    const readsBefore = api.openCount();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+    scan.resolve({ files: [{ file: thirdFile, parents: [] }] });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Added 1 file\./, VISIBLE)).toBeVisible();
+    });
+    expect(screen.getByRole("searchbox", { name: "Search files" })).toHaveValue("QC");
+    expect(screen.getByRole("combobox", { name: "Sort files" })).toHaveValue("name-desc");
+    // The preview belongs to the row it was opened for, and a list operation is
+    // not a reason to take it away or to read anything else.
+    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(api.openCount()).toBe(readsBefore);
+  });
+
+  it("refuses more acquisitions while a folder is being scanned, and nothing else", async () => {
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile, secondFile],
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    // Acquiring more waits: a second batch in flight would answer with a roster
+    // from before this one's rows existed.
+    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+    // Workspace curation does not wait. `Clear list` is the reliable final-empty
+    // escape; `Remove selected` remains available to manage rows already shown,
+    // though imported rows can remain if the import committed first. Rust
+    // linearises either action rather than this side making it impossible.
+    expect(screen.getByRole("button", { name: "Remove selected" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
+    // And none of the ones that cost nothing. Curating what is on screen is
+    // this side's own work, and a filesystem walk is no reason to stop it.
+    expect(screen.getByRole("searchbox", { name: "Search files" })).toBeEnabled();
+    expect(screen.getByRole("combobox", { name: "Sort files" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Preview focused" })).toBeEnabled();
+    fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
+    expect(selectedRowNames().join(" ")).toContain("QC_pool_02.mzML");
+
+    scan.resolve({ files: [] });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
+  });
+
+  it("removes rows during an unresolved import, and the late reply cannot put them back", async () => {
+    // The import-first linearisation, end to end. Rust has already committed the
+    // discovered row when removal takes the gate, so removal's authoritative
+    // roster keeps that row and removes only the selected handle. The folder
+    // reply can still reach this window last, and must not reinstall its copy of
+    // the row the user removed.
+    const stale = deferred<FolderIngestionResult | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      initialDatasets: [selectedFile, secondFile],
+      folderResult: () => stale.promise,
+      removeDatasets: (handles) =>
+        Promise.resolve({
+          roster: { datasets: [secondFile, thirdFile], capacity: 1_024 },
+          removedHandles: handles.filter((handle) => handle === selectedFile.handle),
+          unknownHandles: handles.filter((handle) => handle !== selectedFile.handle),
+        }),
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+
+    await waitFor(() => {
+      expect(rosterRows()).toHaveLength(2);
+    });
+    expect(screen.queryByRole("option", { name: /QC_pool_01\.mzML/ })).toBeNull();
+    expect(screen.getByRole("option", { name: /Blank_03\.mzML/ })).toBeVisible();
+    expect(screen.getByText(/Removed 1 file from the list\./, VISIBLE)).toBeVisible();
+
+    // The import answers afterwards, carrying the roster it saw -- which is the
+    // list from before the removal, plus the row it added. A modelled scan
+    // cannot produce that, because it snapshots when it resolves; this is the
+    // one case the option exists for.
+    stale.resolve({
+      roster: { datasets: [selectedFile, secondFile, thirdFile], capacity: 1_024 },
+      outcomes: [{ outcome: "added", dataset: thirdFile }],
+      discovery: COMPLETE_SCAN,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    // The removed row stays removed, while the discovered row already present
+    // in removal's authoritative roster stays present.
+    expect(screen.queryByRole("option", { name: /QC_pool_01\.mzML/ })).toBeNull();
+    expect(screen.getByRole("option", { name: /Blank_03\.mzML/ })).toBeVisible();
+    expect(rosterRows()).toHaveLength(2);
+    // The account of what the user actually did survives; the late reply does
+    // not overwrite it.
+    expect(screen.getByText(/Removed 1 file from the list\./, VISIBLE)).toBeVisible();
+    // And nothing is invented about the folder. Reaching here with a result at
+    // all means Rust committed the import, so claiming it could not be added
+    // would be a failure that did not happen.
+    expect(screen.queryByText("The folder could not be added")).toBeNull();
+    expect(api.openCount()).toBe(0);
+  });
+
+  it.each(["clear failure first", "folder answer first"] as const)(
+    "returns a failed focused Clear list after authoritative folder reconciliation (%s)",
+    async (order) => {
+      const folder = deferred<FolderIngestionResult | null>();
+      const clearing = deferred<WorkspaceRoster>();
+      const reconciliation = deferred<WorkspaceRoster>();
+      let rosterReads = 0;
+      const api = createFakePreviewApi({
+        availability: unavailableBackend,
+        clearWorkspace: () => clearing.promise,
+        folderResult: () => folder.promise,
+        roster: () => {
+          rosterReads += 1;
+          return rosterReads === 1
+            ? Promise.resolve({ datasets: [], capacity: 1_024 })
+            : reconciliation.promise;
+        },
+      });
+      renderApp(api);
+      const addFolder = await screen.findByRole("button", {
+        name: "Add mzML folder…",
+      });
+      await waitFor(() => {
+        expect(addFolder).toBeEnabled();
+      });
+
+      // Pointer-start the folder import, so it owns no keyboard restoration.
+      fireEvent.click(addFolder);
+      const clear = screen.getByRole("button", { name: "Clear list" });
+      clear.focus();
+      fireEvent.click(clear);
+      await waitFor(() => {
+        expect(clear).toBeDisabled();
+      });
+      blurAsABrowserWould(clear);
+
+      const clearFailure = previewError({ kind: "preview_worker_unavailable" });
+      const folderResult: FolderIngestionResult = {
+        roster: { datasets: [thirdFile], capacity: 1_024 },
+        outcomes: [{ outcome: "added", dataset: thirdFile }],
+        discovery: COMPLETE_SCAN,
+      };
+      if (order === "clear failure first") {
+        clearing.reject(clearFailure);
+        await waitFor(() => {
+          expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
+        });
+        expect(document.body).toHaveFocus();
+        folder.resolve(folderResult);
+      } else {
+        folder.resolve(folderResult);
+        await waitFor(() => {
+          expect(screen.queryByRole("button", { name: "Clear list" })).toBeNull();
+        });
+        expect(document.body).toHaveFocus();
+        clearing.reject(clearFailure);
+      }
+
+      await waitFor(() => {
+        expect(api.rosterReads()).toBe(2);
+      });
+      // The folder reply is older than the failed Clear request and is hidden.
+      // Until Rust answers the owed roster read, neither transient emptiness nor
+      // the re-enabled action is an authoritative focus destination.
+      expect(rosterRows()).toHaveLength(0);
+      expect(document.body).toHaveFocus();
+      expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveFocus();
+
+      reconciliation.resolve({ datasets: [thirdFile], capacity: 1_024 });
+
+      const restored = await screen.findByRole("button", { name: "Clear list" });
+      await waitFor(() => {
+        expect(restored).toHaveFocus();
+      });
+      expect(screen.getByRole("option", { name: /Blank_03\.mzML/ })).toBeVisible();
+      expect(rosterRows()).toHaveLength(1);
+    },
+  );
+
+  it("catches the keyboard when the escape action goes out from under it", async () => {
+    // `Clear list` exists over an empty list only while an import is
+    // unresolved, and during a first import from an empty workspace it is the
+    // only enabled control in the row -- so it is exactly where a keyboard user
+    // lands. Every way the import can settle with nothing added takes it away
+    // again. WebView2 moves focus to the body and can first report a
+    // `focusout` whose destination is null. Nothing else here would recover it:
+    // the row rescue wants a row handle, and no picker restoration exists
+    // because the import was not started by a focused press of the roster's own
+    // button.
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    // Started with the pointer, so nothing is owed to the folder button.
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    const escape = screen.getByRole("button", { name: "Clear list" });
+    expect(escape).toBeEnabled();
+    escape.focus();
+    expect(escape).toHaveFocus();
+
+    // Unlike jsdom's node removal, WebView2 reports a production-like
+    // `focusout` with no destination before the focused control goes. That is
+    // disappearance, not a user choosing somewhere else, so it must not erase
+    // the record that catches the keyboard.
+    blurAsABrowserWould(escape);
+    expect(document.body).toHaveFocus();
+
+    // The folder simply held no mzML, so nothing is added and the escape goes.
+    scan.resolve({ files: [] });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Clear list" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
+    });
+    expect(document.body).not.toHaveFocus();
+  });
+
+  it("does not steal focus when the user leaves a disappearing escape action", async () => {
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    const escape = screen.getByRole("button", { name: "Clear list" });
+    const destination = screen.getByRole("button", { name: "Check again" });
+    escape.focus();
+    destination.focus();
+    expect(destination).toHaveFocus();
+
+    scan.resolve({ files: [] });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Clear list" })).toBeNull();
+    });
+    expect(destination).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveFocus();
+  });
+
+  it("does not revive an old Clear list focus record after a real destination", async () => {
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    const escape = screen.getByRole("button", { name: "Clear list" });
+    const destination = screen.getByRole("button", { name: "Check again" });
+    escape.focus();
+    destination.focus();
+    expect(destination).toHaveFocus();
+
+    // The destination later losing focus is unrelated to `Clear list`. If the
+    // real destination above did not clear the old record, settlement would
+    // mistake this body focus for an orphaned Clear action and steal it.
+    blurAsABrowserWould(destination);
+    expect(document.body).toHaveFocus();
+    scan.resolve({ files: [] });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Clear list" })).toBeNull();
+    });
+    expect(document.body).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveFocus();
+  });
+
+  it("empties the list during an unresolved import, and the late reply cannot refill it", async () => {
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      initialDatasets: [selectedFile, secondFile],
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+
+    expect(await screen.findByText("No files in this session yet")).toBeVisible();
+    expect(screen.getByText(/Cleared 2 files from the list/, VISIBLE)).toBeVisible();
+    // The keyboard is owed to `Add files…`, which is still disabled because the
+    // import has not settled. Focusing a disabled control does nothing, so the
+    // debt is held rather than paid into nowhere.
+    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveFocus();
+
+    scan.resolve({ files: [{ file: thirdFile, parents: [] }] });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    expect(rosterRows()).toHaveLength(0);
+    expect(screen.getByText("No files in this session yet")).toBeVisible();
+    expect(api.openCount()).toBe(0);
+    // And paid on the commit that makes the control usable, rather than leaving
+    // a keyboard user on the body with no way back into the workspace.
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
+  });
+
+  it("keeps an empty workspace empty when Clear list supersedes its first import", async () => {
+    const stale = deferred<FolderIngestionResult | null>();
+    const clearing = deferred<WorkspaceRoster>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      folderResult: () => stale.promise,
+      clearWorkspace: () => clearing.promise,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+
+    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+    const clear = screen.getByRole("button", { name: "Clear list" });
+    expect(clear).toBeEnabled();
+    expect(clear).toHaveAccessibleDescription(
+      "Clear list also prevents the pending folder import from adding files.",
+    );
+    clear.focus();
+    fireEvent.click(clear);
+    expect(api.calls().filter((call) => call === "clearWorkspace")).toHaveLength(1);
+
+    clearing.resolve({ datasets: [], capacity: 1_024 });
+    expect(
+      await screen.findByText(
+        "The workspace is empty. The pending folder import will not add files.",
+        VISIBLE,
+      ),
+    ).toBeVisible();
+    expect(screen.getByText("No files in this session yet")).toBeVisible();
+    expect(screen.getByText("Folder import in progress…", VISIBLE)).toBeVisible();
+
+    stale.reject(
+      previewError({
+        kind: "import_superseded",
+        summary:
+          "The workspace changed while MSCanvas was scanning that folder, so none of its files were added. Scan the folder again.",
+        retryable: true,
+      }),
+    );
+    await waitFor(() => {
+      expect(screen.queryByText("Folder import in progress…")).toBeNull();
+    });
+    expect(rosterRows()).toHaveLength(0);
+    expect(screen.getByText("No files in this session yet")).toBeVisible();
+    expect(
+      screen.getByText(
+        "The workspace is empty. The pending folder import will not add files.",
+        VISIBLE,
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText("The folder could not be added")).toBeNull();
+    expect(screen.queryByText(/workspace changed while MSCanvas was scanning/)).toBeNull();
+    expect(document.body).not.toHaveFocus();
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
+  });
+
+  it("keeps a real folder failure visible when Clear list overlaps the scan", async () => {
+    const scan = deferred<FolderIngestionResult | null>();
+    const clearing = deferred<WorkspaceRoster>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      folderResult: () => scan.promise,
+      clearWorkspace: () => clearing.promise,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+    clearing.resolve({ datasets: [], capacity: 1_024 });
+    expect(
+      await screen.findByText(
+        "The workspace is empty. The pending folder import will not add files.",
+        VISIBLE,
+      ),
+    ).toBeVisible();
+
+    scan.reject(
+      previewError({
+        kind: "folder_scan_failed",
+        summary: "That folder could not be scanned safely.",
+        retryable: true,
+      }),
+    );
+
+    expect(await screen.findByText("The folder could not be added")).toBeVisible();
+    expect(screen.getByText("That folder could not be scanned safely.")).toBeVisible();
+    expect(rosterRows()).toHaveLength(0);
+    expect(screen.queryByText(/workspace changed while MSCanvas was scanning/)).toBeNull();
+  });
+
+  it("keeps a committed first import hidden while Clear list is still pending", async () => {
+    // Rust may commit the import before Clear reaches its gate while the two
+    // replies arrive in the opposite order. The click is already the newer
+    // user intent: exposing the folder roster while Clear is unresolved would
+    // make a row reappear after the escape, and an empty workspace would also
+    // start an implicit preview for a row Clear is about to remove.
+    const imported = deferred<FolderIngestionResult | null>();
+    const clearing = deferred<WorkspaceRoster>();
+    const api = createFakePreviewApi({
+      folderResult: () => imported.promise,
+      clearWorkspace: () => clearing.promise,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+
+    imported.resolve({
+      roster: { datasets: [thirdFile], capacity: 1_024 },
+      outcomes: [{ outcome: "added", dataset: thirdFile }],
+      discovery: COMPLETE_SCAN,
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("Folder import in progress…")).toBeNull();
+    });
+
+    // Clear has not answered. The folder result must remain unobservable for
+    // that entire window, including at the process boundary.
+    expect(rosterRows()).toHaveLength(0);
+    expect(screen.queryByRole("option", { name: /Blank_03\.mzML/ })).toBeNull();
+    expect(screen.getByText("No files in this session yet")).toBeVisible();
+    expect(api.openCount()).toBe(0);
+
+    clearing.resolve({ datasets: [], capacity: 1_024 });
+    expect(
+      await screen.findByText(
+        "The workspace is empty. The pending folder import will not add files.",
+        VISIBLE,
+      ),
+    ).toBeVisible();
+    expect(rosterRows()).toHaveLength(0);
+    expect(api.openCount()).toBe(0);
+  });
+
+  it("waits for this window to know what the session holds before it will import", async () => {
+    // Native page-load start already owns reload ordering, and the roster read
+    // is a pure, gate-linearized snapshot. The operation still waits because
+    // this document must adopt one authoritative roster before it can add to it.
+    const initial = deferred<WorkspaceRoster>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      roster: () => initial.promise,
+      scannedFolder: { files: [{ file: selectedFile, parents: [] }] },
+    });
+    renderApp(api);
+
+    const folder = await screen.findByRole("button", { name: "Add mzML folder…" });
+    expect(folder).toBeDisabled();
+    // Pressed anyway -- a disabled button is a rendering, and the guard that
+    // matters is the one inside the operation.
+    fireEvent.click(folder);
+    expect(api.calls().filter((call) => call === "chooseFolder")).toHaveLength(0);
+
+    initial.resolve({ datasets: [], capacity: 1_024 });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+  });
+
+  it("stays unavailable after a failed roster read, until the retry succeeds", async () => {
+    // A failed read is the same answer as an unfinished one: this window has no
+    // authoritative list, and importing into a workspace it could not read is
+    // not something to start on a guess. The roster's own retry is the way out.
+    let attempts = 0;
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      roster: () => {
+        attempts += 1;
+        return attempts === 1
+          ? Promise.reject(previewError({ kind: "preview_worker_unavailable" }))
+          : Promise.resolve<WorkspaceRoster>({ datasets: [], capacity: 1_024 });
+      },
+      scannedFolder: { files: [{ file: selectedFile, parents: [] }] },
+    });
+    renderApp(api);
+
+    await screen.findByText("The workspace list could not be read");
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try reading it again" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+  });
+
+
+  it("does not let a folder scan take the viewer away", async () => {
+    // A scan launches no process, so nothing about it is a reason to disable
+    // reading a file that is already in the session.
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+
+    expect(await screen.findByRole("grid", { name: "Spectra" })).toBeVisible();
+    scan.resolve({ files: [] });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+  });
+
+  it("changes nothing when the folder picker is dismissed", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      scannedFolder: null,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    expect(rosterRows()).toHaveLength(1);
+    // A dismissed picker is not a folder that held nothing, and it is not a
+    // failure either: nothing was chosen, so there is nothing to report.
+    expect(screen.queryByText(/No mzML files were found/)).toBeNull();
+    expect(screen.queryByText("The folder could not be added")).toBeNull();
+    expect(api.openCount()).toBe(0);
+  });
+
+  it("leaves the workspace and the preview alone when the folder could not be scanned", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      scannedFolder: () =>
+        Promise.reject(
+          previewError({
+            kind: "folder_link_unsupported",
+            summary:
+              "That is a shortcut or link to a folder rather than a folder. MSCanvas does not follow links when scanning, so choose the folder it points at.",
+            retryable: false,
+          }),
+        ),
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    await screen.findByRole("grid", { name: "Spectra" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    expect(await screen.findByText("The folder could not be added")).toBeVisible();
+    expect(screen.getByText(/MSCanvas does not follow links when scanning/)).toBeVisible();
+    expect(rosterRows()).toHaveLength(1);
+    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    // Its own channel: nothing about the workspace was changed, so saying the
+    // workspace could not be changed would describe a mutation that never began.
+    expect(screen.queryByText("The workspace could not be changed")).toBeNull();
+  });
+
+  it("says plainly that a superseded import added nothing", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      scannedFolder: () =>
+        Promise.reject(
+          previewError({
+            kind: "import_superseded",
+            summary:
+              "The workspace changed while MSCanvas was scanning that folder, so none of its files were added. Scan the folder again.",
+            retryable: true,
+          }),
+        ),
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    expect(await screen.findByText(/none of its files were added/)).toBeVisible();
+    expect(rosterRows()).toHaveLength(1);
+  });
+
+  it("changes nothing when a reply arrives after the window has gone", async () => {
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({ scannedFolder: () => scan.promise });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+
+    cleanup();
+    scan.resolve({ files: [{ file: selectedFile, parents: [] }] });
+    await scan.promise;
+
+    // Nothing to update and nothing that tried to: no read was started, and no
+    // state was written into a component that is no longer mounted.
+    expect(api.openCount()).toBe(0);
+    expect(document.body).toBeEmptyDOMElement();
+  });
+
+  it("asks Rust whether the session was empty, not the list on screen", async () => {
+    // A webview can be reloaded while Rust still holds rows, and a read that
+    // answered before those rows existed leaves the roster on screen empty
+    // while the session is not. Reading a file into a workspace that already
+    // had several, with nobody having asked for it, is what the authoritative
+    // answer prevents.
+    const api = createFakePreviewApi({
+      initialDatasets: [thirdFile],
+      // Settled, so the import may start -- and empty, so the list on screen
+      // disagrees with what Rust holds.
+      roster: () => Promise.resolve<WorkspaceRoster>({ datasets: [], capacity: 1_024 }),
+      scannedFolder: { files: [{ file: selectedFile, parents: [] }] },
+    });
+    renderApp(api);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    expect(rosterRows()).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    // Two rows in the reply and one of them added, so the session was not
+    // empty -- however empty this window happened to look.
+    expect(rosterRows()).toHaveLength(2);
+    expect(api.openCount()).toBe(0);
+  });
+
+  it("accounts for a folder through the region that already existed", async () => {
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: {
+        files: [
+          { file: selectedFile, parents: [] },
+          { file: secondFile, parents: ["batch-2"] },
+        ],
+      },
+    });
+    renderApp(api);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+
+    expect(await screen.findByText("Added 2 files.", VISIBLE)).toBeVisible();
+    await waitFor(() => {
+      expect(document.querySelector("[data-live-region='workspace']")?.textContent).toContain(
+        "Workspace: Added 2 files.",
+      );
+    });
+  });
+
+  it("says a scan was incomplete rather than saying the folder was empty", async () => {
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: {
+        files: [],
+        discovery: { complete: false, skippedReparseCount: 2, limitsReached: ["depth"] },
+      },
+    });
+    renderApp(api);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+
+    expect(
+      await screen.findByText(/No files were added, and the scan was incomplete\./, VISIBLE),
+    ).toBeVisible();
+    expect(screen.queryByText(/No mzML files were found/)).toBeNull();
+    expect(
+      screen.getByText(/skipped 2 linked or special filesystem entries/, VISIBLE),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/nested deeper than MSCanvas walks in one scan/, VISIBLE),
+    ).toBeVisible();
+  });
+
+  it("says a complete folder held no mzML, and does not call it a failure", async () => {
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: { files: [] },
+    });
+    renderApp(api);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+
+    expect(
+      await screen.findByText("No mzML files were found in that folder.", VISIBLE),
+    ).toBeVisible();
+    expect(screen.queryByText("The folder could not be added")).toBeNull();
+    expect(screen.queryByText(/scan was incomplete/)).toBeNull();
+  });
+
+  it("announces two folders that did the same thing as two events", async () => {
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: { files: [] },
+    });
+    renderApp(api);
+    const spoken = () =>
+      document.querySelector("[data-live-region='workspace']")?.textContent ?? "";
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+    await waitFor(() => {
+      expect(spoken()).toContain("No mzML files were found in that folder.");
+    });
+    const afterFirst = spoken();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    await waitFor(() => {
+      expect(spoken()).not.toBe(afterFirst);
+    });
+    expect(spoken()).toContain("No mzML files were found in that folder.");
+  });
+});
+
+describe("telling two identically named acquisitions apart", () => {
+  // The accessible name is the row's text run together, and the computation
+  // trims each node -- so what separates the name from its context is the comma
+  // rather than the space beside it.
+  const COLLIDING_ONE = /sample\.mzML,\s*batch-1/;
+  const COLLIDING_TWO = /sample\.mzML,\s*batch-2/;
+
+  function collidingApi(): ReturnType<typeof createFakePreviewApi> {
+    return createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: {
+        files: [
+          { file: NESTED_UNIQUE, parents: [] },
+          // Deliberately in the opposite order to the contexts they produce.
+          // With `batch-1` first, a sort that quietly folded the context into
+          // its key would produce the order the session already holds, and the
+          // test would pass either way.
+          { file: NESTED_ONE, parents: ["batch-2"] },
+          { file: NESTED_TWO, parents: ["batch-1"] },
+        ],
+      },
+    });
+  }
+
+  async function importTheFolder(): Promise<void> {
+    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+    await screen.findByRole("option", { name: /unique\.mzML/ });
+  }
+
+  it("keeps the Run identity aligned with collision context recomputed by the roster", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [{ file: NESTED_ONE, parents: ["batch-1"] }],
+      scannedFolder: {
+        files: [{ file: NESTED_TWO, parents: ["batch-2"] }],
+      },
+    });
+    renderApp(api);
+
+    fireEvent.click(await screen.findByRole("option", { name: /sample\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    const summary = await screen.findByRole("region", { name: "Run" });
+    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const readsAfterOpen = api.openCount();
+
+    // It was unique when the preview DTO was produced, so that response has no
+    // context. The later folder answer recomputes the current roster instead.
+    expect(within(summary).getByText(/^sample\.mzML ·/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    const collidingIdentity = await within(summary).findByText(/^sample\.mzML, batch-1 ·/);
+    expect(collidingIdentity).toBeVisible();
+    expect(collidingIdentity).toHaveAttribute("title", "sample.mzML, batch-1");
+    expect(api.openCount()).toBe(readsAfterOpen);
+    expect(grid).toBeVisible();
+
+    // Removing the row that made the context necessary recomputes the roster
+    // again. The open Run stays, but its now-unique identity sheds the context.
+    fireEvent.click(screen.getByRole("option", { name: COLLIDING_TWO }));
+    // Moving focus and selection is not opening that row. The Run identity
+    // remains attached to the active preview until the roster actually changes.
+    expect(within(summary).getByText(/^sample\.mzML, batch-1 ·/)).toHaveAttribute(
+      "title",
+      "sample.mzML, batch-1",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    let uniqueIdentity: HTMLElement | null = null;
+    await waitFor(() => {
+      uniqueIdentity = within(summary).getByText(/^sample\.mzML ·/);
+      expect(uniqueIdentity).toBeVisible();
+    });
+    expect(uniqueIdentity).toHaveAttribute("title", "sample.mzML");
+    expect(within(summary).queryByText(/batch-1/)).toBeNull();
+    expect(api.openCount()).toBe(readsAfterOpen);
+    expect(grid).toBeVisible();
+  });
+
+  it("uses the same collision label when offering the active file back for Preview", async () => {
+    const api = createFakePreviewApi({
+      chosenInstallation: chosenBackend,
+      initialDatasets: [
+        { file: NESTED_ONE, parents: ["batch-1"] },
+        { file: NESTED_TWO, parents: ["batch-2"] },
+      ],
+    });
+    renderApp(api);
+
+    fireEvent.click(await screen.findByRole("option", { name: COLLIDING_ONE }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    await screen.findByRole("region", { name: "Run" });
+
+    // Changing installation discards backend-derived readings but deliberately
+    // retains the active roster row as a one-action recovery affordance.
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Preview sample.mzML, batch-1" }),
+    ).toBeVisible();
+  });
+
+  it("says where each of two same-named rows came from, and nothing beside a unique name", async () => {
+    renderApp(collidingApi());
+
+    await importTheFolder();
+
+    // Visible, in the row, and in the option's accessible name -- a screen
+    // reader is told exactly what the screen says. The comma is part of the
+    // row's text rather than only a gap in the layout, so the two are not read
+    // as one word.
+    expect(screen.getByRole("option", { name: COLLIDING_ONE })).toBeVisible();
+    expect(screen.getByRole("option", { name: COLLIDING_TWO })).toBeVisible();
+    const unique = screen.getByRole("option", { name: /unique\.mzML/ });
+    // A unique name needs no help, and a folder fragment beside one would be a
+    // location on screen for nothing.
+    expect(unique.textContent).not.toContain("Top level");
+    // The filename is still the primary label, said once.
+    const first = screen.getByRole("option", { name: COLLIDING_ONE });
+    expect(within(first).getAllByText("sample.mzML")).toHaveLength(1);
+  });
+
+  it("shows nothing path-shaped", async () => {
+    renderApp(collidingApi());
+
+    await importTheFolder();
+
+    const list = screen.getByRole("listbox", { name: "Workspace" });
+    const rendered = list.textContent ?? "";
+    expect(rendered).not.toContain(":\\");
+    expect(rendered).not.toContain("..");
+    expect(rendered).not.toMatch(/^[A-Z]:/);
+  });
+
+  it("does not let the context decide what a search finds", async () => {
+    renderApp(collidingApi());
+    await importTheFolder();
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
+      target: { value: "batch-1" },
+    });
+
+    // A search is over the visible name. Matching a location would make a query
+    // find rows whose filename says nothing of the sort, which is a search over
+    // a path by another route.
+    //
+    // Asked of the match count rather than of the rows: an import selects
+    // everything it added, and a selected row stays on screen whether or not
+    // the query found it -- saying so, which is what makes the distinction
+    // visible rather than a trick of the assertion.
+    expect(screen.getByText(/0 matches of 3 files/, VISIBLE)).toBeVisible();
+    for (const row of rosterRows()) {
+      expect(row.textContent).toContain("Selected — outside search");
+    }
+    // And the filename is still what a query does find.
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
+      target: { value: "sample" },
+    });
+    expect(screen.getByText(/2 matches of 3 files/, VISIBLE)).toBeVisible();
+  });
+
+  it("does not let the context decide the name order", async () => {
+    renderApp(collidingApi());
+    await importTheFolder();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+      target: { value: "name-asc" },
+    });
+
+    // `sample.mzML` twice, then `unique.mzML`: the two collide by name and stay
+    // in the order the session holds them, because the context is not a key.
+    // The session holds `batch-2` first, so a sort that used the context would
+    // put `batch-1` above it -- which is the difference this asserts.
+    expect(rosterRows().map((row) => row.textContent?.slice(0, 40))).toEqual([
+      expect.stringContaining("sample.mzML"),
+      expect.stringContaining("sample.mzML"),
+      expect.stringContaining("unique.mzML"),
+    ]);
+    expect(rosterRows()[0]?.textContent).toContain("batch-2");
+    expect(rosterRows()[1]?.textContent).toContain("batch-1");
+  });
+
+  it("takes the context away when the row that made it necessary goes", async () => {
+    renderApp(collidingApi());
+    await importTheFolder();
+    expect(screen.getByRole("option", { name: COLLIDING_ONE })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("option", { name: COLLIDING_TWO }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+
+    await waitFor(() => {
+      expect(rosterRows()).toHaveLength(2);
+    });
+    // Rust decides it over the whole live roster every time one is built, so a
+    // survivor with a unique name stops saying anything at all.
+    expect(screen.queryByText("batch-1")).toBeNull();
+    expect(screen.getByRole("option", { name: /sample\.mzML/ })).toBeVisible();
+  });
+});
+
+describe("giving the keyboard back after an acquisition picker", () => {
+  it("returns it to Add mzML folder… once the scan settles", async () => {
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    const folder = await screen.findByRole("button", { name: "Add mzML folder…" });
+    folder.focus();
+
+    fireEvent.click(folder);
+    // The name does not move while the operation runs, which is the point of
+    // it: this is the same control, found the same way.
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+    // Disabling the focused control is what blurs it, and the browser does not
+    // put focus back when it is enabled again. jsdom does neither, so the blur
+    // is done here rather than assumed -- without it the test would pass with
+    // the restoration deleted.
+    blurAsABrowserWould(folder);
+    expect(document.body).toHaveFocus();
+    scan.resolve({ files: [] });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveFocus();
+    });
+  });
+
+  it("returns it to Add mzML folder… when the picker was dismissed", async () => {
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: null,
+    });
+    renderApp(api);
+    const folder = await screen.findByRole("button", { name: "Add mzML folder…" });
+    folder.focus();
+
+    fireEvent.click(folder);
+    blurAsABrowserWould(folder);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveFocus();
+    });
+  });
+
+  it("returns a focused folder retry to the durable folder action after dismissal", async () => {
+    const retry = deferred<FolderScan | null>();
+    let requests = 0;
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () => {
+        requests += 1;
+        return requests === 1
+          ? Promise.reject(
+              previewError({
+                kind: "folder_scan_failed",
+                summary: "That folder could not be scanned safely.",
+                retryable: true,
+              }),
+            )
+          : retry.promise;
+      },
+    });
+    renderApp(api);
+    const durable = await screen.findByRole("button", { name: "Add mzML folder…" });
+
+    // The first attempt creates the transient shell recovery action. It starts
+    // with the pointer, so no restoration from the durable action is pending.
+    fireEvent.click(durable);
+    const retryButton = await screen.findByRole("button", { name: "Choose another folder" });
+    retryButton.focus();
+    expect(retryButton).toHaveFocus();
+    const focusing = vi.spyOn(durable, "focus");
+
+    fireEvent.click(retryButton);
+    // Starting the retry clears its error and removes the focused button. A real
+    // browser leaves focus on the body; jsdom needs that behaviour reproduced.
+    blurAsABrowserWould(retryButton);
+    expect(screen.queryByRole("button", { name: "Choose another folder" })).toBeNull();
+    expect(durable).toBeDisabled();
+    expect(document.body).toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+
+    retry.resolve(null);
+
+    await waitFor(() => {
+      expect(durable).toHaveFocus();
+    });
+    expect(durable).toBeEnabled();
+    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
+    expect(requests).toBe(2);
+  });
+
+  it("returns a focused folder-error dismissal to the durable folder action", async () => {
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () =>
+        Promise.reject(
+          previewError({
+            kind: "folder_scan_failed",
+            summary: "That folder could not be scanned safely.",
+            retryable: true,
+          }),
+        ),
+    });
+    renderApp(api);
+    const durable = await screen.findByRole("button", { name: "Add mzML folder…" });
+
+    fireEvent.click(durable);
+    const noticeHeading = await screen.findByText("The folder could not be added");
+    const notice = noticeHeading.closest<HTMLElement>('[role="status"]');
+    expect(notice).not.toBeNull();
+    const dismiss = within(notice as HTMLElement).getByRole("button", { name: "Dismiss" });
+    dismiss.focus();
+    expect(dismiss).toHaveFocus();
+    const focusing = vi.spyOn(durable, "focus");
+
+    fireEvent.click(dismiss);
+
+    await waitFor(() => {
+      expect(durable).toHaveFocus();
+    });
+    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveFocus();
+    expect(screen.queryByText("The folder could not be added")).toBeNull();
+    expect(api.calls().filter((call) => call === "chooseFolder")).toHaveLength(1);
+  });
+
+  it("takes no focus when folder-error Dismiss did not own the keyboard", async () => {
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () =>
+        Promise.reject(
+          previewError({
+            kind: "folder_scan_failed",
+            summary: "That folder could not be scanned safely.",
+            retryable: true,
+          }),
+        ),
+    });
+    renderApp(api);
+    const durable = await screen.findByRole("button", { name: "Add mzML folder…" });
+    fireEvent.click(durable);
+    const noticeHeading = await screen.findByText("The folder could not be added");
+    const notice = noticeHeading.closest<HTMLElement>('[role="status"]');
+    expect(notice).not.toBeNull();
+    const dismiss = within(notice as HTMLElement).getByRole("button", { name: "Dismiss" });
+    const focusing = vi.spyOn(durable, "focus");
+
+    // `fireEvent.click` without first focusing the target models a press that
+    // never owned the keyboard. Dismissing its notice must not invent a debt.
+    expect(document.body).toHaveFocus();
+    fireEvent.click(dismiss);
+
+    expect(document.body).toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+    expect(screen.queryByText("The folder could not be added")).toBeNull();
+  });
+
+  it("takes no focus when the transient folder retry did not own the keyboard", async () => {
+    const retry = deferred<FolderScan | null>();
+    let requests = 0;
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () => {
+        requests += 1;
+        return requests === 1
+          ? Promise.reject(
+              previewError({
+                kind: "folder_scan_failed",
+                summary: "That folder could not be scanned safely.",
+                retryable: true,
+              }),
+            )
+          : retry.promise;
+      },
+    });
+    renderApp(api);
+    const durable = await screen.findByRole("button", { name: "Add mzML folder…" });
+    fireEvent.click(durable);
+    const retryButton = await screen.findByRole("button", { name: "Choose another folder" });
+    const focusing = vi.spyOn(durable, "focus");
+
+    // `fireEvent.click` does not focus a button first, which models an
+    // activation that never owned the keyboard and therefore has no debt.
+    expect(document.body).toHaveFocus();
+    fireEvent.click(retryButton);
+    retry.resolve(null);
+
+    await waitFor(() => {
+      expect(durable).toBeEnabled();
+    });
+    expect(document.body).toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+    expect(requests).toBe(2);
+  });
+
+  it("does not steal a focused folder retry debt from a later destination", async () => {
+    const retry = deferred<FolderScan | null>();
+    let requests = 0;
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      initialDatasets: [selectedFile],
+      scannedFolder: () => {
+        requests += 1;
+        return requests === 1
+          ? Promise.reject(
+              previewError({
+                kind: "folder_scan_failed",
+                summary: "That folder could not be scanned safely.",
+                retryable: true,
+              }),
+            )
+          : retry.promise;
+      },
+    });
+    renderApp(api);
+    const durable = await screen.findByRole("button", { name: "Add mzML folder…" });
+    fireEvent.click(durable);
+    const retryButton = await screen.findByRole("button", { name: "Choose another folder" });
+    retryButton.focus();
+    const focusing = vi.spyOn(durable, "focus");
+
+    fireEvent.click(retryButton);
+    blurAsABrowserWould(retryButton);
+    const search = screen.getByRole("searchbox", { name: "Search files" });
+    search.focus();
+    retry.resolve(null);
+
+    await waitFor(() => {
+      expect(durable).toBeEnabled();
+    });
+    expect(search).toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+
+    // Settlement retires the one-shot debt even when it declines to move focus.
+    // A later body focus and unrelated render must not revive it.
+    search.blur();
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort files" }), {
+      target: { value: "name-desc" },
+    });
+    expect(document.body).toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+    expect(requests).toBe(2);
+  });
+
+  it("returns it to Add files… and never to the other acquisition action", async () => {
+    // Two actions, two restorations. A single remembered control would give the
+    // keyboard back to whichever one the code happened to name.
+    const picker = deferred<readonly PickedFile[] | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      pickedFiles: () => picker.promise,
+    });
+    renderApp(api);
+    const add = await screen.findByRole("button", { name: "Add files…" });
+    add.focus();
+
+    fireEvent.click(add);
+    blurAsABrowserWould(add);
+    picker.resolve([selectedFile]);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
+    });
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveFocus();
+  });
+
+  it("does not take focus the user moved somewhere else while the scan ran", async () => {
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      initialDatasets: [selectedFile],
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    const folder = await screen.findByRole("button", { name: "Add mzML folder…" });
+    folder.focus();
+    fireEvent.click(folder);
+    blurAsABrowserWould(folder);
+
+    // The user goes to the search box while the walk runs, which the folder
+    // action deliberately leaves usable.
+    const search = screen.getByRole("searchbox", { name: "Search files" });
+    search.focus();
+    scan.resolve({ files: [] });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    expect(search).toHaveFocus();
+  });
+
+  it("takes no keyboard focus when the action was started with a pointer", async () => {
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    const folder = await screen.findByRole("button", { name: "Add mzML folder…" });
+
+    // Not focused first: a press that did not take the keyboard has no place to
+    // return it to, and putting it here would be a move of its own.
+    fireEvent.click(folder);
+    scan.resolve({ files: [] });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    expect(document.body).toHaveFocus();
+  });
+});
+
+describe("saying what a folder import is doing", () => {
+  const STATUS =
+    "Folder import in progress. MSCanvas is waiting for a folder selection or " +
+    "scanning the chosen folder. The duration is not known.";
+
+  function spoken(): string {
+    return document.querySelector("[data-live-region='folder']")?.textContent ?? "";
+  }
+
+  it("does not claim a folder is being scanned before one has been chosen", async () => {
+    // `folderBusy` is set before the native dialog opens, because that is where
+    // the operation begins. At that moment nothing has been selected, so a
+    // status naming a chosen folder is false for as long as the user spends
+    // navigating -- and false altogether if they cancel.
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    // The picker is open and nothing has been chosen.
+    expect(screen.queryByText(/Scanning folder/)).toBeNull();
+    expect(document.body.textContent).not.toContain("the chosen folder for");
+    // What is said instead is true of both halves of the operation.
+    expect(spoken()).toBe(STATUS);
+    expect(screen.getByText("Folder import in progress…", VISIBLE)).toBeVisible();
+    // And no proportion is invented for a tree nothing has counted.
+    expect(spoken()).not.toMatch(/\d+\s*%/);
+
+    // Still true once the walk itself is running, which is why one sentence
+    // covers both rather than two sentences guessing which.
+    scan.resolve({ files: [{ file: selectedFile, parents: [] }] });
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+  });
+
+  it("clears the status however the operation ends", async () => {
+    for (const ending of ["cancelled", "succeeded", "failed"] as const) {
+      const api = createFakePreviewApi({
+        availability: unavailableBackend,
+        scannedFolder:
+          ending === "cancelled"
+            ? null
+            : ending === "succeeded"
+              ? { files: [] }
+              : () => Promise.reject(previewError({ kind: "folder_not_readable" })),
+      });
+      renderApp(api);
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+      expect(spoken()).toBe(STATUS);
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+      });
+      expect(spoken()).toBe("");
+      expect(screen.queryByText("Folder import in progress…")).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("announces the status through a region that was mounted all along", async () => {
+    // A live region inserted together with its text is the shape screen readers
+    // routinely miss, so the region exists from the first render and only its
+    // text changes.
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    const region = () => document.querySelectorAll("[data-live-region='folder']");
+    expect(region()).toHaveLength(1);
+    expect(spoken()).toBe("");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    expect(region()).toHaveLength(1);
+    expect(spoken()).toBe(STATUS);
+    scan.resolve({ files: [] });
+    await waitFor(() => {
+      expect(spoken()).toBe("");
+    });
+    expect(region()).toHaveLength(1);
+  });
+
+  it("keeps exactly one folder action, named the same throughout", async () => {
+    const scan = deferred<FolderScan | null>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      scannedFolder: () => scan.promise,
+    });
+    renderApp(api);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    expect(screen.getAllByRole("button", { name: "Add mzML folder…" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    scan.resolve({ files: [] });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
+    expect(screen.getAllByRole("button", { name: "Add mzML folder…" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveAttribute(
+      "aria-busy",
+      "false",
+    );
+  });
+
+  it("leaves everything the roster read does not gate alone while it is unresolved", async () => {
+    // Only the folder action waits on the initial read. Adding files is one
+    // gated batch with nothing running unlocked inside it, so it has no window
+    // in which an older read could invalidate it -- and taking it away would be
+    // a cost with nothing bought.
+    const initial = deferred<WorkspaceRoster>();
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      roster: () => initial.promise,
+    });
+    renderApp(api);
+
+    const add = await screen.findByRole("button", { name: "Add files…" });
+    expect(add).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+    // And the window says it is still reading rather than claiming the session
+    // is empty.
+    expect(screen.getByText("Reading the workspace list…")).toBeVisible();
+
+    initial.resolve({ datasets: [], capacity: 1_024 });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    });
   });
 });
