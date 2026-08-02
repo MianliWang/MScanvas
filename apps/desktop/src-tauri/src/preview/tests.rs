@@ -3821,6 +3821,29 @@ fn a_candidate_replaced_between_the_walk_and_the_open_is_refused_and_the_batch_s
     assert_eq!(roster_names(&service), vec!["untouched.mzML"]);
 }
 
+#[test]
+fn an_import_that_is_already_superseded_never_starts_its_scan() {
+    use super::discovery::{DiscoveryError, DiscoveryErrorKind};
+
+    let service = PreviewService::new(Box::new(NoProcess));
+    let token = service.reserve_folder_import();
+    service.begin_webview_document();
+    let scan_started = std::cell::Cell::new(false);
+
+    let error = service
+        .import_folder(token, || {
+            scan_started.set(true);
+            Err(DiscoveryError::new(DiscoveryErrorKind::RootUnavailable))
+        })
+        .expect_err("known-stale work is refused before filesystem discovery");
+
+    assert_eq!(error.kind, "import_superseded");
+    assert!(
+        !scan_started.get(),
+        "an already-superseded token must not start a folder scan"
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn a_scan_owned_by_the_previous_webview_document_adds_nothing_and_holds_nothing() {

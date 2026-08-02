@@ -338,10 +338,11 @@ it.
 
 ## Mutation concurrency
 
-Implemented in M1.4.1 as recorded: the scan runs outside the workspace mutation
-gate and the batch commits only while the generation created by its accepted
-claim remains current. Otherwise the chooser returns typed
-`import_superseded`, accepts nothing, leases nothing and spends no dataset
+Implemented in M1.4.1 as recorded: an import already superseded when its picker
+answers is refused before filesystem discovery. A live import scans outside the
+workspace mutation gate, then the batch commits only while the generation
+created by its accepted claim remains current. Otherwise the chooser returns
+typed `import_superseded`, accepts nothing, leases nothing and spends no dataset
 identifier.
 
 **Begin records a baseline; exact claim creates the generation.** The
@@ -374,11 +375,12 @@ dialog or the recursive scan.
 **Navigation, not roster IPC arrival, owns reload ordering.** Tauri's native
 main-webview `PageLoadEvent::Started` hook advances the generation before the
 replacement document can issue commands. Work claimed by the previous document
-is therefore stale even when its async command is polled later. The protocol
-does not assume FIFO fetch delivery: a delayed old begin cannot advance the
-generation, replaces no live same-generation reservation, and cannot supersede
-an already claimed import. A delayed old roster request is a pure snapshot and
-has no mutation side effect.
+is therefore stale even when its async command is polled later. If its picker
+then answers, the stale token is rejected before the folder walker is invoked.
+The protocol does not assume FIFO fetch delivery: a delayed old begin cannot
+advance the generation, replaces no live same-generation reservation, and
+cannot supersede an already claimed import. A delayed old roster request is a
+pure snapshot and has no mutation side effect.
 
 `get_workspace_roster` still takes the mutation gate, so its stored-fact
 snapshot is wholly before or wholly after a batch rather than partway through
@@ -622,11 +624,14 @@ on it. The cost is that M1.4.0 delivers nothing a user can see, and the feature
 catalogue said so until M1.4.1 made it visible.
 
 If a later workspace action reaches the mutation gate before claim, no picker
-opens; if it follows claim but precedes commit, the scan is superseded, adds
-nothing and says so. If the scan commits first, the later action's roster is
-authoritative: a clear still leaves nothing, while a removal can retain imported
-rows it was never asked to remove. The webview never applies an older folder
-reply over that later roster or while that action is unresolved.
+opens. If it follows claim and reaches the gate before the import's preflight,
+the stale import is refused without walking the folder. If it arrives after
+that short preflight releases the gate -- immediately before discovery or while
+the live scan runs -- the post-scan check supersedes the import, adds nothing
+and says so. If the scan commits first, the later action's roster is
+authoritative: a clear still leaves nothing, while a removal can retain
+imported rows it was never asked to remove. The webview never applies an older
+folder reply over that later roster or while that action is unresolved.
 If the action rejects, a fresh roster read after both operations settle
 reconciles the webview without assuming where the failure occurred. This
 preserves the state Rust actually linearised without letting reply order rewrite

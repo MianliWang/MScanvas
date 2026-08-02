@@ -1759,7 +1759,7 @@ durable folder action after settlement without waiting for an observable
 disabled commit, an activation that did not own keyboard focus takes none, and
 a destination chosen meanwhile keeps it without leaving a stale debt.
 
-**Mutations.** The cumulative total is 144 named mutations, each introduced,
+**Mutations.** The cumulative total is 145 named mutations, each introduced,
 run and restored; none was committed. The final concurrency work added 28 to
 the prior 116. Eight exercise the frontend reservation barrier: Clear and Remove
 guards, rendered `canMutate`, the synchronous pending ref, acknowledgement state
@@ -1774,6 +1774,13 @@ missing command registration; generation serialization; and an unbounded
 reservation registry. Every new mutant was killed by a discriminating test,
 restored, and followed by the final full suite. This statement does not claim a
 per-mutant SHA check for the new batch.
+
+The later stale-token preflight repair adds the 145th mutation: removing the
+pre-scan generation guard makes the direct service test invoke its controlled
+walk and return `folder_not_readable` instead of refusing with
+`import_superseded`. Restoring the guard makes that test pass again while the
+existing post-scan checks continue to cover mutations that arrive during the
+walk.
 
 Final validation passed `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`,
 `cargo fmt --all --check`, workspace Clippy with warnings denied, the workspace
@@ -1801,7 +1808,7 @@ nothing pinned the wire spelling of the scan limits or the summary's fields
 between serde and the frontend's closed union, where a disagreement would be
 silent in the worst way.
 
-The final live P2 found the escape that mattered most: the empty roster hid
+The empty-roster escape P2 found the path that mattered most: the roster hid
 `Clear list`, and the hook rejected the same action, while the first folder
 import was unresolved. The action is now present and enabled whenever a folder
 request is pending. A successful empty clear advances the authoritative
@@ -1818,7 +1825,7 @@ durable `Add mzML folder…` action, waits for it to become usable, restores wit
 `preventScroll`, and retires the debt without moving focus if the user chose
 another destination meanwhile.
 
-The final concurrency review found that dispatching one asynchronous folder
+The reservation-ordering review found that dispatching one asynchronous folder
 command did not prove Rust had polled it before the frontend re-enabled Clear or
 Remove. The final protocol splits that boundary: synchronous begin stores a
 current-generation baseline and returns its correlation ID; exact asynchronous
@@ -1828,6 +1835,16 @@ bounded slot, so a delayed old begin cannot cancel a new import, and a delayed
 old roster request is side-effect-free. Native main-webview
 `PageLoadEvent::Started` is the authoritative reload edge, so no correctness
 claim depends on FIFO delivery of old and new IPC fetches.
+
+A subsequent live P2 found one avoidable cost after that ordering was already
+safe: a token superseded while its picker was open still entered the bounded
+folder walk before the commit-time generation check refused it. `import_folder`
+now checks the token under the short mutation gate before touching the
+filesystem, releases the gate for a live scan, and keeps the original check
+afterward for decisions made during that scan. A direct old-webview test proves
+that an already-stale token never invokes its controlled scan closure. This is
+a Rust-only fail-closed path owned by a document that no longer exists; it
+changes no picker or live rendered state, so the native dialog was not reopened.
 
 Earlier rendered QA used both permitted repair rounds. The first found that the late
 typed `import_superseded` rejection still raised `The folder could not be added`

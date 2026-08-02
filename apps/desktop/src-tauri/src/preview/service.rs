@@ -599,16 +599,17 @@ impl PreviewService {
     ///
     /// 1. the exact claim advanced the generation before the picker opened, so
     ///    there is a name for "the workspace when this picker was accepted";
-    /// 2. scan holding **no** lock -- not the workspace, not the mutation gate.
+    /// 2. reject an already-superseded token before touching the filesystem;
+    /// 3. scan holding **no** lock -- not the workspace, not the mutation gate.
     ///    A tree can take as long as it takes, and a session frozen for the
     ///    length of it would be one the user could not remove a row from;
-    /// 3. take the gate and refuse outright if anything has happened since. A
-    ///    user who cleared the list, added files, or reloaded the window has
-    ///    said what the workspace is, and rows from an import they started
-    ///    before that would arrive from nowhere;
-    /// 4. accept the candidates in discovery order, under the gate, so the
+    /// 4. take the gate again and refuse outright if anything has happened
+    ///    since. A user who cleared the list, added files, or reloaded the
+    ///    window has said what the workspace is, and rows from an import they
+    ///    started before that would arrive from nowhere;
+    /// 5. accept the candidates in discovery order, under the gate, so the
     ///    batch is one contiguous run;
-    /// 5. recheck each candidate's identity against what discovery found,
+    /// 6. recheck each candidate's identity against what discovery found,
     ///    because a path is a proposal and the object behind it can be
     ///    replaced between the walk and the open.
     ///
@@ -645,6 +646,16 @@ impl PreviewService {
         S: FnOnce() -> Result<DiscoveryResult, DiscoveryError>,
     {
         let reserved = token.generation;
+        // A picker can remain open while another workspace decision supersedes
+        // its token. Refuse that known-stale work before paying for a tree walk.
+        // This is only a preflight: the generation must still be checked again
+        // after the unlocked scan to cover a decision made while it runs.
+        let preflight = self.enter_workspace_mutation();
+        if preflight.generation != reserved {
+            return Err(import_superseded());
+        }
+        drop(preflight);
+
         let discovered = scan().map_err(|error| folder_error(error.kind()))?;
 
         // Under the gate, and deliberately without advancing it: this commit is

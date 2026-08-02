@@ -524,9 +524,10 @@ serialises one workspace mutation against another now carries a monotonic
 counter. Adding files, removing rows, emptying the list, a successful exact
 folder claim, and native main-webview `PageLoadEvent::Started` advance it.
 Folder scanning is the one operation long enough that the user can decide
-something else while it runs: it carries the token created by its claim, scans
-holding no lock at all, and commits only if that token still names the current
-generation.
+something else while it runs: it carries the token created by its claim,
+refuses before filesystem discovery if that token is already stale, otherwise
+scans holding no lock at all, and commits only after rechecking that the token
+still names the current generation.
 
 The two-command start is deliberately independent of IPC arrival order.
 Synchronous `begin_mzml_folder_import` records the current generation only as a
