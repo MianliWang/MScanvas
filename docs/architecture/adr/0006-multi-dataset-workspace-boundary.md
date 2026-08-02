@@ -468,6 +468,17 @@ below the folder the user chose — under all of these conditions:
 - display only: never searched, never a sort key, never part of identity, never
   persisted, and its tooltip says exactly what the row already shows.
 
+The same label identifies an acquisition wherever the frontend offers or shows
+the active dataset: the roster row, the Run summary header and the retained
+one-action Preview affordance. The service still stores no active dataset. The
+frontend resolves the current active roster row by its opaque handle and uses
+the descriptor in an older preview response only as a defensive fallback. A
+second same-named row can therefore give an already-open Run its context, and
+removing that row can take the context away, without another backend read and
+without deriving any location in the frontend. The Run identity alone uses the
+secondary text token because this context can be the only visible distinction
+between two acquisitions; the generic panel-header note rule remains unchanged.
+
 The registry's own origin record stays private and stays out of identity: two
 names for one acquisition are one row whichever route each arrived by, and a
 duplicate addition never rewrites where the existing row came from. Its debug
@@ -592,6 +603,9 @@ mutation-concurrency section for the complete state machine.
 - relative context appears only for exact filename collisions and disappears
   when the row that caused it does, is never searched and is never a sort key,
   and a directly added row is told apart from a discovered one;
+- the Run identity and retained Preview affordance use the current active
+  roster label, gain or lose collision context as that roster changes, and do
+  so without another acquisition read;
 - folder begin is current-generation-idempotent in one bounded pending slot,
   exact claim is single-use and advances before the picker, and wrong or
   replayed claims do not consume the live slot;

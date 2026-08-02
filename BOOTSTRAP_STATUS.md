@@ -1422,13 +1422,14 @@ later reviewer found the gap and was right about the facts. Unsearched, the same
 line still reads at 3.49:1 in the light theme, and it is not redundant text: it
 carries the session's capacity, which appears nowhere else, and the only
 statement that removing a row leaves the file alone that a user sees *before*
-pressing the button. But `.panel-header p` is tertiary across the whole
-application — the preview summary, the spectrum panel, the spectrum table's
-caption — and it is tertiary on `main` exactly as it is here. That is one
-decision about one token affecting several panels, not this panel's to make on
-its own while a search happens to be running, and it wants a change that can
-weigh every panel it moves and check each one rendered. This milestone fixed the
-text it added and left the rest recorded rather than quietly implied to be fine.
+pressing the button. The generic `.panel-header p` rule remains tertiary for
+that line, the spectrum panel and the spectrum table's caption. A later M1.4.1
+preview-identity repair adds one deliberately scoped exception:
+`.preview-file-identity` uses the secondary token because it identifies which
+acquisition every value in the Run panel describes. Tests pin both the exception
+and the unchanged generic rule. That exception does not imply the other
+non-redundant tertiary text is readable; this milestone fixed the text it added
+and leaves the remaining debt recorded rather than quietly implied to be fine.
 
 Nine reducer tests hold the first — built on rows whose insertion, name and size
 orders disagree everywhere, so every one of them fails outright if the lookup
@@ -1722,14 +1723,15 @@ files were found in that folder" is said only by a scan that described the whole
 folder; a scan that stopped short says "No files were added, and the scan was
 incomplete" instead.
 
-**Tests.** The default workspace library suite lists 493 Rust tests: 486 pass
-and 7 are ignored entry points. The required `--all-targets` run additionally
-executes 17 passing example-harness tests, for 510 listed tests in total: 503
-pass and 7 are ignored. The core crate accounts for 2 passing tests; the
-desktop library for 270, with 268 passing and 2 ignored because they need the
-local administrative share; plot-spec for 1 passing test; and ProteoWizard for
-220, with 215 passing and 5 ignored controlled subprocess entry points. The
-frontend has 407 passing tests across 14 files. The new Rust coverage is the
+**Tests.** The required `--all-targets` workspace run lists 511 Rust tests: 504
+pass, 7 are ignored and none fail. Seventeen are passing example-harness tests;
+the remaining 494 are the workspace libraries. The core crate accounts for 2
+passing tests; the desktop library for 271, with 269 passing and 2 ignored
+because they need the local administrative share; plot-spec for 1 passing test;
+and ProteoWizard for 220, with 215 passing and 5 ignored controlled subprocess
+entry points. A controlled subprocess self-call that reports 1 passed and 219
+filtered is part of that run and is not counted a second time. The frontend has
+410 passing tests across 14 files. The new Rust coverage is the
 discovery-to-acceptance identity join, both native page-load/commit orderings, a
 scan superseded by page-load start or an emptied list, a scan that survives a
 pure roster snapshot, exact single-use reservation claiming,
@@ -1759,7 +1761,7 @@ durable folder action after settlement without waiting for an observable
 disabled commit, an activation that did not own keyboard focus takes none, and
 a destination chosen meanwhile keeps it without leaving a stale debt.
 
-**Mutations.** The cumulative total is 145 named mutations, each introduced,
+**Mutations.** The cumulative total is 148 named mutations, each introduced,
 run and restored; none was committed. The final concurrency work added 28 to
 the prior 116. Eight exercise the frontend reservation barrier: Clear and Remove
 guards, rendered `canMutate`, the synchronous pending ref, acknowledgement state
@@ -1782,9 +1784,18 @@ walk and return `folder_not_readable` instead of refusing with
 existing post-scan checks continue to cover mutations that arrive during the
 walk.
 
-Final validation passed `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`,
-`cargo fmt --all --check`, workspace Clippy with warnings denied, the workspace
-Rust tests, and `python scripts/check_repo.py`.
+Three further frontend mutants cover the later preview-identity repair, bringing
+the cumulative total to 148. Each was killed by a discriminating test and
+restored. At application commit
+`0893af14d68821420e3fb9a7be82212dcb38ade5`, the frontend suite passed all
+410 tests and the required all-targets Rust run passed 504 with 7 ignored and
+none failed, 511 listed in total. This record makes no claim about a rendered
+measurement that has not yet been taken on that application commit.
+
+Validation through the stale-token preflight repair passed `pnpm lint`, `pnpm
+typecheck`, `pnpm test`, `pnpm build`, `cargo fmt --all --check`, workspace
+Clippy with warnings denied, the workspace Rust tests, and `python
+scripts/check_repo.py`.
 
 One survived its first run and is recorded here because the repair was to the
 test rather than to the product: folding the collision context into the name
@@ -1845,6 +1856,22 @@ afterward for decisions made during that scan. A direct old-webview test proves
 that an already-stale token never invokes its controlled scan closure. This is
 a Rust-only fail-closed path owned by a document that no longer exists; it
 changes no picker or live rendered state, so the native dialog was not reopened.
+
+The preview-identity P2 found a presentation gap in a contract Rust already
+fulfilled. `PreviewDto.file` carried the collision-only `relativeContext`, but
+the Run header rendered only `fileName` and size, so either of two acquisitions
+called `sample.mzML`, when active, could still look like the other in the panel
+that described its measurements. At application commit
+`0893af14d68821420e3fb9a7be82212dcb38ade5`, the header and the retained
+one-action Preview affordance use one shared dataset label. The header prefers
+the current active roster row over the older preview snapshot, so adding the
+second same-named row gives the open Run its context and removing that row takes
+the context away without rereading the acquisition. The identity line alone
+uses the secondary text token; the generic panel-header rule remains unchanged.
+Three discriminating frontend tests cover the live-roster transition, the
+shared recovery label and the scoped colour rule. This is a frontend projection
+repair: it changes no picker, traversal, command or DTO. The native dialog was
+not reopened for it, and no new rendered-QA measurement is claimed here.
 
 Earlier rendered QA used both permitted repair rounds. The first found that the late
 typed `import_superseded` rejection still raised `The folder could not be added`
