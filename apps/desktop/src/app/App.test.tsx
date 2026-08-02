@@ -2807,6 +2807,76 @@ describe("telling two identically named acquisitions apart", () => {
     await screen.findByRole("option", { name: /unique\.mzML/ });
   }
 
+  it("keeps the Run identity aligned with collision context recomputed by the roster", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [{ file: NESTED_ONE, parents: ["batch-1"] }],
+      scannedFolder: {
+        files: [{ file: NESTED_TWO, parents: ["batch-2"] }],
+      },
+    });
+    renderApp(api);
+
+    fireEvent.click(await screen.findByRole("option", { name: /sample\.mzML/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    const summary = await screen.findByRole("region", { name: "Run" });
+    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const readsAfterOpen = api.openCount();
+
+    // It was unique when the preview DTO was produced, so that response has no
+    // context. The later folder answer recomputes the current roster instead.
+    expect(within(summary).getByText(/^sample\.mzML ·/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+
+    const collidingIdentity = await within(summary).findByText(/^sample\.mzML, batch-1 ·/);
+    expect(collidingIdentity).toBeVisible();
+    expect(collidingIdentity).toHaveAttribute("title", "sample.mzML, batch-1");
+    expect(api.openCount()).toBe(readsAfterOpen);
+    expect(grid).toBeVisible();
+
+    // Removing the row that made the context necessary recomputes the roster
+    // again. The open Run stays, but its now-unique identity sheds the context.
+    fireEvent.click(screen.getByRole("option", { name: COLLIDING_TWO }));
+    // Moving focus and selection is not opening that row. The Run identity
+    // remains attached to the active preview until the roster actually changes.
+    expect(within(summary).getByText(/^sample\.mzML, batch-1 ·/)).toHaveAttribute(
+      "title",
+      "sample.mzML, batch-1",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    let uniqueIdentity: HTMLElement | null = null;
+    await waitFor(() => {
+      uniqueIdentity = within(summary).getByText(/^sample\.mzML ·/);
+      expect(uniqueIdentity).toBeVisible();
+    });
+    expect(uniqueIdentity).toHaveAttribute("title", "sample.mzML");
+    expect(within(summary).queryByText(/batch-1/)).toBeNull();
+    expect(api.openCount()).toBe(readsAfterOpen);
+    expect(grid).toBeVisible();
+  });
+
+  it("uses the same collision label when offering the active file back for Preview", async () => {
+    const api = createFakePreviewApi({
+      chosenInstallation: chosenBackend,
+      initialDatasets: [
+        { file: NESTED_ONE, parents: ["batch-1"] },
+        { file: NESTED_TWO, parents: ["batch-2"] },
+      ],
+    });
+    renderApp(api);
+
+    fireEvent.click(await screen.findByRole("option", { name: COLLIDING_ONE }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    await screen.findByRole("region", { name: "Run" });
+
+    // Changing installation discards backend-derived readings but deliberately
+    // retains the active roster row as a one-action recovery affordance.
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Preview sample.mzML, batch-1" }),
+    ).toBeVisible();
+  });
+
   it("says where each of two same-named rows came from, and nothing beside a unique name", async () => {
     renderApp(collidingApi());
 

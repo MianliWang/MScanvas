@@ -95,6 +95,22 @@ describe("narrow desktop layout rules", () => {
     expect(header.getPropertyValue("text-overflow")).toBe("ellipsis");
   });
 
+  it("gives the Run file identity a readable colour without changing every header note", () => {
+    // Same 11px contrast boundary as collision context in the roster: this can
+    // be the only text that distinguishes two same-named acquisitions, while
+    // other panel notes retain their quieter established hierarchy.
+    const app = mountStyles(appStyles);
+
+    expect(
+      requireStyleRule(app, ".panel-header p.preview-file-identity").style.getPropertyValue(
+        "color",
+      ),
+    ).toBe("var(--color-text-secondary)");
+    expect(requireStyleRule(app, ".panel-header p").style.getPropertyValue("color")).toBe(
+      "var(--color-text-tertiary)",
+    );
+  });
+
   it("lets an empty-state action break a file name it cannot fit", () => {
     // The action that offers the retained file says its name, and a name can
     // arrive with nothing in it a line may break at. Centred in a panel that

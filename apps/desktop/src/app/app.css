@@ -469,6 +469,15 @@ button:disabled {
   white-space: nowrap;
 }
 
+/* This line identifies which acquisition every number below belongs to. A
+   collision context can be the only visible difference between two runs, so
+   at 11px it takes the quieter readable text colour rather than the tertiary
+   token used as the established generic panel-note colour. Scoped here so
+   unrelated headers keep their established hierarchy. */
+.panel-header p.preview-file-identity {
+  color: var(--color-text-secondary);
+}
+
 /* While a query is hiding rows this line stops being a note about the panel and
    becomes the only visible account of how much of the session is out of sight.
    Ordinary text at 11px, so it takes the secondary colour rather than the

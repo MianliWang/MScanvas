@@ -5,7 +5,7 @@ import { DatasetRoster } from "./DatasetRoster";
 import { PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel } from "./SelectedSpectrumPanel";
 import { SpectrumTable } from "./SpectrumTable";
-import { formatCount } from "./format";
+import { formatCount, formatDatasetLabel } from "./format";
 import { rosterProjection, type WorkspaceNotice } from "./rosterSelection";
 import { describeProjection } from "./rosterView";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
@@ -34,6 +34,20 @@ export function PreviewWorkspace() {
   // renders are the same list the reducer ranges over rather than a second
   // answer to the same question.
   const projection = useMemo(() => rosterProjection(roster), [roster]);
+
+  // A preview response describes the row as it was when the read was produced,
+  // but a collision context is a fact about the whole *current* roster: it appears
+  // when a same-named row arrives and disappears when that row leaves. Prefer
+  // the live active row only when it is still the one this preview belongs to;
+  // the response is a defensive fallback when no matching live row is
+  // available, rather than the source of display identity.
+  const previewFile =
+    preview.status === "loaded" &&
+    workspace.activeDataset?.handle === preview.preview.file.handle
+      ? workspace.activeDataset
+      : preview.status === "loaded"
+        ? preview.preview.file
+        : null;
 
   // Runs after the panels below have been committed, so each measurement
   // covers the work its name describes rather than stopping when the reply
@@ -374,7 +388,7 @@ export function PreviewWorkspace() {
           />
           {preview.status === "loaded" ? (
             <PreviewSummary
-              file={preview.preview.file}
+              file={previewFile ?? preview.preview.file}
               measurements={workspace.measurements}
               metadata={preview.preview.metadata}
               runSummary={preview.preview.runSummary}
@@ -456,7 +470,7 @@ export function PreviewWorkspace() {
                         onClick={workspace.previewActiveAgain}
                         type="button"
                       >
-                        Preview {workspace.activeDataset.fileName}
+                        Preview {formatDatasetLabel(workspace.activeDataset)}
                       </button>
                     )}
                   </>
