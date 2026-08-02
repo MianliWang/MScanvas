@@ -821,11 +821,11 @@ button:disabled {
 
   .viewer-stack {
     /* At the minimum-height window the taller workspace row leaves a bounded
-       viewer remainder. Reserve enough of it for the 46px Spectra header, the
-       30px sticky table header and one complete 30px data row (plus the panel
-       borders), while the selected-spectrum panel keeps its 52px header and
-       borders. Any extra height still follows the established 1.15:1 ratio. */
-    grid-template-rows: minmax(108px, 1.15fr) minmax(54px, 1fr);
+       viewer remainder. Reserve 116px for the rendered Spectra header, the
+       30px sticky table header, one complete 30px data row and the panel
+       borders. The selected-spectrum panel keeps its 52px header and borders.
+       Any extra height still follows the established 1.15:1 ratio. */
+    grid-template-rows: minmax(116px, 1.15fr) minmax(54px, 1fr);
   }
 }
 

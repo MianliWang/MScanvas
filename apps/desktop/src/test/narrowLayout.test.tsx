@@ -259,7 +259,7 @@ describe("narrow desktop layout markup", () => {
       requireMediaRule(app, "(max-width: 1120px)", ".viewer-stack").style.getPropertyValue(
         "grid-template-rows",
       ),
-    ).toBe("minmax(108px, 1.15fr) minmax(54px, 1fr)");
+    ).toBe("minmax(116px, 1.15fr) minmax(54px, 1fr)");
   });
 
   it("lets a row's notes give ground so the file name keeps a column", () => {
