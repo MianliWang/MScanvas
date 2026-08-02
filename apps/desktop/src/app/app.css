@@ -804,8 +804,19 @@ button:disabled {
        minimum, raised in M1.3 by what the search and sort controls cost and in
        M1.4.1 by the third line the fifth action wraps to; the two have to move
        together, because a track shorter than the panel's minimum clamps it
-       back to a height its chrome does not fit in. */
-    grid-template-rows: minmax(280px, 0.9fr) minmax(0, 1.6fr);
+       back to a height its chrome does not fit in. With a preview loaded the
+       track also pays for the 8px panel gap and the Run panel's complete 52px
+       identity header inside its two 1px borders: 280 + 8 + 54 = 342. Its
+       details may scroll, but the acquisition they describe is never clipped
+       away. */
+    grid-template-rows: minmax(342px, 0.9fr) minmax(0, 1.6fr);
+  }
+
+  .workspace-sidebar > .inspector-panel {
+    /* The Run header is the identity for every value in the viewer. It may
+       give all of its scrollable detail space to the roster at the minimum
+       window, but its 52px header plus the panel borders must remain visible. */
+    min-height: 54px;
   }
 }
 

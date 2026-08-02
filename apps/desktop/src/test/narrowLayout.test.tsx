@@ -222,12 +222,39 @@ describe("narrow desktop layout markup", () => {
       requireMediaRule(app, "(max-width: 1120px)", ".workspace-layout").style.getPropertyValue(
         "grid-template-rows",
       ),
-    ).toBe("minmax(280px, 0.9fr) minmax(0, 1.6fr)");
+    ).toBe("minmax(342px, 0.9fr) minmax(0, 1.6fr)");
     // And what the column cannot fit is clipped here rather than pushing the
     // shell past the viewport.
     expect(requireStyleRule(app, ".workspace-sidebar").style.getPropertyValue("overflow")).toBe(
       "hidden",
     );
+  });
+
+  it("keeps the loaded Run identity visible below the roster at the app minimum", () => {
+    // The roster's two-row floor consumes the old 280px narrow track by
+    // itself. Without a separate Run floor and the matching 8px-gap-plus-52px
+    // track budget, the inspector collapses to about one CSS pixel and clips
+    // the acquisition identity even though its header still has a layout rect.
+    const app = mountStyles(appStyles);
+
+    expect(requireStyleRule(app, ".workspace-sidebar").style.getPropertyValue("gap")).toBe(
+      "8px",
+    );
+    expect(requireStyleRule(app, ".panel-header").style.getPropertyValue("min-height")).toBe(
+      "52px",
+    );
+    expect(
+      requireMediaRule(
+        app,
+        "(max-width: 1120px)",
+        ".workspace-sidebar > .inspector-panel",
+      ).style.getPropertyValue("min-height"),
+    ).toBe("54px");
+    expect(
+      requireMediaRule(app, "(max-width: 1120px)", ".workspace-layout").style.getPropertyValue(
+        "grid-template-rows",
+      ),
+    ).toBe("minmax(342px, 0.9fr) minmax(0, 1.6fr)");
   });
 
   it("lets a row's notes give ground so the file name keeps a column", () => {
