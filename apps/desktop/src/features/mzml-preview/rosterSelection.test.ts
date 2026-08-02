@@ -686,6 +686,21 @@ describe("saying what a workspace action did", () => {
     expect(notice.tone).toBe("warning");
   });
 
+  it("uses Rust's collision context to identify a duplicate", () => {
+    const existing: SelectedFile = {
+      handle: "file-0",
+      fileName: "sample.mzML",
+      byteLength: 4_096,
+      relativeContext: "batch-2",
+    };
+    const notice = describeAddResult({
+      roster: { datasets: [existing], capacity: CAPACITY },
+      outcomes: [{ outcome: "duplicate", existing }],
+    });
+
+    expect(notice.details).toEqual(["sample.mzML, batch-2 is already in the workspace."]);
+  });
+
   it("is quiet when everything arrived", () => {
     const notice = describeAddResult(addResult([added("file-0"), added("file-1")], "file-0", "file-1"));
 

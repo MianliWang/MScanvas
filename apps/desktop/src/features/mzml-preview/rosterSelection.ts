@@ -35,6 +35,7 @@ import type {
   WorkspaceRemoveResult,
   WorkspaceRoster,
 } from "./contracts";
+import { formatDatasetLabel } from "./format";
 import {
   matchesQuery,
   projectRoster,
@@ -132,7 +133,7 @@ export function describeAddResult(result: WorkspaceAddResult): WorkspaceNotice {
   const details = [
     ...duplicates.map((outcome) =>
       outcome.outcome === "duplicate"
-        ? `${outcome.existing.fileName} is already in the workspace.`
+        ? `${formatDatasetLabel(outcome.existing)} is already in the workspace.`
         : "",
     ),
     ...rejected.map((outcome) => `${outcome.candidateName}: ${outcome.error.summary}`),

@@ -925,6 +925,38 @@ describe("the session workspace roster", () => {
     expect(api.openCount()).toBe(1);
   });
 
+  it("identifies which same-named acquisition a direct add found again", async () => {
+    const first = {
+      handle: "collision-0",
+      fileName: "sample.mzML",
+      byteLength: 4_096,
+      relativeContext: null,
+    };
+    const second = {
+      handle: "collision-1",
+      fileName: "sample.mzML",
+      byteLength: 8_192,
+      relativeContext: null,
+    };
+    const api = createFakePreviewApi({
+      initialDatasets: [
+        { file: first, parents: ["batch-1"] },
+        { file: second, parents: ["batch-2"] },
+      ],
+      pickedFiles: [second],
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /sample\.mzML.*batch-2/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+
+    expect(
+      await screen.findByText("sample.mzML, batch-2 is already in the workspace.", VISIBLE),
+    ).toBeVisible();
+    expect(rosterRows()).toHaveLength(2);
+    expect(api.openCount()).toBe(0);
+  });
+
   it("says what a batch did above the list rather than inside it", async () => {
     // A summary that grows with the batch must not take its height from the
     // list it is describing: at a short window that leaves the rows it just
