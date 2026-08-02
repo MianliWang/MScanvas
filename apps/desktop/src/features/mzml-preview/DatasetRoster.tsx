@@ -120,6 +120,7 @@ export function DatasetRoster({
   const listRef = useRef<HTMLUListElement | null>(null);
   const addFilesRef = useRef<HTMLButtonElement | null>(null);
   const addFolderRef = useRef<HTMLButtonElement | null>(null);
+  const removeSelectedRef = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const seenFocusToken = useRef(focusAddFilesToken);
   const seenRestoreAddFolderFocusToken = useRef(restoreAddFolderFocusToken);
@@ -145,6 +146,20 @@ export function DatasetRoster({
    */
   const pendingPickerRestore = useRef<HTMLButtonElement | null>(null);
   const pickerRestoreOutstanding = useRef(false);
+  /**
+   * A focused `Remove selected` action that the request disabled.
+   *
+   * Successful removal returns to the row the reducer chose beside the gap;
+   * an answer that removed none of the requested handles returns to the action
+   * itself. The requested handles distinguish those outcomes without asking
+   * this view to infer a backend result. The debt is armed only after the
+   * disabled commit is seen, so an activation that started no request cannot
+   * move the keyboard later.
+   */
+  const removeFocusDebt = useRef<{
+    readonly requestedHandles: readonly string[];
+    sawDisabled: boolean;
+  } | null>(null);
   /**
    * The row that last took the keyboard, remembered by handle.
    *
@@ -228,6 +243,58 @@ export function DatasetRoster({
       state.focused === null
         ? null
         : (list?.querySelector<HTMLElement>(`[data-handle="${state.focused}"]`) ?? null);
+    if (row !== null) {
+      row.focus({ preventScroll: true });
+      return;
+    }
+    searchRef.current?.focus({ preventScroll: true });
+  });
+
+  /**
+   * Pays the focus debt created when removal disables its own focused action.
+   *
+   * WebView2 moves focus from a disabled button to `body`. When rows changed,
+   * the reducer has already reconciled `state.focused` against the exact
+   * projection the user was looking at, so its row is the durable destination.
+   * If Rust changed nothing, the re-enabled action is the destination instead.
+   * A destination the user chose while the request was running always wins.
+   * Empty-workspace restoration remains the existing `Add files…` debt.
+   */
+  useEffect(() => {
+    const debt = removeFocusDebt.current;
+    if (debt === null) {
+      return;
+    }
+    if (!canMutate) {
+      debt.sawDisabled = true;
+      return;
+    }
+    if (!debt.sawDisabled) {
+      return;
+    }
+    removeFocusDebt.current = null;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body) {
+      return;
+    }
+    const live = new Set(state.datasets.map((dataset) => dataset.handle));
+    const removed = debt.requestedHandles.some((handle) => !live.has(handle));
+    if (!removed) {
+      const control = removeSelectedRef.current;
+      if (control !== null && !control.disabled) {
+        control.focus({ preventScroll: true });
+      }
+      return;
+    }
+    if (state.datasets.length === 0) {
+      return;
+    }
+    const row =
+      state.focused === null
+        ? null
+        : (listRef.current?.querySelector<HTMLElement>(
+            `[data-handle="${state.focused}"]`,
+          ) ?? null);
     if (row !== null) {
       row.focus({ preventScroll: true });
       return;
@@ -614,7 +681,18 @@ export function DatasetRoster({
         <button
           className="secondary-button"
           disabled={!canMutate || state.selected.size === 0}
-          onClick={onRemoveSelected}
+          onClick={(event) => {
+            const control = event.currentTarget;
+            removeFocusDebt.current =
+              document.activeElement === control
+                ? {
+                    requestedHandles: [...state.selected],
+                    sawDisabled: false,
+                  }
+                : null;
+            onRemoveSelected();
+          }}
+          ref={removeSelectedRef}
           type="button"
         >
           Remove selected

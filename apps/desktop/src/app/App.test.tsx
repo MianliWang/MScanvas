@@ -1022,6 +1022,42 @@ describe("the session workspace roster", () => {
     expect(rosterRow(/QC_pool_02\.mzML/)).toHaveAttribute("aria-selected", "true");
   });
 
+  it("returns a focused removal action to the survivor beside the gap", async () => {
+    const removal = deferred<WorkspaceRemoveResult>();
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile, secondFile, thirdFile],
+      removeDatasets: () => removal.promise,
+    });
+    renderApp(api);
+    const removed = await screen.findByRole("option", { name: /QC_pool_02\.mzML/ });
+    fireEvent.click(removed);
+    const survivor = rosterRow(/Blank_03\.mzML/);
+    const focusing = vi.spyOn(survivor, "focus");
+    const remove = screen.getByRole("button", { name: "Remove selected" });
+    remove.focus();
+    fireEvent.click(remove);
+
+    await waitFor(() => {
+      expect(remove).toBeDisabled();
+    });
+    // WebView2 blurs the action when the request disables it. jsdom keeps a
+    // disabled element focused, so reproduce the production transition.
+    blurAsABrowserWould(remove);
+    expect(document.body).toHaveFocus();
+    removal.resolve({
+      roster: { datasets: [selectedFile, thirdFile], capacity: 1_024 },
+      removedHandles: [secondFile.handle],
+      unknownHandles: [],
+    });
+
+    await waitFor(() => {
+      expect(survivor).toHaveFocus();
+    });
+    expect(survivor).toHaveAttribute("tabindex", "0");
+    expect(survivor).toHaveAttribute("aria-selected", "true");
+    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
   it("empties the list without a restart and gives the keyboard back to Add files", async () => {
     const api = createFakePreviewApi({ pickedFiles: [selectedFile, secondFile] });
     await openTheFile(api);

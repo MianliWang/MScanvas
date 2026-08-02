@@ -102,15 +102,19 @@ function Harness({
 function Fixed({
   state,
   canAddFiles = true,
+  canMutate = true,
+  onRemoveSelected = () => undefined,
 }: {
   readonly state: RosterState;
   readonly canAddFiles?: boolean;
+  readonly canMutate?: boolean;
+  readonly onRemoveSelected?: () => void;
 }) {
   return (
     <DatasetRoster
       canAddFiles={canAddFiles}
       canAddFolder
-      canMutate
+      canMutate={canMutate}
       canPreview
       canReloadRoster
       dispatch={() => undefined}
@@ -122,12 +126,26 @@ function Fixed({
       onAddFolder={() => undefined}
       onClearList={() => undefined}
       onReloadRoster={() => undefined}
-      onRemoveSelected={() => undefined}
+      onRemoveSelected={onRemoveSelected}
       projection={rosterProjection(state)}
       restoreAddFolderFocusToken={0}
       state={state}
     />
   );
+}
+
+function removeFrom(state: RosterState, handle: string): RosterState {
+  return rosterReducer(state, {
+    type: "datasetsRemoved",
+    result: {
+      roster: {
+        datasets: state.datasets.filter((dataset) => dataset.handle !== handle),
+        capacity: state.capacity,
+      },
+      removedHandles: [handle],
+      unknownHandles: [],
+    },
+  });
 }
 
 function rows(): HTMLElement[] {
@@ -488,6 +506,89 @@ describe("looking at the roster through a search and a sort", () => {
 
     expect(screen.getByText("No files match this search")).toBeVisible();
     expect(document.activeElement).toBe(searchBox());
+  });
+});
+
+describe("returning the keyboard after removal", () => {
+  const selectedMiddle = () =>
+    rosterReducer(seeded(4), {
+      type: "rowPressed",
+      handle: "file-1",
+      modifiers: { ctrl: false, shift: false },
+    });
+
+  it("moves a focused removal action to the survivor beside the gap", () => {
+    const before = selectedMiddle();
+    const after = removeFrom(before, "file-1");
+    const onRemoveSelected = vi.fn();
+    const { rerender } = render(
+      <Fixed onRemoveSelected={onRemoveSelected} state={before} />,
+    );
+    const remove = screen.getByRole("button", { name: "Remove selected" });
+    const survivor = screen.getByRole("option", { name: /Blank_03\.mzML/ });
+    const focusing = vi.spyOn(survivor, "focus");
+    remove.focus();
+
+    fireEvent.click(remove);
+    rerender(
+      <Fixed canMutate={false} onRemoveSelected={onRemoveSelected} state={before} />,
+    );
+    blurAsABrowserWould(remove);
+    rerender(<Fixed onRemoveSelected={onRemoveSelected} state={after} />);
+
+    expect(onRemoveSelected).toHaveBeenCalledTimes(1);
+    expect(survivor).toHaveFocus();
+    expect(survivor).toHaveAttribute("tabindex", "0");
+    expect(survivor).toHaveAttribute("aria-selected", "true");
+    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it("does not take the keyboard from a destination chosen during removal", () => {
+    const before = selectedMiddle();
+    const after = removeFrom(before, "file-1");
+    const { rerender } = render(<Fixed state={before} />);
+    const remove = screen.getByRole("button", { name: "Remove selected" });
+    remove.focus();
+
+    fireEvent.click(remove);
+    rerender(<Fixed canMutate={false} state={before} />);
+    blurAsABrowserWould(remove);
+    const destination = searchBox();
+    destination.focus();
+    rerender(<Fixed state={after} />);
+
+    expect(destination).toHaveFocus();
+    expect(screen.getByRole("option", { name: /Blank_03\.mzML/ })).not.toHaveFocus();
+  });
+
+  it("takes no keyboard focus from an unfocused removal activation", () => {
+    const before = selectedMiddle();
+    const after = removeFrom(before, "file-1");
+    const { rerender } = render(<Fixed state={before} />);
+    expect(document.body).toHaveFocus();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+    rerender(<Fixed canMutate={false} state={before} />);
+    rerender(<Fixed state={after} />);
+
+    expect(document.body).toHaveFocus();
+  });
+
+  it("returns an unchanged removal to its re-enabled action", () => {
+    const state = selectedMiddle();
+    const { rerender } = render(<Fixed state={state} />);
+    const remove = screen.getByRole("button", { name: "Remove selected" });
+    const focusing = vi.spyOn(remove, "focus");
+    remove.focus();
+    focusing.mockClear();
+
+    fireEvent.click(remove);
+    rerender(<Fixed canMutate={false} state={state} />);
+    blurAsABrowserWould(remove);
+    rerender(<Fixed state={state} />);
+
+    expect(remove).toHaveFocus();
+    expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
   });
 });
 
