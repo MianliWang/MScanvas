@@ -663,8 +663,8 @@ that reads an acquisition is asking for one to be read.
   above.
 - **M1.3** — done: search and sort as a view projection, recorded in the
   amendments above.
-- **M1.4** — implementation complete; final M1.4.1 rendered QA pending: folder
-  ingestion, with its own traversal boundary in
+- **M1.4** — done: folder ingestion and its final M1.4.1 rendered Windows QA,
+  with its own traversal boundary in
   [ADR 0007](0007-logical-acquisition-discovery-and-folder-traversal.md) and the
   amendment above. Directory-formatted acquisitions stay gated on evidence, as
   *Unsupported formats* requires.

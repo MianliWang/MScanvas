@@ -1840,10 +1840,71 @@ begin replaced the now-stale slot. Both fail before an unsafe commit, while an
 overlapping real picker or scan failure remains visible. Opposite-order and
 ghost-begin frontend tests distinguish all sides of that rule.
 
-**Final rendered Windows QA for the current begin/claim implementation is still
-owed and is not claimed here.** The current protocol claims above are backed by
-automated tests; earlier rendered QA exercised its predecessor. Completion
-requires an unlocked, exclusive interactive desktop session.
+**Final rendered Windows QA is complete for the current begin/claim
+implementation.** The bound run was `m141-859e2ed-final2` at
+`859e2ed36d3c699bc7e7c6f562127ad2a4c8db2b`, in the Windows Tauri executable
+whose SHA-256 was
+`746adde83594d500f6563194d86bdcfc2c3fec4bfa5ebf3089675a205f9cc59c`.
+The real PID-owned Common Item Dialog was opened once from the keyboard and
+once from a trusted pointer activation. Minimal native assistance consisted
+only of pressing Esc in the modal. Both cancellations completed the exact
+path-free pair -- `begin_mzml_folder_import {}` followed by
+`choose_mzml_folder { reservationId }` -- with matching single-use IDs; all
+four IPC records settled, neither request nor reply contained a path, both
+chooser replies were `null`, and the empty workspace remained unchanged. The
+keyboard path returned visible 2px focus to `Add mzML folder…`. No further
+native-dialog repetition was used.
+
+The states after the picker were exercised in that same exact-head rendered
+application through one-shot, typed Playwright routes at the live Tauri IPC
+origin. Those routes are deliberately recorded as deterministic projection and
+ordering evidence, not as another filesystem traversal: the real traversal,
+identity and generation orders are the Rust tests above, while the route makes
+the frontend receive each reviewed DTO/error ordering without opening the
+native dialog again. The current empty-workspace escape was observed from both
+sides of the acknowledgement barrier: `Clear list` was present but disabled
+while begin was unresolved, became keyboard-reachable immediately after the
+exact claim was dispatched, kept its 2px focus ring, and reported
+`The workspace is empty. The pending folder import will not add files.` A stale
+non-empty folder result released afterwards installed no row; `Add files…`
+became the visible focused destination only when the import settled.
+
+The remaining rendered states passed as a bounded set of checks:
+
+- A five-row folder result rendered one incomplete-scan warning, one counted
+  linked/special entry, and collision-only `batch-a` / `batch-b` context for the
+  two `sample.mzML` rows. No context appeared on another row.
+- The whole page had no horizontal document/body overflow, horizontally
+  clipped control or framework overlay at the required 960x640, 1366x768 and
+  1920x1080 rendered CSS viewports. The deterministic 128-row production
+  `SpectrumTable` was also
+  stressed at 760x768: its nine headers and cells had zero x-coordinate drift,
+  the sticky header stayed at top, both internal scroll axes were exercised,
+  rows remained virtualized with one roving tab stop, and neither scroll axis
+  escaped to the document.
+- Relative context matched neither search nor sort. A selected non-matching row
+  remained pinned with its `outside search` explanation; all five sort modes
+  stayed local and issued no IPC; equal filenames retained added order.
+- A typed removal reply removed exactly its opaque handle, removed the obsolete
+  collision context, moved visible keyboard focus to the surviving row at that
+  position, and said that disk files were unchanged. Keyboard `Clear list`
+  then emptied the authoritative roster and returned visible focus to
+  `Add files…`.
+- A typed folder failure exposed `Choose another folder` and `Dismiss`.
+  Keyboard Dismiss restored the durable folder action; keyboard retry did not
+  restore it while its exact chooser request was pending, then restored it on
+  settlement.
+- A failed Clear held its typed workspace error while the older import settled,
+  suppressed the stale folder roster, waited for exactly one authoritative
+  `get_workspace_roster {}` response, and restored `Add files…` focus only after
+  that empty reconciliation arrived.
+
+Every accepted rendered phase ended with zero warning/error console events,
+zero page errors, zero visible path leaks and no framework overlay. The app was
+reloaded after instrumentation; the real backend projection was again empty,
+both acquisition actions were enabled, `aria-busy` was false and no QA marker
+remained in the page. No real acquisition content was read; the routed folder
+and preview commands did not reach ProteoWizard.
 
 ## Validation completed during repository initialization
 

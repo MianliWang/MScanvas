@@ -677,9 +677,9 @@ proof of where it lives.
 
 ## Follow-up slices
 
-- **M1.4.1 — implementation delivered; final rendered QA still owed.** The
-  visible `Add mzML folder…` workflow: the picker, two commands, the
-  reservation/result transfer objects and the interface.
+- **M1.4.1 — done.** The visible `Add mzML folder…` workflow, Explorer-style
+  picker, two-command reservation handshake, result transfer and interface all
+  passed final rendered Windows QA at the reviewed exact head.
 - **M1.5 — not started.** Explorer drag-and-drop over this same discovery
   boundary.
 - **Later** — evidence-backed directory-acquisition families, behind the gate
