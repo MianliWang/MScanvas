@@ -2075,6 +2075,91 @@ label, and restoring the old bare-filename expression kills that test. Because
 neither the native command path nor layout changed, the accepted Tauri runs
 above remain the native and layout evidence, and the picker was not reopened.
 
+## Windows Explorer drag-and-drop, 2026-08-02
+
+M1.5 is implemented at final application-code head
+`3b9c3a85e753d506bde867c6f3b723a05eca0bae`. The registered Tauri surface is
+exactly thirteen narrow commands. The main-window capability permissions array
+remains empty, no `core:event` permission was added, and the frontend imports
+neither `@tauri-apps/api/event` nor a `tauri://drag-*` event. Cargo and package
+manifests and lockfiles are unchanged.
+
+Explorer paths enter only the Rust-owned `WindowEvent::DragDrop` adapter for the
+`main` window. The locked `tauri-runtime-wry 2.11.4` routing contract is pinned
+by a source test: the configured window-content WebView synthesizes
+`WindowEvent::DragDrop`, rather than the child-WebView event path. The callback
+normalizes Enter, Over, Leave and Drop without formatting the native event or
+its position, makes only an atomic reservation, retains at most the first 1,024
+roots while keeping the true item count, and offloads every dispatch before any
+lock, Channel send or filesystem work. Over is silent and ticketed workers
+cannot reorder an older Enter after Leave.
+
+The frontend installs one replaceable `tauri::ipc::Channel` subscriber through
+`subscribe_workspace_drop_updates`. Rust sends a closed, path-free union with a
+monotonic sequence and decimal operation token; an actual Tauri Channel test
+captured the serialized idle, hovering, importing, busy, completed and reload
+ordering. Replacement leaves exactly one subscriber, page-load start clears the
+old document's subscriber, and send failure removes only the matching failed
+subscriber without aborting ingestion.
+
+Real Windows filesystem tests cover direct files, multiple folders, mixed root
+order, hard-link identity deduplication and both root and nested junctions. A
+drop uses one 1,024-root limit and one entries, directories and candidates
+ledger across the whole gesture; direct files spend candidate allowance and
+each folder restarts depth at zero. Classification and commit recheck filesystem
+identity without following reparse points. A three-layer containment mutation
+proved that weakening attribute parsing, no-follow opening and child identity
+checking together would admit the outside `outside.mzML`; the restored test
+refuses it and records only an aggregate skipped count.
+
+Concurrency tests prove that expansion holds neither workspace nor mutation
+locks, a busy storm occupies one bounded coalescing bit, and a second Drop is
+reported busy before the first operation's terminal update rather than replacing
+it. Add files, Add folder and roster reads wait for an active drop. Remove,
+Clear, and native main-document page-load start supersede it; late work cannot
+install a roster or notice. Frontend ownership checks adopt one matching
+terminal only, preserve the current query, sort, surviving row state and active
+preview, and start at most one preview only when Rust says the prior workspace
+was empty. Collision-only context affects neither search nor sort.
+
+The final automated suites at that application-code head passed 538 Rust tests
+(531 passed, 7 ignored, 0 failed) and 444 frontend tests across 17 files. The
+wire/privacy contracts enumerate every forbidden path-bearing field, keep
+candidate paths in private Rust types with manual opaque `Debug`, and bound a
+notice to three basename-only details. Mutation evidence killed all 36 required
+faults with one targeted test each and restored every target hash and worktree
+status afterwards. In particular, mutation 24 proved a stale terminal cannot
+install a roster, mutation 25 proved it cannot replace the notice, and mutation
+29 proved collision context cannot reorder equal filenames. No compile error,
+zero-test run or timeout was counted as a kill.
+
+Rendered verification used an ephemeral external Vite harness importing the
+exact production App, PreviewWorkspace and CSS with a fake implementation of
+the same path-free transport. It passed 144/144 assertions over 18 states and
+16/16 visually inspected screenshots at 900x700, 1366x768 and 1920x1080. The
+workspace heights were 558, 648 and 960 px; roster heights were 342, 632 and
+944 px; roster-list heights were 194, 402 and 755 px; and the completed-state
+visible row counts were 6, 12 and 12. The selected-spectrum plot measured
+843x220, 950.02x220 and 1359.13x220 px, and all nine table columns had a maximum
+header/data x-coordinate delta of 0 px.
+
+At 900x700 the hovering and importing overlay bounds were exactly
+`(0, 0, 900, 700)`, `pointer-events` was `none`, the overlay was hidden from the
+accessibility tree, hit testing never selected it, and focus remained on Add
+files. The collision state retained at least 644.81 px for the filename and
+107.28 px for its context. All 18 states had zero horizontal and vertical
+document overflow and exposed no path text. The run recorded zero console
+warnings or errors, zero page errors, zero network or asset failures and zero
+product mismatches. Its temporary report SHA-256 was
+`42c708564560ed3697d8ac8da5a3abf56dd48f998ebc41d859b104dbefbab14`;
+all helper processes, ports, junctions and temporary directories were removed.
+
+No physical Windows Explorer mouse gesture was performed. Native adapter,
+filesystem, Channel and rendered behavior are automated evidence with distinct
+boundaries; this record does not treat the external rendered projection as a
+physical gesture or a native end-to-end run. No acquisition content was read
+and no ProteoWizard process was started for this work.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.

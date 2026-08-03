@@ -1,7 +1,8 @@
 # ADR 0007 — Logical acquisition discovery and folder traversal
 
-- Status: Accepted for the private mzML folder-discovery foundation (M1.4.0) and
-  for the visible `Add mzML folder…` workflow over it (M1.4.1);
+- Status: Accepted for the private mzML folder-discovery foundation (M1.4.0),
+  for the visible `Add mzML folder…` workflow over it (M1.4.1), and as the
+  folder-expansion boundary reused by Windows Explorer drop (M1.5);
   directory-formatted acquisitions remain separately gated
 - Date: 2026-07-31
 - Amended: 2026-08-01 (M1.4.1) — both folder choices use the Windows Common
@@ -9,6 +10,9 @@
 - Amended: 2026-08-02 (M1.4.1) — folder ingestion uses a path-free two-command
   begin/claim protocol, and native main-webview page-load start rather than a
   roster IPC request is the authoritative reload linearisation point.
+- Amended: 2026-08-02 (M1.5) — Windows Explorer drop reuses the same discovery,
+  acceptance and containment boundary under the mixed-root and shared-budget
+  rules in [ADR 0008](0008-windows-explorer-drag-and-drop.md).
 
 ## Context
 
@@ -44,12 +48,16 @@ budgets, the same ordering, the same refusal of every reparse entry — and what
 M1.4.1 adds is the commit around it: whose decision the scan is still answering,
 and what a candidate has to prove at acceptance.
 
-Out of scope here, each for its own reason: vendor formats and
-directory-formatted acquisitions (no evidence), Explorer drag-and-drop (a
-different authority boundary), persistence (ADR 0006 excludes it), and any
-backend work at all (discovery never asks ProteoWizard anything, and neither
-does ingestion — a folder of a thousand files costs a thousand filesystem
-inspections and no processes).
+M1.5 supplies that different authority boundary without creating a second
+discovery model. Each ordinary local folder in a native Explorer drop expands
+through this traversal, while each direct regular file enters the existing file
+acceptance boundary. Native-event ordering, root classification, whole-drop
+limits and the path-free frontend transport belong to ADR 0008.
+
+Still out of scope, each for its own reason: vendor formats and
+directory-formatted acquisitions (no evidence), persistence (ADR 0006 excludes
+it), and any backend work at all (discovery never asks ProteoWizard anything,
+and neither picker nor drop ingestion launches one process per candidate).
 
 ## Definition of a logical acquisition root
 
@@ -154,9 +162,11 @@ Filesystem enumeration order is not a contract and is not used. Measured on
 NTFS, a directory whose entries were created in one order enumerated in another,
 and the result was neither sorted nor ordinal.
 
-This order becomes the candidate order the future folder batch presents to
-acceptance, and therefore the registry insertion order of the rows it adds. The
-sorting key never crosses the boundary.
+This order is the candidate order a picker folder presents to acceptance, and
+therefore the registry insertion order of the rows it adds. M1.5 also uses it to
+expand a folder at that folder's position in a mixed drop; the top-level order
+for that gesture remains the native event order defined by ADR 0008. The sorting
+key never crosses either boundary.
 
 ## Traversal budgets
 
@@ -169,6 +179,14 @@ MAX_DISCOVERY_ENTRIES     = 200_000
 MAX_DISCOVERY_DIRECTORIES = 20_000
 MAX_DISCOVERY_CANDIDATES  = 1_024
 ```
+
+Those values bound one folder-picker scan. M1.5 preserves their meanings but
+uses one entries, directories and candidates ledger across the entire drop.
+Direct-file candidates spend that shared candidate allowance, and every folder
+root begins its own depth calculation at zero rather than inheriting depth from
+the preceding root. `MAX_DROP_ROOTS` and the processing order for an over-limit
+drop are defined separately by ADR 0008. A drop never obtains a fresh full
+ledger for each folder.
 
 The root counts as one entered directory. Every immediate child an enumeration
 returns counts as one inspected entry, counted before it is classified. A
@@ -251,6 +269,11 @@ This does not close the residual window the Consequences section records. It
 converts it from "a file outside the folder can be registered" into "a file that
 changed identity is refused", which is the strongest statement the documented
 APIs support.
+
+M1.5 performs the same observed-versus-accepted identity comparison for both a
+direct dropped file and a candidate expanded from a dropped folder. Its distinct
+native-drop boundary reports either mismatch as `drop_candidate_changed`; the
+M1.4.1 folder picker continues to use `folder_candidate_changed`.
 
 ## Duplicate identity
 
@@ -516,6 +539,12 @@ spelling may expose issuance order, but it is not used as the workspace ordering
 authority; that remains the private generation. It grants no filesystem
 capability, and the main window's Tauri capability set stays empty.
 
+M1.5 adds one path-free `subscribe_workspace_drop_updates` Channel command,
+bringing the current registered surface to thirteen. Explorer paths enter Rust
+through the native main-window event adapter and never enter that command or its
+updates; subscriber ownership and the closed update union are defined by ADR
+0008.
+
 Both folder choices use the Rust-owned Windows Common Item Dialog through
 `IFileDialog` with `FOS_PICKFOLDERS`. This is the Explorer-style folder surface,
 so an absolute path can be pasted into its address bar without walking a legacy
@@ -614,7 +643,8 @@ Added for M1.4.1, all of them deterministic and none of them timed:
   side, is counted, and makes the scan incomplete.
 - Nothing a folder import transfers contains the chosen root's name, a drive, a
   separator, an identity, or either private counter.
-- The command list is exactly twelve, in order, and the capability set is empty.
+- The command list is exactly thirteen — the twelve-command M1.4.1 surface plus
+  the M1.5 drop subscription command — and the capability set is empty.
 
 ## Consequences
 
@@ -685,7 +715,9 @@ proof of where it lives.
 - **M1.4.1 — done.** The visible `Add mzML folder…` workflow, Explorer-style
   picker, two-command reservation handshake, result transfer and interface all
   passed final rendered Windows QA at the reviewed exact head.
-- **M1.5 — not started.** Explorer drag-and-drop over this same discovery
-  boundary.
+- **M1.5 — accepted.** Windows Explorer file, folder and mixed-root drop reuses
+  this discovery boundary under the native-authority, shared-budget and
+  path-free transport rules in
+  [ADR 0008](0008-windows-explorer-drag-and-drop.md).
 - **Later** — evidence-backed directory-acquisition families, behind the gate
   recorded above.

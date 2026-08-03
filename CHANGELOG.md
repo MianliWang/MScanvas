@@ -6,6 +6,15 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
+- Windows Explorer drag-and-drop for one or many regular `.mzML` files, ordinary
+  local folders, or a mixture of both. Direct files use the same acceptance
+  boundary as `Add files…`; folders use the same recursive, deterministic and
+  link-refusing discovery boundary as `Add mzML folder…`. One ordered drop obeys
+  one root limit and shares entry, directory and candidate budgets; traversal
+  depth restarts at zero for each folder. It reports incomplete input without
+  discarding valid files already found and never starts one backend read per row.
+  Native paths remain in Rust, a second active drop is rejected as busy, and
+  directory-formatted or vendor acquisitions remain unsupported.
 - Session mzML workspace. One or many local `.mzML` files can be chosen in a
   single native picker operation and appear as an ordered list, each held through
   a Rust-owned opaque handle. Adding the same acquisition again reports the row

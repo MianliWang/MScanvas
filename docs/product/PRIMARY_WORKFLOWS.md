@@ -30,7 +30,7 @@ the selected file: it stays one click from being reopened.
 
 ## WF-002 — Add and curate a batch
 
-1. Use `Add files…` to choose one or many mzML files, or `Add mzML folder…` to take every `.mzML` file found beneath one folder.
+1. Use `Add files…` to choose one or many mzML files, use `Add mzML folder…` to take every `.mzML` file found beneath one folder, or drop regular files, ordinary local folders, or a mixture of both from Windows Explorer.
 2. Discovery represents each logical acquisition once.
 3. Rows progressively show format, size and readiness.
 4. User searches, sorts, selects/removes items or activates Clear workspace.
@@ -52,7 +52,35 @@ the selected file: it stays one click from being reopened.
 - Main-webview native page-load start, not roster-request arrival, supersedes work owned by a replaced document. A delayed old begin cannot advance the generation or cancel a newer claimed import, and a delayed old roster request is only a snapshot. When this window made a later Clear or Remove, its resulting `import_superseded` or claim-stage `invalid_folder_import_reservation` settles silently; independent picker and discovery failures remain actionable.
 - Two rows that end up sharing a filename show where each was found, and only for as long as they collide.
 
-**Planned follow-ups**, neither of which the application does yet: Explorer drag-and-drop (M1.5), and directory-formatted acquisition discovery, which stays gated until this repository can convert one.
+**Dropping from Windows Explorer**, as of M1.5 and bounded by
+[ADR 0008](../architecture/adr/0008-windows-explorer-drag-and-drop.md):
+
+- One native gesture may contain regular `.mzML` files, ordinary local folders,
+  or both. MSCanvas preserves that gesture's top-level event order; each folder
+  expands in ADR 0007's deterministic order at its position.
+- Direct files use the same acceptance boundary as `Add files…`, while folders
+  use the same recursive discovery and containment boundary as `Add mzML
+  folder…`. One root limit and one shared entries, directories and candidates
+  ledger apply to the whole drop, and direct files consume candidate allowance;
+  traversal depth restarts at zero for each folder root.
+- A drop that reaches a limit, refuses a linked entry, or cannot inspect part of
+  its input reports the operation as incomplete while retaining valid candidates
+  already found. Reparse, remote and virtual roots are not traversed, and a root
+  failure does not disclose the root's name.
+- Native paths remain in Rust. React receives ordered, typed, path-free updates
+  and no Tauri event or filesystem capability; drop ingestion does not start one
+  backend read per accepted row.
+- Hover and import feedback are non-modal and do not take focus. Escape clears
+  hover only. Search, sort, selection, preview, Remove and Clear remain usable;
+  Add actions and roster reload wait for the active drop, and a second drop is
+  rejected as busy rather than replacing it.
+- Remove, Clear and main-document reload supersede a drop that has not committed,
+  so a late completion cannot reinstall an older roster or notice. At most one
+  preview may start after a successful drop, and only when Rust proves the
+  workspace was empty before it.
+
+**Planned follow-up:** directory-formatted acquisition discovery remains gated
+until this repository can convert one.
 
 ## WF-003 — Inspect an acquisition
 

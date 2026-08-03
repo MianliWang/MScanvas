@@ -26,10 +26,19 @@ This catalog is the concise feature index. Detailed semantics remain in [`PROJEC
 | WSP-009 | Search/sort/filter | P1 | Handles large batches without obscuring selected/running items. |
 | WSP-010 | Restore workspace | P1 | Restores logical state safely and marks missing files rather than deleting rows silently. |
 
-Staging for the two folder features, so the acceptance above is read as a target rather than as behavior:
+Implementation notes for the two folder-bearing features follow. The acceptance
+table remains the target, including the unsupported portions called out below:
 
 - **WSP-002 — Partially implemented.** M1.4.0 built the private discovery foundation and M1.4.1 exposed `Add mzML folder…` over it ([ADR 0007](../architecture/adr/0007-logical-acquisition-discovery-and-folder-traversal.md)). What works today: one chosen local Windows folder is scanned recursively for regular `.mzML` files, in a deterministic order, under four named limits, without following any linked or special filesystem entry, and an incomplete scan says so. What is still absent from the acceptance above: directory-formatted acquisitions are not recognized, so there is nothing to stop descending inside. They remain evidence-gated — MSCanvas recognizes none of them today, and will only claim one once this repository can convert it.
-- **WSP-003 — Planned** for M1.5, over the same discovery boundary, which is now product-reachable.
+- **WSP-003 — Implemented for the current mzML surface.** M1.5 accepts one or
+  many regular `.mzML` files, ordinary local folders containing regular `.mzML`
+  files, or a mixture of both from Windows Explorer
+  ([ADR 0008](../architecture/adr/0008-windows-explorer-drag-and-drop.md)).
+  Direct files enter the same acceptance boundary as `Add files…`; folders enter
+  the ADR 0007 discovery boundary under one root limit and a shared entries,
+  directories and candidates ledger. Reparse, remote and virtual roots remain
+  unsupported, and directory-formatted acquisitions remain evidence-gated
+  rather than being treated as implemented.
 
 ## Acquisition overview and viewer
 

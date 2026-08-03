@@ -44,6 +44,18 @@ Build a session workspace of local `.mzML` files and inspect one of them:
   rather than exposing the uncertain folder snapshot. If two files end up
   sharing a name, each says where it was found for as long as they collide.
   Directory-formatted vendor acquisitions are not recognized in this version.
+- Or drop one or many regular `.mzML` files, ordinary local folders, or a mixture
+  of both onto the main window from Windows Explorer. Direct files use the same
+  acceptance boundary as `Add files…`, and each folder uses the same recursive,
+  link-refusing discovery boundary as the folder picker. A single drop obeys one
+  root limit and shares its entry, directory and candidate budgets instead of
+  multiplying them per folder; traversal depth restarts at zero for each folder
+  root. If a limit is reached, a linked entry is refused or part of the input
+  cannot be inspected, the result says the drop was incomplete while retaining
+  valid files already found. Paths stay in Rust, a second drop cannot replace
+  one already importing, and adding a large or mixed drop does not start one
+  backend read per row. Reparse, remote and virtual roots are unsupported;
+  directory-formatted and vendor acquisitions are still not recognized.
 - Select rows with the pointer or the keyboard the way a file list works: click,
   Ctrl-click, Shift-click, arrows, Space, Home, End and Ctrl+A. Remove the
   selected rows, or clear the list, without restarting. Neither ever deletes,
@@ -62,9 +74,9 @@ Build a session workspace of local `.mzML` files and inspect one of them:
 - Reading is explicit and one at a time. Moving around the list costs nothing;
   previewing the focused row reads acquisition metadata, a run summary and a
   spectrum table for that one file, and selecting a table row loads that one
-  spectrum. Adding files or a folder reads at most the first file of a session
-  that had nothing in it, so choosing ten files does not start ten reads and a
-  folder of a thousand does not start a thousand.
+  spectrum. Adding files, a folder or an Explorer drop reads at most the first
+  file of a session that had nothing in it, so choosing or dropping ten files
+  does not start ten reads and a folder of a thousand does not start a thousand.
 - The spectrum is drawn as a repository-owned SVG stick plot with no charting
   dependency. The retention-time unit, the profile/centroid representation and
   array units are shown as unreported rather than guessed, because the backend
@@ -72,10 +84,9 @@ Build a session workspace of local `.mzML` files and inspect one of them:
   the acquisition itself records them.
 
 Not implemented yet: vendor RAW preview; TIC, BPC and chromatogram views;
-directory-formatted acquisition recognition and Explorer drag-and-drop; filtering
-the workspace by anything other
-than filename, and grouping it; a workspace that outlives the session, which
-includes remembering a search or a sort; the conversion workflow with
+directory-formatted acquisition recognition; filtering the workspace by
+anything other than filename, and grouping it; a workspace that outlives the
+session, which includes remembering a search or a sort; the conversion workflow with
 its queue, progress and cancellation; and figure export. mzXML output stays
 disabled and fail-closed until representative multi-source integrity checks pass.
 Typed mzML conversion planning and conversion-integrity verification exist in
@@ -85,8 +96,8 @@ them yet.
 ## Product scope
 
 The first usable product is the target below, not a description of today. A
-session file workspace exists, built from the file and folder pickers rather than
-from drag-and-drop. Of the second item, metadata, spectrum and scan-table
+session file workspace exists, built from the file and folder pickers and native
+Windows Explorer drop. Of the second item, metadata, spectrum and scan-table
 exploration are built and TIC/BPC are not; nothing else in this list is built
 yet. See [What works today](#what-works-today).
 
