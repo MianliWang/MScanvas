@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 
 import { PreviewApiProvider } from "./api";
 import type { FolderIngestionResult } from "./contracts";
+import { WorkspaceDropTransportProvider } from "./dropTransport";
 import { PreviewWorkspace } from "./PreviewWorkspace";
 import {
   createFakePreviewApi,
+  createFakeWorkspaceDropTransport,
   deferred,
   unavailableBackend,
 } from "../../test/previewFixtures";
@@ -23,9 +25,11 @@ describe("folder reservation startup barrier", () => {
     });
 
     render(
-      <PreviewApiProvider value={api}>
-        <PreviewWorkspace />
-      </PreviewApiProvider>,
+      <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+        <PreviewApiProvider value={api}>
+          <PreviewWorkspace />
+        </PreviewApiProvider>
+      </WorkspaceDropTransportProvider>,
     );
 
     const addFolder = await screen.findByRole("button", { name: "Add mzML folder…" });

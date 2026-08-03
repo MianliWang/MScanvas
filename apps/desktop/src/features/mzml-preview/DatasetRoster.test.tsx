@@ -43,6 +43,7 @@ interface HarnessProps {
   readonly canAddFolder?: boolean;
   readonly canReloadRoster?: boolean;
   readonly folderBusy?: boolean;
+  readonly dropBusy?: boolean;
   readonly canMutate?: boolean;
   readonly load?: RosterLoadState;
   readonly rosterSettlementToken?: number;
@@ -69,6 +70,7 @@ function Harness({
   canAddFolder = true,
   canReloadRoster = true,
   folderBusy = false,
+  dropBusy = false,
   canMutate = true,
   load = { status: "ready" },
   rosterSettlementToken = 0,
@@ -85,6 +87,7 @@ function Harness({
       canReloadRoster={canReloadRoster}
       dispatch={dispatch}
       focusAddFilesToken={focusAddFilesToken}
+      dropBusy={dropBusy}
       folderBusy={folderBusy}
       load={load}
       onActivate={onActivate}
@@ -107,6 +110,7 @@ function Fixed({
   canAddFiles = true,
   canMutate = true,
   folderBusy = false,
+  dropBusy = false,
   onAddFiles = () => undefined,
   onClearList = () => true,
   onRemoveSelected = () => undefined,
@@ -116,6 +120,7 @@ function Fixed({
   readonly canAddFiles?: boolean;
   readonly canMutate?: boolean;
   readonly folderBusy?: boolean;
+  readonly dropBusy?: boolean;
   readonly onAddFiles?: () => void;
   readonly onClearList?: () => boolean;
   readonly onRemoveSelected?: () => void;
@@ -130,6 +135,7 @@ function Fixed({
       canReloadRoster
       dispatch={() => undefined}
       focusAddFilesToken={0}
+      dropBusy={dropBusy}
       folderBusy={folderBusy}
       load={{ status: "ready" }}
       onActivate={() => undefined}
@@ -518,6 +524,44 @@ describe("looking at the roster through a search and a sort", () => {
 
     expect(screen.getByText("No files match this search")).toBeVisible();
     expect(document.activeElement).toBe(searchBox());
+  });
+});
+
+describe("native drop roster accessibility", () => {
+  it("offers an enabled Clear escape over an empty busy roster", () => {
+    const onClearList = vi.fn(() => true);
+    render(
+      <Fixed
+        canAddFiles={false}
+        dropBusy
+        onClearList={onClearList}
+        state={initialRosterState}
+      />,
+    );
+
+    expect(screen.getByRole("region", { name: "Workspace" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    const clear = screen.getByRole("button", { name: "Clear list" });
+    expect(clear).toHaveAttribute("aria-describedby", "clear-during-drop-import-description");
+    expect(
+      screen.getByText("Clear list also prevents the pending drop from adding files."),
+    ).toBeInTheDocument();
+    expect(clear).toBeEnabled();
+    fireEvent.click(clear);
+    expect(onClearList).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps search, selection, preview and mutation controls live during a drop", () => {
+    render(<Harness canAddFiles={false} canAddFolder={false} dropBusy rows={2} />);
+
+    expect(screen.getByRole("searchbox", { name: "Search files" })).toBeEnabled();
+    expect(screen.getByRole("combobox", { name: "Sort files" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Preview focused" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("option", { name: /QC_pool_01\.mzML/ }));
+    expect(screen.getByRole("button", { name: "Remove selected" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Clear list/ })).toBeEnabled();
   });
 });
 
@@ -1136,6 +1180,7 @@ describe("the workspace roster as an accessible list", () => {
         canReloadRoster
         dispatch={() => undefined}
         focusAddFilesToken={0}
+        dropBusy={false}
         folderBusy={false}
         load={{ status: "ready" }}
         onActivate={() => undefined}
@@ -1178,6 +1223,7 @@ describe("the workspace roster as an accessible list", () => {
         canReloadRoster
         dispatch={() => undefined}
         focusAddFilesToken={0}
+        dropBusy={false}
         folderBusy={false}
         load={{ status: "ready" }}
         onActivate={() => undefined}
@@ -1263,6 +1309,7 @@ describe("the workspace roster as an accessible list", () => {
         canReloadRoster
         dispatch={() => undefined}
         focusAddFilesToken={0}
+        dropBusy={false}
         folderBusy={false}
         load={{
           status: "failed",

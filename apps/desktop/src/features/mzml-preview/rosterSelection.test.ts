@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type {
+  DropIngestionResult,
   FolderIngestionResult,
   SelectedFile,
   WorkspaceAddOutcome,
@@ -1474,5 +1475,81 @@ describe("importing a folder", () => {
 
     expect(state.datasets.map((dataset) => dataset.handle)).toEqual(["file-0", "file-1"]);
     expect(state.capacity).toBe(CAPACITY);
+  });
+});
+
+describe("adopting a native drop", () => {
+  function dropResult(
+    outcomes: readonly WorkspaceAddOutcome[],
+    ...handles: string[]
+  ): DropIngestionResult {
+    return {
+      roster: roster(...handles),
+      outcomes,
+      summary: {
+        workspaceWasEmpty: false,
+        complete: true,
+        topLevelItemCount: outcomes.length,
+        skippedReparseRootCount: 0,
+        inaccessibleRootCount: 0,
+        remoteRootCount: 0,
+        unsupportedRootCount: 0,
+        skippedReparseEntryCount: 0,
+        inaccessibleEntryCount: 0,
+        limitsReached: [],
+      },
+    };
+  }
+
+  it("unions new rows with live selection while preserving the current view and preview", () => {
+    const before: RosterState = {
+      ...loaded("file-0", "file-1"),
+      query: "file-0",
+      sort: "name-desc",
+      focused: "file-1",
+      anchor: "file-0",
+      selected: new Set(["file-0", "file-1"]),
+      active: "file-0",
+      rowState: new Map([["file-0", "loaded"]]),
+    };
+
+    const state = rosterReducer(before, {
+      type: "dropImported",
+      result: dropResult(
+        [added("file-2"), added("file-3")],
+        "file-0",
+        "file-1",
+        "file-2",
+        "file-3",
+      ),
+    });
+
+    expect(selection(state)).toEqual(["file-0", "file-1", "file-2", "file-3"]);
+    expect([state.focused, state.anchor]).toEqual(["file-1", "file-0"]);
+    expect([state.query, state.sort]).toEqual(["file-0", "name-desc"]);
+    expect(state.active).toBe("file-0");
+    expect(rowPresentation(state, "file-0")).toBe("loaded");
+    expect(rosterProjection(state).pinned.get("file-2")).toBe("selected");
+  });
+
+  it("prunes absent state and falls back to the first newly added row", () => {
+    const before: RosterState = {
+      ...loaded("file-0", "file-1"),
+      focused: "file-1",
+      anchor: "file-1",
+      selected: new Set(["file-0", "file-1"]),
+      active: "file-1",
+      rowState: new Map([["file-1", "loaded"]]),
+    };
+
+    const state = rosterReducer(before, {
+      type: "dropImported",
+      result: dropResult([added("file-2")], "file-0", "file-2"),
+    });
+
+    expect([state.focused, state.anchor]).toEqual(["file-2", "file-2"]);
+    expect(selection(state)).toEqual(["file-0", "file-2"]);
+    expect(state.active).toBeNull();
+    expect(rowPresentation(state, "file-1")).toBe("ready");
   });
 });

@@ -13,12 +13,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { PreviewApi } from "./api";
 import { PreviewApiProvider } from "./api";
+import { WorkspaceDropTransportProvider } from "./dropTransport";
 import type { BackendAvailability } from "./contracts";
 import { PreviewWorkspace } from "./PreviewWorkspace";
 import {
   chosenBackend,
   chosenFolderWithoutTools,
   createFakePreviewApi,
+  createFakeWorkspaceDropTransport,
   deferred,
   previewError,
   unavailableBackend,
@@ -26,9 +28,11 @@ import {
 
 function renderWorkspace(api: PreviewApi): void {
   render(
-    <PreviewApiProvider value={api}>
-      <PreviewWorkspace />
-    </PreviewApiProvider>,
+    <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+      <PreviewApiProvider value={api}>
+        <PreviewWorkspace />
+      </PreviewApiProvider>
+    </WorkspaceDropTransportProvider>,
   );
 }
 
