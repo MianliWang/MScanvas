@@ -606,18 +606,28 @@ impl DropUpdateHub {
     /// accepting a Channel. Repeating Begin before Claim returns the same
     /// reservation, so an old delayed Begin cannot replace a newer pending
     /// claim from the same document epoch.
-    pub(super) fn begin_subscription(&self) -> WorkspaceDropSubscriptionReservationDto {
+    pub(super) fn document_epoch(&self) -> u64 {
+        self.state().document_epoch
+    }
+
+    pub(super) fn begin_subscription(
+        &self,
+        expected_document_epoch: u64,
+    ) -> Result<WorkspaceDropSubscriptionReservationDto, PreviewErrorDto> {
         let _delivery = self.begin_delivery();
         let mut state = self.state();
+        if state.document_epoch != expected_document_epoch {
+            return Err(invalid_workspace_drop_subscription());
+        }
         if let Some(reservation_id) = state
             .pending_subscription
             .as_ref()
             .filter(|pending| pending.document_epoch == state.document_epoch)
             .map(|pending| pending.reservation_id)
         {
-            return WorkspaceDropSubscriptionReservationDto {
+            return Ok(WorkspaceDropSubscriptionReservationDto {
                 reservation_id: reservation_id.handle(),
-            };
+            });
         }
 
         let reservation_id = state.allocate_subscription_reservation();
@@ -626,9 +636,9 @@ impl DropUpdateHub {
             reservation_id,
             document_epoch,
         });
-        WorkspaceDropSubscriptionReservationDto {
+        Ok(WorkspaceDropSubscriptionReservationDto {
             reservation_id: reservation_id.handle(),
-        }
+        })
     }
 
     /// Consumes one exact current-document reservation before replacing the
@@ -636,6 +646,7 @@ impl DropUpdateHub {
     /// Channel nor consumes the one valid pending slot.
     pub(super) fn claim_subscription(
         &self,
+        expected_document_epoch: u64,
         reservation_id: &str,
         channel: Channel<WorkspaceDropUpdateDto>,
     ) -> Result<(), PreviewErrorDto> {
@@ -645,7 +656,8 @@ impl DropUpdateHub {
         let subscriber = {
             let mut state = self.state();
             let matches = state.pending_subscription.as_ref().is_some_and(|pending| {
-                pending.reservation_id == requested
+                state.document_epoch == expected_document_epoch
+                    && pending.reservation_id == requested
                     && pending.document_epoch == state.document_epoch
             });
             if !matches {

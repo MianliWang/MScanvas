@@ -83,6 +83,27 @@ describe("drop result notice", () => {
     expect(notice.message).not.toMatch(/[A-Z]:\\|\\\\|secret-root/i);
   });
 
+  it("describes entry and directory exhaustion as one shared whole-drop ledger", () => {
+    const notice = describeDropResult(
+      result({
+        summary: {
+          ...completeSummary,
+          complete: false,
+          topLevelItemCount: 2,
+          limitsReached: ["entries", "directories"],
+        },
+      }),
+    );
+
+    expect(notice.message).toContain(
+      "the dropped folders collectively reached the shared entry-inspection limit",
+    );
+    expect(notice.message).toContain(
+      "the dropped folders collectively reached the shared directory-entry limit",
+    );
+    expect(notice.message).not.toContain("a dropped folder held more");
+  });
+
   it("bounds per-file details and does not expose duplicate collision context", () => {
     const duplicate = {
       ...selectedFile,

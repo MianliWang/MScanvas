@@ -24,11 +24,16 @@ vi.mock("@tauri-apps/api/core", () => ({
 import { tauriWorkspaceDropTransport } from "./dropTransport";
 
 const idle: WorkspaceDropUpdate = { sequence: 1, state: { status: "idle" } };
+const documentAuthority = "00000000000000000000000000000001";
+const documentAuthorityOptions = {
+  headers: { "mscanvas-document-authority": documentAuthority },
+};
 
 describe("native workspace-drop transport", () => {
   beforeEach(() => {
     core.channels.length = 0;
     core.invoke.mockReset();
+    Reflect.set(globalThis, "__MSCANVAS_DOCUMENT_AUTHORITY__", documentAuthority);
   });
 
   it("subscribes one Channel through the exact path-free command and stops local delivery", async () => {
@@ -43,16 +48,24 @@ describe("native workspace-drop transport", () => {
 
     expect(core.channels).toHaveLength(1);
     expect(core.invoke).toHaveBeenCalledTimes(2);
-    expect(core.invoke).toHaveBeenCalledWith("subscribe_workspace_drop_updates", {
-      request: { phase: "begin" },
-    });
-    expect(core.invoke).toHaveBeenCalledWith("subscribe_workspace_drop_updates", {
-      request: {
-        phase: "claim",
-        reservationId: "drop-subscription-reservation-1",
-        channel: core.channels[0],
+    expect(core.invoke).toHaveBeenCalledWith(
+      "subscribe_workspace_drop_updates",
+      {
+        request: { phase: "begin" },
       },
-    });
+      documentAuthorityOptions,
+    );
+    expect(core.invoke).toHaveBeenCalledWith(
+      "subscribe_workspace_drop_updates",
+      {
+        request: {
+          phase: "claim",
+          reservationId: "drop-subscription-reservation-1",
+          channel: core.channels[0],
+        },
+      },
+      documentAuthorityOptions,
+    );
     expect(JSON.stringify(core.invoke.mock.calls)).not.toMatch(
       /path|root|generation|token|identity|position/i,
     );
@@ -62,6 +75,17 @@ describe("native workspace-drop transport", () => {
     stop();
     core.channels[0]?.onmessage({ sequence: 2, state: { status: "idle" } });
     expect(received).toEqual([idle]);
+  });
+
+  it("fails before invoking when this document has no exact native authority", async () => {
+    Reflect.deleteProperty(globalThis, "__MSCANVAS_DOCUMENT_AUTHORITY__");
+
+    await expect(tauriWorkspaceDropTransport.subscribe(() => undefined)).rejects.toThrow(
+      "The current page does not have native drop authority.",
+    );
+
+    expect(core.invoke).not.toHaveBeenCalled();
+    expect(core.channels).toHaveLength(0);
   });
 
   it("silences the Channel when subscriber registration rejects", async () => {
@@ -147,8 +171,12 @@ describe("native workspace-drop transport", () => {
 
     const firstReceived: WorkspaceDropUpdate[] = [];
     const secondReceived: WorkspaceDropUpdate[] = [];
+    const firstAuthority = "11111111111111111111111111111111";
+    const secondAuthority = "22222222222222222222222222222222";
 
+    Reflect.set(globalThis, "__MSCANVAS_DOCUMENT_AUTHORITY__", firstAuthority);
     const first = tauriWorkspaceDropTransport.subscribe((update) => firstReceived.push(update));
+    Reflect.set(globalThis, "__MSCANVAS_DOCUMENT_AUTHORITY__", secondAuthority);
     const second = tauriWorkspaceDropTransport.subscribe((update) => secondReceived.push(update));
     await Promise.resolve();
     expect(core.invoke).toHaveBeenCalledTimes(1);
@@ -181,6 +209,12 @@ describe("native workspace-drop transport", () => {
           channel: core.channels[1],
         },
       },
+    ]);
+    expect(core.invoke.mock.calls.map((call) => call[2])).toEqual([
+      { headers: { "mscanvas-document-authority": firstAuthority } },
+      { headers: { "mscanvas-document-authority": firstAuthority } },
+      { headers: { "mscanvas-document-authority": secondAuthority } },
+      { headers: { "mscanvas-document-authority": secondAuthority } },
     ]);
     stopFirst();
     core.channels[0]?.onmessage(idle);

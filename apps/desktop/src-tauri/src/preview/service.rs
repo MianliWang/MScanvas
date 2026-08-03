@@ -494,9 +494,18 @@ impl PreviewService {
         self.drop_updates.reset_document(delivery);
     }
 
+    /// Returns the native document epoch captured before a Channel handshake.
+    pub(crate) fn workspace_drop_document_epoch(&self) -> u64 {
+        self.drop_updates.document_epoch()
+    }
+
     /// Begins one current-document subscription without accepting a Channel.
-    pub fn begin_workspace_drop_subscription(&self) -> WorkspaceDropSubscriptionReservationDto {
-        self.drop_updates.begin_subscription()
+    pub fn begin_workspace_drop_subscription(
+        &self,
+        expected_document_epoch: u64,
+    ) -> Result<WorkspaceDropSubscriptionReservationDto, PreviewErrorDto> {
+        self.drop_updates
+            .begin_subscription(expected_document_epoch)
     }
 
     /// Claims one exact current-document reservation and installs its typed
@@ -504,11 +513,12 @@ impl PreviewService {
     /// native updates, so the new channel sees one exact lifecycle state.
     pub fn claim_workspace_drop_subscription(
         &self,
+        expected_document_epoch: u64,
         reservation_id: &str,
         channel: tauri::ipc::Channel<WorkspaceDropUpdateDto>,
     ) -> Result<(), PreviewErrorDto> {
         self.drop_updates
-            .claim_subscription(reservation_id, channel)
+            .claim_subscription(expected_document_epoch, reservation_id, channel)
     }
 
     /// Reserves one normalized native event without taking a lock or sending

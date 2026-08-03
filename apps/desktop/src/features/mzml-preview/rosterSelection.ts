@@ -611,6 +611,18 @@ function transition(state: RosterState, action: RosterAction): RosterState {
           selected: kept,
         };
       }
+      if (action.type === "dropImported") {
+        // The native-drop contract deliberately makes the first newly added
+        // row the roving destination and range anchor. Selection still comes
+        // from the live state this terminal meets, but the new batch has one
+        // deterministic keyboard starting point even in a non-empty session.
+        return {
+          ...base,
+          focused: first,
+          anchor: first,
+          selected: new Set([...kept, ...added]),
+        };
+      }
       const survivingFocus = survivingHandle(state.focused, live);
       const focused = survivingFocus ?? first;
       return {

@@ -6,8 +6,8 @@ import { MAX_NOTICE_DETAILS, plural, type WorkspaceNotice } from "./rosterSelect
 const LIMIT_REACHED: Record<DropScanLimit, string> = {
   roots: "more top-level items were dropped than MSCanvas accepts at once",
   depth: "a dropped folder was nested deeper than MSCanvas walks in one scan",
-  entries: "a dropped folder held more entries than MSCanvas inspects in one scan",
-  directories: "a dropped folder held more subfolders than MSCanvas enters in one scan",
+  entries: "the dropped folders collectively reached the shared entry-inspection limit",
+  directories: "the dropped folders collectively reached the shared directory-entry limit",
   candidates: "the drop produced more candidate files than MSCanvas accepts in one scan",
 };
 

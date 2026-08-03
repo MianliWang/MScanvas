@@ -9,6 +9,17 @@ interface WorkspaceDropSubscriptionReservation {
   readonly reservationId: string;
 }
 
+const DROP_DOCUMENT_AUTHORITY_HEADER = "mscanvas-document-authority";
+const DROP_DOCUMENT_AUTHORITY_PROPERTY = "__MSCANVAS_DOCUMENT_AUTHORITY__";
+
+function currentDropDocumentAuthority(): string {
+  const authority = Reflect.get(globalThis, DROP_DOCUMENT_AUTHORITY_PROPERTY);
+  if (typeof authority !== "string" || !/^[0-9a-f]{32}$/.test(authority)) {
+    throw new Error("The current page does not have native drop authority.");
+  }
+  return authority;
+}
+
 /**
  * The one push boundary the webview needs for native Explorer drag-and-drop.
  *
@@ -32,10 +43,18 @@ export const tauriWorkspaceDropTransport: WorkspaceDropTransport = {
   subscribe: async (onUpdate) => {
     let active = true;
     let silenceChannel = () => undefined;
+    // Capture from this JavaScript realm before any queued registration work.
+    // A delayed callback from a replaced document therefore keeps its old
+    // authority header and fails Rust's current-document proof.
+    const documentAuthority = currentDropDocumentAuthority();
+    const invokeOptions = {
+      headers: { [DROP_DOCUMENT_AUTHORITY_HEADER]: documentAuthority },
+    };
     const registration = registrationTail.then(async () => {
       const reservation = await invoke<WorkspaceDropSubscriptionReservation | null>(
         "subscribe_workspace_drop_updates",
         { request: { phase: "begin" } },
+        invokeOptions,
       );
       if (reservation === null) {
         throw new Error("The drop subscription did not return a reservation.");
@@ -56,7 +75,7 @@ export const tauriWorkspaceDropTransport: WorkspaceDropTransport = {
           reservationId: reservation.reservationId,
           channel: claimedChannel,
         },
-      });
+      }, invokeOptions);
     });
     registrationTail = registration.catch(() => undefined);
     try {

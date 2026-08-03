@@ -3623,9 +3623,30 @@ fn drop_subscription_uses_only_tauris_typed_nested_channel_wire_shape() {
     assert_eq!(request.matches("channel: JavaScriptChannelId").count(), 1);
     assert!(!request.contains("channel: String"));
     assert!(command.contains("channel.channel_on(webview)"));
+    assert!(command.contains("ipc_request: tauri::ipc::Request<'_>"));
+    assert!(command.contains("DROP_DOCUMENT_AUTHORITY_HEADER"));
+    assert!(command.contains("verify_drop_document_authority(&webview, &authority).await?"));
+    assert!(command.contains("if webview.label() != \"main\""));
     assert!(!command.contains("JavaScriptChannelId::from_str"));
     assert!(!command.contains("event_name"));
     assert!(!command.contains("callback_id"));
+
+    let label_guard = command
+        .find("if webview.label() != \"main\"")
+        .expect("non-main webviews fail before authority work");
+    let header = command
+        .find(".get(DROP_DOCUMENT_AUTHORITY_HEADER)")
+        .expect("the document authority comes from the invoke header");
+    let epoch = command
+        .find("service.workspace_drop_document_epoch()")
+        .expect("the command captures the native document epoch");
+    let challenge = command
+        .find("verify_drop_document_authority(&webview, &authority).await?")
+        .expect("the current realm must prove the captured header");
+    let phase = command
+        .find("match request")
+        .expect("only a verified request reaches either phase");
+    assert!(label_guard < header && header < epoch && epoch < challenge && challenge < phase);
 
     assert!(
         "__CHANNEL__:7"
@@ -3652,6 +3673,60 @@ fn drop_subscription_uses_only_tauris_typed_nested_channel_wire_shape() {
         .0;
     assert!(!begin.contains("Channel"));
     assert!(!begin.contains("subscriber ="));
+}
+
+#[test]
+fn document_authority_is_per_document_bounded_and_checked_before_subscription() {
+    let initialization = crate::DROP_DOCUMENT_AUTHORITY_INITIALIZATION_SCRIPT;
+    assert!(
+        initialization.trim_start().starts_with(';'),
+        "the appended script must not call the preceding Tauri IIFE result"
+    );
+    assert!(initialization.contains("new Uint32Array(4)"));
+    assert!(initialization.contains("globalThis.crypto.getRandomValues(words)"));
+    assert!(initialization.contains("Object.defineProperty(globalThis"));
+    for sealed in [
+        "configurable: false",
+        "enumerable: false",
+        "writable: false",
+    ] {
+        assert!(initialization.contains(sealed));
+    }
+    for forbidden in ["path", "root", "identity", "position", "console."] {
+        assert!(!initialization.contains(forbidden), "{forbidden}");
+    }
+
+    let authority = "0123456789abcdef0123456789abcdef";
+    assert_eq!(
+        crate::drop_document_authority_check_script(authority).as_deref(),
+        Some("globalThis.__MSCANVAS_DOCUMENT_AUTHORITY__ === \"0123456789abcdef0123456789abcdef\"")
+    );
+    for malformed in [
+        "",
+        "0123456789abcdef0123456789abcde",
+        "0123456789abcdef0123456789abcdef0",
+        "0123456789abcdef0123456789abcdeg",
+        "0123456789ABCDEF0123456789ABCDEF",
+        "../../0123456789abcdef0123456789",
+    ] {
+        assert!(
+            crate::drop_document_authority_check_script(malformed).is_none(),
+            "malformed document authority was interpolated: {malformed}"
+        );
+    }
+
+    let host = include_str!("../lib.rs");
+    let builder = host
+        .split_once("tauri::Builder::default()")
+        .expect("the application builder exists")
+        .1;
+    let initialize = builder
+        .find(".append_invoke_initialization_script(DROP_DOCUMENT_AUTHORITY_INITIALIZATION_SCRIPT)")
+        .expect("every document receives the authority initializer");
+    let managed = builder
+        .find(".manage(SharedService::new")
+        .expect("the service is installed after the initializer");
+    assert!(initialize < managed);
 }
 
 // ---------------------------------------------------------------------------
@@ -3796,7 +3871,11 @@ fn recording_drop_channel() -> (
 }
 
 fn begin_drop_subscription(service: &PreviewService) -> String {
-    service.begin_workspace_drop_subscription().reservation_id
+    let document_epoch = service.workspace_drop_document_epoch();
+    service
+        .begin_workspace_drop_subscription(document_epoch)
+        .expect("the current document begins its drop subscription")
+        .reservation_id
 }
 
 fn claim_drop_subscription(
@@ -3804,7 +3883,8 @@ fn claim_drop_subscription(
     reservation_id: &str,
     channel: tauri::ipc::Channel<WorkspaceDropUpdateDto>,
 ) -> Result<(), PreviewErrorDto> {
-    service.claim_workspace_drop_subscription(reservation_id, channel)
+    let document_epoch = service.workspace_drop_document_epoch();
+    service.claim_workspace_drop_subscription(document_epoch, reservation_id, channel)
 }
 
 fn subscribe_drop(service: &PreviewService, channel: tauri::ipc::Channel<WorkspaceDropUpdateDto>) {
@@ -4240,6 +4320,36 @@ fn a_delayed_old_subscription_cannot_replace_the_new_document_channel() {
         vec!["idle", "hovering"]
     );
     assert!(captured(&delayed_old_messages).is_empty());
+}
+
+#[test]
+fn page_load_rejects_a_verified_old_epoch_without_consuming_the_new_subscription() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let old_document_epoch = service.workspace_drop_document_epoch();
+    service.begin_webview_document();
+    let new_document_epoch = service.workspace_drop_document_epoch();
+    let new_reservation = service
+        .begin_workspace_drop_subscription(new_document_epoch)
+        .expect("the replacement document begins its subscription")
+        .reservation_id;
+
+    let error = service
+        .begin_workspace_drop_subscription(old_document_epoch)
+        .expect_err("a Begin verified before page load cannot execute afterwards");
+    assert_eq!(error.kind, "invalid_workspace_drop_subscription");
+
+    let (old_channel, old_messages) = recording_drop_channel();
+    let error = service
+        .claim_workspace_drop_subscription(old_document_epoch, &new_reservation, old_channel)
+        .expect_err("a Claim verified before page load cannot consume the new slot");
+    assert_eq!(error.kind, "invalid_workspace_drop_subscription");
+    assert!(captured(&old_messages).is_empty());
+
+    let (new_channel, new_messages) = recording_drop_channel();
+    service
+        .claim_workspace_drop_subscription(new_document_epoch, &new_reservation, new_channel)
+        .expect("the replacement document still owns its exact slot");
+    assert_eq!(status(&captured(&new_messages)[0]), "idle");
 }
 
 #[test]

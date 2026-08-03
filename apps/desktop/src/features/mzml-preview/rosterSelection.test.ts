@@ -1501,7 +1501,7 @@ describe("adopting a native drop", () => {
     };
   }
 
-  it("unions new rows with live selection while preserving the current view and preview", () => {
+  it("unions live selection and anchors focus on the first newly dropped row", () => {
     const before: RosterState = {
       ...loaded("file-0", "file-1"),
       query: "file-0",
@@ -1525,7 +1525,7 @@ describe("adopting a native drop", () => {
     });
 
     expect(selection(state)).toEqual(["file-0", "file-1", "file-2", "file-3"]);
-    expect([state.focused, state.anchor]).toEqual(["file-1", "file-0"]);
+    expect([state.focused, state.anchor]).toEqual(["file-2", "file-2"]);
     expect([state.query, state.sort]).toEqual(["file-0", "name-desc"]);
     expect(state.active).toBe("file-0");
     expect(rowPresentation(state, "file-0")).toBe("loaded");
