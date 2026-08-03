@@ -259,6 +259,17 @@ pub struct FolderIngestionResultDto {
     pub discovery: FolderDiscoverySummaryDto,
 }
 
+/// One Rust-issued claim on the current document's bounded drop subscriber.
+///
+/// The identifier is opaque and path-free. It grants no filesystem authority
+/// and is accepted only once while the document epoch that issued it remains
+/// current.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceDropSubscriptionReservationDto {
+    pub reservation_id: String,
+}
+
 /// One bounded, path-free native-drop update sent to the current document.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -381,6 +392,15 @@ pub fn invalid_folder_import_reservation() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "invalid_folder_import_reservation",
         "That folder import is no longer available. Start it again.",
+        true,
+    )
+}
+
+/// What an unknown, replaced, spent or old-document drop subscription answers.
+pub fn invalid_workspace_drop_subscription() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "invalid_workspace_drop_subscription",
+        "That workspace drop subscription is no longer available. Start it again.",
         true,
     )
 }

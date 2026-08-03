@@ -303,9 +303,7 @@ impl DirectorySource for WindowsDirectorySource {
                 {
                     Ok(entries)
                 } else {
-                    Err(DiscoveryError::new(
-                        DiscoveryErrorKind::RootEnumerationFailed,
-                    ))
+                    Err(root_enumeration_failure(&entries))
                 };
             }
 
@@ -313,7 +311,7 @@ impl DirectorySource for WindowsDirectorySource {
             // entry in a directory is on that directory's volume. Supplying it
             // here is what makes an entry's identity a whole one, comparable
             // against the identity of the child once it is opened.
-            parse_entries(
+            parse_entries_with_usage(
                 &buffer,
                 directory.identity.volume_serial(),
                 limit,
@@ -356,6 +354,35 @@ impl DirectorySource for WindowsDirectorySource {
         }
         ChildDirectory::Opened(WindowsDirectory { handle, identity })
     }
+}
+
+fn root_enumeration_failure(entries: &[DirectoryEntry]) -> DiscoveryError {
+    with_materialized_entry_usage(
+        DiscoveryError::new(DiscoveryErrorKind::RootEnumerationFailed),
+        entries,
+    )
+}
+
+fn parse_entries_with_usage(
+    buffer: &[u8],
+    volume_serial: u64,
+    limit: u64,
+    entries: &mut Vec<DirectoryEntry>,
+) -> Result<(), DiscoveryError> {
+    match parse_entries(buffer, volume_serial, limit, entries) {
+        Ok(()) => Ok(()),
+        Err(error) => Err(with_materialized_entry_usage(error, entries)),
+    }
+}
+
+fn with_materialized_entry_usage(
+    error: DiscoveryError,
+    entries: &[DirectoryEntry],
+) -> DiscoveryError {
+    error.with_materialized_entries(
+        u64::try_from(entries.len())
+            .expect("a Windows directory cannot materialize more than u64::MAX entries"),
+    )
 }
 
 /// Opens a path without following a link on its final component.
@@ -595,6 +622,7 @@ mod tests {
     //! something inside the buffer it arrived in, does the parser refuse, or
     //! does it read on?
 
+    use super::super::DiscoveryUsage;
     use super::*;
 
     const VOLUME: u64 = 0x00AB_CDEF;
@@ -649,7 +677,7 @@ mod tests {
 
     fn parse(buffer: &[u8]) -> Result<Vec<DirectoryEntry>, DiscoveryError> {
         let mut entries = Vec::new();
-        parse_entries(buffer, VOLUME, u64::MAX, &mut entries)?;
+        parse_entries_with_usage(buffer, VOLUME, u64::MAX, &mut entries)?;
         Ok(entries)
     }
 
@@ -675,6 +703,53 @@ mod tests {
         assert_eq!(
             names,
             vec![OsString::from("alpha.mzML"), OsString::from("beta.mzML")]
+        );
+    }
+
+    #[test]
+    fn a_parse_error_reports_materialized_usage_without_names() {
+        let mut first = Record::named("private-alpha.mzML");
+        first.next = u32::try_from(first.build().len()).expect("a test record fits");
+        let mut malformed = Record::named("private-broken.mzML");
+        malformed.declared_name_bytes = Some(0);
+        let mut buffer = first.build();
+        buffer.extend_from_slice(&malformed.build());
+
+        let error = parse(&buffer).expect_err("the malformed second record is refused");
+
+        assert_eq!(
+            error.usage(),
+            DiscoveryUsage {
+                entries_inspected: 1,
+                directories_entered: 0,
+                candidates_collected: 0,
+            }
+        );
+        assert_eq!(
+            format!("{error:?}"),
+            "DiscoveryError(filesystem_invariant_failed)"
+        );
+    }
+
+    #[test]
+    fn an_enumeration_error_reports_materialized_usage_without_names() {
+        let entries = parse(&Record::named("private-sample.mzML").build())
+            .expect("a well-formed record materializes");
+
+        let error = root_enumeration_failure(&entries);
+
+        assert_eq!(error.kind(), DiscoveryErrorKind::RootEnumerationFailed);
+        assert_eq!(
+            error.usage(),
+            DiscoveryUsage {
+                entries_inspected: 1,
+                directories_entered: 0,
+                candidates_collected: 0,
+            }
+        );
+        assert_eq!(
+            format!("{error:?}"),
+            "DiscoveryError(root_enumeration_failed)"
         );
     }
 

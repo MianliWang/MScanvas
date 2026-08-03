@@ -143,6 +143,42 @@ pub(super) struct DiscoverySummary {
     pub(super) inaccessible_entry_count: u64,
 }
 
+/// Resource usage that must survive both successful and failed traversal.
+///
+/// Counts only: no name, path, identity or operating-system error can enter the
+/// mixed-root ledger through this value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct DiscoveryUsage {
+    pub(super) entries_inspected: u64,
+    pub(super) directories_entered: u64,
+    pub(super) candidates_collected: usize,
+}
+
+impl DiscoverySummary {
+    pub(super) const fn usage(self) -> DiscoveryUsage {
+        DiscoveryUsage {
+            entries_inspected: self.entries_inspected,
+            directories_entered: self.directories_entered,
+            candidates_collected: self.candidate_count,
+        }
+    }
+
+    fn charge(&mut self, usage: DiscoveryUsage) {
+        self.entries_inspected = self
+            .entries_inspected
+            .checked_add(usage.entries_inspected)
+            .expect("a bounded discovery cannot inspect more than u64::MAX entries");
+        self.directories_entered = self
+            .directories_entered
+            .checked_add(usage.directories_entered)
+            .expect("a bounded discovery cannot enter more than u64::MAX directories");
+        self.candidate_count = self
+            .candidate_count
+            .checked_add(usage.candidates_collected)
+            .expect("a bounded discovery cannot collect more than usize::MAX candidates");
+    }
+}
+
 /// Everything one walk established.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct DiscoveryResult {
@@ -286,15 +322,33 @@ impl fmt::Debug for DiscoveryErrorKind {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct DiscoveryError {
     kind: DiscoveryErrorKind,
+    usage: DiscoveryUsage,
 }
 
 impl DiscoveryError {
     pub(super) fn new(kind: DiscoveryErrorKind) -> Self {
-        Self { kind }
+        Self {
+            kind,
+            usage: DiscoveryUsage::default(),
+        }
     }
 
     pub(super) fn kind(self) -> DiscoveryErrorKind {
         self.kind
+    }
+
+    pub(super) const fn usage(self) -> DiscoveryUsage {
+        self.usage
+    }
+
+    pub(super) fn with_usage(mut self, usage: DiscoveryUsage) -> Self {
+        self.usage = usage;
+        self
+    }
+
+    pub(super) fn with_materialized_entries(mut self, entries_inspected: u64) -> Self {
+        self.usage.entries_inspected = entries_inspected;
+        self
     }
 }
 
@@ -460,12 +514,18 @@ pub(super) fn discover<S: DirectorySource>(
         let entries = match source.entries(&pending.directory, affordable) {
             Ok(entries) => entries,
             Err(error) => {
+                summary.charge(error.usage());
                 if pending.depth == 0 {
-                    return Err(error);
+                    summary.candidate_count = candidates.len();
+                    return Err(error.with_usage(summary.usage()));
                 }
                 // One unreadable directory is not a reason to discard
                 // everything else the user asked about.
                 summary.inaccessible_entry_count += 1;
+                if summary.entries_inspected >= budget.max_entries {
+                    limits.record(DiscoveryLimit::Entries);
+                    break 'walk;
+                }
                 continue;
             }
         };

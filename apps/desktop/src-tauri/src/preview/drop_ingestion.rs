@@ -7,20 +7,21 @@
 
 use std::ffi::OsString;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use tauri::ipc::Channel;
 use tauri::{DragDropEvent, WindowEvent};
 
 use super::discovery::{
-    DiscoveryBudget, DiscoveryErrorKind, DiscoveryLimit, DropRootInspection,
-    MAX_DISCOVERY_CANDIDATES, MAX_DISCOVERY_DEPTH, MAX_DISCOVERY_DIRECTORIES,
-    MAX_DISCOVERY_ENTRIES, discover_mzml_candidates, inspect_drop_root,
+    DiscoveryBudget, DiscoveryError, DiscoveryErrorKind, DiscoveryLimit, DiscoveryResult,
+    DiscoveryUsage, DropRootInspection, MAX_DISCOVERY_CANDIDATES, MAX_DISCOVERY_DEPTH,
+    MAX_DISCOVERY_DIRECTORIES, MAX_DISCOVERY_ENTRIES, discover_mzml_candidates, inspect_drop_root,
 };
 use super::dto::{
     DropIngestionSummaryDto, DropRejectionReasonDto, DropScanLimitDto, PreviewErrorDto,
-    WorkspaceDropStateDto, WorkspaceDropUpdateDto,
+    WorkspaceDropStateDto, WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
+    invalid_workspace_drop_subscription,
 };
 use super::selection::FileIdentity;
 
@@ -305,6 +306,22 @@ pub(super) fn expand_drop_paths_with_budget(
     paths: Vec<PathBuf>,
     budget: DropBudget,
 ) -> Result<DropBatch, PreviewErrorDto> {
+    expand_drop_paths_with_budget_using(paths, budget, inspect_drop_root, discover_mzml_candidates)
+}
+
+/// Testable seam for proving that all roots share one traversal ledger even
+/// when a source fails after doing bounded work. Neither callback crosses the
+/// application boundary; production supplies the two native adapters above.
+pub(super) fn expand_drop_paths_with_budget_using<I, D>(
+    paths: Vec<PathBuf>,
+    budget: DropBudget,
+    mut inspect_root: I,
+    mut discover_root: D,
+) -> Result<DropBatch, PreviewErrorDto>
+where
+    I: FnMut(&Path) -> DropRootInspection,
+    D: FnMut(&Path, DiscoveryBudget) -> Result<DiscoveryResult, DiscoveryError>,
+{
     let mut summary = DropIngestionSummary {
         top_level_item_count: paths.len(),
         ..DropIngestionSummary::default()
@@ -325,7 +342,7 @@ pub(super) fn expand_drop_paths_with_budget(
             break;
         }
 
-        match inspect_drop_root(&root) {
+        match inspect_root(&root) {
             DropRootInspection::RegularFile { identity } => {
                 candidates.push(DropCandidate {
                     path: root,
@@ -343,7 +360,7 @@ pub(super) fn expand_drop_paths_with_budget(
                     summary.record_limit(DropScanLimitDto::Entries);
                     continue;
                 }
-                let discovered = match discover_mzml_candidates(
+                let discovered = match discover_root(
                     &root,
                     DiscoveryBudget {
                         max_depth: budget.max_depth,
@@ -354,17 +371,23 @@ pub(super) fn expand_drop_paths_with_budget(
                 ) {
                     Ok(discovered) => discovered,
                     Err(error) => {
+                        debit_discovery_usage(
+                            error.usage(),
+                            &mut remaining_entries,
+                            &mut remaining_directories,
+                            &mut remaining_candidates,
+                        );
                         record_root_error(&mut summary, error.kind())?;
                         continue;
                     }
                 };
                 let (discovered, discovered_summary, limits) = discovered.into_parts();
-                remaining_entries =
-                    remaining_entries.saturating_sub(discovered_summary.entries_inspected);
-                remaining_directories =
-                    remaining_directories.saturating_sub(discovered_summary.directories_entered);
-                remaining_candidates =
-                    remaining_candidates.saturating_sub(discovered_summary.candidate_count);
+                debit_discovery_usage(
+                    discovered_summary.usage(),
+                    &mut remaining_entries,
+                    &mut remaining_directories,
+                    &mut remaining_candidates,
+                );
                 summary.skipped_reparse_entry_count = summary
                     .skipped_reparse_entry_count
                     .checked_add(discovered_summary.skipped_reparse_count)
@@ -411,6 +434,17 @@ pub(super) fn expand_drop_paths_with_budget(
         candidates,
         summary,
     })
+}
+
+fn debit_discovery_usage(
+    usage: DiscoveryUsage,
+    remaining_entries: &mut u64,
+    remaining_directories: &mut u64,
+    remaining_candidates: &mut usize,
+) {
+    *remaining_entries = remaining_entries.saturating_sub(usage.entries_inspected);
+    *remaining_directories = remaining_directories.saturating_sub(usage.directories_entered);
+    *remaining_candidates = remaining_candidates.saturating_sub(usage.candidates_collected);
 }
 
 fn checked_increment(value: &mut u64, noun: &str) {
@@ -499,11 +533,51 @@ impl fmt::Debug for DropSubscriber {
     }
 }
 
+const DROP_SUBSCRIPTION_RESERVATION_PREFIX: &str = "drop-subscription-reservation-";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct DropSubscriptionReservationId(u64);
+
+impl DropSubscriptionReservationId {
+    fn handle(self) -> String {
+        format!("{DROP_SUBSCRIPTION_RESERVATION_PREFIX}{}", self.0)
+    }
+
+    fn parse(handle: &str) -> Option<Self> {
+        let id = Self(
+            handle
+                .strip_prefix(DROP_SUBSCRIPTION_RESERVATION_PREFIX)?
+                .parse()
+                .ok()?,
+        );
+        (id.handle() == handle).then_some(id)
+    }
+}
+
+impl fmt::Debug for DropSubscriptionReservationId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<drop-subscription-reservation-id>")
+    }
+}
+
+struct PendingDropSubscription {
+    reservation_id: DropSubscriptionReservationId,
+    document_epoch: u64,
+}
+
+impl fmt::Debug for PendingDropSubscription {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<pending-drop-subscription>")
+    }
+}
+
 struct DropUpdateState {
     next_sequence: u64,
     next_subscriber_id: u64,
+    next_subscription_reservation: u64,
     document_epoch: u64,
     current: WorkspaceDropStateDto,
+    pending_subscription: Option<PendingDropSubscription>,
     subscriber: Option<DropSubscriber>,
 }
 
@@ -512,8 +586,10 @@ impl Default for DropUpdateState {
         Self {
             next_sequence: 0,
             next_subscriber_id: 0,
+            next_subscription_reservation: 0,
             document_epoch: 0,
             current: WorkspaceDropStateDto::Idle,
+            pending_subscription: None,
             subscriber: None,
         }
     }
@@ -526,10 +602,56 @@ impl DropUpdateHub {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    pub(super) fn subscribe(&self, channel: Channel<WorkspaceDropUpdateDto>) {
+    /// Begins one bounded, current-document subscription claim without
+    /// accepting a Channel. Repeating Begin before Claim returns the same
+    /// reservation, so an old delayed Begin cannot replace a newer pending
+    /// claim from the same document epoch.
+    pub(super) fn begin_subscription(&self) -> WorkspaceDropSubscriptionReservationDto {
+        let _delivery = self.begin_delivery();
+        let mut state = self.state();
+        if let Some(reservation_id) = state
+            .pending_subscription
+            .as_ref()
+            .filter(|pending| pending.document_epoch == state.document_epoch)
+            .map(|pending| pending.reservation_id)
+        {
+            return WorkspaceDropSubscriptionReservationDto {
+                reservation_id: reservation_id.handle(),
+            };
+        }
+
+        let reservation_id = state.allocate_subscription_reservation();
+        let document_epoch = state.document_epoch;
+        state.pending_subscription = Some(PendingDropSubscription {
+            reservation_id,
+            document_epoch,
+        });
+        WorkspaceDropSubscriptionReservationDto {
+            reservation_id: reservation_id.handle(),
+        }
+    }
+
+    /// Consumes one exact current-document reservation before replacing the
+    /// subscriber. A wrong, replayed or old-document handle neither installs a
+    /// Channel nor consumes the one valid pending slot.
+    pub(super) fn claim_subscription(
+        &self,
+        reservation_id: &str,
+        channel: Channel<WorkspaceDropUpdateDto>,
+    ) -> Result<(), PreviewErrorDto> {
+        let requested = DropSubscriptionReservationId::parse(reservation_id)
+            .ok_or_else(invalid_workspace_drop_subscription)?;
         let delivery = self.begin_delivery();
         let subscriber = {
             let mut state = self.state();
+            let matches = state.pending_subscription.as_ref().is_some_and(|pending| {
+                pending.reservation_id == requested
+                    && pending.document_epoch == state.document_epoch
+            });
+            if !matches {
+                return Err(invalid_workspace_drop_subscription());
+            }
+            state.pending_subscription = None;
             let id = state.next_subscriber_id;
             state.next_subscriber_id = state
                 .next_subscriber_id
@@ -540,6 +662,7 @@ impl DropUpdateHub {
             subscriber
         };
         self.publish_current_to(delivery, subscriber);
+        Ok(())
     }
 
     pub(super) fn publish_persistent(
@@ -629,6 +752,7 @@ impl DropUpdateHub {
             .checked_add(1)
             .expect("a session cannot load more than u64::MAX webview documents");
         state.current = WorkspaceDropStateDto::Idle;
+        state.pending_subscription = None;
         state.subscriber = None;
     }
 
@@ -671,6 +795,15 @@ impl DropUpdateHub {
 }
 
 impl DropUpdateState {
+    fn allocate_subscription_reservation(&mut self) -> DropSubscriptionReservationId {
+        let reservation = DropSubscriptionReservationId(self.next_subscription_reservation);
+        self.next_subscription_reservation = self
+            .next_subscription_reservation
+            .checked_add(1)
+            .expect("a session cannot begin more than u64::MAX drop subscriptions");
+        reservation
+    }
+
     fn next_update(&mut self, state: WorkspaceDropStateDto) -> WorkspaceDropUpdateDto {
         self.next_sequence = self
             .next_sequence

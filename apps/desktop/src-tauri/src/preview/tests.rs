@@ -17,11 +17,14 @@ use mscanvas_proteowizard::{
 
 use super::backend::{OperationAttempt, PreviewProvider, interpretation_error};
 #[cfg(windows)]
-use super::discovery::{DropRootInspection, inspect_drop_root};
+use super::discovery::inspect_drop_root;
+use super::discovery::{
+    DiscoveryBudget, DiscoveryError, DiscoveryErrorKind, DiscoveryUsage, DropRootInspection,
+};
 use super::drop_ingestion::{
     DropBatch, DropBudget, DropIngestionSummary, MAX_DROP_ROOTS, NativeDropDispatch,
     NativeDropSignal, NativeDropWork, expand_drop_paths, expand_drop_paths_with_budget,
-    normalize_window_drop_event,
+    expand_drop_paths_with_budget_using, normalize_window_drop_event,
 };
 use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, DropIngestionResultDto, DropScanLimitDto,
@@ -29,6 +32,7 @@ use super::dto::{
     WorkspaceAddOutcomeDto, WorkspaceDropUpdateDto,
 };
 use super::installation::InstallationIdentity;
+use super::selection::FileIdentity;
 /// The share-mode probe that answers whether a file is still held open. It
 /// lives beside the flags the lease is opened with, because that is what makes
 /// its answer exact rather than a guess.
@@ -3597,6 +3601,59 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     );
 }
 
+#[test]
+fn drop_subscription_uses_only_tauris_typed_nested_channel_wire_shape() {
+    let host = include_str!("../lib.rs");
+    let request = host
+        .split_once("enum WorkspaceDropSubscriptionRequest")
+        .expect("the command has one typed phase request")
+        .1
+        .split_once("/// Begins or claims")
+        .expect("the request ends before the command")
+        .0;
+    let command = host
+        .split_once("fn subscribe_workspace_drop_updates(")
+        .expect("the one production subscription command exists")
+        .1
+        .split_once("/// Removes the rows")
+        .expect("the command ends before the next operation")
+        .0;
+
+    assert!(request.contains("Begin,"));
+    assert_eq!(request.matches("channel: JavaScriptChannelId").count(), 1);
+    assert!(!request.contains("channel: String"));
+    assert!(command.contains("channel.channel_on(webview)"));
+    assert!(!command.contains("JavaScriptChannelId::from_str"));
+    assert!(!command.contains("event_name"));
+    assert!(!command.contains("callback_id"));
+
+    assert!(
+        "__CHANNEL__:7"
+            .parse::<tauri::ipc::JavaScriptChannelId>()
+            .is_ok(),
+        "the accepted nested value is Tauri's exact Channel wire shape"
+    );
+    for arbitrary in ["7", "workspace-drop", "callback-7", "__CHANNEL__:not-a-u32"] {
+        assert!(
+            arbitrary
+                .parse::<tauri::ipc::JavaScriptChannelId>()
+                .is_err(),
+            "an arbitrary string is not a typed Tauri Channel: {arbitrary}"
+        );
+    }
+
+    let hub = include_str!("drop_ingestion.rs");
+    let begin = hub
+        .split_once("pub(super) fn begin_subscription")
+        .expect("the begin phase exists")
+        .1
+        .split_once("/// Consumes one exact")
+        .expect("begin ends before claim")
+        .0;
+    assert!(!begin.contains("Channel"));
+    assert!(!begin.contains("subscriber ="));
+}
+
 // ---------------------------------------------------------------------------
 // Native Explorer drop boundary
 // ---------------------------------------------------------------------------
@@ -3736,6 +3793,24 @@ fn recording_drop_channel() -> (
         Ok(())
     });
     (channel, messages)
+}
+
+fn begin_drop_subscription(service: &PreviewService) -> String {
+    service.begin_workspace_drop_subscription().reservation_id
+}
+
+fn claim_drop_subscription(
+    service: &PreviewService,
+    reservation_id: &str,
+    channel: tauri::ipc::Channel<WorkspaceDropUpdateDto>,
+) -> Result<(), PreviewErrorDto> {
+    service.claim_workspace_drop_subscription(reservation_id, channel)
+}
+
+fn subscribe_drop(service: &PreviewService, channel: tauri::ipc::Channel<WorkspaceDropUpdateDto>) {
+    let reservation_id = begin_drop_subscription(service);
+    claim_drop_subscription(service, &reservation_id, channel)
+        .expect("the current document claims its exact drop subscription");
 }
 
 fn captured(messages: &CapturedDropMessages) -> Vec<serde_json::Value> {
@@ -3909,7 +3984,7 @@ fn native_drop_callback_reservation_does_not_wait_for_held_service_gates() {
 fn inverse_hover_leave_workers_cannot_resurrect_hovering() {
     let service = PreviewService::new(Box::new(NoProcess));
     let (channel, messages) = recording_drop_channel();
-    service.subscribe_workspace_drop_updates(channel);
+    subscribe_drop(&service, channel);
 
     let enter = service
         .reserve_native_drop_signal(NativeDropSignal::Enter { item_count: 2 })
@@ -3932,7 +4007,7 @@ fn inverse_hover_leave_workers_cannot_resurrect_hovering() {
 fn native_over_is_silent_even_when_repeated() {
     let service = PreviewService::new(Box::new(NoProcess));
     let (channel, messages) = recording_drop_channel();
-    service.subscribe_workspace_drop_updates(channel);
+    subscribe_drop(&service, channel);
     process_drop_signal(&service, NativeDropSignal::Enter { item_count: 1 });
     let before_over = captured(&messages);
 
@@ -3988,7 +4063,7 @@ fn native_drop_callback_bounds_owned_roots_without_losing_true_batch_summary() {
 fn second_drop_is_reported_once_before_terminal_even_when_its_worker_runs_late() {
     let service = Arc::new(PreviewService::new(Box::new(NoProcess)));
     let (channel, messages) = recording_drop_channel();
-    service.subscribe_workspace_drop_updates(channel);
+    subscribe_drop(&service, channel);
     let (started, release, worker) = spawn_blocked_drop(&service, &[]);
     started
         .recv_timeout(Duration::from_secs(2))
@@ -4122,7 +4197,7 @@ fn add_folder_and_roster_operations_wait_for_an_active_native_drop() {
 fn page_load_supersedes_an_active_native_drop_and_clears_subscriber() {
     let service = Arc::new(PreviewService::new(Box::new(NoProcess)));
     let (old_channel, old_messages) = recording_drop_channel();
-    service.subscribe_workspace_drop_updates(old_channel);
+    subscribe_drop(&service, old_channel);
     let (started, release, worker) = spawn_blocked_drop(&service, &[]);
     started
         .recv_timeout(Duration::from_secs(2))
@@ -4136,19 +4211,133 @@ fn page_load_supersedes_an_active_native_drop_and_clears_subscriber() {
     assert_eq!(captured(&old_messages), before_load);
 
     let (new_channel, new_messages) = recording_drop_channel();
-    service.subscribe_workspace_drop_updates(new_channel);
+    subscribe_drop(&service, new_channel);
     assert_eq!(status(&captured(&new_messages)[0]), "hovering");
+}
+
+#[test]
+fn a_delayed_old_subscription_cannot_replace_the_new_document_channel() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let old_reservation = begin_drop_subscription(&service);
+    service.begin_webview_document();
+
+    let new_reservation = begin_drop_subscription(&service);
+    let (new_channel, new_messages) = recording_drop_channel();
+    claim_drop_subscription(&service, &new_reservation, new_channel)
+        .expect("the replacement document claims its reservation");
+    let (delayed_old_channel, delayed_old_messages) = recording_drop_channel();
+    let error = claim_drop_subscription(&service, &old_reservation, delayed_old_channel)
+        .expect_err("the old document cannot claim after page-load start");
+    assert_eq!(error.kind, "invalid_workspace_drop_subscription");
+
+    process_drop_signal(&service, NativeDropSignal::Enter { item_count: 1 });
+
+    assert_eq!(
+        captured(&new_messages)
+            .iter()
+            .map(status)
+            .collect::<Vec<_>>(),
+        vec!["idle", "hovering"]
+    );
+    assert!(captured(&delayed_old_messages).is_empty());
+}
+
+#[test]
+fn delayed_begin_reuses_pending_and_never_displaces_an_installed_subscriber() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    service.begin_webview_document();
+
+    let current_begin = begin_drop_subscription(&service);
+    let delayed_begin = begin_drop_subscription(&service);
+    assert_eq!(delayed_begin, current_begin);
+
+    let (channel, messages) = recording_drop_channel();
+    claim_drop_subscription(&service, &current_begin, channel)
+        .expect("the shared same-epoch reservation is current");
+    let after_claim_begin = begin_drop_subscription(&service);
+    assert_ne!(after_claim_begin, current_begin);
+    assert_eq!(begin_drop_subscription(&service), after_claim_begin);
+
+    process_drop_signal(&service, NativeDropSignal::Enter { item_count: 2 });
+    assert_eq!(
+        captured(&messages).iter().map(status).collect::<Vec<_>>(),
+        vec!["idle", "hovering"]
+    );
+}
+
+#[test]
+fn a_wrong_drop_subscription_handle_does_not_consume_the_current_slot() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let reservation = begin_drop_subscription(&service);
+    let (wrong_channel, wrong_messages) = recording_drop_channel();
+
+    let error = claim_drop_subscription(
+        &service,
+        "drop-subscription-reservation-18446744073709551615",
+        wrong_channel,
+    )
+    .expect_err("an unknown reservation is refused");
+    assert_eq!(error.kind, "invalid_workspace_drop_subscription");
+    assert!(captured(&wrong_messages).is_empty());
+
+    let (current_channel, current_messages) = recording_drop_channel();
+    claim_drop_subscription(&service, &reservation, current_channel)
+        .expect("the exact reservation remains claimable");
+    assert_eq!(status(&captured(&current_messages)[0]), "idle");
+}
+
+#[test]
+fn page_load_invalidates_an_enter_dispatch_queued_by_the_old_document() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let old_enter = service
+        .reserve_native_drop_signal(NativeDropSignal::Enter { item_count: 1 })
+        .expect("Enter produces one queued dispatch");
+
+    service.begin_webview_document();
+    let (new_channel, new_messages) = recording_drop_channel();
+    subscribe_drop(&service, new_channel);
+    service.process_native_drop_dispatch(old_enter);
+
+    assert_eq!(
+        captured(&new_messages)
+            .iter()
+            .map(status)
+            .collect::<Vec<_>>(),
+        vec!["idle"]
+    );
+}
+
+#[test]
+fn page_load_invalidates_a_leave_dispatch_queued_by_the_old_document() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    process_drop_signal(&service, NativeDropSignal::Enter { item_count: 1 });
+    let old_leave = service
+        .reserve_native_drop_signal(NativeDropSignal::Leave)
+        .expect("Leave produces one queued dispatch");
+
+    service.begin_webview_document();
+    let (new_channel, new_messages) = recording_drop_channel();
+    subscribe_drop(&service, new_channel);
+    service.process_native_drop_dispatch(old_leave);
+
+    assert_eq!(
+        captured(&new_messages)
+            .iter()
+            .map(status)
+            .collect::<Vec<_>>(),
+        vec!["idle"]
+    );
 }
 
 #[test]
 fn replacing_drop_subscriber_leaves_exactly_one_live_channel() {
     let service = PreviewService::new(Box::new(NoProcess));
     let (first_channel, first_messages) = recording_drop_channel();
-    service.subscribe_workspace_drop_updates(first_channel);
+    subscribe_drop(&service, first_channel);
     let first_before_replacement = captured(&first_messages);
 
     let (replacement_channel, replacement_messages) = recording_drop_channel();
-    service.subscribe_workspace_drop_updates(replacement_channel);
+    subscribe_drop(&service, replacement_channel);
     process_drop_signal(&service, NativeDropSignal::Enter { item_count: 4 });
 
     assert_eq!(captured(&first_messages), first_before_replacement);
@@ -4165,7 +4354,7 @@ fn replacing_drop_subscriber_leaves_exactly_one_live_channel() {
 fn actual_channel_orders_hover_busy_replacement_clear_and_reload() {
     let service = Arc::new(PreviewService::new(Box::new(NoProcess)));
     let (first_channel, first_messages) = recording_drop_channel();
-    service.subscribe_workspace_drop_updates(first_channel);
+    subscribe_drop(&service, first_channel);
 
     process_drop_signal(&service, NativeDropSignal::Enter { item_count: 3 });
     assert!(
@@ -4228,7 +4417,7 @@ fn actual_channel_orders_hover_busy_replacement_clear_and_reload() {
     }
 
     let (replacement_channel, replacement_messages) = recording_drop_channel();
-    service.subscribe_workspace_drop_updates(replacement_channel);
+    subscribe_drop(&service, replacement_channel);
     let replacement = captured(&replacement_messages);
     assert_eq!(replacement.len(), 1);
     assert_eq!(status(&replacement[0]), "importing");
@@ -4258,7 +4447,7 @@ fn actual_channel_orders_hover_busy_replacement_clear_and_reload() {
         "the previous document's subscriber is cleared before later events"
     );
     let (new_document_channel, new_document_messages) = recording_drop_channel();
-    service.subscribe_workspace_drop_updates(new_document_channel);
+    subscribe_drop(&service, new_document_channel);
     let new_document = captured(&new_document_messages);
     assert_eq!(status(&new_document[0]), "hovering");
     assert_eq!(new_document[0]["sequence"], 8);
@@ -4271,10 +4460,13 @@ fn channel_send_failure_removes_only_that_subscriber_and_never_fails_ingestion()
     let service = PreviewService::new(Box::new(NoProcess));
     let attempts = Arc::new(AtomicUsize::new(0));
     let observed = Arc::clone(&attempts);
-    service.subscribe_workspace_drop_updates(tauri::ipc::Channel::new(move |_| {
-        observed.fetch_add(1, Ordering::Relaxed);
-        Err(tauri::Error::FailedToReceiveMessage)
-    }));
+    subscribe_drop(
+        &service,
+        tauri::ipc::Channel::new(move |_| {
+            observed.fetch_add(1, Ordering::Relaxed);
+            Err(tauri::Error::FailedToReceiveMessage)
+        }),
+    );
     assert_eq!(attempts.load(Ordering::Relaxed), 1);
 
     process_drop_signal(&service, NativeDropSignal::Enter { item_count: 2 });
@@ -4285,7 +4477,7 @@ fn channel_send_failure_removes_only_that_subscriber_and_never_fails_ingestion()
     );
 
     let (replacement, messages) = recording_drop_channel();
-    service.subscribe_workspace_drop_updates(replacement);
+    subscribe_drop(&service, replacement);
     assert_eq!(status(&captured(&messages)[0]), "hovering");
     let work = reserve_drop_work(&service, &[]);
     let result = service
@@ -4318,7 +4510,7 @@ fn channel_send_failure_removes_only_that_subscriber_and_never_fails_ingestion()
 fn failed_drop_channel_state_keeps_operation_id_and_preview_error_required() {
     let service = PreviewService::new(Box::new(NoProcess));
     let (channel, messages) = recording_drop_channel();
-    service.subscribe_workspace_drop_updates(channel);
+    subscribe_drop(&service, channel);
     let work = reserve_drop_work(&service, &[]);
     assert!(
         service
@@ -4509,6 +4701,72 @@ fn drop_root_inspection_classifies_a_junction_before_directory_dispatch() {
         inspect_drop_root(&roots.path().join("as-root")),
         DropRootInspection::Reparse
     ));
+}
+
+#[test]
+fn a_failed_root_debits_the_shared_drop_budget_before_the_next_root() {
+    let direct = PathBuf::from("direct.mzML");
+    let root_a = PathBuf::from("root-a");
+    let root_b = PathBuf::from("root-b");
+    let mut budgets_seen = Vec::new();
+
+    let batch = expand_drop_paths_with_budget_using(
+        vec![direct.clone(), root_a, root_b],
+        DropBudget {
+            max_roots: 3,
+            max_depth: 7,
+            max_entries: 5,
+            max_directories: 3,
+            max_candidates: 5,
+        },
+        |path| {
+            if path == direct {
+                DropRootInspection::RegularFile {
+                    identity: FileIdentity::new(7, [1; 16]),
+                }
+            } else {
+                DropRootInspection::Directory
+            }
+        },
+        |_, budget| {
+            budgets_seen.push(budget);
+            if budgets_seen.len() == 1 {
+                Err(
+                    DiscoveryError::new(DiscoveryErrorKind::RootEnumerationFailed).with_usage(
+                        DiscoveryUsage {
+                            entries_inspected: 2,
+                            directories_entered: 1,
+                            candidates_collected: 0,
+                        },
+                    ),
+                )
+            } else {
+                Err(DiscoveryError::new(DiscoveryErrorKind::RootUnavailable))
+            }
+        },
+    )
+    .expect("a failed root is aggregate-only");
+
+    assert_eq!(
+        budgets_seen,
+        vec![
+            DiscoveryBudget {
+                max_depth: 7,
+                max_entries: 5,
+                max_directories: 3,
+                max_candidates: 4,
+            },
+            DiscoveryBudget {
+                max_depth: 7,
+                max_entries: 3,
+                max_directories: 2,
+                max_candidates: 4,
+            },
+        ]
+    );
+    assert_eq!(batch.candidates.len(), 1);
+    assert_eq!(batch.candidates[0].path, direct);
+    assert_eq!(batch.summary.inaccessible_root_count, 2);
 }
 
 #[cfg(windows)]

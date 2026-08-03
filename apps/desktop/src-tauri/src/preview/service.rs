@@ -34,9 +34,10 @@ use super::dto::{
     MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto, MsLevelCountDto, PrecursorDto,
     PreviewDto, PreviewErrorDto, RetentionTimeDto, RetentionTimeRangeDto, RunSummaryDto,
     SelectedSpectrumDto, SelectedSpectrumOutcomeDto, SpectrumRowDto, SpectrumTableDto,
-    WorkspaceAddOutcomeDto, WorkspaceAddResultDto, WorkspaceDropStateDto, WorkspaceDropUpdateDto,
-    WorkspaceRemoveResultDto, WorkspaceRosterDto, bounded_text, redact_absolute_paths,
-    require_finite, require_finite_option, workspace_full,
+    WorkspaceAddOutcomeDto, WorkspaceAddResultDto, WorkspaceDropStateDto,
+    WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto, WorkspaceRemoveResultDto,
+    WorkspaceRosterDto, bounded_text, redact_absolute_paths, require_finite, require_finite_option,
+    workspace_full,
 };
 use super::dto::{
     FolderDiscoverySummaryDto, FolderImportReservationDto, FolderIngestionResultDto,
@@ -483,20 +484,31 @@ impl PreviewService {
     /// without letting one of that document's delayed roster reads supersede a
     /// new document's later import.
     pub fn begin_webview_document(&self) {
+        // Enter and Leave are dispatched on blocking workers. Advancing the
+        // ticket at the native page-load boundary makes every callback queued
+        // by the replaced document stale before its replay state is reset.
+        let _document_event_ticket = self.allocate_drop_event_ticket();
         let delivery = self.drop_updates.begin_delivery();
         let (gate, _, _pending_busy) = self.begin_superseding_mutation();
         drop(gate);
         self.drop_updates.reset_document(delivery);
     }
 
-    /// Installs the one path-free subscriber owned by the current main
-    /// document. Replacement and the initial snapshot are serialized with
+    /// Begins one current-document subscription without accepting a Channel.
+    pub fn begin_workspace_drop_subscription(&self) -> WorkspaceDropSubscriptionReservationDto {
+        self.drop_updates.begin_subscription()
+    }
+
+    /// Claims one exact current-document reservation and installs its typed
+    /// Channel. Replacement and the initial snapshot are serialized with
     /// native updates, so the new channel sees one exact lifecycle state.
-    pub fn subscribe_workspace_drop_updates(
+    pub fn claim_workspace_drop_subscription(
         &self,
+        reservation_id: &str,
         channel: tauri::ipc::Channel<WorkspaceDropUpdateDto>,
-    ) {
-        self.drop_updates.subscribe(channel);
+    ) -> Result<(), PreviewErrorDto> {
+        self.drop_updates
+            .claim_subscription(reservation_id, channel)
     }
 
     /// Reserves one normalized native event without taking a lock or sending

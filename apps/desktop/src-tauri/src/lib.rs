@@ -3,14 +3,17 @@ mod preview;
 use std::sync::Arc;
 
 use mscanvas_core::BootstrapStatus;
+use serde::Deserialize;
 use tauri::async_runtime::spawn_blocking;
+use tauri::ipc::JavaScriptChannelId;
 use tauri::webview::PageLoadEvent;
 use tauri::{Manager, State};
 
 use preview::dto::{
     BackendAvailabilityDto, FolderImportReservationDto, FolderIngestionResultDto, PreviewDto,
-    PreviewErrorDto, SelectedSpectrumOutcomeDto, WorkspaceAddResultDto, WorkspaceDropUpdateDto,
-    WorkspaceRemoveResultDto, WorkspaceRosterDto,
+    PreviewErrorDto, SelectedSpectrumOutcomeDto, WorkspaceAddResultDto,
+    WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto, WorkspaceRemoveResultDto,
+    WorkspaceRosterDto,
 };
 use preview::{PreviewService, ProteoWizardProvider, normalize_window_drop_event};
 
@@ -132,16 +135,49 @@ async fn choose_mzml_folder(
     .await?
 }
 
-/// Installs the one path-free native-drop stream for the current main
-/// document. The channel is replaced atomically and receives an immediate
-/// snapshot; no event name, callback identifier or filesystem path crosses
-/// this command boundary.
+/// The typed phases of the one native-drop subscription command.
+///
+/// `JavaScriptChannelId` is Tauri's strongly typed nested representation of a
+/// `Channel`: it accepts only the framework's `__CHANNEL__:<u32>` wire shape and
+/// is converted on the injected calling Webview. MSCanvas never accepts or
+/// parses an arbitrary callback string or event name.
+#[derive(Deserialize)]
+#[serde(
+    tag = "phase",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum WorkspaceDropSubscriptionRequest {
+    Begin,
+    Claim {
+        reservation_id: String,
+        channel: JavaScriptChannelId,
+    },
+}
+
+/// Begins or claims the one path-free native-drop stream for the current main
+/// document. Begin retains no Channel. Claim replaces the subscriber only
+/// after Rust validates its current-document reservation, then sends the exact
+/// current snapshot.
 #[tauri::command]
 fn subscribe_workspace_drop_updates(
-    channel: tauri::ipc::Channel<WorkspaceDropUpdateDto>,
+    request: WorkspaceDropSubscriptionRequest,
+    webview: tauri::Webview<tauri::Wry>,
     service: State<'_, SharedService>,
-) {
-    service.subscribe_workspace_drop_updates(channel);
+) -> Result<Option<WorkspaceDropSubscriptionReservationDto>, PreviewErrorDto> {
+    match request {
+        WorkspaceDropSubscriptionRequest::Begin => {
+            Ok(Some(service.begin_workspace_drop_subscription()))
+        }
+        WorkspaceDropSubscriptionRequest::Claim {
+            reservation_id,
+            channel,
+        } => {
+            let channel: tauri::ipc::Channel<WorkspaceDropUpdateDto> = channel.channel_on(webview);
+            service.claim_workspace_drop_subscription(&reservation_id, channel)?;
+            Ok(None)
+        }
+    }
 }
 
 /// Removes the rows these handles name and answers with the roster that
