@@ -70,14 +70,31 @@ the selected file: it stays one click from being reopened.
 - Native paths remain in Rust. React receives ordered, typed, path-free updates
   and no Tauri event or filesystem capability; drop ingestion does not start one
   backend read per accepted row.
-- Hover and import feedback are non-modal and do not take focus. Escape clears
-  hover only. Search, sort, selection, preview, Remove and Clear remain usable;
-  Add actions and roster reload wait for the active drop, and a second drop is
-  rejected as busy rather than replacing it.
+- The current document completes its path-free Begin/Claim subscription attempt
+  before reading the authoritative roster. Each document gets a fresh opaque
+  authority at creation; Rust challenges that exact current realm and rechecks
+  the captured native epoch before either phase can change subscriber state.
+  Subscription unavailability is a separate, truthful and retryable state
+  rather than an ingestion failure. A failed subscription still permits roster
+  adoption and leaves both Add actions usable; a successful Retry reads the
+  authoritative roster again.
+- Hover and import feedback are non-modal and do not take focus. Native Leave or
+  Drop clears hover, and the overlay never captures focus. Search, sort,
+  selection, preview, Remove and Clear remain usable; Add actions and roster
+  reload wait for the active drop, and a second drop is rejected as busy rather
+  than replacing it.
+- If Drop disables a keyboard-focused Add action, completion restores focus only
+  when the user has not chosen another destination. Pointer activation never
+  creates that keyboard debt, while a focused keyboard Dismiss or Retry hands
+  focus to the durable Add action when the transient control disappears.
 - Remove, Clear and main-document reload supersede a drop that has not committed,
   so a late completion cannot reinstall an older roster or notice. At most one
   preview may start after a successful drop, and only when Rust proves the
   workspace was empty before it.
+- A current Drop result prunes the live selection against Rust's roster, unions
+  the new handles, and sets roster focus and range anchor to the first newly
+  added row while preserving query, sort, surviving row state and active
+  preview.
 
 **Planned follow-up:** directory-formatted acquisition discovery remains gated
 until this repository can convert one.

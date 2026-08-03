@@ -1,6 +1,6 @@
-# ADR 0008 — Windows Explorer drag-and-drop
+# ADR 0008 — Windows Explorer drag-and-drop ingestion
 
-- Status: Accepted for M1.5
+- Status: Accepted for regular mzML files and folders on Windows
 - Date: 2026-08-02
 
 ## Context
@@ -76,8 +76,13 @@ order. At each position:
 One ledger is shared by the whole drop for entries inspected, directories
 entered, and candidates. Direct files consume candidate budget. Each folder
 starts its depth calculation at zero, but it does not receive fresh entry,
-directory, or candidate budgets. Reaching any limit makes the aggregate result
-incomplete and records only the path-free limit kind.
+directory, or candidate budgets. Successful and failed discovery roots both
+debit the same batch ledger for work already performed. Windows enumeration or
+parse failures therefore report path-free usage for entries already
+materialized before the failure; a failing root cannot give the next root a
+fresh allowance. Valid candidates already discovered remain available, while
+the root error stays aggregate-only and path-free. Reaching any limit makes the
+aggregate result incomplete and records only the path-free limit kind.
 
 Identity is observed when a direct file is classified and when a folder
 candidate is discovered. Acceptance reopens the candidate without following a
@@ -109,12 +114,21 @@ spends no dataset identifier and publishes no misleading completion result.
 `PageLoadEvent::Started` for `main` is the authoritative document boundary. It:
 
 - advances workspace generation and supersedes old ingestion;
-- clears the current drop subscriber;
+- advances the native event ticket so queued Enter, Leave, and Drop dispatches
+  reserved by the old document are stale before they execute;
+- clears both the pending subscription reservation and current subscriber;
 - clears replay and hover state; and
-- prevents an old background operation from committing or publishing into the
-  new document.
+- prevents an old reservation, queued hover update, or background operation
+  from claiming, committing, or publishing into the new document.
 
 Reload does not rely on a roster IPC request for cancellation.
+
+Tauri's main-frame document-created initialization script also gives each
+JavaScript realm a fresh 128-bit opaque drop authority. It is neither a secret
+nor filesystem authority. The value is non-enumerable, read-only, and sent only
+as the private Tauri invoke header for this subscription command; it is not a
+Channel field or DTO. A replaced realm therefore retains its old value even if
+one of its invokes reaches Rust after the next PageLoad boundary.
 
 ### Path-free Channel
 
@@ -124,22 +138,42 @@ M1.5 adds exactly one command:
 subscribe_workspace_drop_updates
 ```
 
-The registered production command count becomes 13. The command accepts one
-typed Tauri `Channel` and no path. Rust stores at most one current subscriber.
-Replacing the subscriber is immediate. A send failure does not fail or roll back
-ingestion and removes the slot only if the failed channel is still the current
-subscriber.
+The registered production command count becomes 13. That one command implements
+a two-phase, path-free subscription protocol:
 
-Subscription immediately sends the current path-free snapshot. Every update has
-a monotonically increasing sequence number for the current document. The state
-union is:
+```text
+Begin -> current-document reservation
+Claim { reservationId, channel } -> install subscriber and send current snapshot
+```
+
+Begin accepts no Channel. Before either phase, Rust rejects a non-main webview,
+validates the bounded authority header, and uses Tauri's
+`eval_with_callback` to challenge the currently loaded realm. Only an exact
+match proceeds. Rust also captures the native document epoch before that
+challenge and rechecks it under the drop-hub lock, closing a navigation between
+challenge and commit. Missing, malformed, timed-out, realm-mismatched, or stale
+authority fails closed without consuming a valid pending slot.
+
+Within one verified document epoch, repeated unclaimed Begin requests
+idempotently reuse one pending reservation. Claim must present the exact
+Rust-issued reservation and a nested Channel in Tauri's typed
+`JavaScriptChannelId` wire shape; it never accepts an arbitrary callback string.
+A wrong, old, or replayed claim fails closed, does not install a Channel, and
+does not consume the valid pending slot. Page load clears both slots. Rust
+therefore retains at most one pending reservation and one current subscriber. A
+successful Claim sends the current snapshot. A send failure does not fail or
+roll back ingestion and removes the slot only if the failed Channel is still
+current.
+
+Every update has a monotonically increasing sequence number for the current
+document. The state union is:
 
 ```text
 idle
 hovering { itemCount }
 importing { operationId, itemCount }
 completed { operationId, result }
-failed { operationId?, reason }
+failed { operationId, error }
 rejected { reason }
 ```
 
@@ -155,26 +189,46 @@ tested camelCase TypeScript contract.
 ### Frontend adoption and interaction
 
 React depends on a small `WorkspaceDropTransport` interface. The production
-implementation creates one Tauri `Channel`, installs its callback before invoking
-the subscription command, and never imports Tauri's built-in event API. Tests and
-the rendered harness provide a fake implementation of the same path-free
-transport.
+implementation serializes the complete Begin, Channel construction, and Claim
+sequence so a delayed older registration cannot replace a newer subscriber. It
+captures the current realm's authority before queued registration work, passes
+the same private invoke header to both phases, installs the Channel callback
+before Claim, and never imports Tauri's built-in event API. Tests and the
+rendered harness provide a fake implementation of the same path-free transport.
+
+Each current-document subscription attempt settles before React reads the
+authoritative roster. A successful Claim may deliver its current snapshot first;
+a failed attempt still proceeds to the roster read so the workspace does not
+remain in a permanent loading state. Retry repeats the subscription attempt and
+then reads the roster again.
 
 Sequence checks reject duplicate or stale updates. A completed drop adopts its
 roster only if no newer frontend workspace mutation began after importing was
 observed. Adoption preserves current query, sort, selection, active preview, and
-collision context through the established roster reducer.
+collision context through the established roster reducer. It prunes selection
+against the authoritative roster, unions every newly added handle, and sets both
+roving focus and range anchor to the first newly added handle.
 
 The application may auto-preview at most one newly added dataset, and only when
 the Rust result proves that the pre-drop workspace was empty, at least one
 dataset was added, the backend is usable, and no preview request is already in
 flight. Drop ingestion itself never fans out backend work.
 
+An ownerless terminal snapshot is recovery evidence, not proof that this React
+document observed the import. It may trigger an authoritative roster read, but
+an ownerless completion creates no drop notice and starts no preview; an
+ownerless failure remains an operation error. Stale, unmounted, and StrictMode
+subscription attempts cannot apply state or adopt a roster.
+
 Hover and importing states use a non-modal visual overlay and a dedicated live
-region. Enter and importing do not steal focus. Leave, Drop, and Escape remove
-hover hit-testing residue. Escape cancels hover only; it does not cancel an
-accepted import. Clear remains visible and usable even when an empty workspace
-is waiting on a drop.
+region. Enter and importing do not steal focus, and native Leave or Drop removes
+hover hit-testing residue. The overlay never receives or traps focus. If a
+keyboard-owned control becomes disabled or is removed by a Drop transition, the
+UI records one focus debt. Settlement pays that debt to the durable Add action
+only while focus is still on `body` and the user has not selected another real
+destination. Pointer activation creates no keyboard debt. A focused keyboard
+Dismiss or Retry hands focus to the durable Add action when it unmounts. Clear
+remains visible and usable even when an empty workspace is waiting on a drop.
 
 ### Privacy and failure semantics
 
@@ -188,6 +242,13 @@ and internal coordination failures use typed, path-free reasons. A Channel send
 failure affects observation only; it never changes the filesystem or workspace
 result.
 
+A subscription failure is presented separately as truthful “Explorer
+drag-and-drop is unavailable” status with Retry. It never claims that dropped
+items failed. Existing roster state and the Add files/folder pickers remain
+usable, and a successful Retry is followed by an authoritative roster read.
+Shared entry and directory limit text names the collective whole-drop ledger,
+not an individual folder that may never have exceeded a limit by itself.
+
 ## Verification boundary
 
 M1.5 is accepted with automated evidence for:
@@ -195,15 +256,23 @@ M1.5 is accepted with automated evidence for:
 - the production native adapter and main-window filtering;
 - real Windows temporary files, directories, hard links, and junctions;
 - mixed-root ordering, shared budgets, identity rechecks, and generation races;
+- failed-discovery usage debiting the shared batch ledger;
 - actual Tauri Channel capture and subscriber replacement/failure behavior;
+- old reservation, delayed Begin, wrong/replayed Claim, and PageLoad invalidation
+  of queued old native events;
+- per-document initialization authority, current-realm challenge, non-main
+  rejection, and challenge-to-commit epoch recheck, bounded by locked
+  Tauri/Wry source and initialization-order evidence plus deterministic source,
+  epoch, and frontend-header tests;
 - the production frontend through a fake path-free transport;
 - rendered loading, empty, hover, importing, completed, incomplete, rejected,
-  keyboard, focus, live-region, and recovery states; and
+  connecting, unavailable, Retry, keyboard ownership, focus handoff,
+  live-region, and recovery states; and
 - source, capability, command-count, dependency, lockfile, and privacy contracts.
 
 Rendered evidence uses an ephemeral loopback-only Vite harness outside the
-repository at 900×700, 1366×768, and 1920×1080. It imports production components
-and styles and is removed after capture.
+repository at 900×700, 960×640, 1366×768, and 1920×1080. It imports production
+components and styles and is removed after capture.
 
 A physical mouse gesture from Explorer is not required and is not claimed when
 it was not performed. The final evidence states separately:
@@ -212,9 +281,13 @@ it was not performed. The final evidence states separately:
 native Explorer event adapter: automated
 real filesystem ingestion: automated
 path-free Channel bridge: automated
+per-document authority challenge: locked-runtime/source and deterministic contract evidence
 rendered drop states: automated
 physical mouse drag from Explorer: not required / not performed
 ```
+
+The mock WebView cannot execute `eval_with_callback`; this boundary does not
+claim a native runtime execution of the current-realm challenge.
 
 ## Consequences
 

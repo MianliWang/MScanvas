@@ -2078,7 +2078,7 @@ above remain the native and layout evidence, and the picker was not reopened.
 ## Windows Explorer drag-and-drop, 2026-08-02
 
 M1.5 is implemented at final application-code head
-`3b9c3a85e753d506bde867c6f3b723a05eca0bae`. The registered Tauri surface is
+`79f31a4a308cce3675eed4a4294a3a7f18ebfdd5`. The registered Tauri surface is
 exactly thirteen narrow commands. The main-window capability permissions array
 remains empty, no `core:event` permission was added, and the frontend imports
 neither `@tauri-apps/api/event` nor a `tauri://drag-*` event. Cargo and package
@@ -2092,73 +2092,133 @@ normalizes Enter, Over, Leave and Drop without formatting the native event or
 its position, makes only an atomic reservation, retains at most the first 1,024
 roots while keeping the true item count, and offloads every dispatch before any
 lock, Channel send or filesystem work. Over is silent and ticketed workers
-cannot reorder an older Enter after Leave.
+cannot reorder an older Enter after Leave. Main-document page-load start also
+advances that event ticket: tests reserve old-document Enter and Leave
+dispatches, start the replacement document, claim its subscriber, and then run
+the queued work without changing the replacement Channel's single idle state.
+Tauri's main-frame document-created initialization script gives every JavaScript
+realm a fresh 128-bit opaque drop authority in a sealed, non-enumerable global.
+It carries no path or generation and is sent only in this command's private
+invoke header, never in a DTO or Channel update.
 
 The frontend installs one replaceable `tauri::ipc::Channel` subscriber through
-`subscribe_workspace_drop_updates`. Rust sends a closed, path-free union with a
-monotonic sequence and decimal operation token; an actual Tauri Channel test
-captured the serialized idle, hovering, importing, busy, completed and reload
-ordering. Replacement leaves exactly one subscriber, page-load start clears the
-old document's subscriber, and send failure removes only the matching failed
-subscriber without aborting ingestion.
+the two-phase `subscribe_workspace_drop_updates` command. Begin accepts no
+Channel and idempotently returns the one pending current-document reservation;
+Claim must provide that exact reservation and Tauri's typed nested
+`JavaScriptChannelId`. Old, wrong and replayed claims fail closed, a wrong claim
+does not consume the valid slot, and page-load start clears both reservation and
+subscriber. Rust retains at most one of each. The production transport serializes
+the complete Begin-to-Claim registration, and only a successful Claim sends the
+current snapshot. Before each phase Rust rejects non-main Webviews, challenges
+the current realm through `eval_with_callback`, and then rechecks the captured
+native document epoch under the hub lock. A delayed old-realm header, malformed
+or missing authority, callback timeout, or navigation between challenge and
+commit fails closed without consuming the replacement document's pending slot.
+Rust sends a closed, path-free union with a monotonic sequence and mandatory
+`failed { operationId, error }`; actual Tauri Channel tests capture the
+serialized idle, hovering, importing, busy, completed and reload ordering.
+Replacement leaves exactly one subscriber, and send failure removes only the
+matching failed subscriber without aborting ingestion.
 
 Real Windows filesystem tests cover direct files, multiple folders, mixed root
 order, hard-link identity deduplication and both root and nested junctions. A
 drop uses one 1,024-root limit and one entries, directories and candidates
 ledger across the whole gesture; direct files spend candidate allowance and
-each folder restarts depth at zero. Classification and commit recheck filesystem
-identity without following reparse points. A three-layer containment mutation
-proved that weakening attribute parsing, no-follow opening and child identity
-checking together would admit the outside `outside.mzML`; the restored test
-refuses it and records only an aggregate skipped count.
+each folder restarts depth at zero. Successful and failed discovery roots debit
+the same ledger: a path-free `DiscoveryUsage` records entries materialized before
+enumeration or parse failure, and every later root receives only the remainder.
+Valid candidates discovered before a failure are retained. Classification and
+commit recheck filesystem identity without following reparse points. A
+three-layer containment mutation proved that weakening attribute parsing,
+no-follow opening and child identity checking together would admit the outside
+`outside.mzML`; the restored test refuses it and records only an aggregate
+skipped count.
 
 Concurrency tests prove that expansion holds neither workspace nor mutation
 locks, a busy storm occupies one bounded coalescing bit, and a second Drop is
 reported busy before the first operation's terminal update rather than replacing
 it. Add files, Add folder and roster reads wait for an active drop. Remove,
 Clear, and native main-document page-load start supersede it; late work cannot
-install a roster or notice. Frontend ownership checks adopt one matching
-terminal only, preserve the current query, sort, surviving row state and active
-preview, and start at most one preview only when Rust says the prior workspace
-was empty. Collision-only context affects neither search nor sort.
+install a roster or notice. Page load also clears the pending subscription and
+active subscriber before a replacement document can claim. Frontend registration
+settles before the current attempt reads the authoritative roster. A subscription
+failure has its own truthful, retryable notice, still reads the roster, and keeps
+both picker actions usable; successful Retry reads the roster again. Stale and
+StrictMode attempts cannot apply state. An ownerless completion recovers through
+the roster without creating a notice or preview. Frontend ownership checks adopt
+one matching terminal only, preserve the current query, sort, surviving row state
+and active preview, union newly added handles into the live selection, and set
+roving focus and range anchor to the first newly added handle. They start at most
+one preview only when Rust says the prior workspace was empty. Collision-only
+context affects neither search nor sort. Shared entry/directory limit notices
+name the collective drop ledger rather than blaming one folder.
 
-The final automated suites at that application-code head passed 538 Rust tests
-(531 passed, 7 ignored, 0 failed) and 444 frontend tests across 17 files. The
+The final automated suites at that application-code head passed 551 Rust tests
+(544 passed, 7 ignored, 0 failed) and 464 frontend tests across 17 files. The
 wire/privacy contracts enumerate every forbidden path-bearing field, keep
 candidate paths in private Rust types with manual opaque `Debug`, and bound a
-notice to three basename-only details. Mutation evidence killed all 36 required
-faults with one targeted test each and restored every target hash and worktree
-status afterwards. In particular, mutation 24 proved a stale terminal cannot
-install a roster, mutation 25 proved it cannot replace the notice, and mutation
-29 proved collision context cannot reorder equal filenames. No compile error,
-zero-test run or timeout was counted as a kill.
+notice to three basename-only details. Mutation evidence killed the original 36
+required faults plus 16 repair faults, with one targeted discriminating test per
+reachable mutant, and restored every target hash and worktree status afterwards.
+The first repair set removes current-document reservation ownership, PageLoad
+queued-event invalidation, failed-root usage debit, subscription-before-roster
+ordering, subscription-error separation, focus ownership cancellation,
+pointer/keyboard distinction, and Begin-to-Claim serialization. The second set
+removes the current-realm challenge, Begin/Claim epoch rechecks, per-subscription
+realm authority capture, first-added Drop focus, shared-ledger notice wording,
+the main-Webview gate, and the initialization script's safe concatenation
+separator. Mutations 11, 32 and both forms of 33 were rerun after their authority
+paths changed. A first candidate for 11 and a field-only epoch candidate were
+equivalent under the restored guards and were recorded rather than counted. In
+particular, mutation 24 proved a stale terminal cannot install a roster, mutation
+25 proved it cannot replace the notice, and mutation 29 proved collision context
+cannot reorder equal filenames. No compile error, zero-test run or timeout was
+counted as a kill.
 
 Rendered verification used an ephemeral external Vite harness importing the
 exact production App, PreviewWorkspace and CSS with a fake implementation of
-the same path-free transport. It passed 144/144 assertions over 18 states and
-16/16 visually inspected screenshots at 900x700, 1366x768 and 1920x1080. The
-workspace heights were 558, 648 and 960 px; roster heights were 342, 632 and
-944 px; roster-list heights were 194, 402 and 755 px; and the completed-state
-visible row counts were 6, 12 and 12. The selected-spectrum plot measured
-843x220, 950.02x220 and 1359.13x220 px, and all nine table columns had a maximum
-header/data x-coordinate delta of 0 px.
+the same path-free transport. At exact application-code head
+`79f31a4a308cce3675eed4a4294a3a7f18ebfdd5`, Chrome 150.0.7871.187 passed
+333/333 assertions across 32 states and 32 visually inspected screenshots. The
+states cover connecting, unavailable, Retry pending, recovered idle, hovering,
+importing, completed, incomplete, rejected, long subscription failure,
+keyboard-owned and pointer-owned focus transitions, target removal, and
+first-added-row focus and range anchoring.
 
-At 900x700 the hovering and importing overlay bounds were exactly
-`(0, 0, 900, 700)`, `pointer-events` was `none`, the overlay was hidden from the
-accessibility tree, hit testing never selected it, and focus remained on Add
-files. The collision state retained at least 644.81 px for the filename and
-107.28 px for its context. All 18 states had zero horizontal and vertical
-document overflow and exposed no path text. The run recorded zero console
-warnings or errors, zero page errors, zero network or asset failures and zero
-product mismatches. Its temporary report SHA-256 was
-`42c708564560ed3697d8ac8da5a3abf56dd48f998ebc41d859b104dbefbab14`;
-all helper processes, ports, junctions and temporary directories were removed.
+| Viewport | Workspace | Roster (scroll max/reached) | Table | Spectrum panel (scroll max/reached) | Plot |
+| --- | --- | --- | --- | --- | --- |
+| 900x700 | 900x611 | 882x132 (204/204) | 882x69.77 | 884x110.22 (524/524) | 858x220 |
+| 960x640 | 960x551 | 942x132 (204/204) | 942x59 | 944x60.98 (564/564) | 918x220 |
+| 1366x768 | 1366x679 | 348.98x56 (280/280) | 989.02x293.34 | 991.02x304.64 (329/329) | 965.02x220 |
+| 1920x1080 | 1920x991 | 493.88x197.80 (138/138) | 1398.13x460.22 | 1400.13x449.77 (99/99) | 1374.13x220 |
+
+At every viewport, all nine table columns had a maximum header/data position or
+width delta of 0 px, both document overflow axes were 0, and roster and spectrum
+scrolling reached the measured endpoint. Hovering and importing overlays matched
+the viewport exactly, were `aria-hidden`, used `pointer-events: none`, and never
+won hit testing. The permanent live region remained path-free. A 799-character
+subscription error wrapped without disabling either picker. Keyboard Add
+activation recovered focus only when still owned; removing a newer target
+prevented focus theft; keyboard Dismiss and Retry handed focus to Add files while
+pointer activation did not. Each viewport also proved that Drop moved data focus
+to the first newly added row and made that row the Shift-range anchor.
+
+The run recorded zero console warnings or errors, zero page errors, zero request
+failures, zero HTTP responses at or above 400, and zero product mismatches. Its
+temporary report SHA-256 was
+`8E833FC862AA54AC6512D1CDC63288278130C29AAB085630DF4372D54DF436C4`;
+Chrome, Vite, port 41791, the verified junction and the temporary directory were
+all closed or removed.
 
 No physical Windows Explorer mouse gesture was performed. Native adapter,
 filesystem, Channel and rendered behavior are automated evidence with distinct
-boundaries; this record does not treat the external rendered projection as a
-physical gesture or a native end-to-end run. No acquisition content was read
-and no ProteoWizard process was started for this work.
+boundaries. The per-document authority challenge is supported by locked
+Tauri/Wry source and initialization-order inspection plus deterministic source,
+epoch and frontend-header tests; the mock WebView does not execute
+`eval_with_callback`. This record therefore treats neither that contract proof
+nor the external rendered projection as a physical gesture or native end-to-end
+run. No acquisition content was read and no ProteoWizard process was started for
+this work.
 
 ## Validation completed during repository initialization
 
