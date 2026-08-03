@@ -1095,7 +1095,10 @@ describe("native Explorer drop presentation", () => {
       recoveredListener?.({ sequence: 1, state: { status: "hovering", itemCount: 1 } });
     });
     expect(document.querySelector("[data-drop-overlay='hovering']")).toHaveTextContent(
-      "Release to inspect and add 1 dropped items.",
+      "Release to inspect and add 1 dropped item.",
+    );
+    expect(document.querySelector("[data-live-region='drop']")).toHaveTextContent(
+      "Release to inspect and add 1 dropped item.",
     );
     act(() => {
       recoveredListener?.({

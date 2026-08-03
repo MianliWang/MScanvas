@@ -176,9 +176,9 @@ export function PreviewWorkspace() {
           <div className="workspace-drop-overlay-card">
             <strong>
               {workspace.dropPresentation.status === "hovering"
-                ? `Release to inspect and add ${formatCount(
+                ? `Release to inspect and add ${formatDroppedItemCount(
                     workspace.dropPresentation.itemCount,
-                  )} dropped items.`
+                  )}.`
                 : "Adding dropped items…"}
             </strong>
             {workspace.dropPresentation.status === "importing" ? (
@@ -619,12 +619,16 @@ function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>): string
     case "idle":
       return "";
     case "hovering":
-      return `Release to inspect and add ${formatCount(
+      return `Release to inspect and add ${formatDroppedItemCount(
         workspace.dropPresentation.itemCount,
-      )} dropped items.`;
+      )}.`;
     case "importing":
       return DROP_IMPORT_STATUS;
   }
+}
+
+function formatDroppedItemCount(itemCount: number): string {
+  return `${formatCount(itemCount)} dropped ${itemCount === 1 ? "item" : "items"}`;
 }
 
 function announce(workspace: ReturnType<typeof usePreviewWorkspace>): string {

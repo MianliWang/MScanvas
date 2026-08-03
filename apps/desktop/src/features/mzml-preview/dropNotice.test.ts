@@ -96,12 +96,13 @@ describe("drop result notice", () => {
     );
 
     expect(notice.message).toContain(
-      "the dropped folders collectively reached the shared entry-inspection limit",
+      "this drop reached the shared entry-inspection limit",
     );
     expect(notice.message).toContain(
-      "the dropped folders collectively reached the shared directory-entry limit",
+      "this drop reached the shared directory-entry limit",
     );
     expect(notice.message).not.toContain("a dropped folder held more");
+    expect(notice.message).not.toContain("the dropped folders collectively");
   });
 
   it("bounds per-file details and does not expose duplicate collision context", () => {
