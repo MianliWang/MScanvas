@@ -18,6 +18,7 @@ pub mod dialog;
 /// webview asks for a picker, Rust chooses the root, and what comes back is a
 /// roster. No path crosses the boundary in either direction. See ADR 0007.
 mod discovery;
+mod drop_ingestion;
 pub mod dto;
 mod installation;
 pub mod selection;
@@ -27,4 +28,5 @@ pub mod service;
 mod tests;
 
 pub use backend::ProteoWizardProvider;
+pub(crate) use drop_ingestion::normalize_window_drop_event;
 pub use service::PreviewService;

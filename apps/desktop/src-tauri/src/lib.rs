@@ -9,10 +9,10 @@ use tauri::{Manager, State};
 
 use preview::dto::{
     BackendAvailabilityDto, FolderImportReservationDto, FolderIngestionResultDto, PreviewDto,
-    PreviewErrorDto, SelectedSpectrumOutcomeDto, WorkspaceAddResultDto, WorkspaceRemoveResultDto,
-    WorkspaceRosterDto,
+    PreviewErrorDto, SelectedSpectrumOutcomeDto, WorkspaceAddResultDto, WorkspaceDropUpdateDto,
+    WorkspaceRemoveResultDto, WorkspaceRosterDto,
 };
-use preview::{PreviewService, ProteoWizardProvider};
+use preview::{PreviewService, ProteoWizardProvider, normalize_window_drop_event};
 
 #[tauri::command]
 fn get_bootstrap_status() -> BootstrapStatus {
@@ -130,6 +130,18 @@ async fn choose_mzml_folder(
             .transpose()
     })
     .await?
+}
+
+/// Installs the one path-free native-drop stream for the current main
+/// document. The channel is replaced atomically and receives an immediate
+/// snapshot; no event name, callback identifier or filesystem path crosses
+/// this command boundary.
+#[tauri::command]
+fn subscribe_workspace_drop_updates(
+    channel: tauri::ipc::Channel<WorkspaceDropUpdateDto>,
+    service: State<'_, SharedService>,
+) {
+    service.subscribe_workspace_drop_updates(channel);
 }
 
 /// Removes the rows these handles name and answers with the roster that
@@ -285,6 +297,34 @@ pub fn run() {
         .manage(SharedService::new(PreviewService::new(Box::new(
             ProteoWizardProvider::new(),
         ))))
+        // Locked Tauri routing contract: stable tauri-runtime-wry 2.11.4
+        // creates a configured WebviewWindow as `WindowContent` and converts
+        // its Wry drag callback into `WindowEvent::DragDrop`. Child webviews
+        // take the distinct `WebviewEvent` route. This is therefore the native
+        // WebView drag boundary for the configured main window.
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+            let Some(signal) = normalize_window_drop_event(event) else {
+                return;
+            };
+            let service = Arc::clone(&window.state::<SharedService>());
+            let Some(dispatch) = service.reserve_native_drop_signal(signal) else {
+                return;
+            };
+            let operation_id = dispatch.operation_id();
+            tauri::async_runtime::spawn(async move {
+                let worker_service = Arc::clone(&service);
+                if spawn_blocking(move || worker_service.process_native_drop_dispatch(dispatch))
+                    .await
+                    .is_err()
+                    && let Some(operation_id) = operation_id
+                {
+                    service.fail_native_drop_worker(operation_id);
+                }
+            });
+        })
         .on_page_load(|webview, payload| {
             if webview.label() == "main" && payload.event() == PageLoadEvent::Started {
                 webview.state::<SharedService>().begin_webview_document();
@@ -299,6 +339,7 @@ pub fn run() {
             choose_mzml_files,
             begin_mzml_folder_import,
             choose_mzml_folder,
+            subscribe_workspace_drop_updates,
             remove_workspace_datasets,
             clear_workspace,
             open_mzml_preview,

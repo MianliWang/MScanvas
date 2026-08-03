@@ -20,7 +20,10 @@ use std::os::windows::io::AsRawHandle;
 use std::path::Path;
 
 use super::super::selection::FileIdentity;
-use super::{ChildDirectory, DirectoryEntry, DirectorySource, DiscoveryError, DiscoveryErrorKind};
+use super::{
+    ChildDirectory, DirectoryEntry, DirectorySource, DiscoveryError, DiscoveryErrorKind,
+    DropRootInspection,
+};
 
 /// Lets a directory be opened at all; without it `CreateFileW` refuses one.
 const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
@@ -56,6 +59,7 @@ const FILE_ID_EXTD_DIRECTORY_RESTART_INFO_CLASS: i32 = 20;
 const FILE_ID_EXTD_DIRECTORY_INFO_CLASS: i32 = 19;
 const ERROR_NO_MORE_FILES: i32 = 18;
 const DRIVE_REMOTE: u32 = 4;
+const FILE_TYPE_DISK: u32 = 1;
 
 /// The fixed part of `FILE_ID_EXTD_DIR_INFO`, up to but excluding `FileName`.
 ///
@@ -147,6 +151,57 @@ unsafe extern "system" {
 
     #[link_name = "GetDriveTypeW"]
     fn get_drive_type(root_path: *const u16) -> u32;
+
+    #[link_name = "GetFileType"]
+    fn get_file_type(file: *mut c_void) -> u32;
+}
+
+/// Classifies one native-drop root without following its final component.
+///
+/// Syntax-proven remote roots are refused before opening, so a dropped UNC
+/// path cannot turn classification into a network round trip. Everything else
+/// is decided from one no-follow handle.
+pub(super) fn inspect_drop_root(root: &Path) -> DropRootInspection {
+    if has_unsupported_root_prefix(root) {
+        return DropRootInspection::Unsupported;
+    }
+    if is_remote_root(root) {
+        return DropRootInspection::Remote;
+    }
+
+    let Ok(handle) = open_no_follow(root) else {
+        return DropRootInspection::Inaccessible;
+    };
+    if is_remote_object(&handle) {
+        return DropRootInspection::Remote;
+    }
+    let Ok(attributes) = attributes_of(&handle) else {
+        return DropRootInspection::Inaccessible;
+    };
+    if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return DropRootInspection::Reparse;
+    }
+    if attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+        return DropRootInspection::Directory;
+    }
+    // SAFETY: `handle` remains live for the call and is only borrowed.
+    if unsafe { get_file_type(handle.as_raw_handle().cast()) } != FILE_TYPE_DISK {
+        return DropRootInspection::Unsupported;
+    }
+    match identity_of(&handle) {
+        Ok(identity) => DropRootInspection::RegularFile { identity },
+        Err(()) => DropRootInspection::Inaccessible,
+    }
+}
+
+fn has_unsupported_root_prefix(root: &Path) -> bool {
+    use std::path::{Component, Prefix};
+
+    matches!(
+        root.components().next(),
+        Some(Component::Prefix(prefix))
+            if matches!(prefix.kind(), Prefix::DeviceNS(..) | Prefix::Verbatim(..))
+    )
 }
 
 /// A directory the walk is holding open, and what it established about it.

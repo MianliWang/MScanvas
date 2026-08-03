@@ -7,8 +7,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Condvar, Mutex};
 
 use mscanvas_proteowizard::{
     MetadataEntry, MetadataResult, MetadataSectionKind, MsLevelBucket, PreviewNoResult,
@@ -23,15 +23,20 @@ use super::discovery::{
     DiscoveryBudget, DiscoveryError, DiscoveryErrorKind, DiscoveryLimit, DiscoveryResult,
     discover_mzml_candidates,
 };
+use super::drop_ingestion::{
+    ActiveDrop, DropBatch, DropCandidateOrigin, DropImportToken, DropOperationId, DropUpdateHub,
+    NativeDropDispatch, NativeDropSignal, NativeDropWork, drop_busy_state, expand_drop_paths,
+};
 use super::dto::MAX_WORKSPACE_DATASETS;
 use super::dto::{
-    BackendAvailabilityDto, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES, MAX_METADATA_LINE_CHARS,
-    MAX_MS_LEVELS, MAX_PRECURSORS, MAX_SPECTRUM_POINTS, MAX_SPECTRUM_TABLE_ROWS, MetadataDto,
-    MetadataSectionDto, MsLevelCountDto, PrecursorDto, PreviewDto, PreviewErrorDto,
-    RetentionTimeDto, RetentionTimeRangeDto, RunSummaryDto, SelectedSpectrumDto,
-    SelectedSpectrumOutcomeDto, SpectrumRowDto, SpectrumTableDto, WorkspaceAddOutcomeDto,
-    WorkspaceAddResultDto, WorkspaceRemoveResultDto, WorkspaceRosterDto, bounded_text,
-    redact_absolute_paths, require_finite, require_finite_option, workspace_full,
+    BackendAvailabilityDto, DropIngestionResultDto, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES,
+    MAX_METADATA_LINE_CHARS, MAX_MS_LEVELS, MAX_PRECURSORS, MAX_SPECTRUM_POINTS,
+    MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto, MsLevelCountDto, PrecursorDto,
+    PreviewDto, PreviewErrorDto, RetentionTimeDto, RetentionTimeRangeDto, RunSummaryDto,
+    SelectedSpectrumDto, SelectedSpectrumOutcomeDto, SpectrumRowDto, SpectrumTableDto,
+    WorkspaceAddOutcomeDto, WorkspaceAddResultDto, WorkspaceDropStateDto, WorkspaceDropUpdateDto,
+    WorkspaceRemoveResultDto, WorkspaceRosterDto, bounded_text, redact_absolute_paths,
+    require_finite, require_finite_option, workspace_full,
 };
 use super::dto::{
     FolderDiscoverySummaryDto, FolderImportReservationDto, FolderIngestionResultDto,
@@ -43,6 +48,28 @@ use super::selection::{
     accept_mzml_file, candidate_display_name, file_identity, lock_against_replacement,
     relative_contexts, revalidate, selected_file_dto, unknown_dataset,
 };
+
+const DROP_CLAIM_OPERATION_SHIFT: u32 = 32;
+const DROP_CLAIM_STARTED: u64 = 1 << 31;
+const DROP_CLAIM_BUSY: u64 = 1;
+
+fn encode_drop_claim(operation_id: DropOperationId) -> u64 {
+    assert!(operation_id.0 != 0 && operation_id.0 <= u64::from(u32::MAX));
+    operation_id.0 << DROP_CLAIM_OPERATION_SHIFT
+}
+
+fn drop_claim_operation(claim: u64) -> Option<DropOperationId> {
+    let operation = claim >> DROP_CLAIM_OPERATION_SHIFT;
+    (operation != 0).then_some(DropOperationId(operation))
+}
+
+const fn drop_claim_has_busy(claim: u64) -> bool {
+    claim & DROP_CLAIM_BUSY != 0
+}
+
+const fn drop_claim_started(claim: u64) -> bool {
+    claim & DROP_CLAIM_STARTED != 0
+}
 
 /// Everything the session knows about the datasets it holds.
 ///
@@ -305,6 +332,26 @@ pub struct PreviewService {
     /// current; anything the user does that says "the workspace state from here
     /// on" advances it, and the abandoned scan then adds nothing.
     workspace_mutation: Mutex<WorkspaceMutationState>,
+    /// Wakes workspace operations whose contract is to wait for the one active
+    /// or callback-reserved native drop rather than supersede it.
+    workspace_mutation_ready: Condvar,
+    /// The accepted native drop, from the callback's linearization point until
+    /// terminal publication or an authoritative superseding mutation. Zero is
+    /// the empty sentinel; all real operation IDs begin at one.
+    ///
+    /// This atomic is intentionally separate from `workspace_mutation`: the
+    /// platform event callback must be able to reserve or reject a drop without
+    /// waiting for either service mutex or an IPC channel consumer.
+    native_drop_claim: AtomicU64,
+    next_drop_operation: AtomicU64,
+    /// Latest non-`Over` callback in native arrival order. Workers compare
+    /// their ticket before publishing hover/leave so inverse scheduling cannot
+    /// resurrect an older visual state.
+    native_drop_event_ticket: AtomicU64,
+    /// One replayable, path-free state and at most one current-document IPC
+    /// subscriber. Its delivery gate is always acquired before the workspace
+    /// mutation gate, and `Channel::send` runs after all workspace locks drop.
+    drop_updates: DropUpdateHub,
     /// How many times the installation in use has changed.
     ///
     /// Stamped onto every verdict under the same gate that serves it, so the
@@ -345,6 +392,11 @@ impl PreviewService {
             workspace: Mutex::new(Workspace::default()),
             backend_gate: Mutex::new(()),
             workspace_mutation: Mutex::new(WorkspaceMutationState::default()),
+            workspace_mutation_ready: Condvar::new(),
+            native_drop_claim: AtomicU64::new(0),
+            next_drop_operation: AtomicU64::new(1),
+            native_drop_event_ticket: AtomicU64::new(0),
+            drop_updates: DropUpdateHub::default(),
             installation_generation: AtomicU64::new(0),
             resolved: Mutex::new(ObservedBackend::default()),
         }
@@ -431,8 +483,231 @@ impl PreviewService {
     /// without letting one of that document's delayed roster reads supersede a
     /// new document's later import.
     pub fn begin_webview_document(&self) {
-        let (gate, _) = self.begin_mutation();
+        let delivery = self.drop_updates.begin_delivery();
+        let (gate, _, _pending_busy) = self.begin_superseding_mutation();
         drop(gate);
+        self.drop_updates.reset_document(delivery);
+    }
+
+    /// Installs the one path-free subscriber owned by the current main
+    /// document. Replacement and the initial snapshot are serialized with
+    /// native updates, so the new channel sees one exact lifecycle state.
+    pub fn subscribe_workspace_drop_updates(
+        &self,
+        channel: tauri::ipc::Channel<WorkspaceDropUpdateDto>,
+    ) {
+        self.drop_updates.subscribe(channel);
+    }
+
+    /// Reserves one normalized native event without taking a lock or sending
+    /// through IPC. This is the complete platform-callback side of the
+    /// boundary; its owned dispatch is processed on a blocking worker.
+    pub(crate) fn reserve_native_drop_signal(
+        &self,
+        signal: NativeDropSignal<'_>,
+    ) -> Option<NativeDropDispatch> {
+        if matches!(signal, NativeDropSignal::Over) {
+            return None;
+        }
+        let event_ticket = self.allocate_drop_event_ticket();
+        match signal {
+            NativeDropSignal::Enter { item_count } => {
+                let mut claim = self.native_drop_claim.load(Ordering::Acquire);
+                loop {
+                    let Some(operation_id) = drop_claim_operation(claim) else {
+                        return Some(NativeDropDispatch::Enter {
+                            item_count,
+                            event_ticket,
+                            observed_operation: None,
+                        });
+                    };
+                    if drop_claim_has_busy(claim) {
+                        return Some(NativeDropDispatch::Busy {
+                            observed_claim: operation_id,
+                        });
+                    }
+                    match self.native_drop_claim.compare_exchange(
+                        claim,
+                        claim | DROP_CLAIM_BUSY,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(_) => {
+                            return Some(NativeDropDispatch::Busy {
+                                observed_claim: operation_id,
+                            });
+                        }
+                        Err(current) => claim = current,
+                    }
+                }
+            }
+            NativeDropSignal::Leave => Some(NativeDropDispatch::Leave {
+                event_ticket,
+                observed_operation: drop_claim_operation(
+                    self.native_drop_claim.load(Ordering::Acquire),
+                ),
+            }),
+            NativeDropSignal::Drop { paths } => {
+                let mut claim = self.native_drop_claim.load(Ordering::Acquire);
+                loop {
+                    if claim == 0 {
+                        let operation_id = self.allocate_drop_operation();
+                        match self.native_drop_claim.compare_exchange(
+                            0,
+                            encode_drop_claim(operation_id),
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        ) {
+                            Ok(_) => {
+                                return Some(NativeDropDispatch::Start(NativeDropWork {
+                                    operation_id,
+                                    paths: paths
+                                        .iter()
+                                        .take(super::drop_ingestion::MAX_DROP_ROOTS)
+                                        .cloned()
+                                        .collect(),
+                                    top_level_item_count: paths.len(),
+                                }));
+                            }
+                            Err(current) => {
+                                claim = current;
+                                continue;
+                            }
+                        }
+                    }
+
+                    let operation_id = drop_claim_operation(claim)
+                        .expect("a nonzero native-drop claim carries an operation");
+                    if drop_claim_has_busy(claim) {
+                        return Some(NativeDropDispatch::Busy {
+                            observed_claim: operation_id,
+                        });
+                    }
+                    match self.native_drop_claim.compare_exchange(
+                        claim,
+                        claim | DROP_CLAIM_BUSY,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(_) => {
+                            return Some(NativeDropDispatch::Busy {
+                                observed_claim: operation_id,
+                            });
+                        }
+                        Err(current) => claim = current,
+                    }
+                }
+            }
+            NativeDropSignal::Over => unreachable!("handled before allocating an event ticket"),
+        }
+    }
+
+    fn allocate_drop_operation(&self) -> DropOperationId {
+        let operation = self
+            .next_drop_operation
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                (current <= u64::from(u32::MAX)).then(|| current + 1)
+            })
+            .expect("a session cannot accept more than u32::MAX native drops");
+        debug_assert_ne!(operation, 0);
+        DropOperationId(operation)
+    }
+
+    fn allocate_drop_event_ticket(&self) -> u64 {
+        self.native_drop_event_ticket
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                current.checked_add(1)
+            })
+            .map(|previous| previous + 1)
+            .expect("a session cannot receive more than u64::MAX native drop events")
+    }
+
+    fn mark_native_drop_started(&self, operation_id: DropOperationId) -> bool {
+        let mut claim = self.native_drop_claim.load(Ordering::Acquire);
+        loop {
+            if drop_claim_operation(claim) != Some(operation_id) {
+                return false;
+            }
+            if drop_claim_started(claim) {
+                return false;
+            }
+            match self.native_drop_claim.compare_exchange(
+                claim,
+                claim | DROP_CLAIM_STARTED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(current) => claim = current,
+            }
+        }
+    }
+
+    /// Claims one registered busy notice only after `importing` owns the
+    /// delivery order. A worker that arrives earlier leaves the count for the
+    /// start worker to drain immediately after that persistent snapshot.
+    fn take_one_pending_drop_busy(&self, operation_id: DropOperationId) -> bool {
+        let mut claim = self.native_drop_claim.load(Ordering::Acquire);
+        loop {
+            if drop_claim_operation(claim) != Some(operation_id)
+                || !drop_claim_started(claim)
+                || !drop_claim_has_busy(claim)
+            {
+                return false;
+            }
+            match self.native_drop_claim.compare_exchange(
+                claim,
+                claim & !DROP_CLAIM_BUSY,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(current) => claim = current,
+            }
+        }
+    }
+
+    /// Atomically removes the bounded, coalesced busy notice currently
+    /// registered for an operation. Later callbacks either set the bit again
+    /// or observe the terminal clear and become a new operation.
+    fn take_pending_drop_busy(&self, operation_id: DropOperationId) -> Option<bool> {
+        let mut claim = self.native_drop_claim.load(Ordering::Acquire);
+        loop {
+            if drop_claim_operation(claim) != Some(operation_id) {
+                return None;
+            }
+            let pending = drop_claim_has_busy(claim);
+            let without_busy = claim & !DROP_CLAIM_BUSY;
+            match self.native_drop_claim.compare_exchange(
+                claim,
+                without_busy,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(pending),
+                Err(current) => claim = current,
+            }
+        }
+    }
+
+    /// Clears one exact operation and returns the busy notice linearized
+    /// before that terminal boundary.
+    fn clear_native_drop_claim(&self, operation_id: DropOperationId) -> Option<bool> {
+        let mut claim = self.native_drop_claim.load(Ordering::Acquire);
+        loop {
+            if drop_claim_operation(claim) != Some(operation_id) {
+                return None;
+            }
+            match self.native_drop_claim.compare_exchange(
+                claim,
+                0,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(drop_claim_has_busy(claim)),
+                Err(current) => claim = current,
+            }
+        }
     }
 
     /// Everything the session holds, in the order it was added.
@@ -449,7 +724,7 @@ impl PreviewService {
         // its short workspace writes, so taking it here makes the snapshot
         // either wholly before or wholly after that batch rather than a
         // partial list observed between two accepted files.
-        let gate = self.enter_workspace_mutation();
+        let gate = self.enter_workspace_mutation_after_drop();
         let roster = roster_of(&self.workspace());
         drop(gate);
         roster
@@ -470,7 +745,7 @@ impl PreviewService {
         // opens and inspects a file, which is filesystem work, and holding the
         // workspace across it would stop every other command for the length of
         // a batch.
-        let (_batch, _generation) = self.begin_mutation();
+        let (_batch, _generation) = self.begin_waiting_mutation();
         let mut outcomes = Vec::with_capacity(paths.len());
         for path in paths {
             // Taken before acceptance, because acceptance is what may fail and
@@ -524,7 +799,7 @@ impl PreviewService {
     /// The next begin after any other workspace decision replaces the one stale
     /// slot, so abandoned replies cannot grow an unbounded registry.
     pub fn begin_folder_import(&self) -> FolderImportReservationDto {
-        let mut gate = self.enter_workspace_mutation();
+        let mut gate = self.enter_workspace_mutation_after_drop();
         let generation = gate.generation;
         if let Some(reservation_id) = gate
             .pending_folder_import
@@ -561,7 +836,7 @@ impl PreviewService {
     ) -> Result<FolderImportToken, PreviewErrorDto> {
         let requested = FolderImportReservationId::parse(reservation_id)
             .ok_or_else(invalid_folder_import_reservation)?;
-        let mut gate = self.enter_workspace_mutation();
+        let mut gate = self.enter_workspace_mutation_after_drop();
         let matches = gate
             .pending_folder_import
             .as_ref()
@@ -587,7 +862,7 @@ impl PreviewService {
     /// protocol obscuring the ordering they control.
     #[cfg(test)]
     pub(super) fn reserve_folder_import(&self) -> FolderImportToken {
-        let (gate, generation) = self.begin_mutation();
+        let (gate, generation) = self.begin_waiting_mutation();
         drop(gate);
         FolderImportToken { generation }
     }
@@ -724,6 +999,289 @@ impl PreviewService {
         })
     }
 
+    /// Processes one owned dispatch on a blocking worker. No branch of this
+    /// method runs on the Tauri window callback.
+    pub(crate) fn process_native_drop_dispatch(
+        &self,
+        dispatch: NativeDropDispatch,
+    ) -> Option<DropIngestionResultDto> {
+        match dispatch {
+            NativeDropDispatch::Enter {
+                item_count,
+                event_ticket,
+                observed_operation,
+            } => {
+                let delivery = self.drop_updates.begin_delivery();
+                if self.native_drop_event_ticket.load(Ordering::Acquire) != event_ticket
+                    || drop_claim_operation(self.native_drop_claim.load(Ordering::Acquire))
+                        != observed_operation
+                {
+                    drop(delivery);
+                    return None;
+                }
+                if observed_operation.is_none() {
+                    self.drop_updates.publish_persistent(
+                        delivery,
+                        WorkspaceDropStateDto::Hovering { item_count },
+                    );
+                } else {
+                    self.drop_updates
+                        .publish_transient(delivery, drop_busy_state());
+                }
+                None
+            }
+            NativeDropDispatch::Leave {
+                event_ticket,
+                observed_operation,
+            } => {
+                let delivery = self.drop_updates.begin_delivery();
+                if observed_operation.is_none()
+                    && self.native_drop_event_ticket.load(Ordering::Acquire) == event_ticket
+                    && drop_claim_operation(self.native_drop_claim.load(Ordering::Acquire))
+                        .is_none()
+                {
+                    self.drop_updates
+                        .publish_persistent(delivery, WorkspaceDropStateDto::Idle);
+                } else {
+                    drop(delivery);
+                }
+                None
+            }
+            NativeDropDispatch::Busy { observed_claim } => {
+                let delivery = self.drop_updates.begin_delivery();
+                if self.take_one_pending_drop_busy(observed_claim) {
+                    self.drop_updates
+                        .publish_transient(delivery, drop_busy_state());
+                } else {
+                    drop(delivery);
+                }
+                None
+            }
+            NativeDropDispatch::Start(work) => {
+                self.process_native_drop_with(work, expand_drop_paths)
+            }
+        }
+    }
+
+    /// The expansion seam is explicit so concurrency and identity replacement
+    /// can be tested deterministically between classification and commit.
+    pub(super) fn process_native_drop_with<E>(
+        &self,
+        work: NativeDropWork,
+        expand: E,
+    ) -> Option<DropIngestionResultDto>
+    where
+        E: FnOnce(Vec<PathBuf>) -> Result<DropBatch, PreviewErrorDto>,
+    {
+        let (operation_id, paths, top_level_item_count) = work.into_parts();
+        let token = self.begin_native_drop(operation_id, top_level_item_count)?;
+        match expand(paths) {
+            Ok(mut batch) => {
+                batch.summary.top_level_item_count = top_level_item_count;
+                if top_level_item_count > super::drop_ingestion::MAX_DROP_ROOTS {
+                    batch
+                        .summary
+                        .record_limit(super::dto::DropScanLimitDto::Roots);
+                }
+                self.commit_native_drop(token, batch)
+            }
+            Err(error) => {
+                self.fail_native_drop(token, error);
+                None
+            }
+        }
+    }
+
+    /// Claims the workspace generation and publishes `importing` before any
+    /// filesystem classification begins. A page load, Clear, or Remove that
+    /// won the atomic claim first makes this worker a no-op.
+    fn begin_native_drop(
+        &self,
+        operation_id: DropOperationId,
+        item_count: usize,
+    ) -> Option<DropImportToken> {
+        let delivery = self.drop_updates.begin_delivery();
+        let mut gate = self.enter_workspace_mutation();
+        if !self.mark_native_drop_started(operation_id) {
+            drop(gate);
+            drop(delivery);
+            return None;
+        }
+
+        let generation = gate.advance();
+        let workspace_was_empty = self.workspace().registry.len() == 0;
+        gate.active_drop = Some(ActiveDrop {
+            generation,
+            operation_id,
+        });
+        let token = DropImportToken {
+            generation,
+            operation_id,
+            workspace_was_empty,
+        };
+        drop(gate);
+        let pending_busy = self.take_pending_drop_busy(operation_id).unwrap_or(false);
+        self.drop_updates.publish_importing_with_busy(
+            delivery,
+            WorkspaceDropStateDto::Importing {
+                operation_id: operation_id.handle(),
+                item_count,
+            },
+            pending_busy,
+        );
+        Some(token)
+    }
+
+    fn commit_native_drop(
+        &self,
+        token: DropImportToken,
+        batch: DropBatch,
+    ) -> Option<DropIngestionResultDto> {
+        let delivery = self.drop_updates.begin_delivery();
+        let mut gate = self.enter_workspace_mutation();
+        let current = gate.active_drop.is_some_and(|active| {
+            active.generation == token.generation
+                && active.operation_id == token.operation_id
+                && gate.generation == token.generation
+                && drop_claim_operation(self.native_drop_claim.load(Ordering::Acquire))
+                    == Some(token.operation_id)
+        });
+        if !current {
+            drop(gate);
+            drop(delivery);
+            return None;
+        }
+
+        let DropBatch {
+            candidates,
+            summary,
+        } = batch;
+        let mut outcomes = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            let candidate_name = candidate_display_name(&candidate.path);
+            let accepted = match accept_mzml_file(&candidate.path) {
+                Ok(accepted) => accepted,
+                Err(error) => {
+                    outcomes.push(PendingOutcome::Rejected {
+                        candidate_name,
+                        error,
+                    });
+                    continue;
+                }
+            };
+            if accepted.identity() != candidate.observed_identity {
+                outcomes.push(PendingOutcome::Rejected {
+                    candidate_name,
+                    error: drop_candidate_changed(),
+                });
+                continue;
+            }
+
+            let mut workspace = self.workspace();
+            let outcome = match candidate.origin {
+                DropCandidateOrigin::Direct => workspace.registry.add_direct(accepted),
+                DropCandidateOrigin::Folder { relative_parents } => workspace
+                    .registry
+                    .add_discovered(accepted, relative_parents),
+            };
+            drop(workspace);
+            outcomes.push(PendingOutcome::Registered {
+                candidate_name,
+                outcome,
+            });
+        }
+
+        let workspace = self.workspace();
+        let roster = roster_of(&workspace);
+        let outcomes = describe_outcomes(&workspace, outcomes);
+        drop(workspace);
+        let result = DropIngestionResultDto {
+            roster,
+            outcomes,
+            summary: summary.into_dto(token.workspace_was_empty),
+        };
+
+        gate.active_drop = None;
+        let pending_busy = self
+            .clear_native_drop_claim(token.operation_id)
+            .expect("the current drop owns the atomic claim");
+        self.workspace_mutation_ready.notify_all();
+        drop(gate);
+        self.drop_updates.publish_terminal_with_busy(
+            delivery,
+            pending_busy,
+            WorkspaceDropStateDto::Completed {
+                operation_id: token.operation_id.handle(),
+                result: result.clone(),
+            },
+        );
+        Some(result)
+    }
+
+    fn fail_native_drop(&self, token: DropImportToken, error: PreviewErrorDto) {
+        let delivery = self.drop_updates.begin_delivery();
+        let mut gate = self.enter_workspace_mutation();
+        let current = gate.active_drop.is_some_and(|active| {
+            active.generation == token.generation
+                && active.operation_id == token.operation_id
+                && gate.generation == token.generation
+                && drop_claim_operation(self.native_drop_claim.load(Ordering::Acquire))
+                    == Some(token.operation_id)
+        });
+        if !current {
+            drop(gate);
+            drop(delivery);
+            return;
+        }
+        gate.active_drop = None;
+        let pending_busy = self
+            .clear_native_drop_claim(token.operation_id)
+            .expect("the current drop owns the atomic claim");
+        self.workspace_mutation_ready.notify_all();
+        drop(gate);
+        self.drop_updates.publish_terminal_with_busy(
+            delivery,
+            pending_busy,
+            WorkspaceDropStateDto::Failed {
+                operation_id: token.operation_id.handle(),
+                error,
+            },
+        );
+    }
+
+    /// Recovers the logical operation if the blocking worker panics or is
+    /// cancelled. A replacement operation/document cannot be cleared because
+    /// the opaque operation ID must still match.
+    pub(crate) fn fail_native_drop_worker(&self, operation_id: DropOperationId) {
+        let delivery = self.drop_updates.begin_delivery();
+        let mut gate = self.enter_workspace_mutation();
+        let Some(pending_busy) = self.clear_native_drop_claim(operation_id) else {
+            drop(gate);
+            drop(delivery);
+            return;
+        };
+        if gate
+            .active_drop
+            .is_some_and(|active| active.operation_id == operation_id)
+        {
+            gate.active_drop = None;
+        }
+        self.workspace_mutation_ready.notify_all();
+        drop(gate);
+        self.drop_updates.publish_terminal_with_busy(
+            delivery,
+            pending_busy,
+            WorkspaceDropStateDto::Failed {
+                operation_id: operation_id.handle(),
+                error: PreviewErrorDto::new(
+                    "drop_worker_unavailable",
+                    "MSCanvas could not finish adding those dropped items. Try again.",
+                    true,
+                ),
+            },
+        );
+    }
+
     /// Removes the rows these handles name, and says which named nothing.
     ///
     /// The source acquisitions are never touched. Removing a row removes a row
@@ -732,7 +1290,8 @@ impl PreviewService {
         // Advances the generation even when every handle names nothing. The
         // user said "this is the workspace now", and a folder scan that
         // committed across that would repopulate a list they had just pruned.
-        let (_batch, _generation) = self.begin_mutation();
+        let delivery = self.drop_updates.begin_delivery();
+        let (batch, _generation, pending_busy) = self.begin_superseding_mutation();
         let mut removed = Vec::new();
         let mut unknown = Vec::new();
         // The same handle twice is one row to remove, not one removal and one
@@ -757,11 +1316,18 @@ impl PreviewService {
         }
         let roster = roster_of(&workspace);
         drop(workspace);
-        WorkspaceRemoveResultDto {
+        let result = WorkspaceRemoveResultDto {
             roster,
             removed_handles: removed,
             unknown_handles: unknown,
-        }
+        };
+        drop(batch);
+        self.drop_updates.publish_terminal_with_busy(
+            delivery,
+            pending_busy,
+            WorkspaceDropStateDto::Idle,
+        );
+        result
     }
 
     /// Empties the workspace, and answers with the empty roster that is now
@@ -773,10 +1339,19 @@ impl PreviewService {
     /// in flight for one of the emptied datasets must not land on whatever is
     /// added next.
     pub fn clear_workspace(&self) -> WorkspaceRosterDto {
-        let (_batch, _generation) = self.begin_mutation();
+        let delivery = self.drop_updates.begin_delivery();
+        let (batch, _generation, pending_busy) = self.begin_superseding_mutation();
         let mut workspace = self.workspace();
         workspace.clear(RevocationReason::Cleared);
-        roster_of(&workspace)
+        let roster = roster_of(&workspace);
+        drop(workspace);
+        drop(batch);
+        self.drop_updates.publish_terminal_with_busy(
+            delivery,
+            pending_busy,
+            WorkspaceDropStateDto::Idle,
+        );
+        roster
     }
 
     /// Serialises one workspace mutation against another.
@@ -791,6 +1366,21 @@ impl PreviewService {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// Takes the mutation gate only after the one active native drop has
+    /// completed or an authoritative superseding action has cleared it.
+    fn enter_workspace_mutation_after_drop(
+        &self,
+    ) -> std::sync::MutexGuard<'_, WorkspaceMutationState> {
+        let mut gate = self.enter_workspace_mutation();
+        while self.native_drop_claim.load(Ordering::Acquire) != 0 {
+            gate = self
+                .workspace_mutation_ready
+                .wait(gate)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        gate
+    }
+
     /// Takes the gate and declares a new state of the workspace.
     ///
     /// Every immediate mutation goes through here, as does the native start of
@@ -802,10 +1392,58 @@ impl PreviewService {
     /// zero rows is still the user saying "this is the workspace now", and a
     /// scan that committed across it would add rows to a list that had already
     /// been answered for.
-    fn begin_mutation(&self) -> (std::sync::MutexGuard<'_, WorkspaceMutationState>, u64) {
-        let mut gate = self.enter_workspace_mutation();
+    fn begin_waiting_mutation(&self) -> (std::sync::MutexGuard<'_, WorkspaceMutationState>, u64) {
+        let mut gate = self.enter_workspace_mutation_after_drop();
         let generation = gate.advance();
         (gate, generation)
+    }
+
+    /// Starts one of the explicit operations allowed to supersede a native
+    /// drop. The caller already holds the drop delivery gate, so clearing the
+    /// operation and publishing idle cannot be overtaken by its worker.
+    fn begin_superseding_mutation(
+        &self,
+    ) -> (std::sync::MutexGuard<'_, WorkspaceMutationState>, u64, bool) {
+        let mut gate = self.enter_workspace_mutation();
+        let generation = gate.advance();
+        let superseded_claim = self.native_drop_claim.swap(0, Ordering::AcqRel);
+        let superseded_drop = superseded_claim != 0;
+        let pending_busy = drop_claim_has_busy(superseded_claim);
+        gate.active_drop = None;
+        if superseded_drop {
+            self.workspace_mutation_ready.notify_all();
+        }
+        (gate, generation, pending_busy)
+    }
+
+    /// Holds both gates that the old callback-facing implementation used.
+    /// Tests use this to prove native event reservation remains wait-free with
+    /// respect to every service mutex and channel delivery.
+    #[cfg(test)]
+    pub(super) fn hold_drop_gates_for_test(
+        &self,
+        started: std::sync::mpsc::Sender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    ) {
+        let _delivery = self.drop_updates.begin_delivery();
+        let _mutation = self.enter_workspace_mutation();
+        started.send(()).expect("the gate holder reports ready");
+        release.recv().expect("the test releases the held gates");
+    }
+
+    /// Asserts the scan phase owns neither mutation state nor workspace state.
+    #[cfg(test)]
+    pub(super) fn assert_drop_scan_locks_available_for_test(&self) {
+        let mutation = self
+            .workspace_mutation
+            .try_lock()
+            .expect("drop expansion must not hold the mutation gate");
+        let workspace = self
+            .workspace
+            .try_lock()
+            .expect("drop expansion must not hold the workspace lock");
+        drop(workspace);
+        drop(mutation);
     }
 }
 
@@ -884,6 +1522,7 @@ struct WorkspaceMutationState {
     generation: u64,
     next_folder_import_reservation: u64,
     pending_folder_import: Option<PendingFolderImport>,
+    active_drop: Option<ActiveDrop>,
 }
 
 impl WorkspaceMutationState {
@@ -1559,6 +2198,15 @@ fn folder_candidate_changed() -> PreviewErrorDto {
         "folder_candidate_changed",
         "That file changed while MSCanvas was scanning the folder, so it was not added. Scan \
          the folder again to pick up what is there now.",
+        true,
+    )
+}
+
+fn drop_candidate_changed() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "drop_candidate_changed",
+        "That file changed while MSCanvas was adding the dropped items, so it was not added. \
+         Drop it again to inspect what is there now.",
         true,
     )
 }

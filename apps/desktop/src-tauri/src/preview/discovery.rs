@@ -113,6 +113,10 @@ impl DiscoveredCandidate {
     pub(super) fn relative_components(&self) -> &[OsString] {
         &self.relative
     }
+
+    pub(super) fn into_parts(self) -> (PathBuf, Vec<OsString>, FileIdentity) {
+        (self.path, self.relative, self.identity)
+    }
 }
 
 impl fmt::Debug for DiscoveredCandidate {
@@ -171,6 +175,53 @@ impl DiscoveryResult {
         self.limits.is_empty()
             && self.summary.skipped_reparse_count == 0
             && self.summary.inaccessible_entry_count == 0
+    }
+
+    /// Moves a completed walk into the mixed-drop expander without cloning any
+    /// path-bearing candidate.
+    pub(super) fn into_parts(
+        self,
+    ) -> (
+        Vec<DiscoveredCandidate>,
+        DiscoverySummary,
+        Vec<DiscoveryLimit>,
+    ) {
+        (self.candidates, self.summary, self.limits)
+    }
+}
+
+/// No-follow posture of one top-level native-drop root.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum DropRootInspection {
+    RegularFile {
+        identity: FileIdentity,
+    },
+    Directory,
+    Reparse,
+    Remote,
+    Inaccessible,
+    Unsupported,
+    #[cfg_attr(
+        windows,
+        expect(
+            dead_code,
+            reason = "only the non-Windows drop classifier constructs this total-mapping variant"
+        )
+    )]
+    PlatformUnavailable,
+}
+
+impl fmt::Debug for DropRootInspection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::RegularFile { .. } => "regular_file",
+            Self::Directory => "directory",
+            Self::Reparse => "reparse",
+            Self::Remote => "remote",
+            Self::Inaccessible => "inaccessible",
+            Self::Unsupported => "unsupported",
+            Self::PlatformUnavailable => "platform_unavailable",
+        })
     }
 }
 
@@ -546,6 +597,18 @@ pub(super) fn discover<S: DirectorySource>(
 
 #[cfg(windows)]
 mod windows;
+
+/// Classifies one top-level drop root through the same no-follow and remote
+/// posture used by folder discovery.
+#[cfg(windows)]
+pub(super) fn inspect_drop_root(root: &Path) -> DropRootInspection {
+    windows::inspect_drop_root(root)
+}
+
+#[cfg(not(windows))]
+pub(super) const fn inspect_drop_root(_root: &Path) -> DropRootInspection {
+    DropRootInspection::PlatformUnavailable
+}
 
 /// Discovers mzML candidates under a folder the user chose.
 ///
