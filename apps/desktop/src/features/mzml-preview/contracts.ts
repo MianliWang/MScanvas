@@ -129,6 +129,69 @@ export interface FolderIngestionResult {
   readonly discovery: FolderDiscoverySummary;
 }
 
+/** Which bounded native-drop traversal limit was reached. */
+export type DropScanLimit = "roots" | "depth" | "entries" | "directories" | "candidates";
+
+/**
+ * Path-free facts about one Explorer drop.
+ *
+ * Root and traversal failures stay aggregate-only. In particular, this shape
+ * has nowhere for a root name or path to arrive. `workspaceWasEmpty` is the
+ * native service's snapshot at the start of the accepted operation; the
+ * frontend uses it only to decide whether one first-run preview may start.
+ */
+export interface DropIngestionSummary {
+  readonly workspaceWasEmpty: boolean;
+  readonly complete: boolean;
+  readonly topLevelItemCount: number;
+  readonly skippedReparseRootCount: number;
+  readonly inaccessibleRootCount: number;
+  readonly remoteRootCount: number;
+  readonly unsupportedRootCount: number;
+  readonly skippedReparseEntryCount: number;
+  readonly inaccessibleEntryCount: number;
+  readonly limitsReached: readonly DropScanLimit[];
+}
+
+/** What one accepted native Explorer drop did. */
+export interface DropIngestionResult {
+  readonly roster: WorkspaceRoster;
+  readonly outcomes: readonly WorkspaceAddOutcome[];
+  readonly summary: DropIngestionSummary;
+}
+
+/**
+ * The closed, path-free state carried by the native drop Channel.
+ *
+ * `operationId` is an opaque decimal string rather than a JavaScript number,
+ * so a native counter never crosses the safe-integer boundary.
+ */
+export type WorkspaceDropState =
+  | { readonly status: "idle" }
+  | { readonly status: "hovering"; readonly itemCount: number }
+  | {
+      readonly status: "importing";
+      readonly operationId: string;
+      readonly itemCount: number;
+    }
+  | {
+      readonly status: "completed";
+      readonly operationId: string;
+      readonly result: DropIngestionResult;
+    }
+  | {
+      readonly status: "failed";
+      readonly operationId: string;
+      readonly error: PreviewError;
+    }
+  | { readonly status: "rejected"; readonly reason: "drop_busy" };
+
+/** One monotonically sequenced native drop update. */
+export interface WorkspaceDropUpdate {
+  readonly sequence: number;
+  readonly state: WorkspaceDropState;
+}
+
 export interface WorkspaceRemoveResult {
   readonly roster: WorkspaceRoster;
   readonly removedHandles: readonly string[];

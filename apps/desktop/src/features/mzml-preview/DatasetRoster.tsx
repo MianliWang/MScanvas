@@ -51,6 +51,8 @@ export interface DatasetRosterProps {
    * one.
    */
   readonly folderBusy: boolean;
+  /** Whether a native Explorer drop is still being inspected. */
+  readonly dropBusy: boolean;
   /** Whether an explicit preview may be started right now. */
   readonly canPreview: boolean;
   /**
@@ -98,6 +100,8 @@ const ROW_STATE_LABEL: Record<RowPresentation, string> = {
 
 const CLEAR_DURING_FOLDER_IMPORT_DESCRIPTION =
   "Clear list also prevents the pending folder import from adding files.";
+const CLEAR_DURING_DROP_IMPORT_DESCRIPTION =
+  "Clear list also prevents the pending drop from adding files.";
 
 /**
  * The session's workspace: every file it holds, and the actions that curate it.
@@ -119,6 +123,7 @@ export function DatasetRoster({
   canAddFiles,
   canAddFolder,
   folderBusy,
+  dropBusy,
   canPreview,
   canMutate,
   canReloadRoster,
@@ -207,7 +212,7 @@ export function DatasetRoster({
    * clears the rows that arrived. With neither, it would be a control that
    * cannot act.
    */
-  const clearListOffered = state.datasets.length > 0 || folderBusy;
+  const clearListOffered = state.datasets.length > 0 || folderBusy || dropBusy;
 
   useEffect(() => {
     const recordDestination = (event: FocusEvent) => {
@@ -418,6 +423,7 @@ export function DatasetRoster({
     if (
       !canMutate ||
       folderBusy ||
+      dropBusy ||
       rosterSettlementToken === debt.rosterSettlementToken
     ) {
       return;
@@ -441,7 +447,7 @@ export function DatasetRoster({
     keyboardOnClearList.current = false;
     focusAddFilesOwed.current = true;
     payAddFilesDebt();
-  }, [canMutate, folderBusy, payAddFilesDebt, rosterSettlementToken]);
+  }, [canMutate, dropBusy, folderBusy, payAddFilesDebt, rosterSettlementToken]);
 
   /**
    * Catches the keyboard when `Clear list` goes out from under it.
@@ -665,7 +671,7 @@ export function DatasetRoster({
     // is about to change. It says the list is not settled without claiming to
     // know which half of the operation is running.
     <section
-      aria-busy={folderBusy}
+      aria-busy={folderBusy || dropBusy}
       aria-labelledby="dataset-roster-heading"
       className="panel dataset-roster-panel"
     >
@@ -808,7 +814,12 @@ export function DatasetRoster({
         {clearListOffered ? (
           <button
             aria-describedby={
-              folderBusy ? "clear-during-folder-import-description" : undefined
+              [
+                folderBusy ? "clear-during-folder-import-description" : null,
+                dropBusy ? "clear-during-drop-import-description" : null,
+              ]
+                .filter((value): value is string => value !== null)
+                .join(" ") || undefined
             }
             className="secondary-button"
             disabled={!canMutate}
@@ -843,6 +854,11 @@ export function DatasetRoster({
         {folderBusy ? (
           <span className="visually-hidden" id="clear-during-folder-import-description">
             {CLEAR_DURING_FOLDER_IMPORT_DESCRIPTION}
+          </span>
+        ) : null}
+        {dropBusy ? (
+          <span className="visually-hidden" id="clear-during-drop-import-description">
+            {CLEAR_DURING_DROP_IMPORT_DESCRIPTION}
           </span>
         ) : null}
       </div>

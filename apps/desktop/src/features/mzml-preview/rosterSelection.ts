@@ -29,6 +29,7 @@
  */
 
 import type {
+  DropIngestionResult,
   FolderIngestionResult,
   SelectedFile,
   WorkspaceAddResult,
@@ -166,12 +167,21 @@ export function describeRemoveResult(result: WorkspaceRemoveResult): WorkspaceNo
   };
 }
 
-export function describeClear(removed: number, pendingFolderImport = false): WorkspaceNotice {
+export function describeClear(
+  removed: number,
+  pendingFolderImport = false,
+  pendingDropImport = false,
+): WorkspaceNotice {
+  const pendingImportMessage = pendingFolderImport
+    ? pendingDropImport
+      ? "The workspace is empty. The pending imports will not add files."
+      : "The workspace is empty. The pending folder import will not add files."
+    : "The workspace is empty. The pending drop will not add files.";
   return {
     tone: "info",
     message:
-      removed === 0 && pendingFolderImport
-        ? "The workspace is empty. The pending folder import will not add files."
+      removed === 0 && (pendingFolderImport || pendingDropImport)
+        ? pendingImportMessage
         : `Cleared ${plural(removed, "file")} from the list. The files on disk were not changed.`,
     details: [],
     more: 0,
@@ -202,6 +212,7 @@ export type RosterAction =
   | { readonly type: "rosterLoaded"; readonly roster: WorkspaceRoster }
   | { readonly type: "filesAdded"; readonly result: WorkspaceAddResult }
   | { readonly type: "folderImported"; readonly result: FolderIngestionResult }
+  | { readonly type: "dropImported"; readonly result: DropIngestionResult }
   | { readonly type: "datasetsRemoved"; readonly result: WorkspaceRemoveResult }
   | { readonly type: "workspaceCleared"; readonly roster: WorkspaceRoster }
   | {
@@ -551,14 +562,15 @@ function transition(state: RosterState, action: RosterAction): RosterState {
       };
     }
 
-    case "folderImported": {
+    case "folderImported":
+    case "dropImported": {
       // The transition `filesAdded` cannot be, and the difference is time. A
       // file picker is modal: the user cannot touch the roster while it is
       // open, so replacing the selection with the batch is a safe answer to a
-      // question nothing else could have changed. A folder scan is not modal --
-      // searching, sorting and selecting all stay live for its whole length --
-      // so the selection this reply meets is one the user may have built while
-      // it ran, and it is theirs.
+      // question nothing else could have changed. A folder scan and a native
+      // drop are not modal -- searching, sorting and selecting all stay live
+      // for their whole length -- so the selection this reply meets is one the
+      // user may have built while it ran, and it is theirs.
       //
       // Read from the state this transition is given rather than from anything
       // captured when the scan began, which is the whole of what makes that

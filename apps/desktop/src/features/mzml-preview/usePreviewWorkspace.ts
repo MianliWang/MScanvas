@@ -7,8 +7,11 @@ import type {
   PreviewError,
   SelectedFile,
   SelectedSpectrum,
+  WorkspaceDropUpdate,
 } from "./contracts";
 import { toPreviewError } from "./contracts";
+import { describeDropResult } from "./dropNotice";
+import { useWorkspaceDropTransport } from "./dropTransport";
 import { describeFolderResult } from "./folderNotice";
 import {
   appendMeasurement,
@@ -68,6 +71,12 @@ export type RosterLoadState =
   | { readonly status: "ready" }
   | { readonly status: "failed"; readonly error: PreviewError };
 
+/** What the native drop overlay has to render, and no filesystem detail. */
+export type DropPresentation =
+  | { readonly status: "idle" }
+  | { readonly status: "hovering"; readonly itemCount: number }
+  | { readonly status: "importing"; readonly itemCount: number };
+
 export interface PreviewWorkspace {
   readonly backend: BackendState;
   readonly preview: PreviewState;
@@ -115,6 +124,15 @@ export interface PreviewWorkspace {
    * available throughout the native picker and scan.
    */
   readonly folderReservationPending: boolean;
+  /** Whether one accepted native Explorer drop is still being inspected. */
+  readonly dropBusy: boolean;
+  /** The path-free state rendered by the shell overlay. */
+  readonly dropPresentation: DropPresentation;
+  /**
+   * Increments for every rejected second drop so identical guidance is spoken
+   * again without replacing the current import state.
+   */
+  readonly dropRejectedToken: number;
   /** Whether a roster mutation is unresolved. */
   readonly workspaceBusy: boolean;
   readonly checkBackend: () => void;
@@ -180,6 +198,9 @@ export interface PreviewWorkspace {
    */
   readonly folderError: PreviewError | null;
   readonly dismissFolderError: () => void;
+  /** A native drop or its Channel subscription failed. */
+  readonly dropError: PreviewError | null;
+  readonly dismissDropError: () => void;
   /** A workspace mutation that failed. The roster is left as Rust last said. */
   readonly workspaceError: PreviewError | null;
   readonly dismissWorkspaceError: () => void;
@@ -209,6 +230,7 @@ export interface PreviewWorkspace {
  */
 export function usePreviewWorkspace(): PreviewWorkspace {
   const api = usePreviewApi();
+  const dropTransport = useWorkspaceDropTransport();
 
   const [backend, setBackend] = useState<BackendState>({ status: "checking" });
   const [preview, setPreview] = useState<PreviewState>({ status: "empty" });
@@ -371,17 +393,35 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * its way out can clear a newer one's marker or install its account.
    */
   const folderToken = useRef(0);
+  const [dropBusy, setDropBusy] = useState(false);
+  const dropBusyRef = useRef(false);
+  const [dropPresentation, setDropPresentation] = useState<DropPresentation>({
+    status: "idle",
+  });
+  const [dropRejectedToken, setDropRejectedToken] = useState(0);
+  const [dropError, setDropError] = useState<PreviewError | null>(null);
+  /**
+   * The accepted drop that owns importing state and any terminal adoption.
+   * A newer workspace decision changes `workspaceMutations`, so this record's
+   * snapshot becomes an immediate late-result barrier.
+   */
+  const activeDrop = useRef<{
+    readonly operationId: string;
+    readonly mutationsAtStart: number;
+    readonly startedAt: number;
+  } | null>(null);
+  const dropSubscriptionEpoch = useRef(0);
+  const lastDropSequence = useRef(-1);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const workspaceBusyRef = useRef(false);
   const [rosterSettlementToken, setRosterSettlementToken] = useState(0);
   /**
-   * How many removal and clear requests have begun.
+   * How many authoritative workspace-changing decisions have begun.
    *
-   * `Remove selected` and `Clear list` stay available for the length of a
-   * folder import, so their user intent has to hide that import's reply as soon
-   * as the request starts. Waiting for the mutation's answer would let a folder
-   * reply install transient rows -- and, in an empty workspace, start a preview
-   * for one -- after the user had already asked to remove them.
+   * Native drop acceptance, `Remove selected` and `Clear list` all advance the
+   * same frontend ordering line. Remove/Clear hide an older folder or drop
+   * reply as soon as the request starts; accepting a native drop likewise
+   * hides a folder reply that began before it.
    *
    * A rejected mutation has no authoritative roster to replace the hidden
    * folder reply, and rejection does not prove that Rust was unchanged. Such a
@@ -564,7 +604,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     // -- the empty state offers it after a failed read, and a failed read is
     // itself what stops an import starting. This is the rule rather than a
     // rendering of it.
-    if (folderBusyRef.current) {
+    if (folderBusyRef.current || dropBusyRef.current) {
       return;
     }
     rosterToken.current += 1;
@@ -610,6 +650,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       !mounted.current ||
       !workspaceReconcileOwed.current ||
       folderBusyRef.current ||
+      dropBusyRef.current ||
       workspaceBusyRef.current
     ) {
       return;
@@ -875,6 +916,166 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     ],
   );
 
+  /** Clears only the UI ownership of a native drop; it never cancels Rust. */
+  const settleDropPresentation = useCallback(() => {
+    activeDrop.current = null;
+    dropBusyRef.current = false;
+    setDropBusy(false);
+    setDropPresentation({ status: "idle" });
+    setDropRejectedToken(0);
+  }, []);
+
+  const applyDropUpdate = useCallback(
+    (update: WorkspaceDropUpdate) => {
+      const state = update.state;
+      switch (state.status) {
+        case "idle":
+          // The native snapshot is authoritative about whether an import is
+          // still running. This is also how a Remove/Clear-superseded scan can
+          // finish without inventing a misleading completed result.
+          settleDropPresentation();
+          drainWorkspaceReconciliation();
+          return;
+
+        case "hovering":
+          // A second physical drag cannot replace the accepted operation's
+          // presentation. Rust follows it with `drop_busy`; until then the
+          // first operation remains the truthful state.
+          if (activeDrop.current !== null) {
+            return;
+          }
+          setDropError(null);
+          setDropRejectedToken(0);
+          setDropPresentation({ status: "hovering", itemCount: state.itemCount });
+          return;
+
+        case "importing": {
+          const current = activeDrop.current;
+          if (current !== null) {
+            if (current.operationId === state.operationId) {
+              setDropPresentation({ status: "importing", itemCount: state.itemCount });
+            }
+            return;
+          }
+          // Acceptance is an authoritative workspace decision. Advancing this
+          // line once suppresses any folder reply that began before the drop,
+          // while the snapshot stored here lets a later Remove/Clear suppress
+          // this operation in turn.
+          workspaceMutations.current += 1;
+          activeDrop.current = {
+            operationId: state.operationId,
+            mutationsAtStart: workspaceMutations.current,
+            startedAt: now(),
+          };
+          dropBusyRef.current = true;
+          setDropBusy(true);
+          setDropError(null);
+          setDropRejectedToken(0);
+          setDropPresentation({ status: "importing", itemCount: state.itemCount });
+          return;
+        }
+
+        case "completed": {
+          const current = activeDrop.current;
+          if (current === null || current.operationId !== state.operationId) {
+            return;
+          }
+          const ownsAdoption = workspaceMutations.current === current.mutationsAtStart;
+          settleDropPresentation();
+          if (ownsAdoption) {
+            const added = state.result.outcomes.flatMap((outcome) =>
+              outcome.outcome === "added" ? [outcome.dataset.handle] : [],
+            );
+            // A successful terminal roster is newer than an owed read and pays
+            // any debt left by an earlier failed mutation.
+            workspaceReconcileOwed.current = false;
+            dispatchRoster({ type: "dropImported", result: state.result });
+            rosterSettled();
+            showWorkspaceNotice(describeDropResult(state.result));
+            const first = added[0];
+            if (
+              state.result.summary.workspaceWasEmpty &&
+              first !== undefined &&
+              backendUsableRef.current &&
+              !backendBusyRef.current &&
+              viewerRequests.current === 0
+            ) {
+              loadPreview(first, current.startedAt);
+            }
+          }
+          drainWorkspaceReconciliation();
+          return;
+        }
+
+        case "failed": {
+          const current = activeDrop.current;
+          if (current === null || current.operationId !== state.operationId) {
+            return;
+          }
+          const superseded = workspaceMutations.current !== current.mutationsAtStart;
+          settleDropPresentation();
+          if (!superseded) {
+            setDropError(state.error);
+          }
+          drainWorkspaceReconciliation();
+          return;
+        }
+
+        case "rejected":
+          // A second Drop is feedback about the attempted operation, not a
+          // transition of the one already running. In particular, do not clear
+          // its owner or its busy gate.
+          if (state.reason === "drop_busy") {
+            setDropRejectedToken((token) => token + 1);
+          }
+          return;
+      }
+    },
+    [
+      drainWorkspaceReconciliation,
+      loadPreview,
+      rosterSettled,
+      settleDropPresentation,
+      showWorkspaceNotice,
+    ],
+  );
+
+  useEffect(() => {
+    const epoch = dropSubscriptionEpoch.current + 1;
+    dropSubscriptionEpoch.current = epoch;
+    lastDropSequence.current = -1;
+    let alive = true;
+    let unsubscribe: (() => void) | null = null;
+    const ownsSubscription = () =>
+      alive && mounted.current && dropSubscriptionEpoch.current === epoch;
+
+    void dropTransport
+      .subscribe((update) => {
+        if (!ownsSubscription() || update.sequence <= lastDropSequence.current) {
+          return;
+        }
+        lastDropSequence.current = update.sequence;
+        applyDropUpdate(update);
+      })
+      .then((stop) => {
+        if (!ownsSubscription()) {
+          stop();
+          return;
+        }
+        unsubscribe = stop;
+      })
+      .catch((cause: unknown) => {
+        if (ownsSubscription()) {
+          setDropError(toPreviewError(cause));
+        }
+      });
+
+    return () => {
+      alive = false;
+      unsubscribe?.();
+    };
+  }, [applyDropUpdate, dropTransport]);
+
   /**
    * Reads one dataset, because the user asked for that dataset.
    *
@@ -911,7 +1112,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     // Rust's mutation generation: if it reaches the gate before an older scan,
     // that scan is superseded; if the scan committed first, this batch's roster
     // includes its rows. Either way only the later authoritative reply is used.
-    if (pickerBusyRef.current || folderBusyRef.current || workspaceBusyRef.current) {
+    if (
+      pickerBusyRef.current ||
+      folderBusyRef.current ||
+      dropBusyRef.current ||
+      workspaceBusyRef.current
+    ) {
       return;
     }
     const startedAt = now();
@@ -987,7 +1193,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const addFolder = useCallback(() => {
     // Read from refs, never from rendered state. This decision is made inside
     // a handler that can be several commits older than the truth.
-    if (pickerBusyRef.current || folderBusyRef.current || workspaceBusyRef.current) {
+    if (
+      pickerBusyRef.current ||
+      folderBusyRef.current ||
+      dropBusyRef.current ||
+      workspaceBusyRef.current
+    ) {
       return;
     }
     // Not until this window knows what the session holds. The native page-load
@@ -1188,6 +1399,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         // This authoritative roster pays any reconciliation debt left by an
         // earlier failed request during the same import.
         workspaceReconcileOwed.current = false;
+        // Success proves Rust advanced the workspace generation and the older
+        // native drop can no longer commit. Release its UI ownership now; a
+        // later terminal replay is ignored because it no longer owns it.
+        if (activeDrop.current !== null) {
+          settleDropPresentation();
+        }
         dispatchRoster({ type: "datasetsRemoved", result });
         rosterSettled();
         showWorkspaceNotice(describeRemoveResult(result));
@@ -1214,6 +1431,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     drainWorkspaceReconciliation,
     reconcileAfterFailedWorkspaceMutation,
     rosterSettled,
+    settleDropPresentation,
     showWorkspaceNotice,
   ]);
 
@@ -1228,12 +1446,13 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     // first, clear removes every row it added. The authoritative reply is empty
     // either way.
     const folderImportPending = folderBusyRef.current;
+    const dropImportPending = dropBusyRef.current;
     const rosterHasRows = rosterRef.current.datasets.length > 0;
     if (
       workspaceBusyRef.current ||
       pickerBusyRef.current ||
       folderReservationPendingRef.current ||
-      (!rosterHasRows && !folderImportPending)
+      (!rosterHasRows && !folderImportPending && !dropImportPending)
     ) {
       return false;
     }
@@ -1259,9 +1478,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         // This authoritative roster pays any reconciliation debt left by an
         // earlier failed request during the same import.
         workspaceReconcileOwed.current = false;
+        if (activeDrop.current !== null) {
+          settleDropPresentation();
+        }
         dispatchRoster({ type: "workspaceCleared", roster: loaded });
         rosterSettled();
-        showWorkspaceNotice(describeClear(removed, folderImportPending));
+        showWorkspaceNotice(
+          describeClear(removed, folderImportPending, dropImportPending),
+        );
         setFocusAddFilesToken((token) => token + 1);
       })
       .catch((cause: unknown) => {
@@ -1284,6 +1508,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     drainWorkspaceReconciliation,
     reconcileAfterFailedWorkspaceMutation,
     rosterSettled,
+    settleDropPresentation,
     showWorkspaceNotice,
   ]);
 
@@ -1293,6 +1518,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
 
   const dismissFolderError = useCallback(() => {
     setFolderError(null);
+  }, []);
+
+  const dismissDropError = useCallback(() => {
+    setDropError(null);
   }, []);
 
   const dismissWorkspaceError = useCallback(() => {
@@ -1443,6 +1672,9 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     pickerBusy,
     folderBusy,
     folderReservationPending,
+    dropBusy,
+    dropPresentation,
+    dropRejectedToken,
     workspaceBusy,
     checkBackend,
     chooseInstallation,
@@ -1466,6 +1698,8 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     dismissPickerError,
     folderError,
     dismissFolderError,
+    dropError,
+    dismissDropError,
     workspaceError,
     dismissWorkspaceError,
     selectSpectrum,

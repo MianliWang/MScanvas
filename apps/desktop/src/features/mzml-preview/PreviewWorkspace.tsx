@@ -24,6 +24,13 @@ const FOLDER_IMPORT_STATUS =
   "Folder import in progress. MSCanvas is waiting for a folder selection or " +
   "scanning the chosen folder. The duration is not known.";
 
+const DROP_IMPORT_STATUS =
+  "Adding dropped items. MSCanvas is inspecting dropped files and folders. " +
+  "The duration is not known.";
+
+const DROP_BUSY_STATUS =
+  "Another drop is already being processed. Wait for it to finish or clear the workspace.";
+
 /** The session workspace: a curated roster of mzML files, and one open preview. */
 export function PreviewWorkspace() {
   const workspace = usePreviewWorkspace();
@@ -87,6 +94,7 @@ export function PreviewWorkspace() {
     !workspace.backendBusy &&
     !workspace.pickerBusy &&
     !workspace.folderBusy &&
+    !workspace.dropBusy &&
     !workspace.workspaceBusy;
   // One thing more for the folder action, and only for it. Native page-load
   // start has already superseded work owned by the previous document; the
@@ -120,7 +128,7 @@ export function PreviewWorkspace() {
   // whose usefulness depends on whether the scan committed before or after it.
   // The folder reply or owed reconciliation already supplies the authoritative
   // way out, so unlike removing and clearing it waits.
-  const canReloadRoster = canMutate && !workspace.folderBusy;
+  const canReloadRoster = canMutate && !workspace.folderBusy && !workspace.dropBusy;
   // One viewer read at a time. Rust supersedes an older open of one dataset
   // anyway; this is what stops a queue of them forming behind the single
   // backend gate in the first place.
@@ -149,7 +157,31 @@ export function PreviewWorkspace() {
             <span>Local mzML workspace</span>
           </div>
         </div>
+        <p className="workspace-drop-hint">Drop mzML files or folders anywhere in this window.</p>
       </header>
+
+      {workspace.dropPresentation.status === "idle" ? null : (
+        <div
+          aria-hidden="true"
+          className={`workspace-drop-overlay workspace-drop-overlay-${workspace.dropPresentation.status}`}
+          data-drop-overlay={workspace.dropPresentation.status}
+        >
+          <div className="workspace-drop-overlay-card">
+            <strong>
+              {workspace.dropPresentation.status === "hovering"
+                ? `Release to inspect and add ${formatCount(
+                    workspace.dropPresentation.itemCount,
+                  )} dropped items.`
+                : "Adding dropped items…"}
+            </strong>
+            {workspace.dropPresentation.status === "importing" ? (
+              <span>
+                MSCanvas is inspecting dropped files and folders. The duration is not known.
+              </span>
+            ) : null}
+          </div>
+        </div>
+      )}
 
       {/* One grid track, however many notices are showing. The shell's rows
           are fixed, so a conditional notice must not become a row of its own. */}
@@ -242,6 +274,26 @@ export function PreviewWorkspace() {
           </div>
         ) : null}
 
+        {workspace.dropRejectedToken > 0 ? (
+          <div className="notice notice-warning">
+            <strong>Drop not accepted</strong>
+            <span>{DROP_BUSY_STATUS}</span>
+          </div>
+        ) : null}
+
+        {workspace.dropError === null ? null : (
+          // The permanently mounted drop live region below is the one
+          // announcement. Giving this visible copy `role=status` would speak
+          // the same failure twice.
+          <div className="notice notice-danger">
+            <strong>The dropped items could not be added</strong>
+            <span>{workspace.dropError.summary}</span>
+            <button className="link-button" onClick={workspace.dismissDropError} type="button">
+              Dismiss
+            </button>
+          </div>
+        )}
+
         {workspace.workspaceError === null ? null : (
           <div className="notice notice-danger" role="status">
             <strong>The workspace could not be changed</strong>
@@ -319,7 +371,7 @@ export function PreviewWorkspace() {
           last workspace action did, which is otherwise announced nowhere: with
           a preview loaded the viewer's sentence does not change when rows are
           added or removed. */}
-      {/* Each region is named, because there are now four of them and which one
+      {/* Each region is named, because there are now five of them and which one
           said a thing is the whole question a test about announcements asks.
           Reaching for "the last polite region" was a positional answer that a
           fifth region silently changed the meaning of. */}
@@ -362,6 +414,9 @@ export function PreviewWorkspace() {
       <p aria-live="polite" className="visually-hidden" data-live-region="folder">
         {workspace.folderBusy ? FOLDER_IMPORT_STATUS : ""}
       </p>
+      <p aria-live="polite" className="visually-hidden" data-live-region="drop">
+        {announceDrop(workspace)}
+      </p>
 
       <main className="workspace-layout">
         <aside className="workspace-sidebar">
@@ -373,6 +428,7 @@ export function PreviewWorkspace() {
             canReloadRoster={canReloadRoster}
             dispatch={workspace.dispatchRoster}
             focusAddFilesToken={workspace.focusAddFilesToken}
+            dropBusy={workspace.dropBusy}
             folderBusy={workspace.folderBusy}
             load={workspace.rosterLoad}
             onActivate={workspace.activateDataset}
@@ -502,6 +558,25 @@ export function PreviewWorkspace() {
  */
 function announceNotice(notice: WorkspaceNotice): string {
   return `Workspace: ${notice.message}${notice.sequence % 2 === 1 ? "\u00a0" : ""}`;
+}
+
+function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>): string {
+  if (workspace.dropRejectedToken > 0) {
+    return `${DROP_BUSY_STATUS}${workspace.dropRejectedToken % 2 === 1 ? "\u00a0" : ""}`;
+  }
+  if (workspace.dropError !== null) {
+    return `The dropped items could not be added. ${workspace.dropError.summary}`;
+  }
+  switch (workspace.dropPresentation.status) {
+    case "idle":
+      return "";
+    case "hovering":
+      return `Release to inspect and add ${formatCount(
+        workspace.dropPresentation.itemCount,
+      )} dropped items.`;
+    case "importing":
+      return DROP_IMPORT_STATUS;
+  }
 }
 
 function announce(workspace: ReturnType<typeof usePreviewWorkspace>): string {
