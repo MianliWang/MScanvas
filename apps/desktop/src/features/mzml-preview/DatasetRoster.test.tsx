@@ -48,6 +48,7 @@ interface HarnessProps {
   readonly load?: RosterLoadState;
   readonly rosterSettlementToken?: number;
   readonly focusAddFilesToken?: number;
+  readonly restoreAddFilesFocusToken?: number;
   readonly restoreAddFolderFocusToken?: number;
 }
 
@@ -75,6 +76,7 @@ function Harness({
   load = { status: "ready" },
   rosterSettlementToken = 0,
   focusAddFilesToken = 0,
+  restoreAddFilesFocusToken = 0,
   restoreAddFolderFocusToken = 0,
 }: HarnessProps) {
   const [state, dispatch] = useReducer(rosterReducer, seeded(rows));
@@ -97,6 +99,7 @@ function Harness({
       onReloadRoster={() => undefined}
       onRemoveSelected={onRemoveSelected}
       projection={rosterProjection(state)}
+      restoreAddFilesFocusToken={restoreAddFilesFocusToken}
       restoreAddFolderFocusToken={restoreAddFolderFocusToken}
       rosterSettlementToken={rosterSettlementToken}
       state={state}
@@ -145,6 +148,7 @@ function Fixed({
       onReloadRoster={() => undefined}
       onRemoveSelected={onRemoveSelected}
       projection={rosterProjection(state)}
+      restoreAddFilesFocusToken={0}
       restoreAddFolderFocusToken={0}
       rosterSettlementToken={rosterSettlementToken}
       state={state}
@@ -1190,6 +1194,7 @@ describe("the workspace roster as an accessible list", () => {
         onReloadRoster={() => undefined}
         onRemoveSelected={() => undefined}
         projection={rosterProjection(state)}
+        restoreAddFilesFocusToken={0}
         restoreAddFolderFocusToken={0}
         rosterSettlementToken={0}
         state={state}
@@ -1233,6 +1238,7 @@ describe("the workspace roster as an accessible list", () => {
         onReloadRoster={() => undefined}
         onRemoveSelected={() => undefined}
         projection={rosterProjection(discarded)}
+        restoreAddFilesFocusToken={0}
         restoreAddFolderFocusToken={0}
         rosterSettlementToken={0}
         state={discarded}
@@ -1327,6 +1333,7 @@ describe("the workspace roster as an accessible list", () => {
         onReloadRoster={retry}
         onRemoveSelected={() => undefined}
         projection={rosterProjection(initialRosterState)}
+        restoreAddFilesFocusToken={0}
         restoreAddFolderFocusToken={0}
         rosterSettlementToken={0}
         state={initialRosterState}
@@ -1525,6 +1532,144 @@ describe("driving the roster from the keyboard alone", () => {
     rerender(<Harness canAddFiles rows={2} />);
 
     expect(document.activeElement).toBe(chosen);
+  });
+
+  it("restores Add files… after a native drop disabled its keyboard focus", () => {
+    const { rerender } = render(<Harness canAddFiles dropBusy={false} rows={2} />);
+    const add = screen.getByRole("button", { name: "Add files…" });
+    add.focus();
+
+    rerender(<Harness canAddFiles={false} dropBusy rows={2} />);
+    blurAsABrowserWould(add);
+    rerender(<Harness canAddFiles dropBusy={false} rows={2} />);
+
+    expect(add).toHaveFocus();
+  });
+
+  it("does not restore Add files… over a destination chosen during a native drop", () => {
+    const { rerender } = render(<Harness canAddFiles dropBusy={false} rows={2} />);
+    const add = screen.getByRole("button", { name: "Add files…" });
+    add.focus();
+
+    rerender(<Harness canAddFiles={false} dropBusy rows={2} />);
+    blurAsABrowserWould(add);
+    const destination = rows()[1];
+    destination?.focus();
+    expect(destination).toHaveFocus();
+
+    rerender(<Harness canAddFiles dropBusy={false} rows={2} />);
+
+    expect(destination).toHaveFocus();
+    expect(add).not.toHaveFocus();
+  });
+
+  it("does not revive an old Drop focus debt after the newer destination disappears", () => {
+    const destination = document.createElement("button");
+    destination.textContent = "Temporary destination";
+    document.body.append(destination);
+    try {
+      const { rerender } = render(<Harness canAddFiles dropBusy={false} rows={2} />);
+      const add = screen.getByRole("button", { name: "Add files…" });
+      add.focus();
+
+      rerender(<Harness canAddFiles={false} dropBusy rows={2} />);
+      blurAsABrowserWould(add);
+      destination.focus();
+      blurAsABrowserWould(destination);
+      destination.remove();
+
+      rerender(<Harness canAddFiles dropBusy={false} rows={2} />);
+
+      expect(document.body).toHaveFocus();
+      expect(add).not.toHaveFocus();
+    } finally {
+      destination.remove();
+    }
+  });
+
+  it("keeps Drop ownership cancellable while Add files… remains disabled after terminal", () => {
+    const destination = document.createElement("button");
+    destination.textContent = "Temporary post-terminal destination";
+    document.body.append(destination);
+    try {
+      const { rerender } = render(<Harness canAddFiles dropBusy={false} rows={2} />);
+      const add = screen.getByRole("button", { name: "Add files…" });
+      add.focus();
+
+      rerender(<Harness canAddFiles={false} dropBusy rows={2} />);
+      blurAsABrowserWould(add);
+      // Drop has settled, but another gate still keeps the destination
+      // disabled, so the ownership record must remain cancellable here.
+      rerender(<Harness canAddFiles={false} dropBusy={false} rows={2} />);
+      expect(document.body).toHaveFocus();
+
+      destination.focus();
+      blurAsABrowserWould(destination);
+      destination.remove();
+      rerender(<Harness canAddFiles dropBusy={false} rows={2} />);
+
+      expect(document.body).toHaveFocus();
+      expect(add).not.toHaveFocus();
+    } finally {
+      destination.remove();
+    }
+  });
+
+  it("pays a focused Drop-recovery debt when Add files… becomes enabled later", () => {
+    const transient = document.createElement("button");
+    transient.textContent = "Drop recovery";
+    document.body.append(transient);
+    try {
+      const { rerender } = render(
+        <Harness canAddFiles={false} restoreAddFilesFocusToken={0} rows={0} />,
+      );
+      const add = screen.getByRole("button", { name: "Add files…" });
+      const focusing = vi.spyOn(add, "focus");
+      transient.focus();
+      blurAsABrowserWould(transient);
+
+      rerender(
+        <Harness canAddFiles={false} restoreAddFilesFocusToken={1} rows={0} />,
+      );
+      expect(document.body).toHaveFocus();
+      expect(focusing).not.toHaveBeenCalled();
+      rerender(<Harness canAddFiles restoreAddFilesFocusToken={1} rows={0} />);
+
+      expect(add).toHaveFocus();
+      expect(focusing).toHaveBeenCalledWith({ preventScroll: true });
+    } finally {
+      transient.remove();
+    }
+  });
+
+  it("does not revive a delayed Drop-recovery debt after a newer target disappears", () => {
+    const transient = document.createElement("button");
+    transient.textContent = "Drop recovery";
+    const destination = document.createElement("button");
+    destination.textContent = "Temporary later destination";
+    document.body.append(transient, destination);
+    try {
+      const { rerender } = render(
+        <Harness canAddFiles={false} restoreAddFilesFocusToken={0} rows={0} />,
+      );
+      const add = screen.getByRole("button", { name: "Add files…" });
+      transient.focus();
+      blurAsABrowserWould(transient);
+      rerender(
+        <Harness canAddFiles={false} restoreAddFilesFocusToken={1} rows={0} />,
+      );
+
+      destination.focus();
+      blurAsABrowserWould(destination);
+      destination.remove();
+      rerender(<Harness canAddFiles restoreAddFilesFocusToken={1} rows={0} />);
+
+      expect(document.body).toHaveFocus();
+      expect(add).not.toHaveFocus();
+    } finally {
+      transient.remove();
+      destination.remove();
+    }
   });
 
   it("pays a settled shell retry debt without needing an observed disabled commit", () => {

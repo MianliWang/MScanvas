@@ -5,6 +5,10 @@ import type { WorkspaceDropUpdate } from "./contracts";
 
 export type UnsubscribeWorkspaceDrop = () => void;
 
+interface WorkspaceDropSubscriptionReservation {
+  readonly reservationId: string;
+}
+
 /**
  * The one push boundary the webview needs for native Explorer drag-and-drop.
  *
@@ -27,22 +31,39 @@ let registrationTail: Promise<void> = Promise.resolve();
 export const tauriWorkspaceDropTransport: WorkspaceDropTransport = {
   subscribe: async (onUpdate) => {
     let active = true;
-    const channel = new Channel<WorkspaceDropUpdate>();
-    channel.onmessage = (update) => {
-      if (active) {
-        onUpdate(update);
+    let silenceChannel = () => undefined;
+    const registration = registrationTail.then(async () => {
+      const reservation = await invoke<WorkspaceDropSubscriptionReservation | null>(
+        "subscribe_workspace_drop_updates",
+        { request: { phase: "begin" } },
+      );
+      if (reservation === null) {
+        throw new Error("The drop subscription did not return a reservation.");
       }
-    };
 
-    const registration = registrationTail.then(() =>
-      invoke<void>("subscribe_workspace_drop_updates", { channel }),
-    );
+      const claimedChannel = new Channel<WorkspaceDropUpdate>();
+      claimedChannel.onmessage = (update) => {
+        if (active) {
+          onUpdate(update);
+        }
+      };
+      silenceChannel = () => {
+        claimedChannel.onmessage = () => undefined;
+      };
+      await invoke<null>("subscribe_workspace_drop_updates", {
+        request: {
+          phase: "claim",
+          reservationId: reservation.reservationId,
+          channel: claimedChannel,
+        },
+      });
+    });
     registrationTail = registration.catch(() => undefined);
     try {
       await registration;
     } catch (cause: unknown) {
       active = false;
-      channel.onmessage = () => undefined;
+      silenceChannel();
       throw cause;
     }
 
@@ -51,7 +72,7 @@ export const tauriWorkspaceDropTransport: WorkspaceDropTransport = {
       // Channel has no public unregister method. Rust owns subscriber
       // replacement and page-load cleanup; this local barrier guarantees that
       // a late message can no longer reach React after this subscription dies.
-      channel.onmessage = () => undefined;
+      silenceChannel();
     };
   },
 };

@@ -77,6 +77,8 @@ export type DropPresentation =
   | { readonly status: "hovering"; readonly itemCount: number }
   | { readonly status: "importing"; readonly itemCount: number };
 
+export type DropSubscriptionStatus = "connecting" | "available" | "unavailable";
+
 export interface PreviewWorkspace {
   readonly backend: BackendState;
   readonly preview: PreviewState;
@@ -133,6 +135,11 @@ export interface PreviewWorkspace {
    * again without replacing the current import state.
    */
   readonly dropRejectedToken: number;
+  /** Whether this document currently owns the native Explorer-drop Channel. */
+  readonly dropSubscriptionStatus: DropSubscriptionStatus;
+  /** A Channel registration failure, separate from any accepted Drop failure. */
+  readonly dropSubscriptionError: PreviewError | null;
+  readonly retryDropSubscription: () => void;
   /** Whether a roster mutation is unresolved. */
   readonly workspaceBusy: boolean;
   readonly checkBackend: () => void;
@@ -198,7 +205,7 @@ export interface PreviewWorkspace {
    */
   readonly folderError: PreviewError | null;
   readonly dismissFolderError: () => void;
-  /** A native drop or its Channel subscription failed. */
+  /** One accepted native drop failed. */
   readonly dropError: PreviewError | null;
   readonly dismissDropError: () => void;
   /** A workspace mutation that failed. The roster is left as Rust last said. */
@@ -400,6 +407,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   });
   const [dropRejectedToken, setDropRejectedToken] = useState(0);
   const [dropError, setDropError] = useState<PreviewError | null>(null);
+  const [dropSubscriptionStatus, setDropSubscriptionStatus] =
+    useState<DropSubscriptionStatus>("connecting");
+  const [dropSubscriptionError, setDropSubscriptionError] = useState<PreviewError | null>(null);
+  const [dropSubscriptionAttempt, setDropSubscriptionAttempt] = useState(0);
+  const dropSubscriptionPendingRef = useRef(true);
   /**
    * The accepted drop that owns importing state and any terminal adoption.
    * A newer workspace decision changes `workspaceMutations`, so this record's
@@ -588,25 +600,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   /**
    * Reads what the session already holds.
    *
-   * Run on mount because a webview can be reloaded while Rust keeps the
-   * workspace: the roster on screen has to be the roster that exists, not an
-   * empty list this window happens to start with. It launches nothing.
+   * Run after the current document's Drop subscription attempt settles,
+   * because a webview can be reloaded while Rust keeps the workspace: the
+   * roster on screen has to be the roster that exists, not an empty list this
+   * window happens to start with. It launches nothing.
    */
-  const reloadRoster = useCallback(() => {
-    // Reading the list back is not the final-empty escape `Clear list` is, nor
-    // does it manage known rows as `Remove selected` does. Although the command
-    // is now a pure read, starting one during a scan would add an unnecessary
-    // loading state and a snapshot whose usefulness depends on whether the scan
-    // committed before or after it. The folder result or the owed
-    // reconciliation already provides the authoritative way out.
-    //
-    // The visible action is disabled too, but only where it is rendered at all
-    // -- the empty state offers it after a failed read, and a failed read is
-    // itself what stops an import starting. This is the rule rather than a
-    // rendering of it.
-    if (folderBusyRef.current || dropBusyRef.current) {
-      return;
-    }
+  const readAuthoritativeRoster = useCallback(() => {
     rosterToken.current += 1;
     const token = rosterToken.current;
     showRosterLoad({ status: "loading" });
@@ -644,6 +643,18 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       });
   }, [api, clearVisiblePreview, showRosterLoad]);
 
+  const reloadRoster = useCallback(() => {
+    // Reading the list back is not the final-empty escape `Clear list` is, nor
+    // does it manage known rows as `Remove selected` does. A user-requested read
+    // waits for an active import; the subscription-settlement read deliberately
+    // calls `readAuthoritativeRoster` directly because Rust orders that snapshot
+    // after any current Drop and it is the document's startup authority.
+    if (folderBusyRef.current || dropBusyRef.current) {
+      return;
+    }
+    readAuthoritativeRoster();
+  }, [readAuthoritativeRoster]);
+
   /** Starts an owed reconciliation only after both competing operations end. */
   const drainWorkspaceReconciliation = useCallback(() => {
     if (
@@ -673,8 +684,6 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     workspaceReconcileOwed.current = true;
     drainWorkspaceReconciliation();
   }, [drainWorkspaceReconciliation]);
-
-  useEffect(reloadRoster, [reloadRoster]);
 
   /**
    * Records that the workspace list is known again.
@@ -926,7 +935,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   }, []);
 
   const applyDropUpdate = useCallback(
-    (update: WorkspaceDropUpdate) => {
+    (update: WorkspaceDropUpdate, replayedSnapshot = false) => {
       const state = update.state;
       switch (state.status) {
         case "idle":
@@ -978,6 +987,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         case "completed": {
           const current = activeDrop.current;
           if (current === null || current.operationId !== state.operationId) {
+            // The command's first message is an exact current-state replay. A
+            // Drop can finish after page-load start but before this document
+            // claims its Channel, so the authoritative roster read issued when
+            // registration settles must recover it. Do not invent a completion
+            // notice or auto-preview for work this document never observed.
+            if (replayedSnapshot) {
+              settleDropPresentation();
+            }
             return;
           }
           const ownsAdoption = workspaceMutations.current === current.mutationsAtStart;
@@ -1010,6 +1027,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         case "failed": {
           const current = activeDrop.current;
           if (current === null || current.operationId !== state.operationId) {
+            if (replayedSnapshot) {
+              settleDropPresentation();
+              setDropError(state.error);
+            }
             return;
           }
           const superseded = workspaceMutations.current !== current.mutationsAtStart;
@@ -1046,16 +1067,23 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     lastDropSequence.current = -1;
     let alive = true;
     let unsubscribe: (() => void) | null = null;
+    let awaitingSnapshot = true;
     const ownsSubscription = () =>
       alive && mounted.current && dropSubscriptionEpoch.current === epoch;
+
+    dropSubscriptionPendingRef.current = true;
+    setDropSubscriptionStatus("connecting");
+    setDropSubscriptionError(null);
 
     void dropTransport
       .subscribe((update) => {
         if (!ownsSubscription() || update.sequence <= lastDropSequence.current) {
           return;
         }
+        const replayedSnapshot = awaitingSnapshot;
+        awaitingSnapshot = false;
         lastDropSequence.current = update.sequence;
-        applyDropUpdate(update);
+        applyDropUpdate(update, replayedSnapshot);
       })
       .then((stop) => {
         if (!ownsSubscription()) {
@@ -1063,10 +1091,17 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           return;
         }
         unsubscribe = stop;
+        dropSubscriptionPendingRef.current = false;
+        setDropSubscriptionStatus("available");
+        setDropSubscriptionError(null);
+        readAuthoritativeRoster();
       })
       .catch((cause: unknown) => {
         if (ownsSubscription()) {
-          setDropError(toPreviewError(cause));
+          dropSubscriptionPendingRef.current = false;
+          setDropSubscriptionStatus("unavailable");
+          setDropSubscriptionError(toPreviewError(cause));
+          readAuthoritativeRoster();
         }
       });
 
@@ -1074,7 +1109,17 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       alive = false;
       unsubscribe?.();
     };
-  }, [applyDropUpdate, dropTransport]);
+  }, [applyDropUpdate, dropSubscriptionAttempt, dropTransport, readAuthoritativeRoster]);
+
+  const retryDropSubscription = useCallback(() => {
+    if (dropSubscriptionPendingRef.current) {
+      return;
+    }
+    dropSubscriptionPendingRef.current = true;
+    setDropSubscriptionStatus("connecting");
+    setDropSubscriptionError(null);
+    setDropSubscriptionAttempt((attempt) => attempt + 1);
+  }, []);
 
   /**
    * Reads one dataset, because the user asked for that dataset.
@@ -1675,6 +1720,9 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     dropBusy,
     dropPresentation,
     dropRejectedToken,
+    dropSubscriptionStatus,
+    dropSubscriptionError,
+    retryDropSubscription,
     workspaceBusy,
     checkBackend,
     chooseInstallation,

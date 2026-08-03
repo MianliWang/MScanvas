@@ -6139,6 +6139,29 @@ fn the_folder_reservation_handle_carries_no_path_or_internal_generation() {
 }
 
 #[test]
+fn the_drop_subscription_reservation_carries_no_path_or_callback_authority() {
+    let rendered = serde_json::to_string(&super::dto::WorkspaceDropSubscriptionReservationDto {
+        reservation_id: "drop-subscription-reservation-23".to_owned(),
+    })
+    .expect("the reservation serialises");
+
+    assert_eq!(
+        rendered,
+        "{\"reservationId\":\"drop-subscription-reservation-23\"}"
+    );
+    for private in [
+        "path",
+        "root",
+        "generation",
+        "token",
+        "callbackId",
+        "eventName",
+    ] {
+        assert!(!rendered.contains(private), "{rendered}");
+    }
+}
+
+#[test]
 fn the_folder_begin_command_is_synchronous_and_cannot_open_a_picker() {
     let host = include_str!("../lib.rs");
     let body = host

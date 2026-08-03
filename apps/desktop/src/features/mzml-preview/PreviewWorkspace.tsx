@@ -36,6 +36,7 @@ export function PreviewWorkspace() {
   const workspace = usePreviewWorkspace();
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
   const [restoreAddFolderFocusToken, setRestoreAddFolderFocusToken] = useState(0);
+  const [restoreAddFilesFocusToken, setRestoreAddFilesFocusToken] = useState(0);
 
   // Derived once per roster change and handed down, so the rows the list
   // renders are the same list the reducer ranges over rather than a second
@@ -157,7 +158,13 @@ export function PreviewWorkspace() {
             <span>Local mzML workspace</span>
           </div>
         </div>
-        <p className="workspace-drop-hint">Drop mzML files or folders anywhere in this window.</p>
+        <p className="workspace-drop-hint">
+          {workspace.dropSubscriptionStatus === "available"
+            ? "Drop mzML files or folders anywhere in this window."
+            : workspace.dropSubscriptionStatus === "connecting"
+              ? "Connecting Explorer drag-and-drop…"
+              : "Explorer drag-and-drop is unavailable. Use the Add actions below."}
+        </p>
       </header>
 
       {workspace.dropPresentation.status === "idle" ? null : (
@@ -281,6 +288,31 @@ export function PreviewWorkspace() {
           </div>
         ) : null}
 
+        {workspace.dropSubscriptionError === null ? null : (
+          // Connectivity is not a failed import: Rust may still hold a valid
+          // roster and the picker actions remain usable. Keep its recovery and
+          // wording separate from the error for one accepted Drop below.
+          <div className="notice notice-danger">
+            <strong>Explorer drag-and-drop is unavailable</strong>
+            <span>{workspace.dropSubscriptionError.summary}</span>
+            <button
+              className="link-button"
+              onClick={(event) => {
+                // Keyboard activation has click detail zero. A real pointer
+                // press focuses the button before click, so activeElement on
+                // its own would manufacture a keyboard debt for mouse users.
+                if (event.detail === 0 && document.activeElement === event.currentTarget) {
+                  setRestoreAddFilesFocusToken((token) => token + 1);
+                }
+                workspace.retryDropSubscription();
+              }}
+              type="button"
+            >
+              Try connecting again
+            </button>
+          </div>
+        )}
+
         {workspace.dropError === null ? null : (
           // The permanently mounted drop live region below is the one
           // announcement. Giving this visible copy `role=status` would speak
@@ -288,7 +320,16 @@ export function PreviewWorkspace() {
           <div className="notice notice-danger">
             <strong>The dropped items could not be added</strong>
             <span>{workspace.dropError.summary}</span>
-            <button className="link-button" onClick={workspace.dismissDropError} type="button">
+            <button
+              className="link-button"
+              onClick={(event) => {
+                if (event.detail === 0 && document.activeElement === event.currentTarget) {
+                  setRestoreAddFilesFocusToken((token) => token + 1);
+                }
+                workspace.dismissDropError();
+              }}
+              type="button"
+            >
               Dismiss
             </button>
           </div>
@@ -438,6 +479,7 @@ export function PreviewWorkspace() {
             onReloadRoster={workspace.reloadRoster}
             onRemoveSelected={workspace.removeSelected}
             projection={projection}
+            restoreAddFilesFocusToken={restoreAddFilesFocusToken}
             restoreAddFolderFocusToken={restoreAddFolderFocusToken}
             rosterSettlementToken={workspace.rosterSettlementToken}
             state={roster}
@@ -561,6 +603,12 @@ function announceNotice(notice: WorkspaceNotice): string {
 }
 
 function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>): string {
+  if (workspace.dropSubscriptionStatus === "unavailable") {
+    return `Explorer drag-and-drop is unavailable. ${workspace.dropSubscriptionError?.summary ?? "Use the Add actions below."}`;
+  }
+  if (workspace.dropSubscriptionStatus === "connecting") {
+    return "Connecting Explorer drag-and-drop.";
+  }
   if (workspace.dropRejectedToken > 0) {
     return `${DROP_BUSY_STATUS}${workspace.dropRejectedToken % 2 === 1 ? "\u00a0" : ""}`;
   }

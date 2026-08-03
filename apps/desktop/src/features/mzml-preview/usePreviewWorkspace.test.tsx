@@ -2034,10 +2034,305 @@ describe("native Explorer drop updates", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.dropError?.kind).toBe("drop_subscription_failed");
+      expect(result.current.dropSubscriptionStatus).toBe("unavailable");
+      expect(result.current.dropSubscriptionError?.kind).toBe("drop_subscription_failed");
+      expect(result.current.rosterLoad.status).toBe("ready");
     });
+    expect(result.current.dropError).toBeNull();
     expect(result.current.workspaceError).toBeNull();
     expect(result.current.dropBusy).toBe(false);
+    expect(api.rosterReads()).toBe(1);
+  });
+
+  it("does not read the first authoritative roster until subscription registration settles", async () => {
+    const registration = deferred<() => void>();
+    let listener: ((update: Parameters<FakeWorkspaceDropTransport["emit"]>[0]) => void) | null =
+      null;
+    const transport: WorkspaceDropTransport = {
+      subscribe: (onUpdate) => {
+        listener = onUpdate;
+        return registration.promise;
+      },
+    };
+    const api = createFakePreviewApi({ availability: unavailableBackend });
+    const { result } = renderHook(() => usePreviewWorkspace(), {
+      wrapper: wrapper(api, transport),
+    });
+
+    await waitFor(() => {
+      expect(listener).not.toBeNull();
+    });
+    expect(result.current.dropSubscriptionStatus).toBe("connecting");
+    expect(result.current.rosterLoad.status).toBe("loading");
+    expect(api.rosterReads()).toBe(0);
+
+    await act(async () => {
+      registration.resolve(() => undefined);
+      await registration.promise;
+    });
+    await waitFor(() => {
+      expect(result.current.dropSubscriptionStatus).toBe("available");
+      expect(result.current.rosterLoad.status).toBe("ready");
+    });
+    expect(api.rosterReads()).toBe(1);
+  });
+
+  it("retries a failed subscription, rereads the roster and accepts only the new listener", async () => {
+    const secondRegistration = deferred<() => void>();
+    const listeners: Array<
+      (update: Parameters<FakeWorkspaceDropTransport["emit"]>[0]) => void
+    > = [];
+    let attempts = 0;
+    const failure = previewError({ kind: "drop_subscription_failed" });
+    const transport: WorkspaceDropTransport = {
+      subscribe: (onUpdate) => {
+        listeners.push(onUpdate);
+        attempts += 1;
+        return attempts === 1 ? Promise.reject(failure) : secondRegistration.promise;
+      },
+    };
+    const api = createFakePreviewApi({ availability: unavailableBackend });
+    const { result } = renderHook(() => usePreviewWorkspace(), {
+      wrapper: wrapper(api, transport),
+    });
+
+    await waitFor(() => {
+      expect(result.current.dropSubscriptionStatus).toBe("unavailable");
+      expect(api.rosterReads()).toBe(1);
+    });
+    act(() => {
+      result.current.retryDropSubscription();
+    });
+    expect(result.current.dropSubscriptionStatus).toBe("connecting");
+    expect(result.current.dropSubscriptionError).toBeNull();
+    expect(attempts).toBe(2);
+
+    await act(async () => {
+      secondRegistration.resolve(() => undefined);
+      await secondRegistration.promise;
+    });
+    await waitFor(() => {
+      expect(result.current.dropSubscriptionStatus).toBe("available");
+      expect(api.rosterReads()).toBe(2);
+    });
+
+    act(() => {
+      listeners[0]?.({ sequence: 50, state: { status: "hovering", itemCount: 9 } });
+      listeners[1]?.({
+        sequence: 1,
+        state: { status: "importing", operationId: "retry-drop", itemCount: 1 },
+      });
+      listeners[1]?.({
+        sequence: 2,
+        state: {
+          status: "completed",
+          operationId: "retry-drop",
+          result: completedDrop(),
+        },
+      });
+    });
+    expect(result.current.roster.datasets.map((dataset) => dataset.handle)).toEqual([
+      selectedFile.handle,
+    ]);
+    expect(result.current.workspaceNotice?.message).toContain("Added 1 file.");
+  });
+
+  it("recovers an ownerless completed startup snapshot through the post-claim roster read", async () => {
+    const registration = deferred<() => void>();
+    const authoritativeRoster: WorkspaceRoster = {
+      datasets: [selectedFile],
+      capacity: FAKE_WORKSPACE_CAPACITY,
+    };
+    const transport: WorkspaceDropTransport = {
+      subscribe: (onUpdate) => {
+        onUpdate({
+          sequence: 7,
+          state: {
+            status: "completed",
+            operationId: "completed-before-claim",
+            result: completedDrop(),
+          },
+        });
+        return registration.promise;
+      },
+    };
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      roster: () => Promise.resolve(authoritativeRoster),
+    });
+    const { result } = renderHook(() => usePreviewWorkspace(), {
+      wrapper: wrapper(api, transport),
+    });
+
+    expect(result.current.roster.datasets).toHaveLength(0);
+    expect(api.rosterReads()).toBe(0);
+    expect(result.current.workspaceNotice).toBeNull();
+
+    await act(async () => {
+      registration.resolve(() => undefined);
+      await registration.promise;
+    });
+    await waitFor(() => {
+      expect(result.current.roster.datasets.map((dataset) => dataset.handle)).toEqual([
+        selectedFile.handle,
+      ]);
+    });
+    expect(result.current.workspaceNotice).toBeNull();
+    expect(api.openCount()).toBe(0);
+  });
+
+  it("surfaces an ownerless failed startup snapshot as a drop-operation error", async () => {
+    const registration = deferred<() => void>();
+    const failure = previewError({ kind: "drop_candidate_changed" });
+    const transport: WorkspaceDropTransport = {
+      subscribe: (onUpdate) => {
+        onUpdate({
+          sequence: 11,
+          state: {
+            status: "failed",
+            operationId: "failed-before-claim",
+            error: failure,
+          },
+        });
+        return registration.promise;
+      },
+    };
+    const api = createFakePreviewApi({ availability: unavailableBackend });
+    const { result } = renderHook(() => usePreviewWorkspace(), {
+      wrapper: wrapper(api, transport),
+    });
+
+    expect(result.current.dropError).toEqual(failure);
+    expect(result.current.dropSubscriptionError).toBeNull();
+    await act(async () => {
+      registration.resolve(() => undefined);
+      await registration.promise;
+    });
+    await waitFor(() => {
+      expect(result.current.rosterLoad.status).toBe("ready");
+    });
+    expect(api.rosterReads()).toBe(1);
+  });
+
+  it("does not let a delayed startup roster read overwrite a matching terminal result", async () => {
+    const startupRoster = deferred<WorkspaceRoster>();
+    const registration = deferred<() => void>();
+    let listener: ((update: Parameters<FakeWorkspaceDropTransport["emit"]>[0]) => void) | null =
+      null;
+    const transport: WorkspaceDropTransport = {
+      subscribe: (onUpdate) => {
+        listener = onUpdate;
+        onUpdate({
+          sequence: 20,
+          state: { status: "importing", operationId: "startup-import", itemCount: 2 },
+        });
+        return registration.promise;
+      },
+    };
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      roster: () => startupRoster.promise,
+    });
+    const { result } = renderHook(() => usePreviewWorkspace(), {
+      wrapper: wrapper(api, transport),
+    });
+
+    expect(result.current.dropBusy).toBe(true);
+    expect(api.rosterReads()).toBe(0);
+    await act(async () => {
+      registration.resolve(() => undefined);
+      await registration.promise;
+    });
+    await waitFor(() => {
+      expect(api.rosterReads()).toBe(1);
+      expect(result.current.rosterLoad.status).toBe("loading");
+    });
+
+    act(() => {
+      listener?.({
+        sequence: 21,
+        state: {
+          status: "completed",
+          operationId: "startup-import",
+          result: completedDrop([selectedFile, secondFile]),
+        },
+      });
+    });
+    const settlement = result.current.rosterSettlementToken;
+    const notice = result.current.workspaceNotice;
+    expect(result.current.roster.datasets.map((dataset) => dataset.handle)).toEqual([
+      selectedFile.handle,
+      secondFile.handle,
+    ]);
+    expect(notice?.message).toContain("Added 2 files.");
+
+    await act(async () => {
+      startupRoster.resolve({ datasets: [], capacity: FAKE_WORKSPACE_CAPACITY });
+      await startupRoster.promise;
+    });
+    expect(result.current.roster.datasets.map((dataset) => dataset.handle)).toEqual([
+      selectedFile.handle,
+      secondFile.handle,
+    ]);
+    expect(result.current.rosterSettlementToken).toBe(settlement);
+    expect(result.current.workspaceNotice).toEqual(notice);
+    expect(result.current.rosterLoad.status).toBe("ready");
+  });
+
+  it("lets only the current StrictMode registration read or update the workspace", async () => {
+    const registrations = [deferred<() => void>(), deferred<() => void>()];
+    const stops = [vi.fn(), vi.fn()];
+    const listeners: Array<
+      (update: Parameters<FakeWorkspaceDropTransport["emit"]>[0]) => void
+    > = [];
+    const transport: WorkspaceDropTransport = {
+      subscribe: (onUpdate) => {
+        const index = listeners.length;
+        listeners.push(onUpdate);
+        const registration = registrations[index];
+        if (registration === undefined) {
+          throw new Error("StrictMode registered more than twice");
+        }
+        return registration.promise;
+      },
+    };
+    const api = createFakePreviewApi({ availability: unavailableBackend });
+    const { result } = renderHook(() => usePreviewWorkspace(), {
+      wrapper: wrapper(api, transport),
+      reactStrictMode: true,
+    });
+
+    await waitFor(() => {
+      expect(listeners).toHaveLength(2);
+    });
+    expect(api.rosterReads()).toBe(0);
+
+    await act(async () => {
+      registrations[0]?.resolve(stops[0] ?? (() => undefined));
+      await registrations[0]?.promise;
+    });
+    await waitFor(() => {
+      expect(stops[0]).toHaveBeenCalledTimes(1);
+    });
+    expect(api.rosterReads()).toBe(0);
+
+    await act(async () => {
+      registrations[1]?.resolve(stops[1] ?? (() => undefined));
+      await registrations[1]?.promise;
+    });
+    await waitFor(() => {
+      expect(result.current.dropSubscriptionStatus).toBe("available");
+      expect(api.rosterReads()).toBe(1);
+    });
+
+    act(() => {
+      listeners[0]?.({ sequence: 50, state: { status: "hovering", itemCount: 9 } });
+    });
+    expect(result.current.dropPresentation).toEqual({ status: "idle" });
+    act(() => {
+      listeners[1]?.({ sequence: 1, state: { status: "hovering", itemCount: 2 } });
+    });
+    expect(result.current.dropPresentation).toEqual({ status: "hovering", itemCount: 2 });
   });
 
   it("unsubscribes a registration that resolves after unmount", async () => {

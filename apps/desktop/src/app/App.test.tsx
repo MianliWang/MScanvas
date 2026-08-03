@@ -947,6 +947,31 @@ describe("native Explorer drop presentation", () => {
     expect(document.querySelector("[data-drop-overlay]")).toBeNull();
   });
 
+  it("returns a Drop-disabled Add files… action to its former keyboard owner", async () => {
+    const drop = createFakeWorkspaceDropTransport();
+    renderApp(createFakePreviewApi({ availability: unavailableBackend }), drop);
+    const addFiles = await screen.findByRole("button", { name: "Add files…" });
+    await waitFor(() => {
+      expect(drop.subscriberCount()).toBe(1);
+    });
+    addFiles.focus();
+
+    publishDrop(drop, 1, { status: "importing", operationId: "901-focus", itemCount: 1 });
+    expect(addFiles).toBeDisabled();
+    blurAsABrowserWould(addFiles);
+    expect(document.body).toHaveFocus();
+    publishDrop(drop, 2, {
+      status: "completed",
+      operationId: "901-focus",
+      result: renderedDropResult(),
+    });
+
+    await waitFor(() => {
+      expect(addFiles).toBeEnabled();
+      expect(addFiles).toHaveFocus();
+    });
+  });
+
   it("announces a drop failure through only the permanent drop live region", async () => {
     const drop = createFakeWorkspaceDropTransport();
     renderApp(createFakePreviewApi({ availability: unavailableBackend }), drop);
@@ -966,6 +991,153 @@ describe("native Explorer drop presentation", () => {
     expect(document.querySelector("[data-live-region='drop']")).toHaveTextContent(
       "The dropped items could not be added. The dropped item changed before it could be added.",
     );
+
+    const addFiles = screen.getByRole("button", { name: "Add files…" });
+    const notice = screen.getByText("The dropped items could not be added").closest<HTMLElement>(
+      ".notice",
+    );
+    expect(notice).not.toBeNull();
+    const dismiss = within(notice as HTMLElement).getByRole("button", { name: "Dismiss" });
+    dismiss.focus();
+    fireEvent.click(dismiss, { detail: 0 });
+
+    await waitFor(() => {
+      expect(addFiles).toHaveFocus();
+    });
+    expect(screen.queryByText("The dropped items could not be added")).toBeNull();
+  });
+
+  it("does not turn a real pointer dismissal into Drop keyboard focus debt", async () => {
+    const drop = createFakeWorkspaceDropTransport();
+    renderApp(createFakePreviewApi({ availability: unavailableBackend }), drop);
+    const addFiles = await screen.findByRole("button", { name: "Add files…" });
+    await waitFor(() => {
+      expect(drop.subscriberCount()).toBe(1);
+    });
+    publishDrop(drop, 1, { status: "importing", operationId: "903", itemCount: 1 });
+    publishDrop(drop, 2, {
+      status: "failed",
+      operationId: "903",
+      error: previewError({ summary: "The dropped item changed before it could be added." }),
+    });
+    const notice = screen.getByText("The dropped items could not be added").closest<HTMLElement>(
+      ".notice",
+    );
+    expect(notice).not.toBeNull();
+    const dismiss = within(notice as HTMLElement).getByRole("button", { name: "Dismiss" });
+    const focusing = vi.spyOn(addFiles, "focus");
+
+    // Pointer presses focus a button before click in the real browser. A click
+    // count of one distinguishes that path from Enter/Space's detail zero.
+    fireEvent.pointerDown(dismiss);
+    dismiss.focus();
+    fireEvent.click(dismiss, { detail: 1 });
+
+    expect(document.body).toHaveFocus();
+    expect(addFiles).not.toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+  });
+
+  it("keeps picker actions usable across subscription failure and reconnects truthfully", async () => {
+    const retryRegistration = deferred<() => void>();
+    let attempts = 0;
+    let recoveredListener:
+      | ((update: Parameters<FakeWorkspaceDropTransport["emit"]>[0]) => void)
+      | null = null;
+    const transport: WorkspaceDropTransport = {
+      subscribe: (onUpdate) => {
+        attempts += 1;
+        if (attempts === 2) {
+          recoveredListener = onUpdate;
+        }
+        return attempts === 1
+          ? Promise.reject(
+              previewError({
+                kind: "drop_subscription_failed",
+                summary: "Explorer drag-and-drop could not connect.",
+              }),
+            )
+          : retryRegistration.promise;
+      },
+    };
+    const api = createFakePreviewApi({ availability: unavailableBackend });
+    renderApp(api, transport);
+
+    expect(await screen.findByText("Explorer drag-and-drop is unavailable")).toBeVisible();
+    expect(screen.getByText("Explorer drag-and-drop could not connect.")).toBeVisible();
+    expect(screen.getByText("Explorer drag-and-drop is unavailable. Use the Add actions below.")).toBeVisible();
+    expect(document.querySelector("[data-live-region='drop']")).toHaveTextContent(
+      "Explorer drag-and-drop is unavailable. Explorer drag-and-drop could not connect.",
+    );
+    expect(screen.queryByText("The dropped items could not be added")).toBeNull();
+    const addFiles = screen.getByRole("button", { name: "Add files…" });
+    expect(addFiles).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    expect(api.rosterReads()).toBe(1);
+
+    const retry = screen.getByRole("button", { name: "Try connecting again" });
+    retry.focus();
+    fireEvent.click(retry, { detail: 0 });
+    expect(addFiles).toHaveFocus();
+    expect(screen.queryByText("Explorer drag-and-drop is unavailable")).toBeNull();
+    expect(screen.getByText("Connecting Explorer drag-and-drop…")).toBeVisible();
+
+    await act(async () => {
+      retryRegistration.resolve(() => undefined);
+      await retryRegistration.promise;
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Drop mzML files or folders anywhere in this window.")).toBeVisible();
+      expect(api.rosterReads()).toBe(2);
+    });
+
+    act(() => {
+      recoveredListener?.({ sequence: 1, state: { status: "hovering", itemCount: 1 } });
+    });
+    expect(document.querySelector("[data-drop-overlay='hovering']")).toHaveTextContent(
+      "Release to inspect and add 1 dropped items.",
+    );
+    act(() => {
+      recoveredListener?.({
+        sequence: 2,
+        state: { status: "importing", operationId: "recovered-drop", itemCount: 1 },
+      });
+      recoveredListener?.({
+        sequence: 3,
+        state: {
+          status: "completed",
+          operationId: "recovered-drop",
+          result: renderedDropResult(),
+        },
+      });
+    });
+    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(screen.getByText("Added 1 file.")).toBeVisible();
+  });
+
+  it("does not turn a real pointer reconnect into Drop keyboard focus debt", async () => {
+    const retryRegistration = deferred<() => void>();
+    let attempts = 0;
+    const transport: WorkspaceDropTransport = {
+      subscribe: () => {
+        attempts += 1;
+        return attempts === 1
+          ? Promise.reject(previewError({ kind: "drop_subscription_failed" }))
+          : retryRegistration.promise;
+      },
+    };
+    renderApp(createFakePreviewApi({ availability: unavailableBackend }), transport);
+    const retry = await screen.findByRole("button", { name: "Try connecting again" });
+    const addFiles = screen.getByRole("button", { name: "Add files…" });
+    const focusing = vi.spyOn(addFiles, "focus");
+
+    fireEvent.pointerDown(retry);
+    retry.focus();
+    fireEvent.click(retry, { detail: 1 });
+
+    expect(document.body).toHaveFocus();
+    expect(addFiles).not.toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
   });
 });
 
