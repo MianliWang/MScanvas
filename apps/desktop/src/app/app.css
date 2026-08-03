@@ -1,9 +1,64 @@
 /* Three in-flow rows: the toolbar, the backend notice and the workspace. The
    live region between them is out of flow and occupies no track. */
 .app-shell {
+  position: relative;
+  isolation: isolate;
   display: grid;
   height: 100vh;
   grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.workspace-drop-hint {
+  min-width: 0;
+  margin: 0 0 0 auto;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One out-of-flow surface for both native hover and import. It never adds a
+   shell row and never becomes the pointer target, so Leave/Drop cannot leave a
+   transparent element blocking the controls beneath it. */
+.workspace-drop-overlay {
+  position: absolute;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  padding: 18px;
+  border: 3px solid var(--color-accent);
+  background: rgb(23 32 51 / 0.16);
+  pointer-events: none;
+  place-items: center;
+}
+
+.workspace-drop-overlay-card {
+  display: flex;
+  max-width: min(520px, calc(100% - 32px));
+  flex-direction: column;
+  gap: 5px;
+  padding: 16px 20px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-panel);
+  color: var(--color-text-primary);
+  text-align: center;
+}
+
+.workspace-drop-overlay-hovering .workspace-drop-overlay-card {
+  border-color: var(--color-accent);
+}
+
+.workspace-drop-overlay-importing .workspace-drop-overlay-card {
+  border-color: var(--color-warning);
+}
+
+.workspace-drop-overlay-card span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .topbar {

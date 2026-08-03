@@ -24,11 +24,19 @@ const FOLDER_IMPORT_STATUS =
   "Folder import in progress. MSCanvas is waiting for a folder selection or " +
   "scanning the chosen folder. The duration is not known.";
 
+const DROP_IMPORT_STATUS =
+  "Adding dropped items. MSCanvas is inspecting dropped files and folders. " +
+  "The duration is not known.";
+
+const DROP_BUSY_STATUS =
+  "Another drop is already being processed. Wait for it to finish or clear the workspace.";
+
 /** The session workspace: a curated roster of mzML files, and one open preview. */
 export function PreviewWorkspace() {
   const workspace = usePreviewWorkspace();
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
   const [restoreAddFolderFocusToken, setRestoreAddFolderFocusToken] = useState(0);
+  const [restoreAddFilesFocusToken, setRestoreAddFilesFocusToken] = useState(0);
 
   // Derived once per roster change and handed down, so the rows the list
   // renders are the same list the reducer ranges over rather than a second
@@ -87,6 +95,7 @@ export function PreviewWorkspace() {
     !workspace.backendBusy &&
     !workspace.pickerBusy &&
     !workspace.folderBusy &&
+    !workspace.dropBusy &&
     !workspace.workspaceBusy;
   // One thing more for the folder action, and only for it. Native page-load
   // start has already superseded work owned by the previous document; the
@@ -120,7 +129,7 @@ export function PreviewWorkspace() {
   // whose usefulness depends on whether the scan committed before or after it.
   // The folder reply or owed reconciliation already supplies the authoritative
   // way out, so unlike removing and clearing it waits.
-  const canReloadRoster = canMutate && !workspace.folderBusy;
+  const canReloadRoster = canMutate && !workspace.folderBusy && !workspace.dropBusy;
   // One viewer read at a time. Rust supersedes an older open of one dataset
   // anyway; this is what stops a queue of them forming behind the single
   // backend gate in the first place.
@@ -149,7 +158,37 @@ export function PreviewWorkspace() {
             <span>Local mzML workspace</span>
           </div>
         </div>
+        <p className="workspace-drop-hint">
+          {workspace.dropSubscriptionStatus === "available"
+            ? "Drop mzML files or folders anywhere in this window."
+            : workspace.dropSubscriptionStatus === "connecting"
+              ? "Connecting Explorer drag-and-drop…"
+              : "Explorer drag-and-drop is unavailable. Use the Add actions below."}
+        </p>
       </header>
+
+      {workspace.dropPresentation.status === "idle" ? null : (
+        <div
+          aria-hidden="true"
+          className={`workspace-drop-overlay workspace-drop-overlay-${workspace.dropPresentation.status}`}
+          data-drop-overlay={workspace.dropPresentation.status}
+        >
+          <div className="workspace-drop-overlay-card">
+            <strong>
+              {workspace.dropPresentation.status === "hovering"
+                ? `Release to inspect and add ${formatDroppedItemCount(
+                    workspace.dropPresentation.itemCount,
+                  )}.`
+                : "Adding dropped items…"}
+            </strong>
+            {workspace.dropPresentation.status === "importing" ? (
+              <span>
+                MSCanvas is inspecting dropped files and folders. The duration is not known.
+              </span>
+            ) : null}
+          </div>
+        </div>
+      )}
 
       {/* One grid track, however many notices are showing. The shell's rows
           are fixed, so a conditional notice must not become a row of its own. */}
@@ -242,6 +281,60 @@ export function PreviewWorkspace() {
           </div>
         ) : null}
 
+        {workspace.dropRejectedToken > 0 ? (
+          <div className="notice notice-warning">
+            <strong>Drop not accepted</strong>
+            <span>{DROP_BUSY_STATUS}</span>
+          </div>
+        ) : null}
+
+        {workspace.dropSubscriptionError === null ? null : (
+          // Connectivity is not a failed import: Rust may still hold a valid
+          // roster and the picker actions remain usable. Keep its recovery and
+          // wording separate from the error for one accepted Drop below.
+          <div className="notice notice-danger">
+            <strong>Explorer drag-and-drop is unavailable</strong>
+            <span>{workspace.dropSubscriptionError.summary}</span>
+            <button
+              className="link-button"
+              onClick={(event) => {
+                // Keyboard activation has click detail zero. A real pointer
+                // press focuses the button before click, so activeElement on
+                // its own would manufacture a keyboard debt for mouse users.
+                if (event.detail === 0 && document.activeElement === event.currentTarget) {
+                  setRestoreAddFilesFocusToken((token) => token + 1);
+                }
+                workspace.retryDropSubscription();
+              }}
+              type="button"
+            >
+              Try connecting again
+            </button>
+          </div>
+        )}
+
+        {workspace.dropError === null ? null : (
+          // The permanently mounted drop live region below is the one
+          // announcement. Giving this visible copy `role=status` would speak
+          // the same failure twice.
+          <div className="notice notice-danger">
+            <strong>The dropped items could not be added</strong>
+            <span>{workspace.dropError.summary}</span>
+            <button
+              className="link-button"
+              onClick={(event) => {
+                if (event.detail === 0 && document.activeElement === event.currentTarget) {
+                  setRestoreAddFilesFocusToken((token) => token + 1);
+                }
+                workspace.dismissDropError();
+              }}
+              type="button"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
         {workspace.workspaceError === null ? null : (
           <div className="notice notice-danger" role="status">
             <strong>The workspace could not be changed</strong>
@@ -319,7 +412,7 @@ export function PreviewWorkspace() {
           last workspace action did, which is otherwise announced nowhere: with
           a preview loaded the viewer's sentence does not change when rows are
           added or removed. */}
-      {/* Each region is named, because there are now four of them and which one
+      {/* Each region is named, because there are now five of them and which one
           said a thing is the whole question a test about announcements asks.
           Reaching for "the last polite region" was a positional answer that a
           fifth region silently changed the meaning of. */}
@@ -362,6 +455,9 @@ export function PreviewWorkspace() {
       <p aria-live="polite" className="visually-hidden" data-live-region="folder">
         {workspace.folderBusy ? FOLDER_IMPORT_STATUS : ""}
       </p>
+      <p aria-live="polite" className="visually-hidden" data-live-region="drop">
+        {announceDrop(workspace)}
+      </p>
 
       <main className="workspace-layout">
         <aside className="workspace-sidebar">
@@ -373,6 +469,7 @@ export function PreviewWorkspace() {
             canReloadRoster={canReloadRoster}
             dispatch={workspace.dispatchRoster}
             focusAddFilesToken={workspace.focusAddFilesToken}
+            dropBusy={workspace.dropBusy}
             folderBusy={workspace.folderBusy}
             load={workspace.rosterLoad}
             onActivate={workspace.activateDataset}
@@ -382,6 +479,7 @@ export function PreviewWorkspace() {
             onReloadRoster={workspace.reloadRoster}
             onRemoveSelected={workspace.removeSelected}
             projection={projection}
+            restoreAddFilesFocusToken={restoreAddFilesFocusToken}
             restoreAddFolderFocusToken={restoreAddFolderFocusToken}
             rosterSettlementToken={workspace.rosterSettlementToken}
             state={roster}
@@ -502,6 +600,35 @@ export function PreviewWorkspace() {
  */
 function announceNotice(notice: WorkspaceNotice): string {
   return `Workspace: ${notice.message}${notice.sequence % 2 === 1 ? "\u00a0" : ""}`;
+}
+
+function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>): string {
+  if (workspace.dropSubscriptionStatus === "unavailable") {
+    return `Explorer drag-and-drop is unavailable. ${workspace.dropSubscriptionError?.summary ?? "Use the Add actions below."}`;
+  }
+  if (workspace.dropSubscriptionStatus === "connecting") {
+    return "Connecting Explorer drag-and-drop.";
+  }
+  if (workspace.dropRejectedToken > 0) {
+    return `${DROP_BUSY_STATUS}${workspace.dropRejectedToken % 2 === 1 ? "\u00a0" : ""}`;
+  }
+  if (workspace.dropError !== null) {
+    return `The dropped items could not be added. ${workspace.dropError.summary}`;
+  }
+  switch (workspace.dropPresentation.status) {
+    case "idle":
+      return "";
+    case "hovering":
+      return `Release to inspect and add ${formatDroppedItemCount(
+        workspace.dropPresentation.itemCount,
+      )}.`;
+    case "importing":
+      return DROP_IMPORT_STATUS;
+  }
+}
+
+function formatDroppedItemCount(itemCount: number): string {
+  return `${formatCount(itemCount)} dropped ${itemCount === 1 ? "item" : "items"}`;
 }
 
 function announce(workspace: ReturnType<typeof usePreviewWorkspace>): string {

@@ -1,18 +1,22 @@
 mod preview;
 
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
+use std::time::Duration;
 
 use mscanvas_core::BootstrapStatus;
+use serde::Deserialize;
 use tauri::async_runtime::spawn_blocking;
+use tauri::ipc::JavaScriptChannelId;
 use tauri::webview::PageLoadEvent;
 use tauri::{Manager, State};
 
 use preview::dto::{
     BackendAvailabilityDto, FolderImportReservationDto, FolderIngestionResultDto, PreviewDto,
-    PreviewErrorDto, SelectedSpectrumOutcomeDto, WorkspaceAddResultDto, WorkspaceRemoveResultDto,
-    WorkspaceRosterDto,
+    PreviewErrorDto, SelectedSpectrumOutcomeDto, WorkspaceAddResultDto,
+    WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto, WorkspaceRemoveResultDto,
+    WorkspaceRosterDto, invalid_workspace_drop_subscription,
 };
-use preview::{PreviewService, ProteoWizardProvider};
+use preview::{PreviewService, ProteoWizardProvider, normalize_window_drop_event};
 
 #[tauri::command]
 fn get_bootstrap_status() -> BootstrapStatus {
@@ -130,6 +134,124 @@ async fn choose_mzml_folder(
             .transpose()
     })
     .await?
+}
+
+/// The typed phases of the one native-drop subscription command.
+///
+/// `JavaScriptChannelId` is Tauri's strongly typed nested representation of a
+/// `Channel`: it accepts only the framework's `__CHANNEL__:<u32>` wire shape and
+/// is converted on the injected calling Webview. MSCanvas never accepts or
+/// parses an arbitrary callback string or event name.
+#[derive(Deserialize)]
+#[serde(
+    tag = "phase",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum WorkspaceDropSubscriptionRequest {
+    Begin,
+    Claim {
+        reservation_id: String,
+        channel: JavaScriptChannelId,
+    },
+}
+
+const DROP_DOCUMENT_AUTHORITY_HEADER: &str = "mscanvas-document-authority";
+const DROP_DOCUMENT_AUTHORITY_PROPERTY: &str = "__MSCANVAS_DOCUMENT_AUTHORITY__";
+const DROP_DOCUMENT_AUTHORITY_INITIALIZATION_SCRIPT: &str = r#";
+(() => {
+  const words = new Uint32Array(4);
+  globalThis.crypto.getRandomValues(words);
+  const authority = Array.from(
+    words,
+    (word) => word.toString(16).padStart(8, "0"),
+  ).join("");
+  Object.defineProperty(globalThis, "__MSCANVAS_DOCUMENT_AUTHORITY__", {
+    configurable: false,
+    enumerable: false,
+    value: authority,
+    writable: false,
+  });
+})();
+"#;
+
+fn valid_drop_document_authority(authority: &str) -> bool {
+    authority.len() == 32
+        && authority
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn drop_document_authority_check_script(authority: &str) -> Option<String> {
+    valid_drop_document_authority(authority)
+        .then(|| format!("globalThis.{DROP_DOCUMENT_AUTHORITY_PROPERTY} === \"{authority}\""))
+}
+
+async fn verify_drop_document_authority(
+    webview: &tauri::Webview<tauri::Wry>,
+    authority: &str,
+) -> Result<(), PreviewErrorDto> {
+    let script = drop_document_authority_check_script(authority)
+        .ok_or_else(invalid_workspace_drop_subscription)?;
+    let (sender, receiver) = mpsc::sync_channel(1);
+    webview
+        .eval_with_callback(script, move |answer| {
+            let _ = sender.send(answer == "true");
+        })
+        .map_err(|_| invalid_workspace_drop_subscription())?;
+    let matches = spawn_blocking(move || {
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap_or(false)
+    })
+    .await
+    .unwrap_or(false);
+    matches
+        .then_some(())
+        .ok_or_else(invalid_workspace_drop_subscription)
+}
+
+/// Begins or claims the one path-free native-drop stream for the current main
+/// document. Begin retains no Channel. Claim replaces the subscriber only
+/// after Rust validates its current-document reservation, then sends the exact
+/// current snapshot.
+#[tauri::command]
+async fn subscribe_workspace_drop_updates(
+    request: WorkspaceDropSubscriptionRequest,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<Option<WorkspaceDropSubscriptionReservationDto>, PreviewErrorDto> {
+    if webview.label() != "main" {
+        return Err(invalid_workspace_drop_subscription());
+    }
+    let authority = ipc_request
+        .headers()
+        .get(DROP_DOCUMENT_AUTHORITY_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| valid_drop_document_authority(value))
+        .ok_or_else(invalid_workspace_drop_subscription)?
+        .to_owned();
+    let expected_document_epoch = service.workspace_drop_document_epoch();
+    verify_drop_document_authority(&webview, &authority).await?;
+
+    match request {
+        WorkspaceDropSubscriptionRequest::Begin => service
+            .begin_workspace_drop_subscription(expected_document_epoch)
+            .map(Some),
+        WorkspaceDropSubscriptionRequest::Claim {
+            reservation_id,
+            channel,
+        } => {
+            let channel: tauri::ipc::Channel<WorkspaceDropUpdateDto> = channel.channel_on(webview);
+            service.claim_workspace_drop_subscription(
+                expected_document_epoch,
+                &reservation_id,
+                channel,
+            )?;
+            Ok(None)
+        }
+    }
 }
 
 /// Removes the rows these handles name and answers with the roster that
@@ -282,9 +404,38 @@ const fn main_window_handle(_app: &tauri::AppHandle) -> Option<isize> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .append_invoke_initialization_script(DROP_DOCUMENT_AUTHORITY_INITIALIZATION_SCRIPT)
         .manage(SharedService::new(PreviewService::new(Box::new(
             ProteoWizardProvider::new(),
         ))))
+        // Locked Tauri routing contract: stable tauri-runtime-wry 2.11.4
+        // creates a configured WebviewWindow as `WindowContent` and converts
+        // its Wry drag callback into `WindowEvent::DragDrop`. Child webviews
+        // take the distinct `WebviewEvent` route. This is therefore the native
+        // WebView drag boundary for the configured main window.
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+            let Some(signal) = normalize_window_drop_event(event) else {
+                return;
+            };
+            let service = Arc::clone(&window.state::<SharedService>());
+            let Some(dispatch) = service.reserve_native_drop_signal(signal) else {
+                return;
+            };
+            let operation_id = dispatch.operation_id();
+            tauri::async_runtime::spawn(async move {
+                let worker_service = Arc::clone(&service);
+                if spawn_blocking(move || worker_service.process_native_drop_dispatch(dispatch))
+                    .await
+                    .is_err()
+                    && let Some(operation_id) = operation_id
+                {
+                    service.fail_native_drop_worker(operation_id);
+                }
+            });
+        })
         .on_page_load(|webview, payload| {
             if webview.label() == "main" && payload.event() == PageLoadEvent::Started {
                 webview.state::<SharedService>().begin_webview_document();
@@ -299,6 +450,7 @@ pub fn run() {
             choose_mzml_files,
             begin_mzml_folder_import,
             choose_mzml_folder,
+            subscribe_workspace_drop_updates,
             remove_workspace_datasets,
             clear_workspace,
             open_mzml_preview,

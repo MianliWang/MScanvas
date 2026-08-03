@@ -20,7 +20,10 @@ use std::os::windows::io::AsRawHandle;
 use std::path::Path;
 
 use super::super::selection::FileIdentity;
-use super::{ChildDirectory, DirectoryEntry, DirectorySource, DiscoveryError, DiscoveryErrorKind};
+use super::{
+    ChildDirectory, DirectoryEntry, DirectorySource, DiscoveryError, DiscoveryErrorKind,
+    DropRootInspection,
+};
 
 /// Lets a directory be opened at all; without it `CreateFileW` refuses one.
 const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
@@ -56,6 +59,7 @@ const FILE_ID_EXTD_DIRECTORY_RESTART_INFO_CLASS: i32 = 20;
 const FILE_ID_EXTD_DIRECTORY_INFO_CLASS: i32 = 19;
 const ERROR_NO_MORE_FILES: i32 = 18;
 const DRIVE_REMOTE: u32 = 4;
+const FILE_TYPE_DISK: u32 = 1;
 
 /// The fixed part of `FILE_ID_EXTD_DIR_INFO`, up to but excluding `FileName`.
 ///
@@ -147,6 +151,57 @@ unsafe extern "system" {
 
     #[link_name = "GetDriveTypeW"]
     fn get_drive_type(root_path: *const u16) -> u32;
+
+    #[link_name = "GetFileType"]
+    fn get_file_type(file: *mut c_void) -> u32;
+}
+
+/// Classifies one native-drop root without following its final component.
+///
+/// Syntax-proven remote roots are refused before opening, so a dropped UNC
+/// path cannot turn classification into a network round trip. Everything else
+/// is decided from one no-follow handle.
+pub(super) fn inspect_drop_root(root: &Path) -> DropRootInspection {
+    if has_unsupported_root_prefix(root) {
+        return DropRootInspection::Unsupported;
+    }
+    if is_remote_root(root) {
+        return DropRootInspection::Remote;
+    }
+
+    let Ok(handle) = open_no_follow(root) else {
+        return DropRootInspection::Inaccessible;
+    };
+    if is_remote_object(&handle) {
+        return DropRootInspection::Remote;
+    }
+    let Ok(attributes) = attributes_of(&handle) else {
+        return DropRootInspection::Inaccessible;
+    };
+    if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return DropRootInspection::Reparse;
+    }
+    if attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+        return DropRootInspection::Directory;
+    }
+    // SAFETY: `handle` remains live for the call and is only borrowed.
+    if unsafe { get_file_type(handle.as_raw_handle().cast()) } != FILE_TYPE_DISK {
+        return DropRootInspection::Unsupported;
+    }
+    match identity_of(&handle) {
+        Ok(identity) => DropRootInspection::RegularFile { identity },
+        Err(()) => DropRootInspection::Inaccessible,
+    }
+}
+
+fn has_unsupported_root_prefix(root: &Path) -> bool {
+    use std::path::{Component, Prefix};
+
+    matches!(
+        root.components().next(),
+        Some(Component::Prefix(prefix))
+            if matches!(prefix.kind(), Prefix::DeviceNS(..) | Prefix::Verbatim(..))
+    )
 }
 
 /// A directory the walk is holding open, and what it established about it.
@@ -248,9 +303,7 @@ impl DirectorySource for WindowsDirectorySource {
                 {
                     Ok(entries)
                 } else {
-                    Err(DiscoveryError::new(
-                        DiscoveryErrorKind::RootEnumerationFailed,
-                    ))
+                    Err(root_enumeration_failure(&entries))
                 };
             }
 
@@ -258,7 +311,7 @@ impl DirectorySource for WindowsDirectorySource {
             // entry in a directory is on that directory's volume. Supplying it
             // here is what makes an entry's identity a whole one, comparable
             // against the identity of the child once it is opened.
-            parse_entries(
+            parse_entries_with_usage(
                 &buffer,
                 directory.identity.volume_serial(),
                 limit,
@@ -301,6 +354,35 @@ impl DirectorySource for WindowsDirectorySource {
         }
         ChildDirectory::Opened(WindowsDirectory { handle, identity })
     }
+}
+
+fn root_enumeration_failure(entries: &[DirectoryEntry]) -> DiscoveryError {
+    with_materialized_entry_usage(
+        DiscoveryError::new(DiscoveryErrorKind::RootEnumerationFailed),
+        entries,
+    )
+}
+
+fn parse_entries_with_usage(
+    buffer: &[u8],
+    volume_serial: u64,
+    limit: u64,
+    entries: &mut Vec<DirectoryEntry>,
+) -> Result<(), DiscoveryError> {
+    match parse_entries(buffer, volume_serial, limit, entries) {
+        Ok(()) => Ok(()),
+        Err(error) => Err(with_materialized_entry_usage(error, entries)),
+    }
+}
+
+fn with_materialized_entry_usage(
+    error: DiscoveryError,
+    entries: &[DirectoryEntry],
+) -> DiscoveryError {
+    error.with_materialized_entries(
+        u64::try_from(entries.len())
+            .expect("a Windows directory cannot materialize more than u64::MAX entries"),
+    )
 }
 
 /// Opens a path without following a link on its final component.
@@ -540,6 +622,7 @@ mod tests {
     //! something inside the buffer it arrived in, does the parser refuse, or
     //! does it read on?
 
+    use super::super::DiscoveryUsage;
     use super::*;
 
     const VOLUME: u64 = 0x00AB_CDEF;
@@ -594,7 +677,7 @@ mod tests {
 
     fn parse(buffer: &[u8]) -> Result<Vec<DirectoryEntry>, DiscoveryError> {
         let mut entries = Vec::new();
-        parse_entries(buffer, VOLUME, u64::MAX, &mut entries)?;
+        parse_entries_with_usage(buffer, VOLUME, u64::MAX, &mut entries)?;
         Ok(entries)
     }
 
@@ -620,6 +703,53 @@ mod tests {
         assert_eq!(
             names,
             vec![OsString::from("alpha.mzML"), OsString::from("beta.mzML")]
+        );
+    }
+
+    #[test]
+    fn a_parse_error_reports_materialized_usage_without_names() {
+        let mut first = Record::named("private-alpha.mzML");
+        first.next = u32::try_from(first.build().len()).expect("a test record fits");
+        let mut malformed = Record::named("private-broken.mzML");
+        malformed.declared_name_bytes = Some(0);
+        let mut buffer = first.build();
+        buffer.extend_from_slice(&malformed.build());
+
+        let error = parse(&buffer).expect_err("the malformed second record is refused");
+
+        assert_eq!(
+            error.usage(),
+            DiscoveryUsage {
+                entries_inspected: 1,
+                directories_entered: 0,
+                candidates_collected: 0,
+            }
+        );
+        assert_eq!(
+            format!("{error:?}"),
+            "DiscoveryError(filesystem_invariant_failed)"
+        );
+    }
+
+    #[test]
+    fn an_enumeration_error_reports_materialized_usage_without_names() {
+        let entries = parse(&Record::named("private-sample.mzML").build())
+            .expect("a well-formed record materializes");
+
+        let error = root_enumeration_failure(&entries);
+
+        assert_eq!(error.kind(), DiscoveryErrorKind::RootEnumerationFailed);
+        assert_eq!(
+            error.usage(),
+            DiscoveryUsage {
+                entries_inspected: 1,
+                directories_entered: 0,
+                candidates_collected: 0,
+            }
+        );
+        assert_eq!(
+            format!("{error:?}"),
+            "DiscoveryError(root_enumeration_failed)"
         );
     }
 

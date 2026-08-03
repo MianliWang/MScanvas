@@ -7,7 +7,8 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 
 use mscanvas_proteowizard::{
     PreviewOperation, PreviewOutcome, PreviewOutputEntry, PreviewOutputManifest, ProcessOutput,
@@ -15,11 +16,23 @@ use mscanvas_proteowizard::{
 };
 
 use super::backend::{OperationAttempt, PreviewProvider, interpretation_error};
+#[cfg(windows)]
+use super::discovery::inspect_drop_root;
+use super::discovery::{
+    DiscoveryBudget, DiscoveryError, DiscoveryErrorKind, DiscoveryUsage, DropRootInspection,
+};
+use super::drop_ingestion::{
+    DropBatch, DropBudget, DropIngestionSummary, MAX_DROP_ROOTS, NativeDropDispatch,
+    NativeDropSignal, NativeDropWork, expand_drop_paths, expand_drop_paths_with_budget,
+    expand_drop_paths_with_budget_using, normalize_window_drop_event,
+};
 use super::dto::{
-    BackendAvailabilityDto, BackendFailureDto, MAX_WORKSPACE_DATASETS, PreviewErrorDto,
-    SelectedFileDto, SelectedSpectrumOutcomeDto, WorkspaceAddOutcomeDto,
+    BackendAvailabilityDto, BackendFailureDto, DropIngestionResultDto, DropScanLimitDto,
+    MAX_WORKSPACE_DATASETS, PreviewErrorDto, SelectedFileDto, SelectedSpectrumOutcomeDto,
+    WorkspaceAddOutcomeDto, WorkspaceDropUpdateDto,
 };
 use super::installation::InstallationIdentity;
+use super::selection::FileIdentity;
 /// The share-mode probe that answers whether a file is still held open. It
 /// lives beside the flags the lease is opened with, because that is what makes
 /// its answer exact rather than a guess.
@@ -3505,6 +3518,7 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // second picker with conflicting semantics would survive unnoticed.
     let host = include_str!("../lib.rs");
     let api = include_str!("../../../src/features/mzml-preview/api.ts");
+    let drop_transport = include_str!("../../../src/features/mzml-preview/dropTransport.ts");
 
     let registered = host
         .split_once("generate_handler![")
@@ -3530,6 +3544,7 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "choose_mzml_files",
             "begin_mzml_folder_import",
             "choose_mzml_folder",
+            "subscribe_workspace_drop_updates",
             "remove_workspace_datasets",
             "clear_workspace",
             "open_mzml_preview",
@@ -3550,7 +3565,7 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // caller here and is deliberately not in this list.
     for name in &registered[1..] {
         assert!(
-            api.contains(&format!("\"{name}\"")),
+            api.contains(&format!("\"{name}\"")) || drop_transport.contains(&format!("\"{name}\"")),
             "the frontend never calls {name}"
         );
     }
@@ -3559,9 +3574,21 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
         "the frontend must not call a command that no longer exists"
     );
 
-    // No command takes a path from JavaScript, in either spelling.
-    assert!(!host.contains("PathBuf"), "no command accepts a path");
-    assert!(!host.contains("path:"), "no command accepts a path");
+    // No command takes a path from JavaScript. Native adapters may of course
+    // own PathBuf internally, so inspect only the registered signatures.
+    for name in &registered {
+        let marker = format!("fn {name}(");
+        let signature = host
+            .split_once(&marker)
+            .unwrap_or_else(|| panic!("the host defines {name}"))
+            .1
+            .split_once('{')
+            .expect("the command signature is followed by a body")
+            .0;
+        assert!(!signature.contains("PathBuf"), "{name} accepts a PathBuf");
+        assert!(!signature.contains("path:"), "{name} accepts a path");
+        assert!(!signature.contains("paths:"), "{name} accepts paths");
+    }
 
     // And the webview is still granted nothing.
     let capability: serde_json::Value =
@@ -3572,6 +3599,1443 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
         Some(0),
         "the main window is granted no Tauri core API permission"
     );
+}
+
+#[test]
+fn drop_subscription_uses_only_tauris_typed_nested_channel_wire_shape() {
+    let host = include_str!("../lib.rs");
+    let request = host
+        .split_once("enum WorkspaceDropSubscriptionRequest")
+        .expect("the command has one typed phase request")
+        .1
+        .split_once("/// Begins or claims")
+        .expect("the request ends before the command")
+        .0;
+    let command = host
+        .split_once("fn subscribe_workspace_drop_updates(")
+        .expect("the one production subscription command exists")
+        .1
+        .split_once("/// Removes the rows")
+        .expect("the command ends before the next operation")
+        .0;
+
+    assert!(request.contains("Begin,"));
+    assert_eq!(request.matches("channel: JavaScriptChannelId").count(), 1);
+    assert!(!request.contains("channel: String"));
+    assert!(command.contains("channel.channel_on(webview)"));
+    assert!(command.contains("ipc_request: tauri::ipc::Request<'_>"));
+    assert!(command.contains("DROP_DOCUMENT_AUTHORITY_HEADER"));
+    assert!(command.contains("verify_drop_document_authority(&webview, &authority).await?"));
+    assert!(command.contains("if webview.label() != \"main\""));
+    assert!(!command.contains("JavaScriptChannelId::from_str"));
+    assert!(!command.contains("event_name"));
+    assert!(!command.contains("callback_id"));
+
+    let label_guard = command
+        .find("if webview.label() != \"main\"")
+        .expect("non-main webviews fail before authority work");
+    let header = command
+        .find(".get(DROP_DOCUMENT_AUTHORITY_HEADER)")
+        .expect("the document authority comes from the invoke header");
+    let epoch = command
+        .find("service.workspace_drop_document_epoch()")
+        .expect("the command captures the native document epoch");
+    let challenge = command
+        .find("verify_drop_document_authority(&webview, &authority).await?")
+        .expect("the current realm must prove the captured header");
+    let phase = command
+        .find("match request")
+        .expect("only a verified request reaches either phase");
+    assert!(label_guard < header && header < epoch && epoch < challenge && challenge < phase);
+
+    assert!(
+        "__CHANNEL__:7"
+            .parse::<tauri::ipc::JavaScriptChannelId>()
+            .is_ok(),
+        "the accepted nested value is Tauri's exact Channel wire shape"
+    );
+    for arbitrary in ["7", "workspace-drop", "callback-7", "__CHANNEL__:not-a-u32"] {
+        assert!(
+            arbitrary
+                .parse::<tauri::ipc::JavaScriptChannelId>()
+                .is_err(),
+            "an arbitrary string is not a typed Tauri Channel: {arbitrary}"
+        );
+    }
+
+    let hub = include_str!("drop_ingestion.rs");
+    let begin = hub
+        .split_once("pub(super) fn begin_subscription")
+        .expect("the begin phase exists")
+        .1
+        .split_once("/// Consumes one exact")
+        .expect("begin ends before claim")
+        .0;
+    assert!(!begin.contains("Channel"));
+    assert!(!begin.contains("subscriber ="));
+}
+
+#[test]
+fn document_authority_is_per_document_bounded_and_checked_before_subscription() {
+    let initialization = crate::DROP_DOCUMENT_AUTHORITY_INITIALIZATION_SCRIPT;
+    assert!(
+        initialization.trim_start().starts_with(';'),
+        "the appended script must not call the preceding Tauri IIFE result"
+    );
+    assert!(initialization.contains("new Uint32Array(4)"));
+    assert!(initialization.contains("globalThis.crypto.getRandomValues(words)"));
+    assert!(initialization.contains("Object.defineProperty(globalThis"));
+    for sealed in [
+        "configurable: false",
+        "enumerable: false",
+        "writable: false",
+    ] {
+        assert!(initialization.contains(sealed));
+    }
+    for forbidden in ["path", "root", "identity", "position", "console."] {
+        assert!(!initialization.contains(forbidden), "{forbidden}");
+    }
+
+    let authority = "0123456789abcdef0123456789abcdef";
+    assert_eq!(
+        crate::drop_document_authority_check_script(authority).as_deref(),
+        Some("globalThis.__MSCANVAS_DOCUMENT_AUTHORITY__ === \"0123456789abcdef0123456789abcdef\"")
+    );
+    for malformed in [
+        "",
+        "0123456789abcdef0123456789abcde",
+        "0123456789abcdef0123456789abcdef0",
+        "0123456789abcdef0123456789abcdeg",
+        "0123456789ABCDEF0123456789ABCDEF",
+        "../../0123456789abcdef0123456789",
+    ] {
+        assert!(
+            crate::drop_document_authority_check_script(malformed).is_none(),
+            "malformed document authority was interpolated: {malformed}"
+        );
+    }
+
+    let host = include_str!("../lib.rs");
+    let builder = host
+        .split_once("tauri::Builder::default()")
+        .expect("the application builder exists")
+        .1;
+    let initialize = builder
+        .find(".append_invoke_initialization_script(DROP_DOCUMENT_AUTHORITY_INITIALIZATION_SCRIPT)")
+        .expect("every document receives the authority initializer");
+    let managed = builder
+        .find(".manage(SharedService::new")
+        .expect("the service is installed after the initializer");
+    assert!(initialize < managed);
+}
+
+// ---------------------------------------------------------------------------
+// Native Explorer drop boundary
+// ---------------------------------------------------------------------------
+
+fn native_window_hook_source() -> &'static str {
+    include_str!("../lib.rs")
+        .split_once(".on_window_event(")
+        .expect("the host installs a native window-event hook")
+        .1
+        .split_once(".on_page_load(")
+        .expect("the native hook ends before page-load handling")
+        .0
+}
+
+#[test]
+fn native_drop_hook_ignores_non_main_windows() {
+    let hook = native_window_hook_source();
+    let label_guard = hook
+        .find("if window.label() != \"main\"")
+        .expect("the native hook rejects every non-main window");
+    let normalization = hook
+        .find("normalize_window_drop_event(event)")
+        .expect("the guarded event enters the private adapter");
+    assert!(label_guard < normalization);
+    assert!(
+        hook[label_guard..normalization].contains("return;"),
+        "the non-main branch exits before reading drag data"
+    );
+}
+
+#[test]
+fn native_drop_hook_offloads_every_dispatch_before_service_processing() {
+    let hook = native_window_hook_source();
+    let spawn = hook
+        .find("spawn_blocking(move ||")
+        .expect("every owned dispatch crosses to a blocking worker");
+    let reserve = hook
+        .find("reserve_native_drop_signal(signal)")
+        .expect("the callback performs only the atomic reservation");
+    let process = hook
+        .find("process_native_drop_dispatch(dispatch)")
+        .expect("the worker processes the owned dispatch");
+    assert!(reserve < spawn && spawn < process);
+    let callback_prefix = &hook[..spawn];
+    assert!(!callback_prefix.contains("process_native_drop_dispatch"));
+    assert!(!callback_prefix.contains("process_native_drop_with"));
+    assert!(!callback_prefix.contains("begin_delivery"));
+    assert!(!callback_prefix.contains("enter_workspace_mutation"));
+}
+
+#[test]
+fn native_drop_hook_never_formats_or_logs_the_native_event() {
+    let hook = native_window_hook_source();
+    for forbidden in [
+        "format!(",
+        "println!(",
+        "eprintln!(",
+        "dbg!(",
+        "tracing::",
+        "log::",
+    ] {
+        assert!(
+            !hook.contains(forbidden),
+            "native hook contains {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn locked_wry_runtime_routes_main_drag_drop_through_window_events() {
+    let lock = include_str!("../../../../../Cargo.lock");
+    let runtime_wry = lock
+        .split("[[package]]")
+        .find(|package| package.contains("name = \"tauri-runtime-wry\""))
+        .expect("the lockfile includes tauri-runtime-wry");
+    assert!(runtime_wry.contains("version = \"2.11.4\""));
+
+    let host = include_str!("../lib.rs");
+    assert!(host.contains(".on_window_event("));
+    assert!(!host.contains(".on_webview_event("));
+    assert!(native_window_hook_source().contains("normalize_window_drop_event(event)"));
+}
+
+#[test]
+fn native_drag_drop_remains_enabled_for_the_main_window() {
+    let config: serde_json::Value =
+        serde_json::from_str(include_str!("../../tauri.conf.json")).expect("Tauri config parses");
+    let main = config["app"]["windows"]
+        .as_array()
+        .and_then(|windows| windows.first())
+        .expect("the configured main window exists");
+    assert!(
+        main.get("label").is_none() || main["label"] == "main",
+        "the first configured window uses Tauri's default main label"
+    );
+    assert_ne!(
+        main.get("dragDropEnabled")
+            .and_then(serde_json::Value::as_bool),
+        Some(false),
+        "native Tauri drag-and-drop must not be disabled"
+    );
+}
+
+#[test]
+fn native_adapter_keeps_forward_compatible_non_exhaustive_wildcards() {
+    let source = include_str!("drop_ingestion.rs");
+    let adapter = source
+        .split_once("pub(crate) fn normalize_window_drop_event")
+        .expect("the private adapter is present")
+        .1
+        .split_once("/// Accepted native-drop work")
+        .expect("the adapter ends before owned work")
+        .0;
+    assert_eq!(
+        adapter.matches("_ => None").count(),
+        2,
+        "both non-exhaustive Tauri enums fail closed"
+    );
+}
+
+type CapturedDropMessages = Arc<Mutex<Vec<serde_json::Value>>>;
+
+fn recording_drop_channel() -> (
+    tauri::ipc::Channel<WorkspaceDropUpdateDto>,
+    CapturedDropMessages,
+) {
+    let messages = CapturedDropMessages::default();
+    let captured = Arc::clone(&messages);
+    let channel = tauri::ipc::Channel::new(move |body| {
+        let message = body
+            .deserialize::<serde_json::Value>()
+            .expect("the typed Channel message is JSON");
+        captured
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(message);
+        Ok(())
+    });
+    (channel, messages)
+}
+
+fn begin_drop_subscription(service: &PreviewService) -> String {
+    let document_epoch = service.workspace_drop_document_epoch();
+    service
+        .begin_workspace_drop_subscription(document_epoch)
+        .expect("the current document begins its drop subscription")
+        .reservation_id
+}
+
+fn claim_drop_subscription(
+    service: &PreviewService,
+    reservation_id: &str,
+    channel: tauri::ipc::Channel<WorkspaceDropUpdateDto>,
+) -> Result<(), PreviewErrorDto> {
+    let document_epoch = service.workspace_drop_document_epoch();
+    service.claim_workspace_drop_subscription(document_epoch, reservation_id, channel)
+}
+
+fn subscribe_drop(service: &PreviewService, channel: tauri::ipc::Channel<WorkspaceDropUpdateDto>) {
+    let reservation_id = begin_drop_subscription(service);
+    claim_drop_subscription(service, &reservation_id, channel)
+        .expect("the current document claims its exact drop subscription");
+}
+
+fn captured(messages: &CapturedDropMessages) -> Vec<serde_json::Value> {
+    messages
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+fn status(message: &serde_json::Value) -> &str {
+    message["state"]["status"]
+        .as_str()
+        .expect("every drop state has a status")
+}
+
+fn process_drop_signal(service: &PreviewService, signal: NativeDropSignal<'_>) {
+    if let Some(dispatch) = service.reserve_native_drop_signal(signal) {
+        service.process_native_drop_dispatch(dispatch);
+    }
+}
+
+fn reserve_drop_work(service: &PreviewService, paths: &[PathBuf]) -> NativeDropWork {
+    match service
+        .reserve_native_drop_signal(NativeDropSignal::Drop { paths })
+        .expect("a native Drop always creates a dispatch")
+    {
+        NativeDropDispatch::Start(work) => work,
+        NativeDropDispatch::Busy { .. } => panic!("the drop claim was unexpectedly busy"),
+        NativeDropDispatch::Enter { .. } | NativeDropDispatch::Leave { .. } => {
+            panic!("a Drop cannot normalize to hover or leave")
+        }
+    }
+}
+
+fn spawn_blocked_drop(
+    service: &Arc<PreviewService>,
+    paths: &[PathBuf],
+) -> (
+    mpsc::Receiver<()>,
+    mpsc::Sender<()>,
+    std::thread::JoinHandle<Option<DropIngestionResultDto>>,
+) {
+    let work = reserve_drop_work(service, paths);
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let worker_service = Arc::clone(service);
+    let worker = std::thread::spawn(move || {
+        worker_service.process_native_drop_with(work, move |_| {
+            started_tx.send(()).expect("report drop expansion start");
+            release_rx.recv().expect("release drop expansion");
+            Ok(DropBatch {
+                candidates: Vec::new(),
+                summary: DropIngestionSummary::default(),
+            })
+        })
+    });
+    (started_rx, release_tx, worker)
+}
+
+#[test]
+fn native_drop_signals_never_debug_paths_or_positions() {
+    let secret = PathBuf::from(r"C:\Users\private\sample.mzML");
+    let rendered = format!(
+        "{:?}",
+        NativeDropSignal::Drop {
+            paths: std::slice::from_ref(&secret)
+        }
+    );
+
+    assert_eq!(rendered, "Drop { item_count: 1 }");
+    assert!(!rendered.contains(&secret.to_string_lossy().to_string()));
+    assert_eq!(format!("{:?}", NativeDropSignal::Over), "Over");
+}
+
+#[test]
+fn native_window_adapter_normalizes_all_four_drag_states_without_copying_paths_or_positions() {
+    let paths = vec![
+        PathBuf::from(r"C:\private\one.mzML"),
+        PathBuf::from(r"D:\two"),
+    ];
+    let enter = tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Enter {
+        paths: paths.clone(),
+        position: tauri::PhysicalPosition::new(17.25, 91.5),
+    });
+    assert!(matches!(
+        normalize_window_drop_event(&enter),
+        Some(NativeDropSignal::Enter { item_count: 2 })
+    ));
+
+    let over = tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Over {
+        position: tauri::PhysicalPosition::new(-400.0, 8_000.0),
+    });
+    assert!(matches!(
+        normalize_window_drop_event(&over),
+        Some(NativeDropSignal::Over)
+    ));
+
+    let dropped = tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop {
+        paths,
+        position: tauri::PhysicalPosition::new(f64::MAX, f64::MIN),
+    });
+    let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop {
+        paths: event_paths, ..
+    }) = &dropped
+    else {
+        unreachable!("the fixture is a Drop")
+    };
+    let Some(NativeDropSignal::Drop {
+        paths: normalized_paths,
+    }) = normalize_window_drop_event(&dropped)
+    else {
+        panic!("Drop is normalized")
+    };
+    assert_eq!(normalized_paths.as_ptr(), event_paths.as_ptr());
+    assert_eq!(normalized_paths.len(), event_paths.len());
+
+    let leave = tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Leave);
+    assert!(matches!(
+        normalize_window_drop_event(&leave),
+        Some(NativeDropSignal::Leave)
+    ));
+    assert!(normalize_window_drop_event(&tauri::WindowEvent::Focused(true)).is_none());
+}
+
+#[test]
+fn native_drop_callback_reservation_does_not_wait_for_held_service_gates() {
+    let service = Arc::new(PreviewService::new(Box::new(NoProcess)));
+    let (gates_started_tx, gates_started_rx) = mpsc::channel();
+    let (gates_release_tx, gates_release_rx) = mpsc::channel();
+    let holder_service = Arc::clone(&service);
+    let holder = std::thread::spawn(move || {
+        holder_service.hold_drop_gates_for_test(gates_started_tx, gates_release_rx);
+    });
+    gates_started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("both formerly callback-blocking gates are held");
+
+    let (callback_tx, callback_rx) = mpsc::channel();
+    let callback_service = Arc::clone(&service);
+    let callback = std::thread::spawn(move || {
+        let private = vec![PathBuf::from(r"C:\private\accepted.mzML")];
+        callback_tx
+            .send(
+                callback_service
+                    .reserve_native_drop_signal(NativeDropSignal::Drop { paths: &private }),
+            )
+            .expect("return callback result");
+    });
+    let accepted = callback_rx
+        .recv_timeout(Duration::from_millis(250))
+        .expect("atomic callback reservation cannot wait for either held gate")
+        .expect("Drop creates a dispatch");
+    assert!(matches!(&accepted, NativeDropDispatch::Start(_)));
+
+    let rejected = vec![PathBuf::from(r"C:\private\rejected.mzML")];
+    let busy = service
+        .reserve_native_drop_signal(NativeDropSignal::Drop { paths: &rejected })
+        .expect("a concurrent Drop is represented by a path-free dispatch");
+    assert_eq!(format!("{busy:?}"), "Busy");
+    assert!(!format!("{busy:?}").contains("rejected.mzML"));
+
+    drop(accepted);
+    drop(busy);
+    callback.join().expect("callback probe joins");
+    gates_release_tx.send(()).expect("release held gates");
+    holder.join().expect("gate holder joins");
+    service.begin_webview_document();
+}
+
+#[test]
+fn inverse_hover_leave_workers_cannot_resurrect_hovering() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let (channel, messages) = recording_drop_channel();
+    subscribe_drop(&service, channel);
+
+    let enter = service
+        .reserve_native_drop_signal(NativeDropSignal::Enter { item_count: 2 })
+        .expect("Enter creates a dispatch");
+    let leave = service
+        .reserve_native_drop_signal(NativeDropSignal::Leave)
+        .expect("Leave creates a dispatch");
+    service.process_native_drop_dispatch(leave);
+    service.process_native_drop_dispatch(enter);
+
+    let messages = captured(&messages);
+    assert_eq!(
+        messages.iter().map(status).collect::<Vec<_>>(),
+        vec!["idle", "idle"]
+    );
+    assert!(messages.iter().all(|message| status(message) != "hovering"));
+}
+
+#[test]
+fn native_over_is_silent_even_when_repeated() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let (channel, messages) = recording_drop_channel();
+    subscribe_drop(&service, channel);
+    process_drop_signal(&service, NativeDropSignal::Enter { item_count: 1 });
+    let before_over = captured(&messages);
+
+    for _ in 0..1_000 {
+        assert!(
+            service
+                .reserve_native_drop_signal(NativeDropSignal::Over)
+                .is_none()
+        );
+    }
+    assert_eq!(captured(&messages), before_over);
+}
+
+#[test]
+fn native_drop_callback_bounds_owned_roots_without_losing_true_batch_summary() {
+    for top_level_item_count in [MAX_DROP_ROOTS - 1, MAX_DROP_ROOTS, MAX_DROP_ROOTS + 1] {
+        let service = PreviewService::new(Box::new(NoProcess));
+        let paths = (0..top_level_item_count)
+            .map(|index| PathBuf::from(format!(r"C:\private\root-{index}")))
+            .collect::<Vec<_>>();
+        let work = reserve_drop_work(&service, &paths);
+        assert_eq!(
+            format!("{work:?}"),
+            format!("NativeDropWork {{ item_count: {top_level_item_count} }}")
+        );
+
+        let mut owned_root_count = None;
+        let result = service
+            .process_native_drop_with(work, |owned| {
+                owned_root_count = Some(owned.len());
+                Ok(DropBatch {
+                    candidates: Vec::new(),
+                    summary: DropIngestionSummary::default(),
+                })
+            })
+            .expect("the bounded synthetic expansion completes");
+        assert_eq!(
+            owned_root_count,
+            Some(top_level_item_count.min(MAX_DROP_ROOTS))
+        );
+        assert_eq!(result.summary.top_level_item_count, top_level_item_count);
+        if top_level_item_count > MAX_DROP_ROOTS {
+            assert_eq!(result.summary.limits_reached, vec![DropScanLimitDto::Roots]);
+            assert!(!result.summary.complete);
+        } else {
+            assert!(result.summary.limits_reached.is_empty());
+            assert!(result.summary.complete);
+        }
+    }
+}
+
+#[test]
+fn second_drop_is_reported_once_before_terminal_even_when_its_worker_runs_late() {
+    let service = Arc::new(PreviewService::new(Box::new(NoProcess)));
+    let (channel, messages) = recording_drop_channel();
+    subscribe_drop(&service, channel);
+    let (started, release, worker) = spawn_blocked_drop(&service, &[]);
+    started
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the first drop is importing");
+
+    let private = vec![PathBuf::from(r"C:\private\second.mzML")];
+    let late_busy_workers = (0..128)
+        .map(|_| {
+            service
+                .reserve_native_drop_signal(NativeDropSignal::Drop { paths: &private })
+                .expect("every extra Drop is explicitly handled")
+        })
+        .collect::<Vec<_>>();
+
+    release.send(()).expect("finish the first drop");
+    assert!(
+        worker
+            .join()
+            .expect("the first drop worker joins")
+            .is_some()
+    );
+    for dispatch in late_busy_workers {
+        service.process_native_drop_dispatch(dispatch);
+    }
+
+    let messages = captured(&messages);
+    let statuses = messages.iter().map(status).collect::<Vec<_>>();
+    assert_eq!(statuses, vec!["idle", "importing", "rejected", "completed"]);
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| **status == "rejected")
+            .count(),
+        1,
+        "a busy storm occupies one bounded bit and cannot flood the channel"
+    );
+    let serialized = serde_json::to_string(&messages).expect("messages serialize");
+    assert!(!serialized.contains("second.mzML"));
+}
+
+#[test]
+fn native_drop_expansion_holds_neither_workspace_nor_mutation_lock() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let work = reserve_drop_work(&service, &[]);
+    let result = service.process_native_drop_with(work, |_| {
+        service.assert_drop_scan_locks_available_for_test();
+        Ok(DropBatch {
+            candidates: Vec::new(),
+            summary: DropIngestionSummary::default(),
+        })
+    });
+    assert!(result.is_some());
+}
+
+#[test]
+fn remove_supersedes_an_active_native_drop() {
+    let service = Arc::new(PreviewService::new(Box::new(NoProcess)));
+    let (started, release, worker) = spawn_blocked_drop(&service, &[]);
+    started
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the native drop reaches its unlocked scan");
+
+    let removal = service.remove_datasets(&["file-does-not-exist".to_owned()]);
+    assert!(removal.removed_handles.is_empty());
+    assert_eq!(removal.unknown_handles, vec!["file-does-not-exist"]);
+    release.send(()).expect("release the superseded scan");
+    assert!(
+        worker.join().expect("drop worker joins").is_none(),
+        "Remove supersedes even when its handle names no current row"
+    );
+}
+
+#[test]
+fn add_folder_and_roster_operations_wait_for_an_active_native_drop() {
+    let service = Arc::new(PreviewService::new(Box::new(NoProcess)));
+    let (started, release, worker) = spawn_blocked_drop(&service, &[]);
+    started
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the native drop reaches its unlocked scan");
+
+    let (add_tx, add_rx) = mpsc::channel();
+    let add_service = Arc::clone(&service);
+    let add = std::thread::spawn(move || {
+        let result = add_service.add_files(&[]);
+        add_tx.send(result).expect("return Add files result");
+    });
+    let (folder_tx, folder_rx) = mpsc::channel();
+    let folder_service = Arc::clone(&service);
+    let folder = std::thread::spawn(move || {
+        let reservation = folder_service.begin_folder_import();
+        folder_tx
+            .send(reservation)
+            .expect("return folder reservation");
+    });
+    let (roster_tx, roster_rx) = mpsc::channel();
+    let roster_service = Arc::clone(&service);
+    let roster = std::thread::spawn(move || {
+        let result = roster_service.roster();
+        roster_tx.send(result).expect("return roster");
+    });
+
+    assert!(add_rx.recv_timeout(Duration::from_millis(100)).is_err());
+    assert!(folder_rx.recv_timeout(Duration::from_millis(100)).is_err());
+    assert!(roster_rx.recv_timeout(Duration::from_millis(100)).is_err());
+
+    release.send(()).expect("finish native drop");
+    assert!(worker.join().expect("drop worker joins").is_some());
+    assert!(
+        add_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("Add files resumes")
+            .outcomes
+            .is_empty()
+    );
+    folder_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("folder reservation resumes");
+    assert!(
+        roster_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("roster resumes")
+            .datasets
+            .is_empty()
+    );
+    add.join().expect("Add files probe joins");
+    folder.join().expect("folder probe joins");
+    roster.join().expect("roster probe joins");
+}
+
+#[test]
+fn page_load_supersedes_an_active_native_drop_and_clears_subscriber() {
+    let service = Arc::new(PreviewService::new(Box::new(NoProcess)));
+    let (old_channel, old_messages) = recording_drop_channel();
+    subscribe_drop(&service, old_channel);
+    let (started, release, worker) = spawn_blocked_drop(&service, &[]);
+    started
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the old document owns an importing drop");
+    let before_load = captured(&old_messages);
+
+    service.begin_webview_document();
+    release.send(()).expect("release the old worker");
+    assert!(worker.join().expect("old worker joins").is_none());
+    process_drop_signal(&service, NativeDropSignal::Enter { item_count: 1 });
+    assert_eq!(captured(&old_messages), before_load);
+
+    let (new_channel, new_messages) = recording_drop_channel();
+    subscribe_drop(&service, new_channel);
+    assert_eq!(status(&captured(&new_messages)[0]), "hovering");
+}
+
+#[test]
+fn a_delayed_old_subscription_cannot_replace_the_new_document_channel() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let old_reservation = begin_drop_subscription(&service);
+    service.begin_webview_document();
+
+    let new_reservation = begin_drop_subscription(&service);
+    let (new_channel, new_messages) = recording_drop_channel();
+    claim_drop_subscription(&service, &new_reservation, new_channel)
+        .expect("the replacement document claims its reservation");
+    let (delayed_old_channel, delayed_old_messages) = recording_drop_channel();
+    let error = claim_drop_subscription(&service, &old_reservation, delayed_old_channel)
+        .expect_err("the old document cannot claim after page-load start");
+    assert_eq!(error.kind, "invalid_workspace_drop_subscription");
+
+    process_drop_signal(&service, NativeDropSignal::Enter { item_count: 1 });
+
+    assert_eq!(
+        captured(&new_messages)
+            .iter()
+            .map(status)
+            .collect::<Vec<_>>(),
+        vec!["idle", "hovering"]
+    );
+    assert!(captured(&delayed_old_messages).is_empty());
+}
+
+#[test]
+fn page_load_rejects_a_verified_old_epoch_without_consuming_the_new_subscription() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let old_document_epoch = service.workspace_drop_document_epoch();
+    service.begin_webview_document();
+    let new_document_epoch = service.workspace_drop_document_epoch();
+    let new_reservation = service
+        .begin_workspace_drop_subscription(new_document_epoch)
+        .expect("the replacement document begins its subscription")
+        .reservation_id;
+
+    let error = service
+        .begin_workspace_drop_subscription(old_document_epoch)
+        .expect_err("a Begin verified before page load cannot execute afterwards");
+    assert_eq!(error.kind, "invalid_workspace_drop_subscription");
+
+    let (old_channel, old_messages) = recording_drop_channel();
+    let error = service
+        .claim_workspace_drop_subscription(old_document_epoch, &new_reservation, old_channel)
+        .expect_err("a Claim verified before page load cannot consume the new slot");
+    assert_eq!(error.kind, "invalid_workspace_drop_subscription");
+    assert!(captured(&old_messages).is_empty());
+
+    let (new_channel, new_messages) = recording_drop_channel();
+    service
+        .claim_workspace_drop_subscription(new_document_epoch, &new_reservation, new_channel)
+        .expect("the replacement document still owns its exact slot");
+    assert_eq!(status(&captured(&new_messages)[0]), "idle");
+}
+
+#[test]
+fn delayed_begin_reuses_pending_and_never_displaces_an_installed_subscriber() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    service.begin_webview_document();
+
+    let current_begin = begin_drop_subscription(&service);
+    let delayed_begin = begin_drop_subscription(&service);
+    assert_eq!(delayed_begin, current_begin);
+
+    let (channel, messages) = recording_drop_channel();
+    claim_drop_subscription(&service, &current_begin, channel)
+        .expect("the shared same-epoch reservation is current");
+    let after_claim_begin = begin_drop_subscription(&service);
+    assert_ne!(after_claim_begin, current_begin);
+    assert_eq!(begin_drop_subscription(&service), after_claim_begin);
+
+    process_drop_signal(&service, NativeDropSignal::Enter { item_count: 2 });
+    assert_eq!(
+        captured(&messages).iter().map(status).collect::<Vec<_>>(),
+        vec!["idle", "hovering"]
+    );
+}
+
+#[test]
+fn a_wrong_drop_subscription_handle_does_not_consume_the_current_slot() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let reservation = begin_drop_subscription(&service);
+    let (wrong_channel, wrong_messages) = recording_drop_channel();
+
+    let error = claim_drop_subscription(
+        &service,
+        "drop-subscription-reservation-18446744073709551615",
+        wrong_channel,
+    )
+    .expect_err("an unknown reservation is refused");
+    assert_eq!(error.kind, "invalid_workspace_drop_subscription");
+    assert!(captured(&wrong_messages).is_empty());
+
+    let (current_channel, current_messages) = recording_drop_channel();
+    claim_drop_subscription(&service, &reservation, current_channel)
+        .expect("the exact reservation remains claimable");
+    assert_eq!(status(&captured(&current_messages)[0]), "idle");
+}
+
+#[test]
+fn page_load_invalidates_an_enter_dispatch_queued_by_the_old_document() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let old_enter = service
+        .reserve_native_drop_signal(NativeDropSignal::Enter { item_count: 1 })
+        .expect("Enter produces one queued dispatch");
+
+    service.begin_webview_document();
+    let (new_channel, new_messages) = recording_drop_channel();
+    subscribe_drop(&service, new_channel);
+    service.process_native_drop_dispatch(old_enter);
+
+    assert_eq!(
+        captured(&new_messages)
+            .iter()
+            .map(status)
+            .collect::<Vec<_>>(),
+        vec!["idle"]
+    );
+}
+
+#[test]
+fn page_load_invalidates_a_leave_dispatch_queued_by_the_old_document() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    process_drop_signal(&service, NativeDropSignal::Enter { item_count: 1 });
+    let old_leave = service
+        .reserve_native_drop_signal(NativeDropSignal::Leave)
+        .expect("Leave produces one queued dispatch");
+
+    service.begin_webview_document();
+    let (new_channel, new_messages) = recording_drop_channel();
+    subscribe_drop(&service, new_channel);
+    service.process_native_drop_dispatch(old_leave);
+
+    assert_eq!(
+        captured(&new_messages)
+            .iter()
+            .map(status)
+            .collect::<Vec<_>>(),
+        vec!["idle"]
+    );
+}
+
+#[test]
+fn replacing_drop_subscriber_leaves_exactly_one_live_channel() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let (first_channel, first_messages) = recording_drop_channel();
+    subscribe_drop(&service, first_channel);
+    let first_before_replacement = captured(&first_messages);
+
+    let (replacement_channel, replacement_messages) = recording_drop_channel();
+    subscribe_drop(&service, replacement_channel);
+    process_drop_signal(&service, NativeDropSignal::Enter { item_count: 4 });
+
+    assert_eq!(captured(&first_messages), first_before_replacement);
+    assert_eq!(
+        captured(&replacement_messages)
+            .iter()
+            .map(status)
+            .collect::<Vec<_>>(),
+        vec!["idle", "hovering"]
+    );
+}
+
+#[test]
+fn actual_channel_orders_hover_busy_replacement_clear_and_reload() {
+    let service = Arc::new(PreviewService::new(Box::new(NoProcess)));
+    let (first_channel, first_messages) = recording_drop_channel();
+    subscribe_drop(&service, first_channel);
+
+    process_drop_signal(&service, NativeDropSignal::Enter { item_count: 3 });
+    assert!(
+        service
+            .reserve_native_drop_signal(NativeDropSignal::Over)
+            .is_none(),
+        "Over is intentionally silent"
+    );
+    let work = reserve_drop_work(&service, &[]);
+    let (scan_started_tx, scan_started_rx) = mpsc::channel();
+    let (scan_release_tx, scan_release_rx) = mpsc::channel();
+    let worker_service = Arc::clone(&service);
+    let worker = std::thread::spawn(move || {
+        worker_service.process_native_drop_with(work, move |_| {
+            scan_started_tx.send(()).expect("report scan start");
+            scan_release_rx.recv().expect("release scan");
+            Ok(DropBatch {
+                candidates: Vec::new(),
+                summary: DropIngestionSummary::default(),
+            })
+        })
+    });
+    scan_started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the first drop reaches its unlocked scan");
+
+    let rejected_paths = vec![PathBuf::from(r"C:\private\must-not-cross.mzML")];
+    let busy = service
+        .reserve_native_drop_signal(NativeDropSignal::Drop {
+            paths: &rejected_paths,
+        })
+        .expect("a second Drop produces an explicit rejection dispatch");
+    assert!(matches!(&busy, NativeDropDispatch::Busy { .. }));
+    assert_eq!(format!("{busy:?}"), "Busy");
+    service.process_native_drop_dispatch(busy);
+
+    let first = captured(&first_messages);
+    assert_eq!(
+        first.iter().map(status).collect::<Vec<_>>(),
+        vec!["idle", "hovering", "importing", "rejected"]
+    );
+    assert_eq!(first[1]["state"]["itemCount"], 3);
+    assert_eq!(first[2]["state"]["operationId"], "1");
+    assert_eq!(first[3]["state"]["reason"], "drop_busy");
+    assert_eq!(
+        first
+            .iter()
+            .map(|message| message["sequence"].as_u64().expect("sequence"))
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3, 4]
+    );
+    assert!(
+        !serde_json::to_string(&first)
+            .expect("messages serialize")
+            .contains("must-not-cross"),
+        "busy transport retains no path from the rejected drop"
+    );
+    for message in &first {
+        assert_drop_json_is_path_free(message, &[Path::new(r"C:\private")]);
+    }
+
+    let (replacement_channel, replacement_messages) = recording_drop_channel();
+    subscribe_drop(&service, replacement_channel);
+    let replacement = captured(&replacement_messages);
+    assert_eq!(replacement.len(), 1);
+    assert_eq!(status(&replacement[0]), "importing");
+    assert_eq!(replacement[0]["sequence"], 5);
+
+    assert!(service.clear_workspace().datasets.is_empty());
+    let after_clear = captured(&replacement_messages);
+    assert_eq!(
+        status(after_clear.last().expect("clear publishes idle")),
+        "idle"
+    );
+    assert_eq!(after_clear.last().expect("clear update")["sequence"], 6);
+    assert!(
+        {
+            scan_release_tx.send(()).expect("release superseded scan");
+            worker.join().expect("drop worker joins").is_none()
+        },
+        "the superseded worker cannot publish completion"
+    );
+    assert_eq!(captured(&replacement_messages), after_clear);
+
+    service.begin_webview_document();
+    process_drop_signal(&service, NativeDropSignal::Enter { item_count: 1 });
+    assert_eq!(
+        captured(&replacement_messages),
+        after_clear,
+        "the previous document's subscriber is cleared before later events"
+    );
+    let (new_document_channel, new_document_messages) = recording_drop_channel();
+    subscribe_drop(&service, new_document_channel);
+    let new_document = captured(&new_document_messages);
+    assert_eq!(status(&new_document[0]), "hovering");
+    assert_eq!(new_document[0]["sequence"], 8);
+}
+
+#[test]
+fn channel_send_failure_removes_only_that_subscriber_and_never_fails_ingestion() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let service = PreviewService::new(Box::new(NoProcess));
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&attempts);
+    subscribe_drop(
+        &service,
+        tauri::ipc::Channel::new(move |_| {
+            observed.fetch_add(1, Ordering::Relaxed);
+            Err(tauri::Error::FailedToReceiveMessage)
+        }),
+    );
+    assert_eq!(attempts.load(Ordering::Relaxed), 1);
+
+    process_drop_signal(&service, NativeDropSignal::Enter { item_count: 2 });
+    assert_eq!(
+        attempts.load(Ordering::Relaxed),
+        1,
+        "a failed subscriber is removed immediately"
+    );
+
+    let (replacement, messages) = recording_drop_channel();
+    subscribe_drop(&service, replacement);
+    assert_eq!(status(&captured(&messages)[0]), "hovering");
+    let work = reserve_drop_work(&service, &[]);
+    let result = service
+        .process_native_drop_with(work, |_| {
+            Ok(DropBatch {
+                candidates: Vec::new(),
+                summary: DropIngestionSummary::default(),
+            })
+        })
+        .expect("channel delivery is not the ingestion result");
+    assert!(result.roster.datasets.is_empty());
+    assert_eq!(
+        status(captured(&messages).last().expect("terminal update")),
+        "completed"
+    );
+    let terminal = captured(&messages)
+        .into_iter()
+        .last()
+        .expect("completion is delivered");
+    assert_eq!(terminal["state"]["operationId"], "1");
+    assert_eq!(
+        terminal["state"]["result"]["summary"]["workspaceWasEmpty"],
+        true
+    );
+    assert_eq!(terminal["state"]["result"]["summary"]["complete"], true);
+    assert_drop_json_is_path_free(&terminal, &[]);
+}
+
+#[test]
+fn failed_drop_channel_state_keeps_operation_id_and_preview_error_required() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let (channel, messages) = recording_drop_channel();
+    subscribe_drop(&service, channel);
+    let work = reserve_drop_work(&service, &[]);
+    assert!(
+        service
+            .process_native_drop_with(work, |_| {
+                Err(PreviewErrorDto::new(
+                    "synthetic_drop_failure",
+                    "Synthetic drop failure.",
+                    true,
+                ))
+            })
+            .is_none()
+    );
+
+    let messages = captured(&messages);
+    assert_eq!(
+        messages.iter().map(status).collect::<Vec<_>>(),
+        vec!["idle", "importing", "failed"]
+    );
+    let failed = &messages[2]["state"];
+    assert_eq!(failed["operationId"], "1");
+    assert_eq!(failed["error"]["kind"], "synthetic_drop_failure");
+    assert_eq!(failed["error"]["retryable"], true);
+    assert_drop_json_is_path_free(&messages[2], &[]);
+}
+
+fn assert_drop_json_is_path_free(value: &serde_json::Value, private_roots: &[&Path]) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            for (key, value) in fields {
+                assert!(
+                    !matches!(
+                        key.as_str(),
+                        "path"
+                            | "paths"
+                            | "root"
+                            | "directoryName"
+                            | "drive"
+                            | "unc"
+                            | "token"
+                            | "position"
+                            | "nativePosition"
+                            | "identity"
+                            | "generation"
+                            | "entriesInspected"
+                            | "directoriesEntered"
+                    ),
+                    "the drop wire must not expose the private field {key}"
+                );
+                assert_drop_json_is_path_free(value, private_roots);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                assert_drop_json_is_path_free(value, private_roots);
+            }
+        }
+        serde_json::Value::String(text) => {
+            for root in private_roots {
+                assert!(
+                    !text.contains(&root.to_string_lossy().to_string()),
+                    "the drop wire must not contain an absolute fixture root"
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_mixed_drop_preserves_root_order_origin_identity_deduplication_and_privacy() {
+    let direct_tree = FolderTree::new("drop-direct");
+    let direct = direct_tree.file("sample.mzML", b"<mzML>direct</mzML>");
+    let alias = direct_tree.path().join("same-object.mzML");
+    fs::hard_link(&direct, &alias).expect("make a second name for the direct file");
+    let unsupported = direct_tree.file("notes.txt", b"not mzML");
+
+    let folder = FolderTree::new("drop-folder");
+    folder.file("top.mzML", b"<mzML>top</mzML>");
+    folder.file(r"nested\sample.mzML", b"<mzML>nested</mzML>");
+
+    let service = PreviewService::new(Box::new(NoProcess));
+    let paths = vec![direct, folder.path().to_path_buf(), unsupported, alias];
+    let work = reserve_drop_work(&service, &paths);
+    let result = service
+        .process_native_drop_with(work, expand_drop_paths)
+        .expect("the mixed drop remains current");
+
+    assert_eq!(
+        result
+            .outcomes
+            .iter()
+            .map(|outcome| match outcome {
+                WorkspaceAddOutcomeDto::Added { dataset } => {
+                    ("added", dataset.file_name.as_str())
+                }
+                WorkspaceAddOutcomeDto::Duplicate { existing } => {
+                    ("duplicate", existing.file_name.as_str())
+                }
+                WorkspaceAddOutcomeDto::Rejected { candidate_name, .. } => {
+                    ("rejected", candidate_name.as_str())
+                }
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            ("added", "sample.mzML"),
+            ("added", "top.mzML"),
+            ("added", "sample.mzML"),
+            ("rejected", "notes.txt"),
+            ("duplicate", "sample.mzML"),
+        ]
+    );
+    assert_eq!(
+        roster_contexts(&service),
+        vec![
+            ("sample.mzML".to_owned(), Some("Added directly".to_owned())),
+            ("top.mzML".to_owned(), None),
+            ("sample.mzML".to_owned(), Some("nested".to_owned())),
+        ]
+    );
+    assert!(result.summary.workspace_was_empty);
+    assert!(result.summary.complete);
+    assert_eq!(result.summary.top_level_item_count, 4);
+    assert!(result.summary.limits_reached.is_empty());
+
+    let wire = serde_json::to_value(&result).expect("drop result serializes");
+    assert_drop_json_is_path_free(&wire, &[direct_tree.path(), folder.path()]);
+}
+
+#[cfg(windows)]
+#[test]
+fn drop_root_and_entry_refusals_are_aggregate_only_and_never_follow_junctions() {
+    let outside = FolderTree::new("drop-junction-outside");
+    outside.file("private.mzML", b"<mzML>outside</mzML>");
+    let roots = FolderTree::new("drop-junction-roots");
+    roots.junction("as-root", outside.path());
+
+    let chosen = FolderTree::new("drop-junction-entry");
+    chosen.file("kept.mzML", b"<mzML>inside</mzML>");
+    chosen.junction("escape", outside.path());
+    let absent = roots.path().join("absent");
+    let unc = PathBuf::from(r"\\unreachable.invalid\private-share");
+    let device = PathBuf::from(r"\\.\NUL");
+
+    let service = PreviewService::new(Box::new(NoProcess));
+    let paths = vec![
+        roots.path().join("as-root"),
+        chosen.path().to_path_buf(),
+        absent,
+        unc,
+        device,
+    ];
+    let work = reserve_drop_work(&service, &paths);
+    let result = service
+        .process_native_drop_with(work, expand_drop_paths)
+        .expect("root refusals do not fail unrelated candidates");
+
+    assert_eq!(roster_names(&service), vec!["kept.mzML"]);
+    assert!(!result.summary.complete);
+    assert_eq!(result.summary.top_level_item_count, 5);
+    assert_eq!(result.summary.skipped_reparse_root_count, 1);
+    assert_eq!(result.summary.skipped_reparse_entry_count, 1);
+    assert_eq!(result.summary.inaccessible_root_count, 1);
+    assert_eq!(result.summary.remote_root_count, 1);
+    assert_eq!(result.summary.unsupported_root_count, 1);
+    assert!(
+        result.outcomes.iter().all(|outcome| !matches!(
+            outcome,
+            WorkspaceAddOutcomeDto::Rejected { candidate_name, .. }
+                if candidate_name == "as-root" || candidate_name == "absent"
+        )),
+        "root refusals are aggregate-only"
+    );
+
+    let wire = serde_json::to_value(&result).expect("drop result serializes");
+    assert_drop_json_is_path_free(&wire, &[outside.path(), roots.path(), chosen.path()]);
+}
+
+#[cfg(windows)]
+#[test]
+fn drop_root_inspection_classifies_a_junction_before_directory_dispatch() {
+    let outside = FolderTree::new("drop-root-classifier-target");
+    outside.file("private.mzML", b"private");
+    let roots = FolderTree::new("drop-root-classifier");
+    roots.junction("as-root", outside.path());
+
+    assert!(matches!(
+        inspect_drop_root(&roots.path().join("as-root")),
+        DropRootInspection::Reparse
+    ));
+}
+
+#[test]
+fn a_failed_root_debits_the_shared_drop_budget_before_the_next_root() {
+    let direct = PathBuf::from("direct.mzML");
+    let root_a = PathBuf::from("root-a");
+    let root_b = PathBuf::from("root-b");
+    let mut budgets_seen = Vec::new();
+
+    let batch = expand_drop_paths_with_budget_using(
+        vec![direct.clone(), root_a, root_b],
+        DropBudget {
+            max_roots: 3,
+            max_depth: 7,
+            max_entries: 5,
+            max_directories: 3,
+            max_candidates: 5,
+        },
+        |path| {
+            if path == direct {
+                DropRootInspection::RegularFile {
+                    identity: FileIdentity::new(7, [1; 16]),
+                }
+            } else {
+                DropRootInspection::Directory
+            }
+        },
+        |_, budget| {
+            budgets_seen.push(budget);
+            if budgets_seen.len() == 1 {
+                Err(
+                    DiscoveryError::new(DiscoveryErrorKind::RootEnumerationFailed).with_usage(
+                        DiscoveryUsage {
+                            entries_inspected: 2,
+                            directories_entered: 1,
+                            candidates_collected: 0,
+                        },
+                    ),
+                )
+            } else {
+                Err(DiscoveryError::new(DiscoveryErrorKind::RootUnavailable))
+            }
+        },
+    )
+    .expect("a failed root is aggregate-only");
+
+    assert_eq!(
+        budgets_seen,
+        vec![
+            DiscoveryBudget {
+                max_depth: 7,
+                max_entries: 5,
+                max_directories: 3,
+                max_candidates: 4,
+            },
+            DiscoveryBudget {
+                max_depth: 7,
+                max_entries: 3,
+                max_directories: 2,
+                max_candidates: 4,
+            },
+        ]
+    );
+    assert_eq!(batch.candidates.len(), 1);
+    assert_eq!(batch.candidates[0].path, direct);
+    assert_eq!(batch.summary.inaccessible_root_count, 2);
+}
+
+#[cfg(windows)]
+#[test]
+fn every_folder_and_direct_file_spends_one_shared_drop_budget() {
+    let first = FolderTree::new("drop-budget-first");
+    first.file("a.mzML", b"a");
+    first.file("b.mzML", b"b");
+    let direct_tree = FolderTree::new("drop-budget-direct");
+    let direct = direct_tree.file("direct.mzML", b"d");
+    let last = FolderTree::new("drop-budget-last");
+    last.file("never-scanned.mzML", b"n");
+
+    let batch = expand_drop_paths_with_budget(
+        vec![
+            first.path().to_path_buf(),
+            direct,
+            last.path().to_path_buf(),
+        ],
+        DropBudget {
+            max_roots: 3,
+            max_depth: 32,
+            max_entries: 20,
+            max_directories: 20,
+            max_candidates: 3,
+        },
+    )
+    .expect("real local roots expand");
+    assert_eq!(
+        batch
+            .candidates
+            .iter()
+            .map(|candidate| {
+                candidate
+                    .path
+                    .file_name()
+                    .expect("candidate name")
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>(),
+        vec!["a.mzML", "b.mzML", "direct.mzML"]
+    );
+    let summary = batch.summary.into_dto(false);
+    assert_eq!(summary.limits_reached, vec![DropScanLimitDto::Candidates]);
+    assert!(!summary.complete);
+
+    let one = FolderTree::new("drop-budget-entry-one");
+    one.file("one.mzML", b"1");
+    let two = FolderTree::new("drop-budget-entry-two");
+    two.file("two.mzML", b"2");
+    let batch = expand_drop_paths_with_budget(
+        vec![one.path().to_path_buf(), two.path().to_path_buf()],
+        DropBudget {
+            max_roots: 2,
+            max_depth: 32,
+            max_entries: 1,
+            max_directories: 2,
+            max_candidates: 10,
+        },
+    )
+    .expect("the first folder consumes the shared entry allowance");
+    assert_eq!(batch.candidates.len(), 1);
+    assert_eq!(
+        batch.summary.into_dto(false).limits_reached,
+        vec![DropScanLimitDto::Entries]
+    );
+
+    let roots = expand_drop_paths_with_budget(
+        vec![
+            direct_tree.path().join("direct.mzML"),
+            first.path().join("a.mzML"),
+        ],
+        DropBudget {
+            max_roots: 1,
+            max_depth: 32,
+            max_entries: 20,
+            max_directories: 20,
+            max_candidates: 10,
+        },
+    )
+    .expect("the allowed prefix is processed");
+    assert_eq!(roots.candidates.len(), 1);
+    assert_eq!(
+        roots.summary.into_dto(false).limits_reached,
+        vec![DropScanLimitDto::Roots]
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_drop_candidate_replaced_after_classification_is_refused_without_spending_an_id() {
+    let tree = FolderTree::new("drop-identity-recheck");
+    let replaced = tree.file("replaced.mzML", b"old");
+    let untouched = tree.file("untouched.mzML", b"kept");
+    let service = PreviewService::new(Box::new(NoProcess));
+    let paths = vec![replaced.clone(), untouched];
+    let work = reserve_drop_work(&service, &paths);
+
+    let result = service
+        .process_native_drop_with(work, |paths| {
+            let batch = expand_drop_paths(paths)?;
+            fs::remove_file(&replaced).expect("remove the classified object");
+            fs::write(&replaced, b"new").expect("replace it under the same name");
+            Ok(batch)
+        })
+        .expect("one candidate's replacement does not fail the batch");
+
+    assert_eq!(result.outcomes.len(), 2);
+    assert!(matches!(
+        &result.outcomes[0],
+        WorkspaceAddOutcomeDto::Rejected {
+            candidate_name,
+            error,
+        } if candidate_name == "replaced.mzML" && error.kind == "drop_candidate_changed"
+    ));
+    let WorkspaceAddOutcomeDto::Added { dataset } = &result.outcomes[1] else {
+        panic!("the unrelated candidate is added");
+    };
+    assert_eq!(
+        dataset.handle, "file-0",
+        "the rejection spent no dataset ID"
+    );
+    assert_eq!(roster_names(&service), vec!["untouched.mzML"]);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_discovered_drop_candidate_replaced_after_scan_is_refused_without_spending_an_id() {
+    let tree = FolderTree::new("drop-folder-identity-recheck");
+    let replaced = tree.file("replaced.mzML", b"old");
+    tree.file("untouched.mzML", b"kept");
+    let service = PreviewService::new(Box::new(NoProcess));
+    let paths = vec![tree.path().to_path_buf()];
+    let work = reserve_drop_work(&service, &paths);
+
+    let result = service
+        .process_native_drop_with(work, |paths| {
+            let batch = expand_drop_paths(paths)?;
+            fs::remove_file(&replaced).expect("remove the discovered object");
+            fs::write(&replaced, b"new").expect("replace it under the discovered name");
+            Ok(batch)
+        })
+        .expect("the unrelated discovered candidate still commits");
+
+    assert_eq!(result.outcomes.len(), 2);
+    assert!(matches!(
+        &result.outcomes[0],
+        WorkspaceAddOutcomeDto::Rejected {
+            candidate_name,
+            error,
+        } if candidate_name == "replaced.mzML" && error.kind == "drop_candidate_changed"
+    ));
+    let WorkspaceAddOutcomeDto::Added { dataset } = &result.outcomes[1] else {
+        panic!("the unchanged discovered candidate is added")
+    };
+    assert_eq!(dataset.file_name, "untouched.mzML");
+    assert_eq!(dataset.handle, "file-0", "the refusal spends no dataset ID");
+    assert_eq!(roster_names(&service), vec!["untouched.mzML"]);
 }
 
 // ---------------------------------------------------------------------------
@@ -4785,6 +6249,29 @@ fn the_folder_reservation_handle_carries_no_path_or_internal_generation() {
 }
 
 #[test]
+fn the_drop_subscription_reservation_carries_no_path_or_callback_authority() {
+    let rendered = serde_json::to_string(&super::dto::WorkspaceDropSubscriptionReservationDto {
+        reservation_id: "drop-subscription-reservation-23".to_owned(),
+    })
+    .expect("the reservation serialises");
+
+    assert_eq!(
+        rendered,
+        "{\"reservationId\":\"drop-subscription-reservation-23\"}"
+    );
+    for private in [
+        "path",
+        "root",
+        "generation",
+        "token",
+        "callbackId",
+        "eventName",
+    ] {
+        assert!(!rendered.contains(private), "{rendered}");
+    }
+}
+
+#[test]
 fn the_folder_begin_command_is_synchronous_and_cannot_open_a_picker() {
     let host = include_str!("../lib.rs");
     let body = host
@@ -4830,14 +6317,14 @@ fn roster_reads_are_gate_linearized_without_advancing_the_generation() {
         .0;
 
     let gated = body
-        .find("enter_workspace_mutation()")
+        .find("enter_workspace_mutation_after_drop()")
         .expect("a roster snapshot waits for an in-flight batch");
     let snapshot = body
         .find("roster_of(&self.workspace())")
         .expect("the roster is copied while it owns the ordering gate");
     assert!(gated < snapshot);
     assert!(
-        !body.contains("begin_mutation"),
+        !body.contains("begin_waiting_mutation") && !body.contains("begin_superseding_mutation"),
         "a roster read is not a decision"
     );
     assert!(

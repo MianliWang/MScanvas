@@ -1,9 +1,12 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { PreviewApi } from "../features/mzml-preview/api";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
+import type { WorkspaceDropTransport } from "../features/mzml-preview/dropTransport";
+import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTransport";
 import type {
+  DropIngestionResult,
   FolderIngestionResult,
   SelectedFile,
   SelectedSpectrumOutcome,
@@ -11,7 +14,11 @@ import type {
   WorkspaceRoster,
 } from "../features/mzml-preview/contracts";
 import { blurAsABrowserWould } from "../test/browserFocus";
-import type { FolderScan, PickedFile } from "../test/previewFixtures";
+import type {
+  FakeWorkspaceDropTransport,
+  FolderScan,
+  PickedFile,
+} from "../test/previewFixtures";
 import {
   COMPLETE_SCAN,
   availableBackend,
@@ -20,6 +27,7 @@ import {
   chosenFolderWithoutTools,
   buildSpectrum,
   createFakePreviewApi,
+  createFakeWorkspaceDropTransport,
   deferred,
   previewError,
   secondFile,
@@ -29,11 +37,16 @@ import {
 } from "../test/previewFixtures";
 import { App } from "./App";
 
-function renderApp(api: PreviewApi): void {
+function renderApp(
+  api: PreviewApi,
+  dropTransport: WorkspaceDropTransport = createFakeWorkspaceDropTransport(),
+): void {
   render(
-    <PreviewApiProvider value={api}>
-      <App />
-    </PreviewApiProvider>,
+    <WorkspaceDropTransportProvider value={dropTransport}>
+      <PreviewApiProvider value={api}>
+        <App />
+      </PreviewApiProvider>
+    </WorkspaceDropTransportProvider>,
   );
 }
 
@@ -805,6 +818,332 @@ describe("mzML preview workspace", () => {
   });
 });
 
+function renderedDropResult(
+  files: readonly SelectedFile[] = [selectedFile],
+): DropIngestionResult {
+  return {
+    roster: { datasets: files, capacity: 1_024 },
+    outcomes: files.map((dataset) => ({ outcome: "added" as const, dataset })),
+    summary: {
+      workspaceWasEmpty: true,
+      complete: true,
+      topLevelItemCount: files.length,
+      skippedReparseRootCount: 0,
+      inaccessibleRootCount: 0,
+      remoteRootCount: 0,
+      unsupportedRootCount: 0,
+      skippedReparseEntryCount: 0,
+      inaccessibleEntryCount: 0,
+      limitsReached: [],
+    },
+  };
+}
+
+function publishDrop(
+  transport: FakeWorkspaceDropTransport,
+  sequence: number,
+  state: Parameters<FakeWorkspaceDropTransport["emit"]>[0]["state"],
+): void {
+  act(() => {
+    transport.emit({ sequence, state });
+  });
+}
+
+describe("native Explorer drop presentation", () => {
+  it("keeps one path-free hover overlay without moving keyboard focus", async () => {
+    const drop = createFakeWorkspaceDropTransport();
+    renderApp(createFakePreviewApi({ availability: unavailableBackend }), drop);
+    const addFiles = await screen.findByRole("button", { name: "Add files…" });
+    await waitFor(() => {
+      expect(drop.subscriberCount()).toBe(1);
+    });
+    addFiles.focus();
+
+    publishDrop(drop, 1, { status: "hovering", itemCount: 12 });
+
+    const overlay = document.querySelector("[data-drop-overlay='hovering']");
+    expect(overlay).toBeVisible();
+    expect(overlay).toHaveTextContent("Release to inspect and add 12 dropped items.");
+    expect(overlay).toHaveAttribute("aria-hidden", "true");
+    expect(overlay?.querySelectorAll("button, a, input, select, textarea")).toHaveLength(0);
+    expect(document.activeElement).toBe(addFiles);
+    expect(document.querySelector("[data-live-region='drop']")).toHaveTextContent(
+      "Release to inspect and add 12 dropped items.",
+    );
+    expect(overlay?.textContent).not.toMatch(/[A-Z]:\\|\\\\|\.mzML/i);
+
+    publishDrop(drop, 2, { status: "idle" });
+    expect(document.querySelector("[data-drop-overlay]")).toBeNull();
+    expect(document.activeElement).toBe(addFiles);
+  });
+
+  it("keeps the empty-workspace Clear escape active and rejects a second drop without replacing the first", async () => {
+    const drop = createFakeWorkspaceDropTransport();
+    const api = createFakePreviewApi({ availability: unavailableBackend });
+    renderApp(api, drop);
+    await screen.findByRole("button", { name: "Add files…" });
+    await waitFor(() => {
+      expect(drop.subscriberCount()).toBe(1);
+    });
+
+    publishDrop(drop, 1, { status: "importing", operationId: "801", itemCount: 2 });
+    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
+    const clear = screen.getByRole("button", { name: "Clear list" });
+    expect(clear).toBeEnabled();
+    expect(screen.getByRole("region", { name: "Workspace" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    expect(document.querySelector("[data-drop-overlay='importing']")).toHaveTextContent(
+      "Adding dropped items…",
+    );
+
+    publishDrop(drop, 2, { status: "rejected", reason: "drop_busy" });
+    expect(document.querySelector("[data-drop-overlay='importing']")).toBeVisible();
+    expect(
+      screen.getAllByText(
+        "Another drop is already being processed. Wait for it to finish or clear the workspace.",
+      )[0],
+    ).toBeVisible();
+
+    clear.focus();
+    fireEvent.click(clear);
+    await waitFor(() => {
+      expect(document.querySelector("[data-drop-overlay]")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Clear list" })).toBeNull();
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add files…" }));
+    });
+
+    publishDrop(drop, 3, {
+      status: "completed",
+      operationId: "801",
+      result: renderedDropResult(),
+    });
+    expect(screen.queryByRole("option", { name: new RegExp(selectedFile.fileName) })).toBeNull();
+    expect(screen.getByText("The workspace is empty. The pending drop will not add files.")).toBeVisible();
+  });
+
+  it("renders one bounded completion notice and the authoritative dropped rows", async () => {
+    const drop = createFakeWorkspaceDropTransport();
+    renderApp(createFakePreviewApi({ availability: unavailableBackend }), drop);
+    await waitFor(() => {
+      expect(drop.subscriberCount()).toBe(1);
+    });
+
+    publishDrop(drop, 1, { status: "importing", operationId: "901", itemCount: 2 });
+    publishDrop(drop, 2, {
+      status: "completed",
+      operationId: "901",
+      result: renderedDropResult([selectedFile, secondFile]),
+    });
+
+    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(screen.getByRole("option", { name: /QC_pool_02\.mzML/ })).toBeVisible();
+    expect(screen.getByText("Added 2 files.")).toBeVisible();
+    expect(document.querySelector("[data-live-region='workspace']")).toHaveTextContent(
+      "Workspace: Added 2 files.",
+    );
+    expect(document.querySelector("[data-drop-overlay]")).toBeNull();
+  });
+
+  it("returns a Drop-disabled Add files… action to its former keyboard owner", async () => {
+    const drop = createFakeWorkspaceDropTransport();
+    renderApp(createFakePreviewApi({ availability: unavailableBackend }), drop);
+    const addFiles = await screen.findByRole("button", { name: "Add files…" });
+    await waitFor(() => {
+      expect(drop.subscriberCount()).toBe(1);
+    });
+    addFiles.focus();
+
+    publishDrop(drop, 1, { status: "importing", operationId: "901-focus", itemCount: 1 });
+    expect(addFiles).toBeDisabled();
+    blurAsABrowserWould(addFiles);
+    expect(document.body).toHaveFocus();
+    publishDrop(drop, 2, {
+      status: "completed",
+      operationId: "901-focus",
+      result: renderedDropResult(),
+    });
+
+    await waitFor(() => {
+      expect(addFiles).toBeEnabled();
+      expect(addFiles).toHaveFocus();
+    });
+  });
+
+  it("announces a drop failure through only the permanent drop live region", async () => {
+    const drop = createFakeWorkspaceDropTransport();
+    renderApp(createFakePreviewApi({ availability: unavailableBackend }), drop);
+    await waitFor(() => {
+      expect(drop.subscriberCount()).toBe(1);
+    });
+    publishDrop(drop, 1, { status: "importing", operationId: "902", itemCount: 1 });
+    publishDrop(drop, 2, {
+      status: "failed",
+      operationId: "902",
+      error: previewError({ summary: "The dropped item changed before it could be added." }),
+    });
+
+    const visible = screen.getByText("The dropped item changed before it could be added.");
+    expect(visible).toBeVisible();
+    expect(visible.closest("[role='status']")).toBeNull();
+    expect(document.querySelector("[data-live-region='drop']")).toHaveTextContent(
+      "The dropped items could not be added. The dropped item changed before it could be added.",
+    );
+
+    const addFiles = screen.getByRole("button", { name: "Add files…" });
+    const notice = screen.getByText("The dropped items could not be added").closest<HTMLElement>(
+      ".notice",
+    );
+    expect(notice).not.toBeNull();
+    const dismiss = within(notice as HTMLElement).getByRole("button", { name: "Dismiss" });
+    dismiss.focus();
+    fireEvent.click(dismiss, { detail: 0 });
+
+    await waitFor(() => {
+      expect(addFiles).toHaveFocus();
+    });
+    expect(screen.queryByText("The dropped items could not be added")).toBeNull();
+  });
+
+  it("does not turn a real pointer dismissal into Drop keyboard focus debt", async () => {
+    const drop = createFakeWorkspaceDropTransport();
+    renderApp(createFakePreviewApi({ availability: unavailableBackend }), drop);
+    const addFiles = await screen.findByRole("button", { name: "Add files…" });
+    await waitFor(() => {
+      expect(drop.subscriberCount()).toBe(1);
+    });
+    publishDrop(drop, 1, { status: "importing", operationId: "903", itemCount: 1 });
+    publishDrop(drop, 2, {
+      status: "failed",
+      operationId: "903",
+      error: previewError({ summary: "The dropped item changed before it could be added." }),
+    });
+    const notice = screen.getByText("The dropped items could not be added").closest<HTMLElement>(
+      ".notice",
+    );
+    expect(notice).not.toBeNull();
+    const dismiss = within(notice as HTMLElement).getByRole("button", { name: "Dismiss" });
+    const focusing = vi.spyOn(addFiles, "focus");
+
+    // Pointer presses focus a button before click in the real browser. A click
+    // count of one distinguishes that path from Enter/Space's detail zero.
+    fireEvent.pointerDown(dismiss);
+    dismiss.focus();
+    fireEvent.click(dismiss, { detail: 1 });
+
+    expect(document.body).toHaveFocus();
+    expect(addFiles).not.toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+  });
+
+  it("keeps picker actions usable across subscription failure and reconnects truthfully", async () => {
+    const retryRegistration = deferred<() => void>();
+    let attempts = 0;
+    let recoveredListener:
+      | ((update: Parameters<FakeWorkspaceDropTransport["emit"]>[0]) => void)
+      | null = null;
+    const transport: WorkspaceDropTransport = {
+      subscribe: (onUpdate) => {
+        attempts += 1;
+        if (attempts === 2) {
+          recoveredListener = onUpdate;
+        }
+        return attempts === 1
+          ? Promise.reject(
+              previewError({
+                kind: "drop_subscription_failed",
+                summary: "Explorer drag-and-drop could not connect.",
+              }),
+            )
+          : retryRegistration.promise;
+      },
+    };
+    const api = createFakePreviewApi({ availability: unavailableBackend });
+    renderApp(api, transport);
+
+    expect(await screen.findByText("Explorer drag-and-drop is unavailable")).toBeVisible();
+    expect(screen.getByText("Explorer drag-and-drop could not connect.")).toBeVisible();
+    expect(screen.getByText("Explorer drag-and-drop is unavailable. Use the Add actions below.")).toBeVisible();
+    expect(document.querySelector("[data-live-region='drop']")).toHaveTextContent(
+      "Explorer drag-and-drop is unavailable. Explorer drag-and-drop could not connect.",
+    );
+    expect(screen.queryByText("The dropped items could not be added")).toBeNull();
+    const addFiles = screen.getByRole("button", { name: "Add files…" });
+    expect(addFiles).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeEnabled();
+    expect(api.rosterReads()).toBe(1);
+
+    const retry = screen.getByRole("button", { name: "Try connecting again" });
+    retry.focus();
+    fireEvent.click(retry, { detail: 0 });
+    expect(addFiles).toHaveFocus();
+    expect(screen.queryByText("Explorer drag-and-drop is unavailable")).toBeNull();
+    expect(screen.getByText("Connecting Explorer drag-and-drop…")).toBeVisible();
+
+    await act(async () => {
+      retryRegistration.resolve(() => undefined);
+      await retryRegistration.promise;
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Drop mzML files or folders anywhere in this window.")).toBeVisible();
+      expect(api.rosterReads()).toBe(2);
+    });
+
+    act(() => {
+      recoveredListener?.({ sequence: 1, state: { status: "hovering", itemCount: 1 } });
+    });
+    expect(document.querySelector("[data-drop-overlay='hovering']")).toHaveTextContent(
+      "Release to inspect and add 1 dropped item.",
+    );
+    expect(document.querySelector("[data-live-region='drop']")).toHaveTextContent(
+      "Release to inspect and add 1 dropped item.",
+    );
+    act(() => {
+      recoveredListener?.({
+        sequence: 2,
+        state: { status: "importing", operationId: "recovered-drop", itemCount: 1 },
+      });
+      recoveredListener?.({
+        sequence: 3,
+        state: {
+          status: "completed",
+          operationId: "recovered-drop",
+          result: renderedDropResult(),
+        },
+      });
+    });
+    expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
+    expect(screen.getByText("Added 1 file.")).toBeVisible();
+  });
+
+  it("does not turn a real pointer reconnect into Drop keyboard focus debt", async () => {
+    const retryRegistration = deferred<() => void>();
+    let attempts = 0;
+    const transport: WorkspaceDropTransport = {
+      subscribe: () => {
+        attempts += 1;
+        return attempts === 1
+          ? Promise.reject(previewError({ kind: "drop_subscription_failed" }))
+          : retryRegistration.promise;
+      },
+    };
+    renderApp(createFakePreviewApi({ availability: unavailableBackend }), transport);
+    const retry = await screen.findByRole("button", { name: "Try connecting again" });
+    const addFiles = screen.getByRole("button", { name: "Add files…" });
+    const focusing = vi.spyOn(addFiles, "focus");
+
+    fireEvent.pointerDown(retry);
+    retry.focus();
+    fireEvent.click(retry, { detail: 1 });
+
+    expect(document.body).toHaveFocus();
+    expect(addFiles).not.toHaveFocus();
+    expect(focusing).not.toHaveBeenCalled();
+  });
+});
+
 /**
  * Names the visible notice rather than the polite region that mirrors it.
  *
@@ -1415,10 +1754,10 @@ describe("the session workspace roster", () => {
     renderApp(api);
     const regions = () => [...document.querySelectorAll("[aria-live='polite']")];
     await screen.findByRole("button", { name: "Add files…" });
-    // Four, all mounted for the life of the application: what the viewer is
-    // doing, what the search found, what the last workspace action did, and
-    // whether a folder scan is running.
-    expect(regions()).toHaveLength(4);
+    // Five, all mounted for the life of the application: what the viewer is
+    // doing, what the search found, what the last workspace action did,
+    // whether a folder scan is running, and what native drop is doing.
+    expect(regions()).toHaveLength(5);
 
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
@@ -1428,7 +1767,7 @@ describe("the session workspace roster", () => {
       );
     });
     // The same four regions, with new text in one of them.
-    expect(regions()).toHaveLength(4);
+    expect(regions()).toHaveLength(5);
   });
 
   it("does not claim the session is empty before its list has been read", async () => {
@@ -1753,7 +2092,7 @@ describe("the session workspace roster", () => {
     renderApp(api);
     await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
     const regions = () => [...document.querySelectorAll("[aria-live='polite']")];
-    expect(regions()).toHaveLength(4);
+    expect(regions()).toHaveLength(5);
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC" },
@@ -1766,7 +2105,7 @@ describe("the session workspace roster", () => {
     // A search that found nothing is not an empty workspace, and the two must
     // not sound alike.
     expect(spoken).not.toContain("The workspace is empty.");
-    expect(regions()).toHaveLength(4);
+    expect(regions()).toHaveLength(5);
   });
 
   it("says the search was cleared rather than falling silent", async () => {

@@ -18,8 +18,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import appStyles from "../app/app.css?raw";
 import { App } from "../app/App";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
+import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTransport";
 import {
   createFakePreviewApi,
+  createFakeWorkspaceDropTransport,
   secondFile,
   selectedFile,
   thirdFile,
@@ -162,6 +164,21 @@ describe("narrow desktop layout rules", () => {
       ),
     ).toBe("30px");
   });
+
+  it("keeps the drop overlay out of layout and unable to intercept the pointer", () => {
+    const app = mountStyles(appStyles);
+    const shell = requireStyleRule(app, ".app-shell").style;
+    const overlay = requireStyleRule(app, ".workspace-drop-overlay").style;
+
+    expect(shell.getPropertyValue("position")).toBe("relative");
+    expect(shell.getPropertyValue("isolation")).toBe("isolate");
+    expect(overlay.getPropertyValue("position")).toBe("absolute");
+    expect(overlay.getPropertyValue("inset")).toBe("0px");
+    expect(overlay.getPropertyValue("pointer-events")).toBe("none");
+    expect(shell.getPropertyValue("grid-template-rows")).toBe(
+      "auto auto minmax(0, 1fr)",
+    );
+  });
 });
 
 describe("narrow desktop layout markup", () => {
@@ -172,9 +189,11 @@ describe("narrow desktop layout markup", () => {
     // action, and the workspace actions live in one place rather than being
     // repeated in a toolbar.
     render(
-      <PreviewApiProvider value={createFakePreviewApi()}>
-        <App />
-      </PreviewApiProvider>,
+      <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+        <PreviewApiProvider value={createFakePreviewApi()}>
+          <App />
+        </PreviewApiProvider>
+      </WorkspaceDropTransportProvider>,
     );
 
     expect(await screen.findAllByRole("button", { name: "Add files…" })).toHaveLength(1);
@@ -188,9 +207,11 @@ describe("narrow desktop layout markup", () => {
   it("states the whole empty-state sentence rather than a shortened one", async () => {
     // #24 reported this text clipped. Nothing may fix that by saying less.
     render(
-      <PreviewApiProvider value={createFakePreviewApi()}>
-        <App />
-      </PreviewApiProvider>,
+      <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+        <PreviewApiProvider value={createFakePreviewApi()}>
+          <App />
+        </PreviewApiProvider>
+      </WorkspaceDropTransportProvider>,
     );
 
     expect(
@@ -392,14 +413,16 @@ describe("narrow desktop layout markup", () => {
     // holds it is quiet chrome, and the roster shows the same count in full
     // underneath; as the account of a search it is the only thing that says so.
     render(
-      <PreviewApiProvider
-        value={createFakePreviewApi({
-          initialDatasets: [selectedFile, secondFile, thirdFile],
-          availability: unavailableBackend,
-        })}
-      >
-        <App />
-      </PreviewApiProvider>,
+      <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+        <PreviewApiProvider
+          value={createFakePreviewApi({
+            initialDatasets: [selectedFile, secondFile, thirdFile],
+            availability: unavailableBackend,
+          })}
+        >
+          <App />
+        </PreviewApiProvider>
+      </WorkspaceDropTransportProvider>,
     );
     const line = () => document.querySelector("#dataset-roster-matches");
     await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });

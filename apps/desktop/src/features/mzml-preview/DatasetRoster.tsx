@@ -51,6 +51,8 @@ export interface DatasetRosterProps {
    * one.
    */
   readonly folderBusy: boolean;
+  /** Whether a native Explorer drop is still being inspected. */
+  readonly dropBusy: boolean;
   /** Whether an explicit preview may be started right now. */
   readonly canPreview: boolean;
   /**
@@ -80,6 +82,11 @@ export interface DatasetRosterProps {
   /** Increments when focus should return to the `Add files…` action. */
   readonly focusAddFilesToken: number;
   /**
+   * Increments when a focused transient Drop recovery action should return to
+   * the durable `Add files…` action.
+   */
+  readonly restoreAddFilesFocusToken: number;
+  /**
    * Increments when a focused transient folder-error action should return to
    * the durable `Add mzML folder…` action, immediately or after a retry settles.
    */
@@ -98,6 +105,8 @@ const ROW_STATE_LABEL: Record<RowPresentation, string> = {
 
 const CLEAR_DURING_FOLDER_IMPORT_DESCRIPTION =
   "Clear list also prevents the pending folder import from adding files.";
+const CLEAR_DURING_DROP_IMPORT_DESCRIPTION =
+  "Clear list also prevents the pending drop from adding files.";
 
 /**
  * The session's workspace: every file it holds, and the actions that curate it.
@@ -119,11 +128,13 @@ export function DatasetRoster({
   canAddFiles,
   canAddFolder,
   folderBusy,
+  dropBusy,
   canPreview,
   canMutate,
   canReloadRoster,
   rosterSettlementToken,
   focusAddFilesToken,
+  restoreAddFilesFocusToken,
   restoreAddFolderFocusToken,
 }: DatasetRosterProps) {
   const listRef = useRef<HTMLUListElement | null>(null);
@@ -135,9 +146,19 @@ export function DatasetRoster({
   /** Advances whenever a real control becomes the keyboard's newer destination. */
   const focusOwnershipToken = useRef(0);
   const seenFocusToken = useRef(focusAddFilesToken);
+  const seenRestoreAddFilesFocusToken = useRef(restoreAddFilesFocusToken);
   const seenRestoreAddFolderFocusToken = useRef(restoreAddFolderFocusToken);
   /** Whether the keyboard is still owed to `Add files…` from an emptied list. */
   const focusAddFilesOwed = useRef(false);
+  /**
+   * Whether `Add files…` was the last real keyboard destination before a Drop
+   * disabled it. A browser may blur a disabled button to `body` without a new
+   * `focusin`, so that blur must not erase the ownership record.
+   */
+  const addFilesOwnsKeyboard = useRef(false);
+  const previousDropBusy = useRef(dropBusy);
+  const dropAddFilesFocusDebt = useRef<{ readonly focusOwnershipToken: number } | null>(null);
+  const restoreAddFilesFocusDebt = useRef<{ readonly focusOwnershipToken: number } | null>(null);
   /**
    * Whether the keyboard is on `Clear list`, which can go out from under it.
    *
@@ -207,12 +228,13 @@ export function DatasetRoster({
    * clears the rows that arrived. With neither, it would be a control that
    * cannot act.
    */
-  const clearListOffered = state.datasets.length > 0 || folderBusy;
+  const clearListOffered = state.datasets.length > 0 || folderBusy || dropBusy;
 
   useEffect(() => {
     const recordDestination = (event: FocusEvent) => {
       if (event.target instanceof HTMLElement && event.target !== document.body) {
         focusOwnershipToken.current += 1;
+        addFilesOwnsKeyboard.current = event.target === addFilesRef.current;
         if (event.target === clearListRef.current && clearFocusDebt.current !== null) {
           // Returning to the same re-enabled action renews its ownership. A
           // different destination still leaves a mismatch that permanently
@@ -384,6 +406,31 @@ export function DatasetRoster({
     }
   }, []);
 
+  const payOwnedAddFilesDebt = useCallback(
+    (debtRef: { current: { readonly focusOwnershipToken: number } | null }) => {
+      const debt = debtRef.current;
+      if (debt === null) {
+        return;
+      }
+      if (focusOwnershipToken.current !== debt.focusOwnershipToken) {
+        debtRef.current = null;
+        return;
+      }
+      const control = addFilesRef.current;
+      if (control === null || control.disabled) {
+        // Keep both the debt and its ownership token until the destination can
+        // actually receive focus. A newer destination can still cancel it.
+        return;
+      }
+      debtRef.current = null;
+      const active = document.activeElement;
+      if (active === null || active === document.body) {
+        control.focus({ preventScroll: true });
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     if (focusAddFilesToken === seenFocusToken.current) {
       return;
@@ -393,13 +440,47 @@ export function DatasetRoster({
     payAddFilesDebt();
   }, [focusAddFilesToken, payAddFilesDebt]);
 
+  useEffect(() => {
+    if (restoreAddFilesFocusToken === seenRestoreAddFilesFocusToken.current) {
+      return;
+    }
+    seenRestoreAddFilesFocusToken.current = restoreAddFilesFocusToken;
+    restoreAddFilesFocusDebt.current = {
+      focusOwnershipToken: focusOwnershipToken.current,
+    };
+    payOwnedAddFilesDebt(restoreAddFilesFocusDebt);
+  }, [payOwnedAddFilesDebt, restoreAddFilesFocusToken]);
+
+  /**
+   * Restores a Drop-disabled `Add files…` only when it owned the keyboard and
+   * no real destination was chosen while Rust worked. The ownership token is
+   * what keeps a later-disappearing destination from reviving an old debt.
+   */
+  useEffect(() => {
+    const wasBusy = previousDropBusy.current;
+    previousDropBusy.current = dropBusy;
+    if (!wasBusy && dropBusy) {
+      dropAddFilesFocusDebt.current = addFilesOwnsKeyboard.current
+        ? { focusOwnershipToken: focusOwnershipToken.current }
+        : null;
+      return;
+    }
+    if (!wasBusy || dropBusy) {
+      return;
+    }
+
+    payOwnedAddFilesDebt(dropAddFilesFocusDebt);
+  }, [dropBusy, payOwnedAddFilesDebt]);
+
   // The other half, keyed on the one thing that can pay an outstanding debt.
   // Deliberately not a per-commit effect: this component renders a thousand
   // rows, and work that runs after every one of them for a debt that is almost
   // never outstanding is a cost paid a thousand times for nothing.
   useEffect(() => {
     payAddFilesDebt();
-  }, [canAddFiles, payAddFilesDebt]);
+    payOwnedAddFilesDebt(dropAddFilesFocusDebt);
+    payOwnedAddFilesDebt(restoreAddFilesFocusDebt);
+  }, [canAddFiles, payAddFilesDebt, payOwnedAddFilesDebt]);
 
   /**
    * Pays the focus debt created when Clear disables its focused action.
@@ -418,6 +499,7 @@ export function DatasetRoster({
     if (
       !canMutate ||
       folderBusy ||
+      dropBusy ||
       rosterSettlementToken === debt.rosterSettlementToken
     ) {
       return;
@@ -441,7 +523,7 @@ export function DatasetRoster({
     keyboardOnClearList.current = false;
     focusAddFilesOwed.current = true;
     payAddFilesDebt();
-  }, [canMutate, folderBusy, payAddFilesDebt, rosterSettlementToken]);
+  }, [canMutate, dropBusy, folderBusy, payAddFilesDebt, rosterSettlementToken]);
 
   /**
    * Catches the keyboard when `Clear list` goes out from under it.
@@ -665,7 +747,7 @@ export function DatasetRoster({
     // is about to change. It says the list is not settled without claiming to
     // know which half of the operation is running.
     <section
-      aria-busy={folderBusy}
+      aria-busy={folderBusy || dropBusy}
       aria-labelledby="dataset-roster-heading"
       className="panel dataset-roster-panel"
     >
@@ -808,7 +890,12 @@ export function DatasetRoster({
         {clearListOffered ? (
           <button
             aria-describedby={
-              folderBusy ? "clear-during-folder-import-description" : undefined
+              [
+                folderBusy ? "clear-during-folder-import-description" : null,
+                dropBusy ? "clear-during-drop-import-description" : null,
+              ]
+                .filter((value): value is string => value !== null)
+                .join(" ") || undefined
             }
             className="secondary-button"
             disabled={!canMutate}
@@ -843,6 +930,11 @@ export function DatasetRoster({
         {folderBusy ? (
           <span className="visually-hidden" id="clear-during-folder-import-description">
             {CLEAR_DURING_FOLDER_IMPORT_DESCRIPTION}
+          </span>
+        ) : null}
+        {dropBusy ? (
+          <span className="visually-hidden" id="clear-during-drop-import-description">
+            {CLEAR_DURING_DROP_IMPORT_DESCRIPTION}
           </span>
         ) : null}
       </div>

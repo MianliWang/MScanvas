@@ -24,7 +24,7 @@ struct FakeSource {
     /// What each directory hands back, in the order it hands it back.
     entries: HashMap<FileIdentity, Vec<DirectoryEntry>>,
     /// Directories whose enumeration fails.
-    unreadable: Vec<FileIdentity>,
+    unreadable: HashMap<FileIdentity, u64>,
     /// Children whose open fails.
     unopenable: Vec<FileIdentity>,
     /// Children that open as something other than what the parent described.
@@ -58,7 +58,12 @@ impl FakeSource {
     }
 
     fn unreadable(mut self, key: u128) -> Self {
-        self.unreadable.push(identity(key));
+        self.unreadable.insert(identity(key), 0);
+        self
+    }
+
+    fn unreadable_after(mut self, key: u128, entries_inspected: u64) -> Self {
+        self.unreadable.insert(identity(key), entries_inspected);
         self
     }
 
@@ -100,10 +105,11 @@ impl DirectorySource for FakeSource {
         directory: &Self::Directory,
         limit: u64,
     ) -> Result<Vec<DirectoryEntry>, DiscoveryError> {
-        if self.unreadable.contains(&directory.identity) {
-            return Err(DiscoveryError::new(
-                DiscoveryErrorKind::RootEnumerationFailed,
-            ));
+        if let Some(entries_inspected) = self.unreadable.get(&directory.identity) {
+            return Err(
+                DiscoveryError::new(DiscoveryErrorKind::RootEnumerationFailed)
+                    .with_materialized_entries(*entries_inspected),
+            );
         }
         self.limits_asked.borrow_mut().push(limit);
         let mut entries = self
@@ -431,6 +437,7 @@ fn a_reparse_root_is_refused_before_anything_is_walked() {
     .expect_err("a link root is refused");
 
     assert_eq!(error.kind(), DiscoveryErrorKind::RootReparsePoint);
+    assert_eq!(error.usage(), DiscoveryUsage::default());
 }
 
 #[test]
@@ -524,7 +531,7 @@ fn two_directories_with_one_name_but_different_identities_are_both_walked() {
 #[test]
 fn an_unreadable_root_is_an_error_and_an_unreadable_child_is_a_count() {
     let root_failed = discover(
-        &FakeSource::new().unreadable(1),
+        &FakeSource::new().unreadable_after(1, 2),
         &root(),
         DiscoveryBudget::default(),
     )
@@ -532,6 +539,14 @@ fn an_unreadable_root_is_an_error_and_an_unreadable_child_is_a_count() {
     assert_eq!(
         root_failed.kind(),
         DiscoveryErrorKind::RootEnumerationFailed
+    );
+    assert_eq!(
+        root_failed.usage(),
+        DiscoveryUsage {
+            entries_inspected: 2,
+            directories_entered: 1,
+            candidates_collected: 0,
+        }
     );
 
     // One unreadable subdirectory is not a reason to discard the rest.
@@ -543,6 +558,21 @@ fn an_unreadable_root_is_an_error_and_an_unreadable_child_is_a_count() {
     );
 
     assert_eq!(located(&result), vec!["good\\kept.mzML"]);
+    assert_eq!(result.summary().inaccessible_entry_count, 1);
+    assert!(!result.is_complete());
+}
+
+#[test]
+fn a_nested_enumeration_error_keeps_prior_candidates_and_charges_partial_usage() {
+    let result = walk(
+        &FakeSource::new()
+            .directory(1, vec![file("kept.mzML", 2), directory("unreadable", 3)])
+            .unreadable_after(3, 2),
+    );
+
+    assert_eq!(located(&result), vec!["kept.mzML"]);
+    assert_eq!(result.summary().entries_inspected, 4);
+    assert_eq!(result.summary().directories_entered, 2);
     assert_eq!(result.summary().inaccessible_entry_count, 1);
     assert!(!result.is_complete());
 }

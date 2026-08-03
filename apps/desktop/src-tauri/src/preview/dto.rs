@@ -259,6 +259,106 @@ pub struct FolderIngestionResultDto {
     pub discovery: FolderDiscoverySummaryDto,
 }
 
+/// One Rust-issued claim on the current document's bounded drop subscriber.
+///
+/// The identifier is opaque and path-free. It grants no filesystem authority
+/// and is accepted only once while the document epoch that issued it remains
+/// current.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceDropSubscriptionReservationDto {
+    pub reservation_id: String,
+}
+
+/// One bounded, path-free native-drop update sent to the current document.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceDropUpdateDto {
+    /// A checked, session-scoped ordering key. It is not a workspace
+    /// generation and carries no filesystem authority.
+    pub sequence: u64,
+    pub state: WorkspaceDropStateDto,
+}
+
+/// The complete native-drop state vocabulary exposed to the webview.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum WorkspaceDropStateDto {
+    Idle,
+    #[serde(rename_all = "camelCase")]
+    Hovering {
+        item_count: usize,
+    },
+    #[serde(rename_all = "camelCase")]
+    Importing {
+        /// Decimal text keeps a Rust `u64` exact across JavaScript's number
+        /// boundary while revealing no internal generation or token.
+        operation_id: String,
+        item_count: usize,
+    },
+    #[serde(rename_all = "camelCase")]
+    Completed {
+        operation_id: String,
+        result: DropIngestionResultDto,
+    },
+    #[serde(rename_all = "camelCase")]
+    Failed {
+        operation_id: String,
+        error: PreviewErrorDto,
+    },
+    Rejected {
+        reason: DropRejectionReasonDto,
+    },
+}
+
+/// Why one native drop was refused before any of its paths were retained.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub enum DropRejectionReasonDto {
+    #[serde(rename = "drop_busy")]
+    DropBusy,
+}
+
+/// Which shared native-drop budget prevented the remaining roots from being
+/// fully described.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+pub enum DropScanLimitDto {
+    Roots,
+    Depth,
+    Entries,
+    Directories,
+    Candidates,
+}
+
+/// Aggregate facts about a mixed native drop. Root names, paths, traversal
+/// counts and identities remain private to Rust.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DropIngestionSummaryDto {
+    /// The authoritative workspace was empty at the drop's generation claim.
+    /// This is the proof the frontend must use for the one allowed automatic
+    /// preview; it must not infer the fact from a later roster.
+    pub workspace_was_empty: bool,
+    pub complete: bool,
+    pub top_level_item_count: usize,
+    pub skipped_reparse_root_count: u64,
+    pub inaccessible_root_count: u64,
+    pub remote_root_count: u64,
+    pub unsupported_root_count: u64,
+    pub skipped_reparse_entry_count: u64,
+    pub inaccessible_entry_count: u64,
+    pub limits_reached: Vec<DropScanLimitDto>,
+}
+
+/// The authoritative result of one mixed native drop.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DropIngestionResultDto {
+    pub roster: WorkspaceRosterDto,
+    pub outcomes: Vec<WorkspaceAddOutcomeDto>,
+    pub summary: DropIngestionSummaryDto,
+}
+
 /// A path-free, single-use claim on one pending folder import.
 ///
 /// The identifier correlates the two narrow commands needed to survive a
@@ -292,6 +392,15 @@ pub fn invalid_folder_import_reservation() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "invalid_folder_import_reservation",
         "That folder import is no longer available. Start it again.",
+        true,
+    )
+}
+
+/// What an unknown, replaced, spent or old-document drop subscription answers.
+pub fn invalid_workspace_drop_subscription() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "invalid_workspace_drop_subscription",
+        "That workspace drop subscription is no longer available. Start it again.",
         true,
     )
 }

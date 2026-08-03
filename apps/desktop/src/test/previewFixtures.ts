@@ -9,6 +9,8 @@
  */
 
 import type { PreviewApi } from "../features/mzml-preview/api";
+import type { WorkspaceDropUpdate } from "../features/mzml-preview/contracts";
+import type { WorkspaceDropTransport } from "../features/mzml-preview/dropTransport";
 import type {
   BackendAvailability,
   FolderDiscoverySummary,
@@ -23,6 +25,30 @@ import type {
   WorkspaceRemoveResult,
   WorkspaceRoster,
 } from "../features/mzml-preview/contracts";
+
+export interface FakeWorkspaceDropTransport extends WorkspaceDropTransport {
+  emit(update: WorkspaceDropUpdate): void;
+  subscriberCount(): number;
+}
+
+/** A deterministic, path-free Channel substitute for hook and rendered tests. */
+export function createFakeWorkspaceDropTransport(): FakeWorkspaceDropTransport {
+  const subscribers = new Set<(update: WorkspaceDropUpdate) => void>();
+  return {
+    subscribe: async (onUpdate) => {
+      subscribers.add(onUpdate);
+      return () => {
+        subscribers.delete(onUpdate);
+      };
+    },
+    emit: (update) => {
+      for (const subscriber of subscribers) {
+        subscriber(update);
+      }
+    },
+    subscriberCount: () => subscribers.size,
+  };
+}
 
 export const availableBackend: BackendAvailability = {
   state: "available",
