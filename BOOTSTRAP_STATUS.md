@@ -2078,7 +2078,7 @@ above remain the native and layout evidence, and the picker was not reopened.
 ## Windows Explorer drag-and-drop, 2026-08-02
 
 M1.5 is implemented at final application-code head
-`79f31a4a308cce3675eed4a4294a3a7f18ebfdd5`. The registered Tauri surface is
+`75fb9dd6d091c351239c5dff7bc386bdaafafaa6`. The registered Tauri surface is
 exactly thirteen narrow commands. The main-window capability permissions array
 remains empty, no `core:event` permission was added, and the frontend imports
 neither `@tauri-apps/api/event` nor a `tauri://drag-*` event. Cargo and package
@@ -2153,12 +2153,13 @@ one preview only when Rust says the prior workspace was empty. Collision-only
 context affects neither search nor sort. Shared entry/directory limit notices
 name the collective drop ledger rather than blaming one folder.
 
-The final automated suites at that application-code head passed 551 Rust tests
+The final automated suites at final application-code head
+`75fb9dd6d091c351239c5dff7bc386bdaafafaa6` passed 551 Rust tests
 (544 passed, 7 ignored, 0 failed) and 464 frontend tests across 17 files. The
 wire/privacy contracts enumerate every forbidden path-bearing field, keep
 candidate paths in private Rust types with manual opaque `Debug`, and bound a
 notice to three basename-only details. Mutation evidence killed the original 36
-required faults plus 16 repair faults, with one targeted discriminating test per
+required faults plus 19 repair faults, with one targeted discriminating test per
 reachable mutant, and restored every target hash and worktree status afterwards.
 The first repair set removes current-document reservation ownership, PageLoad
 queued-event invalidation, failed-root usage debit, subscription-before-roster
@@ -2167,8 +2168,11 @@ pointer/keyboard distinction, and Begin-to-Claim serialization. The second set
 removes the current-realm challenge, Begin/Claim epoch rechecks, per-subscription
 realm authority capture, first-added Drop focus, shared-ledger notice wording,
 the main-Webview gate, and the initialization script's safe concatenation
-separator. Mutations 11, 32 and both forms of 33 were rerun after their authority
-paths changed. A first candidate for 11 and a field-only epoch candidate were
+separator. The third set forces a singular hover count through the plural label
+and independently restores entries and directories notices that require
+multiple folders instead of naming the drop-wide ledger. Mutations 11, 32 and
+both forms of 33 were rerun after their authority paths changed. A first
+candidate for 11 and a field-only epoch candidate were
 equivalent under the restored guards and were recorded rather than counted. In
 particular, mutation 24 proved a stale terminal cannot install a roster, mutation
 25 proved it cannot replace the notice, and mutation 29 proved collision context
@@ -2179,11 +2183,11 @@ Rendered verification used an ephemeral external Vite harness importing the
 exact production App, PreviewWorkspace and CSS with a fake implementation of
 the same path-free transport. At exact application-code head
 `79f31a4a308cce3675eed4a4294a3a7f18ebfdd5`, Chrome 150.0.7871.187 passed
-333/333 assertions across 32 states and 32 visually inspected screenshots. The
-states cover connecting, unavailable, Retry pending, recovered idle, hovering,
-importing, completed, incomplete, rejected, long subscription failure,
-keyboard-owned and pointer-owned focus transitions, target removal, and
-first-added-row focus and range anchoring.
+333/333 assertions across 32 states and captured 32 screenshots; four
+representative screenshots were visually inspected. The states cover
+connecting, a long subscription-unavailable error, recovered loaded idle,
+hovering, importing, completed, keyboard-owned and pointer-owned focus
+transitions, target removal, and first-added-row focus and range anchoring.
 
 | Viewport | Workspace | Roster (scroll max/reached) | Table | Spectrum panel (scroll max/reached) | Plot |
 | --- | --- | --- | --- | --- | --- |
@@ -2209,6 +2213,23 @@ temporary report SHA-256 was
 `8E833FC862AA54AC6512D1CDC63288278130C29AAB085630DF4372D54DF436C4`;
 Chrome, Vite, port 41791, the verified junction and the temporary directory were
 all closed or removed.
+
+At final application-code head
+`75fb9dd6d091c351239c5dff7bc386bdaafafaa6`, a focused third-repair rendered run
+then passed 49/49 assertions across four consecutive 900x700 states and four
+directly inspected screenshots. It proved singular `1 dropped item`, plural
+`2 dropped items`, a busy rejection that retained the importing overlay, and an
+incomplete no-result notice whose visible and permanent live-region text named
+both shared limits as `this drop reached` without requiring multiple folders.
+Every overlay again measured exactly `(0, 0, 900, 700)`, was `aria-hidden`, used
+`pointer-events: none`, had no interactive descendants, lost the center hit
+test, and produced zero document overflow. After adding a data favicon to the
+external harness, the only remediation run recorded zero console warnings or
+errors, page errors, request failures, and HTTP responses at or above 400. All
+four screenshots were inspected; Chrome, Vite, port 5173, in-memory screenshots
+and the temporary directory were then closed or removed. The preceding attempt,
+whose resource URL was not captured, failed the strict console gate on one 404
+and is not counted as evidence.
 
 No physical Windows Explorer mouse gesture was performed. Native adapter,
 filesystem, Channel and rendered behavior are automated evidence with distinct

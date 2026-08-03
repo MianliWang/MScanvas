@@ -265,9 +265,9 @@ M1.5 is accepted with automated evidence for:
   Tauri/Wry source and initialization-order evidence plus deterministic source,
   epoch, and frontend-header tests;
 - the production frontend through a fake path-free transport;
-- rendered loading, empty, hover, importing, completed, incomplete, rejected,
-  connecting, unavailable, Retry, keyboard ownership, focus handoff,
-  live-region, and recovery states; and
+- rendered connecting, long subscription-unavailable, recovered loaded idle,
+  hover, importing, completed, incomplete no-result, busy rejection, keyboard
+  ownership, focus handoff, live-region, and recovery states; and
 - source, capability, command-count, dependency, lockfile, and privacy contracts.
 
 Rendered evidence uses an ephemeral loopback-only Vite harness outside the
