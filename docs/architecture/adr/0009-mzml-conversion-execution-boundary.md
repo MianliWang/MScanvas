@@ -169,6 +169,12 @@ name to remove. The plan therefore offers an explicit `reclaim_staging_area`,
 which the caller invokes when it decides no run of that plan is in flight.
 Nothing adopts a staging area silently.
 
+The marker is created exclusively and follows nothing. The staging directory is
+new, but it sits in a root another process may write to, so an entry can appear
+at the marker's name between the directory being made and the marker being
+written; a plain write would follow a link there and truncate whatever it
+pointed at, which nothing in this boundary could put back.
+
 Reclamation is bounded by ownership rather than by name. A staging area carries
 a marker file written as it is created, and a directory without that marker is
 refused untouched however it is named — the staging name is deterministic, so a

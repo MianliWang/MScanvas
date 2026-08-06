@@ -830,6 +830,31 @@ impl StagingReclaimError {
     }
 }
 
+/// Writes the ownership marker, creating it exclusively and following nothing.
+///
+/// A plain write would follow a link. The staging directory is new, but it sits
+/// in a root another process may write to, so an entry can appear at the marker's
+/// name between the directory being created and the marker being written — and a
+/// followed link would truncate whatever it pointed at, which could be an output
+/// the user already had or the acquisition itself. Neither the guard nor
+/// reclamation could put that back.
+fn create_owner_marker(marker: &Path) -> io::Result<()> {
+    use std::io::Write;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        /// Refuse a reparse point rather than traverse it.
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options.open(marker)?.write_all(STAGING_OWNER_MAGIC)
+}
+
 enum StagingOwnership {
     Absent,
     Owned,
@@ -963,7 +988,7 @@ impl StagingArea {
             path,
             discarded: false,
         };
-        std::fs::write(area.path.join(STAGING_OWNER_MARKER), STAGING_OWNER_MAGIC)
+        create_owner_marker(&area.path.join(STAGING_OWNER_MARKER))
             .and_then(|()| std::fs::create_dir(area.output_directory()))
             .map_err(|error| ConversionRunFailure::StagingNotCreated { kind: error.kind() })?;
         Ok(area)

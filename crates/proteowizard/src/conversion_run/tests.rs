@@ -869,6 +869,40 @@ fn a_source_that_changed_before_the_run_is_never_converted() {
     assert!(entry_names(&root).is_empty());
 }
 
+/// The staging directory is new, but it sits in a root another process may write
+/// to, so the marker has to be created exclusively rather than written over
+/// whatever is at its name — a plain write would follow a link and truncate the
+/// target, and nothing here could put that back.
+#[test]
+fn the_ownership_marker_is_created_exclusively() {
+    let directory = TestDirectory::new();
+    let marker = directory.path().join("marker");
+
+    create_owner_marker(&marker).expect("write the marker");
+    assert_eq!(
+        fs::read(&marker).expect("read the marker"),
+        STAGING_OWNER_MAGIC
+    );
+
+    let refused = create_owner_marker(&marker).expect_err("an existing entry is refused");
+    assert_eq!(refused.kind(), io::ErrorKind::AlreadyExists);
+    assert_eq!(
+        fs::read(&marker).expect("read the marker"),
+        STAGING_OWNER_MAGIC,
+        "the refused creation truncated nothing"
+    );
+
+    // The same refusal protects an entry that is not the marker at all.
+    let occupied = directory.path().join("occupied");
+    fs::write(&occupied, b"something the user already had").expect("write occupied");
+    let refused = create_owner_marker(&occupied).expect_err("an existing entry is refused");
+    assert_eq!(refused.kind(), io::ErrorKind::AlreadyExists);
+    assert_eq!(
+        fs::read(&occupied).expect("read occupied"),
+        b"something the user already had"
+    );
+}
+
 /// A plan admits a destination root as an object too. A plan can outlive the
 /// directory the caller chose, so nothing may be created under whatever now
 /// answers to its name.

@@ -2331,7 +2331,7 @@ Validation on the exact head: `cargo fmt --all --check`,
 `cargo test --locked --workspace --all-targets`, `python -B scripts/check_repo.py`,
 `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
 
-Twenty-seven tests were added, all deterministic and none reaching a backend: a
+Twenty-eight tests were added, all deterministic and none reaching a backend: a
 substituted runner receives the real planned command, so what it writes and
 where is decided by the boundary under test rather than by the test. They cover
 the derived name and the fixed plan; the argv the backend is given and that it
@@ -2356,7 +2356,7 @@ substituted runner still discarding the staging directory; a capture-failure
 stream label a substituted runner set to a path being projected onto a closed
 set rather than rendered; and a staging directory that cannot be removed being
 reported beside the primary outcome rather than instead of it, proved by holding
-the staged file open with a share mode that refuses deletion. Twenty-six run
+the staged file open with a share mode that refuses deletion. Twenty-seven run
 on every platform; the residue proof is Windows-only, as the mechanism it
 exercises is.
 
@@ -2368,7 +2368,11 @@ invokes when it decides no run is in flight; nothing adopts a staging area
 silently.
 
 That way out is bounded by ownership rather than by name, because deleting a
-tree on the strength of a name is how unrelated data gets destroyed. A staging
+tree on the strength of a name is how unrelated data gets destroyed. The marker
+itself is created exclusively and follows nothing: the staging directory is new,
+but it sits in a root another process may write to, and a plain write would have
+followed a link planted at the marker's name and truncated whatever it pointed
+at — which could be an output the user already had, or the acquisition itself. A staging
 area carries a marker written as it is created, and a directory without it is
 refused untouched however it is named. The marker is why the staging area has an
 inner directory the backend writes into: the integrity contract requires the
