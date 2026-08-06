@@ -648,7 +648,7 @@ fn validate_paths(
     Ok(())
 }
 
-fn validate_output_file_name(
+pub(crate) fn validate_output_file_name(
     output_file_name: &OsStr,
     format: OpenFormat,
 ) -> Result<(), PlanError> {

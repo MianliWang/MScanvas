@@ -344,7 +344,7 @@ impl InstalledHelpCapabilities {
         )
     }
 
-    fn parse_bound_capture(
+    pub(crate) fn parse_bound_capture(
         tool: BackendTool,
         executable: PathBuf,
         executable_sha256: Sha256Digest,
