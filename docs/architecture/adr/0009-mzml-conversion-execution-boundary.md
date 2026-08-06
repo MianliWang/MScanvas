@@ -1,6 +1,7 @@
 # ADR 0009 — mzML conversion execution and output-safety boundary
 
-- Status: Accepted for the private M3.0 conversion foundation; every user-visible
+- Status: Accepted for the private M3.0 conversion foundation; amended 2026-08-06
+  by M3.0.1 for handle-bound finalization; every user-visible
   conversion surface, every additional source posture and every queue concern
   separately gated
 - Date: 2026-08-06
@@ -126,10 +127,10 @@ scratch or sidecar file `msconvert` writes into its own working directory would
 turn a faithful conversion into a rejection. No real-backend evidence exists
 either way; it is recorded as a gate below rather than assumed benign.
 
-Finalization is a no-clobber move of the validated output onto its final name:
-`MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` on Windows, a hard link
-followed by cleanup elsewhere. Both fail rather than replace. Staging and
-destination share a filesystem by construction, so the move is a rename.
+Finalization is a no-clobber move of the validated output onto its final name.
+Both fail rather than replace. Staging and destination share a filesystem by
+construction, so the move is a rename. The M3.0.1 amendment below replaces the
+mechanism this originally used with one bound to the validated object.
 
 Behavior is defined for every branch:
 
@@ -148,19 +149,65 @@ reaches the destination root under any name. The staging directory is owned for
 the lifetime of the run rather than discarded by a call, so an unwind through
 the caller-supplied runner cannot leave it behind.
 
-Two windows remain open and are stated rather than claimed closed. The
-validated bytes are not re-bound to a handle across the move, so what takes the
-final name is provably the file that was judged only in the absence of an
-outside writer with access to the destination root. And cleanup removes the
-staging directory by path rather than by identity, so a directory replaced at
-that path between creation and cleanup would be removed instead. Both need an
-actor with write access to the destination root while a run is in flight, and
-this is the same class of window the process boundary beside it already accepts
-and documents rather than a new one. Closing the first properly means
-finalizing through a handle the validation itself held, which changes
-`verify_mzml_conversion`'s contract; a path recheck before the move would only
-narrow it while reading as though it had closed it, so neither is done here and
-the handle-bound finalization is recorded as a follow-up.
+**Amended 2026-08-06 (M3.0.1): finalization is bound to the validated object.**
+
+Validation no longer describes the file it read and let go. Verifying a
+conversion now returns the object itself: one handle, opened once with the
+access a rename needs, which the scan and the digest both read through, carried
+out of the judgement inside a `ValidatedConversionOutput` that owns it. There is
+no constructor that takes a path, no `Clone`, and an opaque `Debug`.
+
+Finalization consumes that value and renames the object the handle names —
+`SetFileInformationByHandle` with `FileRenameInfo`, whose source is the open
+file object rather than any name. On Windows the staged path is never resolved a
+second time and does not need to still mean anything: replacing it after the
+judgement cannot put unjudged bytes under the final name, because the kernel is
+not asked about that name. Outside Windows the standard library offers no
+object-bound rename, so that platform still links from the staged name and the
+guarantee there is narrower; it is not claimed. Consuming the value is also what makes an object finalizable
+once. The prior window is closed rather than narrowed; a recheck before the move
+was considered and rejected, because it would only shorten the interval while
+reading as though it had removed it.
+
+Binding the rename to the object settles which object is finalized, not what is
+in it, so the retained handle also withholds write sharing: another process
+cannot modify the object between the scan and the rename, and an existing writer
+makes the open fail rather than the judgement describe bytes that later changed.
+Read and delete sharing stay, because a reader cannot invalidate a judgement and
+finalization follows the handle rather than the name.
+
+`ReplaceIfExists` stays false, so an occupied final name fails with
+`ERROR_ALREADY_EXISTS` whatever kind of entry holds it — file, directory or
+link — and nothing is replaced.
+
+The target end is bound differently, because the Win32 entry point does not
+support binding it the same way. `FILE_RENAME_INFO` has a `RootDirectory` field
+that the NT contract resolves the new name against, which would make the target
+object-bound too; measured against this stack, kernel32 refuses every non-null
+`RootDirectory` form with `ERROR_INVALID_PARAMETER`, including with the access
+mask the driver documentation recommends — which is why the standard library
+also always passes null. That measurement is a test, so the day it stops being
+true is visible. The target is therefore bound by holding the admitted
+destination root open for the run *without delete sharing*, which makes the
+directory unrenameable and unremovable while a conversion is in flight, so the
+canonical path the final name is formed from cannot be made to denote a
+different directory. The root is held before it is judged rather than after, so
+the identity check decides about the object the run will actually use.
+
+The cost is wider than the root itself and is stated rather than discovered:
+Windows refuses to rename any *ancestor* of a held directory, so for the
+duration of a run the user cannot rename or remove the destination root or any
+folder above it. The lock lasts exactly as long as the run.
+
+**The cleanup-by-path window remains open and is not addressed here.** Cleanup
+still removes the staging directory by name, so a directory replaced at that
+path between creation and cleanup would be removed instead; the ownership marker
+bounds what that can destroy, and closing it properly is separate work.
+
+One ordering became load-bearing and is explicit in the code: the validated
+object is released on every path, including a failed rename, before the staging
+area is torn down. A retained handle inside a directory being removed would turn
+every failure into residue.
 
 Refusing an existing staging area is right, and on its own it is also a trap: a
 single cleanup failure leaves a deterministically named directory that makes
@@ -299,9 +346,8 @@ webview later should be path-free by construction, not by remembering to redact.
 
 ## Follow-up slices
 
-1. Handle-bound finalization: have the integrity check hand back the handle it
-   read, and finalize through that object rather than through its path, so the
-   bytes that take the final name are the bytes that were judged.
+1. Closing the cleanup-by-path window: remove a staging area by an object the
+   run holds rather than by the name it was created under.
 2. A local diagnostic sink for the captured backend streams. The run drops
    them, because putting them in the result is exactly what the privacy rule
    forbids, and the crate's `Redactor`, `ReportableProcessOutput` and

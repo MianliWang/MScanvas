@@ -42,8 +42,8 @@ use crate::command::{
 };
 use crate::conversion::{
     ConversionIntegrityOutcome, ConversionPolicy, ConversionSourceError, ConversionSourceFacts,
-    ValidConversion, capture_conversion_source, conversion_output_file_name,
-    verify_mzml_conversion,
+    ValidConversion, VerifiedConversion, capture_conversion_source, conversion_output_file_name,
+    verify_mzml_conversion_retaining_output,
 };
 use crate::fs_guard::{self, RegularFileError};
 use crate::mzml::{MzmlFacts, MzmlScanError, MzmlScanLimits};
@@ -672,6 +672,10 @@ pub enum ConversionRunFailure {
     /// was created there.
     #[error("the destination root could not be rechecked: {kind}")]
     DestinationRootNotRechecked { kind: io::ErrorKind },
+    /// The admitted destination root could not be held open, so no finalization
+    /// could be bound to it.
+    #[error("the destination root could not be opened: {kind}")]
+    DestinationRootNotOpened { kind: io::ErrorKind },
 }
 
 impl ConversionRunFailure {
@@ -694,6 +698,7 @@ impl ConversionRunFailure {
             Self::SourceNotRehashed => "source_not_rehashed",
             Self::DestinationRootChanged => "destination_root_changed",
             Self::DestinationRootNotRechecked { .. } => "destination_root_not_rechecked",
+            Self::DestinationRootNotOpened { .. } => "destination_root_not_opened",
         }
     }
 
@@ -1059,6 +1064,34 @@ pub fn run_conversion(
     capabilities: &InstalledHelpCapabilities,
     runner: &dyn ProcessRunner,
 ) -> ConversionRunReport {
+    run_admitted(plan, capabilities, runner, || {})
+}
+
+/// The body of a run, with a seam at the one interval this boundary's central
+/// claim is about: after the output has been judged and before it is given the
+/// final name. Production passes an empty hook; a test uses it to replace the
+/// staging path underneath a validated object.
+fn run_admitted(
+    plan: &ConversionPlan,
+    capabilities: &InstalledHelpCapabilities,
+    runner: &dyn ProcessRunner,
+    after_validation: impl FnOnce(),
+) -> ConversionRunReport {
+    // Order matters here. The root is held before it is judged, not after: a
+    // pinned directory cannot be renamed or removed, so the identity check
+    // below decides about the object this run will actually use. Checking first
+    // and opening afterwards would leave a window, and the work between them
+    // includes rehashing the whole source, which is not a moment.
+    let destination_directory = match finalize::DestinationDirectory::open(plan.destination_root())
+    {
+        Ok(directory) => directory,
+        Err(error) => {
+            return ConversionRunReport::settled(ConversionRunOutcome::Failed(
+                ConversionRunFailure::DestinationRootNotOpened { kind: error.kind() },
+            ));
+        }
+    };
+
     // Nothing is inspected, created or launched under a root that is no longer
     // the directory this plan admitted.
     match plan.destination_root_is_current() {
@@ -1109,8 +1142,12 @@ pub fn run_conversion(
         capabilities,
         runner,
         &staging.output_directory(),
-        &destination,
+        &destination_directory,
+        after_validation,
     );
+    // Every handle this run held on anything inside the staging area is gone by
+    // now: the validated output is consumed by finalization and dropped by every
+    // other path, so cleanup is never blocked by this run's own reading.
     let residue = staging.discard();
     ConversionRunReport {
         outcome,
@@ -1160,7 +1197,8 @@ fn run_staged(
     capabilities: &InstalledHelpCapabilities,
     runner: &dyn ProcessRunner,
     staging: &Path,
-    destination: &Path,
+    destination_directory: &finalize::DestinationDirectory,
+    after_validation: impl FnOnce(),
 ) -> (ConversionRunOutcome, Option<BackendRunFacts>) {
     let command = match build_msconvert_command_with_capabilities(
         capabilities,
@@ -1205,17 +1243,17 @@ fn run_staged(
     }
 
     // Exit status is not evidence of a usable document. The judgement below is
-    // the only thing that may unlock the final name.
-    let verified = verify_mzml_conversion(
+    // the only thing that may unlock the final name, and it hands back the very
+    // object it judged rather than a description of one.
+    let validated = match verify_mzml_conversion_retaining_output(
         &plan.source.facts,
         staging,
         plan.output_file_name(),
         plan.compression,
         plan.scan_limits(),
-    );
-    let valid = match verified {
-        ConversionIntegrityOutcome::Valid(valid) => valid,
-        rejected => {
+    ) {
+        VerifiedConversion::Valid(validated) => validated,
+        VerifiedConversion::Rejected(rejected) => {
             return (
                 ConversionRunOutcome::Failed(ConversionRunFailure::OutputRejected(rejected)),
                 backend,
@@ -1223,67 +1261,35 @@ fn run_staged(
         }
     };
 
-    let staged_output = staging.join(plan.output_file_name());
-    if let Err(error) = finalize_output(&staged_output, destination) {
-        return (
+    after_validation();
+
+    // On Windows nothing here can name the staged output: the rename acts on the
+    // handle the scanner read, so replacing the staging path in the interval
+    // above cannot put unjudged bytes under the final name. Only the platform
+    // with no object-bound rename is given that name at all.
+    #[cfg(not(windows))]
+    let finalized = finalize::finalize_validated(
+        *validated,
+        destination_directory,
+        &staging.join(plan.output_file_name()),
+        plan.output_file_name(),
+    );
+    #[cfg(windows)]
+    let finalized =
+        finalize::finalize_validated(*validated, destination_directory, plan.output_file_name());
+    match finalized {
+        Ok(valid) => (ConversionRunOutcome::Finalized(Box::new(valid)), backend),
+        Err(error) => (
             ConversionRunOutcome::Failed(match error.kind() {
                 io::ErrorKind::AlreadyExists => ConversionRunFailure::DestinationAppearedDuringRun,
                 kind => ConversionRunFailure::NotFinalized { kind },
             }),
             backend,
-        );
+        ),
     }
-
-    (ConversionRunOutcome::Finalized(valid), backend)
 }
 
-#[cfg(windows)]
-fn finalize_output(staged: &Path, destination: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        #[link_name = "MoveFileExW"]
-        fn move_file_ex_w(existing: *const u16, new: *const u16, flags: u32) -> i32;
-    }
-
-    fn wide(value: &OsStr) -> io::Result<Vec<u16>> {
-        let mut wide: Vec<u16> = value.encode_wide().collect();
-        if wide.contains(&0) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "a path may not contain an interior null",
-            ));
-        }
-        wide.push(0);
-        Ok(wide)
-    }
-
-    let staged = wide(staged.as_os_str())?;
-    let destination = wide(destination.as_os_str())?;
-    // No MOVEFILE_REPLACE_EXISTING. An existing destination fails the move with
-    // ERROR_ALREADY_EXISTS instead of being replaced, so this call cannot
-    // overwrite whatever holds that name.
-    // SAFETY: both buffers are null-terminated wide strings that outlive the
-    // call, which is the exact argument form MoveFileExW requires.
-    let moved = unsafe { move_file_ex_w(staged.as_ptr(), destination.as_ptr(), 0) };
-    if moved == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn finalize_output(staged: &Path, destination: &Path) -> io::Result<()> {
-    // The standard library offers no no-clobber rename. A hard link fails when
-    // the destination exists, so the final name is never taken from a file that
-    // is already there. Removing the staged name afterwards is cleanup: the
-    // destination is already finalized, and the staging directory is discarded
-    // either way.
-    std::fs::hard_link(staged, destination)?;
-    let _ = std::fs::remove_file(staged);
-    Ok(())
-}
+mod finalize;
 
 #[cfg(test)]
 mod tests;

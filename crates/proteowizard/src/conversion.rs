@@ -12,7 +12,9 @@
 
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
-use std::io;
+use std::fmt;
+use std::fs::File;
+use std::io::{self, BufReader, Seek, SeekFrom};
 use std::path::Path;
 
 use thiserror::Error;
@@ -174,11 +176,51 @@ pub fn inspect_conversion_output(
     format: OpenFormat,
     limits: MzmlScanLimits,
 ) -> Result<ConversionOutputInspection, ConversionOutputRejection> {
+    open_and_inspect_output(
+        output_directory,
+        expected_file_name,
+        format,
+        limits,
+        OutputRetention::Release,
+    )
+    .map(|(_, inspection)| inspection)
+}
+
+/// Whether the object read is kept open afterwards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputRetention {
+    /// Read the output and let it go. The caller wants facts, not the object.
+    Release,
+    /// Read the output through a handle that can also rename it, and keep that
+    /// handle. This is what makes a later finalization address the object that
+    /// was judged rather than whatever the name resolves to next.
+    Retain,
+}
+
+fn open_and_inspect_output(
+    output_directory: &Path,
+    expected_file_name: &OsStr,
+    format: OpenFormat,
+    limits: MzmlScanLimits,
+    retention: OutputRetention,
+) -> Result<(File, ConversionOutputInspection), ConversionOutputRejection> {
     let snapshot = fs_guard::snapshot_output_directory(output_directory)?;
     let entry = require_single_planned_entry(&snapshot, expected_file_name, format)?;
 
     let path = output_directory.join(expected_file_name);
-    inspect_planned_output_file(&path, entry.byte_length(), limits)
+    let (file, observed_byte_length) = match retention {
+        OutputRetention::Release => fs_guard::open_regular_file(&path)?,
+        OutputRetention::Retain => fs_guard::open_regular_file_renameable(&path)?,
+    };
+    // The length the directory listing reported and the length the opened
+    // object reports must agree, exactly as the ordinary guard requires.
+    if observed_byte_length != entry.byte_length() {
+        return Err(ConversionOutputRejection::ChangedDuringInspection);
+    }
+    // The scanned handle is threaded through by ownership rather than merely
+    // sitting beside the reading: what comes back is the object that was read,
+    // and a caller cannot substitute another without visibly discarding this one.
+    inspect_open_output(file, observed_byte_length, limits)
 }
 
 fn require_single_planned_entry<'a>(
@@ -214,22 +256,83 @@ fn require_single_planned_entry<'a>(
     Ok(entry)
 }
 
-fn inspect_planned_output_file(
-    path: &Path,
+/// Reads the facts and the digest of one already-open output.
+///
+/// Both readings come from the same handle. Reopening the name for the digest
+/// would mean the hash could describe a different object than the scan did, and
+/// neither would be provably the object a later finalization moves.
+fn inspect_open_output(
+    mut file: File,
     observed_byte_length: u64,
     limits: MzmlScanLimits,
-) -> Result<ConversionOutputInspection, ConversionOutputRejection> {
+) -> Result<(File, ConversionOutputInspection), ConversionOutputRejection> {
     // The structural scan runs first so an unusable output reports its precise
     // structural reason rather than a hashing failure that merely happened to
     // occur on the way there.
-    let facts = mzml::inspect_file(path, limits).map_err(ConversionOutputRejection::Scan)?;
-    let sha256 =
-        Sha256Digest::calculate_file(path).map_err(|_| ConversionOutputRejection::NotHashed)?;
-    Ok(ConversionOutputInspection {
-        byte_length: observed_byte_length,
-        sha256,
-        facts,
-    })
+    let facts = mzml::inspect_reader(BufReader::with_capacity(64 * 1024, &mut file), limits)
+        .map_err(ConversionOutputRejection::Scan)?;
+    file.seek(SeekFrom::Start(0))
+        .map_err(|_| ConversionOutputRejection::NotHashed)?;
+    let sha256 = Sha256Digest::calculate_reader(&mut file)
+        .map_err(|_| ConversionOutputRejection::NotHashed)?;
+    Ok((
+        file,
+        ConversionOutputInspection {
+            byte_length: observed_byte_length,
+            sha256,
+            facts,
+        },
+    ))
+}
+
+/// A conversion output that passed the integrity contract, still held open
+/// through the exact handle its bytes and mzML facts were read with.
+///
+/// This is the object a finalization must move. Holding it is what makes the
+/// claim "the file that received the final name is the file that was judged"
+/// true by construction rather than by a recheck that only narrows a race.
+/// There is no `Clone`: one validated reading owns one object.
+pub(crate) struct ValidatedConversionOutput {
+    file: File,
+    valid: ValidConversion,
+}
+
+impl ValidatedConversionOutput {
+    /// What was established about the object. Only a test reads this without
+    /// finalizing: production consumes the whole value.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) const fn valid(&self) -> &ValidConversion {
+        &self.valid
+    }
+
+    /// Consumes the validated reading, yielding the handle that read it.
+    ///
+    /// Consuming is the point: an object can be finalized once, and the handle
+    /// is released either way so cleanup is never blocked by this reading.
+    pub(crate) fn into_parts(self) -> (File, ValidConversion) {
+        (self.file, self.valid)
+    }
+}
+
+impl fmt::Debug for ValidatedConversionOutput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ValidatedConversionOutput")
+            .field("object", &"<opaque-validated-output>")
+            .field("fully_verified", &self.valid.is_fully_verified())
+            .finish_non_exhaustive()
+    }
+}
+
+/// What verifying a conversion established, with the judged object retained
+/// when it passed.
+#[derive(Debug)]
+pub(crate) enum VerifiedConversion {
+    /// The output passed. The exact object read is held open inside.
+    Valid(Box<ValidatedConversionOutput>),
+    /// The output did not pass. Nothing is retained, so cleanup is unblocked.
+    Rejected(ConversionIntegrityOutcome),
 }
 
 /// The canonical source facts an integrity comparison is measured against.
@@ -671,22 +774,72 @@ pub fn verify_mzml_conversion(
     policy: ConversionPolicy,
     limits: MzmlScanLimits,
 ) -> ConversionIntegrityOutcome {
-    let output = match inspect_conversion_output(
+    let (file, output) = match open_and_inspect_output(
         output_directory,
         expected_file_name,
         OpenFormat::MzMl,
         limits,
+        OutputRetention::Release,
     ) {
-        Ok(output) => output,
+        Ok(opened) => opened,
         Err(rejection) => return rejection.into(),
     };
+    // Released as soon as it has been read: a caller of this entry point asked
+    // for facts, not for the object, and holding their file open for the
+    // source revalidation below would be a change they did not ask for.
+    drop(file);
+    judge_against_source(source, output, policy)
+}
 
+/// Verifies a conversion and, when it passes, retains the exact object judged.
+///
+/// The judgement is identical to [`verify_mzml_conversion`] — same directory
+/// postconditions, same scan limits, same required, advisory and unverifiable
+/// classifications. The difference is what survives the call: a validated
+/// output that still holds open the object its facts came from, so finalization
+/// can move that object rather than resolve the name again.
+#[must_use]
+pub(crate) fn verify_mzml_conversion_retaining_output(
+    source: &ConversionSourceFacts,
+    output_directory: &Path,
+    expected_file_name: &OsStr,
+    policy: ConversionPolicy,
+    limits: MzmlScanLimits,
+) -> VerifiedConversion {
+    let (file, output) = match open_and_inspect_output(
+        output_directory,
+        expected_file_name,
+        OpenFormat::MzMl,
+        limits,
+        OutputRetention::Retain,
+    ) {
+        Ok(opened) => opened,
+        Err(rejection) => return VerifiedConversion::Rejected(rejection.into()),
+    };
+
+    match judge_against_source(source, output, policy) {
+        ConversionIntegrityOutcome::Valid(valid) => {
+            VerifiedConversion::Valid(Box::new(ValidatedConversionOutput {
+                file,
+                valid: *valid,
+            }))
+        }
+        rejected => VerifiedConversion::Rejected(rejected),
+    }
+}
+
+/// The judgement itself, shared by both entry points so retention cannot change
+/// what a conversion is found to be.
+fn judge_against_source(
+    source: &ConversionSourceFacts,
+    output: ConversionOutputInspection,
+    policy: ConversionPolicy,
+) -> ConversionIntegrityOutcome {
     match revalidate_source(source) {
         Ok(true) => {}
         Ok(false) => return ConversionIntegrityOutcome::SourceChangedDuringConversion,
         Err(outcome) => return outcome,
     }
-
     compare_documents(source, output, policy)
 }
 

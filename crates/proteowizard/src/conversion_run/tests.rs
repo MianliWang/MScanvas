@@ -7,7 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::*;
 use crate::capability::{CapturedHelpStream, CompleteHelpCapture};
 use crate::command::{BackendTool, CommandSpec};
-use crate::conversion::{CompressionPolicy, IntegrityProperty};
+use crate::conversion::{
+    CompressionPolicy, IntegrityProperty, capture_conversion_source,
+    verify_mzml_conversion_retaining_output,
+};
 
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -758,9 +761,8 @@ fn a_source_is_opened_and_read_rather_than_named() {
     assert_eq!(entry_names(&root), vec![OsString::from("acquisition.mzML")]);
 }
 
-/// The only new foreign-function boundary in this module converts a path to a
-/// wide string. A name with a space and non-ASCII characters must survive it,
-/// end to end, rather than only as far as a plan.
+/// A name with a space and non-ASCII characters must survive planning, staging
+/// and the wide-string rename, end to end rather than only as far as a plan.
 #[test]
 fn a_unicode_name_with_a_space_survives_planning_staging_and_finalization() {
     let directory = TestDirectory::new();
@@ -947,14 +949,15 @@ fn a_destination_root_that_changed_before_the_run_is_never_written_to() {
         Err(StagingReclaimError::NotOwned)
     );
 
-    // Gone entirely.
+    // Gone entirely. The root is held before it is judged, so a root that is no
+    // longer there fails at the hold rather than at the recheck.
     fs::remove_file(&sentinel).expect("remove sentinel");
     fs::remove_dir(&root).expect("remove the replacement root");
     let report = run_conversion(&plan, &capabilities(), &runner);
     assert!(
         matches!(
             report.outcome(),
-            ConversionRunOutcome::Failed(ConversionRunFailure::DestinationRootNotRechecked {
+            ConversionRunOutcome::Failed(ConversionRunFailure::DestinationRootNotOpened {
                 kind: io::ErrorKind::NotFound
             })
         ),
@@ -1111,6 +1114,9 @@ fn every_outcome_renders_a_distinct_stable_identifier_and_no_path() {
         ConversionRunFailure::DestinationRootChanged,
         ConversionRunFailure::DestinationRootNotRechecked {
             kind: io::ErrorKind::NotFound,
+        },
+        ConversionRunFailure::DestinationRootNotOpened {
+            kind: io::ErrorKind::PermissionDenied,
         },
     ];
     let mut identifiers: Vec<&str> = failures
@@ -1399,4 +1405,454 @@ fn a_staging_directory_that_cannot_be_removed_never_changes_the_outcome() {
     assert!(report.finalized().is_some(), "{:?}", report.outcome());
     assert_eq!(report.residue(), None);
     assert_eq!(entry_names(&root), vec![OsString::from("sample.mzML")]);
+}
+
+// --- Handle-bound finalization ---
+//
+// The claim under test is that the object which receives the final name is the
+// object the integrity scanner read. Every test here works the seam
+// `run_admitted` opens between those two moments.
+
+/// Binds a second name to whatever object currently answers to `path`, so a
+/// test can say "the same file" rather than "a file with the same bytes".
+///
+/// Writing through the witness afterwards shows up in every other name for that
+/// object and in no other object, which is what makes it an identity check
+/// rather than a content check.
+fn witness_object(path: &Path, witness: &Path) {
+    fs::hard_link(path, witness).expect("bind a witness name to the object");
+}
+
+/// The staged output of a plan, which only a test may name.
+fn staged_output_of(plan: &ConversionPlan) -> PathBuf {
+    let mut staging = OsString::from(plan.output_file_name());
+    staging.push(STAGING_SUFFIX);
+    plan.destination_root()
+        .join(staging)
+        .join(STAGING_OUTPUT_DIRECTORY)
+        .join(plan.output_file_name())
+}
+
+struct Fixture {
+    _directory: TestDirectory,
+    root: PathBuf,
+    plan: ConversionPlan,
+}
+
+fn fixture(source_name: &str, conflict: ConflictPolicy) -> Fixture {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), source_name);
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let plan = plan_into(open_source(&source), &root, conflict);
+    let root = plan.destination_root().to_path_buf();
+    Fixture {
+        _directory: directory,
+        root,
+        plan,
+    }
+}
+
+#[test]
+fn the_object_that_receives_the_final_name_is_the_object_that_was_validated() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let staged = staged_output_of(&fixture.plan);
+    let witness = fixture.root.parent().expect("a parent").join("witness");
+
+    let report = run_admitted(&fixture.plan, &capabilities(), &runner, || {
+        // Bound after the judgement and before the final name is taken, so the
+        // witness names exactly the object that was judged.
+        witness_object(&staged, &witness);
+    });
+
+    assert!(report.finalized().is_some(), "{:?}", report.outcome());
+    let finalized = fixture.root.join("sample.mzML");
+    let valid = report.finalized().expect("a finalized conversion");
+    assert_eq!(
+        valid.output().byte_length(),
+        fs::metadata(&finalized)
+            .expect("read the finalized output")
+            .len(),
+        "the reported facts do not describe the finalized object"
+    );
+    assert_eq!(
+        fs::read_to_string(&finalized).expect("read the finalized output"),
+        output_document()
+    );
+    // Nothing of the run's own reading is still holding the staging area open.
+    assert_eq!(report.residue(), None);
+    assert_eq!(
+        entry_names(&fixture.root),
+        vec![OsString::from("sample.mzML")]
+    );
+
+    // The witness and the finalized name are the same object: a write through
+    // one is a write to the other.
+    fs::write(&witness, b"the same object").expect("write through the witness");
+    assert_eq!(
+        fs::read(&finalized).expect("read the finalized output"),
+        b"the same object",
+        "the finalized name denotes a different object from the validated one"
+    );
+}
+
+/// The load-bearing regression test, in its strongest form. Between the
+/// judgement and the rename, the validated object is moved aside and a
+/// different, perfectly valid-looking mzML document is put at the staged name.
+/// A path-based move would carry that document to the final name under a report
+/// describing the other one.
+#[cfg(windows)]
+#[test]
+fn a_staging_path_replaced_after_validation_never_reaches_the_final_name() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let staged = staged_output_of(&fixture.plan);
+    let outside = fixture.root.parent().expect("a parent").to_path_buf();
+    let witness = outside.join("witness");
+    let decoy = document(2, Serialization::Output).replace("R1", "DECOY");
+
+    let report = run_admitted(&fixture.plan, &capabilities(), &runner, || {
+        witness_object(&staged, &witness);
+        // The validated object keeps living, under a name this run never knew,
+        // and something else answers to the name it was staged under.
+        fs::rename(&staged, outside.join("moved-aside")).expect("move the validated object aside");
+        fs::write(&staged, &decoy).expect("write a different document at that name");
+    });
+
+    let finalized = fixture.root.join("sample.mzML");
+    assert!(report.finalized().is_some(), "{:?}", report.outcome());
+    let finalized_bytes = fs::read_to_string(&finalized).expect("read the finalized output");
+    assert_eq!(
+        finalized_bytes,
+        output_document(),
+        "the finalized bytes are not the bytes that were judged"
+    );
+    assert!(
+        !finalized_bytes.contains("DECOY"),
+        "the replacement became a successful conversion"
+    );
+    // And it is the same object, not merely the same bytes.
+    fs::write(&witness, b"the validated object").expect("write through the witness");
+    assert_eq!(
+        fs::read(&finalized).expect("read the finalized output"),
+        b"the validated object",
+        "the replacement, not the validated object, received the final name"
+    );
+    // The replacement stayed in the staging area and was discarded with it.
+    assert_eq!(
+        entry_names(&fixture.root),
+        vec![OsString::from("sample.mzML")]
+    );
+}
+
+/// The same attack, mounted by unlinking the staged name instead of moving the
+/// object. Windows leaves the validated object delete-pending, so it can no
+/// longer be renamed — which is the other acceptable outcome: the finalization
+/// fails and the replacement never becomes a successful conversion.
+#[cfg(windows)]
+#[test]
+fn a_staging_path_unlinked_after_validation_never_finalizes_the_replacement() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let staged = staged_output_of(&fixture.plan);
+    let decoy = document(2, Serialization::Output).replace("R1", "DECOY");
+
+    let report = run_admitted(&fixture.plan, &capabilities(), &runner, || {
+        fs::remove_file(&staged).expect("unlink the validated object's name");
+        fs::write(&staged, &decoy).expect("write a different document at that name");
+    });
+
+    assert!(
+        matches!(
+            report.outcome(),
+            ConversionRunOutcome::Failed(ConversionRunFailure::NotFinalized { .. })
+        ),
+        "{:?}",
+        report.outcome()
+    );
+    assert!(
+        report.finalized().is_none(),
+        "an unfinalized run reported a result"
+    );
+    assert!(
+        entry_names(&fixture.root).is_empty(),
+        "something reached the destination root: {:?}",
+        entry_names(&fixture.root)
+    );
+}
+
+/// The same interval, with the destination taken rather than the source
+/// replaced. The validated object must not displace what arrived, whatever kind
+/// of entry it is.
+#[test]
+fn a_destination_taken_after_validation_is_never_replaced() {
+    for occupant in ["file", "directory", "hard-link"] {
+        let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+        let act = convert_faithfully;
+        let runner = FakeRunner::new(&act);
+        let finalized = fixture.root.join("sample.mzML");
+        let neighbour = fixture.root.join("neighbour.txt");
+        fs::write(&neighbour, b"an unrelated file").expect("write neighbour");
+
+        let report = run_admitted(&fixture.plan, &capabilities(), &runner, || match occupant {
+            "directory" => fs::create_dir(&finalized).expect("take the name with a directory"),
+            "hard-link" => {
+                fs::hard_link(&neighbour, &finalized).expect("take the name with a hard link");
+            }
+            _ => fs::write(&finalized, b"something else took this name").expect("take the name"),
+        });
+
+        assert_eq!(
+            *report.outcome(),
+            ConversionRunOutcome::Failed(ConversionRunFailure::DestinationAppearedDuringRun),
+            "occupant: {occupant}"
+        );
+        match occupant {
+            "directory" => assert!(finalized.is_dir(), "the directory was replaced"),
+            "hard-link" => assert_eq!(
+                fs::read(&finalized).expect("read the link"),
+                b"an unrelated file",
+                "the linked file was replaced"
+            ),
+            _ => assert_eq!(
+                fs::read(&finalized).expect("read the occupant"),
+                b"something else took this name"
+            ),
+        }
+        // Nothing was finalized, and the staging area is gone either way.
+        assert_eq!(
+            entry_names(&fixture.root),
+            vec![
+                OsString::from("neighbour.txt"),
+                OsString::from("sample.mzML")
+            ],
+            "occupant: {occupant}"
+        );
+        assert_eq!(report.residue(), None, "occupant: {occupant}");
+    }
+}
+
+/// The destination root is held for the run, so the path the final name is
+/// formed from cannot be made to denote a different directory while the run is
+/// in flight.
+#[cfg(windows)]
+#[test]
+fn the_admitted_destination_root_cannot_be_moved_out_from_under_a_run() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let elsewhere = fixture.root.with_extension("moved");
+    let refusal = Cell::new(None);
+
+    let report = run_admitted(&fixture.plan, &capabilities(), &runner, || {
+        refusal.set(Some(
+            fs::rename(&fixture.root, &elsewhere)
+                .err()
+                .and_then(|error| error.raw_os_error()),
+        ));
+    });
+
+    // Exactly ERROR_SHARING_VIOLATION, not merely "some error". Without the pin
+    // the validated output handle inside the subtree already refuses the rename,
+    // but with ERROR_ACCESS_DENIED — so only the exact code distinguishes the
+    // pin from that pre-existing effect.
+    assert_eq!(
+        refusal.get().expect("the hook ran"),
+        Some(32),
+        "the admitted destination root was not pinned against replacement"
+    );
+    assert!(report.finalized().is_some(), "{:?}", report.outcome());
+    assert_eq!(
+        entry_names(&fixture.root),
+        vec![OsString::from("sample.mzML")]
+    );
+    assert!(!elsewhere.exists());
+}
+
+/// A finalization that fails leaves no successful result and no residue, and
+/// releases the validated object so cleanup can proceed.
+#[test]
+fn a_failed_finalization_produces_no_result_and_leaves_no_staging_behind() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let finalized = fixture.root.join("sample.mzML");
+    let staged = staged_output_of(&fixture.plan);
+
+    let report = run_admitted(&fixture.plan, &capabilities(), &runner, || {
+        fs::write(&finalized, b"taken").expect("take the destination");
+    });
+
+    assert!(report.finalized().is_none());
+    assert_eq!(
+        report.residue(),
+        None,
+        "the staging area was not cleaned up"
+    );
+    assert_eq!(
+        entry_names(&fixture.root),
+        vec![OsString::from("sample.mzML")]
+    );
+    assert_eq!(fs::read(&finalized).expect("read the occupant"), b"taken");
+    // The validated reading is released whether or not it was finalized, so the
+    // staging directory it lived in could be removed.
+    assert!(!staged.exists());
+}
+
+#[test]
+fn a_validated_output_describes_itself_without_a_path_or_a_handle() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let staging = directory.path().join("staged");
+    fs::create_dir(&staging).expect("create the staging directory");
+    fs::write(staging.join("sample.mzML"), output_document()).expect("write the output");
+
+    let facts = capture_conversion_source(&source, MzmlScanLimits::default())
+        .expect("capture source facts");
+    let validated = match verify_mzml_conversion_retaining_output(
+        &facts,
+        &staging,
+        OsStr::new("sample.mzML"),
+        ConversionPolicy::default(),
+        MzmlScanLimits::default(),
+    ) {
+        VerifiedConversion::Valid(validated) => validated,
+        VerifiedConversion::Rejected(outcome) => panic!("expected a valid conversion: {outcome:?}"),
+    };
+
+    let rendered = format!("{validated:?}");
+    assert!(
+        !rendered.contains('/') && !rendered.contains('\\'),
+        "a validated output must not render a path: {rendered}"
+    );
+    assert!(
+        !rendered.contains("sample.mzML") && !rendered.contains("mscanvas-conversion-run-tests"),
+        "a validated output must not render a name: {rendered}"
+    );
+    assert!(rendered.contains("<opaque-validated-output>"), "{rendered}");
+    assert!(
+        !rendered.contains("handle") && !rendered.contains("0x"),
+        "a validated output must not render a handle: {rendered}"
+    );
+    assert!(
+        validated
+            .valid()
+            .verified()
+            .contains(&IntegrityProperty::SpectrumCount)
+    );
+
+    // The held object is released when the validated reading is dropped, which
+    // is what lets the directory it lives in be removed.
+    drop(validated);
+    fs::remove_dir_all(&staging).expect("the validated reading still held the output open");
+}
+
+/// The pin is taken before the root is judged, so a root that cannot be held is
+/// refused before anything is inspected, created or launched.
+#[cfg(windows)]
+#[test]
+fn a_destination_root_that_cannot_be_held_is_refused_before_anything_runs() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+
+    // Held by someone else sharing nothing, so this run cannot hold it.
+    let exclusive = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .custom_flags(0x0200_0000)
+        .open(&fixture.root)
+        .expect("hold the destination root exclusively");
+
+    let report = run_conversion(&fixture.plan, &capabilities(), &runner);
+
+    assert!(
+        matches!(
+            report.outcome(),
+            ConversionRunOutcome::Failed(ConversionRunFailure::DestinationRootNotOpened { .. })
+        ),
+        "{:?}",
+        report.outcome()
+    );
+    assert_eq!(runner.calls(), 0, "the backend never ran");
+    drop(exclusive);
+    assert!(
+        entry_names(&fixture.root).is_empty(),
+        "a run that could not hold the root still created something"
+    );
+}
+
+/// The rename target and the object are separate bindings, and only the object
+/// end is handle-bound. Everything the finalization reads about the target has
+/// to come from the admitted root.
+#[test]
+fn a_unicode_name_with_a_space_survives_the_object_bound_rename() {
+    let fixture = fixture("样本 01.mzML", ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let witness = fixture
+        .root
+        .parent()
+        .expect("a parent")
+        .join("見証 witness");
+
+    let report = run_admitted(&fixture.plan, &capabilities(), &runner, || {
+        witness_object(&staged_output_of(&fixture.plan), &witness);
+    });
+
+    assert!(report.finalized().is_some(), "{:?}", report.outcome());
+    let finalized = fixture.root.join("样本 01.mzML");
+    assert_eq!(
+        fs::read_to_string(&finalized).expect("read the finalized output"),
+        output_document()
+    );
+    fs::write(&witness, b"the same object").expect("write through the witness");
+    assert_eq!(
+        fs::read(&finalized).expect("read the finalized output"),
+        b"the same object",
+        "the wide-string rename finalized a different object"
+    );
+}
+
+/// Binding the rename to the object settles which object is finalized, not what
+/// is in it. The judgement is only worth anything if the bytes cannot change
+/// underneath it, so the retained object refuses a concurrent writer for as long
+/// as the run holds it.
+#[cfg(windows)]
+#[test]
+fn a_validated_object_cannot_be_written_to_while_it_is_held() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let staged = staged_output_of(&fixture.plan);
+    let refusal = Cell::new(None);
+
+    let report = run_admitted(&fixture.plan, &capabilities(), &runner, || {
+        refusal.set(Some(
+            fs::OpenOptions::new()
+                .write(true)
+                .open(&staged)
+                .err()
+                .and_then(|error| error.raw_os_error()),
+        ));
+        // Reading it is still allowed: a reader cannot invalidate a judgement.
+        assert!(fs::read(&staged).is_ok(), "a concurrent reader was refused");
+    });
+
+    assert_eq!(
+        refusal.get().expect("the hook ran"),
+        Some(32),
+        "the validated object accepted a writer between judgement and finalization"
+    );
+    assert!(report.finalized().is_some(), "{:?}", report.outcome());
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("sample.mzML")).expect("read the finalized output"),
+        output_document()
+    );
 }

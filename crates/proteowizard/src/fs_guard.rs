@@ -100,6 +100,75 @@ pub(crate) fn open_regular_file(path: &Path) -> Result<(File, u64), RegularFileE
     Ok((file, opened.len()))
 }
 
+/// Opens a regular file for reading *and* for renaming the object itself.
+///
+/// The extra access is what lets a caller finalize the exact object it read
+/// instead of whatever a later path lookup resolves to. The posture is
+/// otherwise unchanged and deliberately no weaker: the entry is refused if it is
+/// a link, a reparse point or a directory, the open refuses to traverse a
+/// reparse point rather than following one, and the opened handle is rechecked
+/// against what was observed.
+#[cfg(windows)]
+pub(crate) fn open_regular_file_renameable(path: &Path) -> Result<(File, u64), RegularFileError> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_READ_DATA: u32 = 0x0000_0001;
+    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+    const DELETE: u32 = 0x0001_0000;
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+    let observed = std::fs::symlink_metadata(path).map_err(io_error)?;
+    require_regular_file(&observed)?;
+
+    // DELETE is the access a handle-relative rename requires; it does not
+    // authorize a read the ordinary open would have refused. Opening the
+    // reparse point rather than following it means a link substituted at this
+    // name is refused below instead of silently read through.
+    //
+    // The share mode is decided one flag at a time, because binding the rename
+    // to the object only settles *which* object is finalized, not what is in it.
+    //
+    // Write sharing is withheld. Without that, another process could modify the
+    // object between the scan and the rename, and the bytes that took the final
+    // name would not be the bytes that were judged — the very thing this open
+    // exists to prevent. An existing writer now makes the open fail instead.
+    //
+    // Read sharing is granted: a concurrent reader cannot invalidate a
+    // judgement.
+    //
+    // Delete sharing is granted, unlike on the destination root the caller
+    // pins, and the asymmetry is deliberate. The root needs a lock because its
+    // path must keep meaning what it meant and no object-bound naming is
+    // available for a rename target. This object needs none, because its
+    // finalization follows the handle: unlinking or renaming the staged name
+    // cannot redirect it, so refusing those would cost a scanner or a backup
+    // agent its access for no correctness gain.
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .access_mode(FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE | DELETE)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(io_error)?;
+    let opened = file.metadata().map_err(io_error)?;
+    require_regular_file(&opened)?;
+    if opened.len() != observed.len() {
+        return Err(RegularFileError::ChangedDuringOpen);
+    }
+    Ok((file, opened.len()))
+}
+
+/// Opens a regular file for reading. No platform outside Windows offers a
+/// rename bound to the opened object through the standard library, so this is
+/// the ordinary open and the guarantee built on it is correspondingly narrower.
+#[cfg(not(windows))]
+pub(crate) fn open_regular_file_renameable(path: &Path) -> Result<(File, u64), RegularFileError> {
+    open_regular_file(path)
+}
+
 fn io_error(error: io::Error) -> RegularFileError {
     RegularFileError::Io { kind: error.kind() }
 }
@@ -266,6 +335,52 @@ pub fn snapshot_output_directory(
     }
     entries.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(OutputDirectorySnapshot { entries })
+}
+
+#[cfg(test)]
+mod renameable_tests {
+    use super::{RegularFileError, open_regular_file_renameable};
+    use std::io::Read;
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "mscanvas-renameable-{}-{timestamp}-{tag}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&path).expect("create the scratch directory");
+        path
+    }
+
+    /// The open a handle-bound finalization needs is still the ordinary posture:
+    /// it reads, and it refuses everything the plain guard refuses.
+    #[test]
+    fn the_renameable_open_reads_a_regular_file_and_refuses_anything_else() {
+        let directory = scratch("posture");
+        let file = directory.join("output.mzML");
+        std::fs::write(&file, b"contents").expect("write the file");
+
+        let (mut opened, length) =
+            open_regular_file_renameable(&file).expect("open a regular file");
+        assert_eq!(length, 8);
+        let mut read = String::new();
+        opened.read_to_string(&mut read).expect("read the file");
+        assert_eq!(read, "contents", "the handle cannot read what it opened");
+        drop(opened);
+
+        assert!(matches!(
+            open_regular_file_renameable(&directory),
+            Err(RegularFileError::NotRegularFile)
+        ));
+        assert!(matches!(
+            open_regular_file_renameable(&directory.join("absent")),
+            Err(RegularFileError::Io { .. })
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+    }
 }
 
 #[cfg(test)]

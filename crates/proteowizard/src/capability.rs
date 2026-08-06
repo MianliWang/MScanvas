@@ -41,6 +41,12 @@ impl Sha256Digest {
     pub fn calculate_file(path: &std::path::Path) -> Result<Self, Sha256Error> {
         digest_file(path).map(Self)
     }
+
+    /// Calculates a digest from an already-open object, so a caller that holds
+    /// the exact file it means to measure never reopens it by name.
+    pub(crate) fn calculate_reader<R: std::io::Read>(reader: R) -> Result<Self, Sha256Error> {
+        crate::sha256::digest_reader(reader).map(Self)
+    }
 }
 
 impl fmt::Display for Sha256Digest {
