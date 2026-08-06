@@ -344,6 +344,26 @@ impl ConversionPlan {
         &self.destination_root
     }
 
+    /// Removes a staging area an earlier run of this exact plan left behind.
+    ///
+    /// A run refuses an existing staging area rather than adopting it, because
+    /// another run may still own it. That is the right default and it is also a
+    /// trap: one cleanup failure — a transient lock from a scanner or a backup
+    /// agent is enough — leaves a directory whose deterministic name makes every
+    /// later run of this plan refuse, and the path-free failure cannot say which
+    /// name to remove. This is the deliberate way out.
+    ///
+    /// Calling it asserts that no run of this plan is in flight. Nothing here
+    /// can check that, which is why it is the caller's decision and not a
+    /// silent step inside the run.
+    pub fn reclaim_staging_area(&self) -> Result<(), StagingResidue> {
+        match std::fs::remove_dir_all(self.staging_directory()) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(StagingResidue::NotRemoved { kind: error.kind() }),
+        }
+    }
+
     fn destination(&self) -> PathBuf {
         self.destination_root.join(&self.output_file_name)
     }
@@ -364,6 +384,42 @@ impl fmt::Debug for ConversionPlan {
             .field("conflict", &self.conflict)
             .field("compression", &self.compression)
             .finish_non_exhaustive()
+    }
+}
+
+/// Which captured backend stream a capture failure describes.
+///
+/// The process boundary names its streams with a `&'static str`. That is fine
+/// where it is produced, but a substituted runner may set it to anything, and
+/// copying an arbitrary string verbatim into a type whose whole purpose is to
+/// be safe to render would hand that guarantee to the caller. The projection is
+/// closed instead.
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+pub enum BackendStream {
+    #[error("stdout")]
+    Stdout,
+    #[error("stderr")]
+    Stderr,
+    #[error("an unrecognized stream")]
+    Unrecognized,
+}
+
+impl BackendStream {
+    fn from_label(label: &str) -> Self {
+        match label {
+            "stdout" => Self::Stdout,
+            "stderr" => Self::Stderr,
+            _ => Self::Unrecognized,
+        }
+    }
+
+    #[must_use]
+    pub const fn stable_id(self) -> &'static str {
+        match self {
+            Self::Stdout => "stdout",
+            Self::Stderr => "stderr",
+            Self::Unrecognized => "unrecognized_stream",
+        }
     }
 }
 
@@ -407,7 +463,7 @@ pub enum BackendExecutionFailure {
     #[error("the backend process could not be awaited")]
     NotAwaited,
     #[error("backend {stream} could not be captured")]
-    OutputNotCaptured { stream: &'static str },
+    OutputNotCaptured { stream: BackendStream },
     #[error("the owned backend process job could not be terminated")]
     NotTerminated,
 }
@@ -459,7 +515,9 @@ impl From<&ProcessError> for BackendExecutionFailure {
             ProcessError::Launch { kind, .. } => Self::NotLaunched { kind: *kind },
             ProcessError::AssignToOwnedJob { .. } => Self::NotSupervised,
             ProcessError::Wait { .. } => Self::NotAwaited,
-            ProcessError::Capture { stream, .. } => Self::OutputNotCaptured { stream },
+            ProcessError::Capture { stream, .. } => Self::OutputNotCaptured {
+                stream: BackendStream::from_label(stream),
+            },
             ProcessError::Terminate { .. } => Self::NotTerminated,
         }
     }

@@ -148,11 +148,21 @@ final name is provably the file that was judged only in the absence of an
 outside writer with access to the destination root. And cleanup removes the
 staging directory by path rather than by identity, so a directory replaced at
 that path between creation and cleanup would be removed instead. Both need an
-actor with write access to the destination root while a run is in flight;
-neither is closed by this slice, and the deterministic staging name is what
-makes the second one nameable at all. A staging name that collides with a file
-the user already owns is refused permanently, and the path-free failure cannot
-say which name to remove.
+actor with write access to the destination root while a run is in flight, and
+this is the same class of window the process boundary beside it already accepts
+and documents rather than a new one. Closing the first properly means
+finalizing through a handle the validation itself held, which changes
+`verify_mzml_conversion`'s contract; a path recheck before the move would only
+narrow it while reading as though it had closed it, so neither is done here and
+the handle-bound finalization is recorded as a follow-up.
+
+Refusing an existing staging area is right, and on its own it is also a trap: a
+single cleanup failure leaves a deterministically named directory that makes
+every later run of that plan refuse, and a path-free failure cannot say which
+name to remove. The plan therefore offers an explicit `reclaim_staging_area`,
+which the caller invokes when it decides no run of that plan is in flight.
+Nothing adopts a staging area silently. A staging name that collides with a
+file the user already owns is refused the same way and recovered the same way.
 
 ### Validation
 
@@ -178,7 +188,10 @@ rather than a cancellation feature.
 Every result and failure type is path-free and carries a stable identifier.
 `ProcessError` retains the executable name and raw operating-system detail for
 local diagnostics; the boundary projects it onto a path-free failure instead of
-passing it through. Backend facts are exit code, elapsed time, truncation flags
+passing it through. The projection is closed on both sides: the stream name a
+capture failure carries is a free-form string at the process boundary, so it is
+mapped onto a fixed set rather than copied, and a substituted runner cannot put
+an arbitrary value into a type whose purpose is to be safe to render. Backend facts are exit code, elapsed time, truncation flags
 and peak owned-job memory — raw stdout and stderr are absent, because they can
 name the acquisition. The plan and the source render themselves without their
 paths or their file names.
@@ -251,9 +264,12 @@ webview later should be path-free by construction, not by remembering to redact.
 
 ## Follow-up slices
 
-1. Per-file conversion results and a narrow Tauri surface over accepted
+1. Handle-bound finalization: have the integrity check hand back the handle it
+   read, and finalize through that object rather than through its path, so the
+   bytes that take the final name are the bytes that were judged.
+2. Per-file conversion results and a narrow Tauri surface over accepted
    workspace datasets, reusing the transfer-object privacy rules of ADR 0005.
-2. Queue, failure isolation and retry — and the task/cancellation protocol ADR
+3. Queue, failure isolation and retry — and the task/cancellation protocol ADR
    0007 defers, once real cancellation evidence exists.
-3. A vendor source posture, gated on an authorized fixture and on the
+4. A vendor source posture, gated on an authorized fixture and on the
    directory-acquisition evidence list in ADR 0007.

@@ -32,9 +32,10 @@ pub use conversion::{
     verify_mzml_conversion,
 };
 pub use conversion_run::{
-    BackendExecutionFailure, BackendRunFacts, ConflictPolicy, ConversionPlan, ConversionPlanError,
-    ConversionRunFailure, ConversionRunOutcome, ConversionRunReport, ConversionSource,
-    ConversionSourceKind, ConversionSourceRejection, StagingResidue, run_conversion,
+    BackendExecutionFailure, BackendRunFacts, BackendStream, ConflictPolicy, ConversionPlan,
+    ConversionPlanError, ConversionRunFailure, ConversionRunOutcome, ConversionRunReport,
+    ConversionSource, ConversionSourceKind, ConversionSourceRejection, StagingResidue,
+    run_conversion,
 };
 pub use diagnostics::{Redactor, ReportableProcessOutput};
 pub use discovery::{

@@ -429,6 +429,19 @@ fn an_existing_staging_target_fails_without_disturbing_what_is_in_it() {
         b"another run may still own this",
         "a staging area this run did not create is left alone"
     );
+
+    // Refusing forever would be its own trap, so the caller has a deliberate way
+    // out once it decides no run of this plan is in flight.
+    plan.reclaim_staging_area()
+        .expect("reclaim the staging area");
+    assert!(!staging.exists());
+    plan.reclaim_staging_area()
+        .expect("reclaiming an absent staging area is not a failure");
+
+    let report = run_conversion(&plan, &capabilities(), &runner);
+    assert!(report.finalized().is_some(), "{:?}", report.outcome());
+    assert_eq!(runner.calls(), 1);
+    assert_eq!(entry_names(&root), vec![OsString::from("sample.mzML")]);
 }
 
 #[test]
@@ -1031,7 +1044,9 @@ fn every_backend_execution_failure_has_its_own_identifier() {
         },
         BackendExecutionFailure::NotSupervised,
         BackendExecutionFailure::NotAwaited,
-        BackendExecutionFailure::OutputNotCaptured { stream: "stdout" },
+        BackendExecutionFailure::OutputNotCaptured {
+            stream: BackendStream::Stdout,
+        },
         BackendExecutionFailure::NotTerminated,
     ];
     let identifiers: BTreeSet<&str> = failures
@@ -1040,6 +1055,48 @@ fn every_backend_execution_failure_has_its_own_identifier() {
         .map(BackendExecutionFailure::stable_id)
         .collect();
     assert_eq!(identifiers.len(), failures.len());
+}
+
+/// A substituted runner names its capture stream with an unconstrained string.
+/// It must not reach a type whose purpose is to be safe to render.
+#[test]
+fn an_arbitrary_capture_stream_label_is_projected_onto_a_closed_set() {
+    let disclosing = ProcessError::Capture {
+        stream: "D:\\acquisitions\\样本 01.raw",
+        detail: "the capture thread failed".to_owned(),
+    };
+    let projected = BackendExecutionFailure::from(&disclosing);
+
+    assert_eq!(
+        projected,
+        BackendExecutionFailure::OutputNotCaptured {
+            stream: BackendStream::Unrecognized
+        }
+    );
+    for rendered in [format!("{projected:?}"), projected.to_string()] {
+        assert!(
+            !rendered.contains('\\') && !rendered.contains("样本"),
+            "{rendered}"
+        );
+    }
+
+    for (label, expected) in [
+        ("stdout", BackendStream::Stdout),
+        ("stderr", BackendStream::Stderr),
+    ] {
+        assert_eq!(
+            BackendExecutionFailure::from(&ProcessError::Capture {
+                stream: label,
+                detail: String::new(),
+            }),
+            BackendExecutionFailure::OutputNotCaptured { stream: expected }
+        );
+        assert_eq!(expected.stable_id(), label);
+    }
+    assert_eq!(
+        BackendStream::Unrecognized.stable_id(),
+        "unrecognized_stream"
+    );
 }
 
 /// Cleanup is not a verdict. A staging directory that cannot be removed is

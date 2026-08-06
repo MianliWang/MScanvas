@@ -2314,7 +2314,7 @@ Validation on the exact head: `cargo fmt --all --check`,
 `cargo test --locked --workspace --all-targets`, `python -B scripts/check_repo.py`,
 `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
 
-Twenty-three tests were added, all deterministic and none reaching a backend: a
+Twenty-four tests were added, all deterministic and none reaching a backend: a
 substituted runner receives the real planned command, so what it writes and
 where is decided by the boundary under test rather than by the test. They cover
 the derived name and the fixed plan; the argv the backend is given and that it
@@ -2332,11 +2332,20 @@ path-free identifiers across every failure, plan error, source rejection and
 policy; a run that did not complete never being finalized; the backend facts
 projected on both a success and a rejection; a name with a space and non-ASCII
 characters surviving the wide-string conversion end to end; a panic in the
-substituted runner still discarding the staging directory; and a staging
-directory that cannot be removed being reported beside the primary outcome
-rather than instead of it, proved by holding the staged file open with a share
-mode that refuses deletion. Twenty-two run on every platform; the residue proof
-is Windows-only, as the mechanism it exercises is.
+substituted runner still discarding the staging directory; a capture-failure
+stream label a substituted runner set to a path being projected onto a closed
+set rather than rendered; and a staging directory that cannot be removed being
+reported beside the primary outcome rather than instead of it, proved by holding
+the staged file open with a share mode that refuses deletion. Twenty-three run
+on every platform; the residue proof is Windows-only, as the mechanism it
+exercises is.
+
+Refusing an existing staging area is right, and on its own it is also a trap:
+one cleanup failure would leave a deterministically named directory that makes
+every later run of that plan refuse, and a path-free failure cannot say which
+name to remove. The plan therefore offers an explicit way out that the caller
+invokes when it decides no run is in flight; nothing adopts a staging area
+silently.
 
 A source named `acquisition.raw` that reads as mzML is converted to
 `acquisition.mzML`, which pins both halves of the naming rule at once: the
