@@ -177,6 +177,16 @@ emptiness proves ownership but because it makes ownership irrelevant, and
 because removing the marker before removing the root is exactly what leaves one
 behind when the last step fails.
 
+The run is bound to the acquisition the plan admitted. The command builder
+reads the source's identity from its path again, so before anything is created
+or launched the run rechecks the recorded identity, byte length and hash. Without
+that, a source replaced or rewritten between planning and running would be
+converted and the post-run comparison would only notice by rejecting a
+conversion that should never have happened — and not even that if the original
+were restored before it looked, because the integrity scanner never decodes an
+array payload. It costs a third read of the source, which a conversion that
+already reads it twice can afford.
+
 ### Validation
 
 The produced document is judged by the existing mzML conversion-integrity

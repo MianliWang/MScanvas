@@ -598,6 +598,17 @@ pub enum ConversionRunFailure {
     /// The validated output could not be moved onto its final name.
     #[error("the validated output could not be finalized: {kind}")]
     NotFinalized { kind: io::ErrorKind },
+    /// The source is no longer the acquisition the plan accepted, so nothing was
+    /// converted.
+    #[error("the source is not the acquisition this plan accepted")]
+    SourceChangedBeforeRun,
+    /// The source could not be rechecked against the plan, so nothing was
+    /// converted.
+    #[error("the source could not be rechecked against the plan: {kind}")]
+    SourceNotRechecked { kind: io::ErrorKind },
+    /// The source could not be rehashed, so nothing was converted.
+    #[error("the source could not be rehashed")]
+    SourceNotRehashed,
 }
 
 impl ConversionRunFailure {
@@ -615,6 +626,9 @@ impl ConversionRunFailure {
             Self::OutputRejected(_) => "output_rejected",
             Self::DestinationAppearedDuringRun => "destination_appeared_during_run",
             Self::NotFinalized { .. } => "output_not_finalized",
+            Self::SourceChangedBeforeRun => "source_changed_before_run",
+            Self::SourceNotRechecked { .. } => "source_not_rechecked",
+            Self::SourceNotRehashed => "source_not_rehashed",
         }
     }
 
@@ -973,6 +987,10 @@ pub fn run_conversion(
         }
     }
 
+    if let Err(failure) = require_planned_source(&plan.source) {
+        return ConversionRunReport::settled(ConversionRunOutcome::Failed(failure));
+    }
+
     let staging = match StagingArea::create(plan.staging_directory()) {
         Ok(staging) => staging,
         Err(failure) => {
@@ -993,6 +1011,42 @@ pub fn run_conversion(
         backend,
         residue,
     }
+}
+
+/// Refuses a source that is no longer the acquisition the plan accepted.
+///
+/// The command builder captures the source's identity again from its path, so
+/// without this the backend would be bound to whatever now holds that name
+/// rather than to what was measured and admitted. The post-run comparison would
+/// usually notice — but only by rejecting a conversion that should never have
+/// been run, and only if the original is still displaced when it looks. Restore
+/// the original first and the comparison agrees with itself while the backend
+/// read something else entirely, which the integrity scanner cannot detect
+/// because it never decodes an array payload.
+///
+/// This costs one full read of the source. A conversion already reads it twice;
+/// binding the run to the bytes that were admitted is worth the third.
+fn require_planned_source(source: &ConversionSource) -> Result<(), ConversionRunFailure> {
+    match source.facts.identity().matches_current() {
+        Ok(true) => {}
+        Ok(false) => return Err(ConversionRunFailure::SourceChangedBeforeRun),
+        Err(error) => {
+            return Err(ConversionRunFailure::SourceNotRechecked { kind: error.kind() });
+        }
+    }
+
+    let path = source.canonical_path();
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| ConversionRunFailure::SourceNotRechecked { kind: error.kind() })?;
+    if metadata.len() != source.facts.byte_length() {
+        return Err(ConversionRunFailure::SourceChangedBeforeRun);
+    }
+    let sha256 =
+        Sha256Digest::calculate_file(path).map_err(|_| ConversionRunFailure::SourceNotRehashed)?;
+    if sha256 != source.facts.sha256() {
+        return Err(ConversionRunFailure::SourceChangedBeforeRun);
+    }
+    Ok(())
 }
 
 fn run_staged(

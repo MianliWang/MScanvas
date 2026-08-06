@@ -812,6 +812,63 @@ fn a_panic_in_the_runner_still_discards_the_staging_directory() {
     );
 }
 
+/// A plan admits one acquisition, measured. The command builder reads the
+/// source's identity from its path again, so the run has to bind to what the
+/// plan accepted rather than to whatever now holds that name.
+#[test]
+fn a_source_that_changed_before_the_run_is_never_converted() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+
+    // Rewritten in place: same name, same identity, different bytes.
+    fs::write(&source, document(3, Serialization::Source)).expect("rewrite the source");
+    let report = run_conversion(&plan, &capabilities(), &runner);
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::SourceChangedBeforeRun)
+    );
+    assert_eq!(runner.calls(), 0, "the backend never ran");
+    assert!(entry_names(&root).is_empty(), "no staging area was created");
+
+    // Replaced by a different object at the same name.
+    fs::remove_file(&source).expect("remove the source");
+    fs::write(&source, source_document()).expect("write a replacement");
+    let report = run_conversion(&plan, &capabilities(), &runner);
+    assert!(
+        matches!(
+            report.outcome(),
+            ConversionRunOutcome::Failed(
+                ConversionRunFailure::SourceChangedBeforeRun
+                    | ConversionRunFailure::SourceNotRechecked { .. }
+            )
+        ),
+        "{:?}",
+        report.outcome()
+    );
+    assert_eq!(runner.calls(), 0);
+
+    // Gone entirely.
+    fs::remove_file(&source).expect("remove the replacement");
+    let report = run_conversion(&plan, &capabilities(), &runner);
+    assert!(
+        matches!(
+            report.outcome(),
+            ConversionRunOutcome::Failed(ConversionRunFailure::SourceNotRechecked {
+                kind: io::ErrorKind::NotFound
+            })
+        ),
+        "{:?}",
+        report.outcome()
+    );
+    assert_eq!(runner.calls(), 0);
+    assert!(entry_names(&root).is_empty());
+}
+
 /// This boundary requests no cancellation, so a termination that is not an
 /// ordinary exit can only come from a substituted runner. It is a typed failure
 /// rather than a cancellation feature, and it is never a success.
@@ -917,6 +974,11 @@ fn every_outcome_renders_a_distinct_stable_identifier_and_no_path() {
         ConversionRunFailure::NotFinalized {
             kind: io::ErrorKind::PermissionDenied,
         },
+        ConversionRunFailure::SourceChangedBeforeRun,
+        ConversionRunFailure::SourceNotRechecked {
+            kind: io::ErrorKind::NotFound,
+        },
+        ConversionRunFailure::SourceNotRehashed,
     ];
     let mut identifiers: Vec<&str> = failures
         .iter()

@@ -2296,6 +2296,15 @@ conversion completed in `136 ms` below the safe-attempt threshold, and the
 controlled Job Object tests are process-contract evidence. And there is no
 overwrite: the conflict policy is fail or skip, with no third variant to select.
 
+The run is also bound to the acquisition the plan admitted. The command builder
+reads the source's identity from its path again, so before anything is created
+or launched the run rechecks the recorded identity, byte length and hash. Review
+found that without it, a source replaced or rewritten between planning and
+running would be converted, and the post-run comparison would notice only by
+rejecting a conversion that should never have happened — and not even that if the
+original were restored before it looked, since the integrity scanner never
+decodes an array payload.
+
 The boundary converts mzML to mzML. That is not the product goal; it is what the
 evidence permits. The source/output comparison needs mzML source facts, so
 applying it to a source that could not be read that way and calling the result a
@@ -2314,7 +2323,7 @@ Validation on the exact head: `cargo fmt --all --check`,
 `cargo test --locked --workspace --all-targets`, `python -B scripts/check_repo.py`,
 `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
 
-Twenty-four tests were added, all deterministic and none reaching a backend: a
+Twenty-five tests were added, all deterministic and none reaching a backend: a
 substituted runner receives the real planned command, so what it writes and
 where is decided by the boundary under test rather than by the test. They cover
 the derived name and the fixed plan; the argv the backend is given and that it
@@ -2327,7 +2336,8 @@ failure reported without the executable it names; a lossy output, an empty
 output, no output at all, an extra output, and a source replaced under the run,
 each rejected before the final name; a destination taken mid-run keeping its
 contents; a source that is a directory, that is absent, or that is named `.mzML`
-without being mzML; a destination root that is missing or is a file; distinct
+without being mzML; a source rewritten, replaced or removed between planning and
+running; a destination root that is missing or is a file; distinct
 path-free identifiers across every failure, plan error, source rejection and
 policy; a run that did not complete never being finalized; the backend facts
 projected on both a success and a rejection; a name with a space and non-ASCII
@@ -2336,7 +2346,7 @@ substituted runner still discarding the staging directory; a capture-failure
 stream label a substituted runner set to a path being projected onto a closed
 set rather than rendered; and a staging directory that cannot be removed being
 reported beside the primary outcome rather than instead of it, proved by holding
-the staged file open with a share mode that refuses deletion. Twenty-three run
+the staged file open with a share mode that refuses deletion. Twenty-four run
 on every platform; the residue proof is Windows-only, as the mechanism it
 exercises is.
 
