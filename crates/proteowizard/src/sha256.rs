@@ -39,13 +39,26 @@ pub(crate) fn digest_bytes(_bytes: &[u8]) -> Result<[u8; 32], Sha256Error> {
 #[cfg(windows)]
 pub(crate) fn digest_file(path: &Path) -> Result<[u8; 32], Sha256Error> {
     use std::fs::File;
-    use std::io::{BufReader, Read};
 
     let file = File::open(path).map_err(|source| Sha256Error::Io {
         action: "open the input file",
         source,
     })?;
-    let mut reader = BufReader::new(file);
+    digest_reader(file)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn digest_file(_path: &Path) -> Result<[u8; 32], Sha256Error> {
+    Err(Sha256Error::UnsupportedPlatform)
+}
+
+/// Digests whatever the reader yields, so a caller that already holds the exact
+/// object it means to measure never has to reopen it by name.
+#[cfg(windows)]
+pub(crate) fn digest_reader<R: std::io::Read>(reader: R) -> Result<[u8; 32], Sha256Error> {
+    use std::io::{BufReader, Read};
+
+    let mut reader = BufReader::with_capacity(64 * 1024, reader);
     let mut hasher = windows::WindowsSha256::new()?;
     let mut buffer = [0_u8; 64 * 1024];
     loop {
@@ -62,7 +75,7 @@ pub(crate) fn digest_file(path: &Path) -> Result<[u8; 32], Sha256Error> {
 }
 
 #[cfg(not(windows))]
-pub(crate) fn digest_file(_path: &Path) -> Result<[u8; 32], Sha256Error> {
+pub(crate) fn digest_reader<R: std::io::Read>(_reader: R) -> Result<[u8; 32], Sha256Error> {
     Err(Sha256Error::UnsupportedPlatform)
 }
 

@@ -100,6 +100,57 @@ pub(crate) fn open_regular_file(path: &Path) -> Result<(File, u64), RegularFileE
     Ok((file, opened.len()))
 }
 
+/// Opens a regular file for reading *and* for renaming the object itself.
+///
+/// The extra access is what lets a caller finalize the exact object it read
+/// instead of whatever a later path lookup resolves to. The posture is
+/// otherwise unchanged and deliberately no weaker: the entry is refused if it is
+/// a link, a reparse point or a directory, the open refuses to traverse a
+/// reparse point rather than following one, and the opened handle is rechecked
+/// against what was observed.
+#[cfg(windows)]
+pub(crate) fn open_regular_file_renameable(path: &Path) -> Result<(File, u64), RegularFileError> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_READ_DATA: u32 = 0x0000_0001;
+    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+    const DELETE: u32 = 0x0001_0000;
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+    const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+    let observed = std::fs::symlink_metadata(path).map_err(io_error)?;
+    require_regular_file(&observed)?;
+
+    // DELETE is the access a handle-relative rename requires; it does not
+    // authorize a read the ordinary open would have refused. Opening the
+    // reparse point rather than following it means a link substituted at this
+    // name is refused below instead of silently read through.
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .access_mode(FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE | DELETE)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(io_error)?;
+    let opened = file.metadata().map_err(io_error)?;
+    require_regular_file(&opened)?;
+    if opened.len() != observed.len() {
+        return Err(RegularFileError::ChangedDuringOpen);
+    }
+    Ok((file, opened.len()))
+}
+
+/// Opens a regular file for reading. No platform outside Windows offers a
+/// rename bound to the opened object through the standard library, so this is
+/// the ordinary open and the guarantee built on it is correspondingly narrower.
+#[cfg(not(windows))]
+pub(crate) fn open_regular_file_renameable(path: &Path) -> Result<(File, u64), RegularFileError> {
+    open_regular_file(path)
+}
+
 fn io_error(error: io::Error) -> RegularFileError {
     RegularFileError::Io { kind: error.kind() }
 }
