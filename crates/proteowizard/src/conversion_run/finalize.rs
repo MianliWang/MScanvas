@@ -124,7 +124,6 @@ impl std::fmt::Debug for DestinationDirectory {
 pub(super) fn finalize_validated(
     validated: ValidatedConversionOutput,
     destination: &DestinationDirectory,
-    _staged: &Path,
     final_name: &OsStr,
 ) -> io::Result<ValidConversion> {
     let (file, valid) = validated.into_parts();
@@ -229,7 +228,7 @@ fn rename_object_to(file: &File, target: &Path) -> io::Result<()> {
         fn set_file_information_by_handle(
             file: Handle,
             information_class: i32,
-            information: *const c_void,
+            information: *mut c_void,
             information_size: u32,
         ) -> Bool;
     }
@@ -260,8 +259,9 @@ fn rename_object_to(file: &File, target: &Path) -> io::Result<()> {
 
     // SAFETY: `buffer` is at least `buffer_bytes` long and eight-byte aligned,
     // so `base` is a valid, correctly aligned `FILE_RENAME_INFO`. Each field is
-    // written through its own raw place at the offset the assertions above pin,
-    // and the name with its terminator fits exactly in the trailing bytes.
+    // written through its own raw place, at offsets the `repr(C)` layout of
+    // `FileRenameInfoHeader` fixes on every target this compiles for, and the
+    // name with its terminator fits exactly in the trailing bytes.
     unsafe {
         let header = base.cast::<FileRenameInfoHeader>();
         (&raw mut (*header).flags).write(0);
@@ -283,13 +283,12 @@ fn rename_object_to(file: &File, target: &Path) -> io::Result<()> {
             information_size,
         )
     };
-    let outcome = if renamed == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    };
-    drop(buffer);
-    outcome
+    // Read before anything else can clobber the thread's last error. `buffer` is
+    // still owned at this point, which is what keeps it alive across the call.
+    if renamed == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 /// The measurement behind [`DestinationDirectory`]'s target binding: the Win32
@@ -318,16 +317,19 @@ fn a_root_directory_relative_rename_is_unavailable() {
         fn set_file_information_by_handle(
             file: *mut c_void,
             information_class: i32,
-            information: *const c_void,
+            information: *mut c_void,
             information_size: u32,
         ) -> i32;
     }
 
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock after Unix epoch")
+        .as_nanos();
     let root = std::env::temp_dir().join(format!(
-        "mscanvas-root-relative-rename-{}",
+        "mscanvas-root-relative-rename-{}-{timestamp}",
         std::process::id()
     ));
-    let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir(&root).expect("create the probe root");
     let staging = root.join("stage");
     std::fs::create_dir(&staging).expect("create the probe staging directory");

@@ -28,9 +28,8 @@ pub use conversion::{
     AdvisoryObservation, BinaryArrayMismatchKind, CompressionPolicy, ConversionIntegrityOutcome,
     ConversionOutputInspection, ConversionOutputRejection, ConversionPolicy, ConversionSourceError,
     ConversionSourceFacts, DocumentPart, DocumentSide, IntegrityProperty, ValidConversion,
-    ValidatedConversionOutput, VerifiedConversion, capture_conversion_source,
-    conversion_output_file_name, inspect_conversion_output, verify_mzml_conversion,
-    verify_mzml_conversion_retaining_output,
+    capture_conversion_source, conversion_output_file_name, inspect_conversion_output,
+    verify_mzml_conversion,
 };
 pub use conversion_run::{
     BackendExecutionFailure, BackendRunFacts, BackendStream, ConflictPolicy, ConversionPlan,

@@ -2416,9 +2416,12 @@ the facts were not provably about the same object. `ValidatedConversionOutput`
 has no constructor that takes a path, no `Clone`, and an opaque `Debug`.
 
 Finalization consumes that value and renames the object the handle names, with
-`SetFileInformationByHandle` and `FileRenameInfo`. The staged path is never
-resolved again and does not need to still mean anything. Consuming is also what
-makes an object finalizable once, at compile time rather than by a flag.
+`SetFileInformationByHandle` and `FileRenameInfo`. On Windows the staged path is
+never resolved again and does not need to still mean anything; outside Windows
+the standard library offers no object-bound rename, so that platform still links
+from the staged name and the narrower guarantee is stated rather than glossed.
+Consuming is also what makes an object finalizable once, at compile time rather
+than by a flag.
 
 The target end could not be bound the same way, and the reason is measured
 rather than assumed. `FILE_RENAME_INFO` carries a `RootDirectory` handle that the
@@ -2458,9 +2461,9 @@ Validation on the exact head: `cargo fmt --all --check`,
 up from 243), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
 `pnpm test`, `pnpm build`.
 
-Nine tests were added, all deterministic and none reaching a backend. A private
-seam opens the one interval the claim is about — after the judgement, before the
-final name — and the tests act inside it.
+Twelve tests were added, all deterministic and none reaching a backend. A
+private seam opens the one interval the claim is about — after the judgement,
+before the final name — and the tests act inside it.
 
 The load-bearing pair replaces the staged path after validation. Moving the
 validated object aside and writing a different, perfectly valid mzML document at
@@ -2474,29 +2477,47 @@ destination root — the other acceptable outcome, and the reason both are teste
 rather than one.
 
 The rest cover a normal conversion finalizing the same object it validated, with
-the reported byte length matching the finalized file; a destination taken after
-validation by a file, by a directory and by a hard link, each keeping its name
-and contents; the destination root refusing to be renamed out from under a run;
-a failed finalization producing no result, no residue and no staging remains; the
-final-name guard refusing every multi-component and rooted spelling; and a
-validated output rendering neither a path, a name nor a handle, then releasing
-its object on drop.
+the reported byte length matching the finalized file; the same end to end under a
+name with a space and non-ASCII characters, which is where a wide-string bug
+would live; a destination taken after validation by a file, by a directory and by
+a hard link, each keeping its name and contents; the destination root refusing to
+be renamed out from under a run, and a root that cannot be held refusing the run
+before anything is inspected, created or launched; a failed finalization
+producing no result, no residue and no staging remains; the renameable open
+reading what it opened and refusing a directory or an absent path; the final-name
+guard refusing every multi-component and rooted spelling; and a validated output
+rendering neither a path, a name nor a handle, then releasing its object on drop.
 
-Six mutations were introduced one at a time against this head. Four were caught:
+Review changed the design in one place. The destination root was originally
+pinned *after* the identity check, which left a window between the two — and the
+work in it includes rehashing the whole source, which is not a moment. The root
+is now held first and judged second: a pinned directory cannot be renamed or
+removed, so the check that follows decides about the object the run will actually
+use. Review also found the pin's cost understated. Windows refuses to rename any
+ancestor of a held directory, so a run locks the destination root and every
+folder above it for its duration; that is now recorded rather than left to be
+discovered.
+
+Nine mutations were introduced one at a time against this head. Six were caught:
 reopening the output by path before renaming it, and renaming a handle reopened
 after the scan, both fail the substitution tests; `ReplaceIfExists = TRUE` fails
 three no-clobber tests; accepting a multi-component final name fails the guard
-test; sharing deletion on the destination root fails the pin test.
+test; sharing deletion on the destination root fails the pin test; and pinning
+the root after the identity check instead of before fails the root-change test.
 
-Two were not, and the reason is recorded rather than smoothed over. Discarding
-the scanned handle and reopening the same path *inside* validation is invisible
-to every test here, because the reopen happens before any seam exists and the
-path still resolves to the same object at that instant; what stands against it
-is structure, not a test — the scanned handle is threaded out of the scanner by
-ownership, so substituting another means visibly discarding it. And changing
-finalization to borrow rather than consume cannot be caught at runtime, because
-the single-finalization guarantee is move semantics; that mutation does not even
-compile without adding a handle clone.
+Three were not, and the reasons are recorded rather than smoothed over.
+Discarding the scanned handle and reopening the same path *inside* validation is
+invisible to every test here, because the reopen happens before any seam exists
+and the path still resolves to the same object at that instant; what stands
+against it is structure rather than a test — the scanned handle is threaded out
+of the scanner by ownership, so substituting another means visibly discarding it.
+Changing finalization to borrow rather than consume cannot be caught at runtime
+at all, because the single-finalization guarantee is move semantics; that
+mutation does not compile without adding a handle clone. And the renameable
+open's no-follow flag and its post-open recheck survive removal, because
+exercising either needs a symlink — privileged to create on Windows — or a swap
+timed inside the open. Both branches are inherited unchanged from the ordinary
+guard beside them, whose equivalents this repository has never tested either.
 
 Rendered QA was not required and not performed: no frontend file, transfer
 object, command signature, capability or user-facing string changed.

@@ -127,10 +127,10 @@ scratch or sidecar file `msconvert` writes into its own working directory would
 turn a faithful conversion into a rejection. No real-backend evidence exists
 either way; it is recorded as a gate below rather than assumed benign.
 
-Finalization is a no-clobber move of the validated output onto its final name:
-`MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` on Windows, a hard link
-followed by cleanup elsewhere. Both fail rather than replace. Staging and
-destination share a filesystem by construction, so the move is a rename.
+Finalization is a no-clobber move of the validated output onto its final name.
+Both fail rather than replace. Staging and destination share a filesystem by
+construction, so the move is a rename. The M3.0.1 amendment below replaces the
+mechanism this originally used with one bound to the validated object.
 
 Behavior is defined for every branch:
 
@@ -159,10 +159,12 @@ no constructor that takes a path, no `Clone`, and an opaque `Debug`.
 
 Finalization consumes that value and renames the object the handle names —
 `SetFileInformationByHandle` with `FileRenameInfo`, whose source is the open
-file object rather than any name. The staged path is never resolved a second
-time and does not need to still mean anything: replacing it after the judgement
-cannot put unjudged bytes under the final name, because the kernel is not asked
-about that name. Consuming the value is also what makes an object finalizable
+file object rather than any name. On Windows the staged path is never resolved a
+second time and does not need to still mean anything: replacing it after the
+judgement cannot put unjudged bytes under the final name, because the kernel is
+not asked about that name. Outside Windows the standard library offers no
+object-bound rename, so that platform still links from the staged name and the
+guarantee there is narrower; it is not claimed. Consuming the value is also what makes an object finalizable
 once. The prior window is closed rather than narrowed; a recheck before the move
 was considered and rejected, because it would only shorten the interval while
 reading as though it had removed it.
@@ -182,8 +184,13 @@ true is visible. The target is therefore bound by holding the admitted
 destination root open for the run *without delete sharing*, which makes the
 directory unrenameable and unremovable while a conversion is in flight, so the
 canonical path the final name is formed from cannot be made to denote a
-different directory. It costs the user the ability to rename or remove that one
-directory for the duration of a run.
+different directory. The root is held before it is judged rather than after, so
+the identity check decides about the object the run will actually use.
+
+The cost is wider than the root itself and is stated rather than discovered:
+Windows refuses to rename any *ancestor* of a held directory, so for the
+duration of a run the user cannot rename or remove the destination root or any
+folder above it. The lock lasts exactly as long as the run.
 
 **The cleanup-by-path window remains open and is not addressed here.** Cleanup
 still removes the staging directory by name, so a directory replaced at that

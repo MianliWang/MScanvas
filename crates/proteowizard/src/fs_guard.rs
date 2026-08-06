@@ -128,6 +128,14 @@ pub(crate) fn open_regular_file_renameable(path: &Path) -> Result<(File, u64), R
     // authorize a read the ordinary open would have refused. Opening the
     // reparse point rather than following it means a link substituted at this
     // name is refused below instead of silently read through.
+    //
+    // Delete sharing is granted here, unlike the destination root the caller
+    // pins. The asymmetry is the point: the root needs a lock because its path
+    // must keep meaning what it meant and no object-bound naming is available
+    // for a rename target, while this object needs none — its finalization is
+    // bound to the handle, so correctness does not depend on nobody touching
+    // the name. Withholding it would additionally stop a scanner or a backup
+    // agent working in the user's own output directory.
     let file = std::fs::OpenOptions::new()
         .read(true)
         .access_mode(FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE | DELETE)
@@ -317,6 +325,52 @@ pub fn snapshot_output_directory(
     }
     entries.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(OutputDirectorySnapshot { entries })
+}
+
+#[cfg(test)]
+mod renameable_tests {
+    use super::{RegularFileError, open_regular_file_renameable};
+    use std::io::Read;
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "mscanvas-renameable-{}-{timestamp}-{tag}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&path).expect("create the scratch directory");
+        path
+    }
+
+    /// The open a handle-bound finalization needs is still the ordinary posture:
+    /// it reads, and it refuses everything the plain guard refuses.
+    #[test]
+    fn the_renameable_open_reads_a_regular_file_and_refuses_anything_else() {
+        let directory = scratch("posture");
+        let file = directory.join("output.mzML");
+        std::fs::write(&file, b"contents").expect("write the file");
+
+        let (mut opened, length) =
+            open_regular_file_renameable(&file).expect("open a regular file");
+        assert_eq!(length, 8);
+        let mut read = String::new();
+        opened.read_to_string(&mut read).expect("read the file");
+        assert_eq!(read, "contents", "the handle cannot read what it opened");
+        drop(opened);
+
+        assert!(matches!(
+            open_regular_file_renameable(&directory),
+            Err(RegularFileError::NotRegularFile)
+        ));
+        assert!(matches!(
+            open_regular_file_renameable(&directory.join("absent")),
+            Err(RegularFileError::Io { .. })
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+    }
 }
 
 #[cfg(test)]

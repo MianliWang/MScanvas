@@ -292,21 +292,18 @@ fn inspect_open_output(
 /// claim "the file that received the final name is the file that was judged"
 /// true by construction rather than by a recheck that only narrows a race.
 /// There is no `Clone`: one validated reading owns one object.
-pub struct ValidatedConversionOutput {
+pub(crate) struct ValidatedConversionOutput {
     file: File,
     valid: ValidConversion,
 }
 
 impl ValidatedConversionOutput {
+    /// What was established about the object. Only a test reads this without
+    /// finalizing: production consumes the whole value.
+    #[cfg(test)]
     #[must_use]
-    pub const fn valid(&self) -> &ValidConversion {
+    pub(crate) const fn valid(&self) -> &ValidConversion {
         &self.valid
-    }
-
-    /// Gives up the object and keeps only what was established about it.
-    #[must_use]
-    pub fn into_valid(self) -> ValidConversion {
-        self.valid
     }
 
     /// Consumes the validated reading, yielding the handle that read it.
@@ -331,7 +328,7 @@ impl fmt::Debug for ValidatedConversionOutput {
 /// What verifying a conversion established, with the judged object retained
 /// when it passed.
 #[derive(Debug)]
-pub enum VerifiedConversion {
+pub(crate) enum VerifiedConversion {
     /// The output passed. The exact object read is held open inside.
     Valid(Box<ValidatedConversionOutput>),
     /// The output did not pass. Nothing is retained, so cleanup is unblocked.
@@ -777,19 +774,21 @@ pub fn verify_mzml_conversion(
     policy: ConversionPolicy,
     limits: MzmlScanLimits,
 ) -> ConversionIntegrityOutcome {
-    match verify_retaining(
-        source,
+    let (file, output) = match open_and_inspect_output(
         output_directory,
         expected_file_name,
-        policy,
+        OpenFormat::MzMl,
         limits,
         OutputRetention::Release,
     ) {
-        VerifiedConversion::Valid(validated) => {
-            ConversionIntegrityOutcome::Valid(Box::new(validated.into_valid()))
-        }
-        VerifiedConversion::Rejected(outcome) => outcome,
-    }
+        Ok(opened) => opened,
+        Err(rejection) => return rejection.into(),
+    };
+    // Released as soon as it has been read: a caller of this entry point asked
+    // for facts, not for the object, and holding their file open for the
+    // source revalidation below would be a change they did not ask for.
+    drop(file);
+    judge_against_source(source, output, policy)
 }
 
 /// Verifies a conversion and, when it passes, retains the exact object judged.
@@ -800,53 +799,25 @@ pub fn verify_mzml_conversion(
 /// output that still holds open the object its facts came from, so finalization
 /// can move that object rather than resolve the name again.
 #[must_use]
-pub fn verify_mzml_conversion_retaining_output(
+pub(crate) fn verify_mzml_conversion_retaining_output(
     source: &ConversionSourceFacts,
     output_directory: &Path,
     expected_file_name: &OsStr,
     policy: ConversionPolicy,
     limits: MzmlScanLimits,
-) -> VerifiedConversion {
-    verify_retaining(
-        source,
-        output_directory,
-        expected_file_name,
-        policy,
-        limits,
-        OutputRetention::Retain,
-    )
-}
-
-fn verify_retaining(
-    source: &ConversionSourceFacts,
-    output_directory: &Path,
-    expected_file_name: &OsStr,
-    policy: ConversionPolicy,
-    limits: MzmlScanLimits,
-    retention: OutputRetention,
 ) -> VerifiedConversion {
     let (file, output) = match open_and_inspect_output(
         output_directory,
         expected_file_name,
         OpenFormat::MzMl,
         limits,
-        retention,
+        OutputRetention::Retain,
     ) {
         Ok(opened) => opened,
         Err(rejection) => return VerifiedConversion::Rejected(rejection.into()),
     };
 
-    match revalidate_source(source) {
-        Ok(true) => {}
-        Ok(false) => {
-            return VerifiedConversion::Rejected(
-                ConversionIntegrityOutcome::SourceChangedDuringConversion,
-            );
-        }
-        Err(outcome) => return VerifiedConversion::Rejected(outcome),
-    }
-
-    match compare_documents(source, output, policy) {
+    match judge_against_source(source, output, policy) {
         ConversionIntegrityOutcome::Valid(valid) => {
             VerifiedConversion::Valid(Box::new(ValidatedConversionOutput {
                 file,
@@ -855,6 +826,21 @@ fn verify_retaining(
         }
         rejected => VerifiedConversion::Rejected(rejected),
     }
+}
+
+/// The judgement itself, shared by both entry points so retention cannot change
+/// what a conversion is found to be.
+fn judge_against_source(
+    source: &ConversionSourceFacts,
+    output: ConversionOutputInspection,
+    policy: ConversionPolicy,
+) -> ConversionIntegrityOutcome {
+    match revalidate_source(source) {
+        Ok(true) => {}
+        Ok(false) => return ConversionIntegrityOutcome::SourceChangedDuringConversion,
+        Err(outcome) => return outcome,
+    }
+    compare_documents(source, output, policy)
 }
 
 fn revalidate_source(source: &ConversionSourceFacts) -> Result<bool, ConversionIntegrityOutcome> {

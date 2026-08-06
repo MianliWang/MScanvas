@@ -1064,6 +1064,34 @@ pub fn run_conversion(
     capabilities: &InstalledHelpCapabilities,
     runner: &dyn ProcessRunner,
 ) -> ConversionRunReport {
+    run_admitted(plan, capabilities, runner, || {})
+}
+
+/// The body of a run, with a seam at the one interval this boundary's central
+/// claim is about: after the output has been judged and before it is given the
+/// final name. Production passes an empty hook; a test uses it to replace the
+/// staging path underneath a validated object.
+fn run_admitted(
+    plan: &ConversionPlan,
+    capabilities: &InstalledHelpCapabilities,
+    runner: &dyn ProcessRunner,
+    after_validation: impl FnOnce(),
+) -> ConversionRunReport {
+    // Order matters here. The root is held before it is judged, not after: a
+    // pinned directory cannot be renamed or removed, so the identity check
+    // below decides about the object this run will actually use. Checking first
+    // and opening afterwards would leave a window, and the work between them
+    // includes rehashing the whole source, which is not a moment.
+    let destination_directory = match finalize::DestinationDirectory::open(plan.destination_root())
+    {
+        Ok(directory) => directory,
+        Err(error) => {
+            return ConversionRunReport::settled(ConversionRunOutcome::Failed(
+                ConversionRunFailure::DestinationRootNotOpened { kind: error.kind() },
+            ));
+        }
+    };
+
     // Nothing is inspected, created or launched under a root that is no longer
     // the directory this plan admitted.
     match plan.destination_root_is_current() {
@@ -1101,33 +1129,6 @@ pub fn run_conversion(
     if let Err(failure) = require_planned_source(&plan.source) {
         return ConversionRunReport::settled(ConversionRunOutcome::Failed(failure));
     }
-
-    run_admitted(plan, capabilities, runner, || {})
-}
-
-/// The body of a run, with a seam at the one interval this boundary's central
-/// claim is about: after the output has been judged and before it is given the
-/// final name. Production passes an empty hook; a test uses it to replace the
-/// staging path underneath a validated object.
-fn run_admitted(
-    plan: &ConversionPlan,
-    capabilities: &InstalledHelpCapabilities,
-    runner: &dyn ProcessRunner,
-    after_validation: impl FnOnce(),
-) -> ConversionRunReport {
-    // The destination directory is opened once, here, while it is still the
-    // object the identity contract just admitted, and every finalization
-    // addresses the final name relative to this handle. A later path lookup
-    // could resolve somewhere else; this cannot.
-    let destination_directory = match finalize::DestinationDirectory::open(plan.destination_root())
-    {
-        Ok(directory) => directory,
-        Err(error) => {
-            return ConversionRunReport::settled(ConversionRunOutcome::Failed(
-                ConversionRunFailure::DestinationRootNotOpened { kind: error.kind() },
-            ));
-        }
-    };
 
     let staging = match StagingArea::create(plan.staging_directory()) {
         Ok(staging) => staging,
@@ -1262,16 +1263,21 @@ fn run_staged(
 
     after_validation();
 
-    // Nothing here names the staged output. The rename acts on the handle the
-    // scanner read, so replacing the staging path in the interval above cannot
-    // put unjudged bytes under the final name.
-    let staged_output = staging.join(plan.output_file_name());
-    match finalize::finalize_validated(
+    // On Windows nothing here can name the staged output: the rename acts on the
+    // handle the scanner read, so replacing the staging path in the interval
+    // above cannot put unjudged bytes under the final name. Only the platform
+    // with no object-bound rename is given that name at all.
+    #[cfg(not(windows))]
+    let finalized = finalize::finalize_validated(
         *validated,
         destination_directory,
-        &staged_output,
+        &staging.join(plan.output_file_name()),
         plan.output_file_name(),
-    ) {
+    );
+    #[cfg(windows)]
+    let finalized =
+        finalize::finalize_validated(*validated, destination_directory, plan.output_file_name());
+    match finalized {
         Ok(valid) => (ConversionRunOutcome::Finalized(Box::new(valid)), backend),
         Err(error) => (
             ConversionRunOutcome::Failed(match error.kind() {
