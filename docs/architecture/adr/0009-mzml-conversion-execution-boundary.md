@@ -290,9 +290,17 @@ webview later should be path-free by construction, not by remembering to redact.
 1. Handle-bound finalization: have the integrity check hand back the handle it
    read, and finalize through that object rather than through its path, so the
    bytes that take the final name are the bytes that were judged.
-2. Per-file conversion results and a narrow Tauri surface over accepted
+2. A local diagnostic sink for the captured backend streams. The run drops
+   them, because putting them in the result is exactly what the privacy rule
+   forbids, and the crate's `Redactor`, `ReportableProcessOutput` and
+   `classify_process_failure` have no consumer in a slice with no surface. The
+   `ProcessRunner` seam is where such a sink belongs — a runner already owns the
+   `ProcessOutput` it produced — and the slice that adds the product surface is
+   when it gets a destination and a retention rule rather than a buffer nobody
+   reads.
+3. Per-file conversion results and a narrow Tauri surface over accepted
    workspace datasets, reusing the transfer-object privacy rules of ADR 0005.
-3. Queue, failure isolation and retry — and the task/cancellation protocol ADR
+4. Queue, failure isolation and retry — and the task/cancellation protocol ADR
    0007 defers, once real cancellation evidence exists.
-4. A vendor source posture, gated on an authorized fixture and on the
+5. A vendor source posture, gated on an authorized fixture and on the
    directory-acquisition evidence list in ADR 0007.
