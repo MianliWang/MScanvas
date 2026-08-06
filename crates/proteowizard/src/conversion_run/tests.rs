@@ -869,6 +869,101 @@ fn a_source_that_changed_before_the_run_is_never_converted() {
     assert!(entry_names(&root).is_empty());
 }
 
+/// A plan admits a destination root as an object too. A plan can outlive the
+/// directory the caller chose, so nothing may be created under whatever now
+/// answers to its name.
+#[test]
+fn a_destination_root_that_changed_before_the_run_is_never_written_to() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+
+    // The chosen directory is replaced by a different one at the same name.
+    fs::remove_dir(&root).expect("remove the chosen root");
+    fs::create_dir(&root).expect("create a different directory at that name");
+    let sentinel = root.join("someone-elses.txt");
+    fs::write(&sentinel, b"a directory the plan never accepted").expect("write sentinel");
+
+    let report = run_conversion(&plan, &capabilities(), &runner);
+    assert!(
+        matches!(
+            report.outcome(),
+            ConversionRunOutcome::Failed(
+                ConversionRunFailure::DestinationRootChanged
+                    | ConversionRunFailure::DestinationRootNotRechecked { .. }
+            )
+        ),
+        "{:?}",
+        report.outcome()
+    );
+    assert_eq!(runner.calls(), 0, "the backend never ran");
+    assert_eq!(
+        entry_names(&root),
+        vec![OsString::from("someone-elses.txt")],
+        "nothing was created under a root the plan never accepted"
+    );
+
+    // And a staging area under such a root is not this plan's to reclaim.
+    assert_eq!(
+        plan.reclaim_staging_area(),
+        Err(StagingReclaimError::NotOwned)
+    );
+
+    // Gone entirely.
+    fs::remove_file(&sentinel).expect("remove sentinel");
+    fs::remove_dir(&root).expect("remove the replacement root");
+    let report = run_conversion(&plan, &capabilities(), &runner);
+    assert!(
+        matches!(
+            report.outcome(),
+            ConversionRunOutcome::Failed(ConversionRunFailure::DestinationRootNotRechecked {
+                kind: io::ErrorKind::NotFound
+            })
+        ),
+        "{:?}",
+        report.outcome()
+    );
+    assert_eq!(runner.calls(), 0);
+}
+
+/// The staging name is the output name plus a suffix, so a name the plan would
+/// otherwise accept can still be one it cannot stage. That is decided when the
+/// plan is formed, not by the operating system once a run is under way.
+#[test]
+fn an_output_name_that_leaves_no_room_for_a_staging_name_is_refused_when_planned() {
+    let directory = TestDirectory::new();
+    // Canonical on Windows is a verbatim path, so a long component here is not
+    // also a test of the legacy path limit.
+    let base = fs::canonicalize(directory.path()).expect("canonical test directory");
+    let root = base.join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    // ".mzML" is five units, and the staging suffix is seventeen more.
+    let longest_stageable = 255 - 17 - 5;
+    for (stem_length, expected) in [(longest_stageable, true), (longest_stageable + 1, false)] {
+        let name = format!("{}.mzML", "n".repeat(stem_length));
+        let source = base.join(&name);
+        fs::write(&source, source_document()).expect("write a long-named source");
+        let planned = ConversionPlan::to_mzml(open_source(&source), &root, ConflictPolicy::Fail);
+        assert_eq!(
+            planned.is_ok(),
+            expected,
+            "a {stem_length}-unit stem planned as {planned:?}"
+        );
+        if !expected {
+            assert_eq!(
+                planned.err(),
+                Some(ConversionPlanError::OutputFileNameTooLongToStage)
+            );
+        }
+        fs::remove_file(&source).expect("remove the long-named source");
+    }
+}
+
 /// This boundary requests no cancellation, so a termination that is not an
 /// ordinary exit can only come from a substituted runner. It is a typed failure
 /// rather than a cancellation feature, and it is never a success.
@@ -979,6 +1074,10 @@ fn every_outcome_renders_a_distinct_stable_identifier_and_no_path() {
             kind: io::ErrorKind::NotFound,
         },
         ConversionRunFailure::SourceNotRehashed,
+        ConversionRunFailure::DestinationRootChanged,
+        ConversionRunFailure::DestinationRootNotRechecked {
+            kind: io::ErrorKind::NotFound,
+        },
     ];
     let mut identifiers: Vec<&str> = failures
         .iter()
@@ -1061,6 +1160,7 @@ fn every_plan_source_and_policy_identifier_is_distinct() {
     let plan_errors = [
         ConversionPlanError::SourceHasNoConvertibleName,
         ConversionPlanError::UnsafeOutputFileName,
+        ConversionPlanError::OutputFileNameTooLongToStage,
         ConversionPlanError::DestinationRootNotInspectable {
             kind: io::ErrorKind::NotFound,
         },

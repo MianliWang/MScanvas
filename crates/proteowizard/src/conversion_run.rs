@@ -37,7 +37,9 @@ use std::time::Duration;
 use thiserror::Error;
 
 use crate::capability::{InstalledHelpCapabilities, Sha256Digest};
-use crate::command::{OpenFormat, PlanError, build_msconvert_command_with_capabilities};
+use crate::command::{
+    OpenFormat, PlanError, SourceIdentity, build_msconvert_command_with_capabilities,
+};
 use crate::conversion::{
     ConversionIntegrityOutcome, ConversionPolicy, ConversionSourceError, ConversionSourceFacts,
     ValidConversion, capture_conversion_source, conversion_output_file_name,
@@ -73,6 +75,24 @@ const STAGING_OWNER_MAGIC: &[u8] = b"mscanvas-conversion-staging-area\n";
 /// the point of a private staging area. So the marker owns the staging root and
 /// the backend owns one level below it.
 const STAGING_OUTPUT_DIRECTORY: &str = "output";
+
+/// The per-component name limit every filesystem this project targets shares.
+/// It bounds the staging name, which is the output name plus a suffix.
+const MAX_COMPONENT_UNITS: usize = 255;
+
+/// How many units of a name a filesystem counts: UTF-16 code units on Windows,
+/// bytes elsewhere. Measuring in the wrong unit would refuse names that fit.
+#[cfg(windows)]
+fn component_units(name: &OsStr) -> usize {
+    use std::os::windows::ffi::OsStrExt;
+
+    name.encode_wide().count()
+}
+
+#[cfg(not(windows))]
+fn component_units(name: &OsStr) -> usize {
+    name.as_encoded_bytes().len()
+}
 
 /// Which source kinds this boundary is allowed to convert.
 ///
@@ -250,6 +270,8 @@ pub enum ConversionPlanError {
     SourceHasNoConvertibleName,
     #[error("the derived output file name is not one safe file name")]
     UnsafeOutputFileName,
+    #[error("the derived output file name leaves no room for a staging name")]
+    OutputFileNameTooLongToStage,
     #[error("the destination root could not be inspected: {kind}")]
     DestinationRootNotInspectable { kind: io::ErrorKind },
     #[error("the destination root is not a directory")]
@@ -262,6 +284,7 @@ impl ConversionPlanError {
         match self {
             Self::SourceHasNoConvertibleName => "source_has_no_convertible_name",
             Self::UnsafeOutputFileName => "unsafe_output_file_name",
+            Self::OutputFileNameTooLongToStage => "output_file_name_too_long_to_stage",
             Self::DestinationRootNotInspectable { .. } => "destination_root_not_inspectable",
             Self::DestinationRootNotADirectory => "destination_root_not_a_directory",
         }
@@ -279,6 +302,11 @@ impl ConversionPlanError {
 pub struct ConversionPlan {
     source: ConversionSource,
     destination_root: PathBuf,
+    /// The destination root is admitted as an object, not as a name. A plan can
+    /// outlive the directory the caller chose — a queue makes that ordinary
+    /// rather than exotic — and a path that now resolves somewhere else is not
+    /// the root this plan accepted.
+    destination_root_identity: SourceIdentity,
     output_file_name: OsString,
     conflict: ConflictPolicy,
     compression: ConversionPolicy,
@@ -301,6 +329,13 @@ impl ConversionPlan {
                 .ok_or(ConversionPlanError::SourceHasNoConvertibleName)?;
         crate::command::validate_output_file_name(&output_file_name, OpenFormat::MzMl)
             .map_err(|_| ConversionPlanError::UnsafeOutputFileName)?;
+        // The staging area is named after the output, so a name the plan would
+        // otherwise accept can still be one this boundary cannot stage. Deciding
+        // that here makes it a stated refusal rather than an opaque failure from
+        // the operating system once a run is already under way.
+        if component_units(&output_file_name) + STAGING_SUFFIX.len() > MAX_COMPONENT_UNITS {
+            return Err(ConversionPlanError::OutputFileNameTooLongToStage);
+        }
 
         let destination_root = std::fs::canonicalize(destination_root).map_err(|error| {
             ConversionPlanError::DestinationRootNotInspectable { kind: error.kind() }
@@ -311,14 +346,25 @@ impl ConversionPlan {
         if !metadata.is_dir() {
             return Err(ConversionPlanError::DestinationRootNotADirectory);
         }
+        let destination_root_identity =
+            SourceIdentity::capture(&destination_root).map_err(|error| {
+                ConversionPlanError::DestinationRootNotInspectable { kind: error.kind() }
+            })?;
 
         Ok(Self {
             source,
             destination_root,
+            destination_root_identity,
             output_file_name,
             conflict,
             compression: ConversionPolicy::default(),
         })
+    }
+
+    /// Whether the destination root is still the directory object this plan
+    /// admitted, rather than whatever now answers to its name.
+    fn destination_root_is_current(&self) -> io::Result<bool> {
+        self.destination_root_identity.matches_current()
     }
 
     #[must_use]
@@ -382,6 +428,15 @@ impl ConversionPlan {
     /// can check that, which is why it is the caller's decision and not a
     /// silent step inside the run.
     pub fn reclaim_staging_area(&self) -> Result<(), StagingReclaimError> {
+        // A staging area under a root this plan no longer admits is not this
+        // plan's to remove, whatever it is called.
+        match self.destination_root_is_current() {
+            Ok(true) => {}
+            Ok(false) => return Err(StagingReclaimError::NotOwned),
+            Err(error) => {
+                return Err(StagingReclaimError::NotInspectable { kind: error.kind() });
+            }
+        }
         let staging = self.staging_directory();
         match staging_ownership(&staging) {
             StagingOwnership::Absent => return Ok(()),
@@ -609,6 +664,14 @@ pub enum ConversionRunFailure {
     /// The source could not be rehashed, so nothing was converted.
     #[error("the source could not be rehashed")]
     SourceNotRehashed,
+    /// The destination root is no longer the directory the plan accepted, so
+    /// nothing was created there.
+    #[error("the destination root is not the directory this plan accepted")]
+    DestinationRootChanged,
+    /// The destination root could not be rechecked against the plan, so nothing
+    /// was created there.
+    #[error("the destination root could not be rechecked: {kind}")]
+    DestinationRootNotRechecked { kind: io::ErrorKind },
 }
 
 impl ConversionRunFailure {
@@ -629,6 +692,8 @@ impl ConversionRunFailure {
             Self::SourceChangedBeforeRun => "source_changed_before_run",
             Self::SourceNotRechecked { .. } => "source_not_rechecked",
             Self::SourceNotRehashed => "source_not_rehashed",
+            Self::DestinationRootChanged => "destination_root_changed",
+            Self::DestinationRootNotRechecked { .. } => "destination_root_not_rechecked",
         }
     }
 
@@ -969,6 +1034,22 @@ pub fn run_conversion(
     capabilities: &InstalledHelpCapabilities,
     runner: &dyn ProcessRunner,
 ) -> ConversionRunReport {
+    // Nothing is inspected, created or launched under a root that is no longer
+    // the directory this plan admitted.
+    match plan.destination_root_is_current() {
+        Ok(true) => {}
+        Ok(false) => {
+            return ConversionRunReport::settled(ConversionRunOutcome::Failed(
+                ConversionRunFailure::DestinationRootChanged,
+            ));
+        }
+        Err(error) => {
+            return ConversionRunReport::settled(ConversionRunOutcome::Failed(
+                ConversionRunFailure::DestinationRootNotRechecked { kind: error.kind() },
+            ));
+        }
+    }
+
     let destination = plan.destination();
     match std::fs::symlink_metadata(&destination) {
         Ok(_) => {

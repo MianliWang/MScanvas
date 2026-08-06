@@ -95,8 +95,14 @@ rather than reaching a backend.
 
 ### Output-root authority and conflict policy
 
-The destination root is a Rust-owned, canonicalized, existing directory. The
-output name is derived from the source, never supplied.
+The destination root is a Rust-owned, canonicalized, existing directory, and it is admitted as an object rather than as a name: the plan records its
+filesystem identity and the run refuses to create or finalize anything under a path that now resolves to a different directory. A plan can outlive the
+directory the caller chose — a queue makes that ordinary — and a root replaced by another directory, or by a link to one, is not the root that was
+accepted.
+
+The output name is derived from the source, never supplied. A name the naming rule would otherwise accept is still refused when the staging name built
+from it would exceed a filesystem name component, so that is a stated plan-time refusal rather than an opaque operating-system failure once a run is
+under way.
 
 The conflict policy is `Fail` or `Skip`. There is no overwrite variant to
 select. Replacing a file the user already has is not a policy this boundary can

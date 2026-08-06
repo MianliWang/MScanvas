@@ -2305,6 +2305,14 @@ rejecting a conversion that should never have happened — and not even that if 
 original were restored before it looked, since the integrity scanner never
 decodes an array payload.
 
+The destination root is admitted the same way. A plan records its filesystem
+identity, and the run refuses to create or finalize anything under a path that
+now resolves to a different directory — a plan can outlive the folder the user
+chose, and a queue makes that ordinary. A name the naming rule accepts is also
+refused when the staging name built from it would exceed a filesystem name
+component, so that is a plan-time refusal rather than an opaque failure once a
+run is under way.
+
 The boundary converts mzML to mzML. That is not the product goal; it is what the
 evidence permits. The source/output comparison needs mzML source facts, so
 applying it to a source that could not be read that way and calling the result a
@@ -2323,7 +2331,7 @@ Validation on the exact head: `cargo fmt --all --check`,
 `cargo test --locked --workspace --all-targets`, `python -B scripts/check_repo.py`,
 `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
 
-Twenty-five tests were added, all deterministic and none reaching a backend: a
+Twenty-seven tests were added, all deterministic and none reaching a backend: a
 substituted runner receives the real planned command, so what it writes and
 where is decided by the boundary under test rather than by the test. They cover
 the derived name and the fixed plan; the argv the backend is given and that it
@@ -2337,7 +2345,9 @@ output, no output at all, an extra output, and a source replaced under the run,
 each rejected before the final name; a destination taken mid-run keeping its
 contents; a source that is a directory, that is absent, or that is named `.mzML`
 without being mzML; a source rewritten, replaced or removed between planning and
-running; a destination root that is missing or is a file; distinct
+running; a destination root replaced or removed between them; an output name that
+leaves no room for a staging name; a destination root that is missing or is a
+file; distinct
 path-free identifiers across every failure, plan error, source rejection and
 policy; a run that did not complete never being finalized; the backend facts
 projected on both a success and a rejection; a name with a space and non-ASCII
@@ -2346,7 +2356,7 @@ substituted runner still discarding the staging directory; a capture-failure
 stream label a substituted runner set to a path being projected onto a closed
 set rather than rendered; and a staging directory that cannot be removed being
 reported beside the primary outcome rather than instead of it, proved by holding
-the staged file open with a share mode that refuses deletion. Twenty-four run
+the staged file open with a share mode that refuses deletion. Twenty-six run
 on every platform; the residue proof is Windows-only, as the mechanism it
 exercises is.
 
