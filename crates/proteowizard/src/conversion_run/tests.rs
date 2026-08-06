@@ -456,8 +456,17 @@ fn an_existing_staging_target_fails_without_disturbing_what_is_in_it() {
     );
     assert!(staging.join("in-flight").exists());
 
-    // An absent staging area is nothing to reclaim rather than a failure.
+    // Teardown removes the marker before it removes the root, so a root removal
+    // that fails leaves exactly an empty directory. That must stay reclaimable
+    // or it becomes the permanent obstruction the marker exists to prevent —
+    // and removing an empty directory destroys nothing, whoever made it.
     fs::remove_dir_all(&staging).expect("remove the unowned directory");
+    fs::create_dir(&staging).expect("leave an empty staging directory behind");
+    plan.reclaim_staging_area()
+        .expect("an empty staging directory is reclaimable");
+    assert!(!staging.exists());
+
+    // An absent staging area is nothing to reclaim rather than a failure.
     plan.reclaim_staging_area()
         .expect("reclaiming an absent staging area is not a failure");
 

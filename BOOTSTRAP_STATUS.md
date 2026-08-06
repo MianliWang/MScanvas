@@ -2356,7 +2356,11 @@ output directory to hold exactly one planned entry, so the marker owns the
 staging root and the backend owns one level below. Teardown removes the output
 first and the marker last — the reverse order was written first, and the Windows
 residue test caught it: cleanup destroyed the ownership proof before failing, so
-the residue it reported would have been permanently unreclaimable.
+the residue it reported would have been permanently unreclaimable. Review found
+the tail of the same fault — removing the root is itself the step that can fail
+once the marker is already gone — and an empty directory is now reclaimable as
+well, not because emptiness proves ownership but because removing an empty
+directory destroys nothing.
 
 A source named `acquisition.raw` that reads as mzML is converted to
 `acquisition.mzML`, which pins both halves of the naming rule at once: the

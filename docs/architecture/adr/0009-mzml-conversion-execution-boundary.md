@@ -172,7 +172,10 @@ directory: the integrity contract requires the output directory to hold exactly
 one planned entry, so the marker owns the staging root and the backend writes
 one level below it. Teardown removes the backend's output first and the marker
 last, so a cleanup that gives up part-way leaves the proof that makes its own
-residue reclaimable.
+residue reclaimable. An empty directory is reclaimable too — not because
+emptiness proves ownership but because it makes ownership irrelevant, and
+because removing the marker before removing the root is exactly what leaves one
+behind when the last step fails.
 
 ### Validation
 

@@ -758,12 +758,19 @@ enum StagingOwnership {
     NotInspectable { kind: io::ErrorKind },
 }
 
-/// Decides whether the entry at a staging name is a staging area MSCanvas made.
+/// Decides whether the entry at a staging name may be removed.
 ///
-/// Only the marker decides it. A directory that merely carries the expected
-/// name, or one whose marker is a link, a directory or the wrong content, is
-/// not owned — the answer has to be no whenever it is not provably yes, because
-/// the consequence of being wrong is deleting a tree of someone's data.
+/// Two things say yes. The marker, which proves MSCanvas made the directory; a
+/// directory that merely carries the expected name, or whose marker is a link, a
+/// directory or the wrong content, proves nothing, because the consequence of
+/// being wrong is deleting a tree of someone's data. And emptiness, which is not
+/// proof of ownership but makes ownership irrelevant: removing an empty
+/// directory destroys nothing.
+///
+/// Emptiness is not a convenience. Teardown removes the marker before it removes
+/// the root, so a root removal that fails leaves exactly an empty directory —
+/// and without this, that residue would be the permanent obstruction the marker
+/// exists to prevent.
 fn staging_ownership(staging: &Path) -> StagingOwnership {
     match std::fs::symlink_metadata(staging) {
         Ok(metadata) if !metadata.is_dir() => return StagingOwnership::NotOwned,
@@ -771,6 +778,17 @@ fn staging_ownership(staging: &Path) -> StagingOwnership {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return StagingOwnership::Absent;
         }
+        Err(error) => return StagingOwnership::NotInspectable { kind: error.kind() },
+    }
+
+    match std::fs::read_dir(staging) {
+        Ok(mut entries) => match entries.next() {
+            None => return StagingOwnership::Owned,
+            Some(Err(error)) => {
+                return StagingOwnership::NotInspectable { kind: error.kind() };
+            }
+            Some(Ok(_)) => {}
+        },
         Err(error) => return StagingOwnership::NotInspectable { kind: error.kind() },
     }
 
