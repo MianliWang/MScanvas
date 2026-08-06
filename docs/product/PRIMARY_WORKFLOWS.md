@@ -119,6 +119,12 @@ until this repository can convert one.
 
 **Success:** valid outputs are easy to locate and failures do not require rebuilding the batch.
 
+**Not built.** No step of this workflow is reachable. A private Rust boundary
+converts one planned file — staged, validated and finalized without overwrite —
+and step 4's independent queue, step 5's retry and the cancellation this
+workflow implies do not exist. See
+[ADR 0009](../architecture/adr/0009-mzml-conversion-execution-boundary.md).
+
 ## WF-005 — Clear the workspace
 
 **Idle:** `Clear list` → workspace becomes empty → optional Undo.

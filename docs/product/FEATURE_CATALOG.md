@@ -67,6 +67,18 @@ table remains the target, including the unsupported portions called out below:
 | CNV-008 | Conflict policy | P0 | Default is fail/skip; overwrite requires explicit confirmation. |
 | CNV-009 | Natural-language summary | P0 | Before running, state file count, format, processing and output root. |
 
+**None of CNV-001 to CNV-009 is reachable in the product.** A private Rust
+conversion boundary exists beneath them and is covered by tests: it plans mzML
+only, derives the output name from the source, refuses or skips an existing
+destination with no overwrite to select, stages the backend's output in a
+directory MSCanvas owns and takes the final name only after the produced
+document passes the integrity contract. CNV-002 stays unplannable, and
+CNV-004's no-peak-picking rule is the only processing decision that boundary
+expresses. CNV-005, CNV-006 and the compression choice in CNV-007 are not
+expressible yet, and CNV-003's vendor-dataset-root rule is unreachable because
+no vendor acquisition is recognized. See
+[ADR 0009](../architecture/adr/0009-mzml-conversion-execution-boundary.md).
+
 ## Runs and recovery
 
 | ID | Feature | Priority | Acceptance summary |

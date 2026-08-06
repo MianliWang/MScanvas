@@ -66,6 +66,18 @@ All notable changes will be documented here once versioned releases begin.
   discovery on `PATH` and in the locations an installer writes. The chosen
   folder applies to the current session only, is never written to disk, and
   returning to automatic discovery is offered from every state.
+- A private mzML conversion boundary in the ProteoWizard adapter: one immutable
+  plan, one staged execution, one no-clobber finalization. A source is opened and
+  read as mzML before it becomes one, so a name or an extension is never taken
+  for an acquisition. The backend writes into a private staging directory
+  MSCanvas creates inside the destination root, and the final name is taken only
+  after the produced document passes the integrity contract, by a move that fails
+  rather than replaces. A failed, rejected or partial output is discarded and
+  never appears beside the user's files. The conflict policy is fail or skip;
+  there is no overwrite to select. Cancellation is deliberately absent while real
+  backend cancellation remains unmeasured. Nothing in the application reaches
+  this: no command, transfer object, capability or frontend file changed. See
+  [ADR 0009](docs/architecture/adr/0009-mzml-conversion-execution-boundary.md).
 - Typed mzML conversion-integrity contracts in the ProteoWizard adapter. When the
   source is itself mzML, they compare acquisition facts captured before and after
   a conversion; a source in any other format cannot be captured that way, so no

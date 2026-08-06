@@ -1,6 +1,6 @@
 # Bootstrap status
 
-**Updated:** 2026-07-30
+**Updated:** 2026-08-06
 
 **Canonical repository:** [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas)
 
@@ -2241,6 +2241,100 @@ nor the external rendered projection as a physical gesture or native end-to-end
 run. No acquisition content was read and no ProteoWizard process was started for
 this work.
 
+## M3.0 mzML conversion boundary, 2026-08-06
+
+The conversion sequence that until now existed only inside
+`examples/m0_proteowizard_spike.rs` is library code. `mscanvas-proteowizard`
+owns one immutable plan, one staged execution and one no-clobber finalization,
+and `ADR 0009` records the decision.
+
+Three things were missing rather than merely unassembled, and each is closed
+here.
+
+There was no typed plan. `(input, output directory, output name, format,
+compression policy, scan limits)` were threaded by hand across four call sites,
+and two of them could disagree without anything noticing: the compression the
+integrity check assumed and the `--zlib` the backend actually received were
+independent facts, and the limits that read the source and the limits that
+judged the output were chosen separately. A plan now fixes all of them at once,
+and the source's own limits are the ones its output is judged by.
+
+There was no temporary-then-final output lifecycle anywhere in the repository.
+The plan pointed `msconvert` straight at the name a successful conversion takes,
+so a partial write, a lossy output or a rejected document would have been left
+in the user's output directory under exactly that name, distinguishable only by
+a filename suffix convention. Each run now creates a private staging directory
+inside the destination root, exclusively — an existing one is refused untouched
+rather than adopted, because it may belong to a run still in flight — and points
+the backend there. The final name is taken only after the produced document
+passes the integrity contract, by `MoveFileExW` without
+`MOVEFILE_REPLACE_EXISTING`, which fails rather than replaces. Everything else
+is discarded with the staging directory. A destination that appears while the
+run is in flight keeps its contents and the run fails.
+
+That private directory also buys a real check rather than only tidiness. The
+integrity contract has always required the output directory to hold exactly one
+planned entry, which is why the spike kept a stricter empty-directory
+precondition than the library it called. Enclosing the run makes that
+requirement meaningful instead of unenforceable: an extra file the backend
+emitted is now detected rather than lost among the user's own files.
+
+And a source was a path. It is now an object that can only be obtained by
+opening a real file, refusing anything that is not a regular file,
+canonicalizing it, binding it to its filesystem identity, hashing it and reading
+it as mzML. A file named `.mzML` that is not mzML does not produce one. Exactly
+one source kind is expressible, with no vendor or directory variant present even
+as an unconstructed enum variant, which is the rule ADR 0006 already applies to
+the workspace registry.
+
+Two absences are deliberate. There is no cancellation: real backend
+cancellation and partial-output behavior are rated **D**, the only measured
+conversion completed in `136 ms` below the safe-attempt threshold, and the
+controlled Job Object tests are process-contract evidence. And there is no
+overwrite: the conflict policy is fail or skip, with no third variant to select.
+
+The boundary converts mzML to mzML. That is not the product goal; it is what the
+evidence permits. The source/output comparison needs mzML source facts, so
+applying it to a source that could not be read that way and calling the result a
+fidelity check is precisely what this boundary refuses to do. No lawful vendor
+RAW fixture exists or is authorized in this repository, vendor coverage is rated
+**D**, and no vendor source posture may be added before that changes.
+
+Nothing here is reachable from the product. No Tauri command was added or
+changed, no transfer object, capability or frontend file was touched, no
+dependency moved, and the registered command surface is still exactly thirteen.
+Two crate-private visibilities widened — the output-file-name validator and the
+bound-help capability parser — and no public API was removed.
+
+Validation on the exact head: `cargo fmt --all --check`,
+`cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --locked --workspace --all-targets`, `python -B scripts/check_repo.py`,
+`pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
+
+Eighteen tests were added, all deterministic and none reaching a backend: a
+substituted runner receives the real planned command, so what it writes and
+where is decided by the boundary under test rather than by the test. They cover
+the derived name and the fixed plan; the argv the backend is given and that it
+points at the staging directory rather than the destination root; a finalized
+conversion landing beside an unrelated file that is left alone; an existing
+destination under both policies, with the backend never launched and the
+existing bytes unchanged; an existing staging target left exactly as it was; a
+non-zero exit leaving its partial write out of the destination root; a launch
+failure reported without the executable it names; a lossy output, an empty
+output, no output at all, an extra output, and a source replaced under the run,
+each rejected before the final name; a destination taken mid-run keeping its
+contents; a source that is a directory, that is absent, or that is named `.mzML`
+without being mzML; a destination root that is missing or is a file; distinct
+path-free identifiers across every failure; and a staging directory that cannot
+be removed being reported beside the primary outcome rather than instead of it,
+proved by holding the staged file open with a share mode that refuses deletion.
+
+Rendered QA was not required and not performed: no frontend file, transfer
+object, command signature, capability or user-facing string changed.
+ProteoWizard was not executed and the desktop application was not launched. No
+scientific acquisition was used as a fixture; the mzML documents in these tests
+are generated in the test itself.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.
@@ -2265,6 +2359,11 @@ this work.
   separately authorized vendor coverage. The typed preview-result/canonical-identity
   boundary, the mzML conversion-integrity contract, the bounded open-format disposable-VM
   matrix and the representative navigation and scale measurements are complete.
+- Measure what `msconvert` itself does to an existing output. The M0
+  existing-output case was refused by MSCanvas before launch, so the backend's
+  own overwrite behavior has never been observed. The M3.0 conversion boundary
+  does not depend on it — the backend only ever writes into a private staging
+  directory — and must not start depending on it.
 
 ## First verified-bootstrap checklist
 

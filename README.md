@@ -91,7 +91,11 @@ its queue, progress and cancellation; and figure export. mzXML output stays
 disabled and fail-closed until representative multi-source integrity checks pass.
 Typed mzML conversion planning and conversion-integrity verification exist in
 Rust and are covered by tests, but no user-facing conversion workflow is built on
-them yet.
+them yet. That Rust foundation now runs a whole conversion — plan it, stage it
+in a private directory MSCanvas owns, validate what came out, and only then give
+it its final name — but it converts mzML to mzML, because a source it cannot
+first read as mzML has nothing to be checked against. Nothing in the interface
+reaches it.
 
 ## Product scope
 
