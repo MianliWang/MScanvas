@@ -4,6 +4,7 @@
 mod capability;
 mod command;
 mod conversion;
+mod conversion_run;
 mod diagnostics;
 mod discovery;
 mod failure;
@@ -29,6 +30,12 @@ pub use conversion::{
     ConversionSourceFacts, DocumentPart, DocumentSide, IntegrityProperty, ValidConversion,
     capture_conversion_source, conversion_output_file_name, inspect_conversion_output,
     verify_mzml_conversion,
+};
+pub use conversion_run::{
+    BackendExecutionFailure, BackendRunFacts, BackendStream, ConflictPolicy, ConversionPlan,
+    ConversionPlanError, ConversionRunFailure, ConversionRunOutcome, ConversionRunReport,
+    ConversionSource, ConversionSourceKind, ConversionSourceRejection, StagingReclaimError,
+    StagingResidue, run_conversion,
 };
 pub use diagnostics::{Redactor, ReportableProcessOutput};
 pub use discovery::{

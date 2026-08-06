@@ -48,6 +48,8 @@ A shared executor should eventually own:
 
 Backend adapters own capability probing, command planning, event parsing and failure classification.
 
+Of that list, direct argv spawn, bounded capture, owned process-tree termination and normalized failures exist in `mscanvas-proteowizard`, and the temporary/final output transition now exists there too, for one conversion at a time. Concurrency limits, timeouts, structured progress events and the queue that would use them do not. See [ADR 0009](adr/0009-mzml-conversion-execution-boundary.md).
+
 ## Persistence evolution
 
 M1 can use in-memory state plus small settings storage. Introduce durable project/run storage only with an explicit schema/ADR. Derived large data should be stored in suitable files/caches rather than embedded wholesale in a UI settings database.

@@ -447,6 +447,38 @@ pub enum PlanError {
     InstalledHelpCapability(#[from] CapabilityRequirementError),
 }
 
+impl PlanError {
+    /// A stable structural identifier, so a caller that must not render backend
+    /// prose can still say which planning rule refused.
+    #[must_use]
+    pub const fn stable_id(&self) -> &'static str {
+        match self {
+            Self::NonAbsoluteExecutable => "non_absolute_executable",
+            Self::NonAbsoluteInput => "non_absolute_input",
+            Self::NonAbsoluteOutputDirectory => "non_absolute_output_directory",
+            Self::MissingInputName => "missing_input_name",
+            Self::InputPathInspectionFailed { .. } => "input_path_inspection_failed",
+            Self::MissingOutputDirectory => "missing_output_directory",
+            Self::OutputDirectoryInspectionFailed { .. } => "output_directory_inspection_failed",
+            Self::OutputDirectoryNotEmpty => "output_directory_not_empty",
+            Self::OutputDirectoryInsideDirectoryInput => "output_directory_inside_directory_input",
+            Self::InvalidOutputFileName => "invalid_output_file_name",
+            Self::OutputFileExtensionMismatch => "output_file_extension_mismatch",
+            Self::OutputDestinationExists => "output_destination_exists",
+            Self::OutputDestinationInspectionFailed { .. } => {
+                "output_destination_inspection_failed"
+            }
+            Self::InvalidSpectrumPrecision => "invalid_spectrum_precision",
+            Self::InvalidMsLevelFilter => "invalid_ms_level_filter",
+            Self::FilteredTicCapabilityEvidenceRequired => {
+                "filtered_tic_capability_evidence_required"
+            }
+            Self::MzXmlIntegrityGateRequired => "mzxml_integrity_gate_required",
+            Self::InstalledHelpCapability(_) => "installed_help_capability_missing",
+        }
+    }
+}
+
 fn build_msconvert_command(
     executable: impl Into<PathBuf>,
     input: &Path,
@@ -648,7 +680,7 @@ fn validate_paths(
     Ok(())
 }
 
-fn validate_output_file_name(
+pub(crate) fn validate_output_file_name(
     output_file_name: &OsStr,
     format: OpenFormat,
 ) -> Result<(), PlanError> {

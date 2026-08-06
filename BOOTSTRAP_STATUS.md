@@ -1,6 +1,6 @@
 # Bootstrap status
 
-**Updated:** 2026-07-30
+**Updated:** 2026-08-06
 
 **Canonical repository:** [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas)
 
@@ -2241,6 +2241,162 @@ nor the external rendered projection as a physical gesture or native end-to-end
 run. No acquisition content was read and no ProteoWizard process was started for
 this work.
 
+## M3.0 mzML conversion boundary, 2026-08-06
+
+The conversion sequence that until now existed only inside
+`examples/m0_proteowizard_spike.rs` now also exists as library code.
+`mscanvas-proteowizard` owns one immutable plan, one staged execution and one
+no-clobber finalization, and `ADR 0009` records the decision. The spike is
+unchanged and still runs its own sequence straight at the final output name;
+two sequences with different output-safety postures coexist, and retiring the
+harness is a later decision.
+
+Three things were missing rather than merely unassembled, and each is closed
+here.
+
+There was no typed plan. `(input, output directory, output name, format,
+compression policy, scan limits)` were threaded by hand across four call sites,
+and two of them could disagree without anything noticing: the compression the
+integrity check assumed and the `--zlib` the backend actually received were
+independent facts, and the limits that read the source and the limits that
+judged the output were chosen separately. A plan now fixes all of them at once,
+and the source's own limits are the ones its output is judged by.
+
+There was no temporary-then-final output lifecycle anywhere in the repository.
+The plan pointed `msconvert` straight at the name a successful conversion takes,
+so a partial write, a lossy output or a rejected document would have been left
+in the user's output directory under exactly that name, distinguishable only by
+a filename suffix convention. Each run now creates a private staging directory
+inside the destination root, exclusively — an existing one is refused untouched
+rather than adopted, because it may belong to a run still in flight — and points
+the backend there. The final name is taken only after the produced document
+passes the integrity contract, by `MoveFileExW` without
+`MOVEFILE_REPLACE_EXISTING`, which fails rather than replaces. Everything else
+is discarded with the staging directory. A destination that appears while the
+run is in flight keeps its contents and the run fails.
+
+That private directory also buys a real check rather than only tidiness. The
+integrity contract has always required the output directory to hold exactly one
+planned entry, which is why the spike kept a stricter empty-directory
+precondition than the library it called. Enclosing the run makes that
+requirement meaningful instead of unenforceable: an extra file the backend
+emitted is now detected rather than lost among the user's own files.
+
+And a source was a path. It is now an object that can only be obtained by
+opening a real file, refusing anything that is not a regular file,
+canonicalizing it, binding it to its filesystem identity, hashing it and reading
+it as mzML. A file named `.mzML` that is not mzML does not produce one. Exactly
+one source kind is expressible, with no vendor or directory variant present even
+as an unconstructed enum variant, which is the rule ADR 0006 already applies to
+the workspace registry.
+
+Two absences are deliberate. There is no cancellation: real backend
+cancellation and partial-output behavior are rated **D**, the only measured
+conversion completed in `136 ms` below the safe-attempt threshold, and the
+controlled Job Object tests are process-contract evidence. And there is no
+overwrite: the conflict policy is fail or skip, with no third variant to select.
+
+The run is also bound to the acquisition the plan admitted. The command builder
+reads the source's identity from its path again, so before anything is created
+or launched the run rechecks the recorded identity, byte length and hash. Review
+found that without it, a source replaced or rewritten between planning and
+running would be converted, and the post-run comparison would notice only by
+rejecting a conversion that should never have happened — and not even that if the
+original were restored before it looked, since the integrity scanner never
+decodes an array payload.
+
+The destination root is admitted the same way. A plan records its filesystem
+identity, and the run refuses to create or finalize anything under a path that
+now resolves to a different directory — a plan can outlive the folder the user
+chose, and a queue makes that ordinary. A name the naming rule accepts is also
+refused when the staging name built from it would exceed a filesystem name
+component, so that is a plan-time refusal rather than an opaque failure once a
+run is under way.
+
+The boundary converts mzML to mzML. That is not the product goal; it is what the
+evidence permits. The source/output comparison needs mzML source facts, so
+applying it to a source that could not be read that way and calling the result a
+fidelity check is precisely what this boundary refuses to do. No lawful vendor
+RAW fixture exists or is authorized in this repository, vendor coverage is rated
+**D**, and no vendor source posture may be added before that changes.
+
+Nothing here is reachable from the product. No Tauri command was added or
+changed, no transfer object, capability or frontend file was touched, no
+dependency moved, and the registered command surface is still exactly thirteen.
+Two crate-private visibilities widened — the output-file-name validator and the
+bound-help capability parser — and no public API was removed.
+
+Validation on the exact head: `cargo fmt --all --check`,
+`cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --locked --workspace --all-targets`, `python -B scripts/check_repo.py`,
+`pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
+
+Twenty-eight tests were added, all deterministic and none reaching a backend: a
+substituted runner receives the real planned command, so what it writes and
+where is decided by the boundary under test rather than by the test. They cover
+the derived name and the fixed plan; the argv the backend is given and that it
+points at the staging directory rather than the destination root; a finalized
+conversion landing beside an unrelated file that is left alone; an existing
+destination under both policies, with the backend never launched and the
+existing bytes unchanged; an existing staging target left exactly as it was; a
+non-zero exit leaving its partial write out of the destination root; a launch
+failure reported without the executable it names; a lossy output, an empty
+output, no output at all, an extra output, and a source replaced under the run,
+each rejected before the final name; a destination taken mid-run keeping its
+contents; a source that is a directory, that is absent, or that is named `.mzML`
+without being mzML; a source rewritten, replaced or removed between planning and
+running; a destination root replaced or removed between them; an output name that
+leaves no room for a staging name; a destination root that is missing or is a
+file; distinct
+path-free identifiers across every failure, plan error, source rejection and
+policy; a run that did not complete never being finalized; the backend facts
+projected on both a success and a rejection; a name with a space and non-ASCII
+characters surviving the wide-string conversion end to end; a panic in the
+substituted runner still discarding the staging directory; a capture-failure
+stream label a substituted runner set to a path being projected onto a closed
+set rather than rendered; and a staging directory that cannot be removed being
+reported beside the primary outcome rather than instead of it, proved by holding
+the staged file open with a share mode that refuses deletion. Twenty-seven run
+on every platform; the residue proof is Windows-only, as the mechanism it
+exercises is.
+
+Refusing an existing staging area is right, and on its own it is also a trap:
+one cleanup failure would leave a deterministically named directory that makes
+every later run of that plan refuse, and a path-free failure cannot say which
+name to remove. The plan therefore offers an explicit way out that the caller
+invokes when it decides no run is in flight; nothing adopts a staging area
+silently.
+
+That way out is bounded by ownership rather than by name, because deleting a
+tree on the strength of a name is how unrelated data gets destroyed. The marker
+itself is created exclusively and follows nothing: the staging directory is new,
+but it sits in a root another process may write to, and a plain write would have
+followed a link planted at the marker's name and truncated whatever it pointed
+at — which could be an output the user already had, or the acquisition itself. A staging
+area carries a marker written as it is created, and a directory without it is
+refused untouched however it is named. The marker is why the staging area has an
+inner directory the backend writes into: the integrity contract requires the
+output directory to hold exactly one planned entry, so the marker owns the
+staging root and the backend owns one level below. Teardown removes the output
+first and the marker last — the reverse order was written first, and the Windows
+residue test caught it: cleanup destroyed the ownership proof before failing, so
+the residue it reported would have been permanently unreclaimable. Review found
+the tail of the same fault — removing the root is itself the step that can fail
+once the marker is already gone — and an empty directory is now reclaimable as
+well, not because emptiness proves ownership but because removing an empty
+directory destroys nothing.
+
+A source named `acquisition.raw` that reads as mzML is converted to
+`acquisition.mzML`, which pins both halves of the naming rule at once: the
+extension does not decide what a source is, and the format decides what the
+output is called.
+
+Rendered QA was not required and not performed: no frontend file, transfer
+object, command signature, capability or user-facing string changed.
+ProteoWizard was not executed and the desktop application was not launched. No
+scientific acquisition was used as a fixture; the mzML documents in these tests
+are generated in the test itself.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.
@@ -2265,6 +2421,16 @@ this work.
   separately authorized vendor coverage. The typed preview-result/canonical-identity
   boundary, the mzML conversion-integrity contract, the bounded open-format disposable-VM
   matrix and the representative navigation and scale measurements are complete.
+- Measure what `msconvert` itself does to an existing output. The M0
+  existing-output case was refused by MSCanvas before launch, so the backend's
+  own overwrite behavior has never been observed. The M3.0 conversion boundary
+  does not depend on it — the backend only ever writes into a private staging
+  directory — and must not start depending on it.
+- Measure whether `msconvert` writes anything into its working directory besides
+  the output it was asked for. The M3.0 boundary requires the staging directory
+  to hold exactly one planned entry, so a scratch or sidecar file would reject a
+  faithful conversion. Required before that boundary is reachable from the
+  product.
 
 ## First verified-bootstrap checklist
 

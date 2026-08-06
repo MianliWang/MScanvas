@@ -344,6 +344,21 @@ impl InstalledHelpCapabilities {
         )
     }
 
+    /// Builds capabilities from help text that no discovery probe bound to an
+    /// executable. It exists so a test can reach a conversion plan without a
+    /// local installation, and is compiled out of the shipped binary: the
+    /// authority chain that makes installed help evidence runs through
+    /// `parse_bound_help`, and nothing in production may step around it.
+    #[cfg(test)]
+    pub(crate) fn parse_unbound_capture_for_tests(
+        tool: BackendTool,
+        executable: PathBuf,
+        executable_sha256: Sha256Digest,
+        capture: CompleteHelpCapture<'_>,
+    ) -> Result<Self, HelpCapabilityError> {
+        Self::parse_bound_capture(tool, executable, executable_sha256, capture)
+    }
+
     fn parse_bound_capture(
         tool: BackendTool,
         executable: PathBuf,
