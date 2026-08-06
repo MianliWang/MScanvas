@@ -1,0 +1,841 @@
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeSet;
+use std::fs;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use super::*;
+use crate::capability::{CapturedHelpStream, CompleteHelpCapture};
+use crate::command::{BackendTool, CommandSpec};
+use crate::conversion::{CompressionPolicy, IntegrityProperty};
+
+static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+const FIXTURE_SHA256: Sha256Digest = Sha256Digest::from_bytes([0xAB; 32]);
+const EMPTY_SHA256: Sha256Digest = Sha256Digest::from_bytes([0xCD; 32]);
+const EXECUTABLE_SHA256: Sha256Digest = Sha256Digest::from_bytes([0xEF; 32]);
+
+/// The subset of installed `msconvert` help the public conversion plan requires.
+const MSCONVERT_HELP: &str = r"Usage: msconvert [options] [filemasks]
+Convert mass spec data file formats.
+
+Options:
+  -o [ --outdir ] arg (=.)           : set output directory
+  --outfile arg                      : Override the name of output file.
+  --mzML                             : write mzML format [default]
+  --mzXML                            : write mzXML format
+  -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data
+";
+
+struct TestDirectory(PathBuf);
+
+impl TestDirectory {
+    fn new() -> Self {
+        let sequence = NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "mscanvas-conversion-run-tests-{}-{timestamp}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir(&path).expect("create conversion run test directory");
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TestDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// How the two documents below differ. A faithful `msconvert` run adds the
+/// index wrapper and may re-encode numeric precision, and neither may fail a
+/// conversion, so the fixtures differ in exactly those legal ways rather than
+/// being a byte copy of one another.
+#[derive(Clone, Copy)]
+enum Serialization {
+    Source,
+    Output,
+}
+
+fn document(spectra: u32, serialization: Serialization) -> String {
+    let precision = match serialization {
+        Serialization::Source => "MS:1000523",
+        Serialization::Output => "MS:1000521",
+    };
+    let mut body = String::new();
+    for index in 0..spectra {
+        body.push_str(&format!(
+            r#"<spectrum index="{index}" id="scan={}" defaultArrayLength="4">"#,
+            index + 1
+        ));
+        body.push_str(r#"<cvParam accession="MS:1000511" name="ms level" value="1"/>"#);
+        body.push_str(r#"<cvParam accession="MS:1000128" name="profile spectrum"/>"#);
+        body.push_str(r#"<binaryDataArrayList count="2">"#);
+        for accession in ["MS:1000514", "MS:1000515"] {
+            body.push_str(&format!(
+                r#"<binaryDataArray encodedLength="8"><cvParam accession="{accession}"/><cvParam accession="MS:1000574"/><cvParam accession="{precision}"/><binary>AA==</binary></binaryDataArray>"#
+            ));
+        }
+        body.push_str("</binaryDataArrayList></spectrum>");
+    }
+    let run = format!(
+        r#"<run id="R1"><spectrumList count="{spectra}">{body}</spectrumList><chromatogramList count="0"></chromatogramList></run>"#
+    );
+    match serialization {
+        Serialization::Source => format!(r#"<mzML version="1.1.0">{run}</mzML>"#),
+        Serialization::Output => {
+            format!(r#"<indexedmzML><mzML version="1.1.0">{run}</mzML></indexedmzML>"#)
+        }
+    }
+}
+
+fn source_document() -> String {
+    document(2, Serialization::Source)
+}
+
+fn output_document() -> String {
+    document(2, Serialization::Output)
+}
+
+fn capabilities() -> InstalledHelpCapabilities {
+    let executable = fs::canonicalize(std::env::current_exe().expect("test executable"))
+        .expect("canonical test executable");
+    InstalledHelpCapabilities::parse_bound_capture(
+        BackendTool::MsConvert,
+        executable,
+        EXECUTABLE_SHA256,
+        CompleteHelpCapture::new(
+            CapturedHelpStream::new(
+                MSCONVERT_HELP.as_bytes(),
+                MSCONVERT_HELP.len() as u64,
+                false,
+                FIXTURE_SHA256,
+            ),
+            CapturedHelpStream::new(&[], 0, false, EMPTY_SHA256),
+        ),
+    )
+    .expect("parse the msconvert help fixture")
+}
+
+/// A source file whose contents really are mzML, written under `directory`.
+fn write_source(directory: &Path, name: &str) -> PathBuf {
+    let path = directory.join(name);
+    fs::write(&path, source_document()).expect("write conversion source");
+    path
+}
+
+fn open_source(path: &Path) -> ConversionSource {
+    ConversionSource::open_mzml_file(path, MzmlScanLimits::default()).expect("open mzML source")
+}
+
+fn plan_into(source: ConversionSource, root: &Path, conflict: ConflictPolicy) -> ConversionPlan {
+    ConversionPlan::to_mzml(source, root, conflict).expect("plan an mzML conversion")
+}
+
+/// A `msconvert` stand-in. It receives the real planned command, so what it is
+/// told to write, and where, is decided by the boundary under test rather than
+/// by the test.
+struct FakeRunner<'a> {
+    act: &'a dyn Fn(&CommandSpec) -> Result<i32, ProcessError>,
+    calls: Cell<usize>,
+    argv: RefCell<Vec<OsString>>,
+    working_directory: RefCell<Option<PathBuf>>,
+}
+
+impl<'a> FakeRunner<'a> {
+    fn new(act: &'a dyn Fn(&CommandSpec) -> Result<i32, ProcessError>) -> Self {
+        Self {
+            act,
+            calls: Cell::new(0),
+            argv: RefCell::new(Vec::new()),
+            working_directory: RefCell::new(None),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.get()
+    }
+
+    fn argv(&self) -> Vec<OsString> {
+        self.argv.borrow().clone()
+    }
+}
+
+impl ProcessRunner for FakeRunner<'_> {
+    fn run(&self, spec: &CommandSpec) -> Result<ProcessOutput, ProcessError> {
+        self.calls.set(self.calls.get() + 1);
+        self.argv.replace(spec.args().to_vec());
+        self.working_directory
+            .replace(Some(spec.working_directory().to_path_buf()));
+        let exit_code = (self.act)(spec)?;
+        Ok(ProcessOutput {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            stdout_total_bytes: 0,
+            stderr_total_bytes: 0,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            exit_code: Some(exit_code),
+            elapsed: Duration::from_millis(7),
+            termination: Termination::Exited,
+            max_active_processes: Some(1),
+            final_active_processes: Some(0),
+            peak_job_memory_bytes: Some(1_024),
+        })
+    }
+}
+
+/// The path the planned command tells the backend to write.
+fn staged_destination(spec: &CommandSpec) -> PathBuf {
+    spec.output_destination()
+        .expect("a conversion plan carries an output destination")
+        .to_path_buf()
+}
+
+/// Writes the faithful conversion output the plan asked for.
+fn convert_faithfully(spec: &CommandSpec) -> Result<i32, ProcessError> {
+    fs::write(staged_destination(spec), output_document()).expect("write staged output");
+    Ok(0)
+}
+
+fn entry_names(directory: &Path) -> Vec<OsString> {
+    let mut names: Vec<OsString> = fs::read_dir(directory)
+        .expect("read directory")
+        .map(|entry| entry.expect("directory entry").file_name())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_plan_derives_a_deterministic_mzml_name_and_fixes_every_other_decision() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "样本 01.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+
+    assert_eq!(plan.output_file_name(), OsStr::new("样本 01.mzML"));
+    assert_eq!(plan.format(), OpenFormat::MzMl);
+    assert_eq!(plan.conflict_policy(), ConflictPolicy::Fail);
+    assert_eq!(plan.compression_policy().compression().stable_id(), "zlib");
+    assert_eq!(plan.source().kind(), ConversionSourceKind::MzmlFile);
+    // The plan judges its output with the same limits that read its source.
+    assert_eq!(plan.scan_limits(), plan.source().scan_limits());
+    assert_eq!(
+        plan.source().mzml_facts().declared_spectrum_count(),
+        Some(2)
+    );
+    assert_eq!(
+        plan.source().byte_length(),
+        source_document().len() as u64,
+        "the plan records the source it measured"
+    );
+}
+
+#[test]
+fn a_conversion_runs_in_a_private_staging_directory_and_finalizes_into_the_root() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let neighbour = root.join("unrelated.txt");
+    fs::write(&neighbour, b"a file the user already had").expect("write neighbour");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+
+    let valid = report.finalized().unwrap_or_else(|| {
+        panic!(
+            "expected a finalized conversion, got {:?}",
+            report.outcome()
+        )
+    });
+    assert!(valid.verified().contains(&IntegrityProperty::SpectrumCount));
+    assert_eq!(report.residue(), None);
+    assert_eq!(
+        report.backend().and_then(BackendRunFacts::exit_code),
+        Some(0)
+    );
+
+    // The output holds its planned name, the neighbour is untouched, and the
+    // staging directory is gone.
+    assert_eq!(
+        entry_names(&root),
+        vec![
+            OsString::from("sample.mzML"),
+            OsString::from("unrelated.txt")
+        ]
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("sample.mzML")).expect("read finalized output"),
+        output_document()
+    );
+    assert_eq!(
+        fs::read(&neighbour).expect("read neighbour"),
+        b"a file the user already had"
+    );
+}
+
+#[test]
+fn the_planned_command_writes_into_the_staging_directory_and_never_names_mzxml() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+    assert!(report.finalized().is_some(), "{:?}", report.outcome());
+
+    let argv = runner.argv();
+    let canonical_root = fs::canonicalize(&root).expect("canonical destination root");
+    let mut staging_name = OsString::from("sample.mzML");
+    staging_name.push(STAGING_SUFFIX);
+    let staging = canonical_root.join(&staging_name);
+
+    assert_eq!(argv.len(), 7);
+    assert_eq!(argv[1], OsStr::new("--mzML"));
+    // The compression the integrity contract is entitled to assume and the flag
+    // the backend is actually given are two facts, and they must agree.
+    assert_eq!(
+        plan.compression_policy().compression(),
+        CompressionPolicy::Zlib
+    );
+    assert_eq!(argv[2], OsStr::new("--zlib"));
+    assert_eq!(argv[3], OsStr::new("--outdir"));
+    assert_eq!(
+        argv[4],
+        staging.as_os_str(),
+        "the backend writes into the private staging directory, not the destination root"
+    );
+    assert_eq!(argv[5], OsStr::new("--outfile"));
+    assert_eq!(argv[6], OsStr::new("sample.mzML"));
+    assert!(
+        !argv.iter().any(|value| value == OsStr::new("--mzXML")),
+        "{argv:?}"
+    );
+    assert!(
+        !argv.iter().any(|value| value == OsStr::new("--filter")),
+        "no filter is inserted: {argv:?}"
+    );
+}
+
+#[test]
+fn an_existing_destination_is_refused_or_skipped_and_never_overwritten() {
+    for (conflict, expected) in [
+        (
+            ConflictPolicy::Fail,
+            ConversionRunOutcome::Failed(ConversionRunFailure::DestinationExists),
+        ),
+        (
+            ConflictPolicy::Skip,
+            ConversionRunOutcome::SkippedExistingDestination,
+        ),
+    ] {
+        let directory = TestDirectory::new();
+        let source = write_source(directory.path(), "sample.mzML");
+        let root = directory.path().join("out");
+        fs::create_dir(&root).expect("create destination root");
+        let destination = root.join("sample.mzML");
+        fs::write(&destination, b"the result of an earlier run").expect("write destination");
+
+        let plan = plan_into(open_source(&source), &root, conflict);
+        let act = convert_faithfully;
+        let runner = FakeRunner::new(&act);
+        let report = run_conversion(&plan, &capabilities(), &runner);
+
+        assert_eq!(*report.outcome(), expected);
+        assert_eq!(runner.calls(), 0, "the backend never ran");
+        assert_eq!(
+            fs::read(&destination).expect("read destination"),
+            b"the result of an earlier run"
+        );
+        assert_eq!(entry_names(&root), vec![OsString::from("sample.mzML")]);
+    }
+}
+
+#[test]
+fn an_existing_staging_target_fails_without_disturbing_what_is_in_it() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let mut staging_name = OsString::from("sample.mzML");
+    staging_name.push(STAGING_SUFFIX);
+    let staging = root.join(&staging_name);
+    fs::create_dir(&staging).expect("create the pre-existing staging directory");
+    fs::write(staging.join("in-flight"), b"another run may still own this")
+        .expect("write staging content");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::StagingTargetExists)
+    );
+    assert_eq!(runner.calls(), 0, "the backend never ran");
+    assert_eq!(
+        fs::read(staging.join("in-flight")).expect("read staging content"),
+        b"another run may still own this",
+        "a staging area this run did not create is left alone"
+    );
+}
+
+#[test]
+fn a_backend_failure_leaves_its_partial_output_out_of_the_destination_root() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let act = |spec: &CommandSpec| {
+        fs::write(staged_destination(spec), b"<indexedmzML><mzML><run>")
+            .expect("write partial output");
+        Ok(1)
+    };
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::BackendRejected { exit_code: Some(1) })
+    );
+    assert_eq!(
+        report.backend().and_then(BackendRunFacts::exit_code),
+        Some(1)
+    );
+    assert_eq!(report.residue(), None);
+    assert!(
+        entry_names(&root).is_empty(),
+        "a failed run leaves nothing behind: {:?}",
+        entry_names(&root)
+    );
+}
+
+#[test]
+fn a_backend_launch_failure_is_reported_without_the_executable_it_names() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let act = |_: &CommandSpec| {
+        Err(ProcessError::Launch {
+            executable: "C:\\a\\path\\msconvert.exe".to_owned(),
+            kind: LaunchFailureKind::NotFound,
+            detail: "The system cannot find the file specified.".to_owned(),
+        })
+    };
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::Backend(
+            BackendExecutionFailure::NotLaunched {
+                kind: LaunchFailureKind::NotFound
+            }
+        ))
+    );
+    assert_eq!(report.backend(), None);
+    let rendered = format!("{:?}", report.outcome());
+    assert!(
+        !rendered.contains("C:\\a\\path"),
+        "the executable path must not survive the projection: {rendered}"
+    );
+    assert!(entry_names(&root).is_empty());
+}
+
+#[test]
+fn an_output_that_fails_the_integrity_contract_is_never_finalized() {
+    // One spectrum arrives where the source had two. Exit status says success.
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let act = |spec: &CommandSpec| {
+        fs::write(staged_destination(spec), document(1, Serialization::Output))
+            .expect("write a lossy output");
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::OutputRejected(
+            ConversionIntegrityOutcome::SpectrumCountMismatch {
+                source: 2,
+                output: 1
+            }
+        ))
+    );
+    assert!(entry_names(&root).is_empty(), "nothing reached the root");
+}
+
+#[test]
+fn an_empty_output_is_never_a_successful_conversion() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let act = |spec: &CommandSpec| {
+        fs::write(staged_destination(spec), b"").expect("write an empty output");
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::OutputRejected(
+            ConversionIntegrityOutcome::EmptyOutput
+        ))
+    );
+    assert!(entry_names(&root).is_empty());
+}
+
+#[test]
+fn a_backend_that_produced_no_output_is_never_a_successful_conversion() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let act = |_: &CommandSpec| Ok(0);
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::OutputRejected(
+            ConversionIntegrityOutcome::MissingOutput
+        ))
+    );
+    assert!(entry_names(&root).is_empty());
+}
+
+#[test]
+fn an_extra_backend_output_is_rejected_because_the_staging_area_is_private() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let act = |spec: &CommandSpec| {
+        let destination = staged_destination(spec);
+        fs::write(&destination, output_document()).expect("write staged output");
+        fs::write(
+            destination
+                .parent()
+                .expect("the staged output has a parent")
+                .join("sample.mzML.index"),
+            b"an output the plan never asked for",
+        )
+        .expect("write an extra output");
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::OutputRejected(
+            ConversionIntegrityOutcome::UnexpectedExtraOutput { observed: 2 }
+        ))
+    );
+    assert!(entry_names(&root).is_empty());
+}
+
+#[test]
+fn a_source_replaced_during_the_conversion_is_never_finalized() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let replaced = source.clone();
+    let act = move |spec: &CommandSpec| {
+        fs::write(staged_destination(spec), output_document()).expect("write staged output");
+        fs::write(&replaced, document(3, Serialization::Source))
+            .expect("rewrite the source under the run");
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+
+    assert!(
+        matches!(
+            report.outcome(),
+            ConversionRunOutcome::Failed(ConversionRunFailure::OutputRejected(_))
+        ),
+        "{:?}",
+        report.outcome()
+    );
+    assert!(entry_names(&root).is_empty());
+}
+
+#[test]
+fn a_destination_taken_during_the_run_is_left_exactly_as_it_arrived() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let raced = root.join("sample.mzML");
+    let act = move |spec: &CommandSpec| {
+        fs::write(staged_destination(spec), output_document()).expect("write staged output");
+        fs::write(&raced, b"something else took this name").expect("take the destination");
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::DestinationAppearedDuringRun)
+    );
+    assert_eq!(
+        fs::read(root.join("sample.mzML")).expect("read the raced destination"),
+        b"something else took this name",
+        "finalization never replaces what already holds the name"
+    );
+    assert_eq!(entry_names(&root), vec![OsString::from("sample.mzML")]);
+}
+
+#[test]
+fn a_source_is_opened_and_read_rather_than_named() {
+    let directory = TestDirectory::new();
+
+    // An extension is not identity: a file named .mzML that is not mzML is
+    // refused before any plan exists.
+    let impostor = directory.path().join("not-really.mzML");
+    fs::write(&impostor, b"PK\x03\x04 this is not mzML").expect("write impostor");
+    assert!(matches!(
+        ConversionSource::open_mzml_file(&impostor, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::NotReadableAsMzml(_))
+    ));
+
+    // A directory-formatted acquisition is not a source this boundary accepts.
+    let acquisition = directory.path().join("acquisition.d");
+    fs::create_dir(&acquisition).expect("create a directory acquisition");
+    assert_eq!(
+        ConversionSource::open_mzml_file(&acquisition, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::NotARegularFile)
+    );
+
+    // A name that resolves to nothing is not a source either.
+    assert_eq!(
+        ConversionSource::open_mzml_file(
+            &directory.path().join("absent.mzML"),
+            MzmlScanLimits::default()
+        ),
+        Err(ConversionSourceRejection::NotInspectable {
+            kind: io::ErrorKind::NotFound
+        })
+    );
+
+    // Only a real mzML document becomes one.
+    let real = write_source(directory.path(), "real.mzML");
+    assert_eq!(
+        open_source(&real).kind().stable_id(),
+        ConversionSourceKind::MzmlFile.stable_id()
+    );
+}
+
+#[test]
+fn a_plan_refuses_a_destination_root_that_is_not_a_readable_directory() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+
+    assert_eq!(
+        ConversionPlan::to_mzml(
+            open_source(&source),
+            &directory.path().join("absent"),
+            ConflictPolicy::Fail,
+        ),
+        Err(ConversionPlanError::DestinationRootNotInspectable {
+            kind: io::ErrorKind::NotFound
+        })
+    );
+
+    let file_as_root = directory.path().join("root.txt");
+    fs::write(&file_as_root, b"not a directory").expect("write file used as a root");
+    assert_eq!(
+        ConversionPlan::to_mzml(open_source(&source), &file_as_root, ConflictPolicy::Fail),
+        Err(ConversionPlanError::DestinationRootNotADirectory)
+    );
+}
+
+#[test]
+fn every_outcome_renders_a_distinct_stable_identifier_and_no_path() {
+    let failures = [
+        ConversionRunFailure::DestinationExists,
+        ConversionRunFailure::DestinationNotInspectable {
+            kind: io::ErrorKind::PermissionDenied,
+        },
+        ConversionRunFailure::StagingTargetExists,
+        ConversionRunFailure::StagingNotCreated {
+            kind: io::ErrorKind::PermissionDenied,
+        },
+        ConversionRunFailure::NotPlannable(PlanError::OutputDestinationExists),
+        ConversionRunFailure::Backend(BackendExecutionFailure::ExecutableChanged),
+        ConversionRunFailure::BackendRejected { exit_code: Some(3) },
+        ConversionRunFailure::BackendDidNotComplete,
+        ConversionRunFailure::OutputRejected(ConversionIntegrityOutcome::PartialOutput),
+        ConversionRunFailure::DestinationAppearedDuringRun,
+        ConversionRunFailure::NotFinalized {
+            kind: io::ErrorKind::PermissionDenied,
+        },
+    ];
+    let mut identifiers: Vec<&str> = failures
+        .iter()
+        .map(ConversionRunFailure::stable_id)
+        .collect();
+    identifiers.push(ConversionRunOutcome::SkippedExistingDestination.stable_id());
+    let unique: BTreeSet<&str> = identifiers.iter().copied().collect();
+    assert_eq!(unique.len(), identifiers.len(), "{identifiers:?}");
+
+    for failure in &failures {
+        let rendered = format!("{failure:?}");
+        assert!(
+            !rendered.contains('/') && !rendered.contains('\\'),
+            "a failure must not render a path: {rendered}"
+        );
+    }
+
+    // A source and a plan describe themselves without naming where they are.
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    for rendered in [format!("{:?}", plan.source()), format!("{plan:?}")] {
+        assert!(
+            !rendered.contains("mscanvas-conversion-run-tests"),
+            "a plan must not render a path: {rendered}"
+        );
+        assert!(
+            !rendered.contains("sample.mzML"),
+            "a plan must not render a file name: {rendered}"
+        );
+    }
+}
+
+#[test]
+fn every_backend_execution_failure_has_its_own_identifier() {
+    let failures = [
+        BackendExecutionFailure::EnvironmentInvalid,
+        BackendExecutionFailure::StagedDestinationExists,
+        BackendExecutionFailure::StagedDestinationNotInspectable {
+            kind: io::ErrorKind::PermissionDenied,
+        },
+        BackendExecutionFailure::StagingDirectoryNotEmpty,
+        BackendExecutionFailure::StagingDirectoryNotInspectable {
+            kind: io::ErrorKind::PermissionDenied,
+        },
+        BackendExecutionFailure::OutputInsideSource,
+        BackendExecutionFailure::ExecutableNotReverified {
+            kind: io::ErrorKind::PermissionDenied,
+        },
+        BackendExecutionFailure::ExecutableChanged,
+        BackendExecutionFailure::SourceNotReverified {
+            kind: io::ErrorKind::PermissionDenied,
+        },
+        BackendExecutionFailure::SourceChanged,
+        BackendExecutionFailure::NotLaunched {
+            kind: LaunchFailureKind::NotFound,
+        },
+        BackendExecutionFailure::NotSupervised,
+        BackendExecutionFailure::NotAwaited,
+        BackendExecutionFailure::OutputNotCaptured { stream: "stdout" },
+        BackendExecutionFailure::NotTerminated,
+    ];
+    let identifiers: BTreeSet<&str> = failures
+        .iter()
+        .copied()
+        .map(BackendExecutionFailure::stable_id)
+        .collect();
+    assert_eq!(identifiers.len(), failures.len());
+}
+
+/// Cleanup is not a verdict. A staging directory that cannot be removed is
+/// reported beside the outcome, and never instead of it.
+#[cfg(windows)]
+#[test]
+fn a_staging_directory_that_cannot_be_removed_never_changes_the_outcome() {
+    use std::fs::OpenOptions;
+    use std::os::windows::fs::OpenOptionsExt;
+
+    /// Share reads only, so the staged file cannot be deleted while it is open.
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let held = RefCell::new(None);
+    let act = |spec: &CommandSpec| {
+        let destination = staged_destination(spec);
+        fs::write(&destination, output_document()).expect("write staged output");
+        let handle = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&destination)
+            .expect("hold the staged output open");
+        *held.borrow_mut() = Some(handle);
+        Ok(2)
+    };
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::BackendRejected { exit_code: Some(2) }),
+        "the primary cause survives a cleanup failure"
+    );
+    assert!(
+        report.residue().is_some(),
+        "an unremovable staging directory is reported"
+    );
+    assert_eq!(
+        report.residue().map(StagingResidue::stable_id),
+        Some("staging_not_removed")
+    );
+    assert!(
+        !root.join("sample.mzML").exists(),
+        "nothing was finalized into the destination root"
+    );
+
+    // Release the handle so the test directory can be removed.
+    drop(held.borrow_mut().take());
+}
