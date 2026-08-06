@@ -2461,7 +2461,7 @@ Validation on the exact head: `cargo fmt --all --check`,
 up from 243), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
 `pnpm test`, `pnpm build`.
 
-Twelve tests were added, all deterministic and none reaching a backend. A
+Thirteen tests were added, all deterministic and none reaching a backend. A
 private seam opens the one interval the claim is about — after the judgement,
 before the final name — and the tests act inside it.
 
@@ -2485,10 +2485,20 @@ be renamed out from under a run, and a root that cannot be held refusing the run
 before anything is inspected, created or launched; a failed finalization
 producing no result, no residue and no staging remains; the renameable open
 reading what it opened and refusing a directory or an absent path; the final-name
-guard refusing every multi-component and rooted spelling; and a validated output
-rendering neither a path, a name nor a handle, then releasing its object on drop.
+guard refusing every multi-component and rooted spelling; a held object refusing
+a concurrent writer while still admitting a reader; and a validated output
+rendering neither a path, a name nor a handle, then releasing its object on
+drop.
 
-Review changed the design in one place. The destination root was originally
+Review changed the design in two places. Binding the rename to the object
+settles which object is finalized, not what is in it: write sharing on the
+retained handle would have let another process modify the object between the
+scan and the rename, so the bytes taking the final name would not have been the
+bytes that were judged. Write sharing is now withheld for as long as the run
+holds the object, and an existing writer makes the open fail instead. Read and
+delete sharing stay — a reader cannot invalidate a judgement, and refusing
+deletion would cost a scanner or a backup agent its access for no correctness
+gain, because finalization follows the handle rather than the name. The destination root was originally
 pinned *after* the identity check, which left a window between the two — and the
 work in it includes rehashing the whole source, which is not a moment. The root
 is now held first and judged second: a pinned directory cannot be renamed or
@@ -2498,12 +2508,15 @@ ancestor of a held directory, so a run locks the destination root and every
 folder above it for its duration; that is now recorded rather than left to be
 discovered.
 
-Nine mutations were introduced one at a time against this head. Six were caught:
+Ten mutations were introduced one at a time against this head. Seven were
+caught:
 reopening the output by path before renaming it, and renaming a handle reopened
 after the scan, both fail the substitution tests; `ReplaceIfExists = TRUE` fails
 three no-clobber tests; accepting a multi-component final name fails the guard
-test; sharing deletion on the destination root fails the pin test; and pinning
-the root after the identity check instead of before fails the root-change test.
+test; sharing deletion on the destination root fails the pin test; pinning the root
+after the identity check instead of before fails the root-change test; and
+restoring write sharing on the retained object fails the concurrent-writer
+test.
 
 Three were not, and the reasons are recorded rather than smoothed over.
 Discarding the scanned handle and reopening the same path *inside* validation is

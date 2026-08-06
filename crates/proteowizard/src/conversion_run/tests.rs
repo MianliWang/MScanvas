@@ -1819,3 +1819,40 @@ fn a_unicode_name_with_a_space_survives_the_object_bound_rename() {
         "the wide-string rename finalized a different object"
     );
 }
+
+/// Binding the rename to the object settles which object is finalized, not what
+/// is in it. The judgement is only worth anything if the bytes cannot change
+/// underneath it, so the retained object refuses a concurrent writer for as long
+/// as the run holds it.
+#[cfg(windows)]
+#[test]
+fn a_validated_object_cannot_be_written_to_while_it_is_held() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let staged = staged_output_of(&fixture.plan);
+    let refusal = Cell::new(None);
+
+    let report = run_admitted(&fixture.plan, &capabilities(), &runner, || {
+        refusal.set(Some(
+            fs::OpenOptions::new()
+                .write(true)
+                .open(&staged)
+                .err()
+                .and_then(|error| error.raw_os_error()),
+        ));
+        // Reading it is still allowed: a reader cannot invalidate a judgement.
+        assert!(fs::read(&staged).is_ok(), "a concurrent reader was refused");
+    });
+
+    assert_eq!(
+        refusal.get().expect("the hook ran"),
+        Some(32),
+        "the validated object accepted a writer between judgement and finalization"
+    );
+    assert!(report.finalized().is_some(), "{:?}", report.outcome());
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("sample.mzML")).expect("read the finalized output"),
+        output_document()
+    );
+}

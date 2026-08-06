@@ -117,7 +117,6 @@ pub(crate) fn open_regular_file_renameable(path: &Path) -> Result<(File, u64), R
     const DELETE: u32 = 0x0001_0000;
     const SYNCHRONIZE: u32 = 0x0010_0000;
     const FILE_SHARE_READ: u32 = 0x0000_0001;
-    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
     const FILE_SHARE_DELETE: u32 = 0x0000_0004;
     const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 
@@ -129,17 +128,28 @@ pub(crate) fn open_regular_file_renameable(path: &Path) -> Result<(File, u64), R
     // reparse point rather than following it means a link substituted at this
     // name is refused below instead of silently read through.
     //
-    // Delete sharing is granted here, unlike the destination root the caller
-    // pins. The asymmetry is the point: the root needs a lock because its path
-    // must keep meaning what it meant and no object-bound naming is available
-    // for a rename target, while this object needs none — its finalization is
-    // bound to the handle, so correctness does not depend on nobody touching
-    // the name. Withholding it would additionally stop a scanner or a backup
-    // agent working in the user's own output directory.
+    // The share mode is decided one flag at a time, because binding the rename
+    // to the object only settles *which* object is finalized, not what is in it.
+    //
+    // Write sharing is withheld. Without that, another process could modify the
+    // object between the scan and the rename, and the bytes that took the final
+    // name would not be the bytes that were judged — the very thing this open
+    // exists to prevent. An existing writer now makes the open fail instead.
+    //
+    // Read sharing is granted: a concurrent reader cannot invalidate a
+    // judgement.
+    //
+    // Delete sharing is granted, unlike on the destination root the caller
+    // pins, and the asymmetry is deliberate. The root needs a lock because its
+    // path must keep meaning what it meant and no object-bound naming is
+    // available for a rename target. This object needs none, because its
+    // finalization follows the handle: unlinking or renaming the staged name
+    // cannot redirect it, so refusing those would cost a scanner or a backup
+    // agent its access for no correctness gain.
     let file = std::fs::OpenOptions::new()
         .read(true)
         .access_mode(FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE | DELETE)
-        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_DELETE)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
         .map_err(io_error)?;

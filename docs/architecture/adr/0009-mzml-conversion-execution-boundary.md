@@ -169,6 +169,13 @@ once. The prior window is closed rather than narrowed; a recheck before the move
 was considered and rejected, because it would only shorten the interval while
 reading as though it had removed it.
 
+Binding the rename to the object settles which object is finalized, not what is
+in it, so the retained handle also withholds write sharing: another process
+cannot modify the object between the scan and the rename, and an existing writer
+makes the open fail rather than the judgement describe bytes that later changed.
+Read and delete sharing stay, because a reader cannot invalidate a judgement and
+finalization follows the handle rather than the name.
+
 `ReplaceIfExists` stays false, so an occupied final name fails with
 `ERROR_ALREADY_EXISTS` whatever kind of entry holds it — file, directory or
 link — and nothing is replaced.
