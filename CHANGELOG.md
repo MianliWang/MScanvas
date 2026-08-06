@@ -72,8 +72,9 @@ All notable changes will be documented here once versioned releases begin.
   for an acquisition. The backend writes into a private staging directory
   MSCanvas creates inside the destination root, and the final name is taken only
   after the produced document passes the integrity contract, by a move that fails
-  rather than replaces. A failed, rejected or partial output is discarded and
-  never appears beside the user's files. The conflict policy is fail or skip;
+  rather than replaces. A failed, rejected or partial output is discarded, and
+  the only way one is left beside the user's files is a cleanup failure, which is
+  reported. The conflict policy is fail or skip;
   there is no overwrite to select. Cancellation is deliberately absent while real
   backend cancellation remains unmeasured. Nothing in the application reaches
   this: no command, transfer object, capability or frontend file changed. See

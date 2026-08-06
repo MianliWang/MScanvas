@@ -108,7 +108,7 @@ fn output_document() -> String {
 fn capabilities() -> InstalledHelpCapabilities {
     let executable = fs::canonicalize(std::env::current_exe().expect("test executable"))
         .expect("canonical test executable");
-    InstalledHelpCapabilities::parse_bound_capture(
+    InstalledHelpCapabilities::parse_unbound_capture_for_tests(
         BackendTool::MsConvert,
         executable,
         EXECUTABLE_SHA256,
@@ -145,6 +145,7 @@ fn plan_into(source: ConversionSource, root: &Path, conflict: ConflictPolicy) ->
 /// by the test.
 struct FakeRunner<'a> {
     act: &'a dyn Fn(&CommandSpec) -> Result<i32, ProcessError>,
+    termination: Termination,
     calls: Cell<usize>,
     argv: RefCell<Vec<OsString>>,
     working_directory: RefCell<Option<PathBuf>>,
@@ -154,10 +155,18 @@ impl<'a> FakeRunner<'a> {
     fn new(act: &'a dyn Fn(&CommandSpec) -> Result<i32, ProcessError>) -> Self {
         Self {
             act,
+            termination: Termination::Exited,
             calls: Cell::new(0),
             argv: RefCell::new(Vec::new()),
             working_directory: RefCell::new(None),
         }
+    }
+
+    /// A runner that reports something other than an ordinary exit. Nothing in
+    /// this boundary requests one; only a substituted runner can produce it.
+    const fn reporting(mut self, termination: Termination) -> Self {
+        self.termination = termination;
+        self
     }
 
     fn calls(&self) -> usize {
@@ -166,6 +175,10 @@ impl<'a> FakeRunner<'a> {
 
     fn argv(&self) -> Vec<OsString> {
         self.argv.borrow().clone()
+    }
+
+    fn working_directory(&self) -> Option<PathBuf> {
+        self.working_directory.borrow().clone()
     }
 }
 
@@ -182,10 +195,10 @@ impl ProcessRunner for FakeRunner<'_> {
             stdout_total_bytes: 0,
             stderr_total_bytes: 0,
             stdout_truncated: false,
-            stderr_truncated: false,
+            stderr_truncated: true,
             exit_code: Some(exit_code),
             elapsed: Duration::from_millis(7),
-            termination: Termination::Exited,
+            termination: self.termination,
             max_active_processes: Some(1),
             final_active_processes: Some(0),
             peak_job_memory_bytes: Some(1_024),
@@ -303,9 +316,29 @@ fn the_planned_command_writes_into_the_staging_directory_and_never_names_mzxml()
 
     let argv = runner.argv();
     let canonical_root = fs::canonicalize(&root).expect("canonical destination root");
-    let mut staging_name = OsString::from("sample.mzML");
-    staging_name.push(STAGING_SUFFIX);
-    let staging = canonical_root.join(&staging_name);
+    assert_eq!(
+        plan.destination_root(),
+        canonical_root,
+        "the plan carries the canonical root a caller needs to find the output"
+    );
+    // Spelled out rather than rebuilt from the constant, so renaming the suffix
+    // is a decision this test forces someone to make.
+    let staging = canonical_root.join("sample.mzML.mscanvas-staging");
+    // And the suffix must not be one the output snapshot reads as an
+    // interrupted write, decided by that rule rather than by restating it.
+    let probe = directory.path().join("suffix-probe");
+    fs::create_dir(&probe).expect("create the suffix probe directory");
+    fs::create_dir(probe.join("sample.mzML.mscanvas-staging")).expect("create the probe entry");
+    assert!(
+        !fs_guard::snapshot_output_directory(&probe)
+            .expect("snapshot the suffix probe directory")
+            .contains_partial_output()
+    );
+    assert_eq!(
+        runner.working_directory().as_deref(),
+        Some(staging.as_path()),
+        "the backend's working directory is the private staging directory"
+    );
 
     assert_eq!(argv.len(), 7);
     assert_eq!(argv[1], OsStr::new("--mzML"));
@@ -590,13 +623,11 @@ fn a_source_replaced_during_the_conversion_is_never_finalized() {
     let runner = FakeRunner::new(&act);
     let report = run_conversion(&plan, &capabilities(), &runner);
 
-    assert!(
-        matches!(
-            report.outcome(),
-            ConversionRunOutcome::Failed(ConversionRunFailure::OutputRejected(_))
-        ),
-        "{:?}",
-        report.outcome()
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::OutputRejected(
+            ConversionIntegrityOutcome::SourceChangedDuringConversion
+        ))
     );
     assert!(entry_names(&root).is_empty());
 }
@@ -662,11 +693,138 @@ fn a_source_is_opened_and_read_rather_than_named() {
         })
     );
 
-    // Only a real mzML document becomes one.
-    let real = write_source(directory.path(), "real.mzML");
+    // Only a real mzML document becomes one, and the name it happens to carry
+    // decides nothing: this source is called `.raw` and reads as mzML, so the
+    // output name comes from the format rather than from the source extension.
+    let real = write_source(directory.path(), "acquisition.raw");
+    let source = open_source(&real);
+    assert_eq!(source.kind(), ConversionSourceKind::MzmlFile);
+    assert_eq!(source.kind().stable_id(), "mzml_file");
+
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let plan = plan_into(source, &root, ConflictPolicy::Fail);
+    assert_eq!(plan.output_file_name(), OsStr::new("acquisition.mzML"));
+
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+    assert!(report.finalized().is_some(), "{:?}", report.outcome());
+    assert_eq!(entry_names(&root), vec![OsString::from("acquisition.mzML")]);
+}
+
+/// The only new foreign-function boundary in this module converts a path to a
+/// wide string. A name with a space and non-ASCII characters must survive it,
+/// end to end, rather than only as far as a plan.
+#[test]
+fn a_unicode_name_with_a_space_survives_planning_staging_and_finalization() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "样本 01.mzML");
+    let root = directory.path().join("输出 root");
+    fs::create_dir(&root).expect("create destination root");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+
+    assert!(report.finalized().is_some(), "{:?}", report.outcome());
+    assert_eq!(entry_names(&root), vec![OsString::from("样本 01.mzML")]);
     assert_eq!(
-        open_source(&real).kind().stable_id(),
-        ConversionSourceKind::MzmlFile.stable_id()
+        fs::read_to_string(root.join("样本 01.mzML")).expect("read finalized output"),
+        output_document()
+    );
+    let argv = runner.argv();
+    assert_eq!(argv[6], OsStr::new("样本 01.mzML"));
+    assert_eq!(argv.len(), 7, "the name stays one argv value: {argv:?}");
+}
+
+/// A runner is caller-supplied code. An unwind through it must not leave the
+/// backend's output in the destination root under a name every later run would
+/// then refuse.
+#[test]
+fn a_panic_in_the_runner_still_discards_the_staging_directory() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let act = |spec: &CommandSpec| -> Result<i32, ProcessError> {
+        fs::write(staged_destination(spec), output_document()).expect("write staged output");
+        panic!("a substituted runner panicked");
+    };
+    let runner = FakeRunner::new(&act);
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_conversion(&plan, &capabilities(), &runner)
+    }));
+
+    assert!(unwound.is_err(), "the panic must not be swallowed");
+    assert!(
+        entry_names(&root).is_empty(),
+        "the staging directory outlived the unwind: {:?}",
+        entry_names(&root)
+    );
+}
+
+/// This boundary requests no cancellation, so a termination that is not an
+/// ordinary exit can only come from a substituted runner. It is a typed failure
+/// rather than a cancellation feature, and it is never a success.
+#[test]
+fn a_run_that_did_not_complete_is_a_failure_rather_than_a_cancellation() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act).reporting(Termination::Cancelled);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::BackendDidNotComplete)
+    );
+    assert!(
+        entry_names(&root).is_empty(),
+        "a document produced by a run that did not complete is never finalized"
+    );
+}
+
+/// The backend facts a later surface would show are projected exactly, and are
+/// reported whether or not the run produced a usable document.
+#[test]
+fn backend_facts_are_projected_faithfully_on_success_and_on_rejection() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let act = |spec: &CommandSpec| {
+        fs::write(staged_destination(spec), document(1, Serialization::Output))
+            .expect("write a lossy output");
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+
+    let backend = report
+        .backend()
+        .expect("a process ran, so its facts are reported");
+    assert_eq!(backend.exit_code(), Some(0));
+    assert_eq!(backend.elapsed(), Duration::from_millis(7));
+    assert!(!backend.stdout_truncated());
+    assert!(backend.stderr_truncated());
+    assert_eq!(backend.peak_job_memory_bytes(), Some(1_024));
+    assert!(
+        matches!(
+            report.outcome(),
+            ConversionRunOutcome::Failed(ConversionRunFailure::OutputRejected(_))
+        ),
+        "{:?}",
+        report.outcome()
     );
 }
 
@@ -720,15 +878,42 @@ fn every_outcome_renders_a_distinct_stable_identifier_and_no_path() {
         .map(ConversionRunFailure::stable_id)
         .collect();
     identifiers.push(ConversionRunOutcome::SkippedExistingDestination.stable_id());
+    // A finalized run and a skipped one must never share an identifier: one
+    // wrote a file and the other deliberately did not. The finalized value is
+    // read from a real run rather than constructed here, because
+    // `ValidConversion` cannot be forged.
+    identifiers.push(finalized_run().outcome().stable_id());
     let unique: BTreeSet<&str> = identifiers.iter().copied().collect();
     assert_eq!(unique.len(), identifiers.len(), "{identifiers:?}");
 
+    // The embedded plan and integrity errors keep their own identifiers, so a
+    // caller that must not render Debug can still say what went wrong.
+    assert_eq!(
+        ConversionRunFailure::NotPlannable(PlanError::MzXmlIntegrityGateRequired)
+            .detailed_stable_id(),
+        "mzxml_integrity_gate_required"
+    );
+    assert_eq!(
+        ConversionRunFailure::OutputRejected(ConversionIntegrityOutcome::PartialOutput)
+            .detailed_stable_id(),
+        "partial_output"
+    );
+    assert_eq!(
+        ConversionRunFailure::Backend(BackendExecutionFailure::SourceChanged).detailed_stable_id(),
+        "source_changed"
+    );
+    assert_eq!(
+        ConversionRunFailure::DestinationExists.detailed_stable_id(),
+        "destination_exists"
+    );
+
     for failure in &failures {
-        let rendered = format!("{failure:?}");
-        assert!(
-            !rendered.contains('/') && !rendered.contains('\\'),
-            "a failure must not render a path: {rendered}"
-        );
+        for rendered in [format!("{failure:?}"), failure.to_string()] {
+            assert!(
+                !rendered.contains('/') && !rendered.contains('\\'),
+                "a failure must not render a path: {rendered}"
+            );
+        }
     }
 
     // A source and a plan describe themselves without naming where they are.
@@ -745,6 +930,77 @@ fn every_outcome_renders_a_distinct_stable_identifier_and_no_path() {
         assert!(
             !rendered.contains("sample.mzML"),
             "a plan must not render a file name: {rendered}"
+        );
+    }
+}
+
+/// One real finalized run, so a `Finalized` outcome is read from the value the
+/// boundary produces rather than from one a test constructed.
+fn finalized_run() -> ConversionRunReport {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+    assert!(report.finalized().is_some(), "{:?}", report.outcome());
+    report
+}
+
+#[test]
+fn every_plan_source_and_policy_identifier_is_distinct() {
+    let plan_errors = [
+        ConversionPlanError::SourceHasNoConvertibleName,
+        ConversionPlanError::UnsafeOutputFileName,
+        ConversionPlanError::DestinationRootNotInspectable {
+            kind: io::ErrorKind::NotFound,
+        },
+        ConversionPlanError::DestinationRootNotADirectory,
+    ];
+    let plan_identifiers: BTreeSet<&str> = plan_errors
+        .iter()
+        .copied()
+        .map(ConversionPlanError::stable_id)
+        .collect();
+    assert_eq!(plan_identifiers.len(), plan_errors.len());
+
+    let rejections = [
+        ConversionSourceRejection::NotInspectable {
+            kind: io::ErrorKind::NotFound,
+        },
+        ConversionSourceRejection::NotARegularFile,
+        ConversionSourceRejection::NotHashed,
+    ];
+    let rejection_identifiers: BTreeSet<&str> = rejections
+        .iter()
+        .copied()
+        .map(ConversionSourceRejection::stable_id)
+        .collect();
+    assert_eq!(rejection_identifiers.len(), rejections.len());
+
+    assert_ne!(
+        ConflictPolicy::Fail.stable_id(),
+        ConflictPolicy::Skip.stable_id()
+    );
+    assert_eq!(ConflictPolicy::default(), ConflictPolicy::Fail);
+    assert_eq!(
+        StagingResidue::NotRemoved {
+            kind: io::ErrorKind::PermissionDenied
+        }
+        .stable_id(),
+        "staging_not_removed"
+    );
+
+    for rendered in plan_errors
+        .iter()
+        .map(ToString::to_string)
+        .chain(rejections.iter().map(ToString::to_string))
+    {
+        assert!(
+            !rendered.contains('/') && !rendered.contains('\\'),
+            "{rendered}"
         );
     }
 }

@@ -17,8 +17,8 @@
 //! inside the destination root, never into the destination root itself. That
 //! keeps every output the run produced enclosed in a directory MSCanvas owns,
 //! which is what lets the integrity contract insist on exactly one planned
-//! entry, and it means a failed or rejected run leaves nothing behind next to
-//! the user's own files.
+//! entry, and it means a failed or rejected run leaves nothing next to the
+//! user's own files unless the cleanup itself fails, which is reported.
 //!
 //! Finalization is a no-clobber move of the validated output onto its final
 //! name. There is no overwrite policy to select: an existing destination fails
@@ -336,6 +336,14 @@ impl ConversionPlan {
         &self.output_file_name
     }
 
+    /// The canonical directory a finalized output lands in. Rust-side only: a
+    /// path never reaches a transfer boundary, but the caller that chose this
+    /// root needs the canonical form to find what the run produced.
+    #[must_use]
+    pub fn destination_root(&self) -> &Path {
+        &self.destination_root
+    }
+
     fn destination(&self) -> PathBuf {
         self.destination_root.join(&self.output_file_name)
     }
@@ -362,22 +370,45 @@ impl fmt::Debug for ConversionPlan {
 /// Why the backend could not be run to a verdict. This is the path-free
 /// projection of [`ProcessError`], which retains the executable name and raw
 /// operating-system detail for local diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The projection is total rather than trimmed to what an mzML conversion can
+/// currently reach, so a new [`ProcessError`] variant fails the build here
+/// instead of being folded into an existing meaning. Three variants are
+/// therefore unreachable today: the two staging-directory ones describe the
+/// fresh-directory obligation only a preview plan carries, and
+/// `OutputInsideSource` needs a directory-formatted source this boundary cannot
+/// express.
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum BackendExecutionFailure {
+    #[error("the backend child environment is invalid")]
     EnvironmentInvalid,
+    #[error("the staged output destination already exists")]
     StagedDestinationExists,
+    #[error("the staged output destination could not be inspected: {kind}")]
     StagedDestinationNotInspectable { kind: io::ErrorKind },
+    #[error("the staging directory is no longer empty")]
     StagingDirectoryNotEmpty,
+    #[error("the staging directory could not be inspected: {kind}")]
     StagingDirectoryNotInspectable { kind: io::ErrorKind },
+    #[error("the staging directory now resolves inside the conversion source")]
     OutputInsideSource,
+    #[error("the backend executable could not be reverified: {kind}")]
     ExecutableNotReverified { kind: io::ErrorKind },
+    #[error("the backend executable changed after its capability probe")]
     ExecutableChanged,
+    #[error("the conversion source could not be reverified: {kind}")]
     SourceNotReverified { kind: io::ErrorKind },
+    #[error("the conversion source changed after the command was planned")]
     SourceChanged,
+    #[error("the backend could not be launched")]
     NotLaunched { kind: LaunchFailureKind },
+    #[error("the backend could not be assigned to an owned process job")]
     NotSupervised,
+    #[error("the backend process could not be awaited")]
     NotAwaited,
+    #[error("backend {stream} could not be captured")]
     OutputNotCaptured { stream: &'static str },
+    #[error("the owned backend process job could not be terminated")]
     NotTerminated,
 }
 
@@ -436,32 +467,47 @@ impl From<&ProcessError> for BackendExecutionFailure {
 
 /// Why one planned conversion produced no finalized output. No variant carries
 /// a path or backend text.
-#[derive(Debug, PartialEq)]
+///
+/// Each variant's identifier names the failure this boundary owns; the embedded
+/// plan and integrity errors carry their own, so a caller that must not render
+/// `Debug` can still say precisely what went wrong.
+#[derive(Debug, Error, PartialEq)]
 pub enum ConversionRunFailure {
     /// The planned destination already exists and the plan refuses to replace it.
+    #[error("the planned destination already exists")]
     DestinationExists,
     /// The planned destination could not be inspected before the run started.
+    #[error("the planned destination could not be inspected: {kind}")]
     DestinationNotInspectable { kind: io::ErrorKind },
     /// A staging area for this exact output already exists. It is left alone.
+    #[error("a staging area for this output already exists")]
     StagingTargetExists,
     /// The staging area could not be created.
+    #[error("the staging area could not be created: {kind}")]
     StagingNotCreated { kind: io::ErrorKind },
     /// The plan could no longer be turned into a backend command.
+    #[error("the conversion could not be planned: {0}")]
     NotPlannable(PlanError),
     /// The backend could not be run to a verdict.
+    #[error("the backend could not be run: {0}")]
     Backend(BackendExecutionFailure),
     /// The backend exited without reporting success.
+    #[error("the backend exited without reporting success")]
     BackendRejected { exit_code: Option<i32> },
     /// The backend did not run to completion. This boundary requests no
     /// cancellation, so only a substituted runner can report one.
+    #[error("the backend did not run to completion")]
     BackendDidNotComplete,
     /// The produced document failed the mzML conversion-integrity contract and
     /// was discarded rather than finalized.
+    #[error("the produced document failed the conversion-integrity contract")]
     OutputRejected(ConversionIntegrityOutcome),
     /// The destination was taken between validation and finalization. What
     /// arrived there was left exactly as it was.
+    #[error("the destination was taken while the conversion was running")]
     DestinationAppearedDuringRun,
     /// The validated output could not be moved onto its final name.
+    #[error("the validated output could not be finalized: {kind}")]
     NotFinalized { kind: io::ErrorKind },
 }
 
@@ -482,6 +528,18 @@ impl ConversionRunFailure {
             Self::NotFinalized { .. } => "output_not_finalized",
         }
     }
+
+    /// The precise identifier for this failure, reaching into the embedded plan
+    /// or integrity error where one exists.
+    #[must_use]
+    pub const fn detailed_stable_id(&self) -> &'static str {
+        match self {
+            Self::NotPlannable(error) => error.stable_id(),
+            Self::Backend(failure) => failure.stable_id(),
+            Self::OutputRejected(outcome) => outcome.stable_id(),
+            other => other.stable_id(),
+        }
+    }
 }
 
 /// What one planned conversion did.
@@ -489,7 +547,10 @@ impl ConversionRunFailure {
 pub enum ConversionRunOutcome {
     /// The output passed the integrity contract and now holds its planned name.
     Finalized(Box<ValidConversion>),
-    /// The destination already existed and the plan asked for it to be skipped.
+    /// The planned destination name was already taken and the plan asked for it
+    /// to be skipped. This says the name is occupied, not that a valid
+    /// conversion holds it: what is there is deliberately not inspected, because
+    /// this boundary's guarantee is that it never replaces it.
     SkippedExistingDestination,
     /// No output was finalized.
     Failed(ConversionRunFailure),
@@ -559,9 +620,10 @@ impl From<&ProcessOutput> for BackendRunFacts {
 /// What the run could not clean up after itself. This never changes the
 /// outcome: a finalized conversion stays finalized and a failure keeps its
 /// primary cause.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum StagingResidue {
     /// The staging directory MSCanvas created could not be removed.
+    #[error("the staging directory could not be removed: {kind}")]
     NotRemoved { kind: io::ErrorKind },
 }
 
@@ -618,13 +680,66 @@ impl ConversionRunReport {
     }
 }
 
+/// Owns the staging directory for one run.
+///
+/// The guarantee is a lifetime rather than a call: the run executes
+/// caller-supplied code, and an unwind through it must not leave the backend's
+/// output sitting in the user's destination root under a name every later run
+/// would then refuse.
+struct StagingArea {
+    path: PathBuf,
+    discarded: bool,
+}
+
+impl StagingArea {
+    /// Creates the staging directory exclusively.
+    ///
+    /// `create_dir` fails rather than adopting an existing directory, so this
+    /// type never owns — and never removes — a directory it did not create.
+    fn create(path: PathBuf) -> Result<Self, ConversionRunFailure> {
+        match std::fs::create_dir(&path) {
+            Ok(()) => Ok(Self {
+                path,
+                discarded: false,
+            }),
+            Err(error) => Err(match error.kind() {
+                io::ErrorKind::AlreadyExists => ConversionRunFailure::StagingTargetExists,
+                kind => ConversionRunFailure::StagingNotCreated { kind },
+            }),
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Removes the staging directory with whatever the backend left in it.
+    /// Nothing outside it is touched, and a rejected or partial document is
+    /// discarded here rather than left where it could be mistaken for a result.
+    fn discard(mut self) -> Option<StagingResidue> {
+        self.discarded = true;
+        match std::fs::remove_dir_all(&self.path) {
+            Ok(()) => None,
+            Err(error) => Some(StagingResidue::NotRemoved { kind: error.kind() }),
+        }
+    }
+}
+
+impl Drop for StagingArea {
+    fn drop(&mut self) {
+        if !self.discarded {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
 /// Runs one planned conversion and reports what it did.
 ///
 /// The sequence is fixed: refuse or skip an existing destination, create a
 /// private staging directory, plan the backend command into it, run it through
 /// the reviewed execution boundary, judge the produced document against the
-/// source baseline, and only then take the final name. Every exit after the
-/// staging directory exists discards it, including the successful one.
+/// source baseline, and only then take the final name. The staging directory is
+/// discarded on every exit, including the successful one and an unwind.
 #[must_use]
 pub fn run_conversion(
     plan: &ConversionPlan,
@@ -649,19 +764,15 @@ pub fn run_conversion(
         }
     }
 
-    let staging = plan.staging_directory();
-    // `create_dir` fails rather than adopting an existing directory, so a
-    // staging area another run may still be using is never written into and
-    // never removed by this one.
-    if let Err(error) = std::fs::create_dir(&staging) {
-        return ConversionRunReport::settled(ConversionRunOutcome::Failed(match error.kind() {
-            io::ErrorKind::AlreadyExists => ConversionRunFailure::StagingTargetExists,
-            kind => ConversionRunFailure::StagingNotCreated { kind },
-        }));
-    }
+    let staging = match StagingArea::create(plan.staging_directory()) {
+        Ok(staging) => staging,
+        Err(failure) => {
+            return ConversionRunReport::settled(ConversionRunOutcome::Failed(failure));
+        }
+    };
 
-    let (outcome, backend) = run_staged(plan, capabilities, runner, &staging, &destination);
-    let residue = discard_staging(&staging);
+    let (outcome, backend) = run_staged(plan, capabilities, runner, staging.path(), &destination);
+    let residue = staging.discard();
     ConversionRunReport {
         outcome,
         backend,
@@ -749,17 +860,6 @@ fn run_staged(
     }
 
     (ConversionRunOutcome::Finalized(valid), backend)
-}
-
-/// Removes the staging directory MSCanvas created, with whatever the backend
-/// left in it. Nothing outside that directory is touched, and a rejected or
-/// partial document is discarded here rather than being left where a user could
-/// mistake it for a result.
-fn discard_staging(staging: &Path) -> Option<StagingResidue> {
-    match std::fs::remove_dir_all(staging) {
-        Ok(()) => None,
-        Err(error) => Some(StagingResidue::NotRemoved { kind: error.kind() }),
-    }
 }
 
 #[cfg(windows)]

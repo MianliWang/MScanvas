@@ -2244,9 +2244,12 @@ this work.
 ## M3.0 mzML conversion boundary, 2026-08-06
 
 The conversion sequence that until now existed only inside
-`examples/m0_proteowizard_spike.rs` is library code. `mscanvas-proteowizard`
-owns one immutable plan, one staged execution and one no-clobber finalization,
-and `ADR 0009` records the decision.
+`examples/m0_proteowizard_spike.rs` now also exists as library code.
+`mscanvas-proteowizard` owns one immutable plan, one staged execution and one
+no-clobber finalization, and `ADR 0009` records the decision. The spike is
+unchanged and still runs its own sequence straight at the final output name;
+two sequences with different output-safety postures coexist, and retiring the
+harness is a later decision.
 
 Three things were missing rather than merely unassembled, and each is closed
 here.
@@ -2311,7 +2314,7 @@ Validation on the exact head: `cargo fmt --all --check`,
 `cargo test --locked --workspace --all-targets`, `python -B scripts/check_repo.py`,
 `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
 
-Eighteen tests were added, all deterministic and none reaching a backend: a
+Twenty-three tests were added, all deterministic and none reaching a backend: a
 substituted runner receives the real planned command, so what it writes and
 where is decided by the boundary under test rather than by the test. They cover
 the derived name and the fixed plan; the argv the backend is given and that it
@@ -2325,9 +2328,20 @@ output, no output at all, an extra output, and a source replaced under the run,
 each rejected before the final name; a destination taken mid-run keeping its
 contents; a source that is a directory, that is absent, or that is named `.mzML`
 without being mzML; a destination root that is missing or is a file; distinct
-path-free identifiers across every failure; and a staging directory that cannot
-be removed being reported beside the primary outcome rather than instead of it,
-proved by holding the staged file open with a share mode that refuses deletion.
+path-free identifiers across every failure, plan error, source rejection and
+policy; a run that did not complete never being finalized; the backend facts
+projected on both a success and a rejection; a name with a space and non-ASCII
+characters surviving the wide-string conversion end to end; a panic in the
+substituted runner still discarding the staging directory; and a staging
+directory that cannot be removed being reported beside the primary outcome
+rather than instead of it, proved by holding the staged file open with a share
+mode that refuses deletion. Twenty-two run on every platform; the residue proof
+is Windows-only, as the mechanism it exercises is.
+
+A source named `acquisition.raw` that reads as mzML is converted to
+`acquisition.mzML`, which pins both halves of the naming rule at once: the
+extension does not decide what a source is, and the format decides what the
+output is called.
 
 Rendered QA was not required and not performed: no frontend file, transfer
 object, command signature, capability or user-facing string changed.
@@ -2364,6 +2378,11 @@ are generated in the test itself.
   own overwrite behavior has never been observed. The M3.0 conversion boundary
   does not depend on it — the backend only ever writes into a private staging
   directory — and must not start depending on it.
+- Measure whether `msconvert` writes anything into its working directory besides
+  the output it was asked for. The M3.0 boundary requires the staging directory
+  to hold exactly one planned entry, so a scratch or sidecar file would reject a
+  faithful conversion. Required before that boundary is reachable from the
+  product.
 
 ## First verified-bootstrap checklist
 

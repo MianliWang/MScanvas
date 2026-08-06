@@ -114,7 +114,11 @@ untouched rather than adopted, because it may belong to a run still in flight.
 Because the staging directory holds only what this run produced, the existing
 integrity contract's requirement of exactly one planned entry becomes meaningful
 — an extra file the backend emitted is detected instead of being lost among the
-user's own files.
+user's own files. That rule cuts both ways, and the other direction is
+unmeasured: the staging directory is also the backend's working directory, so a
+scratch or sidecar file `msconvert` writes into its own working directory would
+turn a faithful conversion into a rejection. No real-backend evidence exists
+either way; it is recorded as a gate below rather than assumed benign.
 
 Finalization is a no-clobber move of the validated output onto its final name:
 `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` on Windows, a hard link
@@ -134,7 +138,21 @@ Behavior is defined for every branch:
 | Cleanup fails | Recorded beside the outcome, never instead of it. A finalized conversion stays finalized and a failure keeps its primary cause. |
 
 A partial file is therefore never reported as a successful output, and never
-reaches the destination root under any name.
+reaches the destination root under any name. The staging directory is owned for
+the lifetime of the run rather than discarded by a call, so an unwind through
+the caller-supplied runner cannot leave it behind.
+
+Two windows remain open and are stated rather than claimed closed. The
+validated bytes are not re-bound to a handle across the move, so what takes the
+final name is provably the file that was judged only in the absence of an
+outside writer with access to the destination root. And cleanup removes the
+staging directory by path rather than by identity, so a directory replaced at
+that path between creation and cleanup would be removed instead. Both need an
+actor with write access to the destination root while a run is in flight;
+neither is closed by this slice, and the deterministic staging name is what
+makes the second one nameable at all. A staging name that collides with a file
+the user already owns is refused permanently, and the path-free failure cannot
+say which name to remove.
 
 ### Validation
 
@@ -167,12 +185,21 @@ paths or their file names.
 
 ## Consequences
 
-- The conversion sequence is library code with deterministic tests instead of a
-  developer harness. The harness keeps its stricter empty-output-directory
-  precondition, which the recorded M0B output-conflict evidence depends on.
+- The conversion sequence now exists as library code with deterministic tests.
+  The M0 spike keeps its own sequence unchanged, including its stricter
+  empty-output-directory precondition, which the recorded M0B output-conflict
+  evidence depends on — and including pointing `msconvert` straight at the final
+  output name. Two sequences with different output-safety postures therefore
+  coexist; the harness is explicitly unstable and developer-only, and retiring
+  it is a later decision rather than a claim made here.
+- `run_conversion` has never been executed against a real `msconvert`.
+  `SystemProcessRunner` is the production runner and reaches the reviewed
+  `execute` path, but the type system permits any runner and no evidence run has
+  exercised this boundary end to end.
 - The output-safety guarantee is Windows-specific in its mechanism, as the
-  process-tree and file-identity guarantees around it already are. The non-Windows
-  path is correct but is not the guarantee this repository claims.
+  process-tree and file-identity guarantees around it already are. The
+  non-Windows path is correct where hard links are supported and fails a valid
+  conversion where they are not; it is not the guarantee this repository claims.
 - Finalization is atomic with respect to a concurrent observer, not durable
   across power loss. Nothing is flushed before the move; an unmeasured `fsync`
   of a multi-hundred-megabyte output is a cost this slice does not pay silently.
@@ -191,6 +218,9 @@ paths or their file names.
   was refused by MSCanvas before launch, so what `msconvert` itself does to an
   existing file is unknown. This boundary does not depend on it, and must not
   start depending on it.
+- **Whether `msconvert` writes anything besides its output.** Unmeasured, and it
+  decides whether the exactly-one-entry rule rejects faithful conversions.
+  Required before this boundary is reachable from the product.
 - **mzXML.** Rated **C** on demonstrated multi-source spectrum loss. Stays
   unplannable.
 - **Progress and locale.** Both **D**. No progress claim, and stderr wording is
