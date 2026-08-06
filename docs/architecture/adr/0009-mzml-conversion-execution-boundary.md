@@ -161,8 +161,18 @@ single cleanup failure leaves a deterministically named directory that makes
 every later run of that plan refuse, and a path-free failure cannot say which
 name to remove. The plan therefore offers an explicit `reclaim_staging_area`,
 which the caller invokes when it decides no run of that plan is in flight.
-Nothing adopts a staging area silently. A staging name that collides with a
-file the user already owns is refused the same way and recovered the same way.
+Nothing adopts a staging area silently.
+
+Reclamation is bounded by ownership rather than by name. A staging area carries
+a marker file written as it is created, and a directory without that marker is
+refused untouched however it is named — the staging name is deterministic, so a
+user may hold it too, and deleting a tree on the strength of a name is how
+unrelated data gets destroyed. The marker is why the staging area has an inner
+directory: the integrity contract requires the output directory to hold exactly
+one planned entry, so the marker owns the staging root and the backend writes
+one level below it. Teardown removes the backend's output first and the marker
+last, so a cleanup that gives up part-way leaves the proof that makes its own
+residue reclaimable.
 
 ### Validation
 

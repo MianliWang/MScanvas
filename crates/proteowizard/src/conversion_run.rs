@@ -55,6 +55,25 @@ use crate::process::{LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunn
 /// target is a defined, refusable state rather than a name collision.
 const STAGING_SUFFIX: &str = ".mscanvas-staging";
 
+/// Written inside a staging area as it is created, and required before one is
+/// ever removed on the strength of its name alone. A name is not ownership: the
+/// staging name is deterministic, so a user may hold a directory there too.
+const STAGING_OWNER_MARKER: &str = ".mscanvas-staging-owner";
+
+/// The marker's content. It is a constant rather than a token because it proves
+/// which program made the directory, not which run: a run that ended without
+/// cleaning up is exactly the case reclamation exists for, and it cannot leave
+/// a live token behind.
+const STAGING_OWNER_MAGIC: &[u8] = b"mscanvas-conversion-staging-area\n";
+
+/// The staging area's own subdirectory, which the backend writes into.
+///
+/// The marker cannot sit beside the output: the integrity contract requires the
+/// output directory to hold exactly one planned entry, and that requirement is
+/// the point of a private staging area. So the marker owns the staging root and
+/// the backend owns one level below it.
+const STAGING_OUTPUT_DIRECTORY: &str = "output";
+
 /// Which source kinds this boundary is allowed to convert.
 ///
 /// There is exactly one, and it is the one the repository has evidence for: a
@@ -353,15 +372,27 @@ impl ConversionPlan {
     /// later run of this plan refuse, and the path-free failure cannot say which
     /// name to remove. This is the deliberate way out.
     ///
+    /// It removes only a directory MSCanvas created, proved by the ownership
+    /// marker written when the staging area was made. A directory that carries
+    /// no marker is refused untouched, whatever its name: the deterministic name
+    /// is a name a user may also have chosen, and deleting a tree on the
+    /// strength of a name is how unrelated data gets destroyed.
+    ///
     /// Calling it asserts that no run of this plan is in flight. Nothing here
     /// can check that, which is why it is the caller's decision and not a
     /// silent step inside the run.
-    pub fn reclaim_staging_area(&self) -> Result<(), StagingResidue> {
-        match std::fs::remove_dir_all(self.staging_directory()) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(StagingResidue::NotRemoved { kind: error.kind() }),
+    pub fn reclaim_staging_area(&self) -> Result<(), StagingReclaimError> {
+        let staging = self.staging_directory();
+        match staging_ownership(&staging) {
+            StagingOwnership::Absent => return Ok(()),
+            StagingOwnership::Owned => {}
+            StagingOwnership::NotOwned => return Err(StagingReclaimError::NotOwned),
+            StagingOwnership::NotInspectable { kind } => {
+                return Err(StagingReclaimError::NotInspectable { kind });
+            }
         }
+        std::fs::remove_dir_all(&staging)
+            .map_err(|error| StagingReclaimError::NotRemoved { kind: error.kind() })
     }
 
     fn destination(&self) -> PathBuf {
@@ -694,6 +725,73 @@ impl StagingResidue {
     }
 }
 
+/// Why a staging area left behind by an earlier run could not be reclaimed.
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+pub enum StagingReclaimError {
+    /// Something holds the staging name that MSCanvas did not create. It is left
+    /// exactly as it is.
+    #[error("the staging name is held by something MSCanvas did not create")]
+    NotOwned,
+    /// Ownership could not be established either way, so nothing was removed.
+    #[error("the staging area could not be inspected: {kind}")]
+    NotInspectable { kind: io::ErrorKind },
+    /// Ownership was established and the removal still failed.
+    #[error("the staging area could not be removed: {kind}")]
+    NotRemoved { kind: io::ErrorKind },
+}
+
+impl StagingReclaimError {
+    #[must_use]
+    pub const fn stable_id(self) -> &'static str {
+        match self {
+            Self::NotOwned => "staging_not_owned",
+            Self::NotInspectable { .. } => "staging_not_inspectable",
+            Self::NotRemoved { .. } => "staging_not_removed",
+        }
+    }
+}
+
+enum StagingOwnership {
+    Absent,
+    Owned,
+    NotOwned,
+    NotInspectable { kind: io::ErrorKind },
+}
+
+/// Decides whether the entry at a staging name is a staging area MSCanvas made.
+///
+/// Only the marker decides it. A directory that merely carries the expected
+/// name, or one whose marker is a link, a directory or the wrong content, is
+/// not owned — the answer has to be no whenever it is not provably yes, because
+/// the consequence of being wrong is deleting a tree of someone's data.
+fn staging_ownership(staging: &Path) -> StagingOwnership {
+    match std::fs::symlink_metadata(staging) {
+        Ok(metadata) if !metadata.is_dir() => return StagingOwnership::NotOwned,
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return StagingOwnership::Absent;
+        }
+        Err(error) => return StagingOwnership::NotInspectable { kind: error.kind() },
+    }
+
+    let marker = staging.join(STAGING_OWNER_MARKER);
+    let metadata = match std::fs::symlink_metadata(&marker) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return StagingOwnership::NotOwned;
+        }
+        Err(error) => return StagingOwnership::NotInspectable { kind: error.kind() },
+    };
+    if fs_guard::require_regular_file(&metadata).is_err() {
+        return StagingOwnership::NotOwned;
+    }
+    match std::fs::read(&marker) {
+        Ok(content) if content == STAGING_OWNER_MAGIC => StagingOwnership::Owned,
+        Ok(_) => StagingOwnership::NotOwned,
+        Err(error) => StagingOwnership::NotInspectable { kind: error.kind() },
+    }
+}
+
 /// The typed result of one planned conversion.
 #[derive(Debug, PartialEq)]
 pub struct ConversionRunReport {
@@ -750,34 +848,69 @@ struct StagingArea {
 }
 
 impl StagingArea {
-    /// Creates the staging directory exclusively.
+    /// Creates the staging area exclusively, marks it as MSCanvas's, and makes
+    /// the subdirectory the backend will write into.
     ///
     /// `create_dir` fails rather than adopting an existing directory, so this
-    /// type never owns — and never removes — a directory it did not create.
+    /// type never owns — and never removes — a directory it did not create. A
+    /// partially built area is torn down rather than left for a later run to
+    /// find.
     fn create(path: PathBuf) -> Result<Self, ConversionRunFailure> {
-        match std::fs::create_dir(&path) {
-            Ok(()) => Ok(Self {
-                path,
-                discarded: false,
-            }),
-            Err(error) => Err(match error.kind() {
+        if let Err(error) = std::fs::create_dir(&path) {
+            return Err(match error.kind() {
                 io::ErrorKind::AlreadyExists => ConversionRunFailure::StagingTargetExists,
                 kind => ConversionRunFailure::StagingNotCreated { kind },
-            }),
+            });
         }
+        let area = Self {
+            path,
+            discarded: false,
+        };
+        std::fs::write(area.path.join(STAGING_OWNER_MARKER), STAGING_OWNER_MAGIC)
+            .and_then(|()| std::fs::create_dir(area.output_directory()))
+            .map_err(|error| ConversionRunFailure::StagingNotCreated { kind: error.kind() })?;
+        Ok(area)
     }
 
-    fn path(&self) -> &Path {
-        &self.path
+    /// Where the backend writes. Validation inspects this directory, so the
+    /// ownership marker one level above never counts as an unexpected output.
+    fn output_directory(&self) -> PathBuf {
+        self.path.join(STAGING_OUTPUT_DIRECTORY)
     }
 
-    /// Removes the staging directory with whatever the backend left in it.
-    /// Nothing outside it is touched, and a rejected or partial document is
-    /// discarded here rather than left where it could be mistaken for a result.
+    /// Removes the staging area with whatever the backend left in it. Nothing
+    /// outside it is touched, and a rejected or partial document is discarded
+    /// here rather than left where it could be mistaken for a result.
+    ///
+    /// The order matters. The backend's output goes first and the ownership
+    /// marker last, so a cleanup that fails part-way leaves the proof that this
+    /// area is MSCanvas's — which is the only thing that makes the residue
+    /// reclaimable rather than a permanent obstruction.
     fn discard(mut self) -> Option<StagingResidue> {
         self.discarded = true;
-        match std::fs::remove_dir_all(&self.path) {
+        Self::tear_down(&self.path)
+    }
+
+    fn tear_down(path: &Path) -> Option<StagingResidue> {
+        // Sequential and short-circuiting: each step must be given up on before
+        // the next one is attempted, or a failed output removal would still take
+        // the marker with it.
+        if let Some(residue) =
+            Self::residue(std::fs::remove_dir_all(path.join(STAGING_OUTPUT_DIRECTORY)))
+        {
+            return Some(residue);
+        }
+        if let Some(residue) = Self::residue(std::fs::remove_file(path.join(STAGING_OWNER_MARKER)))
+        {
+            return Some(residue);
+        }
+        Self::residue(std::fs::remove_dir(path))
+    }
+
+    fn residue(removal: io::Result<()>) -> Option<StagingResidue> {
+        match removal {
             Ok(()) => None,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => Some(StagingResidue::NotRemoved { kind: error.kind() }),
         }
     }
@@ -786,7 +919,7 @@ impl StagingArea {
 impl Drop for StagingArea {
     fn drop(&mut self) {
         if !self.discarded {
-            let _ = std::fs::remove_dir_all(&self.path);
+            let _ = Self::tear_down(&self.path);
         }
     }
 }
@@ -829,7 +962,13 @@ pub fn run_conversion(
         }
     };
 
-    let (outcome, backend) = run_staged(plan, capabilities, runner, staging.path(), &destination);
+    let (outcome, backend) = run_staged(
+        plan,
+        capabilities,
+        runner,
+        &staging.output_directory(),
+        &destination,
+    );
     let residue = staging.discard();
     ConversionRunReport {
         outcome,

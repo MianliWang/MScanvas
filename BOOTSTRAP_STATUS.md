@@ -2347,6 +2347,17 @@ name to remove. The plan therefore offers an explicit way out that the caller
 invokes when it decides no run is in flight; nothing adopts a staging area
 silently.
 
+That way out is bounded by ownership rather than by name, because deleting a
+tree on the strength of a name is how unrelated data gets destroyed. A staging
+area carries a marker written as it is created, and a directory without it is
+refused untouched however it is named. The marker is why the staging area has an
+inner directory the backend writes into: the integrity contract requires the
+output directory to hold exactly one planned entry, so the marker owns the
+staging root and the backend owns one level below. Teardown removes the output
+first and the marker last — the reverse order was written first, and the Windows
+residue test caught it: cleanup destroyed the ownership proof before failing, so
+the residue it reported would have been permanently unreclaimable.
+
 A source named `acquisition.raw` that reads as mzML is converted to
 `acquisition.mzML`, which pins both halves of the naming rule at once: the
 extension does not decide what a source is, and the format decides what the

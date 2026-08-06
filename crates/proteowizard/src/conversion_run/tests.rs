@@ -321,9 +321,13 @@ fn the_planned_command_writes_into_the_staging_directory_and_never_names_mzxml()
         canonical_root,
         "the plan carries the canonical root a caller needs to find the output"
     );
-    // Spelled out rather than rebuilt from the constant, so renaming the suffix
-    // is a decision this test forces someone to make.
-    let staging = canonical_root.join("sample.mzML.mscanvas-staging");
+    // Spelled out rather than rebuilt from the constants, so renaming either is
+    // a decision this test forces someone to make. The backend writes one level
+    // below the staging root, because the ownership marker lives in the root and
+    // the integrity contract insists the output directory hold one entry.
+    let staging = canonical_root
+        .join("sample.mzML.mscanvas-staging")
+        .join("output");
     // And the suffix must not be one the output snapshot reads as an
     // interrupted write, decided by that rule rather than by restating it.
     let probe = directory.path().join("suffix-probe");
@@ -430,11 +434,30 @@ fn an_existing_staging_target_fails_without_disturbing_what_is_in_it() {
         "a staging area this run did not create is left alone"
     );
 
-    // Refusing forever would be its own trap, so the caller has a deliberate way
-    // out once it decides no run of this plan is in flight.
-    plan.reclaim_staging_area()
-        .expect("reclaim the staging area");
-    assert!(!staging.exists());
+    // And reclaiming will not delete it either. The name is deterministic, so a
+    // user may hold it too; only the ownership marker decides, and a tree of
+    // someone else's data is never removed on the strength of a name.
+    assert_eq!(
+        plan.reclaim_staging_area(),
+        Err(StagingReclaimError::NotOwned)
+    );
+    assert_eq!(
+        fs::read(staging.join("in-flight")).expect("read staging content"),
+        b"another run may still own this"
+    );
+
+    // A marker that is not a plain file MSCanvas wrote does not confer ownership
+    // either.
+    fs::write(staging.join(".mscanvas-staging-owner"), b"not the marker")
+        .expect("write a wrong marker");
+    assert_eq!(
+        plan.reclaim_staging_area(),
+        Err(StagingReclaimError::NotOwned)
+    );
+    assert!(staging.join("in-flight").exists());
+
+    // An absent staging area is nothing to reclaim rather than a failure.
+    fs::remove_dir_all(&staging).expect("remove the unowned directory");
     plan.reclaim_staging_area()
         .expect("reclaiming an absent staging area is not a failure");
 
@@ -1149,6 +1172,26 @@ fn a_staging_directory_that_cannot_be_removed_never_changes_the_outcome() {
         "nothing was finalized into the destination root"
     );
 
-    // Release the handle so the test directory can be removed.
+    // Cleanup removes the backend's output before it removes the ownership
+    // marker, so a cleanup that gives up part-way leaves the proof that this
+    // area is MSCanvas's. Without that order the residue would be permanently
+    // unreclaimable.
+    let staging = root.join("sample.mzML.mscanvas-staging");
+    assert!(
+        staging.join(".mscanvas-staging-owner").is_file(),
+        "the ownership marker did not survive the failed cleanup"
+    );
+
+    // Once the lock is gone, the residue this run left is reclaimable — it
+    // carries that marker — and the conversion runs again.
     drop(held.borrow_mut().take());
+    plan.reclaim_staging_area()
+        .expect("reclaim the staging area this run created");
+
+    let second = convert_faithfully;
+    let runner = FakeRunner::new(&second);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+    assert!(report.finalized().is_some(), "{:?}", report.outcome());
+    assert_eq!(report.residue(), None);
+    assert_eq!(entry_names(&root), vec![OsString::from("sample.mzML")]);
 }
