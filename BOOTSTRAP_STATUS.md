@@ -2397,6 +2397,112 @@ ProteoWizard was not executed and the desktop application was not launched. No
 scientific acquisition was used as a fixture; the mzML documents in these tests
 are generated in the test itself.
 
+## M3.0.1 handle-bound conversion finalization, 2026-08-06
+
+ADR 0009 recorded a window between judging a conversion output and giving it its
+final name. The judgement described a file and let it go; finalization then
+moved whatever the staged path resolved to. Anything with write access to the
+destination root could substitute a different document in between, and the run
+would report the facts of the document it read while the other one took the
+name. That window is closed.
+
+Validation now hands back the object rather than a description of it.
+`verify_mzml_conversion_retaining_output` opens the staged output once, with the
+access a rename needs, scans it and hashes it through that one handle, and
+returns a `ValidatedConversionOutput` that owns it. Both readings coming from
+one handle is itself a repair: the previous path told `mzml::inspect_file` to
+open the name, then told the digest to open the name again, so even the hash and
+the facts were not provably about the same object. `ValidatedConversionOutput`
+has no constructor that takes a path, no `Clone`, and an opaque `Debug`.
+
+Finalization consumes that value and renames the object the handle names, with
+`SetFileInformationByHandle` and `FileRenameInfo`. The staged path is never
+resolved again and does not need to still mean anything. Consuming is also what
+makes an object finalizable once, at compile time rather than by a flag.
+
+The target end could not be bound the same way, and the reason is measured
+rather than assumed. `FILE_RENAME_INFO` carries a `RootDirectory` handle that the
+NT contract resolves the new name against, which would make the target
+object-bound too. Against this stack kernel32 refuses every non-null
+`RootDirectory` form with `ERROR_INVALID_PARAMETER`, including with the exact
+access mask the driver documentation recommends — which is why the standard
+library also always passes null. `a_root_directory_relative_rename_is_unavailable`
+keeps that measurement in the suite, so the day it stops being true is visible.
+The target is instead bound by holding the admitted destination root open for the
+run *without delete sharing*: the directory cannot be renamed or removed while a
+conversion is in flight, so the canonical path the final name is formed from
+cannot be made to denote a different directory. It costs the user the ability to
+rename or remove that one directory for the duration of a run, which is recorded
+rather than hidden.
+
+`ReplaceIfExists` stays false. An occupied final name fails with
+`ERROR_ALREADY_EXISTS` whatever holds it, and the conflict policy is still fail
+or skip with no overwrite to select.
+
+One ordering became load-bearing: the validated object is released on every
+path, including a failed rename, before the staging area is torn down. A handle
+retained inside a directory being removed would turn every failure into residue.
+
+The separate cleanup-by-path window ADR 0009 records is **not** closed by this
+work and is now the first follow-up.
+
+No source posture, format, queue, cancellation, progress, persistence, transfer
+object, command, capability or frontend file changed. No dependency was added,
+removed or moved; the rename is a hand-declared `kernel32` export in the same
+style as the crate's existing Job Object and file-identity bindings, and all
+unsafe code in the conversion boundary lives in one module.
+
+Validation on the exact head: `cargo fmt --all --check`,
+`cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --locked --workspace --all-targets` (252 proteowizard library tests,
+up from 243), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
+`pnpm test`, `pnpm build`.
+
+Nine tests were added, all deterministic and none reaching a backend. A private
+seam opens the one interval the claim is about — after the judgement, before the
+final name — and the tests act inside it.
+
+The load-bearing pair replaces the staged path after validation. Moving the
+validated object aside and writing a different, perfectly valid mzML document at
+its name finalizes the object that was judged, proved by a hard-link witness
+bound to it before the substitution: a write through the witness appears in the
+finalized file, so it is the same object and not merely the same bytes, and the
+replacement is discarded with the staging area. Unlinking the staged name
+instead leaves the validated object delete-pending, which Windows will not
+rename, so that attack ends in a typed finalization failure with nothing in the
+destination root — the other acceptable outcome, and the reason both are tested
+rather than one.
+
+The rest cover a normal conversion finalizing the same object it validated, with
+the reported byte length matching the finalized file; a destination taken after
+validation by a file, by a directory and by a hard link, each keeping its name
+and contents; the destination root refusing to be renamed out from under a run;
+a failed finalization producing no result, no residue and no staging remains; the
+final-name guard refusing every multi-component and rooted spelling; and a
+validated output rendering neither a path, a name nor a handle, then releasing
+its object on drop.
+
+Six mutations were introduced one at a time against this head. Four were caught:
+reopening the output by path before renaming it, and renaming a handle reopened
+after the scan, both fail the substitution tests; `ReplaceIfExists = TRUE` fails
+three no-clobber tests; accepting a multi-component final name fails the guard
+test; sharing deletion on the destination root fails the pin test.
+
+Two were not, and the reason is recorded rather than smoothed over. Discarding
+the scanned handle and reopening the same path *inside* validation is invisible
+to every test here, because the reopen happens before any seam exists and the
+path still resolves to the same object at that instant; what stands against it
+is structure, not a test — the scanned handle is threaded out of the scanner by
+ownership, so substituting another means visibly discarding it. And changing
+finalization to borrow rather than consume cannot be caught at runtime, because
+the single-finalization guarantee is move semantics; that mutation does not even
+compile without adding a handle clone.
+
+Rendered QA was not required and not performed: no frontend file, transfer
+object, command signature, capability or user-facing string changed.
+ProteoWizard was not executed, no vendor fixture was requested or used, and the
+mzML documents in these tests are generated in the test itself.
+
 ## Validation completed during repository initialization
 
 - Required-file and source-of-truth contract checks.
