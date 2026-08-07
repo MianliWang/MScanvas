@@ -1921,15 +1921,23 @@ fn teardown_is_post_order_and_the_marker_goes_last() {
         ));
     });
 
+    // The outcome is itself the post-order proof: a directory with any child
+    // refuses deletion, so a teardown that reached a parent before its children
+    // could not have finished at all.
     assert_eq!(residue, None);
+    assert!(!root.exists());
+
+    // And nothing was removed before the descent finished, which is what makes
+    // the order post- rather than merely depth-first.
     let observed = observed.into_inner();
     assert!(
-        observed
-            .iter()
-            .all(|(marker_present, _, _)| *marker_present),
-        "the marker went before the tree it vouches for: {observed:?}"
+        observed.len() >= 3,
+        "the descent did not reach every level: {observed:?}"
     );
-    assert!(!root.exists());
+    assert!(
+        observed.iter().all(|level| *level == (true, true, true)),
+        "something was deleted before the deepest level was listed: {observed:?}"
+    );
 }
 
 #[test]
@@ -2145,6 +2153,59 @@ fn reclamation_trusts_only_the_admitted_marker_object() {
     let _ = fs::remove_dir_all(&staging);
 }
 
+/// The staging name is as untrustworthy as every other name here. A link
+/// planted where a staging area should be is never opened as one, so no amount
+/// of plausible-looking content on the other side of it can be reclaimed
+/// through.
+#[cfg(windows)]
+#[test]
+fn a_link_at_the_staging_name_is_never_reclaimed_through() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let staging = fixture.root.join("sample.mzML.mscanvas-staging");
+    let outside = fixture
+        .root
+        .parent()
+        .expect("the destination root has a parent")
+        .to_path_buf();
+
+    // The tree on the other side of the link is dressed as a staging area this
+    // boundary owns — marker, output directory and all — so the link is the
+    // only thing standing between reclamation and a recursive delete of it.
+    let victim = outside.join("victim");
+    fs::create_dir(&victim).expect("create the victim tree");
+    fs::write(victim.join(STAGING_OWNER_MARKER), STAGING_OWNER_MAGIC)
+        .expect("write a convincing marker");
+    fs::create_dir(victim.join("output")).expect("create a convincing output directory");
+    fs::write(
+        victim.join("output").join("result.mzML"),
+        b"someone else's work",
+    )
+    .expect("write the victim's data");
+
+    if !make_junction(&staging, &victim) {
+        return;
+    }
+
+    let refused = fixture.plan.reclaim_staging_area();
+
+    assert!(
+        matches!(refused, Err(StagingReclaimError::NotOwned)),
+        "a link at the staging name was accepted as a staging area: {refused:?}"
+    );
+    assert!(victim.is_dir(), "reclamation deleted through the link");
+    assert_eq!(
+        fs::read(victim.join("output").join("result.mzML")).expect("read the victim's data"),
+        b"someone else's work"
+    );
+    assert!(
+        victim.join(".mscanvas-staging-owner").is_file(),
+        "reclamation reached the victim's marker"
+    );
+
+    remove_junction(&staging);
+    assert!(!staging.exists(), "the test left the link behind");
+}
+
 /// The whole reclamation ladder, in the order a caller meets it.
 #[test]
 fn reclamation_covers_absent_owned_empty_and_repeated_attempts() {
@@ -2312,6 +2373,7 @@ fn every_staging_residue_and_reclaim_reason_renders_without_a_path() {
             kind: io::ErrorKind::PermissionDenied,
         },
         StagingReclaimError::NotFullyRemoved(StagingResidue::IdentityChanged),
+        StagingReclaimError::NotAdmissible(StagingResidue::RemoteObject),
     ];
     let reclaim_identifiers: BTreeSet<&str> = reclaims
         .iter()
@@ -2323,6 +2385,12 @@ fn every_staging_residue_and_reclaim_reason_renders_without_a_path() {
         StagingReclaimError::NotFullyRemoved(StagingResidue::ReparsePointEncountered)
             .detailed_stable_id(),
         "staging_reparse_point"
+    );
+    // A reason a caller may read alongside a residue must not answer to the same
+    // identifier as one, or the two cannot be told apart in a log.
+    assert!(
+        identifiers.is_disjoint(&reclaim_identifiers),
+        "a reclaim reason shares an identifier with a residue"
     );
 
     for rendered in residues

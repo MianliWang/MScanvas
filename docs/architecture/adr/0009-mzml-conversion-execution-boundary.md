@@ -322,9 +322,13 @@ descending into `..` would leave the tree altogether.
 Reparse entries are refused, never followed and never removed. Deleting the link
 alone would in fact be safe, but a junction inside a staging area MSCanvas
 created is evidence that something else has been there, and this boundary
-refuses what it cannot account for rather than tidying it away. A staging root
-that holds anything besides the marker and the output directory is refused the
-same way, untouched.
+refuses what it cannot account for rather than tidying it away. The rule applies
+first to the staging name itself: the root is opened without following a link
+*and* refused if the object it reaches is one, so a junction planted where a
+staging area should be can never become the tree that reclamation recurses into.
+A staging root that holds anything besides the marker and the output directory is
+refused the same way, untouched — and stays refused, reclaimable only once
+whatever else is in there has been dealt with by whoever put it there.
 
 Deletion is post-order and the handle ordering is load-bearing: a child's name
 does not leave its parent until the handle marking it closes, and a directory
@@ -335,14 +339,17 @@ free the name — otherwise a third party's handle keeps the entry alive and the
 parent fails through no fault of the ordering — and falls back to the older
 class on filesystems that do not implement it. The ownership marker is deleted
 after everything else and before the root, so a teardown that gives up part-way
-always leaves the proof that makes its own residue reclaimable.
+leaves the proof a later attempt needs rather than a nameless obstruction.
 
 Two named limits bound an arbitrary backend tree: depth 64 and 65,536 entries
 per directory, both traversed with an explicit stack rather than recursion.
 Exceeding either leaves residue and deletes no unverified remainder. A staging
-area that is not on a local volume is refused outright, because the conversion
-guarantee is local-only and a remote volume is where these mechanics stop being
-dependable.
+area that answers as remote is refused outright, because the conversion guarantee
+is local-only and a remote volume is where these mechanics stop being dependable.
+Only a positive answer refuses: a filesystem that does not implement the query at
+all is not treated as remote, because refusing on silence would leave an owned
+tree that neither teardown nor reclamation could ever remove — a worse failure
+than proceeding, and one the object checks below still bound.
 
 What is *not* closed, stated precisely: the marker proves that MSCanvas wrote a
 file of that name and content, not that this plan wrote it. Anything able to

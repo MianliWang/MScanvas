@@ -466,7 +466,7 @@ impl ConversionPlan {
             }
             cleanup::StagingAdmission::NotOwned => return Err(StagingReclaimError::NotOwned),
             cleanup::StagingAdmission::NotInspectable(residue) => {
-                return Err(StagingReclaimError::NotFullyRemoved(residue));
+                return Err(StagingReclaimError::NotAdmissible(residue));
             }
         };
 
@@ -885,6 +885,10 @@ pub enum StagingReclaimError {
     /// evidence a later attempt needs is deliberately still there.
     #[error("the staging area was not fully removed: {0}")]
     NotFullyRemoved(StagingResidue),
+    /// Ownership could not be decided, so nothing was removed at all. This is
+    /// not a partial teardown; it is a refusal before one began.
+    #[error("the staging area could not be admitted: {0}")]
+    NotAdmissible(StagingResidue),
 }
 
 impl StagingReclaimError {
@@ -893,8 +897,9 @@ impl StagingReclaimError {
         match self {
             Self::NotOwned => "staging_not_owned",
             Self::NotInspectable { .. } => "staging_not_inspectable",
-            Self::NotRemoved { .. } => "staging_not_removed",
+            Self::NotRemoved { .. } => "staging_reclaim_not_removed",
             Self::NotFullyRemoved(_) => "staging_not_fully_removed",
+            Self::NotAdmissible(_) => "staging_not_admissible",
         }
     }
 
@@ -902,7 +907,7 @@ impl StagingReclaimError {
     #[must_use]
     pub const fn detailed_stable_id(self) -> &'static str {
         match self {
-            Self::NotFullyRemoved(residue) => residue.stable_id(),
+            Self::NotFullyRemoved(residue) | Self::NotAdmissible(residue) => residue.stable_id(),
             other => other.stable_id(),
         }
     }
@@ -1046,8 +1051,18 @@ impl OwnedStagingArea {
             path,
             state: StagingState::Active,
         };
-        area.populate()
-            .map_err(|error| ConversionRunFailure::StagingNotCreated { kind: error.kind() })?;
+        if let Err(error) = area.populate() {
+            // `Drop` tears down what was built through the objects it holds, but
+            // a failure on the very first step leaves it holding none — and the
+            // directory this function just created would outlive it.
+            let bare = area.root.is_none();
+            let path = area.path.clone();
+            drop(area);
+            if bare {
+                let _ = std::fs::remove_dir(&path);
+            }
+            return Err(ConversionRunFailure::StagingNotCreated { kind: error.kind() });
+        }
         Ok(area)
     }
 
@@ -1125,7 +1140,11 @@ impl Drop for OwnedStagingArea {
         // An unwind reaches here. It performs the same object-bound teardown —
         // never the old path-recursive one — and cannot report what it finds,
         // which is exactly why it must not be the more dangerous form.
-        let _ = self.tear_down();
+        if self.root.is_some() {
+            self.state = self
+                .tear_down()
+                .map_or(StagingState::Cleaned, StagingState::Residue);
+        }
     }
 }
 
@@ -1144,8 +1163,10 @@ impl fmt::Debug for OwnedStagingArea {
 fn open_owned_directory(path: &Path) -> io::Result<File> {
     #[cfg(windows)]
     {
+        use std::os::windows::fs::MetadataExt;
         use std::os::windows::fs::OpenOptionsExt;
 
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
         const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
         const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
         const DELETE: u32 = 0x0001_0000;
@@ -1165,7 +1186,17 @@ fn open_owned_directory(path: &Path) -> io::Result<File> {
             .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
             .open(path)?;
-        if !opened.metadata()?.is_dir() {
+        let metadata = opened.metadata()?;
+        // The open refuses to traverse a link; this refuses to act on one. A
+        // junction planted at the staging name would otherwise be a directory
+        // whose contents belong to somebody else.
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                "an owned staging entry is a reparse point",
+            ));
+        }
+        if !metadata.is_dir() {
             return Err(io::Error::new(
                 io::ErrorKind::NotADirectory,
                 "an owned staging entry is not a directory",
@@ -1175,6 +1206,16 @@ fn open_owned_directory(path: &Path) -> io::Result<File> {
     }
     #[cfg(not(windows))]
     {
+        // No object-bound open exists here, so the link check is made before
+        // the open rather than on the opened object. It is the same refusal the
+        // path-based probe this replaced always made.
+        let observed = std::fs::symlink_metadata(path)?;
+        if observed.file_type().is_symlink() || !observed.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                "an owned staging entry is not a plain directory",
+            ));
+        }
         let opened = File::open(path)?;
         if !opened.metadata()?.is_dir() {
             return Err(io::Error::new(

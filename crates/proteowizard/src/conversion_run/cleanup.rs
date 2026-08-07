@@ -15,10 +15,11 @@
 //!
 //! Two measured facts shape the algorithm. A directory with any child refuses
 //! deletion with `ERROR_DIR_NOT_EMPTY`, and a name marked for deletion does not
-//! leave its parent until the last handle to it closes — on this stack that
-//! holds even under POSIX semantics. Teardown is therefore strictly post-order,
-//! and closing each child handle is part of the deletion rather than tidiness
-//! afterwards.
+//! leave its parent while the handle that marked it is still open. Teardown is
+//! therefore strictly post-order, and closing each child handle is part of the
+//! deletion rather than tidiness afterwards. Which close is *enough* depends on
+//! the disposition used, and `set_delete_disposition` says why POSIX semantics
+//! are asked for first.
 //!
 //! All unsafe code for staging teardown lives here.
 
@@ -163,8 +164,22 @@ fn resolve_child(
     let Some(retained) = retained else {
         return open_verified_child(path, enumerated, posture, parent_volume);
     };
-    let (_, file_id) = full_identity(&retained).map_err(residue_for)?;
-    if file_id != enumerated.identity {
+    // A retained object is pinned, so the listing cannot describe a different
+    // one at that name while this run holds it. The checks are made anyway, and
+    // are exactly the ones the opened path makes, so the two cannot drift.
+    if enumerated.is_reparse_point {
+        return Err(StagingResidue::ReparsePointEncountered);
+    }
+    let expected_directory = match posture {
+        ChildPosture::RegularFile => false,
+        ChildPosture::Directory => true,
+        ChildPosture::AsEnumerated => enumerated.is_directory,
+    };
+    if retained.metadata().map_err(residue_for)?.is_dir() != expected_directory {
+        return Err(StagingResidue::IdentityChanged);
+    }
+    let (volume, file_id) = full_identity(&retained).map_err(residue_for)?;
+    if file_id != enumerated.identity || volume != parent_volume {
         return Err(StagingResidue::IdentityChanged);
     }
     Ok(retained)
@@ -185,6 +200,9 @@ pub(super) fn dispose_empty_root(root: File, _root_path: &Path) -> Result<(), St
 pub(super) fn admit_staging_root(root: &File, root_path: &Path, magic: &[u8]) -> StagingAdmission {
     use std::io::Read;
 
+    if let Err(residue) = require_local_object(root) {
+        return StagingAdmission::NotInspectable(residue);
+    }
     let children = match enumerate_children(root) {
         Ok(children) => children,
         Err(residue) => return StagingAdmission::NotInspectable(residue),
@@ -640,7 +658,6 @@ fn require_local_object(object: &File) -> Result<(), StagingResidue> {
 
     /// `FileRemoteProtocolInfo` in `FILE_INFO_BY_HANDLE_CLASS`.
     const FILE_REMOTE_PROTOCOL_INFO_CLASS: i32 = 13;
-    const ERROR_INVALID_PARAMETER: i32 = 87;
 
     /// `FILE_REMOTE_PROTOCOL_INFO`. Only whether the query succeeds is
     /// consumed; the body exists to give the call a correctly sized buffer.
@@ -699,13 +716,12 @@ fn require_local_object(object: &File) -> Result<(), StagingResidue> {
     if remote != 0 {
         return Err(StagingResidue::RemoteObject);
     }
-    let answered = io::Error::last_os_error();
-    if answered.raw_os_error() == Some(ERROR_INVALID_PARAMETER) {
-        return Ok(());
-    }
-    // Neither a local answer nor a remote one. Nothing is removed on a
-    // locality this teardown could not establish.
-    Err(StagingResidue::RemoteObject)
+    // Only a successful query means remote. Every failure shape — including the
+    // several a filesystem uses to say it does not implement the class — means
+    // carry on. Refusing on those would leave an owned tree that teardown can
+    // never remove and reclamation can never retry, which is a worse failure
+    // than proceeding on a locality that was merely not answerable.
+    Ok(())
 }
 
 /// Lists the immediate children of a directory through its own handle.
@@ -854,12 +870,27 @@ fn enumerate_children(directory: &File) -> Result<Vec<EnumeratedChild>, StagingR
             }
 
             // SAFETY: the name's last byte was just proven to lie inside the
-            // buffer, and its length is a whole number of UTF-16 units.
-            let name = unsafe {
-                std::slice::from_raw_parts(name_base.cast::<u16>(), name_bytes / size_of::<u16>())
-            };
-            let name = OsString::from_wide(name);
+            // buffer, and its length is a whole number of UTF-16 units. The
+            // copy is byte-wise because `cursor` accumulates driver-supplied
+            // offsets, so the trailing array is not necessarily two-byte
+            // aligned — the same reason every scalar above is read unaligned.
+            let mut units = vec![0_u16; name_bytes / size_of::<u16>()];
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    name_base,
+                    units.as_mut_ptr().cast::<u8>(),
+                    name_bytes,
+                );
+            }
+            let name = OsString::from_wide(&units);
 
+            // A name is only ever joined onto a directory path, so anything
+            // that is not one plain component is refused before it can be. The
+            // identity check would catch an escape afterwards; this is the
+            // layer that stops it being attempted.
+            if units.iter().any(|unit| matches!(unit, 0 | 0x2F | 0x5C)) {
+                return Err(StagingResidue::NotEnumerable);
+            }
             // This class returns the dot entries, and descending into `..`
             // would leave the tree altogether.
             if name != OsStr::new(".") && name != OsStr::new("..") {
@@ -938,4 +969,104 @@ pub(super) fn admit_staging_root(_root: &File, root_path: &Path, magic: &[u8]) -
 #[cfg(not(windows))]
 fn residue_of(error: io::Error) -> StagingResidue {
     StagingResidue::NotRemoved { kind: error.kind() }
+}
+
+/// The measurements this teardown is built on, kept honest the same way
+/// `a_root_directory_relative_rename_is_unavailable` keeps finalization's.
+///
+/// A directory with any child refuses deletion, so teardown must be post-order;
+/// and a name marked for deletion leaves its parent when the marking handle
+/// closes, so closing each child is part of the deletion rather than tidiness
+/// afterwards. If either stops holding, the ordering above is the wrong one and
+/// this fails before anything else does.
+#[cfg(all(test, windows))]
+#[test]
+fn the_deletion_semantics_this_teardown_relies_on() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const ERROR_DIR_NOT_EMPTY: i32 = 145;
+    const DELETE: u32 = 0x0001_0000;
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
+    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+    const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock after Unix epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "mscanvas-deletion-semantics-{}-{timestamp}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&root).expect("create the probe root");
+    let child = root.join("child.bin");
+    std::fs::write(&child, b"child").expect("write the probe child");
+
+    let open_directory = || {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .access_mode(FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | DELETE | SYNCHRONIZE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&root)
+            .expect("open the probe root")
+    };
+
+    // A directory with any child refuses to go.
+    let directory = open_directory();
+    let refused =
+        set_delete_disposition(&directory).expect_err("a populated directory was removed");
+    assert_eq!(
+        refused.raw_os_error(),
+        Some(ERROR_DIR_NOT_EMPTY),
+        "a populated directory refused deletion for an unexpected reason: {refused}"
+    );
+    drop(directory);
+    assert!(root.is_dir(), "the refused directory went anyway");
+
+    // Somebody else holds the child, sharing everything. POSIX semantics are
+    // asked for first because they are the only form under which closing *our*
+    // handle is enough to free the name; the fallback waits for the last handle,
+    // which is a slower outcome rather than a wrong one.
+    let third_party = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .open(&child)
+        .expect("hold the probe child open");
+    let ours = std::fs::OpenOptions::new()
+        .read(true)
+        .access_mode(FILE_READ_ATTRIBUTES | DELETE | SYNCHRONIZE)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(&child)
+        .expect("open the probe child for deletion");
+    set_delete_disposition(&ours).expect("mark the probe child");
+    drop(ours);
+
+    let directory = open_directory();
+    let parent = set_delete_disposition(&directory);
+    drop(directory);
+    if child.exists() {
+        // The fallback was taken. The name is still there, so the parent must
+        // still refuse — which is exactly the situation POSIX semantics avoid.
+        assert_eq!(
+            parent
+                .expect_err("an occupied directory was removed")
+                .raw_os_error(),
+            Some(ERROR_DIR_NOT_EMPTY),
+        );
+        drop(third_party);
+        let directory = open_directory();
+        set_delete_disposition(&directory).expect("remove the emptied probe root");
+        drop(directory);
+    } else {
+        parent.expect("remove the emptied probe root");
+        drop(third_party);
+    }
+    assert!(!root.exists(), "the probe root outlived its own deletion");
 }

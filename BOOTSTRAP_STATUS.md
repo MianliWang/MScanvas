@@ -2589,21 +2589,26 @@ skipped.
 
 Reparse entries are refused, never followed and never removed. Deleting the link
 alone would be safe, but a junction inside an area MSCanvas created is evidence
-that something else has been there. A staging root holding anything besides the
-marker and the output directory is refused the same way, untouched.
+that something else has been there. The rule applies first to the staging name
+itself: the root is opened without following a link and refused if the object it
+reaches is one. A staging root holding anything besides the marker and the output
+directory is refused the same way, untouched, and stays refused until whoever put
+that entry there removes it.
 
 Deletion is post-order and the handle ordering is load-bearing: every child is
 disposed and closed before its parent is asked to go. The disposition asks for
 POSIX semantics first, because that is the only form under which closing this
 handle is enough to free the name, and falls back to the older class on
 filesystems that do not implement it. The marker goes after everything else and
-before the root, so an interrupted teardown always leaves the proof that makes
-its own residue reclaimable.
+before the root, so an interrupted teardown leaves the proof a later attempt
+needs rather than a nameless obstruction.
 
 Two named limits bound an arbitrary backend tree — depth 64 and 65,536 entries
 per directory — traversed with an explicit stack rather than recursion.
 Exceeding either leaves residue and deletes no unverified remainder. A staging
-area not on a local volume is refused outright.
+area that answers as remote is refused outright; one whose filesystem does not
+implement the query is not, because refusing on silence would leave an owned tree
+nothing could ever remove.
 
 `StagingResidue` gained five path-free reasons with stable identifiers —
 identity changed, reparse point, foreign entry, traversal limit, not
@@ -2627,11 +2632,11 @@ the crate's existing Job Object, file-identity and rename bindings.
 
 Validation on the exact head: `cargo fmt --all --check`,
 `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
-`cargo test --locked --workspace --all-targets` (268 proteowizard library tests,
+`cargo test --locked --workspace --all-targets` (270 proteowizard library tests,
 up from 256), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
 `pnpm test`, `pnpm build`.
 
-Twelve tests were added, all deterministic and none reaching a backend. A seam
+Fourteen tests were added, all deterministic and none reaching a backend. A seam
 fires after each directory is listed and before anything that listing named is
 opened, which is the one interval the claim is about.
 
@@ -2655,13 +2660,26 @@ a cleanup that cannot finish keeping the primary outcome, reporting residue, and
 staying reclaimable once the obstruction clears; and every residue and reclaim
 reason rendering without a path or a handle.
 
-Nine mutations were introduced one at a time against this head; eight were
+Two tests came out of the whole-diff review rather than the implementation. A
+link planted at the staging name, with a fully convincing owned-looking area on
+the other side of it, is refused and never reclaimed through: the review found
+that nothing defended the staging name itself, and that deleting the one flag
+which happened to defend it passed every test then in the suite. And the two
+deletion semantics the algorithm rests on are now pinned by measurement, in the
+same way finalization pins the rename it cannot use — a directory with any child
+refuses deletion, and a name marked for deletion leaves its parent when the
+marking handle closes.
+
+Ten mutations were introduced one at a time against this head; nine were
 caught. Restoring path-based `remove_dir_all` fails five tests; removing the
 child identity comparison fails the replacement test; following a reparse child
 fails the junction test; deleting the marker first fails six; granting delete
 sharing on the staging root fails the root-replacement test; swallowing residue
 fails four; ignoring a foreign entry fails its test; and never disposing nested
-directories fails five. The ninth — dropping the root handle and immediately
+directories fails five; and opening the staging root without
+`FILE_FLAG_OPEN_REPARSE_POINT` — the mutation that survived the whole suite
+before the review — fails the link-at-the-staging-name test. The tenth —
+dropping the root handle and immediately
 reopening it — is genuinely equivalent: the reopen acquires the same object and
 the same pin, so no observable behavior changes, and it is recorded as
 equivalent rather than as a gap.
