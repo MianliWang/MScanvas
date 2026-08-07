@@ -389,6 +389,45 @@ def validate_user_facing_strings(errors: list[str]) -> None:
                     )
 
 
+def validate_test_support_stays_a_dev_dependency(errors: list[str]) -> None:
+    """The forged-capability constructor must never reach a shipped build.
+
+    `mscanvas-proteowizard`'s `test-support` feature exposes a constructor that
+    builds capability evidence from help text no discovery probe bound to an
+    executable. A conversion is gated on evidence that names one release, one
+    revision and one executable digest, and that gate is worth exactly as much
+    as the impossibility of forging its input. Enabling the feature from an
+    ordinary dependency would put the forgery in the binary users run.
+
+    Checked here rather than remembered, because the change that would break it
+    is a one-word edit in a manifest.
+    """
+    for manifest in sorted(ROOT.glob("**/Cargo.toml")):
+        if any(
+            part in {"node_modules", "target", ".git"} for part in manifest.parts
+        ):
+            continue
+        section = None
+        for number, line in enumerate(
+            manifest.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                section = stripped.strip("[]")
+                continue
+            if "test-support" not in stripped or stripped.startswith("#"):
+                continue
+            if section == "features":
+                continue
+            if section is None or not section.endswith("dev-dependencies"):
+                relative = manifest.relative_to(ROOT).as_posix()
+                errors.append(
+                    f"{relative}:{number} enables the test-support feature outside "
+                    f"[dev-dependencies] (section: {section or 'none'}); it must not "
+                    "reach a shipped build"
+                )
+
+
 def main() -> int:
     errors: list[str] = []
     validate_required(errors)
@@ -399,6 +438,7 @@ def main() -> int:
         validate_markdown_links(errors)
         validate_project_contract(errors)
         validate_user_facing_strings(errors)
+        validate_test_support_stays_a_dev_dependency(errors)
 
     if errors:
         print("Repository validation failed:")

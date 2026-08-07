@@ -30,6 +30,15 @@
   privacy*, *Frontend and Tauri boundary*, *Active dataset* and *Concurrency*
   below; the paragraphs this replaces recorded folder ingestion as gated apart
   from this decision.
+- Amended: 2026-08-07 (M3.0.4) — a dataset records the family it was accepted
+  as. `AcceptedFile` carries a `DatasetSourceKind`, and every use of a dataset
+  re-applies the admission rule it was accepted under rather than the one this
+  boundary happens to run first. See *Source families* below; the paragraph
+  this amends recorded a vendor variant as needing its own evidence and its own
+  decision, and both now exist in
+  [ADR 0010](0010-first-vendor-raw-source-admission.md) and
+  [ADR 0011](0011-private-workspace-conversion-path.md). What the registry
+  accepts from a user is unchanged and still mzML-only.
 
 ## Context
 
@@ -513,6 +522,20 @@ type in it may name a vendor format or a directory acquisition, including as an
 unconstructed enum variant, because a variant that exists is a claim that the
 data behind it is understood. Directory acquisitions and vendor formats need
 their own evidence and their own decision.
+
+### Source families
+
+> **Amended 2026-08-07 by M3.0.4.** That evidence and that decision now exist for
+> exactly one family. [ADR 0010](0010-first-vendor-raw-source-admission.md)
+> recorded a real conversion of a real Thermo acquisition on a named build, and
+> [ADR 0011](0011-private-workspace-conversion-path.md) records the decision to
+> admit it here. `AcceptedFile` therefore carries a `DatasetSourceKind` with two
+> variants, `Mzml` and `ThermoRaw`. The rule above is unchanged and is what let
+> the variant be added: it was a condition to be met, not a prohibition to be
+> waived. Directory acquisitions and every other vendor format remain
+> unevidenced and unnamed. The variant is also unreachable from every ingestion
+> surface — the picker, folder discovery and the Explorer drop are still
+> mzML-only — so what the registry *accepts from a user* has not changed.
 
 ## Persistence exclusion
 

@@ -11,13 +11,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex};
 
 use mscanvas_proteowizard::{
-    MetadataEntry, MetadataResult, MetadataSectionKind, MsLevelBucket, PreviewNoResult,
-    PreviewOutcome, PreviewValue, Redactor, RunSummaryResult, SelectedSpectrumResult,
-    SpectrumIdentity, SpectrumTableResult,
+    ConflictPolicy, MetadataEntry, MetadataResult, MetadataSectionKind, MsLevelBucket,
+    PreviewNoResult, PreviewOutcome, PreviewValue, Redactor, RunSummaryResult,
+    SelectedSpectrumResult, SpectrumIdentity, SpectrumTableResult,
 };
 
 use super::backend::{
     PreviewProvider, open_operations, reporting_redactor, selected_spectrum_operation,
+};
+use super::conversion::{
+    WorkspaceConversionReport, conversion_source_kind, plan_conversion, refuse_unevidenced_build,
+    run_planned_conversion,
 };
 use super::discovery::{
     DiscoveryBudget, DiscoveryError, DiscoveryErrorKind, DiscoveryLimit, DiscoveryResult,
@@ -47,7 +51,7 @@ use super::installation::InstallationIdentity;
 use super::selection::{
     AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity, RevocationReason,
     accept_mzml_file, candidate_display_name, file_identity, lock_against_replacement,
-    relative_contexts, revalidate, selected_file_dto, unknown_dataset,
+    open_conversion_source, relative_contexts, revalidate, selected_file_dto, unknown_dataset,
 };
 
 const DROP_CLAIM_OPERATION_SHIFT: u32 = 32;
@@ -156,6 +160,34 @@ impl Workspace {
         let state = self.runtime.entry(id).or_default();
         state.request_epoch += 1;
         state.preview = None;
+        Some((state.request_epoch, file))
+    }
+
+    /// Starts a request that reads one dataset and changes nothing about it:
+    /// claims the epoch that names it and hands back the file.
+    ///
+    /// Distinct from `begin_open_request`, which also discards what the previous
+    /// open recorded. That discard is right for an open, which replaces the
+    /// preview on screen. It is wrong for a read whose product lands somewhere
+    /// else entirely: the preview the user is looking at is still a true
+    /// description of this dataset afterwards, and clearing it would make a
+    /// conversion behave like a reload that never finished.
+    ///
+    /// It still claims an epoch, because it still has to be superseded by
+    /// anything the user does next.
+    ///
+    /// `None` when the dataset is not registered.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "ADR 0011: the private conversion path lands before the surface it serves"
+        )
+    )]
+    fn begin_reading_request(&mut self, id: DatasetId) -> Option<(u64, AcceptedFile)> {
+        let file = self.registry.get(id)?.file().clone();
+        let state = self.runtime.entry(id).or_default();
+        state.request_epoch += 1;
         Some((state.request_epoch, file))
     }
 
@@ -1619,6 +1651,26 @@ impl PreviewService {
         Ok(dataset_dto(&workspace, id).expect("the dataset was registered a line ago"))
     }
 
+    /// The same, for a dataset admitted as a vendor acquisition.
+    ///
+    /// The only way a Thermo dataset enters a workspace, and deliberately a
+    /// test-only one. Nothing a user can do reaches [`accept_thermo_raw_file`]:
+    /// the picker, folder discovery and the Explorer drop all go through mzML
+    /// acceptance, and this slice adds no surface that would change that. What
+    /// it stands in for is the ingestion decision a later slice has to make on
+    /// purpose, not one this one makes quietly.
+    pub(super) fn add_thermo_dataset(
+        &self,
+        path: &Path,
+    ) -> Result<SelectedFileDto, PreviewErrorDto> {
+        use super::selection::accept_thermo_raw_file;
+
+        let accepted = accept_thermo_raw_file(path)?;
+        let mut workspace = self.workspace();
+        let id = workspace.registry.add_direct(accepted).id();
+        Ok(dataset_dto(&workspace, id).expect("the dataset was registered a line ago"))
+    }
+
     /// How many datasets the session holds.
     pub(super) fn dataset_count(&self) -> usize {
         self.workspace().registry.len()
@@ -1674,6 +1726,90 @@ impl PreviewService {
     ///
     /// All three share a single discovery and capability probe, so opening a
     /// file resolves the backend once rather than once per panel.
+    /// Converts one accepted dataset to mzML in a folder the caller names.
+    ///
+    /// Private, and not on the way to being anything else. No command reaches
+    /// this, no transfer object is built from what it returns and nothing the
+    /// user can click leads here. The product's ingestion surfaces are unchanged
+    /// and still accept mzML only; what this exists to establish is that a
+    /// dataset the session already holds can be carried, whole and identified,
+    /// into the conversion boundary and back.
+    ///
+    /// ## The order, and why it is this one
+    ///
+    /// Every step below is placed against an invariant the rest of this service
+    /// already keeps, and several of them are only correct where they are.
+    ///
+    /// 1. The handle is resolved and the epoch claimed **before** the wait, so a
+    ///    request the user makes afterwards supersedes this one.
+    /// 2. The backend gate is taken with **no workspace lock held**. It is
+    ///    waited on for as long as a whole conversion takes, and the roster has
+    ///    to keep answering throughout. The workspace above is a statement
+    ///    temporary for exactly this reason.
+    /// 3. The epoch is rechecked **after** the wait: a conversion still queued
+    ///    when the user moves on never launches a process.
+    /// 4. The file is revalidated under the family it was accepted as, so a
+    ///    vendor acquisition is re-admitted by its signature rather than by its
+    ///    extension.
+    /// 5. The installation is bound and its build checked against the recorded
+    ///    evidence **before** the file is pinned or anything is created, so an
+    ///    unevidenced build costs the user nothing.
+    /// 6. The file is pinned against replacement, and only then re-admitted as a
+    ///    conversion source. The identity comparison inside that admission is
+    ///    what closes the window between revalidation and the pin -- and it does
+    ///    so before an output could exist, which a comparison made after the run
+    ///    could not.
+    /// 7. The run is stamped with the generation carried by the gate guard, not
+    ///    one read afterwards.
+    ///
+    /// Nothing is recorded against the dataset. A conversion reads it and writes
+    /// elsewhere, so there is no per-dataset state to commit and no reason to
+    /// recheck the epoch a third time.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "ADR 0011: the private conversion path lands before the surface it serves"
+        )
+    )]
+    pub(super) fn convert_workspace_dataset(
+        &self,
+        handle: &str,
+        destination_root: &Path,
+        conflict: ConflictPolicy,
+    ) -> Result<WorkspaceConversionReport, PreviewErrorDto> {
+        let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
+        let (epoch, remembered) = self
+            .workspace()
+            .begin_reading_request(id)
+            .ok_or_else(unknown_dataset)?;
+        let running = self.enter_backend();
+        if !self.workspace().request_is_current(id, epoch) {
+            return Err(superseded());
+        }
+        let file = revalidate(&remembered)?;
+        let backend = self.provider.conversion_backend()?;
+        let kind = conversion_source_kind(file.source_kind());
+        refuse_unevidenced_build(&backend.capabilities, kind)?;
+        // Held for the whole run. The crate pins the source again for itself,
+        // and this is not that: this is what stops the object being replaced
+        // between the session's revalidation above and that pin.
+        let guard = lock_against_replacement(file.path())?;
+        let source = open_conversion_source(&file)?;
+        let plan = plan_conversion(source, destination_root, conflict)?;
+        let report = run_planned_conversion(&plan, &backend);
+        let generation = self.note_resolved(backend.installation.clone());
+        drop(guard);
+        drop(running);
+        Ok(WorkspaceConversionReport::of(
+            id.handle(),
+            file.source_kind(),
+            generation,
+            &plan,
+            &report,
+        ))
+    }
+
     pub fn open_preview(&self, handle: &str) -> Result<PreviewDto, PreviewErrorDto> {
         let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
         // Claimed before the wait, so a request that arrives after this one

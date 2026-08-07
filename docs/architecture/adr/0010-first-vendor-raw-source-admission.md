@@ -4,6 +4,10 @@
   privately; every user-visible conversion surface, every other family and every
   queue concern separately gated
 - Date: 2026-08-07
+- Amended: 2026-08-07 (M3.0.4) — follow-up slice 1 below is done. The posture is
+  now reachable from an accepted workspace dataset through a private, surfaceless
+  path; see [ADR 0011](0011-private-workspace-conversion-path.md). Nothing
+  user-visible converts a RAW file, and every evidence gate below is unchanged.
 
 ## Context
 
@@ -225,6 +229,13 @@ command, transfer object, frontend control, queue, progress, cancellation, retry
 or persistence, and the capability set stays empty. The posture is private Rust,
 reachable only from inside the crate.
 
+> **Amended 2026-08-07 by M3.0.4.** Still nothing user-visible. The posture is
+> now reachable from a workspace dataset as well as from inside the crate, by a
+> private service method with no command, no transfer object and no capability
+> behind it — so "reachable only from inside the crate" becomes "reachable only
+> from inside Rust", and every sentence before it still holds. See
+> [ADR 0011](0011-private-workspace-conversion-path.md).
+
 ## Consequences
 
 The conversion boundary now has two source postures and one shape. That is the
@@ -243,6 +254,13 @@ decide how to present it, which is a decision this slice deliberately leaves
 open.
 
 ## Evidence gates still open
+
+> **Amended 2026-08-07 by M3.0.4.** None of these gates closed. The one thing
+> M3.0.4 adds to the evidence here is that the same fixture, on the same build,
+> produced the same single output when the run was driven from a workspace
+> dataset handle rather than from this ADR's evidence harness — so the
+> exactly-one-output measurement below is not an artefact of how the harness
+> called it. See [ADR 0011](0011-private-workspace-conversion-path.md).
 
 - **Other Thermo acquisitions.** One derived single-scan fixture. Multi-sample
   inputs, large acquisitions and ion-mobility data are unmeasured, and the

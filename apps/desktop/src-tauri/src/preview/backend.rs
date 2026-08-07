@@ -9,10 +9,10 @@ use std::sync::RwLock;
 
 use mscanvas_proteowizard::{
     AvailabilityState, ConfiguredLocation, DiscoveryRequest, InstalledHelpCapabilities,
-    LaunchFailureKind, MAX_PREVIEW_TEXT_BYTES, OutputEntryKind, PreviewInterpretError,
+    LaunchFailureKind, MAX_PREVIEW_TEXT_BYTES, OpenFormat, OutputEntryKind, PreviewInterpretError,
     PreviewOperation, PreviewOutcome, PreviewOutputEntry, PreviewOutputManifest, ProcessError,
-    Redactor, build_msaccess_command_with_capabilities, discover, execute, interpret_preview,
-    snapshot_output_directory,
+    ProcessRunner, Redactor, SystemProcessRunner, build_msaccess_command_with_capabilities,
+    discover, execute, interpret_preview, snapshot_output_directory,
 };
 
 use super::dto::{
@@ -88,6 +88,82 @@ pub trait PreviewProvider: Send + Sync {
     /// changed it, and that is precisely the state this entry point exists to
     /// make impossible.
     fn use_installation(&self, home: Option<PathBuf>);
+
+    /// Binds what one conversion needs from the currently installed backend.
+    ///
+    /// Not a [`PreviewOperation`], deliberately. A conversion reads a different
+    /// tool's help, writes a file rather than answering a question, and is
+    /// gated on evidence recorded for one exact build. Folding it into the
+    /// operation enum would also enrol it in `required_operations`, which
+    /// decides whether an installation is reported *available at all* -- so an
+    /// installation that could preview perfectly well would stop being usable
+    /// because it could not convert.
+    ///
+    /// One method rather than three accessors because the three answers have to
+    /// describe one binding. Capabilities read from one resolution, an identity
+    /// from another and a runner belonging to neither would let a conversion be
+    /// gated on the evidence of a build it did not run on.
+    ///
+    /// The default refuses. A provider that has not been taught to convert must
+    /// say so, because the alternative -- inheriting some other provider's
+    /// backend -- is how a test double ends up launching a real process.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "ADR 0011: the private conversion path lands before the surface it serves"
+        )
+    )]
+    fn conversion_backend(&self) -> Result<ConversionBackend<'_>, PreviewErrorDto> {
+        Err(PreviewErrorDto::new(
+            "conversion_unsupported",
+            "This backend cannot convert acquisitions.",
+            false,
+        ))
+    }
+}
+
+/// One binding of the installed backend, for one conversion.
+///
+/// The runner is borrowed from the provider rather than constructed here, so
+/// the process a conversion launches is the one its provider owns: production
+/// runs the reviewed system runner, and a test double runs whatever it was
+/// built with, without either being able to reach the other's.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "ADR 0011: the private conversion path lands before the surface it serves"
+    )
+)]
+pub struct ConversionBackend<'a> {
+    /// Capability evidence read from the installed `msconvert`'s own help.
+    ///
+    /// From `msconvert` and not `msaccess`, which is what every other operation
+    /// binds. The two are separate executables with separate option grammars,
+    /// and the build evidence a conversion is gated on is a statement about
+    /// this one.
+    pub capabilities: InstalledHelpCapabilities,
+    /// Which installation the capabilities above were read from.
+    pub installation: Option<InstallationIdentity>,
+    /// The execution boundary the conversion's process goes through.
+    pub runner: &'a dyn ProcessRunner,
+}
+
+/// Which installed executable a capability binding reads its help from.
+#[derive(Clone, Copy)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "ADR 0011: the private conversion path lands before the surface it serves"
+    )
+)]
+enum BoundTool {
+    /// Answers preview questions.
+    Msaccess,
+    /// Performs conversions.
+    Msconvert,
 }
 
 /// The production provider: a user-installed ProteoWizard `msaccess`.
@@ -135,6 +211,19 @@ impl ProteoWizardProvider {
     fn bind_capabilities(
         &self,
     ) -> Result<(InstalledHelpCapabilities, Option<InstallationIdentity>), PreviewErrorDto> {
+        self.bind_help_of(BoundTool::Msaccess)
+    }
+
+    /// The shared body of every binding: resolve the installation once, then
+    /// read one tool's complete installed help from that same resolution.
+    ///
+    /// Which tool is a parameter because preview and conversion are answered by
+    /// different executables with different option grammars. Reading one's help
+    /// and planning against the other is the mistake this makes unspellable.
+    fn bind_help_of(
+        &self,
+        tool: BoundTool,
+    ) -> Result<(InstalledHelpCapabilities, Option<InstallationIdentity>), PreviewErrorDto> {
         let request = self.request();
         let configured = configured_home(&request);
         let discovery = discover(&request);
@@ -142,8 +231,12 @@ impl ProteoWizardProvider {
             return Err(unavailable_error(configured.as_deref(), &discovery.failure));
         }
         let identity = InstallationIdentity::of(&discovery);
-        let capabilities = InstalledHelpCapabilities::from_discovered_tool(&discovery.msaccess)
-            .map_err(|_| {
+        let discovered = match tool {
+            BoundTool::Msaccess => &discovery.msaccess,
+            BoundTool::Msconvert => &discovery.msconvert,
+        };
+        let capabilities =
+            InstalledHelpCapabilities::from_discovered_tool(discovered).map_err(|_| {
                 PreviewErrorDto::new(
                     "capability_evidence_unavailable",
                     "The installed ProteoWizard did not describe the commands MSCanvas needs.",
@@ -198,6 +291,31 @@ impl PreviewProvider for ProteoWizardProvider {
         if let Ok(mut chosen) = self.chosen.write() {
             *chosen = home;
         }
+    }
+
+    fn conversion_backend(&self) -> Result<ConversionBackend<'_>, PreviewErrorDto> {
+        let (capabilities, installation) = self.bind_help_of(BoundTool::Msconvert)?;
+        // The option grammar the plan will be built against, required here so a
+        // build that cannot express the conversion is refused while nothing has
+        // been created yet. Planning against absent options would otherwise fail
+        // after a staging directory existed, which is a worse place to find out
+        // and a harder one to describe.
+        capabilities
+            .require_conversion(OpenFormat::MzMl)
+            .map_err(|_| {
+                PreviewErrorDto::new(
+                    "conversion_capability_unavailable",
+                    "The installed ProteoWizard cannot convert to mzML.",
+                    false,
+                )
+            })?;
+        Ok(ConversionBackend {
+            capabilities,
+            installation,
+            // A unit value with no state to carry, so one shared reference is
+            // the whole of it.
+            runner: &SystemProcessRunner,
+        })
     }
 
     fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {

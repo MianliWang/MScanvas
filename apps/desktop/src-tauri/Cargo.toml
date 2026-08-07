@@ -27,4 +27,12 @@ windows = { version = "=0.61.3", features = [
 ] }
 
 [dev-dependencies]
+# The same crate the library depends on, with the test-support constructor
+# turned on. A dev-dependency because only the test build may have it: a
+# conversion this service runs for a user is gated on evidence discovery
+# bound to a real executable, and a test that could forge that evidence in a
+# shipped build would be a way to forge it anywhere.
+mscanvas-proteowizard = { path = "../../../crates/proteowizard", features = [
+  "test-support",
+] }
 serde_json.workspace = true

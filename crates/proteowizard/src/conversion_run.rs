@@ -213,7 +213,15 @@ const EVIDENCED_PROVIDER_BUILDS: [EvidencedProviderBuild; 1] = [EvidencedProvide
 }];
 
 /// Whether the installed build is one this family has been converted on.
-fn provider_build_is_evidenced(
+///
+/// Public because a caller that is about to build a staging directory and a
+/// plan should be able to learn the answer before it does that work, and the
+/// only safe way to offer it that is to hand it *this* predicate. A second
+/// implementation of the same rule at the call site would be a second rule the
+/// moment either changed. [`run_conversion`] applies this one regardless, so a
+/// caller that skips the question is refused, not admitted.
+#[must_use]
+pub fn provider_build_is_evidenced(
     capabilities: &InstalledHelpCapabilities,
     kind: ConversionSourceKind,
 ) -> bool {
@@ -500,6 +508,19 @@ impl ConversionSource {
             SourceBaseline::Mzml(facts) => Some(facts.facts()),
             SourceBaseline::ObjectOnly(_) => None,
         }
+    }
+
+    /// The volume serial number and 128-bit file id the admitted object was
+    /// bound to, where the platform names objects that way.
+    ///
+    /// This exists so a caller that admitted the same object under its own
+    /// rules can prove the two admissions are one object before it hands this
+    /// source to a run. It deliberately carries no path: the caller already
+    /// has the name it chose, and what it lacks — and cannot obtain safely by
+    /// comparing names — is the object behind it.
+    #[must_use]
+    pub const fn object_identity(&self) -> Option<(u64, [u8; 16])> {
+        self.baseline.object().identity().volume_and_file_id()
     }
 
     fn canonical_path(&self) -> &Path {
