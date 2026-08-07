@@ -2291,6 +2291,16 @@ fn a_cleanup_that_cannot_finish_keeps_the_outcome_and_stays_reclaimable() {
         "the residue lost the proof a later attempt needs"
     );
 
+    // The reason a locked owned tree gives has been `staging_not_removed` since
+    // reclamation existed, and callers classify on it.
+    let refused = fixture
+        .plan
+        .reclaim_staging_area()
+        .expect_err("a locked tree cannot be reclaimed");
+    assert!(matches!(refused, StagingReclaimError::NotRemoved { .. }));
+    assert_eq!(refused.stable_id(), "staging_not_removed");
+    assert_eq!(refused.detailed_stable_id(), "staging_not_removed");
+
     // Once the obstruction is gone the same area is reclaimable.
     drop(held.borrow_mut().take());
     fixture

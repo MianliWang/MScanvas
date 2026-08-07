@@ -2635,8 +2635,11 @@ implied to be handled.
 identity changed, reparse point, foreign entry, traversal limit, not enumerable
 — and `StagingReclaimError` gained two that carry a residue, one for a teardown
 that stopped part-way and one for a root that could not be admitted at all, plus
-a detailed identifier that reaches into either. Cleanup residue still
-never replaces the conversion outcome.
+a detailed identifier that reaches into either. No published identifier changed:
+an owned tree that a lock or a permission refused is the one reclamation failure
+this crate already reported, and it keeps the variant, and therefore the
+identifier, it was published with. Cleanup residue still never replaces the
+conversion outcome.
 
 What is not closed, stated rather than implied: the marker proves MSCanvas wrote
 a file of that name and content, not that *this plan* wrote it. Anything able to

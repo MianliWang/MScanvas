@@ -462,7 +462,7 @@ impl ConversionPlan {
                 // nothing. Teardown removes the marker before the root, so this
                 // is exactly what an interrupted cleanup leaves behind.
                 return cleanup::dispose_empty_root(root, &staging)
-                    .map_err(StagingReclaimError::NotFullyRemoved);
+                    .map_err(StagingReclaimError::from_residue);
             }
             cleanup::StagingAdmission::NotOwned => return Err(StagingReclaimError::NotOwned),
             cleanup::StagingAdmission::NotInspectable(residue) => {
@@ -479,7 +479,7 @@ impl ConversionPlan {
                 authority: cleanup::TeardownAuthority::AdmittedMarker,
             },
         )
-        .map_err(StagingReclaimError::NotFullyRemoved)
+        .map_err(StagingReclaimError::from_residue)
     }
 
     fn destination(&self) -> PathBuf {
@@ -888,6 +888,19 @@ pub enum StagingReclaimError {
 }
 
 impl StagingReclaimError {
+    /// Reports a residue as the reason a reclamation failed.
+    ///
+    /// An owned tree that a lock or a permission refused is the one case this
+    /// crate has always reported, and it keeps the variant — and therefore the
+    /// identifier — it was published with. `NotFullyRemoved` carries the
+    /// reasons that had no equivalent before.
+    fn from_residue(residue: StagingResidue) -> Self {
+        match residue {
+            StagingResidue::NotRemoved { kind } => Self::NotRemoved { kind },
+            other => Self::NotFullyRemoved(other),
+        }
+    }
+
     #[must_use]
     pub const fn stable_id(self) -> &'static str {
         match self {
