@@ -146,13 +146,13 @@ cleaned it up:
 | Fact | Thermo RAW | mzML control |
 | --- | --- | --- |
 | Backend exit | `0` | `0` |
-| Backend elapsed | `597 ms` | `167 ms` |
-| Peak owned-job memory | `35,741,696` bytes | `21,819,392` bytes |
+| Backend elapsed | `684 ms` | `183 ms` |
+| Peak owned-job memory | `36,536,320` bytes | `22,007,808` bytes |
 | Entries in the output directory | **`1`** | **`1`** |
 | Entry kind | regular file | regular file |
 | Entry name | exactly the planned name | exactly the planned name |
 | Partial-output suffix present | `false` | `false` |
-| Byte length | `28,661` | `25,470` |
+| Byte length | `28,661` | `25,469` |
 
 **No sidecar, index, log or scratch file.** This is what ADR 0009 recorded as
 unmeasured and required "before this boundary is reachable from the product",
@@ -170,10 +170,10 @@ The whole sequence, unchanged, through `run_conversion`:
 | Source bytes / SHA-256 | `78,309` / `b3d97b38…dd7b` | `25,072` / `711ac14b…9c83` |
 | Outcome | `finalized` | `finalized` |
 | Validation mode | **`output_only`** | `source_comparison` |
-| Backend exit / elapsed | `0` / `490 ms` | `0` / `165 ms` |
+| Backend exit / elapsed | `0` / `511 ms` | `0` / `187 ms` |
 | Output root | `indexedmzML` | `indexedmzML` |
 | Spectra / chromatograms | `1` / `1` | `4` / `2` |
-| Output byte length | `28,661` | `25,518` |
+| Output byte length | `28,661` | `25,517` |
 | Verified | `source_unchanged`, `output_declared_counts`, `index_sequences`, `compression_policy` | the ten comparison and structural properties |
 | Unverified | none | `ms_level_distribution`, `binary_array_kinds`, `spectrum_native_identity`, `spectrum_representation`, `compression_policy` |
 | Inapplicable | the eleven comparison properties | none |
@@ -191,11 +191,16 @@ The mzML control's unverified set is the already-recorded consequence of that
 fixture reaching its controlled-vocabulary facts through a
 `referenceableParamGroup`. It is unchanged by this slice.
 
-**The output digest is not a reproducible pin.** `msconvert` records the source
-location inside the document it writes, so converting the same acquisition from
-a different directory produces different bytes. The observed value for this run
-was `6F3D900F881F8B8C195FE8A47DDF98FAF179CE83D0BC6B5A22DAFDA843FA59F6`; the
-stable facts are the byte length, the structure and the counts.
+**Neither the output digest nor its byte length is a reproducible pin.**
+`msconvert` records path information inside the document it writes, so the same
+acquisition converted into a differently named directory produces different
+bytes — observed directly here: the mzML control's output measured `25,518`
+bytes in one run and `25,517` in another, from the same source, differing only in
+the workspace name. The Thermo output's observed digest for the run recorded
+above was
+`6F3D900F881F8B8C195FE8A47DDF98FAF179CE83D0BC6B5A22DAFDA843FA59F6`. **The stable
+facts are the structure and the counts**, and a later slice must not build a
+cache key or an equality check on the size or the digest of a conversion output.
 
 ## Supported claims
 

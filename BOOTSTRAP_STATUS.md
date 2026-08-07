@@ -2859,27 +2859,37 @@ streams go to an explicitly requested local file with a stated deletion
 obligation, and everything the harness creates in its workspace is removed
 before it returns.
 
-Sixteen tests were added, all deterministic and none reaching a backend, plus
-one explicitly ignored real-fixture run so a machine without the fixture and the
-backend is told the claim went unchecked rather than shown a green run. They
-cover signature recognition in both directions, extension filtering including
-case, a directory and a junction at a source name, a source rewritten before the
-run and one rewritten during it, every output postcondition an output-only
-contract can fail, the build gate across four wrong builds, the spelling
-decision, and that nothing renders a path.
+Sixteen tests were added — fifteen that run and one explicitly ignored — all
+deterministic and none reaching a backend. The ignored one is the real-fixture
+run, so a machine without the fixture and the backend is told the claim went
+unchecked rather than shown a green run. They cover signature recognition in
+both directions, extension filtering including case, a directory and a junction
+at a source name, a source rewritten before the run and one rewritten during it,
+every output postcondition an output-only contract can fail, the build gate
+across four wrong builds, the spelling decision, and that nothing renders a path.
 
-Eight mutations were introduced one at a time; seven were caught. Removing the
-signature check fails the recognition test; claiming a source comparison for a
-vendor result fails the mode test; ignoring an extra output entry fails three;
-dropping the vendor source revalidation fails the rewritten-during-the-run test;
-accepting an unevidenced build fails the gate test; finalizing partial output
-fails its test; and keeping the extended-length spelling for the vendor family
-fails the spelling test. The eighth — using the derived plain spelling without
-re-resolving it — survived, and it is recorded as surviving: it is
-defence-in-depth against a Windows path that normalizes to a different object,
-and an attempt to construct one with a trailing-space directory component did
-not diverge on this build. The check stays; the test that would have justified
-it was removed rather than left asserting something it did not demonstrate.
+Fifteen mutations were introduced one at a time; twelve were caught. Removing
+the signature check, comparing the extension case-sensitively, and reporting a
+too-short file as an inspection failure each fail the recognition test; claiming
+a source comparison for a vendor result fails the mode test; ignoring an extra
+output entry fails three; dropping the vendor source revalidation fails the
+rewritten-during-the-run test; accepting an unevidenced build and ignoring the
+source revision each fail the gate tests; finalizing partial output fails its
+test; skipping the output-only index-sequence or compression checks fails the
+output-contract test; and keeping the extended-length spelling for the vendor
+family fails the spelling test.
+
+Three survived, and each is recorded rather than papered over. Removing the
+posture check from vendor admission is **equivalent**: the guard's own open
+repeats the same refusal, so the two are redundant by construction. Using the
+derived plain spelling without re-resolving it is defence-in-depth against a
+Windows path that normalizes to a different object, and an attempt to construct
+one with a trailing-space directory component did not diverge on this build —
+the check stays, and the test that would have justified it was removed rather
+than left asserting something it did not demonstrate. Reading the signature from
+a second handle instead of the one the digest is computed through needs a writer
+to change the file between two adjacent reads; there is no seam for that and
+adding one to production code for it is not worth what it would buy.
 
 Validation on the exact head: `cargo fmt --all --check`,
 `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,

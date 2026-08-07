@@ -364,6 +364,24 @@ impl SourceObjectFacts {
         self.sha256
     }
 
+    /// Assembles facts a caller established from one opened object.
+    ///
+    /// Exists so a posture that must also read something out of the object —
+    /// a file signature, say — can do it through the same handle the digest is
+    /// computed from, instead of reopening the name and describing bytes the
+    /// digest may not cover.
+    pub(crate) const fn from_parts(
+        identity: SourceIdentity,
+        byte_length: u64,
+        sha256: Sha256Digest,
+    ) -> Self {
+        Self {
+            identity,
+            byte_length,
+            sha256,
+        }
+    }
+
     /// Binds a path to the object it currently names, its length and its
     /// contents. No format is assumed and nothing is parsed.
     pub(crate) fn capture(input: &Path) -> Result<Self, ConversionSourceError> {

@@ -716,14 +716,28 @@ fn backend_input_spelling(
         return Ok(canonical.to_path_buf());
     }
 
+    // Asked on the bytes, because a path this rule cannot decode is still a
+    // path this rule can tell is already plain.
+    if !canonical
+        .as_os_str()
+        .as_encoded_bytes()
+        .starts_with(VERBATIM_PREFIX.as_bytes())
+    {
+        // Already a plain spelling, so there is nothing to derive and nothing
+        // to prove. Every path on a platform without the prefix lands here.
+        return Ok(canonical.to_path_buf());
+    }
+
+    // From here the canonical spelling is one the caller's reader cannot use,
+    // so failing to derive an alternative is a refusal rather than a fallback.
+    // Returning the canonical path anyway would defer a stateable refusal to an
+    // opaque backend failure after a process had already run.
     let Some(plain) = canonical
         .to_str()
         .and_then(|text| text.strip_prefix(VERBATIM_PREFIX))
         .filter(|plain| !plain.starts_with("UNC\\"))
     else {
-        // Nothing to strip, or a form this rule does not know how to shorten
-        // safely. The canonical spelling is the one that was verified.
-        return Ok(canonical.to_path_buf());
+        return Err(PlanError::SourceSpellingNotEquivalent);
     };
     let plain = PathBuf::from(plain);
     let resolved = SourceIdentity::capture(&plain)

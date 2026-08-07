@@ -3001,6 +3001,19 @@ fn a_vendor_conversion_rejects_every_output_its_own_contract_forbids() {
         "output_declared_count_inconsistent"
     );
 
+    // Indices that skip are a document disagreeing with itself just as much as
+    // a declared count that does. There is no source to blame it on here, which
+    // is exactly why the output has to answer for it alone.
+    assert_eq!(
+        attempt(&|spec| {
+            let gapped =
+                output_document().replace(r#"<spectrum index="1""#, r#"<spectrum index="5""#);
+            fs::write(staged_destination(spec), gapped).expect("write a gapped output");
+            Ok(0)
+        }),
+        "index_sequence_not_consecutive"
+    );
+
     // An entry the plan did not ask for is never silently ignored.
     assert_eq!(
         attempt(&|spec| {

@@ -32,7 +32,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::File;
 use std::io;
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -394,17 +394,25 @@ impl ConversionSource {
             return Err(ConversionSourceRejection::UnsupportedExtension);
         }
 
-        let object = SourceObjectFacts::capture(path)?;
-        // Read through the guard's handle rather than the caller's path. The
-        // hash above already fixes the contents, so a signature read afterwards
-        // is a statement about the same bytes the digest covers, and the
-        // pre-run recheck of that digest is what carries both forward.
-        let (mut file, _) = fs_guard::open_regular_file(object.identity().canonical_path())?;
+        let identity = SourceIdentity::capture(path)
+            .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
+
+        // One handle for both readings, which is what makes the recognition a
+        // statement about the bytes the digest covers. Reopening the name for
+        // the digest would let the signature describe one object and the hash
+        // another, and the pre-run recheck would then carry forward a digest of
+        // content nothing had recognized. The output inspector reopens nothing
+        // for exactly this reason; neither does this.
+        let (mut file, byte_length) = fs_guard::open_regular_file(identity.canonical_path())
+            .map_err(|error| match error {
+                RegularFileError::Io { kind } => ConversionSourceRejection::NotInspectable { kind },
+                other => other.into(),
+            })?;
         let mut head = vec![0_u8; signature.len()];
         match file.read_exact(&mut head) {
             Ok(()) => {}
-            // A file shorter than the signature cannot carry it. That is a
-            // mismatch, not an inspection failure.
+            // A file shorter than the signature cannot be carrying it. That is
+            // a mismatch, not an inspection failure.
             Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
                 return Err(ConversionSourceRejection::SignatureMismatch);
             }
@@ -415,6 +423,12 @@ impl ConversionSource {
         if head != signature {
             return Err(ConversionSourceRejection::SignatureMismatch);
         }
+
+        file.rewind()
+            .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
+        let sha256 = Sha256Digest::calculate_reader(&mut file)
+            .map_err(|_| ConversionSourceRejection::NotHashed)?;
+        let object = SourceObjectFacts::from_parts(identity, byte_length, sha256);
 
         Ok(Self {
             kind,
