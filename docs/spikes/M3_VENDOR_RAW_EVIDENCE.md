@@ -162,6 +162,27 @@ and it holds for the default Thermo-to-mzML path with `--zlib` on this build. It
 is one fixture on one build: a multi-sample input or a non-mzML output format
 could differ, and neither was measured.
 
+## Holding the acquisition
+
+A run holds the acquisition open for its whole duration, granting read sharing
+and withholding write and delete. Read sharing is what lets the backend open the
+same object by name; withholding the other two is what makes "the backend
+converted the acquisition that was verified" a property rather than a hope — the
+bytes cannot change under it, and the name cannot be made to mean a different
+object by a rename.
+
+That it is *compatible* with both readers is a measurement, not an assumption:
+
+| Reader | Conversion with the acquisition held | Result |
+| --- | --- | --- |
+| Thermo vendor library | `FT-HCD-MSX.raw` | exit `0`, finalized, one output |
+| ProteoWizard open format | `tiny.pwiz.1.1.mzML` | exit `0`, finalized, one output |
+
+The cost belongs in the record: for the duration of a conversion the user cannot
+modify, rename or delete the acquisition being converted. Windows enforces this;
+no platform outside it offers a mandatory share mode through the standard
+library, so the guarantee there is narrower and is not described as equivalent.
+
 ## Boundary result
 
 The whole sequence, unchanged, through `run_conversion`:
@@ -176,7 +197,7 @@ The whole sequence, unchanged, through `run_conversion`:
 | Output root | `indexedmzML` | `indexedmzML` |
 | Spectra / chromatograms | `1` / `1` | `4` / `2` |
 | Output byte length | `28,661` | `25,517` |
-| Verified | `source_unchanged`, `output_declared_counts`, `index_sequences`, `compression_policy` | the ten comparison and structural properties |
+| Verified | `source_unchanged`, `output_declared_counts`, `output_declared_array_lengths`, `index_sequences`, `compression_policy` | the ten comparison and structural properties |
 | Unverified | none | `ms_level_distribution`, `binary_array_kinds`, `spectrum_native_identity`, `spectrum_representation`, `compression_policy` |
 | Inapplicable | the eleven comparison properties | none |
 | Advisory | none | `numeric_precision_differs`, `byte_length_differs` |
@@ -213,8 +234,9 @@ cache key or an equality check on the size or the digest of a conversion output.
 - The produced document passes the fail-closed mzML scanner, is internally
   consistent, has consecutive index sequences and honours the requested zlib
   compression.
-- The acquisition is identity-bound, digest-bound and rechecked both before the
-  backend starts and again before the output is judged.
+- The acquisition is identity-bound, digest-bound, rechecked before the backend
+  starts and again before the output is judged, and **held against writes,
+  renames and deletion for the whole run** — which both readers tolerate.
 - Private staging, no-clobber handle-bound finalization and identity-bound
   cleanup apply to this family exactly as to mzML.
 

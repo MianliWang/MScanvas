@@ -85,8 +85,13 @@ there is nothing available to pretend a comparison with.
 two:
 
 - **verified** — established. For a vendor run: the source object unchanged, the
-  output's declared list counts consistent with its contents, consecutive index
-  sequences, and the requested compression policy.
+  output's declared list counts present and consistent with its contents, its
+  declared binary-array lengths present, consecutive index sequences, and the
+  requested compression policy. A list holding records while declaring no count
+  has omitted an attribute its schema requires; under a comparison that is
+  survivable because the observed counts on both sides still answer the
+  question, and here it is a rejection, because recording the property as
+  verified would assert something the document declined to state.
 - **unverified** — could have been asked and could not be established, such as a
   vocabulary fact reached through a `referenceableParamGroup`.
 - **inapplicable** — never a question this pair could be asked. Every
@@ -144,6 +149,27 @@ tried, because the consequence of being wrong is a backend reading an object
 nobody verified.
 
 The output directory spelling was measured and needs no such treatment.
+
+### The acquisition is held, not merely checked
+
+A run opens the acquisition before it rechecks it, holds that handle until the
+output has been judged, and hashes through it. Read sharing is granted so the
+backend can open the same object by name; write and delete sharing are withheld.
+
+Checking and then not holding leaves the interval a check exists to close. For a
+source posture with an output-side comparison, a source rewritten under the run
+and restored before the recheck would usually be caught by the comparison
+disagreeing. For an output-only posture nothing would catch it: identity, length
+and digest would all match, and the document would have come from bytes nothing
+ever admitted. Withholding delete matters for the same reason in the other
+direction — the backend resolves a *name*, so an acquisition renamed away and
+replaced would hand it an object this run never saw.
+
+Both readers tolerate the hold, which was measured rather than assumed. The cost
+is stated rather than hidden: for the duration of a conversion the user cannot
+modify, rename or delete the acquisition being converted. Outside Windows the
+standard library offers no mandatory share mode, so the object is held without
+that guarantee and the difference is recorded rather than papered over.
 
 ### Everything else is reused
 

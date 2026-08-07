@@ -541,11 +541,14 @@ impl BinaryArrayMismatchKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum IntegrityProperty {
     SourceUnchanged,
-    /// The output's own declared list counts agree with what it contains. This
-    /// is the one structural property that is about the output alone, so it is
-    /// the only one an output-only validation can establish besides the source
-    /// being unchanged, the index sequences and the compression policy.
+    /// The output's own declared list counts agree with what it contains. A
+    /// structural property about the output alone, so an output-only validation
+    /// can establish it.
     OutputDeclaredCounts,
+    /// Every record in the output declares the length of its binary arrays.
+    /// Also about the output alone, and separate from the comparison of those
+    /// lengths against a source, which is not always available.
+    OutputDeclaredArrayLengths,
     SpectrumCount,
     ChromatogramCount,
     IndexSequences,
@@ -567,6 +570,7 @@ impl IntegrityProperty {
         match self {
             Self::SourceUnchanged => "source_unchanged",
             Self::OutputDeclaredCounts => "output_declared_counts",
+            Self::OutputDeclaredArrayLengths => "output_declared_array_lengths",
             Self::SpectrumCount => "spectrum_count",
             Self::ChromatogramCount => "chromatogram_count",
             Self::IndexSequences => "index_sequences",
@@ -1042,8 +1046,37 @@ fn judge_output_alone(
     let mut report = IntegrityReport::default();
     report.verified.insert(IntegrityProperty::SourceUnchanged);
 
+    // A list that holds records and declares no count has omitted an attribute
+    // its schema requires. Under a comparison that is survivable, because the
+    // observed counts on both sides still answer the question. Here there is no
+    // other side, so recording the property as verified would be asserting
+    // something the document declined to state.
+    if after.declared_spectrum_count().is_none() && after.observed_spectrum_count() > 0 {
+        return ConversionIntegrityOutcome::OutputDeclaredCountInconsistent {
+            part: DocumentPart::Spectrum,
+        };
+    }
+    if after.declared_chromatogram_count().is_none() && after.observed_chromatogram_count() > 0 {
+        return ConversionIntegrityOutcome::OutputDeclaredCountInconsistent {
+            part: DocumentPart::Chromatogram,
+        };
+    }
     if let Some(outcome) = check_output_declared_counts(after, &mut report) {
         return outcome;
+    }
+    // Declared array lengths are readable from the output alone, so their
+    // absence is recorded rather than passed over in silence. It is not a
+    // rejection: the comparison path already treats an absent length as
+    // unestablishable rather than as a defect, and this keeps the two agreeing
+    // about what the fact is worth.
+    if declared_lengths_are_complete(after) {
+        report
+            .verified
+            .insert(IntegrityProperty::OutputDeclaredArrayLengths);
+    } else {
+        report
+            .unverified
+            .insert(IntegrityProperty::OutputDeclaredArrayLengths);
     }
     if !after.spectrum_index_sequence_is_consecutive() {
         return ConversionIntegrityOutcome::IndexSequenceNotConsecutive {

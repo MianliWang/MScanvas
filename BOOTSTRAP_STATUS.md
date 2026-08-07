@@ -2822,6 +2822,19 @@ is therefore a per-family decision, and a plain spelling is derived,
 re-resolved, and required to carry the admitted filesystem identity before it is
 used. mzML keeps the spelling every earlier measurement was recorded with.
 
+A run holds the acquisition rather than merely checking it: opened before the
+recheck, hashed through that handle, and held until the output has been judged,
+granting read sharing and withholding write and delete. Checking and then not
+holding leaves the interval a check exists to close, and for an output-only
+posture nothing else would catch a source rewritten under the run and restored
+before the recheck — identity, length and digest would all match while the
+document came from bytes nothing admitted. Withholding delete closes the same
+hole from the other side, because the backend resolves a name. Both readers
+tolerate the hold, measured rather than assumed. The cost is stated: for the
+duration of a conversion the user cannot modify, rename or delete the
+acquisition being converted, and outside Windows there is no mandatory share
+mode so the guarantee is narrower.
+
 Validation for a vendor source is output-only and the result says so.
 `ConversionSourceFacts` split into the object facts every source has — identity,
 length, digest — and the mzML reading only some sources have, so a vendor source
@@ -2830,9 +2843,13 @@ validation mode and a third property set: the eleven comparison properties are
 recorded as *inapplicable* rather than unverified, because they were never
 questions this pair could be asked, and `is_fully_verified` answers false for
 every output-only result whatever its sets contain. What a vendor run does
-establish is the source object unchanged, the output internally consistent, its
-index sequences consecutive, and the requested compression honoured. The mzML
-comparison is untouched.
+establish is the source object unchanged, the output's declared list counts and
+array lengths present and consistent, its index sequences consecutive, and the
+requested compression honoured. A list holding records while declaring no count
+has omitted an attribute its schema requires: survivable under a comparison,
+where the observed counts on both sides still answer the question, and a
+rejection here, because recording it as verified would assert something the
+document declined to state. The mzML comparison is untouched.
 
 Support is bound to the build it was measured on. Installed help now yields a
 provider build — release and source revision — parsed from the same complete

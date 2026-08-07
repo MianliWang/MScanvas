@@ -9,8 +9,9 @@ use super::{OwnedStagingArea, StagingResidue};
 use crate::capability::{CapturedHelpStream, CompleteHelpCapture};
 use crate::command::{BackendTool, CommandSpec};
 use crate::conversion::{
-    CompressionPolicy, IntegrityProperty, ValidationMode, capture_conversion_source,
-    verify_mzml_conversion_retaining_output,
+    CompressionPolicy, IntegrityProperty, SourceObjectFacts, ValidationMode,
+    capture_conversion_source, verify_mzml_conversion_retaining_output,
+    verify_vendor_conversion_retaining_output,
 };
 
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -666,22 +667,86 @@ fn a_source_replaced_during_the_conversion_is_never_finalized() {
 
     let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
     let replaced = source.clone();
-    let act = move |spec: &CommandSpec| {
+    let rewritten = Cell::new(true);
+    let act = |spec: &CommandSpec| {
         fs::write(staged_destination(spec), output_document()).expect("write staged output");
-        fs::write(&replaced, document(3, Serialization::Source))
-            .expect("rewrite the source under the run");
+        // The run holds the acquisition against writers for its whole duration,
+        // so on a platform with a mandatory share mode this is refused outright
+        // and there is nothing left for the revalidation to catch. Where the
+        // platform offers none, the write lands and the revalidation is what
+        // refuses the conversion. Both are recorded; neither is assumed.
+        rewritten.set(fs::write(&replaced, document(3, Serialization::Source)).is_ok());
         Ok(0)
     };
     let runner = FakeRunner::new(&act);
     let report = run_conversion(&plan, &capabilities(), &runner);
 
+    if rewritten.get() {
+        assert_eq!(
+            *report.outcome(),
+            ConversionRunOutcome::Failed(ConversionRunFailure::OutputRejected(
+                ConversionIntegrityOutcome::SourceChangedDuringConversion
+            ))
+        );
+        assert!(entry_names(&root).is_empty());
+    } else {
+        // Prevented rather than detected, which is the stronger of the two.
+        assert_eq!(report.outcome().stable_id(), "finalized");
+        assert_eq!(
+            fs::read(&source).expect("read the acquisition"),
+            source_document().into_bytes(),
+            "the acquisition changed despite the run holding it"
+        );
+    }
+}
+
+/// On Windows the acquisition is held against writers and against renames for
+/// the whole run, so the backend cannot be handed bytes or an object that
+/// nothing admitted. This is the property the output-only postures depend on:
+/// they have no source comparison to fall back on.
+#[cfg(windows)]
+#[test]
+fn the_acquisition_cannot_be_changed_while_a_run_holds_it() {
+    let directory = TestDirectory::new();
+    let source = write_thermo_source(directory.path(), "acquisition.raw");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
+        .expect("plan a vendor conversion");
+
+    let attempts = RefCell::new(Vec::new());
+    let act = |spec: &CommandSpec| {
+        fs::write(staged_destination(spec), output_document()).expect("write the staged output");
+        let mut attempts = attempts.borrow_mut();
+        // Rewritten in place: the bytes the digest covers.
+        attempts.push((
+            "rewrite",
+            fs::write(&source, thermo_bytes(b"rewritten-body!!")).is_ok(),
+        ));
+        // Renamed away: the name the backend resolves.
+        attempts.push((
+            "rename",
+            fs::rename(&source, directory.path().join("moved.raw")).is_ok(),
+        ));
+        // Removed outright.
+        attempts.push(("remove", fs::remove_file(&source).is_ok()));
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
+
+    for (what, succeeded) in attempts.into_inner() {
+        assert!(!succeeded, "a held acquisition could still be {what}d");
+    }
+    assert_eq!(report.outcome().stable_id(), "finalized");
     assert_eq!(
-        *report.outcome(),
-        ConversionRunOutcome::Failed(ConversionRunFailure::OutputRejected(
-            ConversionIntegrityOutcome::SourceChangedDuringConversion
-        ))
+        fs::read(&source).expect("read the acquisition"),
+        thermo_bytes(b"acquisition-body"),
+        "the acquisition changed under the run"
     );
-    assert!(entry_names(&root).is_empty());
+
+    // And the hold is released once the run is over.
+    fs::write(&source, thermo_bytes(b"afterwards-------")).expect("the hold outlived the run");
 }
 
 #[test]
@@ -2885,6 +2950,7 @@ fn a_vendor_conversion_is_validated_on_its_output_alone() {
         BTreeSet::from([
             "source_unchanged",
             "output_declared_counts",
+            "output_declared_array_lengths",
             "index_sequences",
             "compression_policy",
         ])
@@ -3335,42 +3401,40 @@ fn a_vendor_source_is_named_to_the_backend_in_a_spelling_its_reader_accepts() {
     );
 }
 
-/// The pre-run recheck catches a source changed before the backend starts. This
-/// is the other half: one changed *while* it ran, which only the validation can
-/// see, and which an output-only judgement must refuse exactly as a comparison
-/// would.
+/// The hold normally prevents an acquisition changing under a run, but the hold
+/// is a Windows guarantee and this contract is not. An output whose acquisition
+/// no longer matches what was admitted is refused wherever that happens, and an
+/// output-only judgement must refuse it exactly as a comparison would.
 #[test]
-fn a_vendor_source_rewritten_during_the_run_is_refused_at_validation() {
+fn an_output_whose_acquisition_no_longer_matches_is_refused() {
     let directory = TestDirectory::new();
     let source = write_thermo_source(directory.path(), "acquisition.raw");
-    let root = directory.path().join("out");
-    fs::create_dir(&root).expect("create destination root");
-    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
-        .expect("plan a vendor conversion");
+    let staging = directory.path().join("staging");
+    fs::create_dir(&staging).expect("create a staging directory");
+    fs::write(staging.join("acquisition.mzML"), output_document()).expect("write an output");
 
-    // The backend produces a perfectly good document, and the acquisition it
-    // was produced from is not the one that was admitted any more. The output
-    // is unusable because nothing can say what it came from.
-    let act = |spec: &CommandSpec| {
-        fs::write(staged_destination(spec), output_document()).expect("write the staged output");
-        fs::write(&source, thermo_bytes(b"rewritten-body!!")).expect("rewrite the acquisition");
-        Ok(0)
-    };
-    let runner = FakeRunner::new(&act);
-    let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
+    // Facts describing bytes this file does not hold: exactly what a run would
+    // be left holding if the acquisition changed under it.
+    let stale = SourceObjectFacts::from_parts(
+        SourceIdentity::capture(&source).expect("capture the acquisition identity"),
+        thermo_bytes(b"acquisition-body").len() as u64,
+        Sha256Digest::from_bytes([0x5A; 32]),
+    );
 
-    assert_eq!(runner.calls(), 1);
-    let ConversionRunOutcome::Failed(failure) = report.outcome() else {
-        panic!("a conversion of a rewritten acquisition was finalized: {report:?}");
-    };
-    assert_eq!(
-        failure.detailed_stable_id(),
-        "source_changed_during_conversion"
+    let verified = verify_vendor_conversion_retaining_output(
+        &stale,
+        &staging,
+        OsStr::new("acquisition.mzML"),
+        ConversionPolicy::default(),
+        MzmlScanLimits::default(),
     );
-    assert!(
-        entry_names(&root).is_empty(),
-        "a refused conversion left something behind"
-    );
+
+    match verified {
+        VerifiedConversion::Rejected(outcome) => {
+            assert_eq!(outcome.stable_id(), "source_changed_during_conversion");
+        }
+        VerifiedConversion::Valid(_) => panic!("an unmatched acquisition was accepted"),
+    }
 }
 
 /// The real-acquisition evidence, kept out of ordinary runs.

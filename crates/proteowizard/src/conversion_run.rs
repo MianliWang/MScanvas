@@ -1604,9 +1604,20 @@ fn run_admitted(
         ));
     }
 
-    if let Err(failure) = require_planned_source(&plan.source) {
-        return ConversionRunReport::settled(ConversionRunOutcome::Failed(failure));
-    }
+    // The source is held for the whole run, not merely checked before it. A
+    // pinned object cannot be rewritten or renamed away while the backend reads
+    // it, which is what makes "the backend converted the acquisition that was
+    // verified" a property rather than a hope. It matters most for a source
+    // posture with no output-side comparison to fall back on: a source rewritten
+    // during the run and restored before the recheck would otherwise satisfy
+    // every identity, length and digest test while the document came from bytes
+    // nothing ever admitted.
+    let _pinned_source = match pin_planned_source(&plan.source) {
+        Ok(pinned) => pinned,
+        Err(failure) => {
+            return ConversionRunReport::settled(ConversionRunOutcome::Failed(failure));
+        }
+    };
 
     let staging = match OwnedStagingArea::create(plan.staging_directory()) {
         Ok(staging) => staging,
@@ -1647,7 +1658,7 @@ fn run_admitted(
 ///
 /// This costs one full read of the source. A conversion already reads it twice;
 /// binding the run to the bytes that were admitted is worth the third.
-fn require_planned_source(source: &ConversionSource) -> Result<(), ConversionRunFailure> {
+fn pin_planned_source(source: &ConversionSource) -> Result<File, ConversionRunFailure> {
     let object = source.baseline.object();
     match object.identity().matches_current() {
         Ok(true) => {}
@@ -1657,21 +1668,72 @@ fn require_planned_source(source: &ConversionSource) -> Result<(), ConversionRun
         }
     }
 
+    // Held before it is rechecked, for the reason the destination root is: a
+    // check followed by an open leaves the interval between them, and the work
+    // in that interval is a whole rehash of the acquisition.
     let path = source.canonical_path();
-    let metadata = std::fs::symlink_metadata(path)
+    let mut pinned = open_pinned_source(path).map_err(|error| match error.kind() {
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory => {
+            ConversionRunFailure::SourceChangedBeforeRun
+        }
+        kind => ConversionRunFailure::SourceNotRechecked { kind },
+    })?;
+
+    let metadata = pinned
+        .metadata()
         .map_err(|error| ConversionRunFailure::SourceNotRechecked { kind: error.kind() })?;
+    fs_guard::require_regular_file(&metadata)
+        .map_err(|_| ConversionRunFailure::SourceChangedBeforeRun)?;
     if metadata.len() != object.byte_length() {
         return Err(ConversionRunFailure::SourceChangedBeforeRun);
     }
-    let sha256 =
-        Sha256Digest::calculate_file(path).map_err(|_| ConversionRunFailure::SourceNotRehashed)?;
+    // Hashed through the handle that holds it, so the bytes this compares are
+    // the bytes nothing can change for as long as the handle lives.
+    let sha256 = Sha256Digest::calculate_reader(&mut pinned)
+        .map_err(|_| ConversionRunFailure::SourceNotRehashed)?;
     if sha256 != object.sha256() {
         return Err(ConversionRunFailure::SourceChangedBeforeRun);
     }
     // A digest that still matches is also the family recognition still holding:
     // the signature is a prefix of the bytes this digest covers, so re-reading
     // it would re-derive a fact the hash has already settled.
-    Ok(())
+    Ok(pinned)
+}
+
+/// Opens the acquisition so that nobody can change it while it is converted.
+///
+/// Read sharing is granted, because the backend has to open the same object by
+/// name and a concurrent reader invalidates nothing. Write sharing is withheld,
+/// so the bytes the digest above covers are the bytes the backend reads. Delete
+/// sharing is withheld too, and that half is what stops the *name* being made to
+/// mean something else: the backend resolves a path, so a source renamed away
+/// and replaced would otherwise hand it an object this run never admitted.
+///
+/// The cost is real and belongs in the record: for the duration of a conversion
+/// the user cannot modify, rename or delete the acquisition being converted.
+#[cfg(windows)]
+fn open_pinned_source(path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+/// Opens the acquisition for reading.
+///
+/// No platform outside Windows offers a mandatory share mode through the
+/// standard library, so this holds the object open without preventing anyone
+/// from writing to it. The guarantee is correspondingly narrower and is not
+/// described as equivalent.
+#[cfg(not(windows))]
+fn open_pinned_source(path: &Path) -> io::Result<File> {
+    File::open(path)
 }
 
 fn run_staged(
