@@ -38,6 +38,22 @@ use super::{STAGING_OUTPUT_DIRECTORY, STAGING_OWNER_MARKER, StagingResidue};
 pub(super) struct RetainedStagingObjects {
     pub(super) output: Option<File>,
     pub(super) marker: Option<File>,
+    pub(super) authority: TeardownAuthority,
+}
+
+/// What licenses a teardown to remove an entry it finds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum TeardownAuthority {
+    /// A live run may remove only the objects it created and has held ever
+    /// since. An entry under an expected name that this run does not hold got
+    /// there some other way — the window is narrow, but a staging area whose
+    /// construction failed part-way is exactly when it is open — and this
+    /// boundary does not delete data on the strength of a name it recognises.
+    RetainedObjectsOnly,
+    /// Reclamation has no retained objects, because the run that made them is
+    /// gone. The admitted marker is the proof instead, and it vouches for the
+    /// entries the admitted root listed.
+    AdmittedMarker,
 }
 
 /// What opening a staging root established about it.
@@ -120,6 +136,10 @@ pub(super) fn tear_down_owned_staging_seamed(
     }
 
     if let Some(output) = output {
+        if retained.authority == TeardownAuthority::RetainedObjectsOnly && retained.output.is_none()
+        {
+            return Err(StagingResidue::ForeignEntry);
+        }
         let path = root_path.join(STAGING_OUTPUT_DIRECTORY);
         let opened = resolve_child(
             &path,
@@ -135,6 +155,29 @@ pub(super) fn tear_down_owned_staging_seamed(
     // that gives up part-way leaves the proof that makes its own residue
     // reclaimable rather than a permanent obstruction.
     if let Some(marker) = marker {
+        if retained.authority == TeardownAuthority::RetainedObjectsOnly && retained.marker.is_none()
+        {
+            return Err(StagingResidue::ForeignEntry);
+        }
+        // Anything at all may have arrived while the output tree was going, and
+        // the root would then refuse to go with the marker already spent —
+        // leaving a directory nothing can prove was ever MSCanvas's. One more
+        // listing keeps the proof together with the residue. It does not close
+        // the interval between this listing and the two calls below; it removes
+        // the one that spans an entire tree's removal.
+        let remaining = enumerate_children(&root)?;
+        if let Some(unexpected) = remaining
+            .iter()
+            .find(|child| !child.name_is(STAGING_OWNER_MARKER))
+        {
+            return Err(if unexpected.name_is(STAGING_OUTPUT_DIRECTORY) {
+                StagingResidue::NotRemoved {
+                    kind: io::ErrorKind::DirectoryNotEmpty,
+                }
+            } else {
+                StagingResidue::ForeignEntry
+            });
+        }
         let path = root_path.join(STAGING_OWNER_MARKER);
         let opened = resolve_child(
             &path,
@@ -297,12 +340,19 @@ pub(super) fn tear_down_owned_staging_seamed(
     after_enumeration: &mut dyn FnMut(),
 ) -> Result<(), StagingResidue> {
     after_enumeration();
+    // The same rule as on Windows, even though everything below it is weaker: a
+    // live run removes only what it created and held.
+    let output_path = root_path.join(STAGING_OUTPUT_DIRECTORY);
+    if retained.authority == TeardownAuthority::RetainedObjectsOnly
+        && retained.output.is_none()
+        && output_path.exists()
+    {
+        return Err(StagingResidue::ForeignEntry);
+    }
     drop(retained.output);
     drop(retained.marker);
     drop(root);
-    residue(std::fs::remove_dir_all(
-        root_path.join(STAGING_OUTPUT_DIRECTORY),
-    ))?;
+    residue(std::fs::remove_dir_all(output_path))?;
     residue(std::fs::remove_file(root_path.join(STAGING_OWNER_MARKER)))?;
     residue(std::fs::remove_dir(root_path))
 }

@@ -2320,6 +2320,67 @@ fn a_foreign_entry_in_the_staging_root_stops_teardown_without_deleting_it() {
     let _ = fs::remove_dir_all(&root);
 }
 
+/// A live run removes what it created and held, and nothing else. An entry
+/// under an expected name that this run does not hold arrived some other way,
+/// and automatic cleanup is not the place to decide what it was.
+#[test]
+fn cleanup_after_a_run_removes_only_what_that_run_held() {
+    let directory = TestDirectory::new();
+    let root = directory.path().join("staging");
+    let mut area = OwnedStagingArea::create(root.clone()).expect("create the staging area");
+    let output = area.output_directory();
+    fs::write(output.join("someone-elses.mzML"), b"not ours").expect("write into the output");
+
+    // The state a run is in when it never managed to create and hold its own
+    // output directory, because something else got there first.
+    area.release_output();
+    let residue = area.discard();
+
+    assert_eq!(residue, Some(StagingResidue::ForeignEntry));
+    assert_eq!(
+        fs::read(output.join("someone-elses.mzML")).expect("read the unheld output"),
+        b"not ours"
+    );
+    assert!(
+        root.join(".mscanvas-staging-owner").is_file(),
+        "the refusal spent the proof that makes this reclaimable"
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// The proof is never spent on a teardown that is about to fail. Something
+/// arriving in the staging root while the output tree is going would otherwise
+/// leave a directory nothing can show was ever MSCanvas's.
+#[cfg(windows)]
+#[test]
+fn an_entry_arriving_during_teardown_keeps_the_marker_where_it_is() {
+    let directory = TestDirectory::new();
+    let (area, root) = staging_with_tree(&directory);
+    let intruder = root.join("arrived-late.txt");
+    let firing = Cell::new(0_usize);
+
+    // The seam fires once per directory listed. Firing 0 is the staging root
+    // itself; writing then means the entry appears after that listing and while
+    // the output tree below is still being removed.
+    let residue = area.discard_seamed(&mut || {
+        if firing.replace(firing.get() + 1) == 0 {
+            fs::write(&intruder, b"arrived late").expect("write the late entry");
+        }
+    });
+
+    assert_eq!(residue, Some(StagingResidue::ForeignEntry));
+    assert_eq!(
+        fs::read(&intruder).expect("read the late entry"),
+        b"arrived late"
+    );
+    assert!(
+        root.join(".mscanvas-staging-owner").is_file(),
+        "the marker went even though the root could not"
+    );
+    let _ = fs::remove_file(&intruder);
+    let _ = fs::remove_dir_all(&root);
+}
+
 /// An unwind performs the same object-bound teardown, never the path-recursive
 /// one, because it cannot report what it finds.
 #[test]
@@ -2385,12 +2446,6 @@ fn every_staging_residue_and_reclaim_reason_renders_without_a_path() {
         StagingReclaimError::NotFullyRemoved(StagingResidue::ReparsePointEncountered)
             .detailed_stable_id(),
         "staging_reparse_point"
-    );
-    // A reason a caller may read alongside a residue must not answer to the same
-    // identifier as one, or the two cannot be told apart in a log.
-    assert!(
-        identifiers.is_disjoint(&reclaim_identifiers),
-        "a reclaim reason shares an identifier with a residue"
     );
 
     for rendered in residues

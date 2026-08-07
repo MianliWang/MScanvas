@@ -2595,13 +2595,26 @@ reaches is one. A staging root holding anything besides the marker and the outpu
 directory is refused the same way, untouched, and stays refused until whoever put
 that entry there removes it.
 
+The two entry points differ in one more way than how they obtain the root, and
+it is a difference in authority. A live run removes only the objects it created
+and has held ever since; an entry under an expected name that the run does not
+hold got there some other way, and automatic cleanup refuses it rather than
+deleting data on the strength of a name it recognises. Reclamation has no
+retained objects to appeal to, so its authority is the admitted marker, which
+vouches for the entries the admitted root listed.
+
 Deletion is post-order and the handle ordering is load-bearing: every child is
 disposed and closed before its parent is asked to go. The disposition asks for
 POSIX semantics first, because that is the only form under which closing this
 handle is enough to free the name, and falls back to the older class on
 filesystems that do not implement it. The marker goes after everything else and
 before the root, so an interrupted teardown leaves the proof a later attempt
-needs rather than a nameless obstruction.
+needs rather than a nameless obstruction — and the root is listed once more,
+after the output tree has gone and before the marker is touched, so that anything
+which arrived in the meantime stops the teardown with the proof still in place. A
+far narrower interval remains between that listing and the calls that follow it;
+it is not claimed to be closed, and what is closed is the one that spanned an
+entire tree's removal.
 
 Two named limits bound an arbitrary backend tree — depth 64 and 65,536 entries
 per directory — traversed with an explicit stack rather than recursion.
@@ -2632,11 +2645,11 @@ the crate's existing Job Object, file-identity and rename bindings.
 
 Validation on the exact head: `cargo fmt --all --check`,
 `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
-`cargo test --locked --workspace --all-targets` (270 proteowizard library tests,
+`cargo test --locked --workspace --all-targets` (272 proteowizard library tests,
 up from 256), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
 `pnpm test`, `pnpm build`.
 
-Fourteen tests were added, all deterministic and none reaching a backend. A seam
+Sixteen tests were added, all deterministic and none reaching a backend. A seam
 fires after each directory is listed and before anything that listing named is
 opened, which is the one interval the claim is about.
 
@@ -2660,7 +2673,11 @@ a cleanup that cannot finish keeping the primary outcome, reporting residue, and
 staying reclaimable once the obstruction clears; and every residue and reclaim
 reason rendering without a path or a handle.
 
-Two tests came out of the whole-diff review rather than the implementation. A
+Four tests came out of review rather than implementation. Two answer findings
+raised on the pull request itself: a live run refusing to remove an output
+directory it never held, and an entry arriving in the staging root mid-teardown
+stopping the teardown with the ownership marker still in place rather than
+spent. The other two came out of the whole-diff review. A
 link planted at the staging name, with a fully convincing owned-looking area on
 the other side of it, is refused and never reclaimed through: the review found
 that nothing defended the staging name itself, and that deleting the one flag
@@ -2670,7 +2687,7 @@ same way finalization pins the rename it cannot use — a directory with any chi
 refuses deletion, and a name marked for deletion leaves its parent when the
 marking handle closes.
 
-Ten mutations were introduced one at a time against this head; nine were
+Twelve mutations were introduced one at a time against this head; eleven were
 caught. Restoring path-based `remove_dir_all` fails five tests; removing the
 child identity comparison fails the replacement test; following a reparse child
 fails the junction test; deleting the marker first fails six; granting delete
@@ -2678,7 +2695,9 @@ sharing on the staging root fails the root-replacement test; swallowing residue
 fails four; ignoring a foreign entry fails its test; and never disposing nested
 directories fails five; and opening the staging root without
 `FILE_FLAG_OPEN_REPARSE_POINT` — the mutation that survived the whole suite
-before the review — fails the link-at-the-staging-name test. The tenth —
+before the review — fails the link-at-the-staging-name test; dropping the
+retained-object requirement fails the unheld-output test; and dropping the second
+root listing fails the arrived-mid-teardown test. The twelfth —
 dropping the root handle and immediately
 reopening it — is genuinely equivalent: the reopen acquires the same object and
 the same pin, so no observable behavior changes, and it is recorded as

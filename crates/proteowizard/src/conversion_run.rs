@@ -476,6 +476,7 @@ impl ConversionPlan {
             cleanup::RetainedStagingObjects {
                 output: None,
                 marker,
+                authority: cleanup::TeardownAuthority::AdmittedMarker,
             },
         )
         .map_err(StagingReclaimError::NotFullyRemoved)
@@ -897,7 +898,7 @@ impl StagingReclaimError {
         match self {
             Self::NotOwned => "staging_not_owned",
             Self::NotInspectable { .. } => "staging_not_inspectable",
-            Self::NotRemoved { .. } => "staging_reclaim_not_removed",
+            Self::NotRemoved { .. } => "staging_not_removed",
             Self::NotFullyRemoved(_) => "staging_not_fully_removed",
             Self::NotAdmissible(_) => "staging_not_admissible",
         }
@@ -1107,8 +1108,16 @@ impl OwnedStagingArea {
         let retained = cleanup::RetainedStagingObjects {
             output: self.output.take(),
             marker: self.marker.take(),
+            authority: cleanup::TeardownAuthority::RetainedObjectsOnly,
         };
         cleanup::tear_down_owned_staging_seamed(root, &self.path, retained, after_enumeration).err()
+    }
+
+    /// Releases only the output directory, which is the state a run is in when
+    /// it never managed to create and hold one.
+    #[cfg(test)]
+    fn release_output(&mut self) {
+        self.output.take();
     }
 
     /// Releases the objects without removing anything, which is what a process

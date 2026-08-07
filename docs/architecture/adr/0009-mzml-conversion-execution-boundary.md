@@ -330,6 +330,18 @@ A staging root that holds anything besides the marker and the output directory i
 refused the same way, untouched — and stays refused, reclaimable only once
 whatever else is in there has been dealt with by whoever put it there.
 
+The two entry points differ in one more way than how they obtain the root, and
+it is a difference in authority. A live run removes only the objects it created
+and has held ever since; an entry under an expected name that the run does not
+hold got there some other way, and automatic cleanup refuses it rather than
+deleting data on the strength of a name it recognises. Reclamation has no
+retained objects to appeal to, so its authority is the admitted marker, which
+vouches for the entries the admitted root listed. The narrow window this closes
+is a staging area whose construction failed part-way — the run creates the root
+exclusively, but between that and creating the output directory something else
+can get there first, and nothing else would have stopped the ensuing teardown
+from removing it.
+
 Deletion is post-order and the handle ordering is load-bearing: a child's name
 does not leave its parent until the handle marking it closes, and a directory
 with any child refuses deletion, so every child is disposed and closed before
@@ -339,7 +351,13 @@ free the name — otherwise a third party's handle keeps the entry alive and the
 parent fails through no fault of the ordering — and falls back to the older
 class on filesystems that do not implement it. The ownership marker is deleted
 after everything else and before the root, so a teardown that gives up part-way
-leaves the proof a later attempt needs rather than a nameless obstruction.
+leaves the proof a later attempt needs rather than a nameless obstruction. That
+ordering is only worth anything if the marker is never spent on a teardown that
+is about to fail, so the root is listed once more after the output tree has gone
+and before the marker is touched: anything that arrived in the meantime stops the
+teardown with the proof still in place. A far narrower interval remains between
+that listing and the two calls that follow it, and it is not claimed to be
+closed — what is closed is the one that spanned an entire tree's removal.
 
 Two named limits bound an arbitrary backend tree: depth 64 and 65,536 entries
 per directory, both traversed with an explicit stack rather than recursion.
