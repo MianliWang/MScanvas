@@ -9,6 +9,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use mscanvas_proteowizard::{ConversionSource, ConversionSourceRejection, MzmlScanLimits};
+
 use super::dto::{
     MAX_CANDIDATE_NAME_CHARS, MAX_RELATIVE_CONTEXT_CHARS, MAX_WORKSPACE_DATASETS, PreviewErrorDto,
     SelectedFileDto, bounded_text,
@@ -214,6 +216,51 @@ pub(super) fn has_mzml_extension(path: &Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case(ACCEPTED_EXTENSION))
 }
 
+/// Which family a file was accepted as.
+///
+/// Not a guess about a name and not a format the caller asked for. Each variant
+/// records the admission rule the object actually passed, so every later use of
+/// that dataset re-applies *that* rule rather than whichever one this module
+/// happens to run first. A file has exactly one of these for its whole life in
+/// the session: it is decided when the file is accepted and, like the identity
+/// beside it, is never re-decided.
+///
+/// ADR 0006 refused to let this type exist at all while the only evidence the
+/// repository had was for mzML, on the ground that a variant which exists is a
+/// claim the data behind it is understood -- and said such a claim needs its own
+/// evidence and its own decision. ADR 0010 recorded that evidence for exactly
+/// one vendor family, and ADR 0011 records this decision. The list is short for
+/// the same reason it was empty: a variant is a measurement, not a wish.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum DatasetSourceKind {
+    /// Accepted as mzML: the one open format the product ingests.
+    Mzml,
+    /// Accepted as a Thermo Scientific RAW acquisition, by the reviewed
+    /// signature admission in `mscanvas-proteowizard`.
+    ///
+    /// Unreachable from every ingestion surface the product offers. The picker,
+    /// folder discovery and the Explorer drop all go through
+    /// [`accept_mzml_file`], and none of them can produce this.
+    ThermoRaw,
+}
+
+impl DatasetSourceKind {
+    /// The identifier this family is named by in a report.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "ADR 0011: the private conversion path lands before the surface it serves"
+        )
+    )]
+    pub(super) const fn stable_id(self) -> &'static str {
+        match self {
+            Self::Mzml => "mzml",
+            Self::ThermoRaw => "thermo_raw",
+        }
+    }
+}
+
 /// Validates a caller-supplied path and describes it without leaking it.
 ///
 /// Extension and regular-file posture are checked here rather than in the
@@ -244,10 +291,153 @@ pub fn accept_mzml_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
     Ok(AcceptedFile {
         path: canonical,
         file_name,
+        kind: DatasetSourceKind::Mzml,
         byte_length: inspected.byte_length,
         identity: inspected.identity,
         lease: inspected.lease,
     })
+}
+
+/// Accepts a Thermo Scientific RAW acquisition, for conversion only.
+///
+/// Deliberately not reachable from any ingestion surface: nothing the user can
+/// click reaches this, and normal product ingestion stays mzML-only. It exists
+/// so a dataset that is going to be *converted* can be admitted under the rule
+/// its family actually needs, rather than under the extension test that decides
+/// mzML.
+///
+/// The recognition itself is not reimplemented here. `mscanvas-proteowizard`
+/// already owns a reviewed admission for this family -- posture, extension
+/// filter, signature read through a no-follow deny-write handle, then digest --
+/// and a second spelling of it in this crate would be a second rule the moment
+/// either changed. What this function adds is the part the crate cannot do: the
+/// session's own inspection and the [`FileIdentityLease`] that keeps the object
+/// the one that was admitted.
+///
+/// Both admissions must land on one object. The lease is taken *first*, so the
+/// object cannot be replaced between the two, and the identities are compared
+/// afterwards so that promise is checked rather than assumed.
+pub(super) fn accept_thermo_raw_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
+    let inspected = inspect_selected_file(path)?;
+    let canonical = std::fs::canonicalize(path).map_err(|_| unresolvable())?;
+    let file_name = canonical
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .ok_or_else(|| {
+            PreviewErrorDto::new("file_has_no_name", "That path has no file name.", false)
+        })?;
+
+    // The admission that decides. Its result is dropped here: what this function
+    // returns is a registry row, and the source a run needs is opened again at
+    // the moment of the run, against this same held object.
+    drop(bound_source(
+        DatasetSourceKind::ThermoRaw,
+        &canonical,
+        inspected.identity,
+    )?);
+
+    Ok(AcceptedFile {
+        path: canonical,
+        file_name,
+        kind: DatasetSourceKind::ThermoRaw,
+        byte_length: inspected.byte_length,
+        identity: inspected.identity,
+        lease: inspected.lease,
+    })
+}
+
+/// Re-admits an accepted dataset as a conversion source, under the family it
+/// was accepted as.
+///
+/// The handoff from a workspace dataset to a conversion, and the only one. The
+/// dataset carries a session identity and a hold; the crate carries the
+/// admission rules and everything a run is planned from. Neither can produce
+/// the other, so what this does is open the second against the first and refuse
+/// unless they name one object.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "ADR 0011: the private conversion path lands before the surface it serves"
+    )
+)]
+pub(super) fn open_conversion_source(
+    file: &AcceptedFile,
+) -> Result<ConversionSource, PreviewErrorDto> {
+    bound_source(file.kind, file.path(), file.identity)
+}
+
+/// Opens the crate's source for an object this session already holds, and
+/// proves the two admissions named the same object.
+///
+/// The comparison is the whole point. The crate is handed a path, and a path is
+/// not an object: without this the session would have leased one file and the
+/// conversion would have hashed whatever that name resolved to. Comparing the
+/// volume serial and file id compares the platform identity itself, which is
+/// exactly as strong as the identity check every other use of a dataset makes.
+///
+/// A platform that does not name objects by a volume and a file id refuses
+/// rather than skipping the check. There is no weaker comparison to fall back
+/// to, and proceeding without one would mean the strongest thing said about a
+/// conversion's source is that two strings matched.
+fn bound_source(
+    kind: DatasetSourceKind,
+    canonical: &Path,
+    expected: FileIdentity,
+) -> Result<ConversionSource, PreviewErrorDto> {
+    let limits = MzmlScanLimits::default();
+    let source = match kind {
+        DatasetSourceKind::Mzml => ConversionSource::open_mzml_file(canonical, limits),
+        DatasetSourceKind::ThermoRaw => ConversionSource::open_thermo_raw_file(canonical, limits),
+    }
+    .map_err(source_not_admitted)?;
+    let Some((volume_serial, file_id)) = source.object_identity() else {
+        return Err(PreviewErrorDto::new(
+            "source_identity_unavailable",
+            "MSCanvas cannot bind that file to a conversion on this platform.",
+            false,
+        ));
+    };
+    if FileIdentity::new(volume_serial, file_id) != expected {
+        return Err(PreviewErrorDto::new(
+            "file_identity_changed",
+            "That name no longer refers to the file that was opened. Open it again to continue.",
+            false,
+        ));
+    }
+    Ok(source)
+}
+
+/// How a refused admission is reported.
+///
+/// Every rejection is matched by name rather than through a catch-all, so a
+/// rejection added to the crate later has to be answered here instead of
+/// silently arriving as something else. The messages say what was wrong with
+/// the file and never where it is: a rejection names no path for the same
+/// reason nothing else in this module does.
+fn source_not_admitted(rejection: ConversionSourceRejection) -> PreviewErrorDto {
+    let (code, message) = match rejection {
+        ConversionSourceRejection::UnsupportedExtension => (
+            "unsupported_extension",
+            "That file is not named as an acquisition MSCanvas can convert.",
+        ),
+        ConversionSourceRejection::SignatureMismatch => (
+            "unrecognized_acquisition",
+            "That file does not carry the signature its family requires.",
+        ),
+        ConversionSourceRejection::NotARegularFile => (
+            "not_a_regular_file",
+            "MSCanvas opens regular files, not folders or links.",
+        ),
+        ConversionSourceRejection::NotReadableAsMzml(_) => (
+            "unrecognized_acquisition",
+            "That file could not be read as mzML.",
+        ),
+        ConversionSourceRejection::NotHashed | ConversionSourceRejection::NotInspectable { .. } => {
+            ("file_unreadable", "MSCanvas could not read that file.")
+        }
+    };
+    PreviewErrorDto::new(code, message, false)
 }
 
 /// What one inspection of the selected path established about it.
@@ -539,6 +729,14 @@ fn not_a_regular_file() -> PreviewErrorDto {
 pub struct AcceptedFile {
     path: PathBuf,
     file_name: String,
+    /// The rule this object passed to become a file of this session.
+    ///
+    /// Stored beside the identity because it is the same sort of fact: decided
+    /// once, at acceptance, from the object rather than from its name, and
+    /// re-applied unchanged on every later use. A dataset that recorded no
+    /// family would have to have one guessed for it at the point of use, and a
+    /// guess is exactly what admission exists to replace.
+    kind: DatasetSourceKind,
     byte_length: u64,
     identity: FileIdentity,
     /// Keeps the object alive, so `identity` above cannot come to name a
@@ -586,6 +784,34 @@ impl AcceptedFile {
     #[must_use]
     pub(super) const fn identity(&self) -> FileIdentity {
         self.identity
+    }
+
+    /// The family this file was accepted as.
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "ADR 0011: the private conversion path lands before the surface it serves"
+        )
+    )]
+    pub(super) const fn source_kind(&self) -> DatasetSourceKind {
+        self.kind
+    }
+
+    /// The same file, remembering an identity that is not this object's.
+    ///
+    /// There is no other way to reach the comparison in [`open_conversion_source`]
+    /// from a test. Every ordinary path establishes the identity and the object
+    /// in one inspection, so the two agree by construction, and the window the
+    /// comparison exists to close -- between a session accepting an object and
+    /// the conversion boundary opening it again -- is one only a replacement
+    /// racing the two can open. This forges that disagreement directly rather
+    /// than trying to schedule it.
+    #[cfg(test)]
+    pub(super) fn misremembering_its_object(mut self, identity: FileIdentity) -> Self {
+        self.identity = identity;
+        self
     }
 
     /// Whether the hold this file was accepted with is still open.
@@ -931,7 +1157,16 @@ impl DatasetRegistry {
 /// that follows resolves paths again, so the accepted-at-pick posture has to be
 /// re-established each time rather than remembered.
 pub(super) fn revalidate(remembered: &AcceptedFile) -> Result<AcceptedFile, PreviewErrorDto> {
-    let current = accept_mzml_file(remembered.path())?;
+    // The rule the file was accepted under, applied again -- not the rule that
+    // happens to be first in this module. Re-running mzML acceptance over a
+    // vendor acquisition would admit it on its extension alone, which is the one
+    // thing that family's admission exists to refuse; and a dataset cannot
+    // change family behind the session's back, because a re-admission under the
+    // remembered rule is what has to succeed for the object to still be usable.
+    let current = match remembered.kind {
+        DatasetSourceKind::Mzml => accept_mzml_file(remembered.path())?,
+        DatasetSourceKind::ThermoRaw => accept_thermo_raw_file(remembered.path())?,
+    };
     // Both, because a name can come to point elsewhere and a different file can
     // also take the same name.
     if current.path() != remembered.path() || current.identity != remembered.identity {

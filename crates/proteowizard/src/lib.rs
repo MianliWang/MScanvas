@@ -36,7 +36,7 @@ pub use conversion_run::{
     BackendExecutionFailure, BackendRunFacts, BackendStream, ConflictPolicy, ConversionPlan,
     ConversionPlanError, ConversionRunFailure, ConversionRunOutcome, ConversionRunReport,
     ConversionSource, ConversionSourceKind, ConversionSourceRejection, StagingReclaimError,
-    StagingResidue, run_conversion,
+    StagingResidue, provider_build_is_evidenced, run_conversion,
 };
 pub use diagnostics::{Redactor, ReportableProcessOutput};
 pub use discovery::{

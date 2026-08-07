@@ -7,15 +7,18 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use mscanvas_proteowizard::{
-    PreviewOperation, PreviewOutcome, PreviewOutputEntry, PreviewOutputManifest, ProcessOutput,
-    Termination, interpret_preview,
+    BackendTool, CapturedHelpStream, CommandSpec, CompleteHelpCapture, ConflictPolicy,
+    InstalledHelpCapabilities, PreviewOperation, PreviewOutcome, PreviewOutputEntry,
+    PreviewOutputManifest, ProcessError, ProcessOutput, ProcessRunner, Sha256Digest, Termination,
+    ValidationMode, interpret_preview,
 };
 
-use super::backend::{OperationAttempt, PreviewProvider, interpretation_error};
+use super::backend::{ConversionBackend, OperationAttempt, PreviewProvider, interpretation_error};
 #[cfg(windows)]
 use super::discovery::inspect_drop_root;
 use super::discovery::{
@@ -32,12 +35,12 @@ use super::dto::{
     WorkspaceAddOutcomeDto, WorkspaceDropUpdateDto,
 };
 use super::installation::InstallationIdentity;
-use super::selection::FileIdentity;
 /// The share-mode probe that answers whether a file is still held open. It
 /// lives beside the flags the lease is opened with, because that is what makes
 /// its answer exact rather than a guess.
 #[cfg(windows)]
 use super::selection::nothing_else_holds_open;
+use super::selection::{FileIdentity, accept_thermo_raw_file, open_conversion_source};
 use super::service::PreviewService;
 
 const METADATA_OUTPUT: &str = concat!(
@@ -6367,4 +6370,1354 @@ fn the_folder_chooser_claims_one_reservation_before_it_opens_the_picker() {
     assert!(!signature.contains("token"), "{signature}");
     assert!(!signature.contains("Token"), "{signature}");
     assert!(!signature.contains("Path"), "{signature}");
+}
+
+// --- Private workspace conversion -------------------------------------------
+//
+// The path under test is `PreviewService::convert_workspace_dataset`. It has no
+// command, no transfer object and no frontend, so every test here reaches it the
+// way the implementation intends to be reached: through a dataset handle the
+// session issued.
+//
+// No test needs a local ProteoWizard. Capability evidence comes from a help
+// fixture through the crate's `test-support` feature, and the process is a
+// substituted `ProcessRunner` that receives the real planned command -- so what
+// is written, and where, is decided by the boundary under test rather than by
+// the test.
+
+/// The subset of installed `msconvert` help a conversion plan requires.
+const MSCONVERT_HELP: &str = r"Usage: msconvert [options] [filemasks]
+Convert mass spec data file formats.
+
+Options:
+  -o [ --outdir ] arg (=.)           : set output directory
+  --outfile arg                      : Override the name of output file.
+  --mzML                             : write mzML format [default]
+  --mzXML                            : write mzXML format
+  -z [ --zlib ] [=arg(=1)]           : use zlib compression for binary data
+";
+
+/// The build the repository has recorded vendor conversion evidence for, and
+/// the digest of the exact executable that evidence was produced on.
+///
+/// Spelled out here rather than imported. The crate keeps this list private on
+/// purpose -- it is evidence, not configuration -- and a test that read it from
+/// the crate would pass whatever the crate said, including after a change that
+/// silently widened it.
+const EVIDENCED_RELEASE: &str = "3.0.26013";
+const EVIDENCED_REVISION: &str = "47b13cf";
+const EVIDENCED_EXECUTABLE_SHA256: &str =
+    "9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD";
+
+const HELP_STDOUT_SHA256: Sha256Digest = Sha256Digest::from_bytes([0xAB; 32]);
+const HELP_STDERR_SHA256: Sha256Digest = Sha256Digest::from_bytes([0xCD; 32]);
+
+/// The first eighteen bytes of every Thermo RAW acquisition: `01 A1` followed by
+/// `Finnigan` in UTF-16LE.
+const THERMO_RAW_SIGNATURE: [u8; 18] = [
+    0x01, 0xa1, 0x46, 0x00, 0x69, 0x00, 0x6e, 0x00, 0x6e, 0x00, 0x69, 0x00, 0x67, 0x00, 0x61, 0x00,
+    0x6e, 0x00,
+];
+
+/// A stand-in acquisition: the real signature, then bytes no reader interprets.
+///
+/// Enough for admission, which is what this boundary decides. It is never
+/// handed to a vendor reader -- the process is substituted -- so nothing here
+/// depends on it being a readable acquisition, and nothing may be read into it
+/// about one.
+fn thermo_raw_bytes() -> Vec<u8> {
+    let mut bytes = THERMO_RAW_SIGNATURE.to_vec();
+    bytes.extend_from_slice(&[0x00; 512]);
+    bytes
+}
+
+/// An mzML document, in the two serializations a faithful conversion produces.
+///
+/// A conversion legally adds the index wrapper and may re-encode numeric
+/// precision. The fixtures differ in exactly those ways, so a comparison that
+/// passes is passing on the real contract rather than on a byte copy.
+fn mzml_document(spectra: u32, indexed: bool) -> String {
+    let precision = if indexed { "MS:1000521" } else { "MS:1000523" };
+    let mut body = String::new();
+    for index in 0..spectra {
+        body.push_str(&format!(
+            r#"<spectrum index="{index}" id="scan={}" defaultArrayLength="4">"#,
+            index + 1
+        ));
+        body.push_str(r#"<cvParam accession="MS:1000511" name="ms level" value="1"/>"#);
+        body.push_str(r#"<cvParam accession="MS:1000128" name="profile spectrum"/>"#);
+        body.push_str(r#"<binaryDataArrayList count="2">"#);
+        for accession in ["MS:1000514", "MS:1000515"] {
+            body.push_str(&format!(
+                r#"<binaryDataArray encodedLength="8"><cvParam accession="{accession}"/><cvParam accession="MS:1000574"/><cvParam accession="{precision}"/><binary>AA==</binary></binaryDataArray>"#
+            ));
+        }
+        body.push_str("</binaryDataArrayList></spectrum>");
+    }
+    let run = format!(
+        r#"<run id="R1"><spectrumList count="{spectra}">{body}</spectrumList><chromatogramList count="0"></chromatogramList></run>"#
+    );
+    if indexed {
+        format!(r#"<indexedmzML><mzML version="1.1.0">{run}</mzML></indexedmzML>"#)
+    } else {
+        format!(r#"<mzML version="1.1.0">{run}</mzML>"#)
+    }
+}
+
+/// Installed help that also declares which build produced it.
+fn conversion_capabilities(
+    release: &str,
+    revision: Option<&str>,
+    executable_sha256: &str,
+) -> InstalledHelpCapabilities {
+    let executable = fs::canonicalize(std::env::current_exe().expect("test executable"))
+        .expect("canonical test executable");
+    let reported = revision.map_or_else(
+        || release.to_owned(),
+        |revision| format!("{release} ({revision})"),
+    );
+    let help =
+        format!("ProteoWizard release: {reported}\nBuild date: Jan 13 2026\n{MSCONVERT_HELP}");
+    InstalledHelpCapabilities::parse_unbound_capture_for_tests(
+        BackendTool::MsConvert,
+        executable,
+        executable_sha256
+            .parse()
+            .expect("the evidenced executable digest is a digest"),
+        CompleteHelpCapture::new(
+            CapturedHelpStream::new(
+                help.as_bytes(),
+                help.len() as u64,
+                false,
+                HELP_STDOUT_SHA256,
+            ),
+            CapturedHelpStream::new(&[], 0, false, HELP_STDERR_SHA256),
+        ),
+    )
+    .expect("parse the msconvert help fixture")
+}
+
+/// Capabilities for the exact build the vendor evidence was recorded on.
+fn evidenced_capabilities() -> InstalledHelpCapabilities {
+    conversion_capabilities(
+        EVIDENCED_RELEASE,
+        Some(EVIDENCED_REVISION),
+        EVIDENCED_EXECUTABLE_SHA256,
+    )
+}
+
+/// What a substituted backend process does when it is launched.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BackendAct {
+    /// Writes the document the plan asked for, where it asked for it.
+    Convert,
+    /// Exits cleanly having written nothing.
+    WriteNothing,
+    /// Writes a document with no spectra in it.
+    ConvertEmpty,
+    /// Fails, as a backend that could not read its input would.
+    Fail,
+}
+
+/// A `msconvert` stand-in.
+///
+/// It receives the real planned command, so the destination it writes to is the
+/// staging path the boundary chose rather than one the test invented. A test
+/// that picked its own path would pass while the boundary staged somewhere else
+/// entirely.
+struct FakeConversionRunner {
+    act: BackendAct,
+    /// Shared with the test, so a refusal can be shown to have launched
+    /// nothing at all rather than merely to have produced no file.
+    calls: Arc<AtomicUsize>,
+    /// Signalled the moment a process starts, and parked until released, for the
+    /// tests that need to observe a conversion while it is still holding the
+    /// backend gate.
+    started: Mutex<Option<mpsc::Sender<()>>>,
+    release: Mutex<Option<mpsc::Receiver<()>>>,
+}
+
+impl FakeConversionRunner {
+    fn new(act: BackendAct) -> Self {
+        Self {
+            act,
+            calls: Arc::new(AtomicUsize::new(0)),
+            started: Mutex::new(None),
+            release: Mutex::new(None),
+        }
+    }
+
+    /// The same runner, parked inside its process until it is released.
+    fn blocking(self) -> (Self, mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (started, observe_start) = mpsc::channel();
+        let (release, parked) = mpsc::channel();
+        *self.started.lock().expect("started channel") = Some(started);
+        *self.release.lock().expect("release channel") = Some(parked);
+        (self, observe_start, release)
+    }
+
+    /// How many processes this runner has launched, readable after the runner
+    /// itself has been moved into the provider.
+    fn launches(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.calls)
+    }
+}
+
+impl ProcessRunner for FakeConversionRunner {
+    fn run(&self, spec: &CommandSpec) -> Result<ProcessOutput, ProcessError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(started) = self.started.lock().expect("started channel").take() {
+            started.send(()).expect("announce the started conversion");
+            let parked = self
+                .release
+                .lock()
+                .expect("release channel")
+                .take()
+                .expect("a blocking runner is released exactly once");
+            // Deliberately not ignored. A test that timed out here would go on
+            // to pass a little late, and the thing it is watching for -- a lock
+            // held where it should not be -- looks exactly like that.
+            parked
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the parked conversion is released");
+        }
+        let destination = spec
+            .output_destination()
+            .expect("a conversion plan carries an output destination")
+            .to_path_buf();
+        let exit_code = match self.act {
+            BackendAct::Convert => {
+                fs::write(destination, mzml_document(2, true)).expect("write staged output");
+                0
+            }
+            BackendAct::ConvertEmpty => {
+                fs::write(destination, mzml_document(0, true)).expect("write staged output");
+                0
+            }
+            BackendAct::WriteNothing => 0,
+            BackendAct::Fail => 1,
+        };
+        Ok(ProcessOutput {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            stdout_total_bytes: 0,
+            stderr_total_bytes: 0,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            exit_code: Some(exit_code),
+            elapsed: Duration::from_millis(3),
+            termination: Termination::Exited,
+            max_active_processes: Some(1),
+            final_active_processes: Some(0),
+            peak_job_memory_bytes: Some(2_048),
+        })
+    }
+}
+
+/// A provider that can also convert.
+///
+/// Preview answers come from the ordinary fake, so a test can drive an open and
+/// a conversion through one service and watch them contend for the one gate.
+struct ConvertingProvider {
+    inner: FakeProvider,
+    capabilities: InstalledHelpCapabilities,
+    runner: FakeConversionRunner,
+    /// Parks the first preview operation, for the tests that need a preview to
+    /// be holding the backend gate while a conversion asks for it. The
+    /// conversion side has its own pair on the runner, so either can be made to
+    /// hold the gate while the other waits.
+    preview_started: Mutex<Option<mpsc::Sender<()>>>,
+    preview_release: Mutex<Option<mpsc::Receiver<()>>>,
+}
+
+impl ConvertingProvider {
+    fn new(capabilities: InstalledHelpCapabilities, runner: FakeConversionRunner) -> Self {
+        Self {
+            inner: FakeProvider::available(Vec::new()),
+            capabilities,
+            runner,
+            preview_started: Mutex::new(None),
+            preview_release: Mutex::new(None),
+        }
+    }
+
+    /// The same provider, answering previews and parking inside the first one.
+    fn parking_the_first_preview(mut self) -> (Self, mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (started, observe_start) = mpsc::channel();
+        let (release, parked) = mpsc::channel();
+        self.inner = FakeProvider::available(open_responses());
+        *self
+            .preview_started
+            .lock()
+            .expect("preview started channel") = Some(started);
+        *self
+            .preview_release
+            .lock()
+            .expect("preview release channel") = Some(parked);
+        (self, observe_start, release)
+    }
+
+    /// The default: an evidenced build and a backend that converts faithfully.
+    fn faithful() -> Self {
+        Self::new(
+            evidenced_capabilities(),
+            FakeConversionRunner::new(BackendAct::Convert),
+        )
+    }
+}
+
+impl PreviewProvider for ConvertingProvider {
+    fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
+        self.inner.availability()
+    }
+
+    fn run(
+        &self,
+        source: &Path,
+        operation: &PreviewOperation,
+    ) -> Result<OperationAttempt, PreviewErrorDto> {
+        if let Some(started) = self
+            .preview_started
+            .lock()
+            .expect("preview started channel")
+            .take()
+        {
+            started.send(()).expect("announce the started preview");
+            let parked = self
+                .preview_release
+                .lock()
+                .expect("preview release channel")
+                .take()
+                .expect("a parking preview is released exactly once");
+            parked
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the parked preview is released");
+        }
+        self.inner.run(source, operation)
+    }
+
+    fn use_installation(&self, home: Option<PathBuf>) {
+        self.inner.use_installation(home);
+    }
+
+    fn conversion_backend(&self) -> Result<ConversionBackend<'_>, PreviewErrorDto> {
+        Ok(ConversionBackend {
+            capabilities: self.capabilities.clone(),
+            installation: Some(backend("msconvert", EVIDENCED_RELEASE)),
+            runner: &self.runner,
+        })
+    }
+}
+
+impl TestFile {
+    /// A Thermo RAW acquisition beside the mzML this fixture is named for.
+    fn thermo_raw(&self, name: &str) -> PathBuf {
+        let path = self.directory.join(name);
+        fs::write(&path, thermo_raw_bytes()).expect("write a Thermo RAW fixture");
+        path
+    }
+
+    /// A real mzML document, as opposed to the placeholder `TestFile` writes.
+    ///
+    /// Needed wherever a conversion actually reads its source: the placeholder
+    /// is enough to be accepted by extension, and an mzML source is admitted by
+    /// being read.
+    fn readable_mzml(&self, name: &str) -> PathBuf {
+        let path = self.directory.join(name);
+        fs::write(&path, mzml_document(2, false)).expect("write an mzML source");
+        path
+    }
+
+    /// A folder beside the fixture, for outputs to land in.
+    fn destination(&self, name: &str) -> PathBuf {
+        let path = self.directory.join(name);
+        fs::create_dir_all(&path).expect("create a destination root");
+        path
+    }
+}
+
+/// Names of the entries a directory holds, sorted.
+fn entry_names(directory: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(directory)
+        .expect("read directory")
+        .map(|entry| {
+            entry
+                .expect("directory entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// A conversion is judged on the output alone when its source was never read as
+/// mzML -- and says so, rather than reporting a comparison it never made.
+///
+/// This is the whole vertical: a Thermo acquisition admitted by signature into
+/// the workspace, carried to the conversion boundary by handle, converted, and
+/// judged. Every property that needed the source document is reported
+/// inapplicable, and the conversion is deliberately not fully verified.
+#[test]
+fn a_thermo_dataset_converts_through_its_handle_and_is_judged_on_the_output_alone() {
+    let fixture = TestFile::new("thermo-conversion");
+    let acquisition = fixture.thermo_raw("FT-HCD-MSX.raw");
+    let destination = fixture.destination("out");
+    let provider = Box::new(ConvertingProvider::faithful());
+    let service = PreviewService::new(provider);
+    let dataset = service
+        .add_thermo_dataset(&acquisition)
+        .expect("a Thermo acquisition is admitted for conversion");
+
+    let report = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+
+    assert_eq!(report.outcome(), "finalized");
+    assert_eq!(report.dataset(), dataset.handle);
+    assert_eq!(report.source_kind().stable_id(), "thermo_raw");
+    assert_eq!(report.output_file_name(), Some("FT-HCD-MSX.mzML"));
+    assert_eq!(entry_names(&destination), vec!["FT-HCD-MSX.mzML"]);
+
+    let validation = report.validation().expect("a finalized run was judged");
+    assert_eq!(validation.mode(), ValidationMode::OutputOnly);
+    assert!(
+        !validation.is_fully_verified(),
+        "a conversion with no source reading is never fully verified, whatever passed"
+    );
+    assert!(
+        validation.verified().contains(&"source_unchanged"),
+        "the acquisition itself is still bound and rechecked; got {:?}",
+        validation.verified()
+    );
+    for comparison in ["spectrum_count", "binary_array_lengths", "precursor_counts"] {
+        assert!(
+            validation.inapplicable().contains(&comparison),
+            "{comparison} compares the output to a source document that was never read; got {:?}",
+            validation.inapplicable()
+        );
+    }
+    assert!(
+        validation.unverified().is_empty(),
+        "nothing here failed a check that could have been made; got {:?}",
+        validation.unverified()
+    );
+
+    let output = report
+        .output()
+        .expect("a finalized run measured its output");
+    assert_eq!(output.spectra(), 2);
+    assert_eq!(output.chromatograms(), 0);
+    assert!(output.byte_length() > 0);
+    assert_eq!(output.sha256().len(), 64);
+}
+
+/// The same path over a source that *was* read as mzML compares the two
+/// documents, because there is something to compare.
+#[test]
+fn an_mzml_dataset_converts_through_the_same_path_and_is_compared_to_its_source() {
+    let fixture = TestFile::new("mzml-conversion");
+    let source = fixture.readable_mzml("acquisition.mzML");
+    let destination = fixture.destination("out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let dataset = service.add_dataset(&source).expect("add an mzML dataset");
+
+    let report = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+
+    assert_eq!(report.outcome(), "finalized");
+    assert_eq!(report.source_kind().stable_id(), "mzml");
+    let validation = report.validation().expect("a finalized run was judged");
+    assert_eq!(validation.mode(), ValidationMode::SourceComparison);
+    assert!(
+        validation.inapplicable().is_empty(),
+        "an mzML source can be compared against, so nothing is inapplicable; got {:?}",
+        validation.inapplicable()
+    );
+    assert!(
+        validation.verified().contains(&"source_unchanged"),
+        "the comparison the mode names has to have been made; got {:?}",
+        validation.verified()
+    );
+}
+
+/// A dataset is named by a handle the session issued, and nothing else reaches
+/// the conversion boundary.
+#[test]
+fn a_handle_the_session_never_issued_converts_nothing() {
+    let fixture = TestFile::new("unknown-handle");
+    let destination = fixture.destination("out");
+    let provider = ConvertingProvider::faithful();
+    let service = PreviewService::new(Box::new(provider));
+
+    let error = service
+        .convert_workspace_dataset("file-404", &destination, ConflictPolicy::Fail)
+        .expect_err("an unknown handle is not a dataset");
+
+    assert_eq!(error.kind, "unknown_file_handle");
+    assert_eq!(entry_names(&destination), Vec::<String>::new());
+}
+
+/// A build the repository has no vendor evidence for is refused before anything
+/// is created and before any process is launched.
+///
+/// The refusal is the point, and so is where it happens: an unevidenced build
+/// must not reach the stage where a staging directory exists, because a caller
+/// then has to be told about a directory as well as a refusal.
+#[test]
+fn an_unevidenced_build_refuses_a_vendor_conversion_before_it_stages_anything() {
+    let fixture = TestFile::new("unevidenced-build");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    let provider = Box::new(ConvertingProvider::new(
+        conversion_capabilities("3.0.99999", Some("deadbee"), EVIDENCED_EXECUTABLE_SHA256),
+        runner,
+    ));
+    let service = PreviewService::new(provider);
+    let dataset = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+
+    let error = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect_err("a build with no evidence for this family converts nothing");
+
+    assert_eq!(error.kind, "provider_build_not_evidenced");
+    assert_eq!(
+        entry_names(&destination),
+        Vec::<String>::new(),
+        "nothing may be created under the destination before the build is accepted"
+    );
+    assert_eq!(
+        launches.load(Ordering::SeqCst),
+        0,
+        "an unevidenced build never reaches a process"
+    );
+}
+
+/// The same build, reporting the same release and revision, from a different
+/// executable. Two strings out of a help banner say what a build calls itself,
+/// not what it is.
+#[test]
+fn a_build_naming_the_evidenced_release_from_another_executable_is_still_refused() {
+    let fixture = TestFile::new("substituted-executable");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let provider = Box::new(ConvertingProvider::new(
+        conversion_capabilities(
+            EVIDENCED_RELEASE,
+            Some(EVIDENCED_REVISION),
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ),
+        FakeConversionRunner::new(BackendAct::Convert),
+    ));
+    let service = PreviewService::new(provider);
+    let dataset = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+
+    let error = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect_err("evidence is about an artifact, not about what it calls itself");
+
+    assert_eq!(error.kind, "provider_build_not_evidenced");
+}
+
+/// An mzML source needs no vendor evidence, because the repository's evidence
+/// for reading mzML is not a statement about one build's vendor libraries.
+#[test]
+fn an_unevidenced_build_still_converts_an_open_format_source() {
+    let fixture = TestFile::new("unevidenced-open-format");
+    let source = fixture.readable_mzml("acquisition.mzML");
+    let destination = fixture.destination("out");
+    let provider = Box::new(ConvertingProvider::new(
+        conversion_capabilities("3.0.99999", Some("deadbee"), EVIDENCED_EXECUTABLE_SHA256),
+        FakeConversionRunner::new(BackendAct::Convert),
+    ));
+    let service = PreviewService::new(provider);
+    let dataset = service.add_dataset(&source).expect("add an mzML dataset");
+
+    let report = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+
+    assert_eq!(report.outcome(), "finalized");
+}
+
+/// A provider that has not been taught to convert refuses, rather than
+/// inheriting some other provider's backend.
+#[test]
+fn a_backend_that_cannot_convert_says_so_rather_than_launching_something_else() {
+    let fixture = TestFile::new("no-conversion-backend");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+    let dataset = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+
+    let error = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect_err("a provider with no conversion backend converts nothing");
+
+    assert_eq!(error.kind, "conversion_unsupported");
+}
+
+/// An output with no records in it is not a conversion, whatever the backend
+/// reported.
+#[test]
+fn an_output_with_no_records_is_refused_and_never_takes_the_destination_name() {
+    let fixture = TestFile::new("empty-output");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let provider = Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::ConvertEmpty),
+    ));
+    let service = PreviewService::new(provider);
+    let dataset = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+
+    let report = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+
+    assert_ne!(report.outcome(), "finalized");
+    assert!(report.output().is_none());
+    assert_eq!(
+        report.output_file_name(),
+        None,
+        "a run that finalized nothing names no file, planned or otherwise"
+    );
+    assert_eq!(
+        entry_names(&destination),
+        Vec::<String>::new(),
+        "a refused output never takes the name it was planned for"
+    );
+}
+
+/// A backend that wrote nothing leaves nothing behind, including its staging
+/// area.
+#[test]
+fn a_backend_that_produced_no_file_leaves_no_staging_directory() {
+    let fixture = TestFile::new("no-output");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let provider = Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::WriteNothing),
+    ));
+    let service = PreviewService::new(provider);
+    let dataset = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+
+    let report = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+
+    assert_ne!(report.outcome(), "finalized");
+    assert_eq!(report.output_file_name(), None);
+    assert!(
+        report.residue().is_none(),
+        "the run reclaimed its own staging area; got {:?}",
+        report.residue()
+    );
+    assert_eq!(entry_names(&destination), Vec::<String>::new());
+}
+
+/// A backend that failed is reported as a backend failure, with bounded facts
+/// about the process and no raw output.
+#[test]
+fn a_failed_backend_is_reported_with_bounded_process_facts() {
+    let fixture = TestFile::new("failed-backend");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let provider = Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::Fail),
+    ));
+    let service = PreviewService::new(provider);
+    let dataset = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+
+    let report = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+
+    assert_ne!(report.outcome(), "finalized");
+    let backend = report.backend().expect("a process ran, so it has facts");
+    assert_eq!(backend.exit_code(), Some(1));
+    assert_eq!(entry_names(&destination), Vec::<String>::new());
+}
+
+/// A destination name that is already taken is never replaced. What is there is
+/// deliberately not inspected: the guarantee is that this boundary does not
+/// touch it.
+#[test]
+fn an_occupied_destination_name_is_skipped_or_refused_and_never_overwritten() {
+    let fixture = TestFile::new("occupied-destination");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let occupant = destination.join("acquisition.mzML");
+    fs::write(&occupant, b"someone else's file").expect("write the occupant");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let dataset = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+
+    let skipped = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Skip)
+        .expect("a skipped conversion is an outcome, not an error");
+    assert_eq!(skipped.outcome(), "skipped_existing_destination");
+    assert_eq!(
+        skipped.output_file_name(),
+        None,
+        "the name is occupied by a file this run deliberately did not touch, so it is \
+         not this run's output"
+    );
+
+    let refused = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("a refused conversion is an outcome, not an error");
+    assert_eq!(refused.outcome(), "destination_exists");
+
+    assert_eq!(
+        fs::read(&occupant).expect("read the occupant"),
+        b"someone else's file",
+        "neither policy may replace what was already there"
+    );
+}
+
+/// A destination that is not a folder this session can use is refused while the
+/// plan is being formed, before a staging area or a process exists.
+#[test]
+fn a_destination_that_is_not_a_usable_folder_is_refused_while_planning() {
+    let fixture = TestFile::new("unusable-destination");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    let provider = Box::new(ConvertingProvider::new(evidenced_capabilities(), runner));
+    let service = PreviewService::new(provider);
+    let dataset = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+
+    for destination in [fixture.absent("no-such-folder"), acquisition.clone()] {
+        let error = service
+            .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+            .expect_err("neither a missing folder nor a file is a destination root");
+        assert_eq!(error.kind, "conversion_not_plannable");
+    }
+    assert_eq!(
+        launches.load(Ordering::SeqCst),
+        0,
+        "a plan that was never formed launches nothing"
+    );
+}
+
+/// A dataset the session no longer holds converts nothing, even if the file is
+/// still on disk.
+#[test]
+fn a_dataset_removed_before_the_conversion_starts_converts_nothing() {
+    let fixture = TestFile::new("removed-dataset");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let provider = Box::new(ConvertingProvider::faithful());
+    let service = PreviewService::new(provider);
+    let dataset = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+    let removed = service.remove_datasets(std::slice::from_ref(&dataset.handle));
+    assert_eq!(removed.removed_handles, vec![dataset.handle.clone()]);
+
+    let error = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect_err("a dataset that is gone is not convertible");
+
+    assert_eq!(error.kind, "unknown_file_handle");
+    assert_eq!(entry_names(&destination), Vec::<String>::new());
+}
+
+/// A source replaced by a different object under the same name is refused. The
+/// dataset names an object, and a name that now resolves elsewhere is not it.
+#[test]
+fn a_source_replaced_under_its_own_name_is_never_converted() {
+    let fixture = TestFile::new("replaced-source");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let provider = Box::new(ConvertingProvider::faithful());
+    let service = PreviewService::new(provider);
+    let dataset = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+
+    // A different object, under the name the dataset was accepted with. The
+    // lease permits this; what it forbids is the object being replaced during a
+    // read, which is a different window and a different test.
+    fs::remove_file(&acquisition).expect("remove the accepted acquisition");
+    fs::write(&acquisition, thermo_raw_bytes()).expect("write a different acquisition");
+
+    let error = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect_err("a replaced object is not the dataset that was accepted");
+
+    assert_eq!(error.kind, "file_identity_changed");
+    assert_eq!(entry_names(&destination), Vec::<String>::new());
+}
+
+/// The dataset and the conversion source must be proved to name one object.
+///
+/// The session admits an object and the crate admits one, and each is handed a
+/// path to do it with. A path is not an object: without this comparison the
+/// session would have leased one file while the conversion hashed, planned and
+/// converted whatever that name resolved to at the moment the crate looked.
+#[test]
+fn a_conversion_source_that_is_not_the_dataset_object_is_refused() {
+    let fixture = TestFile::new("handoff-identity");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let sibling = fixture.thermo_raw("other.raw");
+
+    let accepted = accept_thermo_raw_file(&acquisition).expect("admit the acquisition");
+    let elsewhere = accept_thermo_raw_file(&sibling).expect("admit the other acquisition");
+    let confused = accepted.misremembering_its_object(elsewhere.identity());
+
+    let error = open_conversion_source(&confused)
+        .expect_err("an object that is not the one the dataset names is not convertible");
+
+    assert_eq!(error.kind, "file_identity_changed");
+}
+
+/// A vendor acquisition is admitted by its signature, not by its extension. A
+/// file named `.raw` that carries something else is not one.
+#[test]
+fn a_file_named_raw_that_is_not_a_thermo_acquisition_is_not_admitted() {
+    let fixture = TestFile::new("misnamed-raw");
+    let impostor = fixture.directory.join("impostor.raw");
+    fs::write(&impostor, mzml_document(2, false)).expect("write an mzML file named .raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+
+    let error = service
+        .add_thermo_dataset(&impostor)
+        .expect_err("an extension is not a recognition");
+
+    assert_eq!(error.kind, "unrecognized_acquisition");
+}
+
+/// And the converse: the signature alone is not enough either, because the
+/// installed vendor reader will not open the object without the extension.
+#[test]
+fn a_thermo_acquisition_under_another_extension_is_not_admitted() {
+    let fixture = TestFile::new("misnamed-thermo");
+    let disguised = fixture.directory.join("acquisition.dat");
+    fs::write(&disguised, thermo_raw_bytes()).expect("write a Thermo acquisition named .dat");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+
+    let error = service
+        .add_thermo_dataset(&disguised)
+        .expect_err("the reader needs the name as well as the bytes");
+
+    assert_eq!(error.kind, "unsupported_extension");
+}
+
+/// Product ingestion is unchanged. A vendor acquisition is not something the
+/// picker, folder discovery or a drop can add.
+#[test]
+fn normal_ingestion_still_refuses_a_vendor_acquisition() {
+    let fixture = TestFile::new("ingestion-unchanged");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+
+    let picked = service
+        .accept_file(&acquisition)
+        .expect_err("the picker opens mzML only");
+    assert_eq!(picked.kind, "unsupported_extension");
+
+    let added = service
+        .add_dataset(&acquisition)
+        .expect_err("adding to the roster opens mzML only");
+    assert_eq!(added.kind, "unsupported_extension");
+
+    let batch = service.add_files(std::slice::from_ref(&acquisition));
+    assert_eq!(batch.roster.datasets.len(), 0);
+    assert_eq!(service.dataset_count(), 0);
+}
+
+/// Every use of a dataset re-applies the rule it was accepted under. A vendor
+/// dataset is never revalidated as mzML, so a file whose bytes stopped being an
+/// acquisition is refused rather than accepted on its name.
+#[test]
+fn a_vendor_dataset_whose_bytes_changed_family_is_refused_at_revalidation() {
+    let fixture = TestFile::new("family-changed");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let provider = Box::new(ConvertingProvider::faithful());
+    let service = PreviewService::new(provider);
+    let dataset = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+
+    // The same object -- the lease keeps it -- carrying content nothing
+    // recognises. Revalidating this as mzML would accept it on its extension.
+    fs::write(&acquisition, b"not an acquisition at all").expect("rewrite the acquisition");
+
+    let error = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect_err("the family a dataset was accepted as is the family it is rechecked as");
+
+    assert_eq!(error.kind, "unrecognized_acquisition");
+    assert_eq!(entry_names(&destination), Vec::<String>::new());
+}
+
+/// One backend process at a time, across preview and conversion alike. A
+/// conversion waiting for the gate has not launched anything.
+#[test]
+fn a_conversion_waits_for_a_preview_holding_the_backend_gate() {
+    let fixture = TestFile::new("gate-preview-first");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let (provider, observe_start, release) =
+        ConvertingProvider::faithful().parking_the_first_preview();
+    let service = Arc::new(PreviewService::new(Box::new(provider)));
+    let preview_source = service
+        .add_dataset(&fixture.path)
+        .expect("add the preview dataset");
+    let converted = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+
+    let opening = std::thread::spawn({
+        let service = Arc::clone(&service);
+        let handle = preview_source.handle.clone();
+        move || service.open_preview(&handle)
+    });
+    observe_start
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the preview reached the provider and holds the gate");
+
+    let converting = std::thread::spawn({
+        let service = Arc::clone(&service);
+        let handle = converted.handle.clone();
+        let destination = destination.clone();
+        move || service.convert_workspace_dataset(&handle, &destination, ConflictPolicy::Fail)
+    });
+
+    // Nothing has been created, because the conversion has not started. A
+    // conversion that ignored the gate would already have staged and run.
+    std::thread::yield_now();
+    assert_eq!(
+        entry_names(&destination),
+        Vec::<String>::new(),
+        "a conversion waiting for the gate has launched nothing"
+    );
+
+    release.send(()).expect("release the preview");
+    opening.join().expect("the preview thread").ok();
+    let report = converting
+        .join()
+        .expect("the conversion thread")
+        .expect("the conversion reaches an outcome once the gate is free");
+    assert_eq!(report.outcome(), "finalized");
+}
+
+/// And the other way round: a preview queues behind a running conversion rather
+/// than starting a second process beside it.
+#[test]
+fn a_preview_waits_for_a_conversion_holding_the_backend_gate() {
+    let fixture = TestFile::new("gate-conversion-first");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let (runner, observe_start, release) =
+        FakeConversionRunner::new(BackendAct::Convert).blocking();
+    let mut provider = ConvertingProvider::new(evidenced_capabilities(), runner);
+    provider.inner = FakeProvider::available(open_responses());
+    let service = Arc::new(PreviewService::new(Box::new(provider)));
+
+    let preview_source = service
+        .add_dataset(&fixture.path)
+        .expect("add the preview dataset");
+    let converted = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+
+    let converting = std::thread::spawn({
+        let service = Arc::clone(&service);
+        let handle = converted.handle.clone();
+        let destination = destination.clone();
+        move || service.convert_workspace_dataset(&handle, &destination, ConflictPolicy::Fail)
+    });
+    observe_start
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the conversion reached its process and holds the gate");
+
+    let opening = std::thread::spawn({
+        let service = Arc::clone(&service);
+        let handle = preview_source.handle.clone();
+        move || service.open_preview(&handle)
+    });
+
+    std::thread::yield_now();
+    assert_eq!(
+        service.requests_made(&preview_source.handle),
+        0,
+        "a preview waiting for the gate has asked the backend for nothing"
+    );
+
+    release.send(()).expect("release the conversion");
+    let report = converting
+        .join()
+        .expect("the conversion thread")
+        .expect("the conversion reaches an outcome");
+    assert_eq!(report.outcome(), "finalized");
+    opening
+        .join()
+        .expect("the preview thread")
+        .expect("the preview runs once the gate is free");
+}
+
+/// The workspace stays answerable while a conversion runs. The gate is held for
+/// as long as a process takes, and the roster may not be behind it.
+#[test]
+fn the_workspace_answers_while_a_conversion_is_running() {
+    let fixture = TestFile::new("workspace-during-conversion");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let (runner, observe_start, release) =
+        FakeConversionRunner::new(BackendAct::Convert).blocking();
+    let provider = Box::new(ConvertingProvider::new(evidenced_capabilities(), runner));
+    let service = Arc::new(PreviewService::new(provider));
+    let converted = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+
+    let converting = std::thread::spawn({
+        let service = Arc::clone(&service);
+        let handle = converted.handle.clone();
+        let destination = destination.clone();
+        move || service.convert_workspace_dataset(&handle, &destination, ConflictPolicy::Fail)
+    });
+    observe_start
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the conversion is inside its process");
+
+    // Both answer immediately, or neither returns and this test hangs -- which
+    // is the failure, stated as one.
+    assert_eq!(service.roster().datasets.len(), 1);
+    assert_eq!(service.clear_workspace().datasets.len(), 0);
+
+    release.send(()).expect("release the conversion");
+    let report = converting
+        .join()
+        .expect("the conversion thread")
+        .expect("a conversion is not cancelled by the workspace moving on");
+    assert_eq!(report.outcome(), "finalized");
+}
+
+/// A conversion still waiting for the gate when the user moves on never
+/// launches a process.
+#[test]
+fn a_conversion_superseded_while_it_waits_never_starts() {
+    let fixture = TestFile::new("superseded-conversion");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let (provider, observe_start, release) =
+        ConvertingProvider::faithful().parking_the_first_preview();
+    let service = Arc::new(PreviewService::new(Box::new(provider)));
+    let preview_source = service
+        .add_dataset(&fixture.path)
+        .expect("add the preview dataset");
+    let converted = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+
+    let opening = std::thread::spawn({
+        let service = Arc::clone(&service);
+        let handle = preview_source.handle.clone();
+        move || service.open_preview(&handle)
+    });
+    observe_start
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the preview holds the gate");
+
+    let converting = std::thread::spawn({
+        let service = Arc::clone(&service);
+        let handle = converted.handle.clone();
+        let destination = destination.clone();
+        move || service.convert_workspace_dataset(&handle, &destination, ConflictPolicy::Fail)
+    });
+    // The conversion is now queued. A newer request for the same dataset makes
+    // it the one the user is waiting for.
+    while service.requests_made(&converted.handle) == 0 {
+        std::thread::yield_now();
+    }
+    let superseding = std::thread::spawn({
+        let service = Arc::clone(&service);
+        let handle = converted.handle.clone();
+        let destination = destination.clone();
+        move || service.convert_workspace_dataset(&handle, &destination, ConflictPolicy::Fail)
+    });
+    while service.requests_made(&converted.handle) < 2 {
+        std::thread::yield_now();
+    }
+
+    release.send(()).expect("release the preview");
+    opening.join().expect("the preview thread").ok();
+    let first = converting.join().expect("the superseded conversion thread");
+    let second = superseding.join().expect("the newer conversion thread");
+
+    assert!(
+        matches!(&first, Err(error) if error.kind == "selection_superseded"),
+        "a conversion the user moved past never starts; got {first:?}"
+    );
+    assert_eq!(
+        second
+            .expect("the newer conversion reaches an outcome")
+            .outcome(),
+        "finalized"
+    );
+    assert_eq!(entry_names(&destination), vec!["acquisition.mzML"]);
+}
+
+/// The source is held against replacement for the whole run, not merely checked
+/// before it.
+///
+/// A comparison either side of a conversion cannot see a file swapped away and
+/// swapped back while the backend is reading it. The hold removes that window
+/// outright, and this is what shows it is a real hold rather than an intention:
+/// while the process is parked, the object cannot be deleted or renamed.
+#[cfg(windows)]
+#[test]
+fn the_source_cannot_be_replaced_while_its_conversion_is_running() {
+    let fixture = TestFile::new("held-during-conversion");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let (runner, observe_start, release) =
+        FakeConversionRunner::new(BackendAct::Convert).blocking();
+    let provider = Box::new(ConvertingProvider::new(evidenced_capabilities(), runner));
+    let service = Arc::new(PreviewService::new(provider));
+    let dataset = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+
+    let converting = std::thread::spawn({
+        let service = Arc::clone(&service);
+        let handle = dataset.handle.clone();
+        let destination = destination.clone();
+        move || service.convert_workspace_dataset(&handle, &destination, ConflictPolicy::Fail)
+    });
+    observe_start
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the conversion is inside its process");
+
+    assert!(
+        fs::remove_file(&acquisition).is_err(),
+        "the source of a running conversion may not be deleted out from under it"
+    );
+    assert!(
+        fs::rename(&acquisition, fixture.directory.join("moved.raw")).is_err(),
+        "nor renamed, which is the same window by another name"
+    );
+
+    release.send(()).expect("release the conversion");
+    let report = converting
+        .join()
+        .expect("the conversion thread")
+        .expect("the conversion reaches an outcome");
+    assert_eq!(report.outcome(), "finalized");
+}
+
+/// A source another program is writing is not converted.
+///
+/// The hold this boundary takes permits other readers and refuses writers,
+/// deletion and rename. Refusing here is the point: an acquisition somebody
+/// else is still writing is not a finished acquisition, and converting it would
+/// produce a document describing bytes that were only ever half there. The
+/// refusal is retryable, because the answer changes as soon as they are done.
+#[cfg(windows)]
+#[test]
+fn a_source_another_program_is_writing_is_refused_rather_than_read_anyway() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    /// Readers are welcome, which is what lets this get as far as the hold.
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+    let fixture = TestFile::new("source-in-use");
+    let source = fixture.readable_mzml("acquisition.mzML");
+    let destination = fixture.destination("out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let dataset = service.add_dataset(&source).expect("add the dataset");
+
+    let writer = std::fs::OpenOptions::new()
+        .write(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&source)
+        .expect("hold the source open for writing");
+
+    let error = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect_err("a file another program is writing is not converted");
+
+    assert_eq!(error.kind, "source_in_use");
+    assert!(
+        error.retryable,
+        "the answer changes once the writer is done"
+    );
+    assert_eq!(entry_names(&destination), Vec::<String>::new());
+
+    drop(writer);
+    let report = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the same dataset converts once nothing else holds it");
+    assert_eq!(report.outcome(), "finalized");
+}
+
+/// A conversion never records anything against the dataset it read. The preview
+/// on screen still describes that dataset afterwards.
+#[test]
+fn a_conversion_leaves_the_preview_of_its_dataset_alone() {
+    let fixture = TestFile::new("preview-preserved");
+    let destination = fixture.destination("out");
+    let mut provider = ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::Convert),
+    );
+    provider.inner = FakeProvider::available(open_responses());
+    let service = PreviewService::new(Box::new(provider));
+    let source = fixture.readable_mzml("acquisition.mzML");
+    let dataset = service.add_dataset(&source).expect("add the dataset");
+    service
+        .open_preview(&dataset.handle)
+        .expect("open the dataset");
+    assert!(service.holds_preview_state(&dataset.handle));
+
+    service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+
+    assert!(
+        service.holds_preview_state(&dataset.handle),
+        "a conversion reads the dataset and writes elsewhere; it is not a reload"
+    );
+}
+
+/// Nothing a conversion reports names a location. The report is what a future
+/// surface would be built from, and a path in it is a path that leaves Rust.
+#[test]
+fn a_conversion_report_never_carries_a_path() {
+    let fixture = TestFile::new("path-free-report");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let dataset = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+
+    let report = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+
+    let rendered = format!("{report:?}");
+    for fragment in [
+        fixture.directory.to_string_lossy().into_owned(),
+        destination.to_string_lossy().into_owned(),
+        acquisition.to_string_lossy().into_owned(),
+        String::from("\\\\?\\"),
+    ] {
+        assert!(
+            !rendered.contains(&fragment),
+            "the report names {fragment:?}, which is a location: {rendered}"
+        );
+    }
+    assert!(
+        rendered.contains("acquisition.mzML"),
+        "the output's own name is a display name, not a location: {rendered}"
+    );
+}
+
+/// The real vertical, end to end, against a local installation and a real
+/// vendor acquisition.
+///
+/// Ignored by default and the only test here that is. Everything else runs
+/// against a substituted backend so the suite is deterministic and needs no
+/// installation; this one exists because a deterministic suite cannot tell you
+/// that a vendor library on this machine reads this acquisition. It is evidence
+/// collection, run deliberately, and what it produces is recorded in ADR 0011
+/// rather than asserted here beyond the outcome.
+///
+/// Run with the acquisition and a destination folder named by environment, so
+/// neither the repository nor this file learns a path:
+///
+/// ```text
+/// set MSCANVAS_THERMO_FIXTURE=<path to the acquisition>
+/// set MSCANVAS_CONVERSION_DESTINATION=<path to an empty folder>
+/// cargo test -p mscanvas-desktop --lib -- --ignored --nocapture real_thermo
+/// ```
+#[test]
+#[ignore = "needs a local ProteoWizard installation and a real vendor acquisition"]
+fn a_real_thermo_acquisition_converts_through_a_workspace_handle() {
+    let Ok(fixture) = std::env::var("MSCANVAS_THERMO_FIXTURE") else {
+        panic!("set MSCANVAS_THERMO_FIXTURE to the acquisition to convert");
+    };
+    let Ok(destination) = std::env::var("MSCANVAS_CONVERSION_DESTINATION") else {
+        panic!("set MSCANVAS_CONVERSION_DESTINATION to an empty folder");
+    };
+    let acquisition = PathBuf::from(fixture);
+    let destination = PathBuf::from(destination);
+
+    // The production provider. Nothing is substituted: this resolves a real
+    // installation, reads its real help, and launches its real msconvert.
+    let service = PreviewService::new(Box::new(super::backend::ProteoWizardProvider::new()));
+    let dataset = service
+        .add_thermo_dataset(&acquisition)
+        .expect("the acquisition is admitted as a Thermo source");
+    println!("dataset handle: {}", dataset.handle);
+    println!("admitted bytes: {}", dataset.byte_length);
+
+    let report = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+
+    println!("report: {report:?}");
+    assert_eq!(
+        report.outcome(),
+        "finalized",
+        "the evidenced build converts this family"
+    );
+    assert_eq!(report.dataset(), dataset.handle);
+    assert_eq!(report.source_kind().stable_id(), "thermo_raw");
+    let validation = report.validation().expect("a finalized run was judged");
+    assert_eq!(validation.mode(), ValidationMode::OutputOnly);
+    assert!(!validation.is_fully_verified());
+}
+
+/// The conversion is stamped with the installation sequence as it stood when
+/// the gate was taken, not one read afterwards.
+#[test]
+fn a_conversion_is_stamped_with_the_installation_it_ran_on() {
+    let fixture = TestFile::new("installation-stamp");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let dataset = service
+        .add_thermo_dataset(&acquisition)
+        .expect("admit the acquisition");
+
+    let first = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Skip)
+        .expect("the first conversion reaches an outcome");
+    let second = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Skip)
+        .expect("the second conversion reaches an outcome");
+
+    assert_eq!(
+        first.installation_generation(),
+        second.installation_generation(),
+        "two runs on one unchanged installation belong to one point in the sequence"
+    );
 }

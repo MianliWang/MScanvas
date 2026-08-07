@@ -413,8 +413,16 @@ impl InstalledHelpCapabilities {
     /// local installation, and is compiled out of the shipped binary: the
     /// authority chain that makes installed help evidence runs through
     /// `parse_bound_help`, and nothing in production may step around it.
-    #[cfg(test)]
-    pub(crate) fn parse_unbound_capture_for_tests(
+    ///
+    /// Reachable from another crate's tests only through the `test-support`
+    /// feature, which is off by default and enabled as a dev-dependency. The
+    /// desktop service's conversion path cannot be tested any other way: it
+    /// takes capability evidence by value, and every production route to one
+    /// runs a real executable. Widening this to an ordinary public constructor
+    /// would make forged evidence reachable from the shipped binary, which is
+    /// exactly what the gate above it is for.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn parse_unbound_capture_for_tests(
         tool: BackendTool,
         executable: PathBuf,
         executable_sha256: Sha256Digest,

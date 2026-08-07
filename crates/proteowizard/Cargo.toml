@@ -6,6 +6,16 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+## Exposes one constructor that builds capability evidence from help text no
+## discovery probe bound to an executable, so another crate in this workspace can
+## reach a conversion plan in its own tests without a local ProteoWizard.
+##
+## Off by default and enabled only as a dev-dependency, so no shipped build
+## carries it. The authority chain that makes installed help count as evidence
+## runs through discovery, and nothing in production may step around it.
+test-support = []
+
 [dependencies]
 quick-xml.workspace = true
 thiserror.workspace = true

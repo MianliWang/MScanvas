@@ -11,6 +11,7 @@
 //! is a request to show a picker, not a path the webview names.
 
 pub mod backend;
+mod conversion;
 pub mod dialog;
 /// Bounded, private discovery of mzML candidates under a chosen folder.
 ///

@@ -2984,3 +2984,84 @@ private Rust reachable only from inside the crate.
 
 Rendered QA was not required and not performed: the diff contains no frontend
 file, transfer object, command signature, capability or user-facing string.
+
+## M3.0.4 private workspace-to-conversion path, 2026-08-07
+
+Two boundaries existed and did not touch. The session owned datasets — a
+registry keyed by filesystem identity, an accepted file holding its object open,
+an opaque handle the webview receives instead of a path — and accepted only
+mzML. The conversion boundary owned runs — signature admission, an immutable
+plan, private staging, one execution path, an integrity contract, and since
+M3.0.3 one named vendor family gated on the exact build it was measured on — and
+accepted only a path. This slice joins them, once, privately, with no surface.
+
+A path is not a dataset. Resolving a handle to a path and handing the path over
+would give up every guarantee the session exists to keep, at the moment it
+matters most. So the join is made on the object: `ConversionSource` now reports
+the volume serial and file id it was admitted with, the session compares that
+against the identity its own inspection established, and a conversion is refused
+unless the two admissions name one object. No path-bearing internal was made
+public to do it.
+
+`AcceptedFile` now records which family it was accepted as, and every use of a
+dataset re-applies that rule rather than the one this boundary happens to run
+first. ADR 0006 had forbidden such a variant outright while the only evidence
+was for mzML, on the ground that a variant which exists is a claim the data
+behind it is understood — and said such a claim needs its own evidence and its
+own decision. Both now exist, so the condition was met rather than waived; ADR
+0006 is amended to say so.
+
+The coordinator's order is the design. The epoch is claimed before the wait; the
+backend gate is taken with no workspace lock held; the epoch is rechecked after
+the wait; the file is revalidated under its recorded family; the build is
+checked against the recorded evidence before anything is pinned or created; the
+file is pinned and only then re-admitted, so the identity comparison closes the
+window between revalidation and the pin *before an output could exist*; and the
+run is stamped with the generation the gate guard carries. Preview and
+conversion serialize through the one existing gate, in both directions.
+
+Twenty-seven deterministic tests cover it, none needing a local ProteoWizard,
+and one ignored test collects the real end-to-end evidence on demand.
+Ten mutations of the load-bearing decisions were applied one at a time and all
+ten were refused. One initially survived — removing the session's hold on the
+source — because the crate independently pins and re-identifies the source
+during a run; the hold is kept and now has the test that shows what it uniquely
+decides, which is refusing an acquisition another program is still writing.
+
+The real end-to-end conversion was run on the implementation head, on the
+evidenced build (release `3.0.26013`, revision `47b13cf`, `msconvert.exe`
+SHA-256 `9BB6F5D5…D590BD`, verified before the run), beginning from workspace
+dataset handle `file-0` rather than from any harness. `FT-HCD-MSX.raw`
+(78,309 bytes, SHA-256 `b3d97b38…dd7b`) finalized as `FT-HCD-MSX.mzML`,
+28,655 bytes, SHA-256 `6CE2ACE6…D8648C`, 1 spectrum and 1 chromatogram, exit 0
+in 663 ms, exactly one file in the destination, no sidecars, no staging residue.
+Validation was output-only: 9 verified, 0 unverified, 11 inapplicable, and not
+fully verified — which is the honest answer for a source that was never read as
+mzML. The acquisition and the output were deleted afterwards. No vendor data is
+committed.
+
+`mscanvas-proteowizard` gained a `test-support` feature, off by default and
+enabled only as a dev-dependency of the desktop crate. The coordinator takes
+capability evidence by value and every production route to one runs a real
+executable, so without it no deterministic test of this path could exist at all.
+Widening the constructor to an ordinary public one was rejected: it would make
+forged evidence reachable from the shipped binary, which is what the build gate
+above it exists to prevent. No dependency and no lock file changed.
+
+Validation on the final head: `cargo fmt --all --check`,
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --locked --workspace --all-targets`,
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build`, `git diff --check`.
+
+Nothing user-visible changed. No Tauri command, transfer object, frontend file,
+capability, button, menu action, output-folder picker, queue, progress,
+cancellation, retry or persistence. Ingestion is still mzML-only: the picker,
+folder discovery and the Explorer drop all refuse a vendor acquisition, and the
+suite asserts it. The path is compiled into the shipped binary and unreachable
+from it; every item on it carries a stated `expect(dead_code)` under
+`cfg(not(test))` pointing at
+`docs/architecture/adr/0011-private-workspace-conversion-path.md`.
+
+Rendered QA was not required and not performed: the diff contains no frontend
+file, transfer object, command signature, capability or user-facing string.

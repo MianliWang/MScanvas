@@ -111,6 +111,30 @@ impl SourceIdentity {
         &self.canonical_path
     }
 
+    /// The volume serial number and 128-bit file id this object was bound to,
+    /// on the platforms that express object identity that way.
+    ///
+    /// This is the whole identity minus the path, so a caller that already
+    /// bound the same object by its own means can ask whether the two
+    /// bindings name one object without ever being handed a path. Comparing
+    /// the pair is exactly as strong as comparing the platform identity: it is
+    /// the platform identity.
+    ///
+    /// `None` is not a missing measurement. It says this platform does not
+    /// name objects by a volume and a file id, so no such comparison exists to
+    /// be made and a caller must not invent one.
+    #[must_use]
+    pub const fn volume_and_file_id(&self) -> Option<(u64, [u8; 16])> {
+        #[cfg(windows)]
+        {
+            Some((self.platform.volume_serial_number, self.platform.file_id))
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
+    }
+
     const fn is_directory(&self) -> bool {
         self.is_directory
     }
