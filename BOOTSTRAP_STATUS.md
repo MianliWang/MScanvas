@@ -2848,7 +2848,9 @@ array lengths present and consistent, no array declared non-empty without a
 payload, every record saying what its arrays are — m/z and intensity for a
 spectrum, time and intensity for a chromatogram — every record saying how its
 arrays are encoded and not claiming they are both compressed and uncompressed,
-its index sequences consecutive, and the requested compression honoured. Saying
+every spectrum saying which MS level it is and none claiming to be both profile
+and centroid, its index sequences consecutive, and the requested compression
+honoured. Saying
 what an array is does not say how to read it, and a record giving two
 compression answers at once is worse than a wrong one: the compressed-array
 count is satisfied, so only looking for the contradiction finds it. Both checks

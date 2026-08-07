@@ -89,8 +89,9 @@ two:
   declared binary-array lengths present, every record saying what its arrays are
   — a spectrum needs an m/z role and an intensity role, a chromatogram a time
   role and an intensity role — every record saying how its arrays are encoded
-  and not contradicting itself about how they are compressed, consecutive index
-  sequences, and the requested compression policy. That last group is worth separating from the comparison it
+  and not contradicting itself about how they are compressed, every spectrum
+  saying which MS level it is and none claiming to be both profile and centroid,
+  consecutive index sequences, and the requested compression policy. That last group is worth separating from the comparison it
   resembles: *comparing* array roles against a source needs the source and stays
   inapplicable, while an output that never says what its arrays are is one
   nothing downstream can read, and it answers for that by itself. A list holding records while declaring no count
@@ -273,6 +274,13 @@ open.
   Each needs a new scanner fact, which is a change to a fail-closed reader with
   its own evidence obligations rather than a line in this judgement. They belong
   together in one slice.
+- **Hashing the executable and spawning it are two steps.** The process
+  boundary verifies the executable's digest and then spawns it, so a replacement
+  in between launches an executable the gate never saw. That is a property of
+  the reviewed process boundary this slice reuses unchanged, and the M0 spike
+  already records the adjacent spawn-to-job-assignment race for the same reason:
+  the standard library exposes no way to bind process creation to an opened
+  object. Closing it belongs with that boundary.
 - **The vendor libraries themselves.** The build gate binds to the release, the
   revision and the executable's digest. It does not open, hash or version the
   Thermo reader DLLs beside it, so an installation that passes the gate with

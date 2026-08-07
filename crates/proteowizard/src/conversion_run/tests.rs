@@ -2971,6 +2971,7 @@ fn a_vendor_conversion_is_validated_on_its_output_alone() {
             "output_array_payload_presence",
             "output_array_roles",
             "output_array_encoding",
+            "output_spectrum_metadata",
             "index_sequences",
             "compression_policy",
         ])
@@ -3202,6 +3203,34 @@ fn a_vendor_conversion_rejects_every_output_its_own_contract_forbids() {
             Ok(0)
         }),
         "output_compression_contradictory"
+    );
+
+    // A spectrum that does not say which MS level it is cannot be told from any
+    // other one downstream.
+    assert_eq!(
+        attempt(&|spec| {
+            let levelless = output_document().replace(
+                r#"<cvParam accession="MS:1000511" name="ms level" value="1"/>"#,
+                "",
+            );
+            fs::write(staged_destination(spec), levelless).expect("write a levelless output");
+            Ok(0)
+        }),
+        "output_ms_level_missing"
+    );
+
+    // Both representations at once says two incompatible things about the same
+    // peaks.
+    assert_eq!(
+        attempt(&|spec| {
+            let conflicting = output_document().replace(
+                r#"<cvParam accession="MS:1000128" name="profile spectrum"/>"#,
+                r#"<cvParam accession="MS:1000128" name="profile spectrum"/><cvParam accession="MS:1000127" name="centroid spectrum"/>"#,
+            );
+            fs::write(staged_destination(spec), conflicting).expect("write a conflicting output");
+            Ok(0)
+        }),
+        "output_representation_conflicting"
     );
 
     // A peakless record is legitimate and stays so: zero declared length with

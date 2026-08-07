@@ -572,6 +572,11 @@ pub enum IntegrityProperty {
     /// this establishes that an encoding was stated somewhere in the record and
     /// cannot establish that every array stated one, or that none stated two.
     OutputArrayEncoding,
+    /// Every spectrum in the output says which MS level it is, and none claims
+    /// to be both profile and centroid. Two facts about a spectrum's own
+    /// metadata, both recorded by the scanner and both readable without a
+    /// source.
+    OutputSpectrumMetadata,
     SpectrumCount,
     ChromatogramCount,
     IndexSequences,
@@ -597,6 +602,7 @@ impl IntegrityProperty {
             Self::OutputArrayPayloadPresence => "output_array_payload_presence",
             Self::OutputArrayRoles => "output_array_roles",
             Self::OutputArrayEncoding => "output_array_encoding",
+            Self::OutputSpectrumMetadata => "output_spectrum_metadata",
             Self::SpectrumCount => "spectrum_count",
             Self::ChromatogramCount => "chromatogram_count",
             Self::IndexSequences => "index_sequences",
@@ -815,6 +821,13 @@ pub enum ConversionIntegrityOutcome {
         part: DocumentPart,
         index: u64,
     },
+    /// A spectrum in the output does not say which MS level it is, so nothing
+    /// downstream can tell a survey scan from a fragmentation scan.
+    OutputMsLevelMissing,
+    /// A spectrum claims to be both profile and centroid.
+    OutputRepresentationConflicting {
+        index: u64,
+    },
     /// The output is a well-formed document holding no spectra and no
     /// chromatograms. Only reachable where there is no source to compare
     /// against, because a comparison would already have found the counts
@@ -885,6 +898,8 @@ impl ConversionIntegrityOutcome {
             Self::OutputArrayRoleMissing { .. } => "output_array_role_missing",
             Self::OutputArrayEncodingMissing { .. } => "output_array_encoding_missing",
             Self::OutputCompressionContradictory { .. } => "output_compression_contradictory",
+            Self::OutputMsLevelMissing => "output_ms_level_missing",
+            Self::OutputRepresentationConflicting { .. } => "output_representation_conflicting",
             Self::SpectrumCountMismatch { .. } => "spectrum_count_mismatch",
             Self::ChromatogramCountMismatch { .. } => "chromatogram_count_mismatch",
             Self::IndexSequenceNotConsecutive { .. } => "index_sequence_not_consecutive",
@@ -1206,6 +1221,17 @@ fn judge_output_alone(
         report
             .verified
             .insert(IntegrityProperty::OutputArrayEncoding);
+
+        // A spectrum that does not say which MS level it is cannot be told from
+        // any other, and one claiming to be both profile and centroid says two
+        // incompatible things about the same peaks. Both are its own metadata,
+        // both are recorded, and neither needs a source to notice.
+        if let Some(outcome) = check_output_spectrum_metadata(after) {
+            return outcome;
+        }
+        report
+            .verified
+            .insert(IntegrityProperty::OutputSpectrumMetadata);
     } else {
         report
             .unverified
@@ -1213,6 +1239,9 @@ fn judge_output_alone(
         report
             .unverified
             .insert(IntegrityProperty::OutputArrayEncoding);
+        report
+            .unverified
+            .insert(IntegrityProperty::OutputSpectrumMetadata);
     }
 
     // The compression policy is the one requested property that is readable from
@@ -1325,6 +1354,28 @@ fn check_output_array_roles(after: &MzmlFacts) -> Option<ConversionIntegrityOutc
                 part: DocumentPart::Chromatogram,
                 index: position as u64,
             });
+        }
+    }
+    None
+}
+
+/// Refuses an output whose spectra do not describe themselves.
+///
+/// The MS level check is document-wide because the scanner records the
+/// distribution rather than the per-spectrum value, and a spectrum that omitted
+/// the term lands in the `None` bucket — which is exactly the fact needed here.
+/// The representation check is per record, because that one is kept per record.
+fn check_output_spectrum_metadata(after: &MzmlFacts) -> Option<ConversionIntegrityOutcome> {
+    if after.ms_level_distribution().contains_key(&None) {
+        return Some(ConversionIntegrityOutcome::OutputMsLevelMissing);
+    }
+    for (position, record) in after.spectra().iter().enumerate() {
+        if record.representation() == RepresentationMarker::Conflicting {
+            return Some(
+                ConversionIntegrityOutcome::OutputRepresentationConflicting {
+                    index: position as u64,
+                },
+            );
         }
     }
     None
