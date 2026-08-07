@@ -233,8 +233,9 @@ cache key or an equality check on the size or the digest of a conversion output.
   the existing boundary and produces exactly one output file.
 - The produced document passes the fail-closed mzML scanner, is internally
   consistent — declared list counts and array lengths present and agreeing with
-  what it holds, and no array declared non-empty without a payload — has
-  consecutive index sequences, and honours the requested zlib compression.
+  what it holds, and no record declaring points while carrying no data for them,
+  whether its arrays are empty or absent — has consecutive index sequences, and
+  honours the requested zlib compression.
 - The acquisition is identity-bound, digest-bound, rechecked before the backend
   starts and again before the output is judged, and **held against writes,
   renames and deletion for the whole run** — which both readers tolerate.

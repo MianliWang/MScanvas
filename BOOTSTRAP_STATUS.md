@@ -2851,7 +2851,10 @@ has omitted an attribute its schema requires: survivable under a comparison,
 where the observed counts on both sides still answer the question, and a
 rejection here, because recording it as verified would assert something the
 document declined to state. A document that says it holds peaks and holds none
-is refused for the same reason: the comparison path catches that by finding the
+is refused for the same reason, whether the arrays are present and empty or
+absent altogether — the second being the quieter case, because with no arrays
+there is nothing for a payload check to find empty and nothing for a compression
+check to find uncompressed: the comparison path catches that by finding the
 source's payloads where the output has none, and with no source the
 self-contradiction is what remains. A peakless record — zero declared length,
 empty payload — stays legitimate, because the M0 evidence corrected an earlier

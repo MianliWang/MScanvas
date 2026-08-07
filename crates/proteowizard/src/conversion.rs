@@ -1142,18 +1142,33 @@ fn judge_output_alone(
 
 /// Refuses an output whose metadata describes peaks it does not carry.
 ///
-/// A declared length of zero with an empty payload is a peakless record, which
-/// is legitimate and stays legitimate here: the M0 evidence corrected an earlier
-/// contract for rejecting exactly that on ProteoWizard's own reference fixture.
-/// What is refused is a record that declares a non-empty array and carries
-/// nothing for it.
+/// A record that declares points has to hold arrays, and those arrays have to
+/// hold something. Both halves matter and they fail differently: an array
+/// present with an empty payload, and no array at all. The second is the
+/// quieter one — with no arrays there is nothing for a payload check to look at
+/// and nothing for a compression check to find uncompressed, so a document
+/// declaring four points and carrying no binary data would satisfy every other
+/// rule here.
+///
+/// A declared length of zero carries nothing legitimately: a peakless record is
+/// a real one, and the M0 evidence corrected an earlier contract for rejecting
+/// exactly that on ProteoWizard's own reference fixture.
 fn check_output_payload_presence(after: &MzmlFacts) -> Option<ConversionIntegrityOutcome> {
+    fn declares_peaks_without_data(
+        default_array_length: Option<u64>,
+        binary_array_count: u32,
+        empty_binary_payload_count: u32,
+    ) -> bool {
+        default_array_length.is_some_and(|length| length > 0)
+            && (binary_array_count == 0 || empty_binary_payload_count > 0)
+    }
+
     for (position, record) in after.spectra().iter().enumerate() {
-        if record
-            .default_array_length()
-            .is_some_and(|length| length > 0)
-            && record.empty_binary_payload_count() > 0
-        {
+        if declares_peaks_without_data(
+            record.default_array_length(),
+            record.binary_array_count(),
+            record.empty_binary_payload_count(),
+        ) {
             return Some(
                 ConversionIntegrityOutcome::OutputDeclaredArrayWithoutPayload {
                     part: DocumentPart::Spectrum,
@@ -1163,11 +1178,11 @@ fn check_output_payload_presence(after: &MzmlFacts) -> Option<ConversionIntegrit
         }
     }
     for (position, record) in after.chromatograms().iter().enumerate() {
-        if record
-            .default_array_length()
-            .is_some_and(|length| length > 0)
-            && record.empty_binary_payload_count() > 0
-        {
+        if declares_peaks_without_data(
+            record.default_array_length(),
+            record.binary_array_count(),
+            record.empty_binary_payload_count(),
+        ) {
             return Some(
                 ConversionIntegrityOutcome::OutputDeclaredArrayWithoutPayload {
                     part: DocumentPart::Chromatogram,

@@ -3094,6 +3094,28 @@ fn a_vendor_conversion_rejects_every_output_its_own_contract_forbids() {
         "output_declared_array_without_payload"
     );
 
+    // The quieter half of the same rule: a record declaring points while
+    // carrying no binary arrays at all. Nothing else here would notice, because
+    // there is no payload to find empty and no array to find uncompressed.
+    assert_eq!(
+        attempt(&|spec| {
+            let arrayless = output_document()
+                .replace(r#"<binaryDataArrayList count="2">"#, "")
+                .replace("</binaryDataArrayList>", "")
+                .replace(
+                    r#"<binaryDataArray encodedLength="8"><cvParam accession="MS:1000514"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/><binary>AA==</binary></binaryDataArray>"#,
+                    "",
+                )
+                .replace(
+                    r#"<binaryDataArray encodedLength="8"><cvParam accession="MS:1000515"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/><binary>AA==</binary></binaryDataArray>"#,
+                    "",
+                );
+            fs::write(staged_destination(spec), arrayless).expect("write an arrayless output");
+            Ok(0)
+        }),
+        "output_declared_array_without_payload"
+    );
+
     // A peakless record is legitimate and stays so: zero declared length with
     // an empty payload is a real spectrum, not a defect.
     let peakless = output_document()

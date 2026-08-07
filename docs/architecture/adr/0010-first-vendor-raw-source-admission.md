@@ -92,8 +92,9 @@ two:
   survivable because the observed counts on both sides still answer the
   question, and here it is a rejection, because recording the property as
   verified would assert something the document declined to state. The same
-  reasoning refuses a record that declares a non-empty binary array and carries
-  no payload for it: the comparison path finds that by looking for the source's
+  reasoning refuses a record that declares points and carries no data for them —
+  either an array present with an empty payload, or no array at all, the second
+  being the quieter case because nothing else here would notice it: the comparison path finds that by looking for the source's
   payloads, and with no source the contradiction between a declared length and
   an absent payload is what remains — and it is enough. A declared length of
   zero with an empty payload stays legitimate, because a peakless record is a
