@@ -3,7 +3,9 @@
 - **Status:** One vendor source family evidenced and admitted, privately. Every
   user-visible conversion surface remains separately gated.
 - **Date:** 2026-08-07
-- **Exact code head:** `2cb62300fd36cc2757c3c0c8cd4a3723c4252983`
+- **Exact code head:** `529d91f45644a259f7999f56117d3349fc6da728`
+  (first measured at `2cb6230`; every structural fact below was re-measured
+  unchanged at this head after the review fixes, and the timings are from it)
 - **Decision recorded in:** [ADR 0010](../architecture/adr/0010-first-vendor-raw-source-admission.md)
 
 This record closes the first entry in ADR 0009's "evidence gates still open"
