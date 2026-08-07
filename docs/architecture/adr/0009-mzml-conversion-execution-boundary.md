@@ -76,10 +76,10 @@ variant — the same rule [ADR 0006](0006-multi-dataset-workspace-boundary.md)
 applies to the workspace registry, for the same reason. Recognizing a source
 family MSCanvas cannot yet convert is the claim the evidence does not support.
 
-This means the boundary is honest but narrow: today it converts mzML to mzML.
-That is not the product goal, it is what the evidence permits, and the shape it
-establishes — plan, stage, validate, finalize — is the shape a vendor source
-will use once a source posture for one exists.
+This meant the boundary was honest but narrow: at the time it converted mzML to
+mzML. That was not the product goal, it was what the evidence permitted, and the
+shape it establishes — plan, stage, validate, finalize — is the shape a vendor
+source uses now that ADR 0010 has admitted one.
 
 ### Typed plan
 
