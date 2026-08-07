@@ -3272,6 +3272,21 @@ fn a_vendor_conversion_rejects_every_output_its_own_contract_forbids() {
         "output_array_length_missing"
     );
 
+    // A record carrying no arrays at all still has to say so. Declaring nothing
+    // is a missing schema-required attribute whether or not arrays are present.
+    assert_eq!(
+        attempt(&|spec| {
+            let arrayless_undeclared = output_document()
+                .replace(r#" defaultArrayLength="4""#, "")
+                .replace(r#"<binaryDataArrayList count="2">"#, "")
+                .replace("</binaryDataArrayList>", "");
+            fs::write(staged_destination(spec), arrayless_undeclared)
+                .expect("write an arrayless undeclared output");
+            Ok(0)
+        }),
+        "output_array_length_missing"
+    );
+
     // A peakless record is legitimate and stays so: zero declared length with
     // an empty payload is a real spectrum, not a defect.
     let peakless = output_document()

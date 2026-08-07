@@ -1374,7 +1374,13 @@ fn check_output_array_roles(after: &MzmlFacts) -> Option<ConversionIntegrityOutc
     None
 }
 
-/// Refuses a record that holds arrays without saying how many points they hold.
+/// Refuses a record that does not say how many points its arrays hold.
+///
+/// Every record, including one carrying no arrays: a legitimately peakless
+/// record says so by declaring zero, and one that declares nothing has omitted
+/// an attribute its schema requires whether or not it happens to carry arrays.
+/// Measured on the evidence fixture, every spectrum and every chromatogram the
+/// backend produced declares it.
 ///
 /// This boundary already refuses a list that holds records and declares no
 /// count; treating an absent `defaultArrayLength` as merely unestablished was an
@@ -1385,7 +1391,7 @@ fn check_output_array_roles(after: &MzmlFacts) -> Option<ConversionIntegrityOutc
 /// source, and only the second is being asked here.
 fn check_output_declared_array_lengths(after: &MzmlFacts) -> Option<ConversionIntegrityOutcome> {
     for (position, record) in after.spectra().iter().enumerate() {
-        if record.binary_array_count() > 0 && record.default_array_length().is_none() {
+        if record.default_array_length().is_none() {
             return Some(ConversionIntegrityOutcome::OutputArrayLengthMissing {
                 part: DocumentPart::Spectrum,
                 index: position as u64,
@@ -1393,7 +1399,7 @@ fn check_output_declared_array_lengths(after: &MzmlFacts) -> Option<ConversionIn
         }
     }
     for (position, record) in after.chromatograms().iter().enumerate() {
-        if record.binary_array_count() > 0 && record.default_array_length().is_none() {
+        if record.default_array_length().is_none() {
             return Some(ConversionIntegrityOutcome::OutputArrayLengthMissing {
                 part: DocumentPart::Chromatogram,
                 index: position as u64,
