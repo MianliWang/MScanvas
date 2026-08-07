@@ -259,9 +259,14 @@ open.
   all. So an output-only judgement refuses every empty document rather than
   distinguishing a missing `spectrumList` from a legitimate `count="0"`, and it
   cannot notice a record that declares two binary arrays while carrying one, or
-  one missing its identifier. Each needs a new scanner fact, which is a change
-  to a fail-closed reader with its own evidence obligations rather than a line
-  in this judgement. They belong together in one slice.
+  one missing its identifier. Nor does it record *where* a
+  `referenceableParamGroupRef` appeared, so one anywhere in a document — in
+  spectrum metadata that has nothing to do with binary arrays — makes the whole
+  vocabulary unreadable and turns the requested compression policy from a check
+  into an `unverified`, letting an output with uncompressed arrays finalize.
+  Each needs a new scanner fact, which is a change to a fail-closed reader with
+  its own evidence obligations rather than a line in this judgement. They belong
+  together in one slice.
 - **The vendor libraries themselves.** The build gate binds to the release, the
   revision and the executable's digest. It does not open, hash or version the
   Thermo reader DLLs beside it, so an installation that passes the gate with

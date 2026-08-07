@@ -2900,7 +2900,12 @@ evidence, and a caller one keystroke away from typing the acquisition's path
 would have had it truncated instead. An existing file is refused, so is a path
 that resolves to the acquisition, and a diagnostics write that fails is raised
 rather than dropped — a run reporting `finalized` while silently failing to save
-what the caller asked for is the harness lying about what it did. The layout
+what the caller asked for is the harness lying about what it did. Diagnostics inside the workspace are refused, because the workspace is emptied
+when the harness returns and an exception in a cleanup is how the thing it was
+meant to remove survives. The workspace is held before it is judged empty, not
+after: checking and then opening leaves the interval between them, and
+everything downstream would bind to whatever the name meant at the end of it.
+The layout
 stage runs its command directly rather than through `run_conversion`, so it
 takes its own hold on the acquisition and rechecks the admitted digest either
 side of the measurement; without that, layout evidence could describe a run over

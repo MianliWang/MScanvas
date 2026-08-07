@@ -157,7 +157,11 @@ fn run(cli: Cli) -> Result<(), String> {
     println!("{source_facts}");
 
     if let Some(base) = cli.diagnostics.as_deref() {
-        require_safe_diagnostics_base(base, &cli.input)?;
+        // The workspace may not exist yet; creating it first means the
+        // containment question below has something to answer against.
+        fs::create_dir_all(&cli.workspace)
+            .map_err(|error| format!("the workspace could not be created: {:?}", error.kind()))?;
+        require_safe_diagnostics_base(base, &cli.input, &cli.workspace)?;
     }
 
     let capabilities = installed_capabilities(cli.proteowizard_home.as_deref())?;
@@ -276,13 +280,19 @@ struct Workspace {
 fn prepare_workspace(root: &Path) -> Result<Workspace, String> {
     fs::create_dir_all(root)
         .map_err(|error| format!("the workspace could not be created: {:?}", error.kind()))?;
+    // Held before it is judged, not after. Checking a directory is empty and
+    // then opening it leaves the interval between the two, and everything that
+    // follows — the stages, the recursive cleanup — would be bound to whatever
+    // the name meant at the end of it rather than to the thing that was
+    // verified. Once this handle exists the name cannot be repointed, so the
+    // emptiness check below reaches the object this run will actually use.
+    let held = hold_directory(root)?;
     let entries = fs::read_dir(root)
         .map_err(|error| format!("the workspace could not be read: {:?}", error.kind()))?
         .count();
     if entries != 0 {
         return Err("the workspace must be empty".to_owned());
     }
-    let held = hold_directory(root)?;
     Ok(Workspace {
         path: root.to_path_buf(),
         _held: held,
@@ -537,7 +547,27 @@ fn diagnostics_path(base: &Path, stage: &str) -> PathBuf {
 /// the acquisition's. Creation below is no-clobber, which is the guarantee;
 /// this exists so the refusal says which mistake was made instead of reporting
 /// that a file happened to exist.
-fn require_safe_diagnostics_base(base: &Path, input: &Path) -> Result<(), String> {
+fn require_safe_diagnostics_base(
+    base: &Path,
+    input: &Path,
+    workspace: &Path,
+) -> Result<(), String> {
+    // The workspace is emptied when the harness returns, so diagnostics written
+    // inside it would be created, announced as the caller's to keep, and then
+    // deleted by this same run. Refusing is the honest answer: the alternative
+    // is a cleanup with an exception in it, and an exception in a cleanup is how
+    // the thing it was supposed to remove survives.
+    if let (Ok(base_parent), Ok(workspace)) = (
+        fs::canonicalize(base.parent().unwrap_or(Path::new("."))),
+        fs::canonicalize(workspace),
+    ) && base_parent.starts_with(&workspace)
+    {
+        return Err(
+            "the diagnostics destination is inside the workspace, which this harness empties"
+                .to_owned(),
+        );
+    }
+
     for stage in ["layout", "boundary"] {
         let path = diagnostics_path(base, stage);
         if path.exists() {
