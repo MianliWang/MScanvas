@@ -2899,9 +2899,15 @@ what the caller asked for is the harness lying about what it did. The layout
 stage runs its command directly rather than through `run_conversion`, so it
 takes its own hold on the acquisition and rechecks the admitted digest either
 side of the measurement; without that, layout evidence could describe a run over
-bytes the admitted source never had. A workspace the harness cannot empty is
-reported rather than dropped, because what would be left behind is a converted
-document named after the acquisition. It plans with
+bytes the admitted source never had. The workspace is held open without delete
+sharing for the whole run, because the harness deletes its contents recursively
+by resolving a path, and a workspace renamed away and replaced between the
+stages and the cleanup would have had it deleting somebody else's directory —
+the same path-versus-object mistake the staging cleanup slice existed to remove.
+A workspace it cannot empty is reported alongside whatever else failed rather
+than instead of it, because a backend failure is exactly when residue is most
+likely and what would be left behind is a converted document named after the
+acquisition. It plans with
 the same planner and the same per-family spelling the boundary uses, reports the
 layout the backend produced before anything cleans it up, then runs the whole
 boundary. It prints shapes only — extension, kind, byte length, whether a name

@@ -176,25 +176,26 @@ fn run(cli: Cli) -> Result<(), String> {
     );
 
     let workspace = prepare_workspace(&cli.workspace)?;
-    let mut result = (|| -> Result<(), String> {
+    let result = (|| -> Result<(), String> {
         if cli.stage.runs_layout() {
-            report_layout(&cli, &capabilities, &workspace, &source)?;
+            report_layout(&cli, &capabilities, &workspace.path, &source)?;
         }
         if cli.stage.runs_boundary() {
-            report_boundary(&cli, &capabilities, &workspace, source)?;
+            report_boundary(&cli, &capabilities, &workspace.path, source)?;
         }
         Ok(())
     })();
-    // Everything this harness created goes, whichever way the stages ended — and
-    // a failure to remove it is reported rather than dropped, because the usage
+    // Everything this harness created goes, whichever way the stages ended. A
+    // failure to remove it is reported rather than dropped, because the usage
     // promises it and what would be left behind is a converted document named
-    // after the acquisition.
-    if let Err(residue) = remove_workspace_contents(&workspace)
-        && result.is_ok()
-    {
-        result = Err(residue);
+    // after the acquisition — and it is reported *alongside* a stage failure
+    // rather than instead of it, because the two say different things and a
+    // backend failure is exactly when residue is most likely.
+    match (result, remove_workspace_contents(&workspace.path)) {
+        (Ok(()), residue) => residue,
+        (Err(failure), Ok(())) => Err(failure),
+        (Err(failure), Err(residue)) => Err(format!("{failure}; additionally, {residue}")),
     }
-    result
 }
 
 /// Path-free facts about the acquisition under test.
@@ -258,8 +259,21 @@ fn installed_capabilities(home: Option<&Path>) -> Result<InstalledHelpCapabiliti
         .map_err(|error| format!("installed help could not be parsed: {error}"))
 }
 
-/// A scratch root the harness owns outright.
-fn prepare_workspace(root: &Path) -> Result<PathBuf, String> {
+/// A scratch root the harness owns outright, held for as long as it owns it.
+///
+/// The handle is the point. This harness deletes the workspace's contents
+/// recursively at the end, and it decides what to delete by resolving a path —
+/// so a workspace renamed away and replaced between the stages and the cleanup
+/// would have it recursively deleting somebody else's directory. Holding the
+/// directory without delete sharing means the name cannot be made to mean a
+/// different object while the harness is using it.
+struct Workspace {
+    path: PathBuf,
+    /// Dropped after the cleanup, never before.
+    _held: fs::File,
+}
+
+fn prepare_workspace(root: &Path) -> Result<Workspace, String> {
     fs::create_dir_all(root)
         .map_err(|error| format!("the workspace could not be created: {:?}", error.kind()))?;
     let entries = fs::read_dir(root)
@@ -268,7 +282,46 @@ fn prepare_workspace(root: &Path) -> Result<PathBuf, String> {
     if entries != 0 {
         return Err("the workspace must be empty".to_owned());
     }
-    Ok(root.to_path_buf())
+    let held = hold_directory(root)?;
+    Ok(Workspace {
+        path: root.to_path_buf(),
+        _held: held,
+    })
+}
+
+/// Opens a directory so it cannot be renamed or removed while it is held.
+#[cfg(windows)]
+fn hold_directory(path: &Path) -> Result<fs::File, String> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+    let opened = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|error| format!("the workspace could not be held: {:?}", error.kind()))?;
+    if !opened
+        .metadata()
+        .map_err(|error| format!("the workspace could not be inspected: {:?}", error.kind()))?
+        .is_dir()
+    {
+        return Err("the workspace is not a directory".to_owned());
+    }
+    Ok(opened)
+}
+
+/// Opens a directory. No platform outside Windows offers a mandatory share mode
+/// through the standard library, so the guarantee here is narrower and is not
+/// described as equivalent.
+#[cfg(not(windows))]
+fn hold_directory(path: &Path) -> Result<fs::File, String> {
+    fs::File::open(path)
+        .map_err(|error| format!("the workspace could not be held: {:?}", error.kind()))
 }
 
 fn remove_workspace_contents(root: &Path) -> Result<(), String> {
