@@ -2895,7 +2895,13 @@ evidence, and a caller one keystroke away from typing the acquisition's path
 would have had it truncated instead. An existing file is refused, so is a path
 that resolves to the acquisition, and a diagnostics write that fails is raised
 rather than dropped — a run reporting `finalized` while silently failing to save
-what the caller asked for is the harness lying about what it did. It plans with
+what the caller asked for is the harness lying about what it did. The layout
+stage runs its command directly rather than through `run_conversion`, so it
+takes its own hold on the acquisition and rechecks the admitted digest either
+side of the measurement; without that, layout evidence could describe a run over
+bytes the admitted source never had. A workspace the harness cannot empty is
+reported rather than dropped, because what would be left behind is a converted
+document named after the acquisition. It plans with
 the same planner and the same per-family spelling the boundary uses, reports the
 layout the backend produced before anything cleans it up, then runs the whole
 boundary. It prints shapes only — extension, kind, byte length, whether a name

@@ -176,17 +176,24 @@ fn run(cli: Cli) -> Result<(), String> {
     );
 
     let workspace = prepare_workspace(&cli.workspace)?;
-    let result = (|| -> Result<(), String> {
+    let mut result = (|| -> Result<(), String> {
         if cli.stage.runs_layout() {
-            report_layout(&cli, &capabilities, &workspace, source.kind())?;
+            report_layout(&cli, &capabilities, &workspace, &source)?;
         }
         if cli.stage.runs_boundary() {
             report_boundary(&cli, &capabilities, &workspace, source)?;
         }
         Ok(())
     })();
-    // Everything this harness created goes, whichever way the stages ended.
-    remove_workspace_contents(&workspace);
+    // Everything this harness created goes, whichever way the stages ended — and
+    // a failure to remove it is reported rather than dropped, because the usage
+    // promises it and what would be left behind is a converted document named
+    // after the acquisition.
+    if let Err(residue) = remove_workspace_contents(&workspace)
+        && result.is_ok()
+    {
+        result = Err(residue);
+    }
     result
 }
 
@@ -264,18 +271,27 @@ fn prepare_workspace(root: &Path) -> Result<PathBuf, String> {
     Ok(root.to_path_buf())
 }
 
-fn remove_workspace_contents(root: &Path) {
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
-    };
+fn remove_workspace_contents(root: &Path) -> Result<(), String> {
+    let entries = fs::read_dir(root)
+        .map_err(|error| format!("the workspace could not be re-read: {:?}", error.kind()))?;
+    let mut left = 0_usize;
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
-            let _ = fs::remove_dir_all(&path);
+        let removed = if path.is_dir() {
+            fs::remove_dir_all(&path)
         } else {
-            let _ = fs::remove_file(&path);
+            fs::remove_file(&path)
+        };
+        if removed.is_err() {
+            left += 1;
         }
     }
+    if left > 0 {
+        return Err(format!(
+            "the harness could not remove {left} workspace entries; they may name the acquisition"
+        ));
+    }
+    Ok(())
 }
 
 // --- Stage one: what does the backend write? --------------------------------
@@ -291,8 +307,9 @@ fn report_layout(
     cli: &Cli,
     capabilities: &InstalledHelpCapabilities,
     workspace: &Path,
-    kind: ConversionSourceKind,
+    source: &ConversionSource,
 ) -> Result<(), String> {
+    let kind = source.kind();
     let output_directory = workspace.join("layout");
     fs::create_dir(&output_directory)
         .map_err(|error| format!("layout directory: {:?}", error.kind()))?;
@@ -314,9 +331,20 @@ fn report_layout(
     println!("layout.source_kind={}", kind.stable_id());
     println!("layout.input_spelling={:?}", kind.input_spelling());
     println!("layout.argv_shape={}", argv_shape(&command));
+
+    // This stage runs the command itself rather than going through
+    // `run_conversion`, so it does not inherit the boundary's hold on the
+    // acquisition. It takes its own: an acquisition rewritten under this
+    // measurement would make the layout evidence describe a run over bytes the
+    // admitted source never had.
+    let pinned = pin_acquisition(&cli.input)?;
+    require_admitted_bytes(&cli.input, source, "before")?;
+
     let started = SystemTime::now();
     let output = execute(&command).map_err(|error| format!("the backend did not run: {error}"))?;
     let elapsed = started.elapsed().unwrap_or_default();
+    require_admitted_bytes(&cli.input, source, "after")?;
+    drop(pinned);
 
     println!("layout.termination={:?}", output.termination);
     println!("layout.exit_code={:?}", output.exit_code);
@@ -360,6 +388,48 @@ fn report_layout(
                 .is_some_and(|entry| entry.has_name(&output_file_name)
                     && entry.kind() == OutputEntryKind::RegularFile)
     );
+    Ok(())
+}
+
+/// Holds the acquisition against writers for the duration of a measurement.
+///
+/// The same posture the conversion boundary takes, for the same reason. Outside
+/// Windows the standard library offers no mandatory share mode, so this holds
+/// the object without that guarantee and the digest checks around it are what
+/// remain.
+fn pin_acquisition(input: &Path) -> Result<fs::File, String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+        fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(input)
+            .map_err(|error| format!("the acquisition could not be held: {:?}", error.kind()))
+    }
+    #[cfg(not(windows))]
+    {
+        fs::File::open(input)
+            .map_err(|error| format!("the acquisition could not be held: {:?}", error.kind()))
+    }
+}
+
+/// Refuses to report a measurement over bytes the admitted source did not have.
+fn require_admitted_bytes(
+    input: &Path,
+    source: &ConversionSource,
+    when: &str,
+) -> Result<(), String> {
+    let observed = Sha256Digest::calculate_file(input)
+        .map_err(|_| format!("the acquisition could not be rehashed {when} the measurement"))?;
+    if observed != source.sha256() {
+        return Err(format!(
+            "the acquisition is not the admitted one {when} the measurement"
+        ));
+    }
     Ok(())
 }
 
