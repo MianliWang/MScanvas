@@ -778,6 +778,11 @@ pub enum ConversionIntegrityOutcome {
         part: DocumentPart,
         index: u64,
     },
+    /// The output is a well-formed document holding no spectra and no
+    /// chromatograms. Only reachable where there is no source to compare
+    /// against, because a comparison would already have found the counts
+    /// disagreeing.
+    OutputContainsNoRecords,
     SpectrumCountMismatch {
         source: u64,
         output: u64,
@@ -839,6 +844,7 @@ impl ConversionIntegrityOutcome {
             Self::OutputDeclaredArrayWithoutPayload { .. } => {
                 "output_declared_array_without_payload"
             }
+            Self::OutputContainsNoRecords => "output_contains_no_records",
             Self::SpectrumCountMismatch { .. } => "spectrum_count_mismatch",
             Self::ChromatogramCountMismatch { .. } => "chromatogram_count_mismatch",
             Self::IndexSequenceNotConsecutive { .. } => "index_sequence_not_consecutive",
@@ -1061,6 +1067,22 @@ fn judge_output_alone(
     let after = output.facts();
     let mut report = IntegrityReport::default();
     report.verified.insert(IntegrityProperty::SourceUnchanged);
+
+    // Every structural check below is a statement about records, and every one
+    // of them passes vacuously over a document that has none. A well-formed
+    // shell — no `spectrumList`, an empty one, or a `run` holding nothing — would
+    // otherwise satisfy the whole contract and be finalized as a result. A
+    // comparison never reaches this because the source's counts would already
+    // disagree; with no source, refusing an output that converted nothing is
+    // what takes its place.
+    //
+    // This does not distinguish an absent list from a present one declaring
+    // `count="0"`. Telling those apart needs the scanner to record whether the
+    // element and its attribute appeared at all, which is a fact it does not
+    // carry today, and both are refused here anyway.
+    if after.observed_spectrum_count() == 0 && after.observed_chromatogram_count() == 0 {
+        return ConversionIntegrityOutcome::OutputContainsNoRecords;
+    }
 
     // A list that holds records and declares no count has omitted an attribute
     // its schema requires. Under a comparison that is survivable, because the

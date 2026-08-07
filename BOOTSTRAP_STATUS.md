@@ -2850,8 +2850,13 @@ honoured. A list holding records while declaring no count
 has omitted an attribute its schema requires: survivable under a comparison,
 where the observed counts on both sides still answer the question, and a
 rejection here, because recording it as verified would assert something the
-document declined to state. A document that says it holds peaks and holds none
-is refused for the same reason, whether the arrays are present and empty or
+document declined to state. An output holding no spectra and no chromatograms at all is refused before any
+of that, because every structural check is a statement about records and passes
+vacuously over a document that has none; a comparison never reaches the case,
+since the source's counts would already disagree. It does not distinguish an
+absent list from one declaring `count="0"` — that needs a fact the scanner does
+not record, and both are refused regardless. A document that says it holds peaks
+and holds none is refused for the same reason, whether the arrays are present and empty or
 absent altogether — the second being the quieter case, because with no arrays
 there is nothing for a payload check to find empty and nothing for a compression
 check to find uncompressed: the comparison path catches that by finding the

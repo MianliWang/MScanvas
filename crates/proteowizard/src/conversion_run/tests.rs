@@ -3081,6 +3081,24 @@ fn a_vendor_conversion_rejects_every_output_its_own_contract_forbids() {
         "index_sequence_not_consecutive"
     );
 
+    // A well-formed shell that converted nothing. Every structural check below
+    // would pass vacuously over it, so the emptiness itself has to be the
+    // refusal.
+    for shell in [
+        r#"<mzML version="1.1.0"></mzML>"#,
+        r#"<mzML version="1.1.0"><run id="R1"></run></mzML>"#,
+        r#"<mzML version="1.1.0"><run id="R1"><spectrumList count="0"></spectrumList></run></mzML>"#,
+    ] {
+        assert_eq!(
+            attempt(&|spec| {
+                fs::write(staged_destination(spec), shell).expect("write an empty shell");
+                Ok(0)
+            }),
+            "output_contains_no_records",
+            "an empty shell was accepted as a conversion result"
+        );
+    }
+
     // Metadata describing peaks the document does not carry. With no source to
     // find the missing payloads against, the contradiction between a declared
     // length and an absent payload is the whole of what is available — and it

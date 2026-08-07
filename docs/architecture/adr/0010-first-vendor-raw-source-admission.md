@@ -99,6 +99,13 @@ two:
   an absent payload is what remains — and it is enough. A declared length of
   zero with an empty payload stays legitimate, because a peakless record is a
   real one and the M0 evidence corrected an earlier contract for refusing it.
+  And before any of those: an output holding no spectra and no chromatograms is
+  refused outright, because every structural check is a statement about records
+  and passes vacuously over a document that has none. A comparison never reaches
+  that case — the source's counts would already disagree — so refusing an output
+  that converted nothing is what takes its place. It does not distinguish an
+  absent list from one declaring `count="0"`; telling those apart needs a fact
+  the scanner does not record, and both are refused here regardless.
 - **unverified** — could have been asked and could not be established, such as a
   vocabulary fact reached through a `referenceableParamGroup`.
 - **inapplicable** — never a question this pair could be asked. Every
@@ -229,6 +236,11 @@ open.
   ADR 0007's evidence list.
 - **Instrument model.** Not recoverable from this fixture even with the vendor
   reader, so the family can be named exactly and the instrument cannot.
+- **Telling an absent element from an empty one.** The scanner records observed
+  counts, not whether a list element or its `count` attribute appeared. An
+  output-only judgement therefore refuses every empty document rather than
+  distinguishing a missing `spectrumList` from a legitimate `count="0"`. Making
+  that distinction is a scanner change with its own evidence obligations.
 - Real cancellation, partial-output behaviour, backend overwrite semantics,
   mzXML, progress and locale are all exactly as ADR 0009 left them.
 
