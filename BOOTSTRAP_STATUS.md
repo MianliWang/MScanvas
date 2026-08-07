@@ -1,6 +1,6 @@
 # Bootstrap status
 
-**Updated:** 2026-08-06
+**Updated:** 2026-08-07
 
 **Canonical repository:** [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas)
 
@@ -2531,6 +2531,140 @@ open's no-follow flag and its post-open recheck survive removal, because
 exercising either needs a symlink — privileged to create on Windows — or a swap
 timed inside the open. Both branches are inherited unchanged from the ordinary
 guard beside them, whose equivalents this repository has never tested either.
+
+Rendered QA was not required and not performed: no frontend file, transfer
+object, command signature, capability or user-facing string changed.
+ProteoWizard was not executed, no vendor fixture was requested or used, and the
+mzML documents in these tests are generated in the test itself.
+
+## M3.0.2 identity-bound staging cleanup, 2026-08-07
+
+ADR 0009 recorded one safety window still open after handle-bound finalization:
+teardown and reclamation proved that a path named an MSCanvas staging area, and
+then deleted through that path. `remove_dir_all` widened the gap to every
+component of every child — each name resolved again at the moment it was
+unlinked, long after anything had been verified — and the staging guard held no
+handle at all, only a `PathBuf`. That window is closed on Windows.
+
+Nothing in staging teardown deletes a name now. A directory is listed through
+the handle that already holds it; each child is opened following nothing, proved
+to be the object that listing described, and held; deletion is a disposition set
+on that handle. One engine serves both entry points, which differ only in how
+the root object is obtained.
+
+`OwnedStagingArea` replaces the old guard. It opens the staging root, the output
+directory and the ownership marker as it creates them and holds all three for
+the run, each without delete sharing, so none can be renamed or replaced while
+the run depends on them; teardown consumes those handles rather than looking
+anything up. It is RAII, not cloneable, has an opaque `Debug`, and carries an
+explicit state — active, finished, cleaned, residue. An unwind runs the same
+object-bound teardown through `Drop`, never the path-recursive form, precisely
+because `Drop` cannot report what it finds.
+
+Reclamation has none of that evidence, because the run that created the area is
+gone. It opens the staging root once, following nothing, and every judgement
+afterwards is about that object: the listing comes from its handle, and the
+marker is opened, proved to be the entry that was listed, and read through that
+same handle before it is believed. The admitted marker object is carried into
+teardown, so its name is never resolved twice.
+
+Three measured facts shaped the algorithm, and one of them contradicted the
+first design. A directory with any child refuses deletion with
+`ERROR_DIR_NOT_EMPTY`; a name marked for deletion does not leave its parent
+until the handle marking it closes, on this stack even under POSIX semantics;
+and `OpenFileById` works and returns an identity that matches the enumeration
+exactly. The last one was not adopted: it resolves volume-wide rather than
+relative to the parent, so a child moved out of the tree between listing and
+open would still be found — and deleted — outside the boundary. Opening by name
+inside a pinned parent and proving identity refuses that case instead.
+
+The identity a child must match is the full 128-bit file identity together with
+the volume serial. The listing supplies it directly because enumeration uses the
+extended directory class; the older class reports 64 bits whose relationship to
+the 128-bit form is NTFS product behavior rather than contract. Records are
+walked with checked arithmetic — including a minimum forward step, without which
+a malformed chain re-parses the same bytes — and read unaligned, since drivers
+have been observed to violate the documented entry alignment. `.` and `..` are
+skipped.
+
+Reparse entries are refused, never followed and never removed. Deleting the link
+alone would be safe, but a junction inside an area MSCanvas created is evidence
+that something else has been there. A staging root holding anything besides the
+marker and the output directory is refused the same way, untouched.
+
+Deletion is post-order and the handle ordering is load-bearing: every child is
+disposed and closed before its parent is asked to go. The disposition asks for
+POSIX semantics first, because that is the only form under which closing this
+handle is enough to free the name, and falls back to the older class on
+filesystems that do not implement it. The marker goes after everything else and
+before the root, so an interrupted teardown always leaves the proof that makes
+its own residue reclaimable.
+
+Two named limits bound an arbitrary backend tree — depth 64 and 65,536 entries
+per directory — traversed with an explicit stack rather than recursion.
+Exceeding either leaves residue and deletes no unverified remainder. A staging
+area not on a local volume is refused outright.
+
+`StagingResidue` gained five path-free reasons with stable identifiers —
+identity changed, reparse point, foreign entry, traversal limit, not
+enumerable, remote object — and `StagingReclaimError` gained one that carries a
+residue plus a detailed identifier that reaches into it. Cleanup residue still
+never replaces the conversion outcome.
+
+What is not closed, stated rather than implied: the marker proves MSCanvas wrote
+a file of that name and content, not that *this plan* wrote it. Anything able to
+create a file in the destination root can forge one. Making it unforgeable is an
+authenticated-ownership decision this slice deliberately does not take. What
+changed is that a forged marker can now only cause the deletion of objects that
+were individually opened, identity-checked and found to be exactly the entries
+the admitted root listed. Non-Windows keeps the narrower path-based teardown and
+does not claim equivalence; no dependency was added to imitate it.
+
+No source posture, format, queue, cancellation, progress, persistence, transfer
+object, command, capability or frontend file changed. All unsafe code for
+teardown is in one module, hand-declared against `kernel32` in the same style as
+the crate's existing Job Object, file-identity and rename bindings.
+
+Validation on the exact head: `cargo fmt --all --check`,
+`cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --locked --workspace --all-targets` (268 proteowizard library tests,
+up from 256), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
+`pnpm test`, `pnpm build`.
+
+Twelve tests were added, all deterministic and none reaching a backend. A seam
+fires after each directory is listed and before anything that listing named is
+opened, which is the one interval the claim is about.
+
+The load-bearing pair attacks that interval. The admitted staging root cannot be
+renamed away — the attempt is refused with a sharing violation — and a plausible
+impostor beside it, carrying a valid-looking marker and unrelated data, is
+untouched while the admitted object is removed. A child replaced after it was
+listed, by a file, by a directory, or by a hard link to an object outside the
+tree, is refused with an identity mismatch in every case; the outside object is
+intact, the tree is not removed, and the ownership proof survives for a later
+attempt.
+
+The rest cover an arbitrary nested backend tree removed whole; a backend failure
+that left a sidecar directory still leaving the destination root clean; post-
+order with the marker outliving the tree it vouches for; a junction planted in
+the owned tree refused and never followed, with its target intact; reclamation
+across absent, owned, empty, repeated and crashed-run cases; a marker that is
+missing, wrong, a directory or a link trusted in none of those forms; a foreign
+entry stopping teardown without being deleted; an unwind tearing down by object;
+a cleanup that cannot finish keeping the primary outcome, reporting residue, and
+staying reclaimable once the obstruction clears; and every residue and reclaim
+reason rendering without a path or a handle.
+
+Nine mutations were introduced one at a time against this head; eight were
+caught. Restoring path-based `remove_dir_all` fails five tests; removing the
+child identity comparison fails the replacement test; following a reparse child
+fails the junction test; deleting the marker first fails six; granting delete
+sharing on the staging root fails the root-replacement test; swallowing residue
+fails four; ignoring a foreign entry fails its test; and never disposing nested
+directories fails five. The ninth — dropping the root handle and immediately
+reopening it — is genuinely equivalent: the reopen acquires the same object and
+the same pin, so no observable behavior changes, and it is recorded as
+equivalent rather than as a gap.
 
 Rendered QA was not required and not performed: no frontend file, transfer
 object, command signature, capability or user-facing string changed.
