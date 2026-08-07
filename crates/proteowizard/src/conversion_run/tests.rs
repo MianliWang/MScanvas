@@ -3219,6 +3219,20 @@ fn a_vendor_conversion_rejects_every_output_its_own_contract_forbids() {
         "output_ms_level_missing"
     );
 
+    // Written as zero rather than omitted. MS levels start at one, so this says
+    // no more about the stage than leaving it out does.
+    assert_eq!(
+        attempt(&|spec| {
+            let zeroed = output_document().replace(
+                r#"name="ms level" value="1""#,
+                r#"name="ms level" value="0""#,
+            );
+            fs::write(staged_destination(spec), zeroed).expect("write a zero-level output");
+            Ok(0)
+        }),
+        "output_ms_level_missing"
+    );
+
     // Both representations at once says two incompatible things about the same
     // peaks.
     assert_eq!(

@@ -1366,7 +1366,14 @@ fn check_output_array_roles(after: &MzmlFacts) -> Option<ConversionIntegrityOutc
 /// the term lands in the `None` bucket — which is exactly the fact needed here.
 /// The representation check is per record, because that one is kept per record.
 fn check_output_spectrum_metadata(after: &MzmlFacts) -> Option<ConversionIntegrityOutcome> {
-    if after.ms_level_distribution().contains_key(&None) {
+    // An absent MS level and one written as zero are the same defect wearing
+    // different clothes: MS levels start at one, so neither says which stage a
+    // spectrum came from, and both leave a downstream reader guessing.
+    if after
+        .ms_level_distribution()
+        .keys()
+        .any(|level| !matches!(level, Some(1..)))
+    {
         return Some(ConversionIntegrityOutcome::OutputMsLevelMissing);
     }
     for (position, record) in after.spectra().iter().enumerate() {
