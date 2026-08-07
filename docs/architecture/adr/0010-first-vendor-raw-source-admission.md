@@ -266,14 +266,23 @@ open.
   the output-side role and encoding checks establish that a record names what it
   needs and cannot establish that each array carries exactly one role and
   exactly one encoding — a record whose first array claims both roles while its
-  second claims none passes. Nor does it record *where* a
+  second claims none passes. It records that a `binary` element held
+  non-whitespace content, not that the content is well-formed base64, so a
+  payload of `!!!!` is a present payload as far as every check here is
+  concerned. It keeps the last MS level a spectrum declared rather than noticing
+  that it declared two different ones. Nor does it record *where* a
   `referenceableParamGroupRef` appeared, so one anywhere in a document — in
   spectrum metadata that has nothing to do with binary arrays — makes the whole
   vocabulary unreadable and turns the requested compression policy from a check
   into an `unverified`, letting an output with uncompressed arrays finalize.
   Each needs a new scanner fact, which is a change to a fail-closed reader with
   its own evidence obligations rather than a line in this judgement. They belong
-  together in one slice.
+  together in one slice. The base64 one carries an extra constraint that slice
+  will have to honour: this crate's rule is that a binary array is never decoded
+  and never decompressed, so a well-formedness check has to be a streaming
+  character, grouping and padding validation rather than a decode, and its cost
+  has to be measured on a document the size of the representative acquisition
+  rather than assumed.
 - **Hashing the executable and spawning it are two steps.** The process
   boundary verifies the executable's digest and then spawns it, so a replacement
   in between launches an executable the gate never saw. That is a property of
