@@ -260,7 +260,12 @@ open.
   all. So an output-only judgement refuses every empty document rather than
   distinguishing a missing `spectrumList` from a legitimate `count="0"`, and it
   cannot notice a record that declares two binary arrays while carrying one, or
-  one missing its identifier. Nor does it record *where* a
+  one missing its identifier. It keeps the *union* of the roles and numeric
+  encodings a record's arrays declared rather than the per-array assignment, so
+  the output-side role and encoding checks establish that a record names what it
+  needs and cannot establish that each array carries exactly one role and
+  exactly one encoding — a record whose first array claims both roles while its
+  second claims none passes. Nor does it record *where* a
   `referenceableParamGroupRef` appeared, so one anywhere in a document — in
   spectrum metadata that has nothing to do with binary arrays — makes the whole
   vocabulary unreadable and turns the requested compression policy from a check

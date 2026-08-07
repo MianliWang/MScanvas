@@ -2851,7 +2851,12 @@ arrays are encoded and not claiming they are both compressed and uncompressed,
 its index sequences consecutive, and the requested compression honoured. Saying
 what an array is does not say how to read it, and a record giving two
 compression answers at once is worse than a wrong one: the compressed-array
-count is satisfied, so only looking for the contradiction finds it. Array roles are worth
+count is satisfied, so only looking for the contradiction finds it. Both checks
+are record-level and are documented as such rather than named for more than they
+do: the scanner keeps the union of what a record's arrays declared, not the
+per-array assignment, so a record whose first array claims both roles while its
+second claims none passes. That residual gap is recorded with the other scanner
+facts rather than papered over by a property name. Array roles are worth
 separating from the comparison they resemble: comparing them against a source
 needs the source and stays inapplicable, while an output that never says what
 its arrays are is one nothing downstream can read, and it answers for that

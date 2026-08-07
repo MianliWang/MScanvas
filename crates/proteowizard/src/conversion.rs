@@ -554,15 +554,23 @@ pub enum IntegrityProperty {
     /// its metadata still described peaks is caught with no source to compare
     /// against.
     OutputArrayPayloadPresence,
-    /// Every record in the output says what its arrays are. A spectrum needs an
-    /// m/z array and an intensity array; a chromatogram needs a time array and
-    /// an intensity array. Readable from the output alone whenever the
-    /// controlled vocabulary is, and distinct from comparing those roles
-    /// against a source.
+    /// A record's arrays, taken together, name the roles the record needs: m/z
+    /// and intensity for a spectrum, time and intensity for a chromatogram.
+    ///
+    /// Record-level, and deliberately not claimed to be more. The scanner
+    /// records the union of the roles a record's arrays declared, not which
+    /// array declared which, so this establishes that the roles are present and
+    /// cannot establish that each array carries exactly one. A record whose
+    /// first array claims both roles while its second claims none satisfies it.
+    /// Closing that needs a per-array fact the scanner does not keep.
     OutputArrayRoles,
-    /// Every record in the output says how its arrays are encoded, and does not
-    /// contradict itself about how they are compressed. Both are readable from
-    /// the output alone, and both decide whether anything can decode it.
+    /// A record says something about how its arrays are encoded, and does not
+    /// contradict itself about how they are compressed.
+    ///
+    /// Record-level for the same reason and with the same limit: the scanner
+    /// keeps the union of the numeric encodings a record's arrays declared, so
+    /// this establishes that an encoding was stated somewhere in the record and
+    /// cannot establish that every array stated one, or that none stated two.
     OutputArrayEncoding,
     SpectrumCount,
     ChromatogramCount,
@@ -1288,6 +1296,12 @@ fn check_output_payload_presence(after: &MzmlFacts) -> Option<ConversionIntegrit
 /// already recorded by the scanner and are readable from the output alone;
 /// only *comparing* them against a source needs the source.
 ///
+/// What this cannot see is which array carried which role, because the scanner
+/// keeps the union rather than the assignment. A record whose first array
+/// declares both roles and whose second declares none passes here. That is a
+/// real residual gap, it is recorded as one, and closing it is a scanner change
+/// rather than a stronger predicate over the same facts.
+///
 /// Records carrying no arrays at all are not judged here — a peakless record is
 /// legitimate, and one that declares points without arrays was already refused.
 fn check_output_array_roles(after: &MzmlFacts) -> Option<ConversionIntegrityOutcome> {
@@ -1317,6 +1331,11 @@ fn check_output_array_roles(after: &MzmlFacts) -> Option<ConversionIntegrityOutc
 }
 
 /// Refuses an output nothing could decode.
+///
+/// Bounded the same way as the role check, and worth stating rather than
+/// implying: the numeric encodings are a per-record union, so this refuses a
+/// record that states no encoding at all and cannot refuse one where a single
+/// array omitted its own, or declared two.
 fn check_output_array_encoding(
     after: &MzmlFacts,
     policy: ConversionPolicy,
