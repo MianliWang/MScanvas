@@ -545,9 +545,10 @@ pub enum IntegrityProperty {
     /// structural property about the output alone, so an output-only validation
     /// can establish it.
     OutputDeclaredCounts,
-    /// Every record in the output declares the length of its binary arrays.
-    /// Also about the output alone, and separate from the comparison of those
-    /// lengths against a source, which is not always available.
+    /// Every record in the output that holds binary arrays declares how many
+    /// points they hold. About the output alone, and separate from the
+    /// comparison of those lengths against a source, which asks a different
+    /// question and is not always available.
     OutputDeclaredArrayLengths,
     /// Every array the output declares non-empty carries a payload. Observed
     /// without decoding, so an array whose scientific data went missing while
@@ -828,6 +829,12 @@ pub enum ConversionIntegrityOutcome {
     OutputRepresentationConflicting {
         index: u64,
     },
+    /// A record holds binary arrays and does not declare how many points they
+    /// hold, so the output does not state its own point counts.
+    OutputArrayLengthMissing {
+        part: DocumentPart,
+        index: u64,
+    },
     /// The output is a well-formed document holding no spectra and no
     /// chromatograms. Only reachable where there is no source to compare
     /// against, because a comparison would already have found the counts
@@ -900,6 +907,7 @@ impl ConversionIntegrityOutcome {
             Self::OutputCompressionContradictory { .. } => "output_compression_contradictory",
             Self::OutputMsLevelMissing => "output_ms_level_missing",
             Self::OutputRepresentationConflicting { .. } => "output_representation_conflicting",
+            Self::OutputArrayLengthMissing { .. } => "output_array_length_missing",
             Self::SpectrumCountMismatch { .. } => "spectrum_count_mismatch",
             Self::ChromatogramCountMismatch { .. } => "chromatogram_count_mismatch",
             Self::IndexSequenceNotConsecutive { .. } => "index_sequence_not_consecutive",
@@ -1162,15 +1170,12 @@ fn judge_output_alone(
     // rejection: the comparison path already treats an absent length as
     // unestablishable rather than as a defect, and this keeps the two agreeing
     // about what the fact is worth.
-    if declared_lengths_are_complete(after) {
-        report
-            .verified
-            .insert(IntegrityProperty::OutputDeclaredArrayLengths);
-    } else {
-        report
-            .unverified
-            .insert(IntegrityProperty::OutputDeclaredArrayLengths);
+    if let Some(outcome) = check_output_declared_array_lengths(after) {
+        return outcome;
     }
+    report
+        .verified
+        .insert(IntegrityProperty::OutputDeclaredArrayLengths);
     if !after.spectrum_index_sequence_is_consecutive() {
         return ConversionIntegrityOutcome::IndexSequenceNotConsecutive {
             side: DocumentSide::Output,
@@ -1361,6 +1366,35 @@ fn check_output_array_roles(after: &MzmlFacts) -> Option<ConversionIntegrityOutc
                 && record.array_kinds().contains(ArrayKind::Intensity))
         {
             return Some(ConversionIntegrityOutcome::OutputArrayRoleMissing {
+                part: DocumentPart::Chromatogram,
+                index: position as u64,
+            });
+        }
+    }
+    None
+}
+
+/// Refuses a record that holds arrays without saying how many points they hold.
+///
+/// This boundary already refuses a list that holds records and declares no
+/// count; treating an absent `defaultArrayLength` as merely unestablished was an
+/// inconsistency in these rules rather than a considered distinction. It does
+/// not contradict the comparison path degrading an absent length to unverified:
+/// that gate answers *can these two documents be compared*, and this one answers
+/// *is this document a usable result*. Only the second is available with no
+/// source, and only the second is being asked here.
+fn check_output_declared_array_lengths(after: &MzmlFacts) -> Option<ConversionIntegrityOutcome> {
+    for (position, record) in after.spectra().iter().enumerate() {
+        if record.binary_array_count() > 0 && record.default_array_length().is_none() {
+            return Some(ConversionIntegrityOutcome::OutputArrayLengthMissing {
+                part: DocumentPart::Spectrum,
+                index: position as u64,
+            });
+        }
+    }
+    for (position, record) in after.chromatograms().iter().enumerate() {
+        if record.binary_array_count() > 0 && record.default_array_length().is_none() {
+            return Some(ConversionIntegrityOutcome::OutputArrayLengthMissing {
                 part: DocumentPart::Chromatogram,
                 index: position as u64,
             });

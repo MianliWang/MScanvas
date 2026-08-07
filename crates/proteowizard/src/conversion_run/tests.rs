@@ -3258,7 +3258,18 @@ fn a_vendor_conversion_rejects_every_output_its_own_contract_forbids() {
             fs::write(staged_destination(spec), undeclared).expect("write an undeclared output");
             Ok(0)
         }),
-        "output_declared_array_without_payload"
+        "output_array_length_missing"
+    );
+
+    // And with a non-empty payload it is refused for the same reason: the
+    // document does not state its own point counts either way.
+    assert_eq!(
+        attempt(&|spec| {
+            let undeclared = output_document().replace(r#" defaultArrayLength="4""#, "");
+            fs::write(staged_destination(spec), undeclared).expect("write an undeclared output");
+            Ok(0)
+        }),
+        "output_array_length_missing"
     );
 
     // A peakless record is legitimate and stays so: zero declared length with
