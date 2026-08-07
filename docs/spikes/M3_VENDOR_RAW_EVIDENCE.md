@@ -3,7 +3,7 @@
 - **Status:** One vendor source family evidenced and admitted, privately. Every
   user-visible conversion surface remains separately gated.
 - **Date:** 2026-08-07
-- **Exact code head:** `1c8cdc4a2e16e38f8cc13d84b9d187d38f2ab538`
+- **Exact code head:** `a4875b6f89508d12cbabfec686c5def0b99c548d`
   (first measured at `2cb6230`. Review added output-side rules after that, so
   every figure below is from one complete two-stage run of both fixtures on this
   head rather than carried forward — the verified property sets in particular
@@ -150,13 +150,13 @@ cleaned it up:
 | Fact | Thermo RAW | mzML control |
 | --- | --- | --- |
 | Backend exit | `0` | `0` |
-| Backend elapsed | `501 ms` | `168 ms` |
-| Peak owned-job memory | `34,938,880` bytes | `21,889,024` bytes |
+| Backend elapsed | `508 ms` | `185 ms` |
+| Peak owned-job memory | `35,446,784` bytes | `21,868,544` bytes |
 | Entries in the output directory | **`1`** | **`1`** |
 | Entry kind | regular file | regular file |
 | Entry name | exactly the planned name | exactly the planned name |
 | Partial-output suffix present | `false` | `false` |
-| Byte length | `28,661` | `25,486` |
+| Byte length | `28,661` | `25,485` |
 
 **No sidecar, index, log or scratch file.** This is what ADR 0009 recorded as
 unmeasured and required "before this boundary is reachable from the product",
@@ -195,10 +195,10 @@ The whole sequence, unchanged, through `run_conversion`:
 | Source bytes / SHA-256 | `78,309` / `b3d97b38…dd7b` | `25,072` / `711ac14b…9c83` |
 | Outcome | `finalized` | `finalized` |
 | Validation mode | **`output_only`** | `source_comparison` |
-| Backend exit / elapsed | `0` / `521 ms` | `0` / `223 ms` |
+| Backend exit / elapsed | `0` / `493 ms` | `0` / `195 ms` |
 | Output root | `indexedmzML` | `indexedmzML` |
 | Spectra / chromatograms | `1` / `1` | `4` / `2` |
-| Output byte length | `28,661` | `25,534` |
+| Output byte length | `28,661` | `25,533` |
 | Verified | `source_unchanged`, `output_declared_counts`, `output_declared_array_lengths`, `output_array_payload_presence`, `output_array_roles`, `output_array_encoding`, `output_spectrum_metadata`, `index_sequences`, `compression_policy` | the ten comparison and structural properties |
 | Unverified | none | `ms_level_distribution`, `binary_array_kinds`, `spectrum_native_identity`, `spectrum_representation`, `compression_policy` |
 | Inapplicable | the eleven comparison properties | none |
@@ -229,8 +229,8 @@ fixture reaching its controlled-vocabulary facts through a
 `msconvert` records path information inside the document it writes, so the same
 acquisition converted into a differently named directory produces different
 bytes — observed directly here: the mzML control's output has measured
-`25,518`, `25,517` and `25,534` bytes across runs from the same source,
-differing only in the workspace name. The Thermo output's observed digest for the run recorded
+`25,517`, `25,518`, `25,533` and `25,534` bytes across runs from the same
+source, differing only in the workspace name. The Thermo output's observed digest for the run recorded
 above was
 `6F3D900F881F8B8C195FE8A47DDF98FAF179CE83D0BC6B5A22DAFDA843FA59F6`. **The stable
 facts are the structure and the counts**, and a later slice must not build a
