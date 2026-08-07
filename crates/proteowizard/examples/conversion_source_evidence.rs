@@ -328,7 +328,14 @@ fn remove_workspace_contents(root: &Path) -> Result<(), String> {
     let entries = fs::read_dir(root)
         .map_err(|error| format!("the workspace could not be re-read: {:?}", error.kind()))?;
     let mut left = 0_usize;
-    for entry in entries.flatten() {
+    for entry in entries {
+        // An entry that cannot even be enumerated is residue too, and dropping
+        // the error would let the harness report an empty workspace it never
+        // looked at.
+        let Ok(entry) = entry else {
+            left += 1;
+            continue;
+        };
         let path = entry.path();
         let removed = if path.is_dir() {
             fs::remove_dir_all(&path)

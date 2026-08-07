@@ -2845,8 +2845,13 @@ questions this pair could be asked, and `is_fully_verified` answers false for
 every output-only result whatever its sets contain. What a vendor run does
 establish is the source object unchanged, the output's declared list counts and
 array lengths present and consistent, no array declared non-empty without a
-payload, its index sequences consecutive, and the requested compression
-honoured. A list holding records while declaring no count
+payload, every record saying what its arrays are — m/z and intensity for a
+spectrum, time and intensity for a chromatogram — its index sequences
+consecutive, and the requested compression honoured. Array roles are worth
+separating from the comparison they resemble: comparing them against a source
+needs the source and stays inapplicable, while an output that never says what
+its arrays are is one nothing downstream can read, and it answers for that
+alone. A list holding records while declaring no count
 has omitted an attribute its schema requires: survivable under a comparison,
 where the observed counts on both sides still answer the question, and a
 rejection here, because recording it as verified would assert something the

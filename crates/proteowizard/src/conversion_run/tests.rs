@@ -2969,6 +2969,7 @@ fn a_vendor_conversion_is_validated_on_its_output_alone() {
             "output_declared_counts",
             "output_declared_array_lengths",
             "output_array_payload_presence",
+            "output_array_roles",
             "index_sequences",
             "compression_policy",
         ])
@@ -3149,6 +3150,30 @@ fn a_vendor_conversion_rejects_every_output_its_own_contract_forbids() {
             Ok(0)
         }),
         "output_declared_array_without_payload"
+    );
+
+    // Arrays that do not say what they are. Nothing downstream can read the
+    // document as a spectrum, and no source is needed to notice.
+    assert_eq!(
+        attempt(&|spec| {
+            let roleless = output_document()
+                .replace(r#"<cvParam accession="MS:1000514"/>"#, "")
+                .replace(r#"<cvParam accession="MS:1000515"/>"#, "");
+            fs::write(staged_destination(spec), roleless).expect("write a roleless output");
+            Ok(0)
+        }),
+        "output_array_role_missing"
+    );
+
+    // Both arrays claiming the same role is the same defect wearing a disguise.
+    assert_eq!(
+        attempt(&|spec| {
+            let doubled =
+                output_document().replace(r#"accession="MS:1000515""#, r#"accession="MS:1000514""#);
+            fs::write(staged_destination(spec), doubled).expect("write a doubled-role output");
+            Ok(0)
+        }),
+        "output_array_role_missing"
     );
 
     // A peakless record is legitimate and stays so: zero declared length with

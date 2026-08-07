@@ -25,7 +25,7 @@ use crate::fs_guard::{
     self, OutputDirectoryEntry, OutputDirectorySnapshot, OutputEntryKind, RegularFileError,
 };
 use crate::mzml::{
-    self, MzmlFacts, MzmlLimitKind, MzmlMalformedKind, MzmlScanError, MzmlScanLimits,
+    self, ArrayKind, MzmlFacts, MzmlLimitKind, MzmlMalformedKind, MzmlScanError, MzmlScanLimits,
     MzmlSpectrumRecord, RepresentationMarker, UnsafeXmlKind,
 };
 
@@ -554,6 +554,12 @@ pub enum IntegrityProperty {
     /// its metadata still described peaks is caught with no source to compare
     /// against.
     OutputArrayPayloadPresence,
+    /// Every record in the output says what its arrays are. A spectrum needs an
+    /// m/z array and an intensity array; a chromatogram needs a time array and
+    /// an intensity array. Readable from the output alone whenever the
+    /// controlled vocabulary is, and distinct from comparing those roles
+    /// against a source.
+    OutputArrayRoles,
     SpectrumCount,
     ChromatogramCount,
     IndexSequences,
@@ -577,6 +583,7 @@ impl IntegrityProperty {
             Self::OutputDeclaredCounts => "output_declared_counts",
             Self::OutputDeclaredArrayLengths => "output_declared_array_lengths",
             Self::OutputArrayPayloadPresence => "output_array_payload_presence",
+            Self::OutputArrayRoles => "output_array_roles",
             Self::SpectrumCount => "spectrum_count",
             Self::ChromatogramCount => "chromatogram_count",
             Self::IndexSequences => "index_sequences",
@@ -778,6 +785,12 @@ pub enum ConversionIntegrityOutcome {
         part: DocumentPart,
         index: u64,
     },
+    /// A record does not say what its arrays are, so nothing downstream can
+    /// read it as a spectrum or a chromatogram.
+    OutputArrayRoleMissing {
+        part: DocumentPart,
+        index: u64,
+    },
     /// The output is a well-formed document holding no spectra and no
     /// chromatograms. Only reachable where there is no source to compare
     /// against, because a comparison would already have found the counts
@@ -845,6 +858,7 @@ impl ConversionIntegrityOutcome {
                 "output_declared_array_without_payload"
             }
             Self::OutputContainsNoRecords => "output_contains_no_records",
+            Self::OutputArrayRoleMissing { .. } => "output_array_role_missing",
             Self::SpectrumCountMismatch { .. } => "spectrum_count_mismatch",
             Self::ChromatogramCountMismatch { .. } => "chromatogram_count_mismatch",
             Self::IndexSequenceNotConsecutive { .. } => "index_sequence_not_consecutive",
@@ -1142,11 +1156,28 @@ fn judge_output_alone(
         .verified
         .insert(IntegrityProperty::OutputArrayPayloadPresence);
 
+    let vocabulary_readable = !after.parameter_group_reference_observed();
+
+    // What the arrays *are* is readable from the output alone whenever the
+    // vocabulary is, and an output that does not say is one nothing downstream
+    // can read as a spectrum. Comparing those roles against a source is a
+    // different question and stays inapplicable; this is the output answering
+    // for itself.
+    if vocabulary_readable {
+        if let Some(outcome) = check_output_array_roles(after) {
+            return outcome;
+        }
+        report.verified.insert(IntegrityProperty::OutputArrayRoles);
+    } else {
+        report
+            .unverified
+            .insert(IntegrityProperty::OutputArrayRoles);
+    }
+
     // The compression policy is the one requested property that is readable from
     // the output alone, and it degrades for the same reason it degrades in a
     // comparison: an indirected controlled vocabulary is not a fact this scanner
     // will assert.
-    let vocabulary_readable = !after.parameter_group_reference_observed();
     if let Some(outcome) = check_compression_policy(after, policy, vocabulary_readable, &mut report)
     {
         return outcome;
@@ -1211,6 +1242,42 @@ fn check_output_payload_presence(after: &MzmlFacts) -> Option<ConversionIntegrit
                     index: position as u64,
                 },
             );
+        }
+    }
+    None
+}
+
+/// Refuses an output whose records do not say what their arrays are.
+///
+/// A spectrum that carries arrays without an m/z role and an intensity role
+/// cannot be read as a spectrum by anything downstream, and neither can a
+/// chromatogram without a time role and an intensity role. The roles are
+/// already recorded by the scanner and are readable from the output alone;
+/// only *comparing* them against a source needs the source.
+///
+/// Records carrying no arrays at all are not judged here — a peakless record is
+/// legitimate, and one that declares points without arrays was already refused.
+fn check_output_array_roles(after: &MzmlFacts) -> Option<ConversionIntegrityOutcome> {
+    for (position, record) in after.spectra().iter().enumerate() {
+        if record.binary_array_count() > 0
+            && !(record.array_kinds().contains(ArrayKind::Mz)
+                && record.array_kinds().contains(ArrayKind::Intensity))
+        {
+            return Some(ConversionIntegrityOutcome::OutputArrayRoleMissing {
+                part: DocumentPart::Spectrum,
+                index: position as u64,
+            });
+        }
+    }
+    for (position, record) in after.chromatograms().iter().enumerate() {
+        if record.binary_array_count() > 0
+            && !(record.array_kinds().contains(ArrayKind::Time)
+                && record.array_kinds().contains(ArrayKind::Intensity))
+        {
+            return Some(ConversionIntegrityOutcome::OutputArrayRoleMissing {
+                part: DocumentPart::Chromatogram,
+                index: position as u64,
+            });
         }
     }
     None

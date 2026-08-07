@@ -86,8 +86,13 @@ two:
 
 - **verified** — established. For a vendor run: the source object unchanged, the
   output's declared list counts present and consistent with its contents, its
-  declared binary-array lengths present, consecutive index sequences, and the
-  requested compression policy. A list holding records while declaring no count
+  declared binary-array lengths present, every record saying what its arrays are
+  — a spectrum needs an m/z role and an intensity role, a chromatogram a time
+  role and an intensity role — consecutive index sequences, and the requested
+  compression policy. That last group is worth separating from the comparison it
+  resembles: *comparing* array roles against a source needs the source and stays
+  inapplicable, while an output that never says what its arrays are is one
+  nothing downstream can read, and it answers for that by itself. A list holding records while declaring no count
   has omitted an attribute its schema requires; under a comparison that is
   survivable because the observed counts on both sides still answer the
   question, and here it is a rejection, because recording the property as
