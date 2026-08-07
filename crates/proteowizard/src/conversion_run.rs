@@ -848,10 +848,6 @@ pub enum StagingResidue {
     /// A directory listing could not be read as the records it must be.
     #[error("a staging directory could not be enumerated")]
     NotEnumerable,
-    /// The staging area is not on a volume this teardown will act on. The
-    /// conversion guarantee is local-only.
-    #[error("the staging area is not on a local volume")]
-    RemoteObject,
 }
 
 impl StagingResidue {
@@ -864,7 +860,6 @@ impl StagingResidue {
             Self::ForeignEntry => "staging_foreign_entry",
             Self::TraversalLimitReached => "staging_traversal_limit_reached",
             Self::NotEnumerable => "staging_not_enumerable",
-            Self::RemoteObject => "staging_remote_object",
         }
     }
 }

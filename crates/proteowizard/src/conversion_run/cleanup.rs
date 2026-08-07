@@ -13,6 +13,14 @@
 //! handle. A name is only ever a way to reach an object that must then prove
 //! itself, and an object that cannot prove itself is left alone.
 //!
+//! Nothing here refuses a volume in advance. The conversion guarantee is
+//! local-only and a remote volume is where these mechanics stop being
+//! dependable, but that is a reason to decide it when the destination is
+//! admitted, not a reason for teardown to abandon a tree it created. A volume
+//! that cannot support the calls below fails them, and a failed call is typed,
+//! reclaimable residue; a volume refused in advance is a staging area nothing
+//! can ever remove and a deterministic staging name blocked for good.
+//!
 //! Two measured facts shape the algorithm. A directory with any child refuses
 //! deletion with `ERROR_DIR_NOT_EMPTY`, and a name marked for deletion does not
 //! leave its parent while the handle that marked it is still open. Teardown is
@@ -116,7 +124,6 @@ pub(super) fn tear_down_owned_staging_seamed(
     // Everything below is judged against the volume this root lives on, so an
     // object that is somehow elsewhere can never satisfy an identity check.
     let (volume, _) = full_identity(&root).map_err(residue_for)?;
-    require_local_object(&root)?;
     let children = enumerate_children(&root)?;
     after_enumeration();
 
@@ -243,9 +250,6 @@ pub(super) fn dispose_empty_root(root: File, _root_path: &Path) -> Result<(), St
 pub(super) fn admit_staging_root(root: &File, root_path: &Path, magic: &[u8]) -> StagingAdmission {
     use std::io::Read;
 
-    if let Err(residue) = require_local_object(root) {
-        return StagingAdmission::NotInspectable(residue);
-    }
     let children = match enumerate_children(root) {
         Ok(children) => children,
         Err(residue) => return StagingAdmission::NotInspectable(residue),
@@ -691,86 +695,6 @@ fn set_delete_disposition(object: &File) -> io::Result<()> {
     if disposed == 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok(())
-}
-
-/// Refuses an object that does not live on a local volume.
-///
-/// The conversion guarantee is local-only, and a remote volume is where the
-/// identity and disposition mechanics this teardown depends on stop being
-/// dependable. The query succeeds only for a remote object, so success is the
-/// refusal and `ERROR_INVALID_PARAMETER` is the ordinary local answer.
-#[cfg(windows)]
-fn require_local_object(object: &File) -> Result<(), StagingResidue> {
-    use std::ffi::c_void;
-    use std::mem::size_of;
-    use std::os::windows::io::AsRawHandle;
-
-    /// `FileRemoteProtocolInfo` in `FILE_INFO_BY_HANDLE_CLASS`.
-    const FILE_REMOTE_PROTOCOL_INFO_CLASS: i32 = 13;
-
-    /// `FILE_REMOTE_PROTOCOL_INFO`. Only whether the query succeeds is
-    /// consumed; the body exists to give the call a correctly sized buffer.
-    #[repr(C)]
-    struct FileRemoteProtocolInformation {
-        structure_version: u16,
-        structure_size: u16,
-        protocol: u32,
-        protocol_major_version: u16,
-        protocol_minor_version: u16,
-        protocol_revision: u16,
-        reserved: u16,
-        flags: u32,
-        generic_reserved: [u32; 8],
-        protocol_specific: [u32; 16],
-    }
-
-    #[cfg(all(target_env = "msvc", target_pointer_width = "64"))]
-    const _: [(); 116] = [(); size_of::<FileRemoteProtocolInformation>()];
-
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        #[link_name = "GetFileInformationByHandleEx"]
-        fn get_file_information_by_handle_ex(
-            file: *mut c_void,
-            information_class: i32,
-            information: *mut c_void,
-            information_size: u32,
-        ) -> i32;
-    }
-
-    let mut information = FileRemoteProtocolInformation {
-        structure_version: 0,
-        structure_size: u16::try_from(size_of::<FileRemoteProtocolInformation>())
-            .expect("FILE_REMOTE_PROTOCOL_INFO fits in USHORT"),
-        protocol: 0,
-        protocol_major_version: 0,
-        protocol_minor_version: 0,
-        protocol_revision: 0,
-        reserved: 0,
-        flags: 0,
-        generic_reserved: [0; 8],
-        protocol_specific: [0; 16],
-    };
-    // SAFETY: `object` owns a live handle and `information` is the exact repr(C)
-    // FILE_REMOTE_PROTOCOL_INFO buffer the class requires for the call.
-    let remote = unsafe {
-        get_file_information_by_handle_ex(
-            object.as_raw_handle(),
-            FILE_REMOTE_PROTOCOL_INFO_CLASS,
-            (&raw mut information).cast(),
-            u32::try_from(size_of::<FileRemoteProtocolInformation>())
-                .expect("FILE_REMOTE_PROTOCOL_INFO fits in DWORD"),
-        )
-    };
-    if remote != 0 {
-        return Err(StagingResidue::RemoteObject);
-    }
-    // Only a successful query means remote. Every failure shape — including the
-    // several a filesystem uses to say it does not implement the class — means
-    // carry on. Refusing on those would leave an owned tree that teardown can
-    // never remove and reclamation can never retry, which is a worse failure
-    // than proceeding on a locality that was merely not answerable.
     Ok(())
 }
 

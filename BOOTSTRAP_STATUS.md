@@ -2621,15 +2621,21 @@ entire tree's removal.
 
 Two named limits bound an arbitrary backend tree — depth 64 and 65,536 entries
 per directory — traversed with an explicit stack rather than recursion.
-Exceeding either leaves residue and deletes no unverified remainder. A staging
-area that answers as remote is refused outright; one whose filesystem does not
-implement the query is not, because refusing on silence would leave an owned tree
-nothing could ever remove.
+Exceeding either leaves residue and deletes no unverified remainder. Teardown
+refuses no volume in advance: the conversion guarantee is local-only, but that is
+a decision for destination admission, before a staging area exists and before the
+backend runs. Making it in teardown gets the worst of both — everything is
+already written, reclamation applies the same test and refuses the same way, and
+the deterministic staging name is blocked for good. A volume that cannot support
+the calls fails them, and a failed call is reclaimable residue. Nothing yet
+refuses a remote destination up front, and that is recorded as open rather than
+implied to be handled.
 
 `StagingResidue` gained five path-free reasons with stable identifiers —
-identity changed, reparse point, foreign entry, traversal limit, not
-enumerable, remote object — and `StagingReclaimError` gained one that carries a
-residue plus a detailed identifier that reaches into it. Cleanup residue still
+identity changed, reparse point, foreign entry, traversal limit, not enumerable
+— and `StagingReclaimError` gained two that carry a residue, one for a teardown
+that stopped part-way and one for a root that could not be admitted at all, plus
+a detailed identifier that reaches into either. Cleanup residue still
 never replaces the conversion outcome.
 
 What is not closed, stated rather than implied: the marker proves MSCanvas wrote

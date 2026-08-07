@@ -365,13 +365,18 @@ closed — what is closed is the one that spanned an entire tree's removal.
 
 Two named limits bound an arbitrary backend tree: depth 64 and 65,536 entries
 per directory, both traversed with an explicit stack rather than recursion.
-Exceeding either leaves residue and deletes no unverified remainder. A staging
-area that answers as remote is refused outright, because the conversion guarantee
-is local-only and a remote volume is where these mechanics stop being dependable.
-Only a positive answer refuses: a filesystem that does not implement the query at
-all is not treated as remote, because refusing on silence would leave an owned
-tree that neither teardown nor reclamation could ever remove — a worse failure
-than proceeding, and one the object checks below still bound.
+Exceeding either leaves residue and deletes no unverified remainder.
+
+Teardown refuses no volume in advance. The conversion guarantee is local-only,
+and a remote volume is where these mechanics stop being dependable — but that is
+a reason to decide it when the destination is admitted, before a staging area
+exists and before the backend runs. Deciding it in teardown gets the worst of
+both: the staging root, the marker and whatever the backend wrote are all already
+there, reclamation applies the same test and refuses the same way, and the
+deterministic staging name is blocked for good. A volume that cannot support the
+calls fails them instead, and a failed call is typed, reclaimable residue.
+Refusing remote *destinations* up front is a source- and destination-admission
+decision, and it belongs with the ones listed below rather than here.
 
 What is *not* closed, stated precisely: the marker proves that MSCanvas wrote a
 file of that name and content, not that this plan wrote it. Anything able to
@@ -380,6 +385,13 @@ unforgeable is a different decision — an authenticated-ownership model — and
 this amendment deliberately does not make it. What changed is that a forged
 marker can now only cause the deletion of objects that were individually opened,
 identity-checked and found to be exactly the entries the admitted root listed.
+
+Nor is a remote destination root refused anywhere yet. Teardown used to refuse
+one, which only meant a run against an SMB or mapped destination did all its work
+and then left every piece of it permanently. Removing that check makes the
+failure reclaimable rather than terminal; it does not make the destination
+appropriate, and refusing one before a staging area exists is listed below as
+work still to do.
 
 **Non-Windows keeps the narrower guarantee and does not claim otherwise.** The
 standard library offers no object-bound removal, so that platform still tears

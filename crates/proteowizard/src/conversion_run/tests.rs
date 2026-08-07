@@ -2452,7 +2452,6 @@ fn every_staging_residue_and_reclaim_reason_renders_without_a_path() {
         StagingResidue::ForeignEntry,
         StagingResidue::TraversalLimitReached,
         StagingResidue::NotEnumerable,
-        StagingResidue::RemoteObject,
     ];
     let identifiers: BTreeSet<&str> = residues
         .iter()
@@ -2470,7 +2469,7 @@ fn every_staging_residue_and_reclaim_reason_renders_without_a_path() {
             kind: io::ErrorKind::PermissionDenied,
         },
         StagingReclaimError::NotFullyRemoved(StagingResidue::IdentityChanged),
-        StagingReclaimError::NotAdmissible(StagingResidue::RemoteObject),
+        StagingReclaimError::NotAdmissible(StagingResidue::NotEnumerable),
     ];
     let reclaim_identifiers: BTreeSet<&str> = reclaims
         .iter()
