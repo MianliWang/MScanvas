@@ -1,7 +1,8 @@
 # ADR 0009 — mzML conversion execution and output-safety boundary
 
 - Status: Accepted for the private M3.0 conversion foundation; amended 2026-08-06
-  by M3.0.1 for handle-bound finalization; every user-visible
+  by M3.0.1 for handle-bound finalization and 2026-08-07 by M3.0.2 for
+  identity-bound staging cleanup; every user-visible
   conversion surface, every additional source posture and every queue concern
   separately gated
 - Date: 2026-08-06
@@ -199,10 +200,8 @@ Windows refuses to rename any *ancestor* of a held directory, so for the
 duration of a run the user cannot rename or remove the destination root or any
 folder above it. The lock lasts exactly as long as the run.
 
-**The cleanup-by-path window remains open and is not addressed here.** Cleanup
-still removes the staging directory by name, so a directory replaced at that
-path between creation and cleanup would be removed instead; the ownership marker
-bounds what that can destroy, and closing it properly is separate work.
+**The cleanup-by-path window was still open after M3.0.1 and is closed by the
+M3.0.2 amendment below.**
 
 One ordering became load-bearing and is explicit in the code: the validated
 object is released on every path, including a failed rename, before the staging
@@ -278,6 +277,127 @@ and peak owned-job memory — raw stdout and stderr are absent, because they can
 name the acquisition. The plan and the source render themselves without their
 paths or their file names.
 
+**Amended 2026-08-07 (M3.0.2): cleanup deletes objects, not names.**
+
+Proving that a path named an MSCanvas staging area and then deleting through
+that path were two different acts, and `remove_dir_all` widened the gap between
+them to every component of every child: each name was resolved again at the
+moment it was unlinked, long after anything had been verified. The consequence
+of being wrong was a recursive delete of somebody else's tree.
+
+Nothing in staging teardown deletes a name now. A directory is listed through
+the handle that already holds it; each child is opened following nothing, proved
+to be the object that listing described, and held; and deletion is a disposition
+set on that handle. A name is only a way to reach an object that must then prove
+itself, and an object that cannot prove itself is left alone. One engine serves
+both entry points, which differ only in how the root object is obtained.
+
+*Live-run cleanup* uses the strongest evidence available. `OwnedStagingArea`
+opens the staging root, the output directory and the ownership marker as it
+creates them and holds all three for the run, each without delete sharing, so
+none of them can be renamed or replaced while the run depends on them. Teardown
+consumes those handles rather than looking anything up. The type is RAII, has an
+opaque `Debug`, is not cloneable, and carries an explicit state — active,
+finished, cleaned, or residue. An unwind runs the same object-bound teardown
+through `Drop`; it never reverts to the path-recursive form, precisely because
+`Drop` cannot report what it finds.
+
+*Explicit reclamation* has none of that evidence, because the run that created
+the area is gone. It opens the staging root once, following nothing, and every
+judgement afterwards is made about that object: the listing comes from its
+handle, and the marker is opened, proved to be the entry that was listed, and
+read through that same handle before it is believed. The admitted marker object
+is then carried into teardown, so its name is never resolved a second time.
+
+The identity a child must match is the full 128-bit file identity together with
+the volume serial — the pairing `FILE_ID_INFO` documents as what uniquely
+identifies a file. The listing supplies it directly, because the enumeration
+uses the extended directory class; the older class reports 64 bits whose
+relationship to the 128-bit form is NTFS product behavior rather than contract,
+and a boundary should not rest on a filesystem coincidence. Enumeration records
+are walked with checked arithmetic and read unaligned, since drivers have been
+observed to violate the documented entry alignment. `.` and `..` are skipped;
+descending into `..` would leave the tree altogether.
+
+Reparse entries are refused, never followed and never removed. Deleting the link
+alone would in fact be safe, but a junction inside a staging area MSCanvas
+created is evidence that something else has been there, and this boundary
+refuses what it cannot account for rather than tidying it away. The rule applies
+first to the staging name itself: the root is opened without following a link
+*and* refused if the object it reaches is one, so a junction planted where a
+staging area should be can never become the tree that reclamation recurses into.
+A staging root that holds anything besides the marker and the output directory is
+refused the same way, untouched — and stays refused, reclaimable only once
+whatever else is in there has been dealt with by whoever put it there.
+
+The two entry points differ in one more way than how they obtain the root, and
+it is a difference in authority. A live run removes only the objects it created
+and has held ever since; an entry under an expected name that the run does not
+hold got there some other way, and automatic cleanup refuses it rather than
+deleting data on the strength of a name it recognises. Reclamation has no
+retained objects to appeal to, so its authority is the admitted marker, which
+vouches for the entries the admitted root listed. Retention therefore has to
+start at creation rather than at first success: the marker object is held before
+anything is written into it, so a write that fails part-way leaves teardown
+holding the very file this run created instead of an entry it can only refuse
+and reclamation cannot vouch for. The narrow window this closes
+is a staging area whose construction failed part-way — the run creates the root
+exclusively, but between that and creating the output directory something else
+can get there first, and nothing else would have stopped the ensuing teardown
+from removing it.
+
+Deletion is post-order and the handle ordering is load-bearing: a child's name
+does not leave its parent until the handle marking it closes, and a directory
+with any child refuses deletion, so every child is disposed and closed before
+its parent is asked to go. The disposition asks for POSIX semantics first,
+because that is the only form under which closing *this* handle is enough to
+free the name — otherwise a third party's handle keeps the entry alive and the
+parent fails through no fault of the ordering — and falls back to the older
+class on filesystems that do not implement it. The ownership marker is deleted
+after everything else and before the root, so a teardown that gives up part-way
+leaves the proof a later attempt needs rather than a nameless obstruction. That
+ordering is only worth anything if the marker is never spent on a teardown that
+is about to fail, so the root is listed once more after the output tree has gone
+and before the marker is touched: anything that arrived in the meantime stops the
+teardown with the proof still in place. A far narrower interval remains between
+that listing and the two calls that follow it, and it is not claimed to be
+closed — what is closed is the one that spanned an entire tree's removal.
+
+Two named limits bound an arbitrary backend tree: depth 64 and 65,536 entries
+per directory, both traversed with an explicit stack rather than recursion.
+Exceeding either leaves residue and deletes no unverified remainder.
+
+Teardown refuses no volume in advance. The conversion guarantee is local-only,
+and a remote volume is where these mechanics stop being dependable — but that is
+a reason to decide it when the destination is admitted, before a staging area
+exists and before the backend runs. Deciding it in teardown gets the worst of
+both: the staging root, the marker and whatever the backend wrote are all already
+there, reclamation applies the same test and refuses the same way, and the
+deterministic staging name is blocked for good. A volume that cannot support the
+calls fails them instead, and a failed call is typed, reclaimable residue.
+Refusing remote *destinations* up front is a source- and destination-admission
+decision, and it belongs with the ones listed below rather than here.
+
+What is *not* closed, stated precisely: the marker proves that MSCanvas wrote a
+file of that name and content, not that this plan wrote it. Anything able to
+create a file inside the destination root can forge one. Making the marker
+unforgeable is a different decision — an authenticated-ownership model — and
+this amendment deliberately does not make it. What changed is that a forged
+marker can now only cause the deletion of objects that were individually opened,
+identity-checked and found to be exactly the entries the admitted root listed.
+
+Nor is a remote destination root refused anywhere yet. Teardown used to refuse
+one, which only meant a run against an SMB or mapped destination did all its work
+and then left every piece of it permanently. Removing that check makes the
+failure reclaimable rather than terminal; it does not make the destination
+appropriate, and refusing one before a staging area exists is listed below as
+work still to do.
+
+**Non-Windows keeps the narrower guarantee and does not claim otherwise.** The
+standard library offers no object-bound removal, so that platform still tears
+down by path, in the same order. It is not described as equivalent, and no
+dependency was added to imitate it.
+
 ## Consequences
 
 - The conversion sequence now exists as library code with deterministic tests.
@@ -346,9 +466,7 @@ webview later should be path-free by construction, not by remembering to redact.
 
 ## Follow-up slices
 
-1. Closing the cleanup-by-path window: remove a staging area by an object the
-   run holds rather than by the name it was created under.
-2. A local diagnostic sink for the captured backend streams. The run drops
+1. A local diagnostic sink for the captured backend streams. The run drops
    them, because putting them in the result is exactly what the privacy rule
    forbids, and the crate's `Redactor`, `ReportableProcessOutput` and
    `classify_process_failure` have no consumer in a slice with no surface. The
@@ -356,9 +474,9 @@ webview later should be path-free by construction, not by remembering to redact.
    `ProcessOutput` it produced — and the slice that adds the product surface is
    when it gets a destination and a retention rule rather than a buffer nobody
    reads.
-3. Per-file conversion results and a narrow Tauri surface over accepted
+2. Per-file conversion results and a narrow Tauri surface over accepted
    workspace datasets, reusing the transfer-object privacy rules of ADR 0005.
-4. Queue, failure isolation and retry — and the task/cancellation protocol ADR
+3. Queue, failure isolation and retry — and the task/cancellation protocol ADR
    0007 defers, once real cancellation evidence exists.
-5. A vendor source posture, gated on an authorized fixture and on the
+4. A vendor source posture, gated on an authorized fixture and on the
    directory-acquisition evidence list in ADR 0007.

@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::*;
+use super::{OwnedStagingArea, StagingResidue};
 use crate::capability::{CapturedHelpStream, CompleteHelpCapture};
 use crate::command::{BackendTool, CommandSpec};
 use crate::conversion::{
@@ -880,7 +881,9 @@ fn the_ownership_marker_is_created_exclusively() {
     let directory = TestDirectory::new();
     let marker = directory.path().join("marker");
 
-    create_owner_marker(&marker).expect("write the marker");
+    let mut created = create_owner_marker(&marker).expect("create the marker");
+    write_owner_magic(&mut created).expect("write the marker");
+    drop(created);
     assert_eq!(
         fs::read(&marker).expect("read the marker"),
         STAGING_OWNER_MAGIC
@@ -1855,4 +1858,770 @@ fn a_validated_object_cannot_be_written_to_while_it_is_held() {
         fs::read_to_string(fixture.root.join("sample.mzML")).expect("read the finalized output"),
         output_document()
     );
+}
+
+// --- Identity-bound staging cleanup ---
+//
+// The claim under test is that nothing is deleted because a name once passed a
+// check. Every test here works the seam `discard_seamed` opens between the
+// moment a directory is listed and the moment anything that listing named is
+// opened or removed.
+
+/// A staging area created the way a run creates one, with a tree written into
+/// its output directory.
+fn staging_with_tree(directory: &TestDirectory) -> (OwnedStagingArea, PathBuf) {
+    let root = directory.path().join("staging");
+    let area = OwnedStagingArea::create(root.clone()).expect("create the staging area");
+    let output = area.output_directory();
+    fs::write(output.join("result.mzML"), output_document()).expect("write the output");
+    fs::create_dir(output.join("nested")).expect("create a nested directory");
+    fs::write(output.join("nested").join("sidecar.txt"), b"sidecar").expect("write a sidecar");
+    fs::create_dir(output.join("nested").join("deeper")).expect("create a deeper directory");
+    fs::write(
+        output.join("nested").join("deeper").join("leaf.bin"),
+        b"leaf",
+    )
+    .expect("write a leaf");
+    (area, root)
+}
+
+#[test]
+fn an_arbitrary_backend_tree_is_removed_and_the_area_with_it() {
+    let directory = TestDirectory::new();
+    let (area, root) = staging_with_tree(&directory);
+
+    assert_eq!(area.discard(), None);
+    assert!(!root.exists(), "the staging area outlived its own teardown");
+    assert_eq!(
+        entry_names(directory.path()),
+        Vec::<OsString>::new(),
+        "teardown touched something outside the staging area"
+    );
+}
+
+/// Deletion is post-order: a directory only goes once everything in it has, and
+/// the marker only after the output tree, so an interrupted teardown always
+/// leaves the proof that makes its residue reclaimable.
+#[cfg(windows)]
+#[test]
+fn teardown_is_post_order_and_the_marker_goes_last() {
+    let directory = TestDirectory::new();
+    let (area, root) = staging_with_tree(&directory);
+    let marker = root.join(".mscanvas-staging-owner");
+    let output = root.join("output");
+    let deepest = output.join("nested").join("deeper");
+    let observed = RefCell::new(Vec::new());
+
+    // The seam fires after each directory is listed, which is once per level on
+    // the way down. Recording what still exists at each firing shows the order
+    // the levels are emptied in.
+    let residue = area.discard_seamed(&mut || {
+        observed.borrow_mut().push((
+            marker.exists(),
+            deepest.join("leaf.bin").exists(),
+            output.join("result.mzML").exists(),
+        ));
+    });
+
+    // The outcome is itself the post-order proof: a directory with any child
+    // refuses deletion, so a teardown that reached a parent before its children
+    // could not have finished at all.
+    assert_eq!(residue, None);
+    assert!(!root.exists());
+
+    // And nothing was removed before the descent finished, which is what makes
+    // the order post- rather than merely depth-first.
+    let observed = observed.into_inner();
+    assert!(
+        observed.len() >= 3,
+        "the descent did not reach every level: {observed:?}"
+    );
+    assert!(
+        observed.iter().all(|level| *level == (true, true, true)),
+        "something was deleted before the deepest level was listed: {observed:?}"
+    );
+}
+
+#[test]
+fn a_backend_failure_still_leaves_the_destination_root_clean() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = |spec: &CommandSpec| {
+        let staged = staged_destination(spec);
+        let staging = staged.parent().expect("the staged output has a parent");
+        fs::write(&staged, b"<partial").expect("write a partial output");
+        fs::create_dir(staging.join("scratch")).expect("write a sidecar directory");
+        fs::write(staging.join("scratch").join("tmp.bin"), b"tmp").expect("write a sidecar");
+        Ok(3)
+    };
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&fixture.plan, &capabilities(), &runner);
+
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::BackendRejected { exit_code: Some(3) })
+    );
+    assert_eq!(
+        report.residue(),
+        None,
+        "an arbitrary sidecar tree defeated cleanup"
+    );
+    assert!(entry_names(&fixture.root).is_empty());
+}
+
+/// The load-bearing regression test for the root. Between admission and
+/// deletion the staging root is attacked: renamed away, and replaced at its
+/// name by a different directory carrying a plausible marker and unrelated
+/// data. A path-recursive cleanup would delete the replacement.
+#[cfg(windows)]
+#[test]
+fn a_staging_root_replaced_after_admission_is_never_the_thing_deleted() {
+    let directory = TestDirectory::new();
+    let (area, root) = staging_with_tree(&directory);
+    let decoy = directory.path().join("decoy");
+    let refusal = Cell::new(None);
+    let firing = Cell::new(0_u32);
+
+    let residue = area.discard_seamed(&mut || {
+        if firing.replace(firing.get() + 1) != 0 {
+            return;
+        }
+        // The admitted root is held without delete sharing, so it cannot be
+        // renamed out from under the teardown at all.
+        refusal.set(Some(
+            fs::rename(&root, directory.path().join("moved"))
+                .err()
+                .and_then(|error| error.raw_os_error()),
+        ));
+        // A plausible impostor beside it must be untouched either way.
+        fs::create_dir(&decoy).expect("create the decoy");
+        fs::write(
+            decoy.join(".mscanvas-staging-owner"),
+            b"mscanvas-conversion-staging-area\n",
+        )
+        .expect("write a plausible marker");
+        fs::write(decoy.join("precious.txt"), b"not yours").expect("write unrelated data");
+    });
+
+    assert_eq!(
+        refusal.get().expect("the seam ran"),
+        Some(32),
+        "the admitted staging root was not pinned against replacement"
+    );
+    assert_eq!(residue, None);
+    assert!(!root.exists(), "the admitted object was not removed");
+    assert_eq!(
+        fs::read(decoy.join("precious.txt")).expect("read the decoy"),
+        b"not yours",
+        "an unrelated directory was deleted"
+    );
+}
+
+/// The same for a child. Between the listing and the open, the entry a name
+/// referred to is replaced. Identity is what refuses it; the name is not
+/// evidence.
+#[cfg(windows)]
+#[test]
+fn a_child_replaced_after_enumeration_is_refused_and_the_replacement_survives() {
+    for replacement in ["file", "directory", "hard-link"] {
+        let directory = TestDirectory::new();
+        let root = directory.path().join("staging");
+        let area = OwnedStagingArea::create(root.clone()).expect("create the staging area");
+        let output = area.output_directory();
+        fs::write(output.join("result.mzML"), output_document()).expect("write the output");
+
+        let outside = directory.path().join("outside.txt");
+        fs::write(&outside, b"outside data").expect("write an outside object");
+        let target = output.join("result.mzML");
+        // The seam fires once per directory listed: first for the staging root,
+        // then for the output directory. The second firing is the moment this
+        // test is about, because that is when `result.mzML` has been listed and
+        // has not yet been opened.
+        let firing = Cell::new(0_u32);
+
+        let residue = area.discard_seamed(&mut || {
+            if firing.replace(firing.get() + 1) != 1 {
+                return;
+            }
+            fs::remove_file(&target).expect("unlink the listed child");
+            match replacement {
+                "directory" => fs::create_dir(&target).expect("replace with a directory"),
+                "hard-link" => {
+                    fs::hard_link(&outside, &target).expect("replace with a link to outside");
+                }
+                _ => fs::write(&target, b"a different file").expect("replace with a file"),
+            }
+        });
+
+        assert_eq!(
+            residue,
+            Some(StagingResidue::IdentityChanged),
+            "replacement: {replacement}"
+        );
+        assert_eq!(
+            fs::read(&outside).expect("read the outside object"),
+            b"outside data",
+            "an object outside the staging area was touched: {replacement}"
+        );
+        assert!(
+            root.exists(),
+            "a refused teardown removed the tree anyway: {replacement}"
+        );
+        assert!(
+            root.join(".mscanvas-staging-owner").is_file(),
+            "a refused teardown took the ownership proof with it: {replacement}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+/// A junction planted in the owned tree is refused, never followed and never
+/// removed, and what it points at is untouched.
+#[cfg(windows)]
+#[test]
+fn a_reparse_entry_inside_the_owned_tree_is_refused_and_never_followed() {
+    let directory = TestDirectory::new();
+    let root = directory.path().join("staging");
+    let area = OwnedStagingArea::create(root.clone()).expect("create the staging area");
+    let output = area.output_directory();
+    fs::write(output.join("result.mzML"), output_document()).expect("write the output");
+
+    let outside = directory.path().join("outside");
+    fs::create_dir(&outside).expect("create the outside directory");
+    fs::write(outside.join("precious.txt"), b"not yours").expect("write outside data");
+    if !make_junction(&output.join("link"), &outside) {
+        // Junction creation is the one thing here that can be unavailable; the
+        // test says so rather than passing quietly.
+        eprintln!("skipped: this environment cannot create a junction");
+        let _ = area.discard();
+        return;
+    }
+
+    let residue = area.discard();
+
+    assert_eq!(residue, Some(StagingResidue::ReparsePointEncountered));
+    assert_eq!(
+        fs::read(outside.join("precious.txt")).expect("read outside the tree"),
+        b"not yours",
+        "the junction was followed"
+    );
+    assert!(root.exists(), "a refused teardown removed the tree anyway");
+}
+
+/// Only the marker object this boundary wrote makes a staging area reclaimable.
+#[cfg(windows)]
+#[test]
+fn reclamation_trusts_only_the_admitted_marker_object() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let staging = fixture.root.join("sample.mzML.mscanvas-staging");
+    let marker = staging.join(".mscanvas-staging-owner");
+
+    // No marker at all.
+    fs::create_dir(&staging).expect("create the staging name");
+    fs::write(staging.join("held.txt"), b"someone else").expect("write foreign content");
+    assert_eq!(
+        fixture.plan.reclaim_staging_area(),
+        Err(StagingReclaimError::NotOwned)
+    );
+
+    // A marker with the wrong content.
+    fs::write(&marker, b"not the marker").expect("write a wrong marker");
+    assert_eq!(
+        fixture.plan.reclaim_staging_area(),
+        Err(StagingReclaimError::NotOwned)
+    );
+
+    // A marker that is a directory rather than the file this boundary writes.
+    fs::remove_file(&marker).expect("remove the wrong marker");
+    fs::create_dir(&marker).expect("create a marker directory");
+    assert_eq!(
+        fixture.plan.reclaim_staging_area(),
+        Err(StagingReclaimError::NotOwned)
+    );
+    fs::remove_dir(&marker).expect("remove the marker directory");
+
+    // A marker that is a link is never read through.
+    if make_junction(&marker, &staging) {
+        assert_eq!(
+            fixture.plan.reclaim_staging_area(),
+            Err(StagingReclaimError::NotOwned)
+        );
+        remove_junction(&marker);
+    }
+
+    assert!(
+        fs::read(staging.join("held.txt")).expect("read the foreign content") == b"someone else",
+        "a refused reclamation removed something"
+    );
+    let _ = fs::remove_dir_all(&staging);
+}
+
+/// The staging name is as untrustworthy as every other name here. A link
+/// planted where a staging area should be is never opened as one, so no amount
+/// of plausible-looking content on the other side of it can be reclaimed
+/// through.
+#[cfg(windows)]
+#[test]
+fn a_link_at_the_staging_name_is_never_reclaimed_through() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let staging = fixture.root.join("sample.mzML.mscanvas-staging");
+    let outside = fixture
+        .root
+        .parent()
+        .expect("the destination root has a parent")
+        .to_path_buf();
+
+    // The tree on the other side of the link is dressed as a staging area this
+    // boundary owns — marker, output directory and all — so the link is the
+    // only thing standing between reclamation and a recursive delete of it.
+    let victim = outside.join("victim");
+    fs::create_dir(&victim).expect("create the victim tree");
+    fs::write(victim.join(STAGING_OWNER_MARKER), STAGING_OWNER_MAGIC)
+        .expect("write a convincing marker");
+    fs::create_dir(victim.join("output")).expect("create a convincing output directory");
+    fs::write(
+        victim.join("output").join("result.mzML"),
+        b"someone else's work",
+    )
+    .expect("write the victim's data");
+
+    if !make_junction(&staging, &victim) {
+        return;
+    }
+
+    let refused = fixture.plan.reclaim_staging_area();
+
+    assert!(
+        matches!(refused, Err(StagingReclaimError::NotOwned)),
+        "a link at the staging name was accepted as a staging area: {refused:?}"
+    );
+    assert!(victim.is_dir(), "reclamation deleted through the link");
+    assert_eq!(
+        fs::read(victim.join("output").join("result.mzML")).expect("read the victim's data"),
+        b"someone else's work"
+    );
+    assert!(
+        victim.join(".mscanvas-staging-owner").is_file(),
+        "reclamation reached the victim's marker"
+    );
+
+    remove_junction(&staging);
+    assert!(!staging.exists(), "the test left the link behind");
+}
+
+/// The whole reclamation ladder, in the order a caller meets it.
+#[test]
+fn reclamation_covers_absent_owned_empty_and_repeated_attempts() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create the destination root");
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let staging = plan.destination_root().join("sample.mzML.mscanvas-staging");
+
+    // Absent is nothing to reclaim.
+    plan.reclaim_staging_area()
+        .expect("an absent staging area is not a failure");
+
+    // An owned area with a real tree is reclaimed as objects.
+    let area = OwnedStagingArea::create(staging.clone()).expect("create the staging area");
+    let output = area.output_directory();
+    fs::write(output.join("result.mzML"), output_document()).expect("write the output");
+    fs::create_dir(output.join("nested")).expect("create a nested directory");
+    fs::write(output.join("nested").join("leaf.bin"), b"leaf").expect("write a leaf");
+    // Release the run's handles without tearing down, which is what a process
+    // that died mid-run leaves behind.
+    area.abandon();
+    assert!(staging.is_dir());
+    plan.reclaim_staging_area()
+        .expect("an owned staging area is reclaimable");
+    assert!(!staging.exists());
+
+    // A second attempt has nothing to do and says so.
+    plan.reclaim_staging_area()
+        .expect("a second reclaim is not a failure");
+
+    // An empty directory is reclaimable: teardown removes the marker before the
+    // root, so this is exactly what an interrupted cleanup leaves.
+    fs::create_dir(&staging).expect("leave an empty staging directory");
+    plan.reclaim_staging_area()
+        .expect("an empty staging directory is reclaimable");
+    assert!(!staging.exists());
+}
+
+/// Cleanup residue never replaces the conversion result, and the evidence a
+/// later attempt needs survives.
+#[cfg(windows)]
+#[test]
+fn a_cleanup_that_cannot_finish_keeps_the_outcome_and_stays_reclaimable() {
+    use std::fs::OpenOptions;
+    use std::os::windows::fs::OpenOptionsExt;
+
+    /// Share reads only, so the staged file cannot be opened for deletion.
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let held = RefCell::new(None);
+    let act = |spec: &CommandSpec| {
+        let staged = staged_destination(spec);
+        fs::write(&staged, output_document()).expect("write the staged output");
+        *held.borrow_mut() = Some(
+            OpenOptions::new()
+                .read(true)
+                .share_mode(FILE_SHARE_READ)
+                .open(&staged)
+                .expect("hold the staged output open"),
+        );
+        Ok(4)
+    };
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&fixture.plan, &capabilities(), &runner);
+
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::BackendRejected { exit_code: Some(4) }),
+        "cleanup residue replaced the primary outcome"
+    );
+    assert!(
+        report.residue().is_some(),
+        "an unremovable tree reported nothing"
+    );
+    let staging = fixture.root.join("sample.mzML.mscanvas-staging");
+    assert!(
+        staging.join(".mscanvas-staging-owner").is_file(),
+        "the residue lost the proof a later attempt needs"
+    );
+
+    // The reason a locked owned tree gives has been `staging_not_removed` since
+    // reclamation existed, and callers classify on it.
+    let refused = fixture
+        .plan
+        .reclaim_staging_area()
+        .expect_err("a locked tree cannot be reclaimed");
+    assert!(matches!(refused, StagingReclaimError::NotRemoved { .. }));
+    assert_eq!(refused.stable_id(), "staging_not_removed");
+    assert_eq!(refused.detailed_stable_id(), "staging_not_removed");
+
+    // Once the obstruction is gone the same area is reclaimable.
+    drop(held.borrow_mut().take());
+    fixture
+        .plan
+        .reclaim_staging_area()
+        .expect("the residue is reclaimable once the lock is gone");
+    assert!(!staging.exists());
+    assert!(entry_names(&fixture.root).is_empty());
+}
+
+/// The staging root holds exactly what this boundary put there. Anything else
+/// stops the teardown rather than being deleted or deleted around.
+#[cfg(windows)]
+#[test]
+fn a_foreign_entry_in_the_staging_root_stops_teardown_without_deleting_it() {
+    let directory = TestDirectory::new();
+    let root = directory.path().join("staging");
+    let area = OwnedStagingArea::create(root.clone()).expect("create the staging area");
+    fs::write(root.join("someone-elses.txt"), b"not yours").expect("write a foreign entry");
+
+    let residue = area.discard();
+
+    assert_eq!(residue, Some(StagingResidue::ForeignEntry));
+    assert_eq!(
+        fs::read(root.join("someone-elses.txt")).expect("read the foreign entry"),
+        b"not yours"
+    );
+    assert!(root.join(".mscanvas-staging-owner").is_file());
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A live run removes what it created and held, and nothing else. An entry
+/// under an expected name that this run does not hold arrived some other way,
+/// and automatic cleanup is not the place to decide what it was.
+#[test]
+fn cleanup_after_a_run_removes_only_what_that_run_held() {
+    let directory = TestDirectory::new();
+    let root = directory.path().join("staging");
+    let mut area = OwnedStagingArea::create(root.clone()).expect("create the staging area");
+    let output = area.output_directory();
+    fs::write(output.join("someone-elses.mzML"), b"not ours").expect("write into the output");
+
+    // The state a run is in when it never managed to create and hold its own
+    // output directory, because something else got there first.
+    area.release_output();
+    let residue = area.discard();
+
+    assert_eq!(residue, Some(StagingResidue::ForeignEntry));
+    assert_eq!(
+        fs::read(output.join("someone-elses.mzML")).expect("read the unheld output"),
+        b"not ours"
+    );
+    assert!(
+        root.join(".mscanvas-staging-owner").is_file(),
+        "the refusal spent the proof that makes this reclaimable"
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A marker this run created but never managed to fill in is still this run's
+/// to remove. Refusing it would leave a staging root that reclamation cannot
+/// vouch for either, and the deterministic staging name would be blocked for
+/// good by a partial write.
+#[cfg(windows)]
+#[test]
+fn a_marker_created_but_never_filled_in_is_still_the_run_s_to_remove() {
+    let directory = TestDirectory::new();
+    let root = directory.path().join("staging");
+    fs::create_dir(&root).expect("create the staging root");
+    let marker_path = root.join(".mscanvas-staging-owner");
+
+    // Exactly what `populate` holds when the write into a freshly created
+    // marker fails: the object exists, this run holds it, and it is empty.
+    let area = OwnedStagingArea {
+        root: Some(open_owned_directory(&root).expect("open the staging root")),
+        output: None,
+        marker: Some(create_owner_marker(&marker_path).expect("create the marker")),
+        path: root.clone(),
+        state: StagingState::Active,
+    };
+    assert_eq!(
+        fs::metadata(&marker_path).expect("stat the marker").len(),
+        0,
+        "the marker under test is supposed to be unwritten"
+    );
+
+    assert_eq!(area.discard(), None);
+    assert!(
+        !root.exists(),
+        "a run could not clean up after its own unfinished marker"
+    );
+}
+
+/// The proof is never spent on a teardown that is about to fail. Something
+/// arriving in the staging root while the output tree is going would otherwise
+/// leave a directory nothing can show was ever MSCanvas's.
+#[cfg(windows)]
+#[test]
+fn an_entry_arriving_during_teardown_keeps_the_marker_where_it_is() {
+    let directory = TestDirectory::new();
+    let (area, root) = staging_with_tree(&directory);
+    let intruder = root.join("arrived-late.txt");
+    let firing = Cell::new(0_usize);
+
+    // The seam fires once per directory listed. Firing 0 is the staging root
+    // itself; writing then means the entry appears after that listing and while
+    // the output tree below is still being removed.
+    let residue = area.discard_seamed(&mut || {
+        if firing.replace(firing.get() + 1) == 0 {
+            fs::write(&intruder, b"arrived late").expect("write the late entry");
+        }
+    });
+
+    assert_eq!(residue, Some(StagingResidue::ForeignEntry));
+    assert_eq!(
+        fs::read(&intruder).expect("read the late entry"),
+        b"arrived late"
+    );
+    assert!(
+        root.join(".mscanvas-staging-owner").is_file(),
+        "the marker went even though the root could not"
+    );
+    let _ = fs::remove_file(&intruder);
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// An unwind performs the same object-bound teardown, never the path-recursive
+/// one, because it cannot report what it finds.
+#[test]
+fn an_unwind_tears_the_staging_area_down_by_object() {
+    let directory = TestDirectory::new();
+    let root = directory.path().join("staging");
+    let outside = directory.path().join("outside.txt");
+    fs::write(&outside, b"outside data").expect("write an outside object");
+
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let area = OwnedStagingArea::create(root.clone()).expect("create the staging area");
+        fs::write(area.output_directory().join("result.mzML"), b"partial")
+            .expect("write an output");
+        panic!("something went wrong mid-run");
+    }));
+
+    assert!(unwound.is_err(), "the panic must not be swallowed");
+    assert!(!root.exists(), "the staging area outlived the unwind");
+    assert_eq!(
+        fs::read(&outside).expect("read the outside object"),
+        b"outside data"
+    );
+}
+
+#[test]
+fn every_staging_residue_and_reclaim_reason_renders_without_a_path() {
+    let residues = [
+        StagingResidue::NotRemoved {
+            kind: io::ErrorKind::PermissionDenied,
+        },
+        StagingResidue::IdentityChanged,
+        StagingResidue::ReparsePointEncountered,
+        StagingResidue::ForeignEntry,
+        StagingResidue::TraversalLimitReached,
+        StagingResidue::NotEnumerable,
+    ];
+    let identifiers: BTreeSet<&str> = residues
+        .iter()
+        .copied()
+        .map(StagingResidue::stable_id)
+        .collect();
+    assert_eq!(identifiers.len(), residues.len());
+
+    let reclaims = [
+        StagingReclaimError::NotOwned,
+        StagingReclaimError::NotInspectable {
+            kind: io::ErrorKind::PermissionDenied,
+        },
+        StagingReclaimError::NotRemoved {
+            kind: io::ErrorKind::PermissionDenied,
+        },
+        StagingReclaimError::NotFullyRemoved(StagingResidue::IdentityChanged),
+        StagingReclaimError::NotAdmissible(StagingResidue::NotEnumerable),
+    ];
+    let reclaim_identifiers: BTreeSet<&str> = reclaims
+        .iter()
+        .copied()
+        .map(StagingReclaimError::stable_id)
+        .collect();
+    assert_eq!(reclaim_identifiers.len(), reclaims.len());
+    assert_eq!(
+        StagingReclaimError::NotFullyRemoved(StagingResidue::ReparsePointEncountered)
+            .detailed_stable_id(),
+        "staging_reparse_point"
+    );
+
+    for rendered in residues
+        .iter()
+        .map(|residue| format!("{residue:?} {residue}"))
+        .chain(
+            reclaims
+                .iter()
+                .map(|reclaim| format!("{reclaim:?} {reclaim}")),
+        )
+    {
+        assert!(
+            !rendered.contains('/') && !rendered.contains('\\'),
+            "a cleanup reason must not render a path: {rendered}"
+        );
+        assert!(
+            !rendered.contains("0x") && !rendered.to_lowercase().contains("handle"),
+            "a cleanup reason must not render a handle: {rendered}"
+        );
+    }
+
+    // The area itself describes its state and nothing about where it is.
+    let directory = TestDirectory::new();
+    let area = OwnedStagingArea::create(directory.path().join("staging"))
+        .expect("create the staging area");
+    let rendered = format!("{area:?}");
+    assert!(
+        !rendered.contains('/') && !rendered.contains('\\') && !rendered.contains("staging"),
+        "a staging area must not render its path: {rendered}"
+    );
+    assert!(rendered.contains("Active"), "{rendered}");
+    assert_eq!(area.discard(), None);
+}
+
+/// Creates a directory junction, reporting whether the environment allowed it.
+///
+/// A junction is the reparse entry an unprivileged process can actually make,
+/// and there is no standard-library API for one, so this is the documented
+/// `FSCTL_SET_REPARSE_POINT` call rather than a shelled-out `mklink`.
+#[cfg(windows)]
+fn make_junction(link: &Path, target: &Path) -> bool {
+    use std::ffi::c_void;
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FSCTL_SET_REPARSE_POINT: u32 = 0x0009_00A4;
+    const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003;
+    const GENERIC_WRITE: u32 = 0x4000_0000;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        #[link_name = "DeviceIoControl"]
+        fn device_io_control(
+            device: *mut c_void,
+            control_code: u32,
+            in_buffer: *mut c_void,
+            in_size: u32,
+            out_buffer: *mut c_void,
+            out_size: u32,
+            returned: *mut u32,
+            overlapped: *mut c_void,
+        ) -> i32;
+    }
+
+    if fs::create_dir_all(link).is_err() {
+        return false;
+    }
+    let mut substitute: Vec<u16> = OsString::from(format!(
+        "\\??\\{}",
+        fs::canonicalize(target)
+            .expect("canonical junction target")
+            .to_string_lossy()
+            .trim_start_matches(r"\\?\")
+    ))
+    .encode_wide()
+    .collect();
+    substitute.push(0);
+    let name_bytes = (substitute.len() - 1) * 2;
+
+    // REPARSE_DATA_BUFFER: tag, data length, reserved, then the mount-point
+    // header and the two path buffers.
+    let mut buffer = vec![0_u8; 8 + 8 + name_bytes + 2 + 2];
+    buffer[0..4].copy_from_slice(&IO_REPARSE_TAG_MOUNT_POINT.to_le_bytes());
+    let data_length = (8 + name_bytes + 2 + 2) as u16;
+    buffer[4..6].copy_from_slice(&data_length.to_le_bytes());
+    buffer[8..10].copy_from_slice(&0_u16.to_le_bytes());
+    buffer[10..12].copy_from_slice(&(name_bytes as u16).to_le_bytes());
+    buffer[12..14].copy_from_slice(&((name_bytes + 2) as u16).to_le_bytes());
+    buffer[14..16].copy_from_slice(&0_u16.to_le_bytes());
+    for (index, unit) in substitute.iter().take(substitute.len() - 1).enumerate() {
+        let at = 16 + index * 2;
+        buffer[at..at + 2].copy_from_slice(&unit.to_le_bytes());
+    }
+
+    let Ok(handle) = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .access_mode(GENERIC_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(link)
+    else {
+        let _ = fs::remove_dir(link);
+        return false;
+    };
+    let mut returned = 0_u32;
+    // SAFETY: the handle is live and the buffer is a correctly sized
+    // REPARSE_DATA_BUFFER for a mount point that outlives the call.
+    let set = unsafe {
+        device_io_control(
+            handle.as_raw_handle(),
+            FSCTL_SET_REPARSE_POINT,
+            buffer.as_mut_ptr().cast(),
+            buffer.len() as u32,
+            std::ptr::null_mut(),
+            0,
+            &raw mut returned,
+            std::ptr::null_mut(),
+        )
+    };
+    drop(handle);
+    if set == 0 {
+        let _ = fs::remove_dir(link);
+        return false;
+    }
+    true
+}
+
+#[cfg(windows)]
+fn remove_junction(link: &Path) {
+    let _ = fs::remove_dir(link);
 }

@@ -15,7 +15,8 @@
 //! The target end is bound differently, because the Win32 entry point does not
 //! support binding it the same way — see [`DestinationDirectory`].
 //!
-//! All unsafe code in the conversion boundary lives here.
+//! All unsafe code for finalization lives here; teardown's is in
+//! [`super::cleanup`], and the boundary has no other.
 
 use std::ffi::OsStr;
 use std::fs::File;

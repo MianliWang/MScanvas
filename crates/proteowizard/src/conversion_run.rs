@@ -30,6 +30,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
+use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -437,17 +438,48 @@ impl ConversionPlan {
                 return Err(StagingReclaimError::NotInspectable { kind: error.kind() });
             }
         }
+
+        // The staging root is opened once and everything after this decides
+        // about that object. Nothing re-resolves the name, so what is verified
+        // and what is deleted cannot come apart.
         let staging = self.staging_directory();
-        match staging_ownership(&staging) {
-            StagingOwnership::Absent => return Ok(()),
-            StagingOwnership::Owned => {}
-            StagingOwnership::NotOwned => return Err(StagingReclaimError::NotOwned),
-            StagingOwnership::NotInspectable { kind } => {
-                return Err(StagingReclaimError::NotInspectable { kind });
+        let root = match open_owned_directory(&staging) {
+            Ok(root) => root,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotADirectory => {
+                return Err(StagingReclaimError::NotOwned);
             }
-        }
-        std::fs::remove_dir_all(&staging)
-            .map_err(|error| StagingReclaimError::NotRemoved { kind: error.kind() })
+            Err(error) => {
+                return Err(StagingReclaimError::NotInspectable { kind: error.kind() });
+            }
+        };
+
+        let marker = match cleanup::admit_staging_root(&root, &staging, STAGING_OWNER_MAGIC) {
+            cleanup::StagingAdmission::Owned(marker) => Some(marker),
+            cleanup::StagingAdmission::Empty => {
+                // Emptiness is not proof of ownership; it makes ownership
+                // irrelevant, because removing an empty directory destroys
+                // nothing. Teardown removes the marker before the root, so this
+                // is exactly what an interrupted cleanup leaves behind.
+                return cleanup::dispose_empty_root(root, &staging)
+                    .map_err(StagingReclaimError::from_residue);
+            }
+            cleanup::StagingAdmission::NotOwned => return Err(StagingReclaimError::NotOwned),
+            cleanup::StagingAdmission::NotInspectable(residue) => {
+                return Err(StagingReclaimError::NotAdmissible(residue));
+            }
+        };
+
+        cleanup::tear_down_owned_staging(
+            root,
+            &staging,
+            cleanup::RetainedStagingObjects {
+                output: None,
+                marker,
+                authority: cleanup::TeardownAuthority::AdmittedMarker,
+            },
+        )
+        .map_err(StagingReclaimError::from_residue)
     }
 
     fn destination(&self) -> PathBuf {
@@ -795,9 +827,27 @@ impl From<&ProcessOutput> for BackendRunFacts {
 /// primary cause.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum StagingResidue {
-    /// The staging directory MSCanvas created could not be removed.
-    #[error("the staging directory could not be removed: {kind}")]
+    /// An object MSCanvas owned could not be removed.
+    #[error("the staging area could not be removed: {kind}")]
     NotRemoved { kind: io::ErrorKind },
+    /// Something replaced an entry between the moment it was listed and the
+    /// moment it was opened. Neither the object that was listed nor the one that
+    /// arrived was touched.
+    #[error("a staging entry changed identity before it could be removed")]
+    IdentityChanged,
+    /// A link was found where an owned object was expected. It is never
+    /// followed and never removed.
+    #[error("a staging entry is a reparse point")]
+    ReparsePointEncountered,
+    /// The staging root holds something this boundary did not put there.
+    #[error("the staging area holds an entry MSCanvas did not create")]
+    ForeignEntry,
+    /// The owned tree is deeper or wider than teardown will walk.
+    #[error("the staging area exceeds the traversal limit")]
+    TraversalLimitReached,
+    /// A directory listing could not be read as the records it must be.
+    #[error("a staging directory could not be enumerated")]
+    NotEnumerable,
 }
 
 impl StagingResidue {
@@ -805,6 +855,11 @@ impl StagingResidue {
     pub const fn stable_id(self) -> &'static str {
         match self {
             Self::NotRemoved { .. } => "staging_not_removed",
+            Self::IdentityChanged => "staging_identity_changed",
+            Self::ReparsePointEncountered => "staging_reparse_point",
+            Self::ForeignEntry => "staging_foreign_entry",
+            Self::TraversalLimitReached => "staging_traversal_limit_reached",
+            Self::NotEnumerable => "staging_not_enumerable",
         }
     }
 }
@@ -822,20 +877,53 @@ pub enum StagingReclaimError {
     /// Ownership was established and the removal still failed.
     #[error("the staging area could not be removed: {kind}")]
     NotRemoved { kind: io::ErrorKind },
+    /// Ownership was established and teardown stopped part-way. The ownership
+    /// evidence a later attempt needs is deliberately still there.
+    #[error("the staging area was not fully removed: {0}")]
+    NotFullyRemoved(StagingResidue),
+    /// Ownership could not be decided, so nothing was removed at all. This is
+    /// not a partial teardown; it is a refusal before one began.
+    #[error("the staging area could not be admitted: {0}")]
+    NotAdmissible(StagingResidue),
 }
 
 impl StagingReclaimError {
+    /// Reports a residue as the reason a reclamation failed.
+    ///
+    /// An owned tree that a lock or a permission refused is the one case this
+    /// crate has always reported, and it keeps the variant — and therefore the
+    /// identifier — it was published with. `NotFullyRemoved` carries the
+    /// reasons that had no equivalent before.
+    fn from_residue(residue: StagingResidue) -> Self {
+        match residue {
+            StagingResidue::NotRemoved { kind } => Self::NotRemoved { kind },
+            other => Self::NotFullyRemoved(other),
+        }
+    }
+
     #[must_use]
     pub const fn stable_id(self) -> &'static str {
         match self {
             Self::NotOwned => "staging_not_owned",
             Self::NotInspectable { .. } => "staging_not_inspectable",
             Self::NotRemoved { .. } => "staging_not_removed",
+            Self::NotFullyRemoved(_) => "staging_not_fully_removed",
+            Self::NotAdmissible(_) => "staging_not_admissible",
+        }
+    }
+
+    /// The precise reason, reaching into the residue where one exists.
+    #[must_use]
+    pub const fn detailed_stable_id(self) -> &'static str {
+        match self {
+            Self::NotFullyRemoved(residue) | Self::NotAdmissible(residue) => residue.stable_id(),
+            other => other.stable_id(),
         }
     }
 }
 
-/// Writes the ownership marker, creating it exclusively and following nothing.
+/// Creates the ownership marker exclusively, following nothing, and returns the
+/// object without writing to it.
 ///
 /// A plain write would follow a link. The staging directory is new, but it sits
 /// in a root another process may write to, so an entry can appear at the marker's
@@ -843,80 +931,40 @@ impl StagingReclaimError {
 /// followed link would truncate whatever it pointed at, which could be an output
 /// the user already had or the acquisition itself. Neither the guard nor
 /// reclamation could put that back.
-fn create_owner_marker(marker: &Path) -> io::Result<()> {
-    use std::io::Write;
-
+///
+/// Creating and writing are separate so the caller can retain the object before
+/// anything goes into it. A write that fails then leaves teardown holding the
+/// very file this run created, rather than an entry it can only refuse.
+fn create_owner_marker(marker: &Path) -> io::Result<File> {
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
+    options.read(true).write(true).create_new(true);
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
 
+        const DELETE: u32 = 0x0001_0000;
+        const FILE_GENERIC_READ: u32 = 0x0012_0089;
+        const FILE_GENERIC_WRITE: u32 = 0x0012_0116;
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
         /// Refuse a reparse point rather than traverse it.
         const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 
-        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+        // The marker is held for the run: delete sharing is withheld so it
+        // cannot be replaced under the run, and DELETE access is taken now so
+        // teardown can remove this exact object without reopening a name.
+        options
+            .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE)
+            .share_mode(FILE_SHARE_READ)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
     }
-    options.open(marker)?.write_all(STAGING_OWNER_MAGIC)
+    options.open(marker)
 }
 
-enum StagingOwnership {
-    Absent,
-    Owned,
-    NotOwned,
-    NotInspectable { kind: io::ErrorKind },
-}
+/// Puts the magic into a marker object the caller already holds.
+fn write_owner_magic(marker: &mut File) -> io::Result<()> {
+    use std::io::Write;
 
-/// Decides whether the entry at a staging name may be removed.
-///
-/// Two things say yes. The marker, which proves MSCanvas made the directory; a
-/// directory that merely carries the expected name, or whose marker is a link, a
-/// directory or the wrong content, proves nothing, because the consequence of
-/// being wrong is deleting a tree of someone's data. And emptiness, which is not
-/// proof of ownership but makes ownership irrelevant: removing an empty
-/// directory destroys nothing.
-///
-/// Emptiness is not a convenience. Teardown removes the marker before it removes
-/// the root, so a root removal that fails leaves exactly an empty directory —
-/// and without this, that residue would be the permanent obstruction the marker
-/// exists to prevent.
-fn staging_ownership(staging: &Path) -> StagingOwnership {
-    match std::fs::symlink_metadata(staging) {
-        Ok(metadata) if !metadata.is_dir() => return StagingOwnership::NotOwned,
-        Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return StagingOwnership::Absent;
-        }
-        Err(error) => return StagingOwnership::NotInspectable { kind: error.kind() },
-    }
-
-    match std::fs::read_dir(staging) {
-        Ok(mut entries) => match entries.next() {
-            None => return StagingOwnership::Owned,
-            Some(Err(error)) => {
-                return StagingOwnership::NotInspectable { kind: error.kind() };
-            }
-            Some(Ok(_)) => {}
-        },
-        Err(error) => return StagingOwnership::NotInspectable { kind: error.kind() },
-    }
-
-    let marker = staging.join(STAGING_OWNER_MARKER);
-    let metadata = match std::fs::symlink_metadata(&marker) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return StagingOwnership::NotOwned;
-        }
-        Err(error) => return StagingOwnership::NotInspectable { kind: error.kind() },
-    };
-    if fs_guard::require_regular_file(&metadata).is_err() {
-        return StagingOwnership::NotOwned;
-    }
-    match std::fs::read(&marker) {
-        Ok(content) if content == STAGING_OWNER_MAGIC => StagingOwnership::Owned,
-        Ok(_) => StagingOwnership::NotOwned,
-        Err(error) => StagingOwnership::NotInspectable { kind: error.kind() },
-    }
+    marker.write_all(STAGING_OWNER_MAGIC)
 }
 
 /// The typed result of one planned conversion.
@@ -963,25 +1011,49 @@ impl ConversionRunReport {
     }
 }
 
-/// Owns the staging directory for one run.
+/// The staging area a run created, held as the objects it created.
 ///
-/// The guarantee is a lifetime rather than a call: the run executes
-/// caller-supplied code, and an unwind through it must not leave the backend's
-/// output sitting in the user's destination root under a name every later run
-/// would then refuse.
-struct StagingArea {
+/// The guarantee is a lifetime and an object, not a call and a name. The run
+/// executes caller-supplied code, so an unwind through it must not leave the
+/// backend's output in the user's destination root — and the teardown that
+/// prevents that must not be a recursive delete of whatever the names resolve to
+/// by then. This type therefore keeps the objects themselves from the moment it
+/// makes them, and teardown deletes those objects.
+///
+/// The path is kept to reach children and for nothing else: every object opened
+/// through it still has to prove its identity before anything is removed.
+struct OwnedStagingArea {
+    /// The staging root. `None` once teardown has consumed it.
+    root: Option<File>,
+    /// The directory the backend writes into, held from creation so teardown
+    /// never has to find it by name.
+    output: Option<File>,
+    /// The ownership marker, held from creation for the same reason.
+    marker: Option<File>,
     path: PathBuf,
-    discarded: bool,
+    state: StagingState,
 }
 
-impl StagingArea {
-    /// Creates the staging area exclusively, marks it as MSCanvas's, and makes
-    /// the subdirectory the backend will write into.
+/// Where a staging area is in its life.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StagingState {
+    /// Created and holding its objects; the run may still be using it.
+    Active,
+    /// The run has finished with it and teardown may proceed.
+    Finished,
+    /// Teardown removed every object it owned.
+    Cleaned,
+    /// Teardown stopped, and what it could not remove is still there.
+    Residue(StagingResidue),
+}
+
+impl OwnedStagingArea {
+    /// Creates the staging area exclusively, marks it as MSCanvas's, makes the
+    /// subdirectory the backend will write into, and holds all three.
     ///
     /// `create_dir` fails rather than adopting an existing directory, so this
     /// type never owns — and never removes — a directory it did not create. A
-    /// partially built area is torn down rather than left for a later run to
-    /// find.
+    /// partially built area is torn down rather than left for a later run.
     fn create(path: PathBuf) -> Result<Self, ConversionRunFailure> {
         if let Err(error) = std::fs::create_dir(&path) {
             return Err(match error.kind() {
@@ -989,14 +1061,44 @@ impl StagingArea {
                 kind => ConversionRunFailure::StagingNotCreated { kind },
             });
         }
-        let area = Self {
+        let mut area = Self {
+            root: None,
+            output: None,
+            marker: None,
             path,
-            discarded: false,
+            state: StagingState::Active,
         };
-        create_owner_marker(&area.path.join(STAGING_OWNER_MARKER))
-            .and_then(|()| std::fs::create_dir(area.output_directory()))
-            .map_err(|error| ConversionRunFailure::StagingNotCreated { kind: error.kind() })?;
+        if let Err(error) = area.populate() {
+            // `Drop` tears down what was built through the objects it holds, but
+            // a failure on the very first step leaves it holding none — and the
+            // directory this function just created would outlive it.
+            let bare = area.root.is_none();
+            let path = area.path.clone();
+            drop(area);
+            if bare {
+                let _ = std::fs::remove_dir(&path);
+            }
+            return Err(ConversionRunFailure::StagingNotCreated { kind: error.kind() });
+        }
         Ok(area)
+    }
+
+    /// Opens the root, writes and keeps the marker, and makes and keeps the
+    /// output directory. Any failure leaves `area` to tear down what exists.
+    fn populate(&mut self) -> io::Result<()> {
+        self.root = Some(open_owned_directory(&self.path)?);
+        let marker_path = self.path.join(STAGING_OWNER_MARKER);
+        // Retained before it is written, so a write that fails part-way leaves
+        // teardown holding this exact object. A marker created by this run but
+        // never filled in is otherwise an entry cleanup must refuse and
+        // reclamation cannot vouch for, which would block the staging name for
+        // good.
+        self.marker = Some(create_owner_marker(&marker_path)?);
+        write_owner_magic(self.marker.as_mut().expect("the marker was just stored"))?;
+        let output_path = self.output_directory();
+        std::fs::create_dir(&output_path)?;
+        self.output = Some(open_owned_directory(&output_path)?);
+        Ok(())
     }
 
     /// Where the backend writes. Validation inspects this directory, so the
@@ -1008,46 +1110,151 @@ impl StagingArea {
     /// Removes the staging area with whatever the backend left in it. Nothing
     /// outside it is touched, and a rejected or partial document is discarded
     /// here rather than left where it could be mistaken for a result.
-    ///
-    /// The order matters. The backend's output goes first and the ownership
-    /// marker last, so a cleanup that fails part-way leaves the proof that this
-    /// area is MSCanvas's — which is the only thing that makes the residue
-    /// reclaimable rather than a permanent obstruction.
     fn discard(mut self) -> Option<StagingResidue> {
-        self.discarded = true;
-        Self::tear_down(&self.path)
+        self.state = StagingState::Finished;
+        let residue = self.tear_down();
+        self.state = residue.map_or(StagingState::Cleaned, StagingState::Residue);
+        residue
     }
 
-    fn tear_down(path: &Path) -> Option<StagingResidue> {
-        // Sequential and short-circuiting: each step must be given up on before
-        // the next one is attempted, or a failed output removal would still take
-        // the marker with it.
-        if let Some(residue) =
-            Self::residue(std::fs::remove_dir_all(path.join(STAGING_OUTPUT_DIRECTORY)))
-        {
-            return Some(residue);
-        }
-        if let Some(residue) = Self::residue(std::fs::remove_file(path.join(STAGING_OWNER_MARKER)))
-        {
-            return Some(residue);
-        }
-        Self::residue(std::fs::remove_dir(path))
+    /// The one teardown, shared by the ordinary exit and by an unwind.
+    ///
+    /// It is idempotent: the objects are taken, so a second call has nothing to
+    /// take and reports nothing.
+    fn tear_down(&mut self) -> Option<StagingResidue> {
+        self.tear_down_seamed(&mut || {})
     }
 
-    fn residue(removal: io::Result<()>) -> Option<StagingResidue> {
-        match removal {
-            Ok(()) => None,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => Some(StagingResidue::NotRemoved { kind: error.kind() }),
+    fn tear_down_seamed(&mut self, after_enumeration: &mut dyn FnMut()) -> Option<StagingResidue> {
+        let root = self.root.take()?;
+        let retained = cleanup::RetainedStagingObjects {
+            output: self.output.take(),
+            marker: self.marker.take(),
+            authority: cleanup::TeardownAuthority::RetainedObjectsOnly,
+        };
+        cleanup::tear_down_owned_staging_seamed(root, &self.path, retained, after_enumeration).err()
+    }
+
+    /// Releases only the output directory, which is the state a run is in when
+    /// it never managed to create and hold one.
+    #[cfg(test)]
+    fn release_output(&mut self) {
+        self.output.take();
+    }
+
+    /// Releases the objects without removing anything, which is what a process
+    /// that died mid-run leaves behind: the tree is still there and no handle
+    /// holds it.
+    #[cfg(test)]
+    fn abandon(mut self) {
+        self.root.take();
+        self.output.take();
+        self.marker.take();
+        self.state = StagingState::Residue(StagingResidue::NotRemoved {
+            kind: io::ErrorKind::Interrupted,
+        });
+    }
+
+    /// The same discard, with the seam a test uses to change what the names in
+    /// an already-listed directory mean.
+    #[cfg(test)]
+    fn discard_seamed(mut self, after_enumeration: &mut dyn FnMut()) -> Option<StagingResidue> {
+        self.state = StagingState::Finished;
+        let residue = self.tear_down_seamed(after_enumeration);
+        self.state = residue.map_or(StagingState::Cleaned, StagingState::Residue);
+        residue
+    }
+}
+
+impl Drop for OwnedStagingArea {
+    fn drop(&mut self) {
+        // An unwind reaches here. It performs the same object-bound teardown —
+        // never the old path-recursive one — and cannot report what it finds,
+        // which is exactly why it must not be the more dangerous form.
+        if self.root.is_some() {
+            self.state = self
+                .tear_down()
+                .map_or(StagingState::Cleaned, StagingState::Residue);
         }
     }
 }
 
-impl Drop for StagingArea {
-    fn drop(&mut self) {
-        if !self.discarded {
-            let _ = Self::tear_down(&self.path);
+impl fmt::Debug for OwnedStagingArea {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OwnedStagingArea")
+            .field("state", &self.state)
+            .field("objects_held", &self.root.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Opens a directory MSCanvas owns, following nothing and refusing to let it be
+/// renamed or removed by anyone else while it is held.
+fn open_owned_directory(path: &Path) -> io::Result<File> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
+        const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+        const DELETE: u32 = 0x0001_0000;
+        const SYNCHRONIZE: u32 = 0x0010_0000;
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+        const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+        // Delete sharing is withheld so this directory cannot be renamed or
+        // removed by anyone else while the run depends on it. It costs the user
+        // the ability to rename or remove this directory, and any ancestor of
+        // it, for the duration of a run.
+        let opened = std::fs::OpenOptions::new()
+            .read(true)
+            .access_mode(FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | DELETE | SYNCHRONIZE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)?;
+        let metadata = opened.metadata()?;
+        // The open refuses to traverse a link; this refuses to act on one. A
+        // junction planted at the staging name would otherwise be a directory
+        // whose contents belong to somebody else.
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                "an owned staging entry is a reparse point",
+            ));
         }
+        if !metadata.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                "an owned staging entry is not a directory",
+            ));
+        }
+        Ok(opened)
+    }
+    #[cfg(not(windows))]
+    {
+        // No object-bound open exists here, so the link check is made before
+        // the open rather than on the opened object. It is the same refusal the
+        // path-based probe this replaced always made.
+        let observed = std::fs::symlink_metadata(path)?;
+        if observed.file_type().is_symlink() || !observed.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                "an owned staging entry is not a plain directory",
+            ));
+        }
+        let opened = File::open(path)?;
+        if !opened.metadata()?.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                "an owned staging entry is not a directory",
+            ));
+        }
+        Ok(opened)
     }
 }
 
@@ -1130,7 +1337,7 @@ fn run_admitted(
         return ConversionRunReport::settled(ConversionRunOutcome::Failed(failure));
     }
 
-    let staging = match StagingArea::create(plan.staging_directory()) {
+    let staging = match OwnedStagingArea::create(plan.staging_directory()) {
         Ok(staging) => staging,
         Err(failure) => {
             return ConversionRunReport::settled(ConversionRunOutcome::Failed(failure));
@@ -1289,6 +1496,7 @@ fn run_staged(
     }
 }
 
+mod cleanup;
 mod finalize;
 
 #[cfg(test)]
