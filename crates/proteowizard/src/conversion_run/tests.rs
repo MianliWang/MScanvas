@@ -881,7 +881,9 @@ fn the_ownership_marker_is_created_exclusively() {
     let directory = TestDirectory::new();
     let marker = directory.path().join("marker");
 
-    create_owner_marker(&marker).expect("write the marker");
+    let mut created = create_owner_marker(&marker).expect("create the marker");
+    write_owner_magic(&mut created).expect("write the marker");
+    drop(created);
     assert_eq!(
         fs::read(&marker).expect("read the marker"),
         STAGING_OWNER_MAGIC
@@ -2346,6 +2348,40 @@ fn cleanup_after_a_run_removes_only_what_that_run_held() {
         "the refusal spent the proof that makes this reclaimable"
     );
     let _ = fs::remove_dir_all(&root);
+}
+
+/// A marker this run created but never managed to fill in is still this run's
+/// to remove. Refusing it would leave a staging root that reclamation cannot
+/// vouch for either, and the deterministic staging name would be blocked for
+/// good by a partial write.
+#[cfg(windows)]
+#[test]
+fn a_marker_created_but_never_filled_in_is_still_the_run_s_to_remove() {
+    let directory = TestDirectory::new();
+    let root = directory.path().join("staging");
+    fs::create_dir(&root).expect("create the staging root");
+    let marker_path = root.join(".mscanvas-staging-owner");
+
+    // Exactly what `populate` holds when the write into a freshly created
+    // marker fails: the object exists, this run holds it, and it is empty.
+    let area = OwnedStagingArea {
+        root: Some(open_owned_directory(&root).expect("open the staging root")),
+        output: None,
+        marker: Some(create_owner_marker(&marker_path).expect("create the marker")),
+        path: root.clone(),
+        state: StagingState::Active,
+    };
+    assert_eq!(
+        fs::metadata(&marker_path).expect("stat the marker").len(),
+        0,
+        "the marker under test is supposed to be unwritten"
+    );
+
+    assert_eq!(area.discard(), None);
+    assert!(
+        !root.exists(),
+        "a run could not clean up after its own unfinished marker"
+    );
 }
 
 /// The proof is never spent on a teardown that is about to fail. Something

@@ -336,7 +336,11 @@ and has held ever since; an entry under an expected name that the run does not
 hold got there some other way, and automatic cleanup refuses it rather than
 deleting data on the strength of a name it recognises. Reclamation has no
 retained objects to appeal to, so its authority is the admitted marker, which
-vouches for the entries the admitted root listed. The narrow window this closes
+vouches for the entries the admitted root listed. Retention therefore has to
+start at creation rather than at first success: the marker object is held before
+anything is written into it, so a write that fails part-way leaves teardown
+holding the very file this run created instead of an entry it can only refuse
+and reclamation cannot vouch for. The narrow window this closes
 is a staging area whose construction failed part-way — the run creates the root
 exclusively, but between that and creating the output directory something else
 can get there first, and nothing else would have stopped the ensuing teardown

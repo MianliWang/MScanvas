@@ -2601,7 +2601,10 @@ and has held ever since; an entry under an expected name that the run does not
 hold got there some other way, and automatic cleanup refuses it rather than
 deleting data on the strength of a name it recognises. Reclamation has no
 retained objects to appeal to, so its authority is the admitted marker, which
-vouches for the entries the admitted root listed.
+vouches for the entries the admitted root listed. Retention starts at creation
+rather than at first success: the marker object is held before anything is
+written into it, so a write that fails part-way leaves teardown holding the very
+file this run created rather than an entry it could only refuse.
 
 Deletion is post-order and the handle ordering is load-bearing: every child is
 disposed and closed before its parent is asked to go. The disposition asks for
@@ -2645,11 +2648,11 @@ the crate's existing Job Object, file-identity and rename bindings.
 
 Validation on the exact head: `cargo fmt --all --check`,
 `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
-`cargo test --locked --workspace --all-targets` (272 proteowizard library tests,
+`cargo test --locked --workspace --all-targets` (273 proteowizard library tests,
 up from 256), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
 `pnpm test`, `pnpm build`.
 
-Sixteen tests were added, all deterministic and none reaching a backend. A seam
+Seventeen tests were added, all deterministic and none reaching a backend. A seam
 fires after each directory is listed and before anything that listing named is
 opened, which is the one interval the claim is about.
 
@@ -2673,11 +2676,15 @@ a cleanup that cannot finish keeping the primary outcome, reporting residue, and
 staying reclaimable once the obstruction clears; and every residue and reclaim
 reason rendering without a path or a handle.
 
-Four tests came out of review rather than implementation. Two answer findings
+Five tests came out of review rather than implementation. Three answer findings
 raised on the pull request itself: a live run refusing to remove an output
-directory it never held, and an entry arriving in the staging root mid-teardown
+directory it never held; an entry arriving in the staging root mid-teardown
 stopping the teardown with the ownership marker still in place rather than
-spent. The other two came out of the whole-diff review. A
+spent; and a marker this run created but never filled in still being this run's
+to remove. That last one is the observable consequence of holding the marker
+before writing it; the ordering inside `populate` that produces it is structural
+and is not independently mutation-detectable. The other two came out of the
+whole-diff review. A
 link planted at the staging name, with a fully convincing owned-looking area on
 the other side of it, is refused and never reclaimed through: the review found
 that nothing defended the staging name itself, and that deleting the one flag

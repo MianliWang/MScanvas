@@ -914,7 +914,8 @@ impl StagingReclaimError {
     }
 }
 
-/// Writes the ownership marker, creating it exclusively and following nothing.
+/// Creates the ownership marker exclusively, following nothing, and returns the
+/// object without writing to it.
 ///
 /// A plain write would follow a link. The staging directory is new, but it sits
 /// in a root another process may write to, so an entry can appear at the marker's
@@ -922,9 +923,11 @@ impl StagingReclaimError {
 /// followed link would truncate whatever it pointed at, which could be an output
 /// the user already had or the acquisition itself. Neither the guard nor
 /// reclamation could put that back.
+///
+/// Creating and writing are separate so the caller can retain the object before
+/// anything goes into it. A write that fails then leaves teardown holding the
+/// very file this run created, rather than an entry it can only refuse.
 fn create_owner_marker(marker: &Path) -> io::Result<File> {
-    use std::io::Write;
-
     let mut options = std::fs::OpenOptions::new();
     options.read(true).write(true).create_new(true);
     #[cfg(windows)]
@@ -946,9 +949,14 @@ fn create_owner_marker(marker: &Path) -> io::Result<File> {
             .share_mode(FILE_SHARE_READ)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
     }
-    let mut file = options.open(marker)?;
-    file.write_all(STAGING_OWNER_MAGIC)?;
-    Ok(file)
+    options.open(marker)
+}
+
+/// Puts the magic into a marker object the caller already holds.
+fn write_owner_magic(marker: &mut File) -> io::Result<()> {
+    use std::io::Write;
+
+    marker.write_all(STAGING_OWNER_MAGIC)
 }
 
 /// The typed result of one planned conversion.
@@ -1072,7 +1080,13 @@ impl OwnedStagingArea {
     fn populate(&mut self) -> io::Result<()> {
         self.root = Some(open_owned_directory(&self.path)?);
         let marker_path = self.path.join(STAGING_OWNER_MARKER);
+        // Retained before it is written, so a write that fails part-way leaves
+        // teardown holding this exact object. A marker created by this run but
+        // never filled in is otherwise an entry cleanup must refuse and
+        // reclamation cannot vouch for, which would block the staging name for
+        // good.
         self.marker = Some(create_owner_marker(&marker_path)?);
+        write_owner_magic(self.marker.as_mut().expect("the marker was just stored"))?;
         let output_path = self.output_directory();
         std::fs::create_dir(&output_path)?;
         self.output = Some(open_owned_directory(&output_path)?);
