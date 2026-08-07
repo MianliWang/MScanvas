@@ -1050,7 +1050,7 @@ fn identity_mismatch(
     }
 }
 
-fn unique_label_value<'a>(
+pub(crate) fn unique_label_value<'a>(
     streams: impl IntoIterator<Item = &'a [u8]>,
     label: &str,
 ) -> (Option<String>, bool) {
@@ -1080,7 +1080,7 @@ fn unique_label_value<'a>(
     }
 }
 
-fn split_release_revision(value: &str) -> (Option<String>, Option<String>) {
+pub(crate) fn split_release_revision(value: &str) -> (Option<String>, Option<String>) {
     let value = value.trim();
     if let Some((release, suffix)) = value.rsplit_once(" (")
         && let Some(revision) = suffix.strip_suffix(')')

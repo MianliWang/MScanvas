@@ -335,16 +335,20 @@ pub(crate) enum VerifiedConversion {
     Rejected(ConversionIntegrityOutcome),
 }
 
-/// The canonical source facts an integrity comparison is measured against.
+/// What was established about the source *object*, independently of what could
+/// be read out of it.
+///
+/// Every source has these three, whatever format it is in, and they are what a
+/// run rechecks to prove the acquisition it converts is the one it admitted.
+/// Nothing here says the bytes are comparable to anything.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ConversionSourceFacts {
+pub struct SourceObjectFacts {
     identity: SourceIdentity,
     byte_length: u64,
     sha256: Sha256Digest,
-    facts: MzmlFacts,
 }
 
-impl ConversionSourceFacts {
+impl SourceObjectFacts {
     #[must_use]
     pub const fn identity(&self) -> &SourceIdentity {
         &self.identity
@@ -358,6 +362,57 @@ impl ConversionSourceFacts {
     #[must_use]
     pub const fn sha256(&self) -> Sha256Digest {
         self.sha256
+    }
+
+    /// Binds a path to the object it currently names, its length and its
+    /// contents. No format is assumed and nothing is parsed.
+    pub(crate) fn capture(input: &Path) -> Result<Self, ConversionSourceError> {
+        let identity = SourceIdentity::capture(input)
+            .map_err(|error| ConversionSourceError::NotResolved { kind: error.kind() })?;
+        let path = identity.canonical_path();
+        let byte_length = std::fs::symlink_metadata(path)
+            .map_err(|error| ConversionSourceError::NotResolved { kind: error.kind() })?
+            .len();
+        let sha256 =
+            Sha256Digest::calculate_file(path).map_err(|_| ConversionSourceError::NotHashed)?;
+        Ok(Self {
+            identity,
+            byte_length,
+            sha256,
+        })
+    }
+}
+
+/// The canonical source facts an integrity comparison is measured against.
+///
+/// This is the object facts *plus* a reading of the source as mzML, and the
+/// second half is what makes a source/output comparison meaningful. A source
+/// that cannot be read that way carries [`SourceObjectFacts`] alone.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConversionSourceFacts {
+    object: SourceObjectFacts,
+    facts: MzmlFacts,
+}
+
+impl ConversionSourceFacts {
+    #[must_use]
+    pub const fn identity(&self) -> &SourceIdentity {
+        self.object.identity()
+    }
+
+    #[must_use]
+    pub const fn byte_length(&self) -> u64 {
+        self.object.byte_length()
+    }
+
+    #[must_use]
+    pub const fn sha256(&self) -> Sha256Digest {
+        self.object.sha256()
+    }
+
+    #[must_use]
+    pub const fn object(&self) -> &SourceObjectFacts {
+        &self.object
     }
 
     #[must_use]
@@ -397,21 +452,10 @@ pub fn capture_conversion_source(
     input: &Path,
     limits: MzmlScanLimits,
 ) -> Result<ConversionSourceFacts, ConversionSourceError> {
-    let identity = SourceIdentity::capture(input)
-        .map_err(|error| ConversionSourceError::NotResolved { kind: error.kind() })?;
-    let path = identity.canonical_path();
-    let byte_length = std::fs::symlink_metadata(path)
-        .map_err(|error| ConversionSourceError::NotResolved { kind: error.kind() })?
-        .len();
-    let sha256 =
-        Sha256Digest::calculate_file(path).map_err(|_| ConversionSourceError::NotHashed)?;
-    let facts = mzml::inspect_file(path, limits).map_err(ConversionSourceError::Scan)?;
-    Ok(ConversionSourceFacts {
-        identity,
-        byte_length,
-        sha256,
-        facts,
-    })
+    let object = SourceObjectFacts::capture(input)?;
+    let facts = mzml::inspect_file(object.identity().canonical_path(), limits)
+        .map_err(ConversionSourceError::Scan)?;
+    Ok(ConversionSourceFacts { object, facts })
 }
 
 /// Which document a structural observation belongs to.
@@ -479,6 +523,11 @@ impl BinaryArrayMismatchKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum IntegrityProperty {
     SourceUnchanged,
+    /// The output's own declared list counts agree with what it contains. This
+    /// is the one structural property that is about the output alone, so it is
+    /// the only one an output-only validation can establish besides the source
+    /// being unchanged, the index sequences and the compression policy.
+    OutputDeclaredCounts,
     SpectrumCount,
     ChromatogramCount,
     IndexSequences,
@@ -499,6 +548,7 @@ impl IntegrityProperty {
     pub const fn stable_id(self) -> &'static str {
         match self {
             Self::SourceUnchanged => "source_unchanged",
+            Self::OutputDeclaredCounts => "output_declared_counts",
             Self::SpectrumCount => "spectrum_count",
             Self::ChromatogramCount => "chromatogram_count",
             Self::IndexSequences => "index_sequences",
@@ -554,18 +604,60 @@ impl AdvisoryObservation {
     }
 }
 
+/// How much of the integrity contract a conversion could even be asked.
+///
+/// This is a property of the *source*, decided when the source was admitted,
+/// and it is carried into the result so no caller can read an output-only
+/// judgement as a fidelity statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationMode {
+    /// The source was read under the same model as the output, so the two were
+    /// compared record by record.
+    SourceComparison,
+    /// The source could not be read under a comparable model. Only the output's
+    /// own postconditions were established; nothing was compared, and no
+    /// statement about what the source contained is available.
+    OutputOnly,
+}
+
+impl ValidationMode {
+    #[must_use]
+    pub const fn stable_id(self) -> &'static str {
+        match self {
+            Self::SourceComparison => "source_comparison",
+            Self::OutputOnly => "output_only",
+        }
+    }
+
+    /// Whether this mode can support a source-versus-output fidelity statement
+    /// at all.
+    #[must_use]
+    pub const fn compares_against_source(self) -> bool {
+        matches!(self, Self::SourceComparison)
+    }
+}
+
 /// A conversion whose every evaluated invariant held.
 ///
-/// `unverified` is not an accusation: it names the properties this document
-/// pair genuinely could not establish, such as vocabulary facts reached through
-/// a `referenceableParamGroup` or a native identifier form the canonical
-/// identity contract deliberately leaves opaque. A gate that needs the stricter
-/// statement asserts [`ValidConversion::is_fully_verified`].
+/// Three sets, and the difference between them matters. `verified` is what was
+/// established. `unverified` names properties this pair could have been asked
+/// but genuinely could not establish — vocabulary facts reached through a
+/// `referenceableParamGroup`, or a native identifier form the canonical identity
+/// contract deliberately leaves opaque. `inapplicable` names properties that
+/// were never a question at all, because the source could not be read under a
+/// comparable model; they are not gaps in this run's evidence, they are outside
+/// what an output-only validation is.
+///
+/// A gate that needs the strict statement asserts
+/// [`ValidConversion::is_fully_verified`], which is false for every output-only
+/// result whatever its sets contain.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValidConversion {
     output: ConversionOutputInspection,
+    mode: ValidationMode,
     verified: BTreeSet<IntegrityProperty>,
     unverified: BTreeSet<IntegrityProperty>,
+    inapplicable: BTreeSet<IntegrityProperty>,
     advisory: BTreeSet<AdvisoryObservation>,
 }
 
@@ -573,6 +665,12 @@ impl ValidConversion {
     #[must_use]
     pub const fn output(&self) -> &ConversionOutputInspection {
         &self.output
+    }
+
+    /// How much of the contract this conversion could be asked.
+    #[must_use]
+    pub const fn validation_mode(&self) -> ValidationMode {
+        self.mode
     }
 
     #[must_use]
@@ -585,6 +683,13 @@ impl ValidConversion {
         &self.unverified
     }
 
+    /// Properties that were not a question this source and output could be
+    /// asked. Always empty under [`ValidationMode::SourceComparison`].
+    #[must_use]
+    pub const fn inapplicable(&self) -> &BTreeSet<IntegrityProperty> {
+        &self.inapplicable
+    }
+
     #[must_use]
     pub const fn advisory(&self) -> &BTreeSet<AdvisoryObservation> {
         &self.advisory
@@ -592,9 +697,13 @@ impl ValidConversion {
 
     /// Whether every integrity property was actually evaluated, not merely left
     /// unviolated.
+    ///
+    /// An output-only validation answers `false` unconditionally. It is not a
+    /// weaker comparison; it is not a comparison, and a caller asking this
+    /// question is asking for the statement only a comparison can make.
     #[must_use]
     pub fn is_fully_verified(&self) -> bool {
-        self.unverified.is_empty()
+        self.mode.compares_against_source() && self.unverified.is_empty()
     }
 }
 
@@ -828,10 +937,80 @@ pub(crate) fn verify_mzml_conversion_retaining_output(
     }
 }
 
-/// The judgement itself, shared by both entry points so retention cannot change
-/// what a conversion is found to be.
-fn judge_against_source(
-    source: &ConversionSourceFacts,
+/// Verifies a conversion whose source could not be read as mzML, retaining the
+/// exact object judged when it passes.
+///
+/// The filesystem postconditions are identical to the comparing entry points —
+/// the same single-planned-entry rule, the same scan limits, the same fail-closed
+/// scanner, the same retained handle. What is absent is the comparison, because
+/// there is nothing on the source side to compare against, and the result says
+/// so through [`ValidationMode::OutputOnly`] rather than by quietly reporting a
+/// smaller set of verified properties.
+///
+/// The source is still revalidated. Identity, length and content are rechecked
+/// exactly as they are for an mzML source: a vendor acquisition rewritten while
+/// the backend read it invalidates the run whether or not anything about its
+/// contents is comparable.
+#[must_use]
+pub(crate) fn verify_vendor_conversion_retaining_output(
+    source: &SourceObjectFacts,
+    output_directory: &Path,
+    expected_file_name: &OsStr,
+    policy: ConversionPolicy,
+    limits: MzmlScanLimits,
+) -> VerifiedConversion {
+    let (file, output) = match open_and_inspect_output(
+        output_directory,
+        expected_file_name,
+        OpenFormat::MzMl,
+        limits,
+        OutputRetention::Retain,
+    ) {
+        Ok(opened) => opened,
+        Err(rejection) => return VerifiedConversion::Rejected(rejection.into()),
+    };
+
+    match judge_output_alone(source, output, policy) {
+        ConversionIntegrityOutcome::Valid(valid) => {
+            VerifiedConversion::Valid(Box::new(ValidatedConversionOutput {
+                file,
+                valid: *valid,
+            }))
+        }
+        rejected => VerifiedConversion::Rejected(rejected),
+    }
+}
+
+/// Every property that is a statement about a source and an output together.
+///
+/// An output-only validation records these as inapplicable rather than
+/// unverified: they were not questions this pair could be asked. Listing them
+/// explicitly, rather than deriving the set by subtraction, is what makes adding
+/// a new comparison property a compile-time decision about which bucket it
+/// belongs in.
+const COMPARISON_PROPERTIES: [IntegrityProperty; 11] = [
+    IntegrityProperty::SpectrumCount,
+    IntegrityProperty::ChromatogramCount,
+    IntegrityProperty::MsLevelDistribution,
+    IntegrityProperty::BinaryArrayCounts,
+    IntegrityProperty::BinaryArrayKinds,
+    IntegrityProperty::BinaryArrayLengths,
+    IntegrityProperty::BinaryArrayPayloadPresence,
+    IntegrityProperty::PrecursorCounts,
+    IntegrityProperty::SpectrumNativeIdentity,
+    IntegrityProperty::SpectrumRepresentation,
+    IntegrityProperty::RetentionTimeUnitMarkers,
+];
+
+/// Judges an output on its own terms.
+///
+/// Three things are established and no more: the source object is still the one
+/// that was admitted, the output is internally consistent, and it honours the
+/// compression the plan asked for. Everything else a conversion result can say
+/// is a comparison, and this function is reached precisely because there is
+/// nothing to compare against.
+fn judge_output_alone(
+    source: &SourceObjectFacts,
     output: ConversionOutputInspection,
     policy: ConversionPolicy,
 ) -> ConversionIntegrityOutcome {
@@ -840,10 +1019,100 @@ fn judge_against_source(
         Ok(false) => return ConversionIntegrityOutcome::SourceChangedDuringConversion,
         Err(outcome) => return outcome,
     }
+
+    let after = output.facts();
+    let mut report = IntegrityReport::default();
+    report.verified.insert(IntegrityProperty::SourceUnchanged);
+
+    if let Some(outcome) = check_output_declared_counts(after, &mut report) {
+        return outcome;
+    }
+    if !after.spectrum_index_sequence_is_consecutive() {
+        return ConversionIntegrityOutcome::IndexSequenceNotConsecutive {
+            side: DocumentSide::Output,
+            part: DocumentPart::Spectrum,
+        };
+    }
+    if !after.chromatogram_index_sequence_is_consecutive() {
+        return ConversionIntegrityOutcome::IndexSequenceNotConsecutive {
+            side: DocumentSide::Output,
+            part: DocumentPart::Chromatogram,
+        };
+    }
+    report.verified.insert(IntegrityProperty::IndexSequences);
+
+    // The compression policy is the one requested property that is readable from
+    // the output alone, and it degrades for the same reason it degrades in a
+    // comparison: an indirected controlled vocabulary is not a fact this scanner
+    // will assert.
+    let vocabulary_readable = !after.parameter_group_reference_observed();
+    if let Some(outcome) = check_compression_policy(after, policy, vocabulary_readable, &mut report)
+    {
+        return outcome;
+    }
+
+    ConversionIntegrityOutcome::Valid(Box::new(ValidConversion {
+        output,
+        mode: ValidationMode::OutputOnly,
+        verified: report.verified,
+        unverified: report.unverified,
+        inapplicable: COMPARISON_PROPERTIES.into_iter().collect(),
+        advisory: report.advisory,
+    }))
+}
+
+/// The output is this boundary's own product, so it must agree with itself.
+fn check_output_declared_counts(
+    after: &MzmlFacts,
+    report: &mut IntegrityReport,
+) -> Option<ConversionIntegrityOutcome> {
+    if after
+        .declared_spectrum_count()
+        .is_some_and(|declared| declared != after.observed_spectrum_count())
+    {
+        return Some(
+            ConversionIntegrityOutcome::OutputDeclaredCountInconsistent {
+                part: DocumentPart::Spectrum,
+            },
+        );
+    }
+    if after
+        .declared_chromatogram_count()
+        .is_some_and(|declared| declared != after.observed_chromatogram_count())
+    {
+        return Some(
+            ConversionIntegrityOutcome::OutputDeclaredCountInconsistent {
+                part: DocumentPart::Chromatogram,
+            },
+        );
+    }
+    report
+        .verified
+        .insert(IntegrityProperty::OutputDeclaredCounts);
+    None
+}
+
+/// The judgement itself, shared by both entry points so retention cannot change
+/// what a conversion is found to be.
+fn judge_against_source(
+    source: &ConversionSourceFacts,
+    output: ConversionOutputInspection,
+    policy: ConversionPolicy,
+) -> ConversionIntegrityOutcome {
+    match revalidate_source(source.object()) {
+        Ok(true) => {}
+        Ok(false) => return ConversionIntegrityOutcome::SourceChangedDuringConversion,
+        Err(outcome) => return outcome,
+    }
     compare_documents(source, output, policy)
 }
 
-fn revalidate_source(source: &ConversionSourceFacts) -> Result<bool, ConversionIntegrityOutcome> {
+/// Whether the source object is still the one that was admitted.
+///
+/// Identity, length and content, in that order, and it is deliberately the same
+/// three for every source posture: a vendor acquisition rewritten under a run is
+/// exactly as invalidating as an mzML one, whatever else about it is readable.
+fn revalidate_source(source: &SourceObjectFacts) -> Result<bool, ConversionIntegrityOutcome> {
     let unchanged_identity = source
         .identity
         .matches_current()
@@ -945,7 +1214,7 @@ fn compare_documents(
             .advisory
             .insert(AdvisoryObservation::RootWrapperDiffers);
     }
-    if source.byte_length != output.byte_length() {
+    if source.byte_length() != output.byte_length() {
         report
             .advisory
             .insert(AdvisoryObservation::ByteLengthDiffers);
@@ -954,8 +1223,11 @@ fn compare_documents(
 
     ConversionIntegrityOutcome::Valid(Box::new(ValidConversion {
         output,
+        mode: ValidationMode::SourceComparison,
         verified: report.verified,
         unverified: report.unverified,
+        // A comparison was available, so nothing was outside the question.
+        inapplicable: BTreeSet::new(),
         advisory: report.advisory,
     }))
 }
@@ -986,25 +1258,8 @@ fn compare_counts(
     // The output is ours, so it must be internally consistent. A source that
     // disagrees with its own declared count is recorded, not rejected, because
     // every comparison below uses observed counts on both sides.
-    if after
-        .declared_spectrum_count()
-        .is_some_and(|declared| declared != after.observed_spectrum_count())
-    {
-        return Some(
-            ConversionIntegrityOutcome::OutputDeclaredCountInconsistent {
-                part: DocumentPart::Spectrum,
-            },
-        );
-    }
-    if after
-        .declared_chromatogram_count()
-        .is_some_and(|declared| declared != after.observed_chromatogram_count())
-    {
-        return Some(
-            ConversionIntegrityOutcome::OutputDeclaredCountInconsistent {
-                part: DocumentPart::Chromatogram,
-            },
-        );
+    if let Some(outcome) = check_output_declared_counts(after, report) {
+        return Some(outcome);
     }
     if before
         .declared_spectrum_count()

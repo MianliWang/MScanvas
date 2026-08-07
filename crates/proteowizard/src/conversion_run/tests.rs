@@ -9,7 +9,7 @@ use super::{OwnedStagingArea, StagingResidue};
 use crate::capability::{CapturedHelpStream, CompleteHelpCapture};
 use crate::command::{BackendTool, CommandSpec};
 use crate::conversion::{
-    CompressionPolicy, IntegrityProperty, capture_conversion_source,
+    CompressionPolicy, IntegrityProperty, ValidationMode, capture_conversion_source,
     verify_mzml_conversion_retaining_output,
 };
 
@@ -249,7 +249,10 @@ fn a_plan_derives_a_deterministic_mzml_name_and_fixes_every_other_decision() {
     // The plan judges its output with the same limits that read its source.
     assert_eq!(plan.scan_limits(), plan.source().scan_limits());
     assert_eq!(
-        plan.source().mzml_facts().declared_spectrum_count(),
+        plan.source()
+            .mzml_facts()
+            .expect("an mzML source carries mzML facts")
+            .declared_spectrum_count(),
         Some(2)
     );
     assert_eq!(
@@ -2624,4 +2627,772 @@ fn make_junction(link: &Path, target: &Path) -> bool {
 #[cfg(windows)]
 fn remove_junction(link: &Path) {
     let _ = fs::remove_dir(link);
+}
+
+// --- The first evidenced vendor source family ---
+//
+// The claim under test is narrow and worth stating exactly: a Thermo RAW file
+// is recognized by what it *is*, converted through the same boundary as every
+// other source, and judged on its output alone — and nothing anywhere reports
+// that as a fidelity comparison.
+//
+// None of these tests reach a backend. The real-acquisition evidence is a
+// separate, explicitly ignored run recorded in the evidence document.
+
+/// The exact 18 bytes a Thermo RAW file begins with, spelled out here rather
+/// than imported so a test cannot pass because the constant it checks against
+/// was changed to match a mistake.
+const THERMO_HEADER: [u8; 18] = [
+    0x01, 0xA1, b'F', 0, b'i', 0, b'n', 0, b'n', 0, b'i', 0, b'g', 0, b'a', 0, b'n', 0,
+];
+
+/// The provider build this repository has Thermo RAW evidence for.
+const EVIDENCED_RELEASE: &str = "3.0.26013";
+const EVIDENCED_REVISION: &str = "47b13cf";
+
+/// A stand-in acquisition: the real family signature followed by filler.
+///
+/// It is deliberately not vendor data. Everything this boundary decides about a
+/// source is decided from the signature, the posture and the object's identity,
+/// and all three are real here. What it cannot stand in for is the vendor
+/// reader's behaviour, which is why the backend is substituted in these tests
+/// and measured for real elsewhere.
+fn thermo_bytes(filler: &[u8]) -> Vec<u8> {
+    let mut bytes = THERMO_HEADER.to_vec();
+    bytes.extend_from_slice(filler);
+    bytes
+}
+
+fn write_thermo_source(directory: &Path, name: &str) -> PathBuf {
+    let path = directory.join(name);
+    fs::write(&path, thermo_bytes(b"acquisition-body")).expect("write a vendor source");
+    path
+}
+
+fn open_thermo(path: &Path) -> ConversionSource {
+    ConversionSource::open_thermo_raw_file(path, MzmlScanLimits::default())
+        .expect("open a Thermo RAW source")
+}
+
+/// Installed help that also declares which build produced it.
+fn capabilities_reporting(release: &str, revision: Option<&str>) -> InstalledHelpCapabilities {
+    let executable = fs::canonicalize(std::env::current_exe().expect("test executable"))
+        .expect("canonical test executable");
+    let reported = revision.map_or_else(
+        || release.to_owned(),
+        |revision| format!("{release} ({revision})"),
+    );
+    let help =
+        format!("ProteoWizard release: {reported}\nBuild date: Jan 13 2026\n{MSCONVERT_HELP}");
+    InstalledHelpCapabilities::parse_unbound_capture_for_tests(
+        BackendTool::MsConvert,
+        executable,
+        EXECUTABLE_SHA256,
+        CompleteHelpCapture::new(
+            CapturedHelpStream::new(help.as_bytes(), help.len() as u64, false, FIXTURE_SHA256),
+            CapturedHelpStream::new(&[], 0, false, EMPTY_SHA256),
+        ),
+    )
+    .expect("parse the msconvert help fixture")
+}
+
+/// Capabilities for the exact build the vendor evidence was recorded on.
+fn evidenced_capabilities() -> InstalledHelpCapabilities {
+    capabilities_reporting(EVIDENCED_RELEASE, Some(EVIDENCED_REVISION))
+}
+
+// --- Source admission -------------------------------------------------------
+
+/// Recognition is the file signature. The extension is a filter in front of it,
+/// because the installed reader will not open the object without one, and
+/// neither half is allowed to stand in for the other.
+#[test]
+fn a_vendor_source_is_recognized_by_its_signature_and_not_by_its_name() {
+    let directory = TestDirectory::new();
+
+    // The evidenced shape: right name, right signature.
+    let admitted = write_thermo_source(directory.path(), "acquisition.raw");
+    let source = open_thermo(&admitted);
+    assert_eq!(source.kind(), ConversionSourceKind::ThermoRawFile);
+    assert_eq!(source.byte_length(), 34);
+    assert!(source.mzml_facts().is_none(), "a RAW file was read as mzML");
+    assert!(!source.kind().supports_source_comparison());
+
+    // The extension alone establishes nothing. This is the whole point: a file
+    // that ends in `.raw` and contains something else is refused, so no source
+    // is ever created by a suffix.
+    let misnamed = directory.path().join("not-really.raw");
+    fs::write(&misnamed, b"PK\x03\x04 this is a zip archive").expect("write a decoy");
+    assert_eq!(
+        ConversionSource::open_thermo_raw_file(&misnamed, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::SignatureMismatch)
+    );
+
+    // A file too short to carry the signature cannot be carrying it. That is a
+    // mismatch, not an inspection failure.
+    let truncated = directory.path().join("truncated.raw");
+    fs::write(&truncated, &THERMO_HEADER[..4]).expect("write a truncated decoy");
+    assert_eq!(
+        ConversionSource::open_thermo_raw_file(&truncated, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::SignatureMismatch)
+    );
+
+    // One byte wrong is wrong.
+    let mut nearly = THERMO_HEADER;
+    nearly[17] = 1;
+    let near_miss = directory.path().join("near-miss.raw");
+    fs::write(&near_miss, nearly).expect("write a near miss");
+    assert_eq!(
+        ConversionSource::open_thermo_raw_file(&near_miss, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::SignatureMismatch)
+    );
+
+    // And the signature alone is not enough either, because the reader this
+    // boundary hands the file to refuses any other extension.
+    let unsupported = directory.path().join("acquisition.dat");
+    fs::write(&unsupported, thermo_bytes(b"body")).expect("write a misnamed acquisition");
+    assert_eq!(
+        ConversionSource::open_thermo_raw_file(&unsupported, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::UnsupportedExtension)
+    );
+
+    // Windows does not distinguish the case of an extension and neither does
+    // this, or a file the backend accepts would be refused for its spelling.
+    let shouted = directory.path().join("acquisition.RAW");
+    fs::write(&shouted, thermo_bytes(b"body")).expect("write an upper-case acquisition");
+    assert_eq!(
+        open_thermo(&shouted).kind(),
+        ConversionSourceKind::ThermoRawFile
+    );
+
+    // An mzML file is not admitted by the vendor posture, and a vendor file is
+    // not admitted by the mzML posture. The two recognitions are independent.
+    let mzml = write_source(directory.path(), "sample.mzML");
+    assert_eq!(
+        ConversionSource::open_thermo_raw_file(&mzml, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::UnsupportedExtension)
+    );
+    assert!(matches!(
+        ConversionSource::open_mzml_file(&admitted, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::NotReadableAsMzml(_))
+    ));
+}
+
+/// A source is an object. A directory carrying the right name and a link to a
+/// real acquisition are both refused before anything is read.
+#[test]
+fn a_vendor_source_must_be_a_plain_regular_file() {
+    let directory = TestDirectory::new();
+
+    let directory_source = directory.path().join("acquisition.raw");
+    fs::create_dir(&directory_source).expect("create a directory named like an acquisition");
+    assert_eq!(
+        ConversionSource::open_thermo_raw_file(&directory_source, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::NotARegularFile)
+    );
+    fs::remove_dir(&directory_source).expect("remove the directory");
+
+    let absent = directory.path().join("absent.raw");
+    assert!(matches!(
+        ConversionSource::open_thermo_raw_file(&absent, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::NotInspectable { .. })
+    ));
+}
+
+/// A junction standing where an acquisition should be is refused rather than
+/// followed, so nothing outside the chosen object is ever read as one.
+#[cfg(windows)]
+#[test]
+fn a_link_at_a_vendor_source_name_is_refused_and_never_followed() {
+    let directory = TestDirectory::new();
+    let target = directory.path().join("target");
+    fs::create_dir(&target).expect("create the link target");
+    fs::write(target.join("real.raw"), thermo_bytes(b"body")).expect("write behind the link");
+
+    let link = directory.path().join("acquisition.raw");
+    if !make_junction(&link, &target) {
+        return;
+    }
+    assert_eq!(
+        ConversionSource::open_thermo_raw_file(&link, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::NotARegularFile)
+    );
+    remove_junction(&link);
+}
+
+/// Everything a refusal renders is safe to show. None of it names the file.
+#[test]
+fn every_vendor_source_rejection_renders_without_a_path() {
+    let rejections = [
+        ConversionSourceRejection::UnsupportedExtension,
+        ConversionSourceRejection::SignatureMismatch,
+    ];
+    let identifiers: BTreeSet<&str> = rejections
+        .iter()
+        .copied()
+        .map(|rejection| rejection.stable_id())
+        .collect();
+    assert_eq!(identifiers.len(), rejections.len());
+    for rejection in rejections {
+        let rendered = format!("{rejection:?} {rejection}");
+        assert!(
+            !rendered.contains('/') && !rendered.contains('\\'),
+            "{rendered}"
+        );
+    }
+
+    // The source itself is opaque: its debug projection says what kind it is
+    // and nothing about where it came from.
+    let directory = TestDirectory::new();
+    let path = write_thermo_source(directory.path(), "样本 01.raw");
+    let rendered = format!("{:?}", open_thermo(&path));
+    assert!(rendered.contains("ThermoRawFile"));
+    assert!(!rendered.contains('/') && !rendered.contains('\\'));
+    assert!(!rendered.contains("样本"));
+}
+
+// --- Validation mode --------------------------------------------------------
+
+/// A vendor conversion is judged on its output and says so. Nothing in the
+/// result can be read as a statement about what the acquisition contained.
+#[test]
+fn a_vendor_conversion_is_validated_on_its_output_alone() {
+    let directory = TestDirectory::new();
+    let source = write_thermo_source(directory.path(), "acquisition.raw");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
+        .expect("plan a vendor conversion");
+    assert_eq!(plan.output_file_name(), OsStr::new("acquisition.mzML"));
+
+    let runner = FakeRunner::new(&convert_faithfully);
+    let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
+
+    let ConversionRunOutcome::Finalized(valid) = report.outcome() else {
+        panic!("a faithful vendor conversion was not finalized: {report:?}");
+    };
+    assert_eq!(valid.validation_mode(), ValidationMode::OutputOnly);
+    assert!(!valid.validation_mode().compares_against_source());
+
+    // What an output-only run can establish, and exactly that.
+    let verified: BTreeSet<&str> = valid
+        .verified()
+        .iter()
+        .map(|property| property.stable_id())
+        .collect();
+    assert_eq!(
+        verified,
+        BTreeSet::from([
+            "source_unchanged",
+            "output_declared_counts",
+            "index_sequences",
+            "compression_policy",
+        ])
+    );
+    // Every comparison is recorded as never having been a question, rather than
+    // as something this run failed to establish.
+    assert!(valid.unverified().is_empty(), "{:?}", valid.unverified());
+    assert!(
+        valid
+            .inapplicable()
+            .contains(&IntegrityProperty::SpectrumCount)
+    );
+    assert!(
+        valid
+            .inapplicable()
+            .contains(&IntegrityProperty::MsLevelDistribution)
+    );
+    assert!(valid.verified().is_disjoint(valid.inapplicable()));
+
+    // The load-bearing one: an empty `unverified` set must not become a
+    // fidelity claim.
+    assert!(
+        !valid.is_fully_verified(),
+        "an output-only conversion claimed full verification"
+    );
+    assert!(report.residue().is_none());
+    assert_eq!(entry_names(&root), vec![OsString::from("acquisition.mzML")]);
+}
+
+/// An mzML source keeps the comparison it always had. The vendor posture adds a
+/// mode; it does not weaken the one that was there.
+#[test]
+fn an_mzml_conversion_still_compares_against_its_source() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+
+    let runner = FakeRunner::new(&convert_faithfully);
+    let report = run_conversion(&plan, &capabilities(), &runner);
+
+    let ConversionRunOutcome::Finalized(valid) = report.outcome() else {
+        panic!("a faithful mzML conversion was not finalized: {report:?}");
+    };
+    assert_eq!(valid.validation_mode(), ValidationMode::SourceComparison);
+    assert!(valid.validation_mode().compares_against_source());
+    assert!(
+        valid.inapplicable().is_empty(),
+        "a comparison reported an inapplicable property"
+    );
+    assert!(valid.verified().contains(&IntegrityProperty::SpectrumCount));
+}
+
+/// Output-only is not permission to accept anything. Every postcondition the
+/// output alone can fail still fails it.
+#[test]
+fn a_vendor_conversion_rejects_every_output_its_own_contract_forbids() {
+    let directory = TestDirectory::new();
+    let source = write_thermo_source(directory.path(), "acquisition.raw");
+
+    let attempt = |act: &dyn Fn(&CommandSpec) -> Result<i32, ProcessError>| {
+        let root = directory.path().join(format!(
+            "out-{}",
+            NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).expect("create destination root");
+        let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
+            .expect("plan a vendor conversion");
+        let runner = FakeRunner::new(act);
+        let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
+        let outcome = match report.outcome() {
+            ConversionRunOutcome::Failed(failure) => failure.detailed_stable_id(),
+            other => panic!("an unusable output was accepted: {other:?}"),
+        };
+        assert!(
+            entry_names(&root).is_empty(),
+            "a rejected conversion left something in the destination root"
+        );
+        outcome
+    };
+
+    // Nothing written at all.
+    assert_eq!(attempt(&|_| Ok(0)), "missing_output");
+
+    // An empty file is not a document.
+    assert_eq!(
+        attempt(&|spec| {
+            fs::write(staged_destination(spec), b"").expect("write an empty output");
+            Ok(0)
+        }),
+        "zero_byte_output"
+    );
+
+    // Not mzML at all.
+    assert_eq!(
+        attempt(&|spec| {
+            fs::write(staged_destination(spec), b"<html></html>").expect("write a non-document");
+            Ok(0)
+        }),
+        "wrong_root_format"
+    );
+
+    // mzML whose own declared count disagrees with what it holds. The output is
+    // this boundary's product, so it has to agree with itself.
+    assert_eq!(
+        attempt(&|spec| {
+            let inconsistent = output_document()
+                .replace(r#"<spectrumList count="2">"#, r#"<spectrumList count="7">"#);
+            fs::write(staged_destination(spec), inconsistent)
+                .expect("write an inconsistent output");
+            Ok(0)
+        }),
+        "output_declared_count_inconsistent"
+    );
+
+    // An entry the plan did not ask for is never silently ignored.
+    assert_eq!(
+        attempt(&|spec| {
+            let staged = staged_destination(spec);
+            fs::write(&staged, output_document()).expect("write the planned output");
+            fs::write(
+                staged
+                    .parent()
+                    .expect("staged output has a parent")
+                    .join("extra.log"),
+                b"backend chatter",
+            )
+            .expect("write an unexpected sidecar");
+            Ok(0)
+        }),
+        "unexpected_output"
+    );
+
+    // A backend that failed produced nothing worth judging.
+    assert_eq!(attempt(&|_| Ok(1)), "backend_rejected");
+}
+
+/// The acquisition a run converts is the acquisition it admitted, and for a
+/// vendor source that check is the only thing standing between the boundary and
+/// a backend reading a file nobody verified.
+#[test]
+fn a_vendor_source_replaced_or_rewritten_before_the_run_is_refused() {
+    let directory = TestDirectory::new();
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    // Rewritten in place, same name, same length: only the content moved.
+    let source = write_thermo_source(directory.path(), "acquisition.raw");
+    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
+        .expect("plan a vendor conversion");
+    fs::write(&source, thermo_bytes(b"different-body!!")).expect("rewrite the acquisition");
+    let runner = FakeRunner::new(&convert_faithfully);
+    let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::SourceChangedBeforeRun)
+    );
+    assert_eq!(
+        runner.calls(),
+        0,
+        "the backend read a rewritten acquisition"
+    );
+
+    // Replaced by a different object under the same name.
+    let replaced = write_thermo_source(directory.path(), "second.raw");
+    let plan = ConversionPlan::to_mzml(open_thermo(&replaced), &root, ConflictPolicy::Fail)
+        .expect("plan a vendor conversion");
+    fs::remove_file(&replaced).expect("remove the acquisition");
+    fs::write(&replaced, thermo_bytes(b"acquisition-body")).expect("replace the acquisition");
+    let runner = FakeRunner::new(&convert_faithfully);
+    let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
+    assert!(
+        matches!(
+            report.outcome(),
+            ConversionRunOutcome::Failed(
+                ConversionRunFailure::SourceChangedBeforeRun
+                    | ConversionRunFailure::SourceNotRechecked { .. }
+            )
+        ),
+        "a replaced acquisition was converted: {report:?}"
+    );
+    assert_eq!(runner.calls(), 0);
+    assert!(entry_names(&root).is_empty());
+}
+
+// --- Capability binding -----------------------------------------------------
+
+/// One successful conversion is evidence about the build it ran on. A vendor
+/// family is refused on every other build, before a staging area exists.
+#[test]
+fn a_vendor_family_runs_only_on_a_build_it_has_evidence_for() {
+    let directory = TestDirectory::new();
+    let source = write_thermo_source(directory.path(), "acquisition.raw");
+
+    let attempt = |installed: &InstalledHelpCapabilities| {
+        let root = directory.path().join(format!(
+            "out-{}",
+            NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).expect("create destination root");
+        let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
+            .expect("plan a vendor conversion");
+        let runner = FakeRunner::new(&convert_faithfully);
+        let report = run_conversion(&plan, installed, &runner);
+        // Nothing may be created for a build with no evidence, so the staging
+        // name has to be as absent as everything else.
+        let entries = entry_names(&root);
+        (
+            report.outcome().stable_id().to_owned(),
+            runner.calls(),
+            entries,
+        )
+    };
+
+    let (outcome, calls, entries) = attempt(&evidenced_capabilities());
+    assert_eq!(outcome, "finalized");
+    assert_eq!(calls, 1);
+    assert_eq!(entries, vec![OsString::from("acquisition.mzML")]);
+
+    // A later release is not this release.
+    let (outcome, calls, entries) = attempt(&capabilities_reporting("3.0.26204", Some("a09eea9")));
+    assert_eq!(outcome, "source_family_not_evidenced");
+    assert_eq!(calls, 0, "an unevidenced build launched a backend");
+    assert!(
+        entries.is_empty(),
+        "an unevidenced build created {entries:?}"
+    );
+
+    // The right release built from a different revision is a different build.
+    let (outcome, ..) = attempt(&capabilities_reporting(EVIDENCED_RELEASE, Some("deadbee")));
+    assert_eq!(outcome, "source_family_not_evidenced");
+
+    // A build that will not say which it is cannot be matched against evidence
+    // recorded for a specific one.
+    let (outcome, ..) = attempt(&capabilities_reporting(EVIDENCED_RELEASE, None));
+    assert_eq!(outcome, "source_family_not_evidenced");
+
+    // Help that declares no release at all is the case every existing test
+    // fixture is in, and it is refused for the same reason.
+    let (outcome, ..) = attempt(&capabilities());
+    assert_eq!(outcome, "source_family_not_evidenced");
+}
+
+/// The gate is about the vendor family, not about conversion in general: an
+/// mzML source is unaffected by a build this repository has no vendor evidence
+/// for, because its reader is not the one the evidence is about.
+#[test]
+fn the_provider_build_gate_does_not_touch_the_mzml_posture() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+
+    let runner = FakeRunner::new(&convert_faithfully);
+    let report = run_conversion(
+        &plan,
+        &capabilities_reporting("9.9.99999", Some("ffffff0")),
+        &runner,
+    );
+
+    assert_eq!(report.outcome().stable_id(), "finalized");
+    assert!(!ConversionSourceKind::MzmlFile.requires_provider_build_evidence());
+    assert!(ConversionSourceKind::ThermoRawFile.requires_provider_build_evidence());
+}
+
+/// The build identity comes from the same complete help capture every other
+/// capability fact comes from, so a capability decision and a discovery report
+/// cannot disagree about which build answered.
+#[test]
+fn the_provider_build_is_read_from_the_installed_help() {
+    let evidenced = evidenced_capabilities();
+    let build = evidenced
+        .provider_build()
+        .expect("help declaring a release yields a build");
+    assert_eq!(build.release(), EVIDENCED_RELEASE);
+    assert_eq!(build.source_revision(), Some(EVIDENCED_REVISION));
+    assert!(build.is(EVIDENCED_RELEASE, EVIDENCED_REVISION));
+    assert!(!build.is(EVIDENCED_RELEASE, "other"));
+
+    // Help that never names a release yields no build rather than a guess.
+    assert!(capabilities().provider_build().is_none());
+
+    // A build that reports two different releases is not an identity.
+    let conflicting = capabilities_reporting("3.0.26013\nProteoWizard release: 3.0.26204", None);
+    assert!(conflicting.provider_build().is_none());
+}
+
+// --- Execution safety, for the family that has just been admitted -----------
+
+/// Every safety property the boundary already had applies unchanged to the new
+/// source posture. This is the point of adding a source rather than a pipeline.
+#[test]
+fn a_vendor_conversion_reuses_the_whole_safety_boundary() {
+    let directory = TestDirectory::new();
+    let source = write_thermo_source(directory.path(), "acquisition.raw");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    // The backend writes into a private staging directory, never the
+    // destination root, and is told to name its output there.
+    let observed = RefCell::new(None);
+    let act = |spec: &CommandSpec| {
+        let staged = staged_destination(spec);
+        *observed.borrow_mut() = Some(staged.clone());
+        assert!(
+            staged
+                .parent()
+                .and_then(Path::parent)
+                .is_some_and(|staging| staging
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with(".mscanvas-staging"))),
+            "a vendor run wrote outside a private staging area"
+        );
+        assert_eq!(
+            entry_names(&root),
+            vec![OsString::from("acquisition.mzML.mscanvas-staging")],
+            "the destination root held something other than the staging area"
+        );
+        fs::write(&staged, output_document()).expect("write the staged output");
+        Ok(0)
+    };
+    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
+        .expect("plan a vendor conversion");
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
+
+    assert_eq!(report.outcome().stable_id(), "finalized");
+    assert!(report.residue().is_none(), "staging survived a vendor run");
+    assert_eq!(entry_names(&root), vec![OsString::from("acquisition.mzML")]);
+    assert!(!observed.borrow().as_ref().expect("a staged path").exists());
+
+    // No-clobber: a second run refuses the name the first one took, and leaves
+    // what is there exactly as it is.
+    let existing = fs::read(root.join("acquisition.mzML")).expect("read the finalized output");
+    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
+        .expect("plan a second vendor conversion");
+    let runner = FakeRunner::new(&convert_faithfully);
+    let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::DestinationExists)
+    );
+    assert_eq!(runner.calls(), 0);
+    assert_eq!(
+        fs::read(root.join("acquisition.mzML")).expect("read it again"),
+        existing
+    );
+}
+
+/// A backend that never reached an ordinary exit produced nothing this boundary
+/// will finalize, whatever the source family.
+#[test]
+fn a_vendor_run_that_did_not_complete_finalizes_nothing() {
+    let directory = TestDirectory::new();
+    let source = write_thermo_source(directory.path(), "acquisition.raw");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
+        .expect("plan a vendor conversion");
+
+    let runner = FakeRunner::new(&convert_faithfully).reporting(Termination::Cancelled);
+    let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
+
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::BackendDidNotComplete)
+    );
+    assert!(entry_names(&root).is_empty());
+}
+
+/// The measured fact that changed the design: this family's reader cannot open
+/// the Windows extended-length path this crate binds identity to, and the open
+/// format's reader can. The spelling is therefore per-family, and it is proved
+/// to name the admitted object rather than assumed to.
+#[cfg(windows)]
+#[test]
+fn a_vendor_source_is_named_to_the_backend_in_a_spelling_its_reader_accepts() {
+    assert_eq!(
+        ConversionSourceKind::MzmlFile.input_spelling(),
+        InputSpelling::Canonical
+    );
+    assert_eq!(
+        ConversionSourceKind::ThermoRawFile.input_spelling(),
+        InputSpelling::PlainVerified
+    );
+
+    let directory = TestDirectory::new();
+    let source = write_thermo_source(directory.path(), "acquisition.raw");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
+        .expect("plan a vendor conversion");
+
+    let runner = FakeRunner::new(&convert_faithfully);
+    let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
+    assert_eq!(report.outcome().stable_id(), "finalized");
+
+    let argv = runner.argv();
+    let input = argv.first().expect("the input is the first argument");
+    let input = Path::new(input);
+    assert!(
+        !input.to_string_lossy().starts_with(r"\\?\"),
+        "the vendor reader was handed an extended-length path"
+    );
+    assert!(input.is_absolute());
+    // The spelling is not merely shorter: it reaches the object that was
+    // admitted, which is what the plan proved before using it.
+    assert_eq!(
+        fs::read(input).expect("read through the spelling handed to the backend"),
+        fs::read(&source).expect("read the admitted acquisition")
+    );
+
+    // The open format keeps the spelling its own evidence was recorded with.
+    let mzml = write_source(directory.path(), "sample.mzML");
+    let mzml_root = directory.path().join("mzml-out");
+    fs::create_dir(&mzml_root).expect("create destination root");
+    let plan = plan_into(open_source(&mzml), &mzml_root, ConflictPolicy::Fail);
+    let runner = FakeRunner::new(&convert_faithfully);
+    assert_eq!(
+        run_conversion(&plan, &capabilities(), &runner)
+            .outcome()
+            .stable_id(),
+        "finalized"
+    );
+    assert!(
+        runner
+            .argv()
+            .first()
+            .expect("the input is the first argument")
+            .to_string_lossy()
+            .starts_with(r"\\?\"),
+        "the open-format spelling changed"
+    );
+}
+
+/// The pre-run recheck catches a source changed before the backend starts. This
+/// is the other half: one changed *while* it ran, which only the validation can
+/// see, and which an output-only judgement must refuse exactly as a comparison
+/// would.
+#[test]
+fn a_vendor_source_rewritten_during_the_run_is_refused_at_validation() {
+    let directory = TestDirectory::new();
+    let source = write_thermo_source(directory.path(), "acquisition.raw");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
+        .expect("plan a vendor conversion");
+
+    // The backend produces a perfectly good document, and the acquisition it
+    // was produced from is not the one that was admitted any more. The output
+    // is unusable because nothing can say what it came from.
+    let act = |spec: &CommandSpec| {
+        fs::write(staged_destination(spec), output_document()).expect("write the staged output");
+        fs::write(&source, thermo_bytes(b"rewritten-body!!")).expect("rewrite the acquisition");
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
+
+    assert_eq!(runner.calls(), 1);
+    let ConversionRunOutcome::Failed(failure) = report.outcome() else {
+        panic!("a conversion of a rewritten acquisition was finalized: {report:?}");
+    };
+    assert_eq!(
+        failure.detailed_stable_id(),
+        "source_changed_during_conversion"
+    );
+    assert!(
+        entry_names(&root).is_empty(),
+        "a refused conversion left something behind"
+    );
+}
+
+/// The real-acquisition evidence, kept out of ordinary runs.
+///
+/// CI has no lawful vendor acquisition and no ProteoWizard, so this is ignored
+/// rather than skipped silently: a machine that has both can run it by name,
+/// and one that does not is told the claim went unchecked instead of shown a
+/// green run. The reproduction command and the fixture provenance are in the
+/// vendor RAW evidence document.
+#[test]
+#[ignore = "requires a lawful vendor acquisition and an installed ProteoWizard; see docs/spikes/M3_VENDOR_RAW_EVIDENCE.md"]
+fn the_vendor_raw_evidence_run_is_reproducible() {
+    let Some(fixture) = std::env::var_os("MSCANVAS_THERMO_RAW_FIXTURE").map(PathBuf::from) else {
+        panic!(
+            "set MSCANVAS_THERMO_RAW_FIXTURE to the lawful acquisition described in the evidence document"
+        );
+    };
+    let source = ConversionSource::open_thermo_raw_file(&fixture, MzmlScanLimits::default())
+        .expect("the fixture is admitted as a Thermo RAW source");
+    assert_eq!(source.kind(), ConversionSourceKind::ThermoRawFile);
+
+    let discovery = crate::discovery::discover(crate::discovery::DiscoveryRequest::automatic());
+    let capabilities = InstalledHelpCapabilities::from_discovered_tool(&discovery.msconvert)
+        .expect("installed help");
+    let directory = TestDirectory::new();
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let plan = ConversionPlan::to_mzml(source, &root, ConflictPolicy::Fail).expect("plan");
+
+    let report = run_conversion(&plan, &capabilities, &crate::process::SystemProcessRunner);
+    let ConversionRunOutcome::Finalized(valid) = report.outcome() else {
+        panic!("the evidence conversion did not finalize: {report:?}");
+    };
+    assert_eq!(valid.validation_mode(), ValidationMode::OutputOnly);
+    assert!(!valid.is_fully_verified());
+    assert!(report.residue().is_none());
+    assert_eq!(entry_names(&root).len(), 1);
 }

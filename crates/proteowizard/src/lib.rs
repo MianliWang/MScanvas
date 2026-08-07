@@ -17,19 +17,20 @@ mod sha256;
 pub use capability::{
     CapabilityRequirementError, CapturedHelpStream, CompleteHelpCapture, DeclarationKind,
     HelpCapabilityError, HelpExample, HelpStream, InstalledHelpCapabilities,
-    NamedGrammarDeclaration, OptionArgument, OptionDeclaration, RawHelpHashes, Sha256Digest,
-    Sha256DigestParseError, TicCapability,
+    NamedGrammarDeclaration, OptionArgument, OptionDeclaration, ProviderBuild, RawHelpHashes,
+    Sha256Digest, Sha256DigestParseError, TicCapability,
 };
 pub use command::{
-    BackendTool, CommandSpec, OpenFormat, PlanError, PreviewOperation, SourceIdentity,
-    build_msaccess_command_with_capabilities, build_msconvert_command_with_capabilities,
+    BackendTool, CommandSpec, InputSpelling, OpenFormat, PlanError, PreviewOperation,
+    SourceIdentity, build_msaccess_command_with_capabilities, build_msconvert_command_for_source,
+    build_msconvert_command_with_capabilities,
 };
 pub use conversion::{
     AdvisoryObservation, BinaryArrayMismatchKind, CompressionPolicy, ConversionIntegrityOutcome,
     ConversionOutputInspection, ConversionOutputRejection, ConversionPolicy, ConversionSourceError,
-    ConversionSourceFacts, DocumentPart, DocumentSide, IntegrityProperty, ValidConversion,
-    capture_conversion_source, conversion_output_file_name, inspect_conversion_output,
-    verify_mzml_conversion,
+    ConversionSourceFacts, DocumentPart, DocumentSide, IntegrityProperty, SourceObjectFacts,
+    ValidConversion, ValidationMode, capture_conversion_source, conversion_output_file_name,
+    inspect_conversion_output, verify_mzml_conversion,
 };
 pub use conversion_run::{
     BackendExecutionFailure, BackendRunFacts, BackendStream, ConflictPolicy, ConversionPlan,
