@@ -169,6 +169,10 @@ fn run(cli: Cli) -> Result<(), String> {
     // Which family this acquisition belongs to is decided once, by admission,
     // and both stages answer about that family.
     let source = open_source(&cli.input)?;
+    // From the admitted object, so the fixture identity this evidence records is
+    // the identity of the thing every stage below measures.
+    println!("input.byte_length={}", source.byte_length());
+    println!("input.sha256={}", source.sha256());
     println!("source.kind={}", source.kind().stable_id());
     println!(
         "source.supports_comparison={}",
@@ -202,7 +206,14 @@ fn run(cli: Cli) -> Result<(), String> {
     }
 }
 
-/// Path-free facts about the acquisition under test.
+/// What the acquisition is called, before anything has admitted it.
+///
+/// Deliberately only the extension. The length and the digest are reported
+/// after admission, from the admitted object: reading them here would be a
+/// third independent read of the file, and an acquisition replaced between that
+/// read and the admission would leave this evidence describing one snapshot
+/// while every measurement described another. A fixture identity in an evidence
+/// record has to be the identity of the thing that was measured.
 fn describe_input(input: &Path) -> Result<String, String> {
     let metadata = fs::symlink_metadata(input).map_err(|error| {
         format!(
@@ -213,17 +224,12 @@ fn describe_input(input: &Path) -> Result<String, String> {
     if !metadata.is_file() {
         return Err("the input is not a regular file".to_owned());
     }
-    let sha256 = Sha256Digest::calculate_file(input)
-        .map_err(|_| "the input could not be hashed".to_owned())?;
     let extension = input
         .extension()
         .and_then(OsStr::to_str)
         .unwrap_or("<none>")
         .to_owned();
-    Ok(format!(
-        "input.extension={extension}\ninput.byte_length={length}\ninput.sha256={sha256}",
-        length = metadata.len()
-    ))
+    Ok(format!("input.extension={extension}"))
 }
 
 fn installed_capabilities(home: Option<&Path>) -> Result<InstalledHelpCapabilities, String> {

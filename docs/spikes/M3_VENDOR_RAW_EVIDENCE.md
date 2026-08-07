@@ -44,7 +44,7 @@ rather than merely convenient.
 | Retrieval URL | <https://raw.githubusercontent.com/ProteoWizard/pwiz/8f945db389acc21faf1d59eb88c3f10f5b1be242/pwiz/data/vendor_readers/Thermo/Reader_Thermo_Test.data/FT-HCD-MSX.raw> |
 | HTTP result | `200`, zero redirects, no credentials |
 | Downloaded | 2026-08-07 |
-| Byte length | `78,309` |
+| Byte length | `78,309` — reported by the harness from the *admitted* source object, not from an independent read, so the identity recorded here is the identity of the thing that was measured |
 | SHA-256 | `b3d97b3856dd1e8dd6846d21c58b1b1824c309480908fe4c2dfabe152bd6dd7b` |
 | Published checksum | **None upstream.** The digest above was calculated here and must be re-verified on acquisition |
 | Licence basis | The repository root `LICENSE` at that commit is Apache-2.0 (`200`, 11,358 bytes), granting the right to "reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work" |
