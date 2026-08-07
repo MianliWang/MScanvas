@@ -269,7 +269,9 @@ open.
   second claims none passes. It records that a `binary` element held
   non-whitespace content, not that the content is well-formed base64, so a
   payload of `!!!!` is a present payload as far as every check here is
-  concerned. It keeps the last MS level a spectrum declared rather than noticing
+  concerned. It does not read `encodedLength` at all, so an array omitting that
+  schema-required attribute is invisible here and would be refused by a
+  schema-validating reader downstream. It keeps the last MS level a spectrum declared rather than noticing
   that it declared two different ones. Nor does it record *where* a
   `referenceableParamGroupRef` appeared, so one anywhere in a document — in
   spectrum metadata that has nothing to do with binary arrays — makes the whole
