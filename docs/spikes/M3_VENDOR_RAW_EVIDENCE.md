@@ -3,9 +3,10 @@
 - **Status:** One vendor source family evidenced and admitted, privately. Every
   user-visible conversion surface remains separately gated.
 - **Date:** 2026-08-07
-- **Exact code head:** `529d91f45644a259f7999f56117d3349fc6da728`
+- **Exact code head:** `9ede8534f0ec3d708c312cc5a017607bfbbaa57c`
   (first measured at `2cb6230`; every structural fact below was re-measured
-  unchanged at this head after the review fixes, and the timings are from it)
+  unchanged after each round of review fixes, and the figures here are from a
+  complete two-stage run at this head)
 - **Decision recorded in:** [ADR 0010](../architecture/adr/0010-first-vendor-raw-source-admission.md)
 
 This record closes the first entry in ADR 0009's "evidence gates still open"
@@ -148,8 +149,8 @@ cleaned it up:
 | Fact | Thermo RAW | mzML control |
 | --- | --- | --- |
 | Backend exit | `0` | `0` |
-| Backend elapsed | `684 ms` | `183 ms` |
-| Peak owned-job memory | `36,536,320` bytes | `22,007,808` bytes |
+| Backend elapsed | `655 ms` | `161 ms` |
+| Peak owned-job memory | `36,442,112` bytes | `21,864,448` bytes |
 | Entries in the output directory | **`1`** | **`1`** |
 | Entry kind | regular file | regular file |
 | Entry name | exactly the planned name | exactly the planned name |
@@ -193,7 +194,7 @@ The whole sequence, unchanged, through `run_conversion`:
 | Source bytes / SHA-256 | `78,309` / `b3d97b38…dd7b` | `25,072` / `711ac14b…9c83` |
 | Outcome | `finalized` | `finalized` |
 | Validation mode | **`output_only`** | `source_comparison` |
-| Backend exit / elapsed | `0` / `511 ms` | `0` / `187 ms` |
+| Backend exit / elapsed | `0` / `512 ms` | `0` / `181 ms` |
 | Output root | `indexedmzML` | `indexedmzML` |
 | Spectra / chromatograms | `1` / `1` | `4` / `2` |
 | Output byte length | `28,661` | `25,517` |
