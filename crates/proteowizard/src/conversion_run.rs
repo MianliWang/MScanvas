@@ -32,6 +32,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::File;
 use std::io;
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -39,12 +40,13 @@ use thiserror::Error;
 
 use crate::capability::{InstalledHelpCapabilities, Sha256Digest};
 use crate::command::{
-    OpenFormat, PlanError, SourceIdentity, build_msconvert_command_with_capabilities,
+    InputSpelling, OpenFormat, PlanError, SourceIdentity, build_msconvert_command_for_source,
 };
 use crate::conversion::{
     ConversionIntegrityOutcome, ConversionPolicy, ConversionSourceError, ConversionSourceFacts,
-    ValidConversion, VerifiedConversion, capture_conversion_source, conversion_output_file_name,
-    verify_mzml_conversion_retaining_output,
+    SourceObjectFacts, ValidConversion, VerifiedConversion, capture_conversion_source,
+    conversion_output_file_name, verify_mzml_conversion_retaining_output,
+    verify_vendor_conversion_retaining_output,
 };
 use crate::fs_guard::{self, RegularFileError};
 use crate::mzml::{MzmlFacts, MzmlScanError, MzmlScanLimits};
@@ -97,14 +99,22 @@ fn component_units(name: &OsStr) -> usize {
 
 /// Which source kinds this boundary is allowed to convert.
 ///
-/// There is exactly one, and it is the one the repository has evidence for: a
-/// regular file MSCanvas can already read as mzML. Directory-formatted and
-/// vendor acquisitions are not expressible here, not even as an unconstructed
-/// variant, until conversion evidence for them exists.
+/// Each variant names an exact family the repository has measured evidence for,
+/// and there is no generic vendor or RAW variant: a family MSCanvas has not
+/// converted with a lawful fixture on a tested provider build is not
+/// expressible here, not even as an unconstructed variant. Directory-formatted
+/// acquisitions remain outside all of it, behind the evidence list ADR 0007
+/// records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConversionSourceKind {
     /// A regular file that read as mzML before it became a source.
     MzmlFile,
+    /// A regular file carrying the Thermo Scientific RAW file signature.
+    ///
+    /// Single-file, not a directory acquisition, which is why it fits the
+    /// object model the mzML posture already established rather than needing a
+    /// new one.
+    ThermoRawFile,
 }
 
 impl ConversionSourceKind {
@@ -112,9 +122,127 @@ impl ConversionSourceKind {
     pub const fn stable_id(self) -> &'static str {
         match self {
             Self::MzmlFile => "mzml_file",
+            Self::ThermoRawFile => "thermo_raw_file",
         }
     }
+
+    /// Whether a conversion from this source can be compared against it.
+    ///
+    /// Only a source this boundary can read under the same model as the output
+    /// can. Everything else is validated on its output alone, and saying so
+    /// here is what keeps the two from being confused downstream.
+    #[must_use]
+    pub const fn supports_source_comparison(self) -> bool {
+        matches!(self, Self::MzmlFile)
+    }
+
+    /// How this family's source object must be spelled in the backend's argv.
+    ///
+    /// Measured, and it differs by family rather than by platform. On this
+    /// build, ProteoWizard's own open-format reader opens the Windows
+    /// extended-length canonical path this crate binds identity to, and the
+    /// Thermo vendor library does not: it answers `Corrupt RAW file` and exits
+    /// non-zero for the very object it converts successfully under a plain
+    /// spelling. Nothing about the file changes; only how it is named.
+    #[must_use]
+    pub const fn input_spelling(self) -> InputSpelling {
+        match self {
+            Self::MzmlFile => InputSpelling::Canonical,
+            Self::ThermoRawFile => InputSpelling::PlainVerified,
+        }
+    }
+
+    /// Whether this family needs its own recorded provider-build evidence
+    /// before a run may use it.
+    ///
+    /// mzML is read by ProteoWizard's own open-format code and by this crate's
+    /// scanner, and the repository has open-format evidence across builds. A
+    /// vendor family is read by a vendor library whose behaviour this
+    /// repository has measured on exactly the builds it has measured.
+    #[must_use]
+    pub const fn requires_provider_build_evidence(self) -> bool {
+        matches!(self, Self::ThermoRawFile)
+    }
 }
+
+/// The exact leading bytes of a Thermo Scientific RAW file: `0x01 0xA1`
+/// followed by `Finnigan` in UTF-16LE.
+///
+/// This is the same 18-byte header ProteoWizard's own `Reader_Thermo` matches
+/// on, and it matches on nothing else — the file name is not consulted there.
+/// Measured against the evidence fixture, which begins with exactly these bytes.
+const THERMO_RAW_SIGNATURE: [u8; 18] = [
+    0x01, 0xA1, b'F', 0, b'i', 0, b'n', 0, b'n', 0, b'i', 0, b'g', 0, b'a', 0, b'n', 0,
+];
+
+/// One ProteoWizard build a vendor source family was actually converted on.
+///
+/// A row exists because a real acquisition of that family was converted on that
+/// exact build through this boundary and the result was recorded. Widening
+/// support is therefore adding a measured row, not relaxing a check.
+struct EvidencedProviderBuild {
+    kind: ConversionSourceKind,
+    release: &'static str,
+    source_revision: &'static str,
+    /// The digest of the exact `msconvert.exe` the conversion ran against.
+    ///
+    /// Two strings out of a help banner say what a build calls itself, not what
+    /// it is. An installation reporting the same release and revision with the
+    /// vendor libraries missing or replaced answers identically, and the
+    /// evidence was never about that installation. Discovery already hashes the
+    /// executable either side of its probe, so binding the row to the artifact
+    /// costs nothing and is the strongest single thing this crate has probed.
+    ///
+    /// It is not a check on the vendor libraries themselves, which this crate
+    /// never opens; that remains an open gate.
+    executable_sha256: &'static str,
+}
+
+/// Every build this repository has vendor-source evidence for.
+///
+/// Deliberately exact and deliberately short. One successful conversion is
+/// evidence about the build it ran on; treating it as evidence about every
+/// installation is the claim ADR 0002 and the M0 spike both refuse to make,
+/// because a vendor family is read by a vendor library whose behaviour changes
+/// between releases and whose availability is not uniform across builds.
+const EVIDENCED_PROVIDER_BUILDS: [EvidencedProviderBuild; 1] = [EvidencedProviderBuild {
+    kind: ConversionSourceKind::ThermoRawFile,
+    release: "3.0.26013",
+    source_revision: "47b13cf",
+    executable_sha256: "9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD",
+}];
+
+/// Whether the installed build is one this family has been converted on.
+fn provider_build_is_evidenced(
+    capabilities: &InstalledHelpCapabilities,
+    kind: ConversionSourceKind,
+) -> bool {
+    if !kind.requires_provider_build_evidence() {
+        return true;
+    }
+    let Some(build) = capabilities.provider_build() else {
+        // A build that will not say which it is cannot be matched against
+        // evidence recorded for a specific one.
+        return false;
+    };
+    let executable = capabilities.executable_sha256().to_string();
+    EVIDENCED_PROVIDER_BUILDS.iter().any(|evidenced| {
+        evidenced.kind == kind
+            && build.is(evidenced.release, evidenced.source_revision)
+            && executable.eq_ignore_ascii_case(evidenced.executable_sha256)
+    })
+}
+
+/// The extension the installed vendor reader requires, whatever the signature
+/// says.
+///
+/// Measured: a file carrying the exact Thermo signature under a different
+/// extension is refused by the vendor library itself with `Corrupt RAW file`
+/// and exit 1, producing nothing. The signature is the authority for *what a
+/// file is*; this is the separate, equally measured fact about what the
+/// installed reader will open. Admitting a source the backend cannot read would
+/// be a refusal deferred to a launched process rather than a stated one.
+const THERMO_RAW_EXTENSION: &str = "raw";
 
 /// Why a candidate path did not become a conversion source. No variant carries
 /// a path or backend text.
@@ -128,6 +256,16 @@ pub enum ConversionSourceRejection {
     NotReadableAsMzml(MzmlScanError),
     #[error("the conversion source could not be hashed")]
     NotHashed,
+    /// The name does not carry the extension the family's installed reader
+    /// requires. This is a filter, not the recognition: a name that passes it
+    /// still has to prove what it is.
+    #[error("the conversion source does not carry the required file extension")]
+    UnsupportedExtension,
+    /// The object does not begin with the family's documented file signature.
+    /// This is the recognition, and nothing about the name can substitute for
+    /// it.
+    #[error("the conversion source does not carry the expected file signature")]
+    SignatureMismatch,
 }
 
 impl ConversionSourceRejection {
@@ -138,6 +276,8 @@ impl ConversionSourceRejection {
             Self::NotARegularFile => "source_not_a_regular_file",
             Self::NotReadableAsMzml(_) => "source_not_readable_as_mzml",
             Self::NotHashed => "source_not_hashed",
+            Self::UnsupportedExtension => "source_unsupported_extension",
+            Self::SignatureMismatch => "source_signature_mismatch",
         }
     }
 }
@@ -176,7 +316,33 @@ impl From<RegularFileError> for ConversionSourceRejection {
 pub struct ConversionSource {
     kind: ConversionSourceKind,
     limits: MzmlScanLimits,
-    facts: ConversionSourceFacts,
+    baseline: SourceBaseline,
+}
+
+/// What a source can be measured against afterwards.
+///
+/// The variants are not two ways of holding the same thing. One carries a
+/// reading of the source under the model the output will be read under, and the
+/// other carries only what is true of the object. Which one a source has is
+/// decided when it is admitted and is never re-decided.
+#[derive(Clone, PartialEq)]
+enum SourceBaseline {
+    /// The source was read as mzML, so the output can be compared to it. Boxed
+    /// because a whole document's facts dwarf the object facts beside it, and a
+    /// vendor source should not carry that weight for a reading it does not have.
+    Mzml(Box<ConversionSourceFacts>),
+    /// The source is a bound, hashed object and nothing more. There is no mzML
+    /// reading of it and this boundary will not pretend there is one.
+    ObjectOnly(SourceObjectFacts),
+}
+
+impl SourceBaseline {
+    const fn object(&self) -> &SourceObjectFacts {
+        match self {
+            Self::Mzml(facts) => facts.object(),
+            Self::ObjectOnly(object) => object,
+        }
+    }
 }
 
 impl ConversionSource {
@@ -197,7 +363,108 @@ impl ConversionSource {
         Ok(Self {
             kind: ConversionSourceKind::MzmlFile,
             limits,
-            facts,
+            baseline: SourceBaseline::Mzml(Box::new(facts)),
+        })
+    }
+
+    /// Opens a regular-file Thermo Scientific RAW acquisition as a conversion
+    /// source.
+    ///
+    /// Admission is in three steps and the order matters. The posture check
+    /// refuses anything that is not a plain regular file. The extension is then
+    /// a filter, because the installed vendor reader will not open the object
+    /// without it. And the file signature is the recognition: the object is
+    /// opened under the no-follow guard and its first bytes are read *through
+    /// that handle*, so what is recognized is the object, not the name that
+    /// reached it.
+    ///
+    /// The scan limits are the ones the output will be read with. They judge
+    /// nothing on this side — a RAW file is not mzML and this boundary never
+    /// pretends to read one — and are carried so the plan keeps one limit
+    /// contract whatever the source is.
+    pub fn open_thermo_raw_file(
+        path: &Path,
+        limits: MzmlScanLimits,
+    ) -> Result<Self, ConversionSourceRejection> {
+        Self::open_signed_object(
+            path,
+            limits,
+            ConversionSourceKind::ThermoRawFile,
+            THERMO_RAW_EXTENSION,
+            &THERMO_RAW_SIGNATURE,
+        )
+    }
+
+    /// The shared body of every signature-recognized single-file family.
+    fn open_signed_object(
+        path: &Path,
+        limits: MzmlScanLimits,
+        kind: ConversionSourceKind,
+        extension: &str,
+        signature: &[u8],
+    ) -> Result<Self, ConversionSourceRejection> {
+        if !has_extension(path, extension) {
+            return Err(ConversionSourceRejection::UnsupportedExtension);
+        }
+
+        // Pinned before anything is judged about it, and the order carries the
+        // whole no-link promise. Checking the posture on the path and then
+        // capturing the identity would leave the interval between them, and
+        // `SourceIdentity::capture` *follows* links: a link dropped in there
+        // would be canonicalized to its target, and a different acquisition —
+        // one carrying a perfectly valid signature — would be admitted as the
+        // one the caller chose. The open below refuses to traverse a reparse
+        // point and withholds delete sharing, so the name cannot be repointed
+        // afterwards and every judgement that follows is about this object.
+        let mut file = open_admission_candidate(path)
+            .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
+        fs_guard::require_regular_file(&metadata)?;
+        let byte_length = metadata.len();
+
+        let identity = SourceIdentity::capture(path)
+            .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
+
+        // Both readings come from that one pinned handle, which withholds write
+        // sharing. Reopening the name for the digest would let the signature
+        // describe one object and the hash another; sharing the handle with a
+        // writer would let it describe one *snapshot* and the hash another,
+        // which is the same defect a step further in. Either way the pre-run
+        // recheck would carry forward a digest of content nothing had
+        // recognized, and skip re-reading the signature on the strength of a
+        // digest that no longer covers it.
+        //
+        // An acquisition somebody else is writing is therefore not admitted at
+        // all, which is the right answer: it is not a finished acquisition.
+        let mut head = vec![0_u8; signature.len()];
+        match file.read_exact(&mut head) {
+            Ok(()) => {}
+            // A file shorter than the signature cannot be carrying it. That is
+            // a mismatch, not an inspection failure.
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
+                return Err(ConversionSourceRejection::SignatureMismatch);
+            }
+            Err(error) => {
+                return Err(ConversionSourceRejection::NotInspectable { kind: error.kind() });
+            }
+        }
+        if head != signature {
+            return Err(ConversionSourceRejection::SignatureMismatch);
+        }
+
+        file.rewind()
+            .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
+        let sha256 = Sha256Digest::calculate_reader(&mut file)
+            .map_err(|_| ConversionSourceRejection::NotHashed)?;
+        let object = SourceObjectFacts::from_parts(identity, byte_length, sha256);
+        drop(file);
+
+        Ok(Self {
+            kind,
+            limits,
+            baseline: SourceBaseline::ObjectOnly(object),
         })
     }
 
@@ -213,23 +480,44 @@ impl ConversionSource {
 
     #[must_use]
     pub const fn byte_length(&self) -> u64 {
-        self.facts.byte_length()
+        self.baseline.object().byte_length()
     }
 
     #[must_use]
     pub const fn sha256(&self) -> Sha256Digest {
-        self.facts.sha256()
+        self.baseline.object().sha256()
     }
 
-    /// The typed mzML facts read from the source before any conversion ran.
+    /// The typed mzML facts read from the source before any conversion ran, for
+    /// the source postures that have them.
+    ///
+    /// `None` is not a gap in this run's evidence. It says the source was never
+    /// read as mzML, which is the whole reason its conversion is validated on
+    /// the output alone.
     #[must_use]
-    pub const fn mzml_facts(&self) -> &MzmlFacts {
-        self.facts.facts()
+    pub const fn mzml_facts(&self) -> Option<&MzmlFacts> {
+        match &self.baseline {
+            SourceBaseline::Mzml(facts) => Some(facts.facts()),
+            SourceBaseline::ObjectOnly(_) => None,
+        }
     }
 
     fn canonical_path(&self) -> &Path {
-        self.facts.identity().canonical_path()
+        self.baseline.object().identity().canonical_path()
     }
+}
+
+/// Whether a path carries exactly this extension, ignoring ASCII case.
+///
+/// The same predicate the output snapshot uses, for the same reason: Windows
+/// does not distinguish `.raw` from `.RAW`, and a rule that did would refuse
+/// files the backend accepts.
+fn has_extension(path: &Path, expected: &str) -> bool {
+    path.extension().is_some_and(|extension| {
+        extension
+            .as_encoded_bytes()
+            .eq_ignore_ascii_case(expected.as_bytes())
+    })
 }
 
 impl fmt::Debug for ConversionSource {
@@ -696,6 +984,10 @@ pub enum ConversionRunFailure {
     /// The source could not be rehashed, so nothing was converted.
     #[error("the source could not be rehashed")]
     SourceNotRehashed,
+    /// The installed backend build is not one this source family has been
+    /// converted on. Nothing was created, launched or removed.
+    #[error("the installed backend build has no evidence for this source family")]
+    SourceFamilyNotEvidenced,
     /// The destination root is no longer the directory the plan accepted, so
     /// nothing was created there.
     #[error("the destination root is not the directory this plan accepted")]
@@ -728,6 +1020,7 @@ impl ConversionRunFailure {
             Self::SourceChangedBeforeRun => "source_changed_before_run",
             Self::SourceNotRechecked { .. } => "source_not_rechecked",
             Self::SourceNotRehashed => "source_not_rehashed",
+            Self::SourceFamilyNotEvidenced => "source_family_not_evidenced",
             Self::DestinationRootChanged => "destination_root_changed",
             Self::DestinationRootNotRechecked { .. } => "destination_root_not_rechecked",
             Self::DestinationRootNotOpened { .. } => "destination_root_not_opened",
@@ -1333,9 +1626,29 @@ fn run_admitted(
         }
     }
 
-    if let Err(failure) = require_planned_source(&plan.source) {
-        return ConversionRunReport::settled(ConversionRunOutcome::Failed(failure));
+    // A source family this installation has no evidence for is refused before a
+    // staging area exists, so an ungated build never gets as far as creating a
+    // directory or launching anything.
+    if !provider_build_is_evidenced(capabilities, plan.source.kind()) {
+        return ConversionRunReport::settled(ConversionRunOutcome::Failed(
+            ConversionRunFailure::SourceFamilyNotEvidenced,
+        ));
     }
+
+    // The source is held for the whole run, not merely checked before it. A
+    // pinned object cannot be rewritten or renamed away while the backend reads
+    // it, which is what makes "the backend converted the acquisition that was
+    // verified" a property rather than a hope. It matters most for a source
+    // posture with no output-side comparison to fall back on: a source rewritten
+    // during the run and restored before the recheck would otherwise satisfy
+    // every identity, length and digest test while the document came from bytes
+    // nothing ever admitted.
+    let _pinned_source = match pin_planned_source(&plan.source) {
+        Ok(pinned) => pinned,
+        Err(failure) => {
+            return ConversionRunReport::settled(ConversionRunOutcome::Failed(failure));
+        }
+    };
 
     let staging = match OwnedStagingArea::create(plan.staging_directory()) {
         Ok(staging) => staging,
@@ -1376,8 +1689,27 @@ fn run_admitted(
 ///
 /// This costs one full read of the source. A conversion already reads it twice;
 /// binding the run to the bytes that were admitted is worth the third.
-fn require_planned_source(source: &ConversionSource) -> Result<(), ConversionRunFailure> {
-    match source.facts.identity().matches_current() {
+fn pin_planned_source(source: &ConversionSource) -> Result<File, ConversionRunFailure> {
+    let object = source.baseline.object();
+
+    // Held before it is judged, and the order is the whole point. Checking the
+    // identity and then opening leaves the interval between them: a name
+    // atomically replaced in there binds this handle to an object nothing
+    // admitted, and a replacement carrying identical bytes would pass the
+    // length and digest checks below and launch a conversion that can run for
+    // minutes before the post-run revalidation notices. Once the handle exists
+    // without delete sharing the name cannot be repointed, so the check that
+    // follows describes the object this run will actually use.
+    let path = source.canonical_path();
+    // An open that fails says the recheck could not be made, which is the
+    // reason this boundary has always given for a source it cannot reach. What
+    // the source *became* is decided by the posture, length and digest checks
+    // below, so reordering the open does not move a case from one reason to the
+    // other.
+    let mut pinned = open_pinned_source(path)
+        .map_err(|error| ConversionRunFailure::SourceNotRechecked { kind: error.kind() })?;
+
+    match object.identity().matches_current() {
         Ok(true) => {}
         Ok(false) => return Err(ConversionRunFailure::SourceChangedBeforeRun),
         Err(error) => {
@@ -1385,18 +1717,91 @@ fn require_planned_source(source: &ConversionSource) -> Result<(), ConversionRun
         }
     }
 
-    let path = source.canonical_path();
-    let metadata = std::fs::symlink_metadata(path)
+    let metadata = pinned
+        .metadata()
         .map_err(|error| ConversionRunFailure::SourceNotRechecked { kind: error.kind() })?;
-    if metadata.len() != source.facts.byte_length() {
+    fs_guard::require_regular_file(&metadata)
+        .map_err(|_| ConversionRunFailure::SourceChangedBeforeRun)?;
+    if metadata.len() != object.byte_length() {
         return Err(ConversionRunFailure::SourceChangedBeforeRun);
     }
-    let sha256 =
-        Sha256Digest::calculate_file(path).map_err(|_| ConversionRunFailure::SourceNotRehashed)?;
-    if sha256 != source.facts.sha256() {
+    // Hashed through the handle that holds it, so the bytes this compares are
+    // the bytes nothing can change for as long as the handle lives.
+    let sha256 = Sha256Digest::calculate_reader(&mut pinned)
+        .map_err(|_| ConversionRunFailure::SourceNotRehashed)?;
+    if sha256 != object.sha256() {
         return Err(ConversionRunFailure::SourceChangedBeforeRun);
     }
-    Ok(())
+    // A digest that still matches is also the family recognition still holding:
+    // the signature is a prefix of the bytes this digest covers, so re-reading
+    // it would re-derive a fact the hash has already settled.
+    Ok(pinned)
+}
+
+/// Opens a candidate acquisition so it can be judged from the object itself.
+///
+/// The same posture as the run's own hold — no link is followed, and neither
+/// write nor delete sharing is granted — with one difference: a directory is
+/// allowed to open, so that a directory offered as a source is refused by the
+/// posture check with the reason that is true of it rather than by the open
+/// with an incidental one.
+#[cfg(windows)]
+fn open_admission_candidate(path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+/// Opens a candidate acquisition. No platform outside Windows offers a
+/// mandatory share mode through the standard library, so the guarantee is
+/// narrower and the posture check after it is what remains.
+#[cfg(not(windows))]
+fn open_admission_candidate(path: &Path) -> io::Result<File> {
+    File::open(path)
+}
+
+/// Opens the acquisition so that nobody can change it while it is converted.
+///
+/// Read sharing is granted, because the backend has to open the same object by
+/// name and a concurrent reader invalidates nothing. Write sharing is withheld,
+/// so the bytes the digest above covers are the bytes the backend reads. Delete
+/// sharing is withheld too, and that half is what stops the *name* being made to
+/// mean something else: the backend resolves a path, so a source renamed away
+/// and replaced would otherwise hand it an object this run never admitted.
+///
+/// The cost is real and belongs in the record: for the duration of a conversion
+/// the user cannot modify, rename or delete the acquisition being converted.
+#[cfg(windows)]
+fn open_pinned_source(path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+/// Opens the acquisition for reading.
+///
+/// No platform outside Windows offers a mandatory share mode through the
+/// standard library, so this holds the object open without preventing anyone
+/// from writing to it. The guarantee is correspondingly narrower and is not
+/// described as equivalent.
+#[cfg(not(windows))]
+fn open_pinned_source(path: &Path) -> io::Result<File> {
+    File::open(path)
 }
 
 fn run_staged(
@@ -1407,12 +1812,13 @@ fn run_staged(
     destination_directory: &finalize::DestinationDirectory,
     after_validation: impl FnOnce(),
 ) -> (ConversionRunOutcome, Option<BackendRunFacts>) {
-    let command = match build_msconvert_command_with_capabilities(
+    let command = match build_msconvert_command_for_source(
         capabilities,
         plan.source.canonical_path(),
         staging,
         plan.output_file_name(),
         OpenFormat::MzMl,
+        plan.source.kind().input_spelling(),
     ) {
         Ok(command) => command,
         Err(error) => {
@@ -1452,13 +1858,28 @@ fn run_staged(
     // Exit status is not evidence of a usable document. The judgement below is
     // the only thing that may unlock the final name, and it hands back the very
     // object it judged rather than a description of one.
-    let validated = match verify_mzml_conversion_retaining_output(
-        &plan.source.facts,
-        staging,
-        plan.output_file_name(),
-        plan.compression,
-        plan.scan_limits(),
-    ) {
+    //
+    // Which judgement runs is decided by what the source is, not by what the
+    // output turned out to contain: a source read as mzML is compared against,
+    // and one that never was is validated on its output alone. Nothing here can
+    // apply the comparison to a source it could not read that way.
+    let verified = match &plan.source.baseline {
+        SourceBaseline::Mzml(facts) => verify_mzml_conversion_retaining_output(
+            facts,
+            staging,
+            plan.output_file_name(),
+            plan.compression,
+            plan.scan_limits(),
+        ),
+        SourceBaseline::ObjectOnly(object) => verify_vendor_conversion_retaining_output(
+            object,
+            staging,
+            plan.output_file_name(),
+            plan.compression,
+            plan.scan_limits(),
+        ),
+    };
+    let validated = match verified {
         VerifiedConversion::Valid(validated) => validated,
         VerifiedConversion::Rejected(rejected) => {
             return (

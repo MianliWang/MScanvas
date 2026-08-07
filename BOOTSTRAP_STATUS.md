@@ -98,7 +98,7 @@ A narrower continuation verified the matching official Windows x86_64 portable a
 
 The local Windows Sandbox/VM gate stopped without changing optional features. Exact run [`30129182032`](https://github.com/MianliWang/MScanvas/actions/runs/30129182032) later used an ephemeral GitHub-hosted `windows-2025` VM and executed commit `f0d7957fbbe129263a9a89684b6ce549b1b3a086`. The unsigned portable tools ran only as a temporary non-elevated standard user with protected inputs, scoped writable paths, exact-program outbound blocks and owned-process supervision. The fixture/archive/executable identities, complete help, 12 operation records and complete teardown were verified; the sanitized artifact ZIP independently matched SHA-256 `8A07BBDBA9C195A311A00658A9FC7F086E83B6DA3943F41B12B90BC2ED23E927`.
 
-The source-reconciled runtime result is capability-specific. Discovery/build identity is A. Metadata, summary/counts, derived TIC/filtering, scan listing, selected spectrum, overall conversion and mzML conversion are B with named parser/scientific limits. mzXML is C because the tested multi-source fixture lost one of four spectra despite exit 0. BPC, repeated navigation, large arrays, progress, real cancellation, locale stability and vendor RAW coverage remain D. The M0 provider decision is therefore still incomplete, but it is no longer blocked by unavailable isolation or absent open-format runtime evidence. See the [M0 ProteoWizard spike report](docs/spikes/M0_PROTEOWIZARD_SPIKE.md).
+The source-reconciled runtime result is capability-specific. Discovery/build identity is A. Metadata, summary/counts, derived TIC/filtering, scan listing, selected spectrum, overall conversion and mzML conversion are B with named parser/scientific limits. mzXML is C because the tested multi-source fixture lost one of four spectra despite exit 0. BPC, repeated navigation, large arrays, progress, real cancellation, locale stability and vendor RAW coverage were all D at that date. **Corrected 2026-08-07: vendor RAW is no longer D for one family.** Thermo Scientific RAW, single file, has since been converted from a lawful fixture on the installed 3.0.26013 build and admitted privately; see the M3.0.3 section below. Every other rating in this paragraph is still the M0 result. The M0 provider decision is therefore still incomplete, but it is no longer blocked by unavailable isolation or absent open-format runtime evidence. See the [M0 ProteoWizard spike report](docs/spikes/M0_PROTEOWIZARD_SPIKE.md).
 
 ## M0C Slice 1 preview integrity contracts on 2026-07-26
 
@@ -2777,3 +2777,210 @@ mzML documents in these tests are generated in the test itself.
   ruleset requires the Frontend, Rust and Repository quality checks, requires the
   branch to be up to date, requires review threads to be resolved, and forbids
   force-pushes and branch deletion.
+
+## M3.0.3 first evidenced vendor RAW source, 2026-08-07
+
+ADR 0009 recorded two open evidence gates that this slice closes. There was no
+lawful vendor fixture, so no vendor source posture could exist; and nobody had
+measured whether `msconvert` writes anything besides its output, which is what
+the boundary's exactly-one-entry rule depends on. Both were measured on a real
+installed backend against a real acquisition.
+
+The fixture is ProteoWizard's own `FT-HCD-MSX.raw`, pinned at commit
+`8f945db3`, 78,309 bytes, SHA-256 `b3d97b38…dd7b`, covered by the repository's
+root Apache-2.0 licence — the same instrument this repository already relies on
+for the tiny mzML control, verified again at that commit with no NOTICE and no
+per-directory licence to complicate it. It is a single-scan extraction the
+ProteoWizard maintainer authored and committed to his own project, not a
+biological or clinical acquisition. It is not tracked, and it was deleted after
+the measurements. The full provenance, licence basis and lawful-use reasoning
+are in `docs/spikes/M3_VENDOR_RAW_EVIDENCE.md`; the decision is
+`docs/architecture/adr/0010-first-vendor-raw-source-admission.md`.
+
+Three families were evaluated. Bruker and Waters are directory acquisitions with
+no file signature at all — their readers probe for named members inside a
+directory — so admitting either means the whole evidence list ADR 0007 requires
+before a directory family may be recognised. Thermo RAW is a single regular file
+and reuses the object model the mzML posture already established, which is why
+it is first.
+
+Recognition is the file's own 18-byte header: `01 A1` followed by `Finnigan` in
+UTF-16LE, read from the object through the no-follow guard's handle. It is the
+same header ProteoWizard's `Reader_Thermo` matches on, and that reader consults
+no name. The extension is a filter in front of it rather than the recognition,
+and it is there because of a measurement: the installed vendor library refuses
+the very same object under another extension, exiting non-zero and producing
+nothing. Both halves are refused at admission — a `.raw` file holding filler,
+and a correctly signed file named otherwise — so a suffix never creates a
+source.
+
+One measurement changed the design. The Thermo reader cannot open the Windows
+extended-length path this crate binds identity to: it answers `Corrupt RAW file`
+and exits non-zero for the exact object it converts under a plain spelling,
+while ProteoWizard's open-format reader accepts either. The argv source spelling
+is therefore a per-family decision, and a plain spelling is derived,
+re-resolved, and required to carry the admitted filesystem identity before it is
+used. mzML keeps the spelling every earlier measurement was recorded with.
+
+A run holds the acquisition rather than merely checking it: opened before the
+recheck, hashed through that handle, and held until the output has been judged,
+granting read sharing and withholding write and delete. Checking and then not
+holding leaves the interval a check exists to close, and for an output-only
+posture nothing else would catch a source rewritten under the run and restored
+before the recheck — identity, length and digest would all match while the
+document came from bytes nothing admitted. Withholding delete closes the same
+hole from the other side, because the backend resolves a name. Both readers
+tolerate the hold, measured rather than assumed. The cost is stated: for the
+duration of a conversion the user cannot modify, rename or delete the
+acquisition being converted, and outside Windows there is no mandatory share
+mode so the guarantee is narrower.
+
+Validation for a vendor source is output-only and the result says so.
+`ConversionSourceFacts` split into the object facts every source has — identity,
+length, digest — and the mzML reading only some sources have, so a vendor source
+carries nothing to pretend a comparison with. `ValidConversion` gained a
+validation mode and a third property set: the eleven comparison properties are
+recorded as *inapplicable* rather than unverified, because they were never
+questions this pair could be asked, and `is_fully_verified` answers false for
+every output-only result whatever its sets contain. What a vendor run does
+establish is the source object unchanged, the output's declared list counts and
+array lengths present and consistent, no array declared non-empty without a
+payload, every record saying what its arrays are — m/z and intensity for a
+spectrum, time and intensity for a chromatogram — every record saying how its
+arrays are encoded and not claiming they are both compressed and uncompressed,
+every spectrum saying which MS level it is and none claiming to be both profile
+and centroid, its index sequences consecutive, and the requested compression
+honoured. Saying
+what an array is does not say how to read it, and a record giving two
+compression answers at once is worse than a wrong one: the compressed-array
+count is satisfied, so only looking for the contradiction finds it. Both checks
+are record-level and are documented as such rather than named for more than they
+do: the scanner keeps the union of what a record's arrays declared, not the
+per-array assignment, so a record whose first array claims both roles while its
+second claims none passes. That residual gap is recorded with the other scanner
+facts rather than papered over by a property name. Array roles are worth
+separating from the comparison they resemble: comparing them against a source
+needs the source and stays inapplicable, while an output that never says what
+its arrays are is one nothing downstream can read, and it answers for that
+alone. A list holding records while declaring no count
+has omitted an attribute its schema requires: survivable under a comparison,
+where the observed counts on both sides still answer the question, and a
+rejection here, because recording it as verified would assert something the
+document declined to state. An output holding no spectra and no chromatograms at all is refused before any
+of that, because every structural check is a statement about records and passes
+vacuously over a document that has none; a comparison never reaches the case,
+since the source's counts would already disagree. It does not distinguish an
+absent list from one declaring `count="0"` — that needs a fact the scanner does
+not record, and both are refused regardless. A document that says it holds peaks
+and holds none is refused for the same reason, whether the arrays are present and empty or
+absent altogether — the second being the quieter case, because with no arrays
+there is nothing for a payload check to find empty and nothing for a compression
+check to find uncompressed: the comparison path catches that by finding the
+source's payloads where the output has none, and with no source the
+self-contradiction is what remains. A peakless record — zero declared length,
+empty payload — stays legitimate, because the M0 evidence corrected an earlier
+contract for refusing exactly that. The mzML comparison is untouched.
+
+Support is bound to the build it was measured on. Installed help now yields a
+provider build — release and source revision — parsed from the same complete
+capture every other capability fact comes from and with discovery's own parsing,
+so a capability decision and a discovery report cannot disagree. A vendor family
+runs only on a listed build, refused before a staging area exists, and widening
+is adding a measured row rather than relaxing a check. A row names three things:
+the release, the source revision, and the digest of the `msconvert.exe` the
+conversion actually ran against. Two strings out of a help banner say what a
+build calls itself, and an installation with the vendor libraries missing or
+replaced answers both identically; discovery already hashes the executable
+either side of its probe, so binding the row to the artifact costs nothing. The
+vendor libraries themselves are not opened or hashed, and that is recorded as
+open rather than implied.
+
+Measured result, on release `3.0.26013` revision `47b13cf`, from one complete
+two-stage run of both fixtures on the final tree rather than carried forward
+across the review rounds: the layout stage
+produced exactly one entry carrying the planned name, 28,661 bytes, no sidecar,
+index, log or scratch file, and the mzML control did the same. The boundary run
+finalized in `output_only` mode with an `indexedmzML` output of one spectrum and
+one chromatogram, no cleanup residue, exactly one file in the destination root,
+and `fully_verified=false`. The output digest is deliberately not pinned:
+`msconvert` records the source location inside the document, so the same
+acquisition converted from a different directory produces different bytes.
+
+`examples/conversion_source_evidence.rs` is the reusable harness. Its
+`--diagnostics` destination is a base path with one no-clobber file per stage: a
+single shared destination let the second stage truncate the first one's
+evidence, and a caller one keystroke away from typing the acquisition's path
+would have had it truncated instead. An existing file is refused, so is a path
+that resolves to the acquisition, and a diagnostics write that fails is raised
+rather than dropped — a run reporting `finalized` while silently failing to save
+what the caller asked for is the harness lying about what it did. Diagnostics inside the workspace are refused, because the workspace is emptied
+when the harness returns and an exception in a cleanup is how the thing it was
+meant to remove survives. The workspace is held before it is judged empty, not
+after: checking and then opening leaves the interval between them, and
+everything downstream would bind to whatever the name meant at the end of it.
+The layout
+stage runs its command directly rather than through `run_conversion`, so it
+takes its own hold on the acquisition and rechecks the admitted digest either
+side of the measurement; without that, layout evidence could describe a run over
+bytes the admitted source never had. The workspace is held open without delete
+sharing for the whole run, because the harness deletes its contents recursively
+by resolving a path, and a workspace renamed away and replaced between the
+stages and the cleanup would have had it deleting somebody else's directory —
+the same path-versus-object mistake the staging cleanup slice existed to remove.
+A workspace it cannot empty is reported alongside whatever else failed rather
+than instead of it, because a backend failure is exactly when residue is most
+likely and what would be left behind is a converted document named after the
+acquisition. It plans with
+the same planner and the same per-family spelling the boundary uses, reports the
+layout the backend produced before anything cleans it up, then runs the whole
+boundary. It prints shapes only — extension, kind, byte length, whether a name
+is the planned one — and never a name derived from an acquisition. Raw backend
+streams go to an explicitly requested local file with a stated deletion
+obligation, and everything the harness creates in its workspace is removed
+before it returns.
+
+Sixteen tests were added — fifteen that run and one explicitly ignored — all
+deterministic and none reaching a backend. The ignored one is the real-fixture
+run, so a machine without the fixture and the backend is told the claim went
+unchecked rather than shown a green run. They cover signature recognition in
+both directions, extension filtering including case, a directory and a junction
+at a source name, a source rewritten before the run and one rewritten during it,
+every output postcondition an output-only contract can fail, the build gate
+across four wrong builds, the spelling decision, and that nothing renders a path.
+
+Fifteen mutations were introduced one at a time; twelve were caught. Removing
+the signature check, comparing the extension case-sensitively, and reporting a
+too-short file as an inspection failure each fail the recognition test; claiming
+a source comparison for a vendor result fails the mode test; ignoring an extra
+output entry fails three; dropping the vendor source revalidation fails the
+rewritten-during-the-run test; accepting an unevidenced build and ignoring the
+source revision each fail the gate tests; finalizing partial output fails its
+test; skipping the output-only index-sequence or compression checks fails the
+output-contract test; and keeping the extended-length spelling for the vendor
+family fails the spelling test.
+
+Three survived, and each is recorded rather than papered over. Removing the
+posture check from vendor admission is **equivalent**: the guard's own open
+repeats the same refusal, so the two are redundant by construction. Using the
+derived plain spelling without re-resolving it is defence-in-depth against a
+Windows path that normalizes to a different object, and an attempt to construct
+one with a trailing-space directory component did not diverge on this build —
+the check stays, and the test that would have justified it was removed rather
+than left asserting something it did not demonstrate. Reading the signature from
+a second handle instead of the one the digest is computed through needs a writer
+to change the file between two adjacent reads; there is no seam for that and
+adding one to production code for it is not worth what it would buy.
+
+Validation on the exact head: `cargo fmt --all --check`,
+`cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --locked --workspace --all-targets` (288 proteowizard library tests,
+up from 273), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
+`pnpm test`, `pnpm build`, `git diff --check`.
+
+Nothing user-visible changed. No Tauri command, transfer object, frontend file,
+capability, queue, progress, cancellation, retry or persistence, and no
+dependency. Users cannot convert a RAW file after this slice; the posture is
+private Rust reachable only from inside the crate.
+
+Rendered QA was not required and not performed: the diff contains no frontend
+file, transfer object, command signature, capability or user-facing string.

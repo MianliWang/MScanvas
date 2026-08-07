@@ -371,7 +371,16 @@ No global `msaccess` decision is justified. Status meanings are A (sufficient), 
 | Progress | **D** | Streams captured, but cadence was not timestamped | No stable machine-readable progress claim | Unsupported initially; adapter plus shared run state later |
 | Cancellation | **D** | Real operation too fast; controlled owned-Job tests only | No backend cancellation/partial-output observation | Shared Rust executor; backend evidence deferred |
 | Locale stability | **D** | Only `en-US` was run | No cross-locale delimiter/decimal/error evidence | Deferred parser validation |
-| Vendor-format coverage | **D** | Excluded by explicit scope | Open mzML cannot establish proprietary-reader support | Deferred ProteoWizard adapter evaluation |
+| Vendor-format coverage | **D** at the time of this spike | Excluded by explicit scope | Open mzML cannot establish proprietary-reader support | Deferred ProteoWizard adapter evaluation |
+
+**Update 2026-08-07.** The vendor-format row above is this spike's result and is
+not the current state. One family — Thermo Scientific RAW, single file — has
+since been converted from a lawful fixture on an installed backend and admitted
+privately; see the
+[M3.0.3 vendor RAW evidence record](M3_VENDOR_RAW_EVIDENCE.md) and
+[ADR 0010](../architecture/adr/0010-first-vendor-raw-source-admission.md). No
+other family, provider build or user-visible capability changed, and every other
+rating in the table is still this spike's result.
 
 The next product slice may use these B capabilities only behind typed parse/output-integrity contracts. It should not add a second backend merely to erase the remaining evidence gaps.
 

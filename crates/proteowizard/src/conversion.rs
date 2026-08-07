@@ -25,8 +25,8 @@ use crate::fs_guard::{
     self, OutputDirectoryEntry, OutputDirectorySnapshot, OutputEntryKind, RegularFileError,
 };
 use crate::mzml::{
-    self, MzmlFacts, MzmlLimitKind, MzmlMalformedKind, MzmlScanError, MzmlScanLimits,
-    MzmlSpectrumRecord, RepresentationMarker, UnsafeXmlKind,
+    self, ArrayKind, CompressionMarker, MzmlFacts, MzmlLimitKind, MzmlMalformedKind, MzmlScanError,
+    MzmlScanLimits, MzmlSpectrumRecord, RepresentationMarker, UnsafeXmlKind,
 };
 
 /// The compression the typed conversion plan requested. This is MSCanvas policy,
@@ -335,16 +335,20 @@ pub(crate) enum VerifiedConversion {
     Rejected(ConversionIntegrityOutcome),
 }
 
-/// The canonical source facts an integrity comparison is measured against.
+/// What was established about the source *object*, independently of what could
+/// be read out of it.
+///
+/// Every source has these three, whatever format it is in, and they are what a
+/// run rechecks to prove the acquisition it converts is the one it admitted.
+/// Nothing here says the bytes are comparable to anything.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ConversionSourceFacts {
+pub struct SourceObjectFacts {
     identity: SourceIdentity,
     byte_length: u64,
     sha256: Sha256Digest,
-    facts: MzmlFacts,
 }
 
-impl ConversionSourceFacts {
+impl SourceObjectFacts {
     #[must_use]
     pub const fn identity(&self) -> &SourceIdentity {
         &self.identity
@@ -358,6 +362,75 @@ impl ConversionSourceFacts {
     #[must_use]
     pub const fn sha256(&self) -> Sha256Digest {
         self.sha256
+    }
+
+    /// Assembles facts a caller established from one opened object.
+    ///
+    /// Exists so a posture that must also read something out of the object —
+    /// a file signature, say — can do it through the same handle the digest is
+    /// computed from, instead of reopening the name and describing bytes the
+    /// digest may not cover.
+    pub(crate) const fn from_parts(
+        identity: SourceIdentity,
+        byte_length: u64,
+        sha256: Sha256Digest,
+    ) -> Self {
+        Self {
+            identity,
+            byte_length,
+            sha256,
+        }
+    }
+
+    /// Binds a path to the object it currently names, its length and its
+    /// contents. No format is assumed and nothing is parsed.
+    pub(crate) fn capture(input: &Path) -> Result<Self, ConversionSourceError> {
+        let identity = SourceIdentity::capture(input)
+            .map_err(|error| ConversionSourceError::NotResolved { kind: error.kind() })?;
+        let path = identity.canonical_path();
+        let byte_length = std::fs::symlink_metadata(path)
+            .map_err(|error| ConversionSourceError::NotResolved { kind: error.kind() })?
+            .len();
+        let sha256 =
+            Sha256Digest::calculate_file(path).map_err(|_| ConversionSourceError::NotHashed)?;
+        Ok(Self {
+            identity,
+            byte_length,
+            sha256,
+        })
+    }
+}
+
+/// The canonical source facts an integrity comparison is measured against.
+///
+/// This is the object facts *plus* a reading of the source as mzML, and the
+/// second half is what makes a source/output comparison meaningful. A source
+/// that cannot be read that way carries [`SourceObjectFacts`] alone.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConversionSourceFacts {
+    object: SourceObjectFacts,
+    facts: MzmlFacts,
+}
+
+impl ConversionSourceFacts {
+    #[must_use]
+    pub const fn identity(&self) -> &SourceIdentity {
+        self.object.identity()
+    }
+
+    #[must_use]
+    pub const fn byte_length(&self) -> u64 {
+        self.object.byte_length()
+    }
+
+    #[must_use]
+    pub const fn sha256(&self) -> Sha256Digest {
+        self.object.sha256()
+    }
+
+    #[must_use]
+    pub const fn object(&self) -> &SourceObjectFacts {
+        &self.object
     }
 
     #[must_use]
@@ -397,21 +470,10 @@ pub fn capture_conversion_source(
     input: &Path,
     limits: MzmlScanLimits,
 ) -> Result<ConversionSourceFacts, ConversionSourceError> {
-    let identity = SourceIdentity::capture(input)
-        .map_err(|error| ConversionSourceError::NotResolved { kind: error.kind() })?;
-    let path = identity.canonical_path();
-    let byte_length = std::fs::symlink_metadata(path)
-        .map_err(|error| ConversionSourceError::NotResolved { kind: error.kind() })?
-        .len();
-    let sha256 =
-        Sha256Digest::calculate_file(path).map_err(|_| ConversionSourceError::NotHashed)?;
-    let facts = mzml::inspect_file(path, limits).map_err(ConversionSourceError::Scan)?;
-    Ok(ConversionSourceFacts {
-        identity,
-        byte_length,
-        sha256,
-        facts,
-    })
+    let object = SourceObjectFacts::capture(input)?;
+    let facts = mzml::inspect_file(object.identity().canonical_path(), limits)
+        .map_err(ConversionSourceError::Scan)?;
+    Ok(ConversionSourceFacts { object, facts })
 }
 
 /// Which document a structural observation belongs to.
@@ -479,6 +541,43 @@ impl BinaryArrayMismatchKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum IntegrityProperty {
     SourceUnchanged,
+    /// The output's own declared list counts agree with what it contains. A
+    /// structural property about the output alone, so an output-only validation
+    /// can establish it.
+    OutputDeclaredCounts,
+    /// Every record in the output that holds binary arrays declares how many
+    /// points they hold. About the output alone, and separate from the
+    /// comparison of those lengths against a source, which asks a different
+    /// question and is not always available.
+    OutputDeclaredArrayLengths,
+    /// Every array the output declares non-empty carries a payload. Observed
+    /// without decoding, so an array whose scientific data went missing while
+    /// its metadata still described peaks is caught with no source to compare
+    /// against.
+    OutputArrayPayloadPresence,
+    /// A record's arrays, taken together, name the roles the record needs: m/z
+    /// and intensity for a spectrum, time and intensity for a chromatogram.
+    ///
+    /// Record-level, and deliberately not claimed to be more. The scanner
+    /// records the union of the roles a record's arrays declared, not which
+    /// array declared which, so this establishes that the roles are present and
+    /// cannot establish that each array carries exactly one. A record whose
+    /// first array claims both roles while its second claims none satisfies it.
+    /// Closing that needs a per-array fact the scanner does not keep.
+    OutputArrayRoles,
+    /// A record says something about how its arrays are encoded, and does not
+    /// contradict itself about how they are compressed.
+    ///
+    /// Record-level for the same reason and with the same limit: the scanner
+    /// keeps the union of the numeric encodings a record's arrays declared, so
+    /// this establishes that an encoding was stated somewhere in the record and
+    /// cannot establish that every array stated one, or that none stated two.
+    OutputArrayEncoding,
+    /// Every spectrum in the output says which MS level it is, and none claims
+    /// to be both profile and centroid. Two facts about a spectrum's own
+    /// metadata, both recorded by the scanner and both readable without a
+    /// source.
+    OutputSpectrumMetadata,
     SpectrumCount,
     ChromatogramCount,
     IndexSequences,
@@ -499,6 +598,12 @@ impl IntegrityProperty {
     pub const fn stable_id(self) -> &'static str {
         match self {
             Self::SourceUnchanged => "source_unchanged",
+            Self::OutputDeclaredCounts => "output_declared_counts",
+            Self::OutputDeclaredArrayLengths => "output_declared_array_lengths",
+            Self::OutputArrayPayloadPresence => "output_array_payload_presence",
+            Self::OutputArrayRoles => "output_array_roles",
+            Self::OutputArrayEncoding => "output_array_encoding",
+            Self::OutputSpectrumMetadata => "output_spectrum_metadata",
             Self::SpectrumCount => "spectrum_count",
             Self::ChromatogramCount => "chromatogram_count",
             Self::IndexSequences => "index_sequences",
@@ -554,18 +659,60 @@ impl AdvisoryObservation {
     }
 }
 
+/// How much of the integrity contract a conversion could even be asked.
+///
+/// This is a property of the *source*, decided when the source was admitted,
+/// and it is carried into the result so no caller can read an output-only
+/// judgement as a fidelity statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationMode {
+    /// The source was read under the same model as the output, so the two were
+    /// compared record by record.
+    SourceComparison,
+    /// The source could not be read under a comparable model. Only the output's
+    /// own postconditions were established; nothing was compared, and no
+    /// statement about what the source contained is available.
+    OutputOnly,
+}
+
+impl ValidationMode {
+    #[must_use]
+    pub const fn stable_id(self) -> &'static str {
+        match self {
+            Self::SourceComparison => "source_comparison",
+            Self::OutputOnly => "output_only",
+        }
+    }
+
+    /// Whether this mode can support a source-versus-output fidelity statement
+    /// at all.
+    #[must_use]
+    pub const fn compares_against_source(self) -> bool {
+        matches!(self, Self::SourceComparison)
+    }
+}
+
 /// A conversion whose every evaluated invariant held.
 ///
-/// `unverified` is not an accusation: it names the properties this document
-/// pair genuinely could not establish, such as vocabulary facts reached through
-/// a `referenceableParamGroup` or a native identifier form the canonical
-/// identity contract deliberately leaves opaque. A gate that needs the stricter
-/// statement asserts [`ValidConversion::is_fully_verified`].
+/// Three sets, and the difference between them matters. `verified` is what was
+/// established. `unverified` names properties this pair could have been asked
+/// but genuinely could not establish — vocabulary facts reached through a
+/// `referenceableParamGroup`, or a native identifier form the canonical identity
+/// contract deliberately leaves opaque. `inapplicable` names properties that
+/// were never a question at all, because the source could not be read under a
+/// comparable model; they are not gaps in this run's evidence, they are outside
+/// what an output-only validation is.
+///
+/// A gate that needs the strict statement asserts
+/// [`ValidConversion::is_fully_verified`], which is false for every output-only
+/// result whatever its sets contain.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValidConversion {
     output: ConversionOutputInspection,
+    mode: ValidationMode,
     verified: BTreeSet<IntegrityProperty>,
     unverified: BTreeSet<IntegrityProperty>,
+    inapplicable: BTreeSet<IntegrityProperty>,
     advisory: BTreeSet<AdvisoryObservation>,
 }
 
@@ -573,6 +720,12 @@ impl ValidConversion {
     #[must_use]
     pub const fn output(&self) -> &ConversionOutputInspection {
         &self.output
+    }
+
+    /// How much of the contract this conversion could be asked.
+    #[must_use]
+    pub const fn validation_mode(&self) -> ValidationMode {
+        self.mode
     }
 
     #[must_use]
@@ -585,6 +738,13 @@ impl ValidConversion {
         &self.unverified
     }
 
+    /// Properties that were not a question this source and output could be
+    /// asked. Always empty under [`ValidationMode::SourceComparison`].
+    #[must_use]
+    pub const fn inapplicable(&self) -> &BTreeSet<IntegrityProperty> {
+        &self.inapplicable
+    }
+
     #[must_use]
     pub const fn advisory(&self) -> &BTreeSet<AdvisoryObservation> {
         &self.advisory
@@ -592,9 +752,13 @@ impl ValidConversion {
 
     /// Whether every integrity property was actually evaluated, not merely left
     /// unviolated.
+    ///
+    /// An output-only validation answers `false` unconditionally. It is not a
+    /// weaker comparison; it is not a comparison, and a caller asking this
+    /// question is asking for the statement only a comparison can make.
     #[must_use]
     pub fn is_fully_verified(&self) -> bool {
-        self.unverified.is_empty()
+        self.mode.compares_against_source() && self.unverified.is_empty()
     }
 }
 
@@ -634,6 +798,48 @@ pub enum ConversionIntegrityOutcome {
     OutputDeclaredCountInconsistent {
         part: DocumentPart,
     },
+    /// A record declares a non-empty binary array and carries no payload for
+    /// it. Unlike a `BinaryArrayMismatch`, no second document is involved: the
+    /// output contradicts itself.
+    OutputDeclaredArrayWithoutPayload {
+        part: DocumentPart,
+        index: u64,
+    },
+    /// A record does not say what its arrays are, so nothing downstream can
+    /// read it as a spectrum or a chromatogram.
+    OutputArrayRoleMissing {
+        part: DocumentPart,
+        index: u64,
+    },
+    /// A record does not say how its arrays are encoded, so nothing downstream
+    /// can decode them.
+    OutputArrayEncodingMissing {
+        part: DocumentPart,
+        index: u64,
+    },
+    /// A record says its arrays are both compressed and not compressed.
+    OutputCompressionContradictory {
+        part: DocumentPart,
+        index: u64,
+    },
+    /// A spectrum in the output does not say which MS level it is, so nothing
+    /// downstream can tell a survey scan from a fragmentation scan.
+    OutputMsLevelMissing,
+    /// A spectrum claims to be both profile and centroid.
+    OutputRepresentationConflicting {
+        index: u64,
+    },
+    /// A record holds binary arrays and does not declare how many points they
+    /// hold, so the output does not state its own point counts.
+    OutputArrayLengthMissing {
+        part: DocumentPart,
+        index: u64,
+    },
+    /// The output is a well-formed document holding no spectra and no
+    /// chromatograms. Only reachable where there is no source to compare
+    /// against, because a comparison would already have found the counts
+    /// disagreeing.
+    OutputContainsNoRecords,
     SpectrumCountMismatch {
         source: u64,
         output: u64,
@@ -692,6 +898,16 @@ impl ConversionIntegrityOutcome {
             Self::SourceNotRevalidated { .. } => "source_not_revalidated",
             Self::SourceNotRehashed => "source_not_rehashed",
             Self::OutputDeclaredCountInconsistent { .. } => "output_declared_count_inconsistent",
+            Self::OutputDeclaredArrayWithoutPayload { .. } => {
+                "output_declared_array_without_payload"
+            }
+            Self::OutputContainsNoRecords => "output_contains_no_records",
+            Self::OutputArrayRoleMissing { .. } => "output_array_role_missing",
+            Self::OutputArrayEncodingMissing { .. } => "output_array_encoding_missing",
+            Self::OutputCompressionContradictory { .. } => "output_compression_contradictory",
+            Self::OutputMsLevelMissing => "output_ms_level_missing",
+            Self::OutputRepresentationConflicting { .. } => "output_representation_conflicting",
+            Self::OutputArrayLengthMissing { .. } => "output_array_length_missing",
             Self::SpectrumCountMismatch { .. } => "spectrum_count_mismatch",
             Self::ChromatogramCountMismatch { .. } => "chromatogram_count_mismatch",
             Self::IndexSequenceNotConsecutive { .. } => "index_sequence_not_consecutive",
@@ -828,10 +1044,80 @@ pub(crate) fn verify_mzml_conversion_retaining_output(
     }
 }
 
-/// The judgement itself, shared by both entry points so retention cannot change
-/// what a conversion is found to be.
-fn judge_against_source(
-    source: &ConversionSourceFacts,
+/// Verifies a conversion whose source could not be read as mzML, retaining the
+/// exact object judged when it passes.
+///
+/// The filesystem postconditions are identical to the comparing entry points —
+/// the same single-planned-entry rule, the same scan limits, the same fail-closed
+/// scanner, the same retained handle. What is absent is the comparison, because
+/// there is nothing on the source side to compare against, and the result says
+/// so through [`ValidationMode::OutputOnly`] rather than by quietly reporting a
+/// smaller set of verified properties.
+///
+/// The source is still revalidated. Identity, length and content are rechecked
+/// exactly as they are for an mzML source: a vendor acquisition rewritten while
+/// the backend read it invalidates the run whether or not anything about its
+/// contents is comparable.
+#[must_use]
+pub(crate) fn verify_vendor_conversion_retaining_output(
+    source: &SourceObjectFacts,
+    output_directory: &Path,
+    expected_file_name: &OsStr,
+    policy: ConversionPolicy,
+    limits: MzmlScanLimits,
+) -> VerifiedConversion {
+    let (file, output) = match open_and_inspect_output(
+        output_directory,
+        expected_file_name,
+        OpenFormat::MzMl,
+        limits,
+        OutputRetention::Retain,
+    ) {
+        Ok(opened) => opened,
+        Err(rejection) => return VerifiedConversion::Rejected(rejection.into()),
+    };
+
+    match judge_output_alone(source, output, policy) {
+        ConversionIntegrityOutcome::Valid(valid) => {
+            VerifiedConversion::Valid(Box::new(ValidatedConversionOutput {
+                file,
+                valid: *valid,
+            }))
+        }
+        rejected => VerifiedConversion::Rejected(rejected),
+    }
+}
+
+/// Every property that is a statement about a source and an output together.
+///
+/// An output-only validation records these as inapplicable rather than
+/// unverified: they were not questions this pair could be asked. Listing them
+/// explicitly, rather than deriving the set by subtraction, is what makes adding
+/// a new comparison property a compile-time decision about which bucket it
+/// belongs in.
+const COMPARISON_PROPERTIES: [IntegrityProperty; 11] = [
+    IntegrityProperty::SpectrumCount,
+    IntegrityProperty::ChromatogramCount,
+    IntegrityProperty::MsLevelDistribution,
+    IntegrityProperty::BinaryArrayCounts,
+    IntegrityProperty::BinaryArrayKinds,
+    IntegrityProperty::BinaryArrayLengths,
+    IntegrityProperty::BinaryArrayPayloadPresence,
+    IntegrityProperty::PrecursorCounts,
+    IntegrityProperty::SpectrumNativeIdentity,
+    IntegrityProperty::SpectrumRepresentation,
+    IntegrityProperty::RetentionTimeUnitMarkers,
+];
+
+/// Judges an output on its own terms.
+///
+/// Three things are established and no more: the source object is still the one
+/// that was admitted, the output is internally consistent, and it honours the
+/// compression the plan asked for. Everything else a conversion result can say
+/// is a comparison, and this function is reached precisely because there is
+/// nothing to compare against.
+fn judge_output_alone(
+    source: &SourceObjectFacts,
     output: ConversionOutputInspection,
     policy: ConversionPolicy,
 ) -> ConversionIntegrityOutcome {
@@ -840,10 +1126,435 @@ fn judge_against_source(
         Ok(false) => return ConversionIntegrityOutcome::SourceChangedDuringConversion,
         Err(outcome) => return outcome,
     }
+
+    let after = output.facts();
+    let mut report = IntegrityReport::default();
+    report.verified.insert(IntegrityProperty::SourceUnchanged);
+
+    // Every structural check below is a statement about records, and every one
+    // of them passes vacuously over a document that has none. A well-formed
+    // shell — no `spectrumList`, an empty one, or a `run` holding nothing — would
+    // otherwise satisfy the whole contract and be finalized as a result. A
+    // comparison never reaches this because the source's counts would already
+    // disagree; with no source, refusing an output that converted nothing is
+    // what takes its place.
+    //
+    // This does not distinguish an absent list from a present one declaring
+    // `count="0"`. Telling those apart needs the scanner to record whether the
+    // element and its attribute appeared at all, which is a fact it does not
+    // carry today, and both are refused here anyway.
+    if after.observed_spectrum_count() == 0 && after.observed_chromatogram_count() == 0 {
+        return ConversionIntegrityOutcome::OutputContainsNoRecords;
+    }
+
+    // A list that holds records and declares no count has omitted an attribute
+    // its schema requires. Under a comparison that is survivable, because the
+    // observed counts on both sides still answer the question. Here there is no
+    // other side, so recording the property as verified would be asserting
+    // something the document declined to state.
+    if after.declared_spectrum_count().is_none() && after.observed_spectrum_count() > 0 {
+        return ConversionIntegrityOutcome::OutputDeclaredCountInconsistent {
+            part: DocumentPart::Spectrum,
+        };
+    }
+    if after.declared_chromatogram_count().is_none() && after.observed_chromatogram_count() > 0 {
+        return ConversionIntegrityOutcome::OutputDeclaredCountInconsistent {
+            part: DocumentPart::Chromatogram,
+        };
+    }
+    if let Some(outcome) = check_output_declared_counts(after, &mut report) {
+        return outcome;
+    }
+    // Declared array lengths are readable from the output alone, so their
+    // absence is recorded rather than passed over in silence. It is not a
+    // rejection: the comparison path already treats an absent length as
+    // unestablishable rather than as a defect, and this keeps the two agreeing
+    // about what the fact is worth.
+    if let Some(outcome) = check_output_declared_array_lengths(after) {
+        return outcome;
+    }
+    report
+        .verified
+        .insert(IntegrityProperty::OutputDeclaredArrayLengths);
+    if !after.spectrum_index_sequence_is_consecutive() {
+        return ConversionIntegrityOutcome::IndexSequenceNotConsecutive {
+            side: DocumentSide::Output,
+            part: DocumentPart::Spectrum,
+        };
+    }
+    if !after.chromatogram_index_sequence_is_consecutive() {
+        return ConversionIntegrityOutcome::IndexSequenceNotConsecutive {
+            side: DocumentSide::Output,
+            part: DocumentPart::Chromatogram,
+        };
+    }
+    report.verified.insert(IntegrityProperty::IndexSequences);
+
+    // A document that says it holds peaks and holds none is unusable, and it
+    // says so entirely by itself. The comparison path catches this by finding
+    // the source's payloads where the output has none; with no source, the
+    // contradiction between a declared length and an absent payload is what
+    // remains, and it is enough.
+    if let Some(outcome) = check_output_payload_presence(after) {
+        return outcome;
+    }
+    report
+        .verified
+        .insert(IntegrityProperty::OutputArrayPayloadPresence);
+
+    let vocabulary_readable = !after.parameter_group_reference_observed();
+
+    // What the arrays *are* is readable from the output alone whenever the
+    // vocabulary is, and an output that does not say is one nothing downstream
+    // can read as a spectrum. Comparing those roles against a source is a
+    // different question and stays inapplicable; this is the output answering
+    // for itself.
+    if vocabulary_readable {
+        if let Some(outcome) = check_output_array_roles(after) {
+            return outcome;
+        }
+        report.verified.insert(IntegrityProperty::OutputArrayRoles);
+
+        // Saying what an array is does not say how to read it. A payload with
+        // no numeric encoding leaves its width and type unstated, and a record
+        // claiming its arrays are both compressed and uncompressed is worse
+        // than wrong: it is two answers to one question, and the compressed
+        // count alone cannot see it because that count is satisfied.
+        if let Some(outcome) = check_output_array_encoding(after, policy) {
+            return outcome;
+        }
+        report
+            .verified
+            .insert(IntegrityProperty::OutputArrayEncoding);
+
+        // A spectrum that does not say which MS level it is cannot be told from
+        // any other, and one claiming to be both profile and centroid says two
+        // incompatible things about the same peaks. Both are its own metadata,
+        // both are recorded, and neither needs a source to notice.
+        if let Some(outcome) = check_output_spectrum_metadata(after) {
+            return outcome;
+        }
+        report
+            .verified
+            .insert(IntegrityProperty::OutputSpectrumMetadata);
+    } else {
+        report
+            .unverified
+            .insert(IntegrityProperty::OutputArrayRoles);
+        report
+            .unverified
+            .insert(IntegrityProperty::OutputArrayEncoding);
+        report
+            .unverified
+            .insert(IntegrityProperty::OutputSpectrumMetadata);
+    }
+
+    // The compression policy is the one requested property that is readable from
+    // the output alone, and it degrades for the same reason it degrades in a
+    // comparison: an indirected controlled vocabulary is not a fact this scanner
+    // will assert.
+    if let Some(outcome) = check_compression_policy(after, policy, vocabulary_readable, &mut report)
+    {
+        return outcome;
+    }
+
+    ConversionIntegrityOutcome::Valid(Box::new(ValidConversion {
+        output,
+        mode: ValidationMode::OutputOnly,
+        verified: report.verified,
+        unverified: report.unverified,
+        inapplicable: COMPARISON_PROPERTIES.into_iter().collect(),
+        advisory: report.advisory,
+    }))
+}
+
+/// Refuses an output whose metadata describes peaks it does not carry.
+///
+/// A record that declares points has to hold arrays, and those arrays have to
+/// hold something. Both halves matter and they fail differently: an array
+/// present with an empty payload, and no array at all. The second is the
+/// quieter one — with no arrays there is nothing for a payload check to look at
+/// and nothing for a compression check to find uncompressed, so a document
+/// declaring four points and carrying no binary data would satisfy every other
+/// rule here.
+///
+/// A declared length of zero carries nothing legitimately: a peakless record is
+/// a real one, and the M0 evidence corrected an earlier contract for rejecting
+/// exactly that on ProteoWizard's own reference fixture.
+fn check_output_payload_presence(after: &MzmlFacts) -> Option<ConversionIntegrityOutcome> {
+    fn declares_peaks_without_data(
+        default_array_length: Option<u64>,
+        binary_array_count: u32,
+        empty_binary_payload_count: u32,
+    ) -> bool {
+        match default_array_length {
+            // Declared non-empty: arrays are required, and they must hold
+            // something.
+            Some(1..) => binary_array_count == 0 || empty_binary_payload_count > 0,
+            // Declared empty: a peakless record, which is legitimate.
+            Some(0) => false,
+            // Not declared at all. The point count cannot be determined, so an
+            // empty payload can no longer be excused as peakless — that excuse
+            // rests on a declaration this record did not make. Fail closed
+            // rather than let a missing attribute route around the check.
+            None => binary_array_count > 0 && empty_binary_payload_count > 0,
+        }
+    }
+
+    for (position, record) in after.spectra().iter().enumerate() {
+        if declares_peaks_without_data(
+            record.default_array_length(),
+            record.binary_array_count(),
+            record.empty_binary_payload_count(),
+        ) {
+            return Some(
+                ConversionIntegrityOutcome::OutputDeclaredArrayWithoutPayload {
+                    part: DocumentPart::Spectrum,
+                    index: position as u64,
+                },
+            );
+        }
+    }
+    for (position, record) in after.chromatograms().iter().enumerate() {
+        if declares_peaks_without_data(
+            record.default_array_length(),
+            record.binary_array_count(),
+            record.empty_binary_payload_count(),
+        ) {
+            return Some(
+                ConversionIntegrityOutcome::OutputDeclaredArrayWithoutPayload {
+                    part: DocumentPart::Chromatogram,
+                    index: position as u64,
+                },
+            );
+        }
+    }
+    None
+}
+
+/// Refuses an output whose records do not say what their arrays are.
+///
+/// A spectrum that carries arrays without an m/z role and an intensity role
+/// cannot be read as a spectrum by anything downstream, and neither can a
+/// chromatogram without a time role and an intensity role. The roles are
+/// already recorded by the scanner and are readable from the output alone;
+/// only *comparing* them against a source needs the source.
+///
+/// What this cannot see is which array carried which role, because the scanner
+/// keeps the union rather than the assignment. A record whose first array
+/// declares both roles and whose second declares none passes here. That is a
+/// real residual gap, it is recorded as one, and closing it is a scanner change
+/// rather than a stronger predicate over the same facts.
+///
+/// Records carrying no arrays at all are not judged here — a peakless record is
+/// legitimate, and one that declares points without arrays was already refused.
+fn check_output_array_roles(after: &MzmlFacts) -> Option<ConversionIntegrityOutcome> {
+    for (position, record) in after.spectra().iter().enumerate() {
+        if record.binary_array_count() > 0
+            && !(record.array_kinds().contains(ArrayKind::Mz)
+                && record.array_kinds().contains(ArrayKind::Intensity))
+        {
+            return Some(ConversionIntegrityOutcome::OutputArrayRoleMissing {
+                part: DocumentPart::Spectrum,
+                index: position as u64,
+            });
+        }
+    }
+    for (position, record) in after.chromatograms().iter().enumerate() {
+        if record.binary_array_count() > 0
+            && !(record.array_kinds().contains(ArrayKind::Time)
+                && record.array_kinds().contains(ArrayKind::Intensity))
+        {
+            return Some(ConversionIntegrityOutcome::OutputArrayRoleMissing {
+                part: DocumentPart::Chromatogram,
+                index: position as u64,
+            });
+        }
+    }
+    None
+}
+
+/// Refuses a record that does not say how many points its arrays hold.
+///
+/// Every record, including one carrying no arrays: a legitimately peakless
+/// record says so by declaring zero, and one that declares nothing has omitted
+/// an attribute its schema requires whether or not it happens to carry arrays.
+/// Measured on the evidence fixture, every spectrum and every chromatogram the
+/// backend produced declares it.
+///
+/// This boundary already refuses a list that holds records and declares no
+/// count; treating an absent `defaultArrayLength` as merely unestablished was an
+/// inconsistency in these rules rather than a considered distinction. It does
+/// not contradict the comparison path degrading an absent length to unverified:
+/// that gate answers *can these two documents be compared*, and this one answers
+/// *is this document a usable result*. Only the second is available with no
+/// source, and only the second is being asked here.
+fn check_output_declared_array_lengths(after: &MzmlFacts) -> Option<ConversionIntegrityOutcome> {
+    for (position, record) in after.spectra().iter().enumerate() {
+        if record.default_array_length().is_none() {
+            return Some(ConversionIntegrityOutcome::OutputArrayLengthMissing {
+                part: DocumentPart::Spectrum,
+                index: position as u64,
+            });
+        }
+    }
+    for (position, record) in after.chromatograms().iter().enumerate() {
+        if record.default_array_length().is_none() {
+            return Some(ConversionIntegrityOutcome::OutputArrayLengthMissing {
+                part: DocumentPart::Chromatogram,
+                index: position as u64,
+            });
+        }
+    }
+    None
+}
+
+/// Refuses an output whose spectra do not describe themselves.
+///
+/// The MS level check is document-wide because the scanner records the
+/// distribution rather than the per-spectrum value, and a spectrum that omitted
+/// the term lands in the `None` bucket — which is exactly the fact needed here.
+/// The representation check is per record, because that one is kept per record.
+fn check_output_spectrum_metadata(after: &MzmlFacts) -> Option<ConversionIntegrityOutcome> {
+    // An absent MS level and one written as zero are the same defect wearing
+    // different clothes: MS levels start at one, so neither says which stage a
+    // spectrum came from, and both leave a downstream reader guessing.
+    if after
+        .ms_level_distribution()
+        .keys()
+        .any(|level| !matches!(level, Some(1..)))
+    {
+        return Some(ConversionIntegrityOutcome::OutputMsLevelMissing);
+    }
+    for (position, record) in after.spectra().iter().enumerate() {
+        if record.representation() == RepresentationMarker::Conflicting {
+            return Some(
+                ConversionIntegrityOutcome::OutputRepresentationConflicting {
+                    index: position as u64,
+                },
+            );
+        }
+    }
+    None
+}
+
+/// Refuses an output nothing could decode.
+///
+/// Bounded the same way as the role check, and worth stating rather than
+/// implying: the numeric encodings are a per-record union, so this refuses a
+/// record that states no encoding at all and cannot refuse one where a single
+/// array omitted its own, or declared two.
+fn check_output_array_encoding(
+    after: &MzmlFacts,
+    policy: ConversionPolicy,
+) -> Option<ConversionIntegrityOutcome> {
+    let compression_matters = matches!(policy.compression(), CompressionPolicy::Zlib);
+    for (position, record) in after.spectra().iter().enumerate() {
+        if let Some(outcome) = judge_record_encoding(
+            DocumentPart::Spectrum,
+            position as u64,
+            record.binary_array_count(),
+            record.precision().is_empty(),
+            compression_matters
+                && record
+                    .compression()
+                    .contains(CompressionMarker::NoCompression),
+        ) {
+            return Some(outcome);
+        }
+    }
+    for (position, record) in after.chromatograms().iter().enumerate() {
+        if let Some(outcome) = judge_record_encoding(
+            DocumentPart::Chromatogram,
+            position as u64,
+            record.binary_array_count(),
+            record.precision().is_empty(),
+            compression_matters
+                && record
+                    .compression()
+                    .contains(CompressionMarker::NoCompression),
+        ) {
+            return Some(outcome);
+        }
+    }
+    None
+}
+
+/// Whether one record's arrays can be decoded at all.
+///
+/// A record with no arrays is not judged: a peakless record is legitimate, and
+/// one declaring points without arrays was already refused.
+fn judge_record_encoding(
+    part: DocumentPart,
+    index: u64,
+    binary_array_count: u32,
+    precision_absent: bool,
+    compression_contradictory: bool,
+) -> Option<ConversionIntegrityOutcome> {
+    if binary_array_count == 0 {
+        return None;
+    }
+    if precision_absent {
+        return Some(ConversionIntegrityOutcome::OutputArrayEncodingMissing { part, index });
+    }
+    if compression_contradictory {
+        return Some(ConversionIntegrityOutcome::OutputCompressionContradictory { part, index });
+    }
+    None
+}
+
+/// The output is this boundary's own product, so it must agree with itself.
+fn check_output_declared_counts(
+    after: &MzmlFacts,
+    report: &mut IntegrityReport,
+) -> Option<ConversionIntegrityOutcome> {
+    if after
+        .declared_spectrum_count()
+        .is_some_and(|declared| declared != after.observed_spectrum_count())
+    {
+        return Some(
+            ConversionIntegrityOutcome::OutputDeclaredCountInconsistent {
+                part: DocumentPart::Spectrum,
+            },
+        );
+    }
+    if after
+        .declared_chromatogram_count()
+        .is_some_and(|declared| declared != after.observed_chromatogram_count())
+    {
+        return Some(
+            ConversionIntegrityOutcome::OutputDeclaredCountInconsistent {
+                part: DocumentPart::Chromatogram,
+            },
+        );
+    }
+    report
+        .verified
+        .insert(IntegrityProperty::OutputDeclaredCounts);
+    None
+}
+
+/// The judgement itself, shared by both entry points so retention cannot change
+/// what a conversion is found to be.
+fn judge_against_source(
+    source: &ConversionSourceFacts,
+    output: ConversionOutputInspection,
+    policy: ConversionPolicy,
+) -> ConversionIntegrityOutcome {
+    match revalidate_source(source.object()) {
+        Ok(true) => {}
+        Ok(false) => return ConversionIntegrityOutcome::SourceChangedDuringConversion,
+        Err(outcome) => return outcome,
+    }
     compare_documents(source, output, policy)
 }
 
-fn revalidate_source(source: &ConversionSourceFacts) -> Result<bool, ConversionIntegrityOutcome> {
+/// Whether the source object is still the one that was admitted.
+///
+/// Identity, length and content, in that order, and it is deliberately the same
+/// three for every source posture: a vendor acquisition rewritten under a run is
+/// exactly as invalidating as an mzML one, whatever else about it is readable.
+fn revalidate_source(source: &SourceObjectFacts) -> Result<bool, ConversionIntegrityOutcome> {
     let unchanged_identity = source
         .identity
         .matches_current()
@@ -945,7 +1656,7 @@ fn compare_documents(
             .advisory
             .insert(AdvisoryObservation::RootWrapperDiffers);
     }
-    if source.byte_length != output.byte_length() {
+    if source.byte_length() != output.byte_length() {
         report
             .advisory
             .insert(AdvisoryObservation::ByteLengthDiffers);
@@ -954,8 +1665,11 @@ fn compare_documents(
 
     ConversionIntegrityOutcome::Valid(Box::new(ValidConversion {
         output,
+        mode: ValidationMode::SourceComparison,
         verified: report.verified,
         unverified: report.unverified,
+        // A comparison was available, so nothing was outside the question.
+        inapplicable: BTreeSet::new(),
         advisory: report.advisory,
     }))
 }
@@ -986,25 +1700,8 @@ fn compare_counts(
     // The output is ours, so it must be internally consistent. A source that
     // disagrees with its own declared count is recorded, not rejected, because
     // every comparison below uses observed counts on both sides.
-    if after
-        .declared_spectrum_count()
-        .is_some_and(|declared| declared != after.observed_spectrum_count())
-    {
-        return Some(
-            ConversionIntegrityOutcome::OutputDeclaredCountInconsistent {
-                part: DocumentPart::Spectrum,
-            },
-        );
-    }
-    if after
-        .declared_chromatogram_count()
-        .is_some_and(|declared| declared != after.observed_chromatogram_count())
-    {
-        return Some(
-            ConversionIntegrityOutcome::OutputDeclaredCountInconsistent {
-                part: DocumentPart::Chromatogram,
-            },
-        );
+    if let Some(outcome) = check_output_declared_counts(after, report) {
+        return Some(outcome);
     }
     if before
         .declared_spectrum_count()

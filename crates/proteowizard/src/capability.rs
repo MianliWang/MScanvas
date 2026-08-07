@@ -255,12 +255,50 @@ impl TicCapability {
     }
 }
 
+/// Which ProteoWizard build the installed help says it came from.
+///
+/// Read out of the same complete, non-truncated capture every other capability
+/// fact is read from, using the same parsing discovery uses, so the build a
+/// capability decision is made against and the build discovery reported cannot
+/// disagree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderBuild {
+    release: String,
+    source_revision: Option<String>,
+}
+
+impl ProviderBuild {
+    /// The normalized release, such as `3.0.26013`.
+    #[must_use]
+    pub fn release(&self) -> &str {
+        &self.release
+    }
+
+    /// The source revision the release advertised, such as `47b13cf`. Absent
+    /// when the build did not emit one.
+    #[must_use]
+    pub fn source_revision(&self) -> Option<&str> {
+        self.source_revision.as_deref()
+    }
+
+    /// Whether this build is exactly the one named.
+    ///
+    /// A build that emitted no revision never matches one that names a
+    /// revision: evidence recorded against a specific revision is not evidence
+    /// about a build that will not say which it is.
+    #[must_use]
+    pub fn is(&self, release: &str, source_revision: &str) -> bool {
+        self.release == release && self.source_revision.as_deref() == Some(source_revision)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledHelpCapabilities {
     tool: BackendTool,
     executable: PathBuf,
     executable_sha256: Sha256Digest,
     raw_help_hashes: RawHelpHashes,
+    provider_build: Option<ProviderBuild>,
     options: BTreeMap<String, OptionDeclaration>,
     analysis_queries: BTreeMap<String, NamedGrammarDeclaration>,
     spectrum_filters: BTreeMap<String, NamedGrammarDeclaration>,
@@ -271,6 +309,7 @@ pub struct InstalledHelpCapabilities {
 struct ParsedHelpCapabilities {
     tool: BackendTool,
     raw_help_hashes: RawHelpHashes,
+    provider_build: Option<ProviderBuild>,
     options: BTreeMap<String, OptionDeclaration>,
     analysis_queries: BTreeMap<String, NamedGrammarDeclaration>,
     spectrum_filters: BTreeMap<String, NamedGrammarDeclaration>,
@@ -288,12 +327,31 @@ impl ParsedHelpCapabilities {
             executable,
             executable_sha256,
             raw_help_hashes: self.raw_help_hashes,
+            provider_build: self.provider_build,
             options: self.options,
             analysis_queries: self.analysis_queries,
             spectrum_filters: self.spectrum_filters,
             examples: self.examples,
         }
     }
+}
+
+/// Reads the build identity out of a complete help capture.
+///
+/// Uses discovery's parsing rather than a second one, so a build that reports
+/// two different releases produces no identity here for exactly the reason it
+/// produces none there.
+fn parse_provider_build(stdout: &[u8], stderr: &[u8]) -> Option<ProviderBuild> {
+    let (reported, conflict) =
+        crate::discovery::unique_label_value([stdout, stderr], "ProteoWizard release:");
+    if conflict {
+        return None;
+    }
+    let (release, source_revision) = crate::discovery::split_release_revision(reported.as_deref()?);
+    Some(ProviderBuild {
+        release: release?,
+        source_revision,
+    })
 }
 
 impl InstalledHelpCapabilities {
@@ -382,11 +440,18 @@ impl InstalledHelpCapabilities {
         let mut parser = HelpParser::new(tool);
         parser.parse_stream(stdout)?;
         parser.parse_stream(stderr)?;
-        let parsed = parser.finish(RawHelpHashes {
+        let mut parsed = parser.finish(RawHelpHashes {
             stdout: capture.stdout.sha256,
             stderr: capture.stderr.sha256,
         })?;
+        parsed.provider_build = parse_provider_build(capture.stdout.bytes, capture.stderr.bytes);
         Ok(parsed.bind_to_executable(executable, executable_sha256))
+    }
+
+    /// Which ProteoWizard build this help came from, when it said.
+    #[must_use]
+    pub const fn provider_build(&self) -> Option<&ProviderBuild> {
+        self.provider_build.as_ref()
     }
 
     #[must_use]
@@ -823,6 +888,9 @@ impl HelpParser {
         Ok(ParsedHelpCapabilities {
             tool: self.tool,
             raw_help_hashes,
+            // Filled in by the caller, which holds the raw capture the build
+            // identity is read from.
+            provider_build: None,
             options: self.options,
             analysis_queries: self.analysis_queries,
             spectrum_filters: self.spectrum_filters,

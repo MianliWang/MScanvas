@@ -443,6 +443,10 @@ pub enum PlanError {
         "mzXML conversion is unavailable until source/output integrity validation is implemented"
     )]
     MzXmlIntegrityGateRequired,
+    /// The source could not be named in a spelling the reader for its family
+    /// accepts without also naming a different object.
+    #[error("no verified backend spelling exists for the conversion source")]
+    SourceSpellingNotEquivalent,
     #[error(transparent)]
     InstalledHelpCapability(#[from] CapabilityRequirementError),
 }
@@ -474,6 +478,7 @@ impl PlanError {
                 "filtered_tic_capability_evidence_required"
             }
             Self::MzXmlIntegrityGateRequired => "mzxml_integrity_gate_required",
+            Self::SourceSpellingNotEquivalent => "source_spelling_not_equivalent",
             Self::InstalledHelpCapability(_) => "installed_help_capability_missing",
         }
     }
@@ -524,6 +529,41 @@ pub fn build_msconvert_command_with_capabilities(
     output_file_name: &OsStr,
     format: OpenFormat,
 ) -> Result<CommandSpec, PlanError> {
+    build_msconvert_command_for_source(
+        capabilities,
+        input,
+        output_directory,
+        output_file_name,
+        format,
+        InputSpelling::Canonical,
+    )
+}
+
+/// How the source path is spelled in the argv the backend receives.
+///
+/// The canonical path this crate binds identity to is a Windows extended-length
+/// path, and which readers accept one is a measured fact rather than a matter of
+/// taste. It is therefore a per-source-family decision, not a global one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputSpelling {
+    /// Exactly the canonical path. What every measurement in this repository so
+    /// far was recorded against.
+    Canonical,
+    /// The same object named without the `\\?\` prefix, and only when that
+    /// spelling is proved to reach the same object. Required by readers that
+    /// cannot open an extended-length path.
+    PlainVerified,
+}
+
+/// Builds an mzML conversion command with an explicit source-path spelling.
+pub fn build_msconvert_command_for_source(
+    capabilities: &InstalledHelpCapabilities,
+    input: &Path,
+    output_directory: &Path,
+    output_file_name: &OsStr,
+    format: OpenFormat,
+    spelling: InputSpelling,
+) -> Result<CommandSpec, PlanError> {
     match format {
         OpenFormat::MzMl => {
             capabilities.require_conversion(format)?;
@@ -531,7 +571,7 @@ pub fn build_msconvert_command_with_capabilities(
             validate_paths(&executable, input, output_directory)?;
             validate_output_file_name(output_file_name, format)?;
             let safe_output = require_safe_output_directory(input, output_directory)?;
-            let canonical_input = safe_output.source_identity.canonical_path().to_path_buf();
+            let canonical_input = backend_input_spelling(&safe_output.source_identity, spelling)?;
             let command = build_msconvert_command(
                 executable,
                 &canonical_input,
@@ -655,6 +695,57 @@ fn build_msaccess_command_spec(
     }
 
     CommandSpec::new(BackendTool::MsAccess, executable, args, output_directory)
+}
+
+/// The Windows extended-length prefix `std::fs::canonicalize` produces.
+const VERBATIM_PREFIX: &str = r"\\?\";
+
+/// Decides how the admitted source object is named in the backend's argv.
+///
+/// A plain spelling is never assumed to reach the same file. It is derived,
+/// resolved again, and required to have the identity that was admitted — the
+/// same comparison this crate uses everywhere else a name has to be trusted. A
+/// spelling that cannot be proved is refused rather than tried, because the
+/// consequence of being wrong is a backend reading an object nobody verified.
+fn backend_input_spelling(
+    admitted: &SourceIdentity,
+    spelling: InputSpelling,
+) -> Result<PathBuf, PlanError> {
+    let canonical = admitted.canonical_path();
+    if spelling == InputSpelling::Canonical {
+        return Ok(canonical.to_path_buf());
+    }
+
+    // Asked on the bytes, because a path this rule cannot decode is still a
+    // path this rule can tell is already plain.
+    if !canonical
+        .as_os_str()
+        .as_encoded_bytes()
+        .starts_with(VERBATIM_PREFIX.as_bytes())
+    {
+        // Already a plain spelling, so there is nothing to derive and nothing
+        // to prove. Every path on a platform without the prefix lands here.
+        return Ok(canonical.to_path_buf());
+    }
+
+    // From here the canonical spelling is one the caller's reader cannot use,
+    // so failing to derive an alternative is a refusal rather than a fallback.
+    // Returning the canonical path anyway would defer a stateable refusal to an
+    // opaque backend failure after a process had already run.
+    let Some(plain) = canonical
+        .to_str()
+        .and_then(|text| text.strip_prefix(VERBATIM_PREFIX))
+        .filter(|plain| !plain.starts_with("UNC\\"))
+    else {
+        return Err(PlanError::SourceSpellingNotEquivalent);
+    };
+    let plain = PathBuf::from(plain);
+    let resolved = SourceIdentity::capture(&plain)
+        .map_err(|error| PlanError::InputPathInspectionFailed { kind: error.kind() })?;
+    if &resolved != admitted {
+        return Err(PlanError::SourceSpellingNotEquivalent);
+    }
+    Ok(plain)
 }
 
 fn validate_paths(
