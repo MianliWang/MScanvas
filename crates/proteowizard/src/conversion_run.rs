@@ -403,34 +403,41 @@ impl ConversionSource {
         extension: &str,
         signature: &[u8],
     ) -> Result<Self, ConversionSourceRejection> {
-        let metadata = std::fs::symlink_metadata(path)
-            .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
-        fs_guard::require_regular_file(&metadata)?;
         if !has_extension(path, extension) {
             return Err(ConversionSourceRejection::UnsupportedExtension);
         }
 
-        let identity = SourceIdentity::capture(path)
-            .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
-
-        // One handle for both readings, and one that withholds write sharing.
-        // Both halves are needed. Reopening the name for the digest would let
-        // the signature describe one object and the hash another; sharing the
-        // handle with a writer lets it describe one *snapshot* and the hash
-        // another, which is the same defect a step further in. Either way the
-        // pre-run recheck would carry forward a digest of content nothing had
-        // recognized, and skip re-reading the signature on the strength of a
-        // digest that no longer covers it.
-        //
-        // An acquisition somebody else is writing is therefore not admitted at
-        // all, which is the right answer: it is not a finished acquisition.
-        let mut file = open_pinned_source(identity.canonical_path())
+        // Pinned before anything is judged about it, and the order carries the
+        // whole no-link promise. Checking the posture on the path and then
+        // capturing the identity would leave the interval between them, and
+        // `SourceIdentity::capture` *follows* links: a link dropped in there
+        // would be canonicalized to its target, and a different acquisition —
+        // one carrying a perfectly valid signature — would be admitted as the
+        // one the caller chose. The open below refuses to traverse a reparse
+        // point and withholds delete sharing, so the name cannot be repointed
+        // afterwards and every judgement that follows is about this object.
+        let mut file = open_admission_candidate(path)
             .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
         let metadata = file
             .metadata()
             .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
         fs_guard::require_regular_file(&metadata)?;
         let byte_length = metadata.len();
+
+        let identity = SourceIdentity::capture(path)
+            .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
+
+        // Both readings come from that one pinned handle, which withholds write
+        // sharing. Reopening the name for the digest would let the signature
+        // describe one object and the hash another; sharing the handle with a
+        // writer would let it describe one *snapshot* and the hash another,
+        // which is the same defect a step further in. Either way the pre-run
+        // recheck would carry forward a digest of content nothing had
+        // recognized, and skip re-reading the signature on the strength of a
+        // digest that no longer covers it.
+        //
+        // An acquisition somebody else is writing is therefore not admitted at
+        // all, which is the right answer: it is not a finished acquisition.
         let mut head = vec![0_u8; signature.len()];
         match file.read_exact(&mut head) {
             Ok(()) => {}
@@ -1729,6 +1736,36 @@ fn pin_planned_source(source: &ConversionSource) -> Result<File, ConversionRunFa
     // the signature is a prefix of the bytes this digest covers, so re-reading
     // it would re-derive a fact the hash has already settled.
     Ok(pinned)
+}
+
+/// Opens a candidate acquisition so it can be judged from the object itself.
+///
+/// The same posture as the run's own hold — no link is followed, and neither
+/// write nor delete sharing is granted — with one difference: a directory is
+/// allowed to open, so that a directory offered as a source is refused by the
+/// posture check with the reason that is true of it rather than by the open
+/// with an incidental one.
+#[cfg(windows)]
+fn open_admission_candidate(path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+/// Opens a candidate acquisition. No platform outside Windows offers a
+/// mandatory share mode through the standard library, so the guarantee is
+/// narrower and the posture check after it is what remains.
+#[cfg(not(windows))]
+fn open_admission_candidate(path: &Path) -> io::Result<File> {
+    File::open(path)
 }
 
 /// Opens the acquisition so that nobody can change it while it is converted.
