@@ -2895,7 +2895,9 @@ either side of its probe, so binding the row to the artifact costs nothing. The
 vendor libraries themselves are not opened or hashed, and that is recorded as
 open rather than implied.
 
-Measured result, on release `3.0.26013` revision `47b13cf`: the layout stage
+Measured result, on release `3.0.26013` revision `47b13cf`, from one complete
+two-stage run of both fixtures on the final tree rather than carried forward
+across the review rounds: the layout stage
 produced exactly one entry carrying the planned name, 28,661 bytes, no sidecar,
 index, log or scratch file, and the mzML control did the same. The boundary run
 finalized in `output_only` mode with an `indexedmzML` output of one spectrum and
