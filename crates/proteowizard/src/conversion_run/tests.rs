@@ -2860,6 +2860,45 @@ fn a_vendor_source_is_recognized_by_its_signature_and_not_by_its_name() {
     ));
 }
 
+/// Admission reads the signature and the digest from one handle that withholds
+/// write sharing, so both describe the same snapshot. An acquisition somebody
+/// else is writing is not a finished acquisition and is not admitted.
+#[cfg(windows)]
+#[test]
+fn an_acquisition_being_written_is_not_admitted() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    /// Share reads only: a writer holding the file this way still permits our
+    /// read, which is what makes the refusal below about *write* sharing rather
+    /// than about the file being open at all.
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+    let directory = TestDirectory::new();
+    let source = write_thermo_source(directory.path(), "acquisition.raw");
+
+    let writer = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&source)
+        .expect("hold the acquisition open for writing");
+
+    assert!(
+        matches!(
+            ConversionSource::open_thermo_raw_file(&source, MzmlScanLimits::default()),
+            Err(ConversionSourceRejection::NotInspectable { .. })
+        ),
+        "an acquisition under a writer was admitted"
+    );
+
+    // And once the writer is gone it is an ordinary acquisition again.
+    drop(writer);
+    assert_eq!(
+        open_thermo(&source).kind(),
+        ConversionSourceKind::ThermoRawFile
+    );
+}
+
 /// A source is an object. A directory carrying the right name and a link to a
 /// real acquisition are both refused before anything is read.
 #[test]

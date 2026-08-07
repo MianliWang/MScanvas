@@ -413,17 +413,24 @@ impl ConversionSource {
         let identity = SourceIdentity::capture(path)
             .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
 
-        // One handle for both readings, which is what makes the recognition a
-        // statement about the bytes the digest covers. Reopening the name for
-        // the digest would let the signature describe one object and the hash
-        // another, and the pre-run recheck would then carry forward a digest of
-        // content nothing had recognized. The output inspector reopens nothing
-        // for exactly this reason; neither does this.
-        let (mut file, byte_length) = fs_guard::open_regular_file(identity.canonical_path())
-            .map_err(|error| match error {
-                RegularFileError::Io { kind } => ConversionSourceRejection::NotInspectable { kind },
-                other => other.into(),
-            })?;
+        // One handle for both readings, and one that withholds write sharing.
+        // Both halves are needed. Reopening the name for the digest would let
+        // the signature describe one object and the hash another; sharing the
+        // handle with a writer lets it describe one *snapshot* and the hash
+        // another, which is the same defect a step further in. Either way the
+        // pre-run recheck would carry forward a digest of content nothing had
+        // recognized, and skip re-reading the signature on the strength of a
+        // digest that no longer covers it.
+        //
+        // An acquisition somebody else is writing is therefore not admitted at
+        // all, which is the right answer: it is not a finished acquisition.
+        let mut file = open_pinned_source(identity.canonical_path())
+            .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
+        fs_guard::require_regular_file(&metadata)?;
+        let byte_length = metadata.len();
         let mut head = vec![0_u8; signature.len()];
         match file.read_exact(&mut head) {
             Ok(()) => {}
@@ -445,6 +452,7 @@ impl ConversionSource {
         let sha256 = Sha256Digest::calculate_reader(&mut file)
             .map_err(|_| ConversionSourceRejection::NotHashed)?;
         let object = SourceObjectFacts::from_parts(identity, byte_length, sha256);
+        drop(file);
 
         Ok(Self {
             kind,
