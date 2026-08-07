@@ -1282,8 +1282,18 @@ fn check_output_payload_presence(after: &MzmlFacts) -> Option<ConversionIntegrit
         binary_array_count: u32,
         empty_binary_payload_count: u32,
     ) -> bool {
-        default_array_length.is_some_and(|length| length > 0)
-            && (binary_array_count == 0 || empty_binary_payload_count > 0)
+        match default_array_length {
+            // Declared non-empty: arrays are required, and they must hold
+            // something.
+            Some(1..) => binary_array_count == 0 || empty_binary_payload_count > 0,
+            // Declared empty: a peakless record, which is legitimate.
+            Some(0) => false,
+            // Not declared at all. The point count cannot be determined, so an
+            // empty payload can no longer be excused as peakless — that excuse
+            // rests on a declaration this record did not make. Fail closed
+            // rather than let a missing attribute route around the check.
+            None => binary_array_count > 0 && empty_binary_payload_count > 0,
+        }
     }
 
     for (position, record) in after.spectra().iter().enumerate() {

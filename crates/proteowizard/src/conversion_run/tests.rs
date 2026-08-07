@@ -3247,6 +3247,20 @@ fn a_vendor_conversion_rejects_every_output_its_own_contract_forbids() {
         "output_representation_conflicting"
     );
 
+    // No declared length at all, with empty payloads. The point count cannot be
+    // determined, so the peakless excuse is unavailable: it rests on a
+    // declaration this record never made.
+    assert_eq!(
+        attempt(&|spec| {
+            let undeclared = output_document()
+                .replace(r#" defaultArrayLength="4""#, "")
+                .replace("<binary>AA==</binary>", "<binary></binary>");
+            fs::write(staged_destination(spec), undeclared).expect("write an undeclared output");
+            Ok(0)
+        }),
+        "output_declared_array_without_payload"
+    );
+
     // A peakless record is legitimate and stays so: zero declared length with
     // an empty payload is a real spectrum, not a defect.
     let peakless = output_document()

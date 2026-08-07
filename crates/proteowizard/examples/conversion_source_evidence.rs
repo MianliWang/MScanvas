@@ -310,10 +310,13 @@ fn prepare_workspace(root: &Path) -> Result<Workspace, String> {
 fn hold_directory(path: &Path) -> Result<fs::File, String> {
     use std::os::windows::fs::OpenOptionsExt;
 
+    use std::os::windows::fs::MetadataExt;
+
     const FILE_SHARE_READ: u32 = 0x0000_0001;
     const FILE_SHARE_WRITE: u32 = 0x0000_0002;
     const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
     const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
 
     let opened = fs::OpenOptions::new()
         .read(true)
@@ -321,11 +324,17 @@ fn hold_directory(path: &Path) -> Result<fs::File, String> {
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
         .map_err(|error| format!("the workspace could not be held: {:?}", error.kind()))?;
-    if !opened
+    let metadata = opened
         .metadata()
-        .map_err(|error| format!("the workspace could not be inspected: {:?}", error.kind()))?
-        .is_dir()
-    {
+        .map_err(|error| format!("the workspace could not be inspected: {:?}", error.kind()))?;
+    // The open refuses to traverse a link; this refuses to act on one. Holding
+    // a junction pins the link, not its target, so every path-based read and
+    // the recursive cleanup would follow a target that can still be redirected
+    // — which is the whole thing the hold exists to prevent.
+    if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err("the workspace is a reparse point".to_owned());
+    }
+    if !metadata.is_dir() {
         return Err("the workspace is not a directory".to_owned());
     }
     Ok(opened)
