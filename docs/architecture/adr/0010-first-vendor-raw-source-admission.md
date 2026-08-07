@@ -137,6 +137,16 @@ evidenced, and the refusal happens before a staging area exists: an ungated
 build creates nothing, launches nothing and removes nothing. A build that will
 not say which it is never matches evidence recorded for a specific one.
 
+A listed row names three things, not two: the release, the source revision, and
+the SHA-256 of the `msconvert.exe` the conversion actually ran against. Two
+strings out of a help banner say what a build calls itself. An installation
+reporting the same release and revision with the vendor libraries missing or
+replaced answers both identically, and the evidence was never about that
+installation. Discovery already hashes the executable either side of its probe,
+so binding to the artifact costs nothing. It is not a check on the vendor
+libraries themselves — this crate never opens them — and that stays an open
+gate.
+
 One successful conversion is evidence about the build it ran on. Treating it as
 evidence about every installation is the claim ADR 0002 and the M0 spike both
 decline to make, because a vendor family is read by a vendor library whose
@@ -236,11 +246,19 @@ open.
   ADR 0007's evidence list.
 - **Instrument model.** Not recoverable from this fixture even with the vendor
   reader, so the family can be named exactly and the instrument cannot.
-- **Telling an absent element from an empty one.** The scanner records observed
-  counts, not whether a list element or its `count` attribute appeared. An
-  output-only judgement therefore refuses every empty document rather than
-  distinguishing a missing `spectrumList` from a legitimate `count="0"`. Making
-  that distinction is a scanner change with its own evidence obligations.
+- **Declared structure the scanner does not record.** It records observed
+  counts, not whether a list element or its `count` attribute appeared, and not
+  the per-record `binaryDataArrayList/@count`. So an output-only judgement
+  refuses every empty document rather than distinguishing a missing
+  `spectrumList` from a legitimate `count="0"`, and it cannot notice a record
+  that declares two binary arrays while carrying one. Both need new scanner
+  facts, which is a change to a fail-closed reader with its own evidence
+  obligations rather than a line in this judgement.
+- **The vendor libraries themselves.** The build gate binds to the release, the
+  revision and the executable's digest. It does not open, hash or version the
+  Thermo reader DLLs beside it, so an installation that passes the gate with
+  those replaced is unverified. Doing better means an installation self-test,
+  which is its own slice.
 - Real cancellation, partial-output behaviour, backend overwrite semantics,
   mzXML, progress and locale are all exactly as ADR 0009 left them.
 

@@ -2870,7 +2870,14 @@ provider build — release and source revision — parsed from the same complete
 capture every other capability fact comes from and with discovery's own parsing,
 so a capability decision and a discovery report cannot disagree. A vendor family
 runs only on a listed build, refused before a staging area exists, and widening
-is adding a measured row rather than relaxing a check.
+is adding a measured row rather than relaxing a check. A row names three things:
+the release, the source revision, and the digest of the `msconvert.exe` the
+conversion actually ran against. Two strings out of a help banner say what a
+build calls itself, and an installation with the vendor libraries missing or
+replaced answers both identically; discovery already hashes the executable
+either side of its probe, so binding the row to the artifact costs nothing. The
+vendor libraries themselves are not opened or hashed, and that is recorded as
+open rather than implied.
 
 Measured result, on release `3.0.26013` revision `47b13cf`: the layout stage
 produced exactly one entry carrying the planned name, 28,661 bytes, no sidecar,

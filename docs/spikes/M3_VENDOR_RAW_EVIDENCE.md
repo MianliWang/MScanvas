@@ -84,7 +84,7 @@ re-walk them:
 | Release | `3.0.26013` |
 | Source revision | `47b13cf` |
 | Build date | `Jan 13 2026 14:42:37` |
-| `msconvert.exe` SHA-256 | `9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD` |
+| `msconvert.exe` SHA-256 | `9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD` — the vendor family's build gate binds to this digest, not only to the release and revision strings |
 | Discovery | `Available`, source `CommonInstallRoot`, `same_installation=true` |
 | Installation | User-supplied and user-installed. Nothing is bundled, downloaded or redistributed |
 
@@ -253,7 +253,10 @@ cache key or an equality check on the size or the digest of a conversion output.
   large files, ion-mobility data, or an instrument model this fixture does not
   report.
 - **No claim about other provider builds.** Support is refused on every build
-  not listed as evidenced.
+  whose release, revision *and* executable digest are not the listed ones. The
+  vendor reader libraries beside that executable are not opened, hashed or
+  versioned, so an installation passing the gate with those replaced is
+  unverified.
 - **No claim about other vendors.** Bruker and Waters are directory
   acquisitions and remain unrecognised.
 - **No product claim.** Nothing user-visible converts a RAW file after this

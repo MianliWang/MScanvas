@@ -2739,8 +2739,25 @@ fn open_thermo(path: &Path) -> ConversionSource {
         .expect("open a Thermo RAW source")
 }
 
+/// The digest the vendor evidence is bound to.
+fn evidenced_executable_sha256() -> Sha256Digest {
+    EVIDENCED_PROVIDER_BUILDS[0]
+        .executable_sha256
+        .parse()
+        .expect("the evidenced executable digest parses")
+}
+
 /// Installed help that also declares which build produced it.
 fn capabilities_reporting(release: &str, revision: Option<&str>) -> InstalledHelpCapabilities {
+    capabilities_reporting_for(release, revision, evidenced_executable_sha256())
+}
+
+/// The same, for an installation whose executable is not the evidenced one.
+fn capabilities_reporting_for(
+    release: &str,
+    revision: Option<&str>,
+    executable_sha256: Sha256Digest,
+) -> InstalledHelpCapabilities {
     let executable = fs::canonicalize(std::env::current_exe().expect("test executable"))
         .expect("canonical test executable");
     let reported = revision.map_or_else(
@@ -2752,7 +2769,7 @@ fn capabilities_reporting(release: &str, revision: Option<&str>) -> InstalledHel
     InstalledHelpCapabilities::parse_unbound_capture_for_tests(
         BackendTool::MsConvert,
         executable,
-        EXECUTABLE_SHA256,
+        executable_sha256,
         CompleteHelpCapture::new(
             CapturedHelpStream::new(help.as_bytes(), help.len() as u64, false, FIXTURE_SHA256),
             CapturedHelpStream::new(&[], 0, false, EMPTY_SHA256),
@@ -3282,6 +3299,19 @@ fn a_vendor_family_runs_only_on_a_build_it_has_evidence_for() {
     // fixture is in, and it is refused for the same reason.
     let (outcome, ..) = attempt(&capabilities());
     assert_eq!(outcome, "source_family_not_evidenced");
+
+    // The right release and the right revision out of a different binary. Two
+    // strings from a help banner say what a build calls itself; the evidence was
+    // taken against an artifact, and an installation with the vendor libraries
+    // missing or replaced would answer these two identically.
+    let (outcome, calls, entries) = attempt(&capabilities_reporting_for(
+        EVIDENCED_RELEASE,
+        Some(EVIDENCED_REVISION),
+        EXECUTABLE_SHA256,
+    ));
+    assert_eq!(outcome, "source_family_not_evidenced");
+    assert_eq!(calls, 0);
+    assert!(entries.is_empty());
 }
 
 /// The gate is about the vendor family, not about conversion in general: an

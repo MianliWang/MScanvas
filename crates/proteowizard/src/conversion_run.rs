@@ -184,6 +184,18 @@ struct EvidencedProviderBuild {
     kind: ConversionSourceKind,
     release: &'static str,
     source_revision: &'static str,
+    /// The digest of the exact `msconvert.exe` the conversion ran against.
+    ///
+    /// Two strings out of a help banner say what a build calls itself, not what
+    /// it is. An installation reporting the same release and revision with the
+    /// vendor libraries missing or replaced answers identically, and the
+    /// evidence was never about that installation. Discovery already hashes the
+    /// executable either side of its probe, so binding the row to the artifact
+    /// costs nothing and is the strongest single thing this crate has probed.
+    ///
+    /// It is not a check on the vendor libraries themselves, which this crate
+    /// never opens; that remains an open gate.
+    executable_sha256: &'static str,
 }
 
 /// Every build this repository has vendor-source evidence for.
@@ -197,6 +209,7 @@ const EVIDENCED_PROVIDER_BUILDS: [EvidencedProviderBuild; 1] = [EvidencedProvide
     kind: ConversionSourceKind::ThermoRawFile,
     release: "3.0.26013",
     source_revision: "47b13cf",
+    executable_sha256: "9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD",
 }];
 
 /// Whether the installed build is one this family has been converted on.
@@ -212,8 +225,11 @@ fn provider_build_is_evidenced(
         // evidence recorded for a specific one.
         return false;
     };
+    let executable = capabilities.executable_sha256().to_string();
     EVIDENCED_PROVIDER_BUILDS.iter().any(|evidenced| {
-        evidenced.kind == kind && build.is(evidenced.release, evidenced.source_revision)
+        evidenced.kind == kind
+            && build.is(evidenced.release, evidenced.source_revision)
+            && executable.eq_ignore_ascii_case(evidenced.executable_sha256)
     })
 }
 
