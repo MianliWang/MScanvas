@@ -2970,6 +2970,7 @@ fn a_vendor_conversion_is_validated_on_its_output_alone() {
             "output_declared_array_lengths",
             "output_array_payload_presence",
             "output_array_roles",
+            "output_array_encoding",
             "index_sequences",
             "compression_policy",
         ])
@@ -3174,6 +3175,33 @@ fn a_vendor_conversion_rejects_every_output_its_own_contract_forbids() {
             Ok(0)
         }),
         "output_array_role_missing"
+    );
+
+    // Arrays with no numeric encoding: their width and type are unstated, so
+    // the payload cannot be decoded even though everything about it looks
+    // present.
+    assert_eq!(
+        attempt(&|spec| {
+            let unencoded = output_document().replace(r#"<cvParam accession="MS:1000521"/>"#, "");
+            fs::write(staged_destination(spec), unencoded).expect("write an unencoded output");
+            Ok(0)
+        }),
+        "output_array_encoding_missing"
+    );
+
+    // Both compression answers at once. The compressed-array count is satisfied,
+    // so only looking at the contradiction finds it.
+    assert_eq!(
+        attempt(&|spec| {
+            let contradictory = output_document().replace(
+                r#"<cvParam accession="MS:1000574"/>"#,
+                r#"<cvParam accession="MS:1000574"/><cvParam accession="MS:1000576"/>"#,
+            );
+            fs::write(staged_destination(spec), contradictory)
+                .expect("write a contradictory output");
+            Ok(0)
+        }),
+        "output_compression_contradictory"
     );
 
     // A peakless record is legitimate and stays so: zero declared length with

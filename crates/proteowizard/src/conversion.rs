@@ -25,8 +25,8 @@ use crate::fs_guard::{
     self, OutputDirectoryEntry, OutputDirectorySnapshot, OutputEntryKind, RegularFileError,
 };
 use crate::mzml::{
-    self, ArrayKind, MzmlFacts, MzmlLimitKind, MzmlMalformedKind, MzmlScanError, MzmlScanLimits,
-    MzmlSpectrumRecord, RepresentationMarker, UnsafeXmlKind,
+    self, ArrayKind, CompressionMarker, MzmlFacts, MzmlLimitKind, MzmlMalformedKind, MzmlScanError,
+    MzmlScanLimits, MzmlSpectrumRecord, RepresentationMarker, UnsafeXmlKind,
 };
 
 /// The compression the typed conversion plan requested. This is MSCanvas policy,
@@ -560,6 +560,10 @@ pub enum IntegrityProperty {
     /// controlled vocabulary is, and distinct from comparing those roles
     /// against a source.
     OutputArrayRoles,
+    /// Every record in the output says how its arrays are encoded, and does not
+    /// contradict itself about how they are compressed. Both are readable from
+    /// the output alone, and both decide whether anything can decode it.
+    OutputArrayEncoding,
     SpectrumCount,
     ChromatogramCount,
     IndexSequences,
@@ -584,6 +588,7 @@ impl IntegrityProperty {
             Self::OutputDeclaredArrayLengths => "output_declared_array_lengths",
             Self::OutputArrayPayloadPresence => "output_array_payload_presence",
             Self::OutputArrayRoles => "output_array_roles",
+            Self::OutputArrayEncoding => "output_array_encoding",
             Self::SpectrumCount => "spectrum_count",
             Self::ChromatogramCount => "chromatogram_count",
             Self::IndexSequences => "index_sequences",
@@ -791,6 +796,17 @@ pub enum ConversionIntegrityOutcome {
         part: DocumentPart,
         index: u64,
     },
+    /// A record does not say how its arrays are encoded, so nothing downstream
+    /// can decode them.
+    OutputArrayEncodingMissing {
+        part: DocumentPart,
+        index: u64,
+    },
+    /// A record says its arrays are both compressed and not compressed.
+    OutputCompressionContradictory {
+        part: DocumentPart,
+        index: u64,
+    },
     /// The output is a well-formed document holding no spectra and no
     /// chromatograms. Only reachable where there is no source to compare
     /// against, because a comparison would already have found the counts
@@ -859,6 +875,8 @@ impl ConversionIntegrityOutcome {
             }
             Self::OutputContainsNoRecords => "output_contains_no_records",
             Self::OutputArrayRoleMissing { .. } => "output_array_role_missing",
+            Self::OutputArrayEncodingMissing { .. } => "output_array_encoding_missing",
+            Self::OutputCompressionContradictory { .. } => "output_compression_contradictory",
             Self::SpectrumCountMismatch { .. } => "spectrum_count_mismatch",
             Self::ChromatogramCountMismatch { .. } => "chromatogram_count_mismatch",
             Self::IndexSequenceNotConsecutive { .. } => "index_sequence_not_consecutive",
@@ -1168,10 +1186,25 @@ fn judge_output_alone(
             return outcome;
         }
         report.verified.insert(IntegrityProperty::OutputArrayRoles);
+
+        // Saying what an array is does not say how to read it. A payload with
+        // no numeric encoding leaves its width and type unstated, and a record
+        // claiming its arrays are both compressed and uncompressed is worse
+        // than wrong: it is two answers to one question, and the compressed
+        // count alone cannot see it because that count is satisfied.
+        if let Some(outcome) = check_output_array_encoding(after, policy) {
+            return outcome;
+        }
+        report
+            .verified
+            .insert(IntegrityProperty::OutputArrayEncoding);
     } else {
         report
             .unverified
             .insert(IntegrityProperty::OutputArrayRoles);
+        report
+            .unverified
+            .insert(IntegrityProperty::OutputArrayEncoding);
     }
 
     // The compression policy is the one requested property that is readable from
@@ -1279,6 +1312,66 @@ fn check_output_array_roles(after: &MzmlFacts) -> Option<ConversionIntegrityOutc
                 index: position as u64,
             });
         }
+    }
+    None
+}
+
+/// Refuses an output nothing could decode.
+fn check_output_array_encoding(
+    after: &MzmlFacts,
+    policy: ConversionPolicy,
+) -> Option<ConversionIntegrityOutcome> {
+    let compression_matters = matches!(policy.compression(), CompressionPolicy::Zlib);
+    for (position, record) in after.spectra().iter().enumerate() {
+        if let Some(outcome) = judge_record_encoding(
+            DocumentPart::Spectrum,
+            position as u64,
+            record.binary_array_count(),
+            record.precision().is_empty(),
+            compression_matters
+                && record
+                    .compression()
+                    .contains(CompressionMarker::NoCompression),
+        ) {
+            return Some(outcome);
+        }
+    }
+    for (position, record) in after.chromatograms().iter().enumerate() {
+        if let Some(outcome) = judge_record_encoding(
+            DocumentPart::Chromatogram,
+            position as u64,
+            record.binary_array_count(),
+            record.precision().is_empty(),
+            compression_matters
+                && record
+                    .compression()
+                    .contains(CompressionMarker::NoCompression),
+        ) {
+            return Some(outcome);
+        }
+    }
+    None
+}
+
+/// Whether one record's arrays can be decoded at all.
+///
+/// A record with no arrays is not judged: a peakless record is legitimate, and
+/// one declaring points without arrays was already refused.
+fn judge_record_encoding(
+    part: DocumentPart,
+    index: u64,
+    binary_array_count: u32,
+    precision_absent: bool,
+    compression_contradictory: bool,
+) -> Option<ConversionIntegrityOutcome> {
+    if binary_array_count == 0 {
+        return None;
+    }
+    if precision_absent {
+        return Some(ConversionIntegrityOutcome::OutputArrayEncodingMissing { part, index });
+    }
+    if compression_contradictory {
+        return Some(ConversionIntegrityOutcome::OutputCompressionContradictory { part, index });
     }
     None
 }

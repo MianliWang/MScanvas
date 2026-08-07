@@ -2846,8 +2846,12 @@ every output-only result whatever its sets contain. What a vendor run does
 establish is the source object unchanged, the output's declared list counts and
 array lengths present and consistent, no array declared non-empty without a
 payload, every record saying what its arrays are — m/z and intensity for a
-spectrum, time and intensity for a chromatogram — its index sequences
-consecutive, and the requested compression honoured. Array roles are worth
+spectrum, time and intensity for a chromatogram — every record saying how its
+arrays are encoded and not claiming they are both compressed and uncompressed,
+its index sequences consecutive, and the requested compression honoured. Saying
+what an array is does not say how to read it, and a record giving two
+compression answers at once is worse than a wrong one: the compressed-array
+count is satisfied, so only looking for the contradiction finds it. Array roles are worth
 separating from the comparison they resemble: comparing them against a source
 needs the source and stays inapplicable, while an output that never says what
 its arrays are is one nothing downstream can read, and it answers for that

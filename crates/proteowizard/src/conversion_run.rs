@@ -1676,6 +1676,24 @@ fn run_admitted(
 /// binding the run to the bytes that were admitted is worth the third.
 fn pin_planned_source(source: &ConversionSource) -> Result<File, ConversionRunFailure> {
     let object = source.baseline.object();
+
+    // Held before it is judged, and the order is the whole point. Checking the
+    // identity and then opening leaves the interval between them: a name
+    // atomically replaced in there binds this handle to an object nothing
+    // admitted, and a replacement carrying identical bytes would pass the
+    // length and digest checks below and launch a conversion that can run for
+    // minutes before the post-run revalidation notices. Once the handle exists
+    // without delete sharing the name cannot be repointed, so the check that
+    // follows describes the object this run will actually use.
+    let path = source.canonical_path();
+    // An open that fails says the recheck could not be made, which is the
+    // reason this boundary has always given for a source it cannot reach. What
+    // the source *became* is decided by the posture, length and digest checks
+    // below, so reordering the open does not move a case from one reason to the
+    // other.
+    let mut pinned = open_pinned_source(path)
+        .map_err(|error| ConversionRunFailure::SourceNotRechecked { kind: error.kind() })?;
+
     match object.identity().matches_current() {
         Ok(true) => {}
         Ok(false) => return Err(ConversionRunFailure::SourceChangedBeforeRun),
@@ -1683,17 +1701,6 @@ fn pin_planned_source(source: &ConversionSource) -> Result<File, ConversionRunFa
             return Err(ConversionRunFailure::SourceNotRechecked { kind: error.kind() });
         }
     }
-
-    // Held before it is rechecked, for the reason the destination root is: a
-    // check followed by an open leaves the interval between them, and the work
-    // in that interval is a whole rehash of the acquisition.
-    let path = source.canonical_path();
-    let mut pinned = open_pinned_source(path).map_err(|error| match error.kind() {
-        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory => {
-            ConversionRunFailure::SourceChangedBeforeRun
-        }
-        kind => ConversionRunFailure::SourceNotRechecked { kind },
-    })?;
 
     let metadata = pinned
         .metadata()

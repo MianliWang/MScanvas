@@ -88,8 +88,9 @@ two:
   output's declared list counts present and consistent with its contents, its
   declared binary-array lengths present, every record saying what its arrays are
   — a spectrum needs an m/z role and an intensity role, a chromatogram a time
-  role and an intensity role — consecutive index sequences, and the requested
-  compression policy. That last group is worth separating from the comparison it
+  role and an intensity role — every record saying how its arrays are encoded
+  and not contradicting itself about how they are compressed, consecutive index
+  sequences, and the requested compression policy. That last group is worth separating from the comparison it
   resembles: *comparing* array roles against a source needs the source and stays
   inapplicable, while an output that never says what its arrays are is one
   nothing downstream can read, and it answers for that by itself. A list holding records while declaring no count

@@ -198,7 +198,7 @@ The whole sequence, unchanged, through `run_conversion`:
 | Output root | `indexedmzML` | `indexedmzML` |
 | Spectra / chromatograms | `1` / `1` | `4` / `2` |
 | Output byte length | `28,661` | `25,517` |
-| Verified | `source_unchanged`, `output_declared_counts`, `output_declared_array_lengths`, `output_array_payload_presence`, `output_array_roles`, `index_sequences`, `compression_policy` | the ten comparison and structural properties |
+| Verified | `source_unchanged`, `output_declared_counts`, `output_declared_array_lengths`, `output_array_payload_presence`, `output_array_roles`, `output_array_encoding`, `index_sequences`, `compression_policy` | the ten comparison and structural properties |
 | Unverified | none | `ms_level_distribution`, `binary_array_kinds`, `spectrum_native_identity`, `spectrum_representation`, `compression_policy` |
 | Inapplicable | the eleven comparison properties | none |
 | Advisory | none | `numeric_precision_differs`, `byte_length_differs` |
