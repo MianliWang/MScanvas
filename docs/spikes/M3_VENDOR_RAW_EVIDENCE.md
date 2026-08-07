@@ -277,10 +277,14 @@ cargo run --locked -p mscanvas-proteowizard --example conversion_source_evidence
     [--diagnostics <local-file>]
 ```
 
-The harness prints only shapes. `--diagnostics` writes the raw backend streams
-to a local file because they name the acquisition; it is not printed, not
-committed, and the caller deletes it after reading. The harness removes
-everything it created inside its workspace before returning.
+The harness prints only shapes. `--diagnostics` takes a base path and each stage
+writes its own file beside it, because the raw backend streams name the
+acquisition: they are not printed, not committed, and the caller deletes them
+after reading. Every one is created no-clobber, so an existing file is refused
+rather than overwritten — and a base path that resolves to the acquisition is
+refused by name, because a harness that truncates the thing it was pointed at is
+worse than no harness. The workspace must be empty, and everything the harness
+creates inside it is removed before it returns.
 
 The same run is also an explicitly ignored test:
 

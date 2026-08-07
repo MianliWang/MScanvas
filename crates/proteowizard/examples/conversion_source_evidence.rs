@@ -22,10 +22,12 @@
 //!
 //! This example is intentionally not a stable MSCanvas CLI contract.
 
+use std::cell::RefCell;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Write;
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::SystemTime;
@@ -144,7 +146,7 @@ const USAGE: [&str; 9] = [
     "",
     "--input: an acquisition outside the repository. It is never committed.",
     "--workspace: a scratch directory this harness owns. It must be empty, and everything the harness creates inside it is removed before it returns.",
-    "--diagnostics: a local file to receive raw backend stdout and stderr. It can name the acquisition, so delete it after reading.",
+    "--diagnostics: a base path. Each stage writes its own file beside it, created no-clobber; an existing one is refused rather than overwritten, and so is the acquisition itself. The files can name the acquisition, so delete them after reading.",
 ];
 
 fn run(cli: Cli) -> Result<(), String> {
@@ -153,6 +155,10 @@ fn run(cli: Cli) -> Result<(), String> {
 
     let source_facts = describe_input(&cli.input)?;
     println!("{source_facts}");
+
+    if let Some(base) = cli.diagnostics.as_deref() {
+        require_safe_diagnostics_base(base, &cli.input)?;
+    }
 
     let capabilities = installed_capabilities(cli.proteowizard_home.as_deref())?;
 
@@ -325,8 +331,8 @@ fn report_layout(
         output.peak_job_memory_bytes
     );
 
-    if let Some(path) = cli.diagnostics.as_deref() {
-        write_diagnostics(path, &output)?;
+    if let Some(base) = cli.diagnostics.as_deref() {
+        write_diagnostics(&diagnostics_path(base, "layout"), &output)?;
     }
 
     let snapshot = snapshot_output_directory(&output_directory)
@@ -383,12 +389,58 @@ fn argv_shape(command: &CommandSpec) -> String {
         .join(" ")
 }
 
+/// Where a stage's raw backend streams go.
+///
+/// Each stage gets its own file so a second stage cannot overwrite the first
+/// one's evidence, which is exactly what a single shared destination did.
+fn diagnostics_path(base: &Path, stage: &str) -> PathBuf {
+    let mut name = base.as_os_str().to_owned();
+    name.push(".");
+    name.push(stage);
+    name.push(".txt");
+    PathBuf::from(name)
+}
+
+/// Refuses a diagnostics destination that would destroy something.
+///
+/// `--diagnostics` takes a path from a caller who is one slip away from typing
+/// the acquisition's. Creation below is no-clobber, which is the guarantee;
+/// this exists so the refusal says which mistake was made instead of reporting
+/// that a file happened to exist.
+fn require_safe_diagnostics_base(base: &Path, input: &Path) -> Result<(), String> {
+    for stage in ["layout", "boundary"] {
+        let path = diagnostics_path(base, stage);
+        if path.exists() {
+            return Err(
+                "a diagnostics file already exists; this harness never overwrites one".to_owned(),
+            );
+        }
+        if same_object(&path, input) {
+            return Err("the diagnostics destination is the acquisition itself".to_owned());
+        }
+    }
+    if same_object(base, input) {
+        return Err("the diagnostics destination is the acquisition itself".to_owned());
+    }
+    Ok(())
+}
+
+/// Whether two paths name the same existing object.
+fn same_object(left: &Path, right: &Path) -> bool {
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
 /// Writes the raw backend streams to a local file the caller must delete.
 ///
 /// Raw backend output can name the acquisition, so it never enters the printed
-/// evidence and never leaves this file.
+/// evidence and never leaves this file. The file is created no-clobber: this
+/// harness will not truncate anything, least of all an acquisition somebody
+/// pointed it at by mistake.
 fn write_diagnostics(path: &Path, output: &ProcessOutput) -> Result<(), String> {
-    let mut file = fs::File::create(path).map_err(|error| {
+    let mut file = fs::File::create_new(path).map_err(|error| {
         format!(
             "the diagnostics file could not be created: {:?}",
             error.kind()
@@ -426,14 +478,23 @@ fn write_diagnostics(path: &Path, output: &ProcessOutput) -> Result<(), String> 
 /// belongs.
 struct CapturingRunner<'a> {
     inner: SystemProcessRunner,
-    diagnostics: Option<&'a Path>,
+    diagnostics: Option<PathBuf>,
+    /// A diagnostics failure cannot be returned through `ProcessRunner`, whose
+    /// error type belongs to the process boundary. It is kept and raised by the
+    /// caller instead of being dropped, because a run that reports `finalized`
+    /// while silently failing to save the evidence the caller explicitly asked
+    /// for is the harness lying about what it did.
+    diagnostics_failure: RefCell<Option<String>>,
+    _lifetime: PhantomData<&'a ()>,
 }
 
 impl ProcessRunner for CapturingRunner<'_> {
     fn run(&self, spec: &CommandSpec) -> Result<ProcessOutput, ProcessError> {
         let output = self.inner.run(spec)?;
-        if let Some(path) = self.diagnostics {
-            let _ = write_diagnostics(path, &output);
+        if let Some(path) = self.diagnostics.as_deref()
+            && let Err(error) = write_diagnostics(path, &output)
+        {
+            *self.diagnostics_failure.borrow_mut() = Some(error);
         }
         Ok(output)
     }
@@ -458,11 +519,22 @@ fn report_boundary(
 
     let runner = CapturingRunner {
         inner: SystemProcessRunner,
-        diagnostics: cli.diagnostics.as_deref(),
+        diagnostics: cli
+            .diagnostics
+            .as_deref()
+            .map(|base| diagnostics_path(base, "boundary")),
+        diagnostics_failure: RefCell::new(None),
+        _lifetime: PhantomData,
     };
     let started = SystemTime::now();
     let report = run_conversion(&plan, capabilities, &runner);
     let elapsed = started.elapsed().unwrap_or_default();
+    // Raised before anything is reported: a run that says `finalized` while
+    // silently failing to save the evidence the caller asked for is the harness
+    // lying about what it did.
+    if let Some(failure) = runner.diagnostics_failure.borrow_mut().take() {
+        return Err(failure);
+    }
 
     println!("boundary.harness_elapsed_ms={}", elapsed.as_millis());
     if let Some(backend) = report.backend() {

@@ -247,13 +247,16 @@ open.
 - **Instrument model.** Not recoverable from this fixture even with the vendor
   reader, so the family can be named exactly and the instrument cannot.
 - **Declared structure the scanner does not record.** It records observed
-  counts, not whether a list element or its `count` attribute appeared, and not
-  the per-record `binaryDataArrayList/@count`. So an output-only judgement
-  refuses every empty document rather than distinguishing a missing
-  `spectrumList` from a legitimate `count="0"`, and it cannot notice a record
-  that declares two binary arrays while carrying one. Both need new scanner
-  facts, which is a change to a fail-closed reader with its own evidence
-  obligations rather than a line in this judgement.
+  counts, not whether a list element or its `count` attribute appeared, not the
+  per-record `binaryDataArrayList/@count`, and not whether a record carried the
+  `id` its schema requires — a spectrum without one shows up only as an
+  unrecognised native identity, and a chromatogram without one shows up not at
+  all. So an output-only judgement refuses every empty document rather than
+  distinguishing a missing `spectrumList` from a legitimate `count="0"`, and it
+  cannot notice a record that declares two binary arrays while carrying one, or
+  one missing its identifier. Each needs a new scanner fact, which is a change
+  to a fail-closed reader with its own evidence obligations rather than a line
+  in this judgement. They belong together in one slice.
 - **The vendor libraries themselves.** The build gate binds to the release, the
   revision and the executable's digest. It does not open, hash or version the
   Thermo reader DLLs beside it, so an installation that passes the gate with
