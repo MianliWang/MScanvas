@@ -91,7 +91,13 @@ two:
   has omitted an attribute its schema requires; under a comparison that is
   survivable because the observed counts on both sides still answer the
   question, and here it is a rejection, because recording the property as
-  verified would assert something the document declined to state.
+  verified would assert something the document declined to state. The same
+  reasoning refuses a record that declares a non-empty binary array and carries
+  no payload for it: the comparison path finds that by looking for the source's
+  payloads, and with no source the contradiction between a declared length and
+  an absent payload is what remains — and it is enough. A declared length of
+  zero with an empty payload stays legitimate, because a peakless record is a
+  real one and the M0 evidence corrected an earlier contract for refusing it.
 - **unverified** — could have been asked and could not be established, such as a
   vocabulary fact reached through a `referenceableParamGroup`.
 - **inapplicable** — never a question this pair could be asked. Every

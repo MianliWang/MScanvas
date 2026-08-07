@@ -2951,6 +2951,7 @@ fn a_vendor_conversion_is_validated_on_its_output_alone() {
             "source_unchanged",
             "output_declared_counts",
             "output_declared_array_lengths",
+            "output_array_payload_presence",
             "index_sequences",
             "compression_policy",
         ])
@@ -3078,6 +3079,41 @@ fn a_vendor_conversion_rejects_every_output_its_own_contract_forbids() {
             Ok(0)
         }),
         "index_sequence_not_consecutive"
+    );
+
+    // Metadata describing peaks the document does not carry. With no source to
+    // find the missing payloads against, the contradiction between a declared
+    // length and an absent payload is the whole of what is available — and it
+    // is enough.
+    assert_eq!(
+        attempt(&|spec| {
+            let hollow = output_document().replace("<binary>AA==</binary>", "<binary></binary>");
+            fs::write(staged_destination(spec), hollow).expect("write a hollow output");
+            Ok(0)
+        }),
+        "output_declared_array_without_payload"
+    );
+
+    // A peakless record is legitimate and stays so: zero declared length with
+    // an empty payload is a real spectrum, not a defect.
+    let peakless = output_document()
+        .replace(r#"defaultArrayLength="4""#, r#"defaultArrayLength="0""#)
+        .replace("<binary>AA==</binary>", "<binary></binary>");
+    let root = directory.path().join("peakless-out");
+    fs::create_dir(&root).expect("create destination root");
+    let plan = ConversionPlan::to_mzml(open_thermo(&source), &root, ConflictPolicy::Fail)
+        .expect("plan a vendor conversion");
+    let act = |spec: &CommandSpec| {
+        fs::write(staged_destination(spec), &peakless).expect("write a peakless output");
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act);
+    assert_eq!(
+        run_conversion(&plan, &evidenced_capabilities(), &runner)
+            .outcome()
+            .stable_id(),
+        "finalized",
+        "a legitimately peakless document was refused"
     );
 
     // An entry the plan did not ask for is never silently ignored.

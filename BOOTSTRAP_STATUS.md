@@ -2844,12 +2844,18 @@ recorded as *inapplicable* rather than unverified, because they were never
 questions this pair could be asked, and `is_fully_verified` answers false for
 every output-only result whatever its sets contain. What a vendor run does
 establish is the source object unchanged, the output's declared list counts and
-array lengths present and consistent, its index sequences consecutive, and the
-requested compression honoured. A list holding records while declaring no count
+array lengths present and consistent, no array declared non-empty without a
+payload, its index sequences consecutive, and the requested compression
+honoured. A list holding records while declaring no count
 has omitted an attribute its schema requires: survivable under a comparison,
 where the observed counts on both sides still answer the question, and a
 rejection here, because recording it as verified would assert something the
-document declined to state. The mzML comparison is untouched.
+document declined to state. A document that says it holds peaks and holds none
+is refused for the same reason: the comparison path catches that by finding the
+source's payloads where the output has none, and with no source the
+self-contradiction is what remains. A peakless record — zero declared length,
+empty payload — stays legitimate, because the M0 evidence corrected an earlier
+contract for refusing exactly that. The mzML comparison is untouched.
 
 Support is bound to the build it was measured on. Installed help now yields a
 provider build — release and source revision — parsed from the same complete

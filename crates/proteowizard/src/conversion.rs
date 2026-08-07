@@ -549,6 +549,11 @@ pub enum IntegrityProperty {
     /// Also about the output alone, and separate from the comparison of those
     /// lengths against a source, which is not always available.
     OutputDeclaredArrayLengths,
+    /// Every array the output declares non-empty carries a payload. Observed
+    /// without decoding, so an array whose scientific data went missing while
+    /// its metadata still described peaks is caught with no source to compare
+    /// against.
+    OutputArrayPayloadPresence,
     SpectrumCount,
     ChromatogramCount,
     IndexSequences,
@@ -571,6 +576,7 @@ impl IntegrityProperty {
             Self::SourceUnchanged => "source_unchanged",
             Self::OutputDeclaredCounts => "output_declared_counts",
             Self::OutputDeclaredArrayLengths => "output_declared_array_lengths",
+            Self::OutputArrayPayloadPresence => "output_array_payload_presence",
             Self::SpectrumCount => "spectrum_count",
             Self::ChromatogramCount => "chromatogram_count",
             Self::IndexSequences => "index_sequences",
@@ -765,6 +771,13 @@ pub enum ConversionIntegrityOutcome {
     OutputDeclaredCountInconsistent {
         part: DocumentPart,
     },
+    /// A record declares a non-empty binary array and carries no payload for
+    /// it. Unlike a `BinaryArrayMismatch`, no second document is involved: the
+    /// output contradicts itself.
+    OutputDeclaredArrayWithoutPayload {
+        part: DocumentPart,
+        index: u64,
+    },
     SpectrumCountMismatch {
         source: u64,
         output: u64,
@@ -823,6 +836,9 @@ impl ConversionIntegrityOutcome {
             Self::SourceNotRevalidated { .. } => "source_not_revalidated",
             Self::SourceNotRehashed => "source_not_rehashed",
             Self::OutputDeclaredCountInconsistent { .. } => "output_declared_count_inconsistent",
+            Self::OutputDeclaredArrayWithoutPayload { .. } => {
+                "output_declared_array_without_payload"
+            }
             Self::SpectrumCountMismatch { .. } => "spectrum_count_mismatch",
             Self::ChromatogramCountMismatch { .. } => "chromatogram_count_mismatch",
             Self::IndexSequenceNotConsecutive { .. } => "index_sequence_not_consecutive",
@@ -1092,6 +1108,18 @@ fn judge_output_alone(
     }
     report.verified.insert(IntegrityProperty::IndexSequences);
 
+    // A document that says it holds peaks and holds none is unusable, and it
+    // says so entirely by itself. The comparison path catches this by finding
+    // the source's payloads where the output has none; with no source, the
+    // contradiction between a declared length and an absent payload is what
+    // remains, and it is enough.
+    if let Some(outcome) = check_output_payload_presence(after) {
+        return outcome;
+    }
+    report
+        .verified
+        .insert(IntegrityProperty::OutputArrayPayloadPresence);
+
     // The compression policy is the one requested property that is readable from
     // the output alone, and it degrades for the same reason it degrades in a
     // comparison: an indirected controlled vocabulary is not a fact this scanner
@@ -1110,6 +1138,45 @@ fn judge_output_alone(
         inapplicable: COMPARISON_PROPERTIES.into_iter().collect(),
         advisory: report.advisory,
     }))
+}
+
+/// Refuses an output whose metadata describes peaks it does not carry.
+///
+/// A declared length of zero with an empty payload is a peakless record, which
+/// is legitimate and stays legitimate here: the M0 evidence corrected an earlier
+/// contract for rejecting exactly that on ProteoWizard's own reference fixture.
+/// What is refused is a record that declares a non-empty array and carries
+/// nothing for it.
+fn check_output_payload_presence(after: &MzmlFacts) -> Option<ConversionIntegrityOutcome> {
+    for (position, record) in after.spectra().iter().enumerate() {
+        if record
+            .default_array_length()
+            .is_some_and(|length| length > 0)
+            && record.empty_binary_payload_count() > 0
+        {
+            return Some(
+                ConversionIntegrityOutcome::OutputDeclaredArrayWithoutPayload {
+                    part: DocumentPart::Spectrum,
+                    index: position as u64,
+                },
+            );
+        }
+    }
+    for (position, record) in after.chromatograms().iter().enumerate() {
+        if record
+            .default_array_length()
+            .is_some_and(|length| length > 0)
+            && record.empty_binary_payload_count() > 0
+        {
+            return Some(
+                ConversionIntegrityOutcome::OutputDeclaredArrayWithoutPayload {
+                    part: DocumentPart::Chromatogram,
+                    index: position as u64,
+                },
+            );
+        }
+    }
+    None
 }
 
 /// The output is this boundary's own product, so it must agree with itself.

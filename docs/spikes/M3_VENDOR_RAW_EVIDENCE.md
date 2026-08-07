@@ -197,7 +197,7 @@ The whole sequence, unchanged, through `run_conversion`:
 | Output root | `indexedmzML` | `indexedmzML` |
 | Spectra / chromatograms | `1` / `1` | `4` / `2` |
 | Output byte length | `28,661` | `25,517` |
-| Verified | `source_unchanged`, `output_declared_counts`, `output_declared_array_lengths`, `index_sequences`, `compression_policy` | the ten comparison and structural properties |
+| Verified | `source_unchanged`, `output_declared_counts`, `output_declared_array_lengths`, `output_array_payload_presence`, `index_sequences`, `compression_policy` | the ten comparison and structural properties |
 | Unverified | none | `ms_level_distribution`, `binary_array_kinds`, `spectrum_native_identity`, `spectrum_representation`, `compression_policy` |
 | Inapplicable | the eleven comparison properties | none |
 | Advisory | none | `numeric_precision_differs`, `byte_length_differs` |
@@ -232,8 +232,9 @@ cache key or an equality check on the size or the digest of a conversion output.
 - On provider build `3.0.26013 (47b13cf)`, that family converts to mzML through
   the existing boundary and produces exactly one output file.
 - The produced document passes the fail-closed mzML scanner, is internally
-  consistent, has consecutive index sequences and honours the requested zlib
-  compression.
+  consistent — declared list counts and array lengths present and agreeing with
+  what it holds, and no array declared non-empty without a payload — has
+  consecutive index sequences, and honours the requested zlib compression.
 - The acquisition is identity-bound, digest-bound, rechecked before the backend
   starts and again before the output is judged, and **held against writes,
   renames and deletion for the whole run** — which both readers tolerate.
