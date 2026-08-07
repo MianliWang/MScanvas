@@ -3048,6 +3048,14 @@ Widening the constructor to an ordinary public one was rejected: it would make
 forged evidence reachable from the shipped binary, which is what the build gate
 above it exists to prevent. No dependency and no lock file changed.
 
+Review caught that declaring the feature is not by itself a barrier:
+`cargo build --all-features` turns on every feature a manifest declares, and
+Cargo offers no way to exempt one, so the original claim that no shipped build
+could carry it was false. It is now enforced twice — `scripts/check_repo.py`
+refuses any manifest that enables the feature outside `[dev-dependencies]`, and
+the crate refuses to compile with it on in an optimized build, which is the only
+property that distinguishes a build users receive.
+
 Validation on the final head: `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
 `cargo test --locked --workspace --all-targets`,

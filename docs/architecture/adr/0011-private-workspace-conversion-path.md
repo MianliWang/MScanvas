@@ -226,11 +226,22 @@ public one was rejected: it would make forged evidence reachable from the
 shipped binary, which is precisely what the build gate above it exists to
 prevent. No dependency and no lock file changed.
 
-That the feature stays out of a shipped build is checked rather than remembered:
-`scripts/check_repo.py` refuses any manifest that enables `test-support` outside
-`[dev-dependencies]`, because the change that would break it is a one-word edit.
+Keeping it out of a shipped build is enforced twice, because declaring a feature
+is not by itself a barrier. `cargo build --all-features` turns on every feature a
+manifest declares, and Cargo offers no way to exempt one — so a manifest
+convention alone would have left the claim false and the gate reachable.
+
+- `scripts/check_repo.py` refuses any manifest that enables `test-support`
+  outside `[dev-dependencies]`, because that change is a one-word edit.
+- The crate itself refuses to compile with the feature on in an optimized build.
+  That is the only property distinguishing a build users receive, and it catches
+  `--all-features` exactly where a manifest rule cannot: a test build keeps the
+  constructor, and an optimized build carrying it fails to compile rather than
+  shipping a way around the gate.
+
 `cargo tree -e features,no-dev` shows the feature absent from the desktop's
-normal build graph and present only in its test graph.
+normal build graph and present only in its test graph; `cargo check
+--features test-support --release` fails, and both other combinations succeed.
 
 ## Evidence
 

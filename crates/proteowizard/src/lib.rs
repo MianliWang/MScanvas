@@ -1,6 +1,23 @@
 //! Discovery, typed command planning, process supervision, and typed preview
 //! output interpretation for a user-installed ProteoWizard backend.
 
+// `test-support` exposes a constructor that builds capability evidence from
+// help text no discovery probe bound to an executable. A conversion is gated on
+// evidence naming one release, one revision and one executable digest, and that
+// gate is worth exactly as much as the impossibility of forging its input.
+//
+// The feature is off by default and is enabled here only as a dev-dependency,
+// but `cargo build --all-features` turns on every feature a manifest declares
+// and Cargo offers no way to exempt one. So the barrier is here instead, at the
+// only property that distinguishes a build users receive: an optimized one.
+// A test build keeps the constructor; an optimized build carrying it does not
+// compile at all, rather than compiling and shipping a way around the gate.
+#[cfg(all(feature = "test-support", not(debug_assertions)))]
+compile_error!(
+    "the test-support feature forges capability evidence and must never be part of \
+     an optimized build; it exists for tests, which are not optimized"
+);
+
 mod capability;
 mod command;
 mod conversion;
