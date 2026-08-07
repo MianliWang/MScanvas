@@ -2,7 +2,9 @@
 
 - Status: Accepted for the private M3.0 conversion foundation; amended 2026-08-06
   by M3.0.1 for handle-bound finalization and 2026-08-07 by M3.0.2 for
-  identity-bound staging cleanup; every user-visible
+  identity-bound staging cleanup; the vendor-source and output-layout gates
+  below are closed by
+  [ADR 0010](0010-first-vendor-raw-source-admission.md); every user-visible
   conversion surface, every additional source posture and every queue concern
   separately gated
 - Date: 2026-08-06
@@ -61,7 +63,14 @@ all.
 
 ### Supported source posture
 
-Exactly one source kind is expressible: a regular file that read as mzML. There
+**Superseded in part by [ADR 0010](0010-first-vendor-raw-source-admission.md),
+which admits one named vendor family on one tested provider build.** The rule
+below is unchanged and is what that ADR had to satisfy: a family is expressible
+only once it has been converted from a lawful fixture on a real backend, and it
+is named exactly rather than generically.
+
+Exactly one source kind was expressible when this ADR was written: a regular file
+that read as mzML. There
 is no vendor variant and no directory variant, not even as an unconstructed enum
 variant — the same rule [ADR 0006](0006-multi-dataset-workspace-boundary.md)
 applies to the workspace registry, for the same reason. Recognizing a source
@@ -253,9 +262,11 @@ judgement; a backend that exits zero and produces nothing, an empty file, a
 structurally unusable file or a lossy file is rejected.
 
 The comparison is only made where it means something. It requires mzML source
-facts, which is exactly why the only expressible source kind is mzML: this
-boundary never applies an mzML-source comparison to a source it could not read
-that way and calls the result a fidelity check.
+facts: this boundary never applies an mzML-source comparison to a source it could
+not read that way and calls the result a fidelity check. ADR 0010 keeps that rule
+by giving a source with no mzML reading an output-only validation and a result
+that says which it got, rather than by widening what the comparison is applied
+to.
 
 ### Cancellation
 
@@ -425,17 +436,24 @@ dependency was added to imitate it.
 
 ## Evidence gates still open
 
-- **Vendor RAW.** No lawful fixture exists or is authorized; coverage is rated
-  **D**. No vendor source posture may be added before one does.
+- ~~**Vendor RAW.** No lawful fixture exists or is authorized; coverage is rated
+  **D**. No vendor source posture may be added before one does.~~ **Closed for
+  one family on 2026-08-07** by [ADR 0010](0010-first-vendor-raw-source-admission.md)
+  and the [M3.0.3 evidence record](../../spikes/M3_VENDOR_RAW_EVIDENCE.md).
+  Every other family, and every other provider build, is still gated.
 - **Real cancellation and partial-output behavior.** Rated **D**. Required
   before a queue can offer cancellation.
 - **Backend overwrite semantics.** Never measured: the M0 existing-output case
   was refused by MSCanvas before launch, so what `msconvert` itself does to an
   existing file is unknown. This boundary does not depend on it, and must not
   start depending on it.
-- **Whether `msconvert` writes anything besides its output.** Unmeasured, and it
-  decides whether the exactly-one-entry rule rejects faithful conversions.
-  Required before this boundary is reachable from the product.
+- ~~**Whether `msconvert` writes anything besides its output.** Unmeasured, and
+  it decides whether the exactly-one-entry rule rejects faithful conversions.~~
+  **Measured 2026-08-07.** A default mzML conversion of a Thermo RAW acquisition
+  and of an mzML acquisition each produced exactly one file, carrying the planned
+  name, with no sidecar, index, log or scratch entry. One fixture per family on
+  one build: a multi-sample input or a non-mzML output format is still
+  unmeasured.
 - **mzXML.** Rated **C** on demonstrated multi-source spectrum loss. Stays
   unplannable.
 - **Progress and locale.** Both **D**. No progress claim, and stderr wording is

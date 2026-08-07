@@ -2777,3 +2777,120 @@ mzML documents in these tests are generated in the test itself.
   ruleset requires the Frontend, Rust and Repository quality checks, requires the
   branch to be up to date, requires review threads to be resolved, and forbids
   force-pushes and branch deletion.
+
+## M3.0.3 first evidenced vendor RAW source, 2026-08-07
+
+ADR 0009 recorded two open evidence gates that this slice closes. There was no
+lawful vendor fixture, so no vendor source posture could exist; and nobody had
+measured whether `msconvert` writes anything besides its output, which is what
+the boundary's exactly-one-entry rule depends on. Both were measured on a real
+installed backend against a real acquisition.
+
+The fixture is ProteoWizard's own `FT-HCD-MSX.raw`, pinned at commit
+`8f945db3`, 78,309 bytes, SHA-256 `b3d97b38…dd7b`, covered by the repository's
+root Apache-2.0 licence — the same instrument this repository already relies on
+for the tiny mzML control, verified again at that commit with no NOTICE and no
+per-directory licence to complicate it. It is a single-scan extraction the
+ProteoWizard maintainer authored and committed to his own project, not a
+biological or clinical acquisition. It is not tracked, and it was deleted after
+the measurements. The full provenance, licence basis and lawful-use reasoning
+are in `docs/spikes/M3_VENDOR_RAW_EVIDENCE.md`; the decision is
+`docs/architecture/adr/0010-first-vendor-raw-source-admission.md`.
+
+Three families were evaluated. Bruker and Waters are directory acquisitions with
+no file signature at all — their readers probe for named members inside a
+directory — so admitting either means the whole evidence list ADR 0007 requires
+before a directory family may be recognised. Thermo RAW is a single regular file
+and reuses the object model the mzML posture already established, which is why
+it is first.
+
+Recognition is the file's own 18-byte header: `01 A1` followed by `Finnigan` in
+UTF-16LE, read from the object through the no-follow guard's handle. It is the
+same header ProteoWizard's `Reader_Thermo` matches on, and that reader consults
+no name. The extension is a filter in front of it rather than the recognition,
+and it is there because of a measurement: the installed vendor library refuses
+the very same object under another extension, exiting non-zero and producing
+nothing. Both halves are refused at admission — a `.raw` file holding filler,
+and a correctly signed file named otherwise — so a suffix never creates a
+source.
+
+One measurement changed the design. The Thermo reader cannot open the Windows
+extended-length path this crate binds identity to: it answers `Corrupt RAW file`
+and exits non-zero for the exact object it converts under a plain spelling,
+while ProteoWizard's open-format reader accepts either. The argv source spelling
+is therefore a per-family decision, and a plain spelling is derived,
+re-resolved, and required to carry the admitted filesystem identity before it is
+used. mzML keeps the spelling every earlier measurement was recorded with.
+
+Validation for a vendor source is output-only and the result says so.
+`ConversionSourceFacts` split into the object facts every source has — identity,
+length, digest — and the mzML reading only some sources have, so a vendor source
+carries nothing to pretend a comparison with. `ValidConversion` gained a
+validation mode and a third property set: the eleven comparison properties are
+recorded as *inapplicable* rather than unverified, because they were never
+questions this pair could be asked, and `is_fully_verified` answers false for
+every output-only result whatever its sets contain. What a vendor run does
+establish is the source object unchanged, the output internally consistent, its
+index sequences consecutive, and the requested compression honoured. The mzML
+comparison is untouched.
+
+Support is bound to the build it was measured on. Installed help now yields a
+provider build — release and source revision — parsed from the same complete
+capture every other capability fact comes from and with discovery's own parsing,
+so a capability decision and a discovery report cannot disagree. A vendor family
+runs only on a listed build, refused before a staging area exists, and widening
+is adding a measured row rather than relaxing a check.
+
+Measured result, on release `3.0.26013` revision `47b13cf`: the layout stage
+produced exactly one entry carrying the planned name, 28,661 bytes, no sidecar,
+index, log or scratch file, and the mzML control did the same. The boundary run
+finalized in `output_only` mode with an `indexedmzML` output of one spectrum and
+one chromatogram, no cleanup residue, exactly one file in the destination root,
+and `fully_verified=false`. The output digest is deliberately not pinned:
+`msconvert` records the source location inside the document, so the same
+acquisition converted from a different directory produces different bytes.
+
+`examples/conversion_source_evidence.rs` is the reusable harness. It plans with
+the same planner and the same per-family spelling the boundary uses, reports the
+layout the backend produced before anything cleans it up, then runs the whole
+boundary. It prints shapes only — extension, kind, byte length, whether a name
+is the planned one — and never a name derived from an acquisition. Raw backend
+streams go to an explicitly requested local file with a stated deletion
+obligation, and everything the harness creates in its workspace is removed
+before it returns.
+
+Sixteen tests were added, all deterministic and none reaching a backend, plus
+one explicitly ignored real-fixture run so a machine without the fixture and the
+backend is told the claim went unchecked rather than shown a green run. They
+cover signature recognition in both directions, extension filtering including
+case, a directory and a junction at a source name, a source rewritten before the
+run and one rewritten during it, every output postcondition an output-only
+contract can fail, the build gate across four wrong builds, the spelling
+decision, and that nothing renders a path.
+
+Eight mutations were introduced one at a time; seven were caught. Removing the
+signature check fails the recognition test; claiming a source comparison for a
+vendor result fails the mode test; ignoring an extra output entry fails three;
+dropping the vendor source revalidation fails the rewritten-during-the-run test;
+accepting an unevidenced build fails the gate test; finalizing partial output
+fails its test; and keeping the extended-length spelling for the vendor family
+fails the spelling test. The eighth — using the derived plain spelling without
+re-resolving it — survived, and it is recorded as surviving: it is
+defence-in-depth against a Windows path that normalizes to a different object,
+and an attempt to construct one with a trailing-space directory component did
+not diverge on this build. The check stays; the test that would have justified
+it was removed rather than left asserting something it did not demonstrate.
+
+Validation on the exact head: `cargo fmt --all --check`,
+`cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --locked --workspace --all-targets` (288 proteowizard library tests,
+up from 273), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
+`pnpm test`, `pnpm build`, `git diff --check`.
+
+Nothing user-visible changed. No Tauri command, transfer object, frontend file,
+capability, queue, progress, cancellation, retry or persistence, and no
+dependency. Users cannot convert a RAW file after this slice; the posture is
+private Rust reachable only from inside the crate.
+
+Rendered QA was not required and not performed: the diff contains no frontend
+file, transfer object, command signature, capability or user-facing string.
