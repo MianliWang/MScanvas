@@ -3239,3 +3239,110 @@ No cancellation, progress percentage, parallel conversion, app-restart
 persistence, mzXML, overwrite, second vendor family, directory-formatted
 acquisition support, output auto-import or output auto-preview. No dependency and
 no capability was added.
+
+## Private ProteoWizard conversion cancellation, 2026-08-08
+
+Real backend cancellation and partial-output behaviour were rated **D** from M0
+onward, because the only measured conversion completed in `136 ms`. They are now
+measured, and a private cancellation primitive sits beneath the visible queue.
+Nothing a user can reach starts a cancellable conversion, and the queue is still
+uncancellable and still says so.
+
+Everything cancellation needs had been built since M0 and none of it was
+reachable: the process boundary owned a Windows Job Object with
+`KILL_ON_JOB_CLOSE`, a `CancellationToken` and `TerminateJobObject`, and proved
+process-tree termination against a controlled parent-and-grandchild tree — but
+`ProcessRunner` had one entry point, `SystemProcessRunner::run` always passed a
+token nobody held, and `run_conversion` could not request anything.
+
+`ConversionCancellation` is created per attempt and taken by value, and it is not
+`Clone`, so one request belongs to one attempt and cannot be reset, reused or
+aimed at a second run; a second use is a use-after-move rather than a rule.
+`CancellationRequest` is the clonable handle a caller keeps and can only request
+with. Both render an opaque `Debug` and neither serializes.
+`ProcessRunner::run_cancellable` is one defaulted method: the default keeps the
+only guarantee a runner can keep without owning supervision — a request already
+made launches nothing — and then delegates, so a substituted runner can never
+report a mid-run cancellation it did not perform. `SystemProcessRunner` overrides
+it with the reviewed `execute_cancellable`. No dependency was added and no second
+subprocess implementation exists.
+
+`run_conversion_cancellable` reports `Cancelled` only when the owned job
+confirmed no surviving process. A request that could not be confirmed is a
+distinct `CancellationFailed` carrying the process boundary's own typed reason,
+with cleanup residue kept separate; a natural exit, a natural backend failure and
+a launch failure each keep the reason true of them; and `run_conversion` is
+unchanged for every caller that supplies none. `ConversionRunOutcome` was
+deliberately not widened, so nothing that matches it exhaustively — the queue,
+the desktop boundary — acquired a state to classify, and no cancelled outcome was
+silently marked retryable.
+
+Six real scenarios ran on the evidenced build (release `3.0.26013`, revision
+`47b13cf`, `msconvert.exe` SHA-256 `9BB6F5D5…D590BD`, verified by the library's
+own gate, which refuses any other installation). The lawful `78,309`-byte Thermo
+fixture converts in about half a second, so a bounded mzML workload was generated
+outside the repository — `3,000` spectra of `500` peaks, `36,014,923` bytes, no
+personal or proprietary content, deleted with the workspace — and it converts to
+a finalized `12,283,969`-byte output in `1,598 ms` of backend time through the
+unchanged boundary.
+
+A request made before an attempt launched no process and created no staging area.
+Early and mid-write requests terminated the owned tree with `STATUS_CANCELLED` in
+`80`–`94 ms`, leaving zero surviving owned processes. The mid-write run was
+terminated with `107,323` bytes of partial document on disk; the race run `9`
+bytes short of the finished size. Every cancelled run left the destination root
+empty, removed the partial document by identity-bound cleanup with no residue,
+and finalized nothing. The evidenced Thermo reader was terminated too, in
+`119 ms`, having written nothing at all.
+
+The partial-output measurement changed what private staging means here. This
+build writes its output **directly under the planned name and grows it in
+place** — no `.part`, `.partial` or `.tmp` suffix appeared in any observation, so
+a partial output is indistinguishable from a finished one by name. Pointed at the
+destination root, this backend would leave a truncated `.mzML` under exactly the
+name a good conversion takes. Every observation held exactly one staging entry:
+no sidecar, index, log or scratch file, even mid-write.
+
+One ordering rule, decided by observation order inside the supervision loop, and
+both halves are measured. A request observed while the process is still running
+makes successful job termination decisive — a run cancelled at `1,604 ms` against
+a `1,598 ms` backend reported `Cancelled` with an exit code of `0`, because the
+process finished in the window between `try_wait` and `TerminateJobObject`, and
+nothing was finalized. A completion already observed makes the run an ordinary
+exit, proved deterministically by a runner that issues the request only after the
+real process has returned: `finalized`, one output, no residue. Only one is ever
+reported.
+
+Validation on the final head: `cargo fmt --all --check`,
+`cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --locked --workspace --all-targets` (315 ProteoWizard tests, up from
+297), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
+`pnpm test`, `pnpm build`, `git diff --check`. Ordinary CI runs no backend and
+downloads nothing; the real evidence is an explicit developer-only example.
+
+Nine mutations were applied one at a time and each was caught by the test written
+for it: the system runner ignoring its token; the default runner ignoring a
+request already made; the parent killed while the owned job is left alone; a
+cancellation reported before the owned tree is confirmed empty; a natural exit
+relabelled cancelled because a request was pending; a partial staged document
+reaching finalization; identity-bound cleanup skipped after a cancellation; a
+termination failure reported as a cancellation; and both pre-launch refusals
+dropped. One of the nine survived on first application — dropping the refusal
+between the source rehash and staging creation broke no destination but made the
+run claim a backend had run when none had — and the test naming that property was
+written rather than the mutation argued away. Two intended mutations are
+structurally unreachable and recorded as such: a cancellation object controlling a
+second run does not compile, and a raw process identifier cannot be exposed
+because `ProcessOutput` has never carried one.
+
+Rendered QA was not required and not performed: no frontend file, transfer
+object, Tauri command, capability or user-facing string changed. The downloaded
+fixture, the generated workload, every converted output and every scratch
+directory were removed; no child process survived any scenario. See
+[ADR 0014](docs/architecture/adr/0014-proteowizard-cancellation-evidence.md) and
+the [M3.3 evidence record](docs/spikes/M3_CANCELLATION_EVIDENCE.md).
+
+No cancellation UI, Tauri command, transfer object, queue semantics, progress
+percentage, parallel conversion, second vendor family or dependency was added.
+The product semantics for cancelling one item, continuing, or cancelling a whole
+queue remain undecided.

@@ -414,6 +414,27 @@ are worth recording, because a survivor is a gap in the tests and not a curiosit
   passes: a control that only stopped watching would be a lie about what it does,
   and terminating a process tree mid-write without knowing what it leaves behind
   is worse than not offering to.
+
+  **Amended 2026-08-08 (M3.3).** That evidence slice passed, and this gate is
+  now narrower rather than closed.
+  [ADR 0014](0014-proteowizard-cancellation-evidence.md) establishes that a real
+  `msconvert` process tree is terminated on request with no surviving
+  descendant, and that the partial document it leaves — written in place under
+  the planned name, with no partial-name suffix — is removed by identity-bound
+  cleanup and never reaches the destination root. So the two mechanical fears
+  above are answered: a control would not be merely cosmetic, and what a
+  mid-write termination leaves behind is known.
+
+  What remains open is entirely product semantics, and this queue is unchanged
+  until an ADR settles it: whether Cancel stops one item and halts the queue,
+  stops one and continues, or empties the queue; whether a user-cancelled item
+  is offered the same retry affordance as a failed one, when it has no failure
+  to correct; what a queue-wide request is, given that the primitive is
+  per-attempt; and what a cancelled item leaves in the roster. The queue's
+  states, transfer objects and copy are untouched, and `ConversionRunOutcome` —
+  which this ADR's classifier matches exhaustively — was deliberately not
+  widened, so no cancelled outcome has been silently classified as retryable or
+  as anything else.
 - **No parallelism.** One lane, deliberately. Two `msconvert` processes on one
   machine is a measurement nobody here has taken.
 - **No persistence.** A queue survives a WebView reload because its state is in
