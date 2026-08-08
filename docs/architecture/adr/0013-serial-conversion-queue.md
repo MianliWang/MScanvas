@@ -141,6 +141,14 @@ user who switched ProteoWizard between a run and its retry would get some of one
 queue's files from one build and the rest from another, which is not a batch
 anybody can compare — and the interface would present it as one result.
 
+What it records is the installation's **identity**, not the sequence that counts
+changes to it. Switching away and back again is an ordinary thing to do and it
+restores the same build; a counter only ever goes up, so comparing counters would
+have refused that queue for ever over a change the user had already undone. Both
+sides must say which build they are — an installation that will not identify
+itself is not evidence that it is the same one — which is the rule the
+destination's identity already follows.
+
 A refusal that lands on a retry puts back what the retry moved. `begin_retry`
 returns retryable failures to pending, so a refusal after that point would leave
 them neither failed nor run: counted nowhere, no longer retryable, and lost to a
@@ -281,7 +289,7 @@ and for sixteen.
 
 ### Deterministic coverage
 
-Rust: 380 tests, none needing an installation. Frontend: 493, none needing a
+Rust: 381 tests, none needing an installation. Frontend: 493, none needing a
 WebView. Between them they cover queue planning and every one of its refusals,
 the visible order surviving a sort, serial execution observed while parked at the
 first item, one binding and one lane, failure isolation with a later item still

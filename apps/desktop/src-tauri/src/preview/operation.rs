@@ -27,6 +27,7 @@ use super::dto::{
     conversion_busy, invalid_conversion_reservation, queue_duplicate_dataset,
     queue_installation_changed, queue_is_empty, queue_too_large,
 };
+use super::installation::InstallationIdentity;
 use super::selection::{DatasetId, DatasetSourceKind};
 
 const CONVERSION_RESERVATION_PREFIX: &str = "conversion-reservation-";
@@ -240,10 +241,14 @@ pub(super) struct ConversionQueue {
     /// Set when a destination has been admitted, and kept for the queue's life
     /// so a retry does not ask for one again.
     destination: Option<AdmittedDestination>,
-    /// Which installation this queue's items were converted on, as the
-    /// service's own sequence counts it. Set by the first pass and required to
-    /// match on every later one, so one queue is one build.
-    installation_generation: Option<u64>,
+    /// Which installation this queue's items were converted on.
+    ///
+    /// The identity itself, not the sequence that counts changes to it. A
+    /// counter only ever goes up, so a user who switched away from an
+    /// installation and back again would have a queue that could never be
+    /// retried -- the restored installation is the same build wearing a higher
+    /// number.
+    installation: Option<InstallationIdentity>,
     /// A refusal that stopped the whole queue rather than one item.
     error: Option<PreviewErrorDto>,
 }
@@ -283,7 +288,7 @@ impl ConversionQueue {
             current: 0,
             retry_round: 0,
             destination: None,
-            installation_generation: None,
+            installation: None,
             error: None,
         })
     }
@@ -583,18 +588,27 @@ impl ConversionSlot {
     pub(super) fn bind_installation(
         &mut self,
         operation: u64,
-        generation: u64,
+        installation: Option<InstallationIdentity>,
     ) -> Result<(), PreviewErrorDto> {
         let Some(queue) = self.running_mut(operation) else {
             // Not this worker's queue any more. Whatever replaced it will bind
             // its own installation, and the caller stops either way.
             return Ok(());
         };
-        match queue.installation_generation {
-            Some(bound) if bound != generation => Err(queue_installation_changed()),
-            Some(_) => Ok(()),
+        match &queue.installation {
+            // Both sides must say which build they are. An installation that
+            // will not identify itself is not evidence that it is the same one,
+            // and there is no weaker comparison to fall back on -- the same rule
+            // the destination's identity follows.
+            Some(bound) => {
+                if installation.as_ref() == Some(bound) {
+                    Ok(())
+                } else {
+                    Err(queue_installation_changed())
+                }
+            }
             None => {
-                queue.installation_generation = Some(generation);
+                queue.installation = installation;
                 Ok(())
             }
         }

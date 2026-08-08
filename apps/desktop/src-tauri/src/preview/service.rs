@@ -1263,13 +1263,18 @@ impl PreviewService {
         // pass ran on: a user who switches ProteoWizard between a run and its
         // retry would otherwise get some of one queue's files from one build
         // and the rest from another, which is not a batch anybody can compare.
+        //
+        // The queue holds the identity rather than the generation the call
+        // below returns. Switching away and back is a real thing to do, and it
+        // restores the same build -- while the generation, which only counts
+        // changes, would have moved on and refused the retry for ever.
         let generation = self.note_resolved(backend.installation.clone());
         // Bound to a local first, and every lock below it likewise. A guard
         // produced inside an `if` condition lives until the end of that `if`,
         // body included -- and each of these bodies takes the same lock again.
         let bound = self
             .conversion_slot()
-            .bind_installation(operation, generation);
+            .bind_installation(operation, backend.installation.clone());
         if let Err(error) = bound {
             drop(running);
             return self.refuse_queue(operation, error);

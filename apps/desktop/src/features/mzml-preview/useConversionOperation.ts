@@ -130,10 +130,16 @@ export function useConversionOperation(
     // screen beside a conversion done by its successor, until some later
     // backend operation happened to reconcile them.
     if (update.state.status === "terminal") {
-      for (const item of update.state.queue.items) {
-        if (item.report !== null) {
-          onInstallationGeneration(item.report.installationGeneration);
-        }
+      // Once for the queue, not once per item. Every item of one queue ran on
+      // one installation, so their generations agree -- and reporting each of
+      // them separately would start a backend probe per item before any of them
+      // had answered, which for a full queue is sixteen serial help probes with
+      // preview and conversion disabled throughout.
+      const generations = update.state.queue.items
+        .map((item) => item.report?.installationGeneration)
+        .filter((generation): generation is number => generation !== undefined);
+      if (generations.length > 0) {
+        onInstallationGeneration(Math.max(...generations));
       }
     }
   }, [onInstallationGeneration]);

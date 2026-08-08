@@ -759,7 +759,13 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
   if (queue.error !== null) {
     return queue.error.summary;
   }
-  return `${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed. Output-only validation.`;
+  // The same condition the visible panel applies, because it is the same claim.
+  // A queue whose items were all skipped judged nothing, and a skipped item's
+  // existing file was explicitly not inspected.
+  const judged = queue.items.some((item) => item.report?.validation != null);
+  return `${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed.${
+    judged ? " Output-only validation." : ""
+  }`;
 }
 
 function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>): string {

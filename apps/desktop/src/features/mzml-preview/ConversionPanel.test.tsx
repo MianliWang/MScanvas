@@ -418,6 +418,12 @@ describe("queueing selected Thermo RAW conversions", () => {
     // conversion the user could start next, which is a different claim and a
     // true one.
     expect(within(queueResult()).queryByText(/Output-only validation\./, VISIBLE)).toBeNull();
+    // And the live region is a second path to the same claim, so it answers to
+    // the same rule rather than announcing what the screen does not say.
+    await waitFor(() => {
+      expect(liveRegion()).toContain("0 converted, 2 skipped, 0 failed.");
+    });
+    expect(liveRegion()).not.toContain("Output-only validation");
   });
 
   it("stops offering actions for the whole of a retry, not only for its first moment", async () => {

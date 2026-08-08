@@ -10056,3 +10056,53 @@ fn a_folder_is_the_same_folder_only_when_it_is_the_same_object() {
         )
     );
 }
+
+/// Switching away from an installation and back again restores it, and the
+/// queue is retryable again.
+///
+/// The counter that records *changes* can never come back to a previous value,
+/// so a queue that compared generations would have been refused for ever after
+/// any switch -- including a switch the user undid a moment later. The queue
+/// compares the installation itself.
+#[test]
+fn restoring_the_original_installation_makes_the_queue_retryable_again() {
+    let fixture = TestFile::new("queue-installation-restored");
+    let destination = destination_root(&fixture, "out");
+    let provider = ConvertingProvider::faithful();
+    let label = provider.installation_label();
+    let service = PreviewService::new(Box::new(provider));
+    let held = fixture.thermo_raw("held.raw");
+    let handle = add_one_acquisition(&service, &held);
+
+    let writer = hold_for_writing(&held);
+    let update = queue_and_run(&service, &[handle], &destination);
+    assert_eq!(terminal_queue(&update).retryable_failed_count, 1);
+    drop(writer);
+
+    // Away...
+    *label.lock().expect("the installation label") = String::from("other-msconvert");
+    let refused = service
+        .retry_conversion_queue(current_document(&service))
+        .expect("the retry answers");
+    assert_eq!(
+        terminal_queue(&refused)
+            .error
+            .as_ref()
+            .expect("a queue-level refusal")
+            .kind,
+        "queue_installation_changed"
+    );
+
+    // ...and back. The same build, whatever the change counter now reads.
+    *label.lock().expect("the installation label") = String::from("msconvert");
+    let retried = service
+        .retry_conversion_queue(current_document(&service))
+        .expect("the original installation is back, so the queue can run again");
+
+    let queue = terminal_queue(&retried);
+    assert_eq!(queue.error, None);
+    assert_eq!(queue.finalized_count, 1);
+    assert_eq!(queue.failed_count, 0);
+    assert_eq!(queue.items[0].attempts, 2);
+    assert_eq!(entry_names(&destination), vec!["held.mzML"]);
+}
