@@ -295,23 +295,6 @@ pub struct WorkspaceConversionReservationDto {
     pub reservation_id: String,
 }
 
-/// What the interface must show before a conversion is started.
-///
-/// Every field is derived from what the run will actually do rather than
-/// restated by the interface. A summary the frontend composed from constants
-/// would be a second description of the plan, free to drift from the first.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ConversionPlanSummaryDto {
-    /// The row this plan is about, described as the roster describes it.
-    pub dataset: SelectedFileDto,
-    pub output_format: ConversionOutputFormatDto,
-    /// The compression every binary array in the output must carry, taken from
-    /// the policy the plan is fixed with.
-    pub compression: String,
-    pub validation_mode: ValidationModeDto,
-}
-
 /// The only output format this workflow can produce.
 ///
 /// A one-member union rather than a bare string, so adding mzXML later is a
@@ -348,7 +331,20 @@ pub enum ConversionConflictPolicyDto {
     Skip,
 }
 
-/// One bounded, path-free read of the session's single conversion slot.
+/// The most items one queue may hold.
+///
+/// Far below the workspace's own capacity, and deliberately so. This slice runs
+/// items serially and has no cancellation, so a queue is something the user
+/// waits out: at a realistic minute or three per acquisition, sixteen is
+/// something like half an hour. A queue sized to the roster would be an
+/// afternoon nobody could stop.
+///
+/// Stated as one number rather than derived from anything, because it is a
+/// judgement about how long a person should be asked to wait and not a fact
+/// about the machine.
+pub const MAX_CONVERSION_QUEUE_ITEMS: usize = 16;
+
+/// One bounded, path-free read of the session's conversion slot.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceConversionUpdateDto {
@@ -360,9 +356,9 @@ pub struct WorkspaceConversionUpdateDto {
 
 /// The complete conversion-state vocabulary exposed to the webview.
 ///
-/// One slot, not a queue: there is no member holding a list, and no member
-/// naming work that has not started. `terminal` is one report, replaced by the
-/// next conversion and never accumulated.
+/// One queue, not a list of queues: `terminal` is replaced by the next queue
+/// and never accumulated. A single-dataset conversion is a queue of one, so
+/// there is one protocol rather than two.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum WorkspaceConversionStateDto {
@@ -373,29 +369,122 @@ pub enum WorkspaceConversionStateDto {
         /// Decimal text keeps a Rust `u64` exact across JavaScript's number
         /// boundary while revealing no internal generation or token.
         operation_id: String,
-        dataset: SelectedFileDto,
+        queue: ConversionQueueDto,
     },
-    /// A destination was accepted and the conversion is under way. There is
-    /// deliberately no completed fraction: nothing measures one.
+    /// A destination was accepted and items are being converted in order. There
+    /// is deliberately no completed fraction: what is measured is how many
+    /// items are done, and nothing measures a fraction of one.
     #[serde(rename_all = "camelCase")]
     Running {
         operation_id: String,
-        dataset: SelectedFileDto,
+        queue: ConversionQueueDto,
     },
+    /// Every item reached an outcome, or the queue was refused before any of
+    /// them could.
     #[serde(rename_all = "camelCase")]
-    Completed {
+    Terminal {
         operation_id: String,
-        report: ConversionReportDto,
+        queue: ConversionQueueDto,
     },
-    /// The operation did not reach a conversion outcome at all -- a refused
-    /// destination, a superseded row, an unusable backend. Distinct from a
-    /// conversion that ran and failed, which is a `completed` report.
-    #[serde(rename_all = "camelCase")]
-    Failed {
-        operation_id: String,
-        dataset_handle: String,
-        error: PreviewErrorDto,
-    },
+}
+
+/// One queue, in facts that name no location.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionQueueDto {
+    /// The items, in the order they will run. Fixed when the queue was created:
+    /// re-sorting or re-searching the roster afterwards changes what the user
+    /// is looking at, not what this queue does.
+    pub items: Vec<ConversionQueueItemDto>,
+    /// Which item is running, or how many have finished when none is. Always a
+    /// count of items, never a fraction of one.
+    pub current_index: usize,
+    pub item_count: usize,
+    /// How many times `Retry failed` has run. Zero for a queue's first pass.
+    pub retry_round: u64,
+    pub conflict_policy: ConversionConflictPolicyDto,
+    pub finalized_count: usize,
+    pub skipped_count: usize,
+    pub failed_count: usize,
+    /// How many failures another attempt could plausibly change, under the same
+    /// source, destination, policy and build.
+    pub retryable_failed_count: usize,
+    pub non_retryable_failed_count: usize,
+    /// A refusal that stopped the whole queue rather than one item -- a
+    /// destination this boundary will not write to, a backend that cannot
+    /// convert, a reservation that is no longer valid.
+    pub error: Option<PreviewErrorDto>,
+    /// Where the sequence of backend changes stood when this queue last
+    /// resolved one.
+    ///
+    /// Carried by the queue and not only by its items, because the pass that
+    /// matters most for this may produce no item at all: a queue refused for
+    /// running on a different installation resolved that installation first,
+    /// and a reader with only the old items' reports would go on showing the
+    /// installation those results came from.
+    pub installation_generation: u64,
+}
+
+/// One item of a queue.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionQueueItemDto {
+    pub dataset_handle: String,
+    pub file_name: String,
+    pub source_kind: DatasetSourceKindDto,
+    /// The name this item's output will take, derived before the queue was
+    /// created. Two items that would produce the same name in one folder are
+    /// refused there rather than discovered here.
+    pub output_file_name: String,
+    pub state: ConversionQueueItemStateDto,
+    /// How many times this item has been attempted. One after the first pass.
+    pub attempts: u64,
+    pub retryable: bool,
+    /// The latest attempt's report, when an attempt reached a conversion.
+    /// Only the latest: an attempt history would be an unbounded one, and
+    /// nothing in this workflow reads a second entry.
+    pub report: Option<ConversionReportDto>,
+    /// Why an attempt never reached a conversion at all. Distinct from a
+    /// conversion that ran and failed, which is a `report`.
+    pub error: Option<PreviewErrorDto>,
+}
+
+/// Where one item is.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ConversionQueueItemStateDto {
+    Pending,
+    Running,
+    Finalized,
+    /// The planned name was already taken and the policy asked for it to be
+    /// left alone. Not a failure, and deliberately not a success: nothing was
+    /// inspected and nothing was written.
+    Skipped,
+    Failed,
+}
+
+/// What the interface shows before a queue is started.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionQueuePlanDto {
+    pub items: Vec<ConversionQueuePlanItemDto>,
+    pub output_format: ConversionOutputFormatDto,
+    /// The compression every binary array in every output must carry, taken
+    /// from the policy the plans are fixed with.
+    pub compression: String,
+    pub validation_mode: ValidationModeDto,
+    /// The most items one queue may hold, carried with the plan so the
+    /// interface states the limit Rust enforces rather than one of its own.
+    pub capacity: usize,
+}
+
+/// One row of a queue plan.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionQueuePlanItemDto {
+    pub dataset_handle: String,
+    pub file_name: String,
+    pub output_file_name: String,
 }
 
 /// What one conversion did, in facts that name no location.
@@ -480,6 +569,77 @@ pub fn dataset_not_previewable() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "dataset_not_previewable",
         "Convert to mzML before previewing this acquisition.",
+        false,
+    )
+}
+
+/// What a queue larger than one session may run answers with.
+pub fn queue_too_large() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "queue_too_large",
+        // Formatted from the bound rather than restating it. A sentence naming
+        // its own number is a second copy of the limit, free to be right today
+        // and wrong after the constant moves.
+        format!(
+            "MSCanvas converts up to {MAX_CONVERSION_QUEUE_ITEMS} acquisitions in one queue. \
+             Select fewer and convert the rest afterwards."
+        ),
+        false,
+    )
+}
+
+/// What a queue naming no convertible row answers with.
+pub fn queue_is_empty() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "queue_is_empty",
+        "Select at least one Thermo RAW row to convert.",
+        false,
+    )
+}
+
+/// What a queue naming one row twice answers with.
+pub fn queue_duplicate_dataset() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "queue_duplicate_dataset",
+        "That request names the same acquisition more than once.",
+        false,
+    )
+}
+
+/// What a queue whose items would fight over one output name answers with.
+///
+/// Refused before a picker opens, because conflict policy cannot settle it: two
+/// items of one queue writing one name is not a conflict with something that
+/// was already there, and letting queue order decide the winner would make the
+/// result depend on a sort the user can change.
+pub fn queue_output_name_collision(names: &[String]) -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "queue_output_name_collision",
+        "Two or more selected acquisitions would produce the same converted filename, so nothing \
+         was queued. Convert them separately, or into different folders.",
+        false,
+    )
+    .with_detail(names.join(", "))
+}
+
+/// What a retry answers with when the folder it would write into is no longer
+/// the one the queue was admitted against.
+pub fn queue_destination_changed() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "queue_destination_changed",
+        "The folder those conversions were saved to is no longer the same folder, so nothing was \
+         retried. Start a new conversion to choose it again.",
+        true,
+    )
+}
+
+/// What a retry answers with when the installed ProteoWizard is no longer the
+/// one the queue's earlier items were converted on.
+pub fn queue_installation_changed() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "queue_installation_changed",
+        "The installed ProteoWizard has changed since those conversions ran, so nothing was \
+         retried. Start a new conversion so every file in it comes from one installation.",
         false,
     )
 }

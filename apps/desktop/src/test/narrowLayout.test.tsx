@@ -20,8 +20,11 @@ import { App } from "../app/App";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
 import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTransport";
 import {
+  availableBackend,
   createFakePreviewApi,
   createFakeWorkspaceDropTransport,
+  queueItem,
+  queueOf,
   secondFile,
   selectedFile,
   thirdFile,
@@ -38,10 +41,24 @@ function mountStyles(css: string): HTMLStyleElement {
   return style;
 }
 
+/**
+ * One selector written the same way however the stylesheet lays it out.
+ *
+ * The CSSOM hands back a grouped selector with the author's own line breaks
+ * still in it, so `a, b` and `a,\nb` are different strings for the same rule.
+ * Comparing on the normalized form keeps these assertions about which rule
+ * exists rather than about where the formatter put a newline.
+ */
+function normalizeSelector(selector: string): string {
+  return selector.replaceAll(/\s*,\s*/g, ", ").trim();
+}
+
 function requireStyleRule(style: HTMLStyleElement, selector: string): CSSStyleRule {
+  const wanted = normalizeSelector(selector);
   const rule = Array.from(style.sheet?.cssRules ?? []).find(
     (candidate): candidate is CSSStyleRule =>
-      "selectorText" in candidate && candidate.selectorText === selector,
+      "selectorText" in candidate &&
+      normalizeSelector((candidate as CSSStyleRule).selectorText) === wanted,
   );
 
   expect(rule, `Expected a CSS rule for ${selector}`).toBeDefined();
@@ -201,10 +218,77 @@ describe("narrow desktop layout markup", () => {
     expect(requireStyleRule(app, ".conversion-actions").style.getPropertyValue("flex-wrap")).toBe(
       "wrap",
     );
-    // And a long output name breaks rather than widening the column.
+  });
+
+  it("lets a queue of sixteen sit in the column without widening it", () => {
+    // The panel is in the narrow column with the roster, and a queue puts two
+    // file names on every line of it. Neither name may be what pushes the
+    // sidebar -- and the document -- past the window.
+    const app = mountStyles(appStyles);
+
+    const list = requireStyleRule(app, ".conversion-queue-list").style;
+    expect(list.getPropertyValue("min-width")).toBe("0px");
+    // The position is rendered as text, so the list marker would say it twice.
+    expect(list.getPropertyValue("list-style")).toBe("none");
+
+    const item = requireStyleRule(app, ".conversion-queue-list > li").style;
+    expect(item.getPropertyValue("min-width")).toBe("0px");
+    expect(item.getPropertyValue("flex-wrap")).toBe("wrap");
+
+    // Both names shrink on the same terms, so a long acquisition name cannot
+    // take the whole line from the name it converts to.
+    const names = requireStyleRule(
+      app,
+      ".conversion-queue-name, .conversion-queue-output",
+    ).style;
+    expect(names.getPropertyValue("min-width")).toBe("0px");
+    expect(names.getPropertyValue("flex")).toBe("1 1 6em");
+    expect(names.getPropertyValue("overflow")).toBe("hidden");
+    expect(names.getPropertyValue("text-overflow")).toBe("ellipsis");
+    expect(names.getPropertyValue("white-space")).toBe("nowrap");
+
+    // The state and a failure sentence take the next line whole and wrap
+    // there, rather than being clipped alongside the names.
+    const status = requireStyleRule(
+      app,
+      ".conversion-queue-status, .conversion-queue-attempts, .conversion-queue-facts, " +
+        ".conversion-queue-reason, .conversion-queue-residue",
+    ).style;
+    expect(status.getPropertyValue("flex")).toBe("1 0 100%");
+    expect(status.getPropertyValue("overflow-wrap")).toBe("anywhere");
+    // Two digits' worth, so item 10 does not shift the column item 9 set.
+    expect(requireStyleRule(app, ".conversion-queue-order").style.getPropertyValue("min-width")).toBe(
+      "1.6em",
+    );
+  });
+
+  it("says an item's state in a colour that can be read, having already said it in words", () => {
+    // Colour reinforces `ITEM_STATE_LABEL` and never carries the state alone.
+    // Both hues are the tokens the rest of the workspace uses for the same two
+    // meanings, so neither introduces a contrast this app has not already
+    // accepted.
+    const app = mountStyles(appStyles);
+
     expect(
-      requireStyleRule(app, ".conversion-result-headline").style.getPropertyValue("overflow-wrap"),
-    ).toBe("anywhere");
+      requireStyleRule(
+        app,
+        '.conversion-queue-list > li[data-item-state="failed"] > .conversion-queue-status, .conversion-queue-reason',
+      ).style.getPropertyValue("color"),
+    ).toBe("var(--color-danger)");
+    expect(
+      requireStyleRule(
+        app,
+        '.conversion-queue-list > li[data-item-state="finalized"] > .conversion-queue-status',
+      ).style.getPropertyValue("color"),
+    ).toBe("var(--color-success)");
+    // The running item is the one the user is watching, so it is the one that
+    // takes the primary colour and the weight.
+    const running = requireStyleRule(
+      app,
+      '.conversion-queue-list > li[data-item-state="running"] > .conversion-queue-status',
+    ).style;
+    expect(running.getPropertyValue("color")).toBe("var(--color-text-primary)");
+    expect(running.getPropertyValue("font-weight")).toBe("600");
   });
 
   it("gives the source family a track of its own without taking the name's", () => {
@@ -504,4 +588,72 @@ describe("narrow desktop layout markup", () => {
       "0px",
     );
   });
+});
+
+/**
+ * The queue at the three window sizes this repository checks the workspace at.
+ *
+ * jsdom lays nothing out, so this is not a rendered check and does not replace
+ * one. What the widths pin is that the queue is one piece of markup rather than
+ * a wide copy and a narrow copy: at every size there is one list, one control
+ * per action, no Cancel, and no percentage. The pixel questions are answered by
+ * the CSSOM rules above, and by nothing here.
+ */
+describe("the conversion queue at each checked window size", () => {
+  const VIEWPORTS = [
+    { name: "900x700", width: 900, height: 700 },
+    { name: "1366x768", width: 1366, height: 768 },
+    { name: "1920x1080", width: 1920, height: 1080 },
+  ] as const;
+
+  for (const viewport of VIEWPORTS) {
+    it(`shows one queue and no way to cancel it at ${viewport.name}`, async () => {
+      window.innerWidth = viewport.width;
+      window.innerHeight = viewport.height;
+      window.dispatchEvent(new Event("resize"));
+
+      const items = [
+        queueItem("file-1", "run-1.raw", { state: "finalized" }),
+        queueItem("file-2", "run-2.raw", { state: "running" }),
+        queueItem("file-3", "run-3.raw"),
+      ];
+      const api = createFakePreviewApi({
+        initialDatasets: items.map((item) => ({
+          handle: item.datasetHandle,
+          fileName: item.fileName,
+          byteLength: 78_309,
+          sourceKind: "thermo_raw" as const,
+          relativeContext: null,
+        })),
+        availability: availableBackend,
+        initialConversion: { status: "running", operationId: "1", queue: queueOf(items) },
+      });
+
+      render(
+        <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+          <PreviewApiProvider value={api}>
+            <App />
+          </PreviewApiProvider>
+        </WorkspaceDropTransportProvider>,
+      );
+
+      await screen.findByText("Converting item 2 of 3…");
+      // One list of items, not one per breakpoint.
+      const lists = document.querySelectorAll(".conversion-queue-list");
+      expect(lists).toHaveLength(1);
+      expect(lists[0].querySelectorAll("li")).toHaveLength(3);
+      expect(
+        Array.from(lists[0].querySelectorAll("li")).map((row) =>
+          row.getAttribute("data-item-state"),
+        ),
+      ).toEqual(["finalized", "running", "pending"]);
+
+      // The two things this workflow must never grow without evidence.
+      expect(screen.queryByRole("button", { name: /cancel/i })).toBeNull();
+      expect(document.body.textContent).not.toMatch(/\d+\s?%/);
+      expect(
+        screen.getByText("This conversion workflow cannot cancel a running queue."),
+      ).toBeVisible();
+    });
+  }
 });

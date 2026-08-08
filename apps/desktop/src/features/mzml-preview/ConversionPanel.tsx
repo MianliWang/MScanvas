@@ -2,9 +2,9 @@ import type { ReactElement } from "react";
 
 import type {
   ConversionConflictPolicy,
+  ConversionQueue,
+  ConversionQueueItem,
   ConversionReport,
-  SelectedFile,
-  WorkspaceConversionState,
 } from "./contracts";
 import { formatByteLength, formatCount, formatDuration } from "./format";
 import type { ConversionOperation } from "./useConversionOperation";
@@ -37,27 +37,40 @@ const RESIDUE_EXPLANATION = "MSCanvas could not remove its own temporary folder 
 
 export interface ConversionPanelProps {
   readonly conversion: ConversionOperation;
-  /** The row the keyboard is on, which is the row this panel is about. */
-  readonly focused: SelectedFile | null;
+  /**
+   * Where the rows came from, which is what the action may call them.
+   *
+   * One selected row is still a selected row: labelling it `Convert focused…`
+   * would name a row the action might not be acting on.
+   */
+  readonly scope: "selection" | "focused";
+  /** The rows this panel would queue, in the order they would run. */
+  readonly handles: readonly string[];
+  /** How many selected rows are not convertible and are therefore excluded. */
+  readonly excludedSelectedCount: number;
   /** Whether anything else is already occupying the one backend lane. */
   readonly canConvert: boolean;
 }
 
 /**
- * The focused row's conversion: what it would do, and what it did.
+ * The conversion queue: what it would do, and what it did.
  *
- * Acts on exactly one row — the focused one — and never on the selection. A
- * selection is a set the user built for removing rows; converting is one
- * acquisition at a time, and an action that read the selection would be an
- * action whose scope changed as they curated the list.
+ * Acts on the selection where there is one and on the focused row otherwise, so
+ * a multi-row selection becomes a queue without a second control. The scope a
+ * selection gives is a set the user curates, so the whole of it — the ordered
+ * list, the name each item would write, and the rows excluded for being mzML
+ * already — is on screen before the action is pressed, and it is bound at that
+ * moment rather than tracked afterwards.
  */
 export function ConversionPanel({
   conversion,
-  focused,
+  scope,
+  handles,
+  excludedSelectedCount,
   canConvert,
 }: ConversionPanelProps): ReactElement | null {
   const { state, plan } = conversion;
-  const terminal = state.status === "completed" || state.status === "failed";
+  const terminal = state.status === "terminal";
 
   // Nothing to say. The panel is not a permanent fixture: with no convertible
   // row focused and no operation to report, it would be a heading over an empty
@@ -88,47 +101,48 @@ export function ConversionPanel({
         </div>
       )}
 
-      {conversion.busy ? (
-        <RunningState state={state} />
-      ) : (
-        <>
-          {terminal ? <TerminalState state={state} /> : null}
-          {/* Shown beside the last result rather than instead of it. Rust's
-              slot lets a new conversion replace the previous report, so a panel
-              that only ever rendered the report would make the second
-              conversion of a session reachable by reloading the application and
-              no other way. The report is what just happened; the plan is what
-              would happen next, and both are true at once. */}
-          {plan.status === "none" ? null : (
-            <PlanState
-              canConvert={canConvert}
-              conversion={conversion}
-              focused={focused}
-              repeating={terminal}
-            />
-          )}
-        </>
+      {conversion.busy || terminal ? (
+        <QueueState canConvert={canConvert} conversion={conversion} />
+      ) : null}
+      {/* Not while a queue is under way. The plan is an ordered list of file to
+          output and so is the running queue, and two of them one above the other
+          — one live, one hypothetical, and the hypothetical one's button
+          disabled — is the panel describing two different things in the same
+          shape. A finished queue is different: there the plan is how the user
+          converts something else, so it stays. */}
+      {conversion.busy || plan.status === "none" ? null : (
+        <PlanState
+          canConvert={canConvert}
+          conversion={conversion}
+          excludedSelectedCount={excludedSelectedCount}
+          handles={handles}
+          repeating={terminal}
+          scope={scope}
+        />
       )}
     </section>
   );
 }
 
-/** What a conversion would do, and the one control that starts it. */
+/** What a queue would do, and the one control that starts it. */
 function PlanState({
   conversion,
-  focused,
+  handles,
+  excludedSelectedCount,
   canConvert,
   repeating,
+  scope,
 }: {
   readonly conversion: ConversionOperation;
-  readonly focused: SelectedFile | null;
+  readonly handles: readonly string[];
+  readonly excludedSelectedCount: number;
   readonly canConvert: boolean;
+  readonly scope: "selection" | "focused";
   /** Whether a previous result is on screen above this plan. */
   readonly repeating: boolean;
 }): ReactElement | null {
   const { plan } = conversion;
-  // With a result above it, silence is better than a second empty state: the
-  // report already says what the panel is about.
+  // With a result above it, silence is better than a second empty state.
   if (repeating && plan.status !== "loaded") {
     return null;
   }
@@ -143,22 +157,41 @@ function PlanState({
     );
   }
   if (plan.status === "none") {
-    return <div className="empty-state">Focus a Thermo RAW row to convert it.</div>;
+    return <div className="empty-state">Select or focus a Thermo RAW row to convert it.</div>;
   }
 
   const summary = plan.plan;
-  const name = focused?.handle === summary.dataset.handle ? focused.fileName : summary.dataset.fileName;
+  const count = summary.items.length;
   return (
     <div className="conversion-plan">
+      <p id="conversion-plan-summary">
+        {count === 1
+          ? "One Thermo RAW acquisition will be converted to mzML."
+          : `${String(count)} Thermo RAW acquisitions will be converted to mzML, one after another, in the order below.`}
+        {excludedSelectedCount === 0
+          ? ""
+          : ` ${String(excludedSelectedCount)} selected ${
+              excludedSelectedCount === 1 ? "row is" : "rows are"
+            } already mzML and ${excludedSelectedCount === 1 ? "is" : "are"} not part of this conversion.`}
+      </p>
+
+      <ol className="conversion-queue-list">
+        {summary.items.map((item, index) => (
+          <li key={item.datasetHandle}>
+            <span className="conversion-queue-order">{index + 1}</span>
+            <span className="conversion-queue-name" title={item.fileName}>
+              {item.fileName}
+            </span>
+            <span aria-hidden="true">→</span>
+            <span className="visually-hidden">converts to </span>
+            <span className="conversion-queue-output" title={item.outputFileName}>
+              {item.outputFileName}
+            </span>
+          </li>
+        ))}
+      </ol>
+
       <dl className="metadata-list">
-        <div>
-          <dt>Source</dt>
-          <dd title={name}>{name}</dd>
-        </div>
-        <div>
-          <dt>Family</dt>
-          <dd>Thermo RAW</dd>
-        </div>
         <div>
           <dt>Output</dt>
           <dd>{summary.outputFormat}</dd>
@@ -167,14 +200,18 @@ function PlanState({
           <dt>Compression</dt>
           <dd>{summary.compression}</dd>
         </div>
+        <div>
+          <dt>Destination</dt>
+          <dd>One folder, chosen next</dd>
+        </div>
       </dl>
 
       <p className="quiet-text" id="conversion-validation-disclosure" role="note">
-        {OUTPUT_ONLY_DISCLOSURE}
+        {OUTPUT_ONLY_DISCLOSURE} They run one at a time and cannot be cancelled.
       </p>
 
       <fieldset className="conversion-conflict">
-        <legend>If the output name is taken</legend>
+        <legend>If an output name is taken</legend>
         {CONFLICT_POLICIES.map((policy) => (
           <label key={policy}>
             <input
@@ -193,15 +230,15 @@ function PlanState({
 
       <div className="conversion-actions">
         <button
-          aria-describedby="conversion-validation-disclosure"
+          aria-describedby="conversion-plan-summary conversion-validation-disclosure"
           className="primary-button"
-          disabled={!canConvert}
+          disabled={!canConvert || handles.length === 0}
           onClick={() => {
-            conversion.convert(summary.dataset.handle);
+            conversion.convert(handles);
           }}
           type="button"
         >
-          Convert focused…
+          {scope === "focused" ? "Convert focused…" : `Convert ${String(count)} selected…`}
         </button>
       </div>
     </div>
@@ -209,125 +246,210 @@ function PlanState({
 }
 
 /**
- * A conversion under way.
+ * A queue under way, or the one that just finished.
  *
- * No percentage and no cancel. Nothing measures a fraction of a `msconvert`
- * run, and this workflow genuinely cannot stop one — so it says so instead of
- * offering a control that would only stop watching.
+ * Item-count progress and nothing else. Nothing measures a fraction of a
+ * `msconvert` run, and this workflow genuinely cannot stop one — so it says so
+ * instead of offering a control that would only stop watching.
  */
-function RunningState({ state }: { readonly state: WorkspaceConversionState }): ReactElement {
-  const name =
-    state.status === "awaitingDestination" || state.status === "running"
-      ? state.dataset.fileName
-      : "";
+function QueueState({
+  conversion,
+  canConvert,
+}: {
+  readonly conversion: ConversionOperation;
+  /** Whether anything else is already occupying the one backend lane. */
+  readonly canConvert: boolean;
+}): ReactElement | null {
+  const state = conversion.state;
+  if (state.status === "idle") {
+    return null;
+  }
+  const { queue } = state;
+  // A retry this document dispatched and has not been answered for. The slot
+  // still reads `terminal` -- Rust answers once, when the whole rerun is over --
+  // so without this the panel would go on showing the old result and go on
+  // offering the very control that is already running. Read from the operation
+  // rather than derived, so this and the live region cannot disagree.
+  const retrying = conversion.retrying && state.status === "terminal";
   return (
     <div className="conversion-running">
-      <p>
-        {state.status === "awaitingDestination"
-          ? "Choose where to save the converted mzML."
-          : "Conversion in progress…"}
-      </p>
-      <p className="quiet-text" title={name}>
-        {name}
-      </p>
-      <p className="quiet-text" role="note">
-        This first conversion workflow cannot cancel a running conversion.
-      </p>
+      {retrying ? (
+        <>
+          <p>Retrying the failures…</p>
+          <p className="quiet-text" role="note">
+            This conversion workflow cannot cancel a running queue.
+          </p>
+        </>
+      ) : state.status === "awaitingDestination" ? (
+        <p>Choose where to save the converted mzML.</p>
+      ) : state.status === "running" ? (
+        <>
+          <p>
+            {`Converting item ${String(runningPosition(queue))} of ${String(queue.itemCount)}…`}
+          </p>
+          <p className="quiet-text" role="note">
+            This conversion workflow cannot cancel a running queue.
+          </p>
+        </>
+      ) : (
+        <p>
+          {`${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed of ${String(queue.itemCount)}.`}
+        </p>
+      )}
+
+      {queue.error === null ? null : (
+        <p className="notice notice-danger" role="status">
+          {queue.error.summary}
+        </p>
+      )}
+
+      <ol className="conversion-queue-list">
+        {queue.items.map((item, index) => (
+          <li key={item.datasetHandle} data-item-state={item.state}>
+            <span className="conversion-queue-order">{index + 1}</span>
+            <span className="conversion-queue-name" title={item.fileName}>
+              {item.fileName}
+            </span>
+            <span aria-hidden="true">→</span>
+            <span className="visually-hidden">converts to </span>
+            <span className="conversion-queue-output" title={item.outputFileName}>
+              {item.outputFileName}
+            </span>
+            <span className="visually-hidden">, </span>
+            <span className="conversion-queue-status">{ITEM_STATE_LABEL[item.state]}</span>
+            {item.attempts > 1 ? (
+              <>
+                <span className="visually-hidden">, </span>
+                <span className="conversion-queue-attempts">
+                  {`attempt ${String(item.attempts)}`}
+                </span>
+              </>
+            ) : null}
+            {item.state === "failed" ? (
+              <>
+                <span className="visually-hidden">, </span>
+                <span className="conversion-queue-reason">{itemFailureSentence(item)}</span>
+              </>
+            ) : null}
+            {/* What was actually produced, per item. A queue that said only
+                `Converted` would have taken away the one thing that lets a user
+                tell a real conversion from an empty one. */}
+            {item.report?.output == null ? null : (
+              <>
+                <span className="visually-hidden">, </span>
+                <span className="conversion-queue-facts">
+                  {`${formatByteLength(item.report.output.byteLength)}, ${formatCount(
+                    item.report.output.spectrumCount,
+                  )} spectra, ${formatCount(item.report.output.chromatogramCount)} chromatograms`}
+                  {item.report.backend === null
+                    ? ""
+                    : `, ${formatDuration(item.report.backend.elapsedMilliseconds)}`}
+                </span>
+              </>
+            )}
+            {/* Cleanup failing is the user's problem, not only MSCanvas', because
+                what is left behind is in the folder they chose. */}
+            {item.report?.stagingResidue == null ? null : (
+              <>
+                <span className="visually-hidden">, </span>
+                <span className="conversion-queue-residue">{RESIDUE_EXPLANATION}</span>
+              </>
+            )}
+          </li>
+        ))}
+      </ol>
+
+      {state.status === "terminal" && !retrying ? (
+        <>
+          {/* Only where something was actually judged. A queue whose items were
+              all skipped or all failed validated nothing -- and a skipped item's
+              existing file was explicitly not inspected, so claiming
+              output-only validation over it would claim a check nobody ran. */}
+          {queue.items.some((item) => item.report?.validation != null) ? (
+            <p className="quiet-text" role="note">
+              {OUTPUT_ONLY_DISCLOSURE}
+            </p>
+          ) : null}
+          <p className="quiet-text">
+            Converted files were not added to the workspace. Add them with Add files… when you
+            want to look at them.
+          </p>
+          {queue.retryableFailedCount === 0 ? (
+            queue.nonRetryableFailedCount === 0 ? null : (
+              <p className="quiet-text" role="note">
+                Those failures would not change on another attempt with the same acquisitions,
+                folder and settings.
+              </p>
+            )
+          ) : (
+            <div className="conversion-actions">
+              <button
+                aria-describedby="conversion-retry-scope"
+                className="secondary-button"
+                // The same gate the primary action answers to. A retry is a
+                // conversion, so an unavailable ProteoWizard, a recheck in
+                // flight or a preview still holding the lane refuse it for the
+                // same reasons -- and offering it anyway would buy a certain
+                // error or a long silent wait.
+                disabled={!canConvert}
+                onClick={conversion.retry}
+                type="button"
+              >
+                {`Retry ${String(queue.retryableFailedCount)} failed`}
+              </button>
+              <span className="visually-hidden" id="conversion-retry-scope">
+                Reruns only the failures another attempt could change, using the same folder, the
+                same conflict setting and the same order. Converted and skipped files are left as
+                they are.
+              </span>
+            </div>
+          )}
+        </>
+      ) : null}
     </div>
   );
-}
-
-/** What the last operation did. */
-function TerminalState({ state }: { readonly state: WorkspaceConversionState }): ReactElement {
-  if (state.status === "failed") {
-    return (
-      <div className="notice notice-danger" role="status">
-        <span>{state.error.summary}</span>
-      </div>
-    );
-  }
-  if (state.status !== "completed") {
-    return <div className="empty-state">Nothing to report.</div>;
-  }
-  return <ConversionOutcome report={state.report} />;
 }
 
 /**
- * One finished conversion, told apart by what it actually did.
+ * Which item is running, counting from one.
  *
- * `finalized`, `skipped` and everything else are three different answers and
- * are never collapsed: one produced a file, one deliberately left a file alone,
- * and the rest produced nothing.
+ * The item that says it is running, not the queue's position. The position
+ * counts what is done, and during a run the two agree -- but the live region and
+ * the roster both read the state, and a third reader that trusted the position
+ * would name a different acquisition than they marked the moment they did not.
+ * Falls back to the position, because a queue between items has no running item
+ * and still has a number to show.
  */
-function ConversionOutcome({ report }: { readonly report: ConversionReport }): ReactElement {
-  const residue =
-    report.stagingResidue === null ? null : (
-      <p className="notice notice-warning" role="note">
-        {RESIDUE_EXPLANATION}
-      </p>
-    );
-
-  if (report.outcome === "finalized" && report.output !== null) {
-    return (
-      <div className="conversion-result">
-        <p className="conversion-result-headline">
-          Converted <strong title={report.outputFileName ?? ""}>{report.outputFileName}</strong>
-        </p>
-        <dl className="metadata-list">
-          <div>
-            <dt>Size</dt>
-            <dd>{formatByteLength(report.output.byteLength)}</dd>
-          </div>
-          <div>
-            <dt>Spectra</dt>
-            <dd>{formatCount(report.output.spectrumCount)}</dd>
-          </div>
-          <div>
-            <dt>Chromatograms</dt>
-            <dd>{formatCount(report.output.chromatogramCount)}</dd>
-          </div>
-          {report.backend === null ? null : (
-            <div>
-              <dt>Took</dt>
-              <dd>{formatDuration(report.backend.elapsedMilliseconds)}</dd>
-            </div>
-          )}
-        </dl>
-        <p className="quiet-text" role="note">
-          {OUTPUT_ONLY_DISCLOSURE}
-        </p>
-        <p className="quiet-text">
-          The converted file was not added to the workspace. Add it with Add files… when you want
-          to look at it.
-        </p>
-        {residue}
-      </div>
-    );
+function runningPosition(queue: ConversionQueue): number {
+  const running = queue.items.findIndex((item) => item.state === "running");
+  if (running !== -1) {
+    return running + 1;
   }
+  // Between items, the next one is the first still pending -- not the count of
+  // what is done. A retry reruns failures wherever they sit, so with items 2
+  // and 4 failed the count says three and the answer is two.
+  const next = queue.items.findIndex((item) => item.state === "pending");
+  return next === -1 ? Math.min(queue.currentIndex + 1, queue.itemCount) : next + 1;
+}
 
-  if (report.outcome === "skipped_existing_destination") {
-    return (
-      <div className="conversion-result">
-        <p className="conversion-result-headline">
-          A file of that name was already there, and was left untouched.
-        </p>
-        <p className="quiet-text">
-          MSCanvas did not inspect it and did not convert anything. Choose another folder, or move
-          the existing file, to convert this acquisition.
-        </p>
-        {residue}
-      </div>
-    );
+/** What each item state says, in words rather than in colour. */
+const ITEM_STATE_LABEL: Record<ConversionQueueItem["state"], string> = {
+  pending: "Waiting",
+  running: "Converting",
+  finalized: "Converted",
+  skipped: "Skipped — a file of that name was already there",
+  failed: "Failed",
+};
+
+/** Why one item failed, from whichever half of the boundary refused it. */
+function itemFailureSentence(item: ConversionQueueItem): string {
+  if (item.error !== null) {
+    return item.error.summary;
   }
-
-  return (
-    <div className="conversion-result">
-      <p className="notice notice-danger" role="status">
-        {failureSentence(report)}
-      </p>
-      {residue}
-    </div>
-  );
+  if (item.report === null) {
+    return "The conversion did not finish, so no file was written.";
+  }
+  return failureSentence(item.report);
 }
 
 /**

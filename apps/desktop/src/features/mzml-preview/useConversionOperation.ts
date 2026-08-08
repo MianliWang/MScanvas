@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePreviewApi } from "./api";
 import type {
   ConversionConflictPolicy,
-  ConversionPlanSummary,
+  ConversionQueuePlan,
   PreviewError,
   WorkspaceConversionState,
   WorkspaceConversionUpdate,
@@ -27,9 +27,9 @@ const POLL_INTERVAL_MS = 2_000;
 /** The plan summary for one row, and how the reading of it went. */
 export type ConversionPlanState =
   | { readonly status: "none" }
-  | { readonly status: "loading"; readonly handle: string }
-  | { readonly status: "loaded"; readonly plan: ConversionPlanSummary }
-  | { readonly status: "failed"; readonly handle: string; readonly error: PreviewError };
+  | { readonly status: "loading"; readonly handles: readonly string[] }
+  | { readonly status: "loaded"; readonly plan: ConversionQueuePlan }
+  | { readonly status: "failed"; readonly handles: readonly string[]; readonly error: PreviewError };
 
 export interface ConversionOperation {
   /** The authoritative slot, as Rust last reported it. */
@@ -42,8 +42,7 @@ export interface ConversionOperation {
    * controls are offered rather than which are permitted.
    */
   readonly busy: boolean;
-  /** The row a busy slot is working on, so a roster can pin it. */
-  readonly busyHandle: string | null;
+
   /**
    * The same answer as `busy`, readable from a handler.
    *
@@ -57,9 +56,23 @@ export interface ConversionOperation {
   readonly error: PreviewError | null;
   readonly conflictPolicy: ConversionConflictPolicy;
   readonly setConflictPolicy: (policy: ConversionConflictPolicy) => void;
-  /** Describes the conversion one row would get, or clears the description. */
-  readonly describe: (handle: string | null) => void;
-  readonly convert: (handle: string) => void;
+  /** Describes the queue these rows would get, or clears the description. */
+  readonly describe: (handles: readonly string[]) => void;
+  readonly convert: (handles: readonly string[]) => void;
+  /** Reruns every retryable failure of the terminal queue. */
+  readonly retry: () => void;
+  /** Whether the terminal queue has anything worth retrying. */
+  readonly canRetry: boolean;
+  /**
+   * Whether this document has dispatched a retry and has not been answered.
+   *
+   * Rust still reads `terminal` throughout -- it answers once, when the whole
+   * serial rerun is over -- so every reader that has to know a rerun is under
+   * way reads this rather than deriving it, and they cannot come to disagree.
+   */
+  readonly retrying: boolean;
+  /** Every row a live queue holds, so a roster can pin them. */
+  readonly busyHandles: readonly string[];
   readonly dismissError: () => void;
 }
 
@@ -99,6 +112,10 @@ export function useConversionOperation(
   // that read the rendered value could start a second conversion inside the
   // render that has not committed the first one yet.
   const busyRef = useRef(false);
+  // Whether this document is inside a retry it dispatched and has not been
+  // answered for. Rendered, unlike `busyRef`, because the interface has to stop
+  // offering actions for the whole of that window.
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -120,8 +137,23 @@ export function useConversionOperation(
     // banner and a preview read from the replaced installation would stay on
     // screen beside a conversion done by its successor, until some later
     // backend operation happened to reconcile them.
-    if (update.state.status === "completed") {
-      onInstallationGeneration(update.state.report.installationGeneration);
+    if (update.state.status === "terminal") {
+      // Once for the queue, not once per item. Every item of one queue ran on
+      // one installation, so their generations agree -- and reporting each of
+      // them separately would start a backend probe per item before any of them
+      // had answered, which for a full queue is sixteen serial help probes with
+      // preview and conversion disabled throughout.
+      const generations = [
+        // The queue's own reading first. A pass refused for running on a
+        // different installation produced no item, so the reports alone would
+        // leave the banner naming the installation the earlier results came
+        // from until the user rechecked by hand.
+        update.state.queue.installationGeneration,
+        ...update.state.queue.items
+          .map((item) => item.report?.installationGeneration)
+          .filter((generation): generation is number => generation !== undefined),
+      ];
+      onInstallationGeneration(Math.max(...generations));
     }
   }, [onInstallationGeneration]);
 
@@ -163,7 +195,21 @@ export function useConversionOperation(
     };
   }, [readAttempt, readState]);
 
-  const busy = state.status === "awaitingDestination" || state.status === "running";
+  // The authoritative slot, plus the window this document is knowingly inside.
+  //
+  // A retry is one command that does not answer until the whole serial rerun is
+  // over, and unlike starting a queue it has no reservation half to tell the
+  // interface that something began. Without this the panel would show the old
+  // terminal result -- and offer Retry, Clear, Add and Preview as usable -- for
+  // as long as the rerun took, with every one of them then silently ignored by
+  // the local guard or refused by Rust.
+  //
+  // Not an invented conversion state: what it reports is that this document has
+  // asked and is waiting, which is the same thing `pickerBusy` and `folderBusy`
+  // report elsewhere. The authoritative queue arrives on the first poll and
+  // takes over from there.
+  const busy =
+    retrying || state.status === "awaitingDestination" || state.status === "running";
 
   // While something is under way, and not otherwise. An idle slot changes only
   // when this document changes it, and a terminal report does not change at
@@ -180,16 +226,16 @@ export function useConversionOperation(
   }, [busy, readState]);
 
   const describe = useCallback(
-    (handle: string | null) => {
+    (handles: readonly string[]) => {
       planToken.current += 1;
       const token = planToken.current;
-      if (handle === null) {
+      if (handles.length === 0) {
         setPlan({ status: "none" });
         return;
       }
-      setPlan({ status: "loading", handle });
+      setPlan({ status: "loading", handles });
       api
-        .describeConversion(handle)
+        .describeConversion(handles)
         .then((summary) => {
           if (mounted.current && token === planToken.current) {
             setPlan({ status: "loaded", plan: summary });
@@ -197,7 +243,7 @@ export function useConversionOperation(
         })
         .catch((cause: unknown) => {
           if (mounted.current && token === planToken.current) {
-            setPlan({ status: "failed", handle, error: toPreviewError(cause) });
+            setPlan({ status: "failed", handles, error: toPreviewError(cause) });
           }
         });
     },
@@ -205,7 +251,7 @@ export function useConversionOperation(
   );
 
   const convert = useCallback(
-    (handle: string) => {
+    (handles: readonly string[]) => {
       if (busyRef.current) {
         return;
       }
@@ -215,7 +261,7 @@ export function useConversionOperation(
       busyRef.current = true;
       setError(null);
       api
-        .convertDataset(handle, conflictPolicy, () => {
+        .convertDatasets(handles, conflictPolicy, () => {
           // The reservation exists and the claim has been dispatched. From here
           // the operation is Rust's, and a read will find it even if this
           // document goes away.
@@ -238,12 +284,51 @@ export function useConversionOperation(
     [api, applyUpdate, conflictPolicy, readState],
   );
 
-  const busyHandle = useMemo(() => {
+  // Every row a live queue holds, not only the one running: a queued row
+  // cannot be removed and cannot be searched away either, because the user has
+  // already committed it to work they cannot stop.
+  const busyHandles = useMemo(() => {
     if (state.status === "awaitingDestination" || state.status === "running") {
-      return state.dataset.handle;
+      return state.queue.items.map((item) => item.datasetHandle);
     }
-    return null;
-  }, [state]);
+    // A dispatched retry holds the same rows, and Rust will refuse to let them
+    // go. Without this the window between the click and the first poll would
+    // offer `Remove selected` over the very failures being rerun, and the only
+    // outcome would be a workspace error nobody needed to see.
+    if (retrying && state.status === "terminal") {
+      return state.queue.items.map((item) => item.datasetHandle);
+    }
+    return [];
+  }, [state, retrying]);
+
+  const canRetry =
+    state.status === "terminal" && state.queue.retryableFailedCount > 0;
+
+  const retry = useCallback(() => {
+    if (busyRef.current) {
+      return;
+    }
+    busyRef.current = true;
+    setRetrying(true);
+    setError(null);
+    api
+      .retryConversions()
+      .then((update) => {
+        if (mounted.current) {
+          setRetrying(false);
+        }
+        applyUpdate(update);
+      })
+      .catch((cause: unknown) => {
+        if (!mounted.current) {
+          return;
+        }
+        busyRef.current = false;
+        setRetrying(false);
+        setError(toPreviewError(cause));
+        readState();
+      });
+  }, [api, applyUpdate, readState]);
 
   const dismissError = useCallback(() => {
     setError(null);
@@ -252,8 +337,11 @@ export function useConversionOperation(
   return {
     state,
     busy,
-    busyHandle,
+    busyHandles,
     busyRef,
+    canRetry,
+    retry,
+    retrying,
     plan,
     error,
     conflictPolicy,

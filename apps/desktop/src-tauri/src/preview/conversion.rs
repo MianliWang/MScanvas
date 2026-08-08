@@ -18,9 +18,10 @@
 use std::path::Path;
 
 use mscanvas_proteowizard::{
-    BackendRunFacts, ConflictPolicy, ConversionPlan, ConversionPlanError, ConversionPolicy,
-    ConversionRunOutcome, ConversionRunReport, ConversionSource, ConversionSourceKind,
-    InstalledHelpCapabilities, IntegrityProperty, StagingResidue, ValidationMode,
+    BackendExecutionFailure, BackendRunFacts, ConflictPolicy, ConversionPlan, ConversionPlanError,
+    ConversionPolicy, ConversionRunFailure, ConversionRunOutcome, ConversionRunReport,
+    ConversionSource, ConversionSourceKind, InstalledHelpCapabilities, IntegrityProperty,
+    OpenFormat, StagingResidue, ValidationMode, conversion_output_file_name,
     provider_build_is_evidenced, run_conversion,
 };
 
@@ -63,6 +64,11 @@ pub(super) struct WorkspaceConversionReport {
     /// The precise failure, reaching into the plan or integrity error where one
     /// exists. Absent unless the run failed.
     detailed_outcome: Option<&'static str>,
+    /// How this run ended, as the queue groups it.
+    outcome_class: OutcomeClass,
+    /// Whether another attempt against the same source, destination, policy and
+    /// build could plausibly end differently.
+    retryable: bool,
     /// Bounded facts about the backend process, when one ran.
     backend: Option<BackendRunFacts>,
     /// What the run could not reclaim of its own staging area.
@@ -151,11 +157,200 @@ impl WorkspaceConversionReport {
                 inapplicable: property_ids(valid.inapplicable()),
                 fully_verified: valid.is_fully_verified(),
             }),
+            outcome_class: outcome_class(run.outcome()),
+            retryable: run_is_retryable(run.residue(), run.outcome()),
             backend: run.backend(),
             residue: run.residue(),
             installation_generation,
         }
     }
+
+    /// How this run ended, as the queue groups it.
+    pub(super) const fn outcome_class(&self) -> OutcomeClass {
+        self.outcome_class
+    }
+
+    /// Whether another attempt could plausibly end differently.
+    pub(super) const fn is_retryable(&self) -> bool {
+        self.retryable
+    }
+}
+
+/// The three answers a run can give, as a queue groups them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum OutcomeClass {
+    Finalized,
+    /// The planned name was taken and the policy asked for it to be left alone.
+    /// Not a failure, and deliberately not a success.
+    Skipped,
+    Failed,
+}
+
+const fn outcome_class(outcome: &ConversionRunOutcome) -> OutcomeClass {
+    match outcome {
+        ConversionRunOutcome::Finalized(_) => OutcomeClass::Finalized,
+        ConversionRunOutcome::SkippedExistingDestination => OutcomeClass::Skipped,
+        ConversionRunOutcome::Failed(_) => OutcomeClass::Failed,
+    }
+}
+
+/// Whether another attempt at the *same* plan could plausibly end differently.
+///
+/// Total over the conversion boundary's own failure vocabulary, with no
+/// wildcard arm anywhere: a failure added to the crate later stops this
+/// compiling until somebody decides what it means for a retry. That is the
+/// whole point of writing it this way -- a default of "retryable" would offer
+/// the user a button that reruns a process which cannot succeed, and a default
+/// of "not retryable" would quietly hide failures that a second attempt would
+/// have fixed.
+///
+/// "Same plan" is exact: the same source dataset, the same destination folder,
+/// the same conflict policy and the same provider build. Nothing here is
+/// retryable because the *user* could change something; only because the same
+/// request could genuinely go differently.
+fn outcome_is_retryable(outcome: &ConversionRunOutcome) -> bool {
+    match outcome {
+        // Nothing to retry. A skipped item deliberately left a file alone, and
+        // rerunning it would leave the same file alone again.
+        ConversionRunOutcome::Finalized(_) | ConversionRunOutcome::SkippedExistingDestination => {
+            false
+        }
+        ConversionRunOutcome::Failed(failure) => match failure {
+            // The one failure this repository has evidence for as transient.
+            // The run could not pin the destination directory, and the crate's
+            // own test holds that directory with no sharing, gets exactly this,
+            // and then releases it -- so a second attempt against an unlocked
+            // folder is a different attempt, not the same one repeated.
+            //
+            // `NotFound` is the same identifier for the opposite condition: the
+            // folder is gone, and it will still be gone next time. Reading the
+            // kind is what tells them apart, and is the reason this matches on
+            // the variant rather than on its stable identifier.
+            ConversionRunFailure::DestinationRootNotOpened { kind } => {
+                *kind != std::io::ErrorKind::NotFound
+            }
+
+            // Everything below would answer the same way again, and the
+            // repository has no measurement suggesting otherwise.
+            //
+            // The name is taken, and the policy already said what to do about
+            // it. Choosing differently is a different queue.
+            ConversionRunFailure::DestinationExists
+            | ConversionRunFailure::DestinationAppearedDuringRun
+            // The destination could not be described, or is no longer the
+            // directory this queue was admitted against.
+            | ConversionRunFailure::DestinationNotInspectable { .. }
+            | ConversionRunFailure::DestinationRootChanged
+            | ConversionRunFailure::DestinationRootNotRechecked { .. }
+            // A staging area is in the way, or could not be made. The staging
+            // name is a deterministic function of the plan, so the next attempt
+            // at this plan finds the same obstruction; reclaiming it is not
+            // something this workflow offers. `StagingNotCreated` is worse than
+            // the others: it is the one failure that can leave a directory
+            // behind *without* reporting residue, so a retry could not even be
+            // told it was blocked.
+            | ConversionRunFailure::StagingTargetExists
+            | ConversionRunFailure::StagingNotCreated { .. }
+            // The plan itself cannot be expressed against these capabilities.
+            | ConversionRunFailure::NotPlannable(_)
+            // The acquisition changed under the run, could not be rechecked, or
+            // could not be read through to a digest. The plan's baseline is
+            // immutable, so a second attempt compares against the same values;
+            // the crate's own test runs the same plan three times over a
+            // changing source and fails every time.
+            | ConversionRunFailure::SourceChangedBeforeRun
+            | ConversionRunFailure::SourceNotRechecked { .. }
+            | ConversionRunFailure::SourceNotRehashed
+            // This build has no recorded evidence for this family. A pure
+            // function of the family and the capabilities.
+            | ConversionRunFailure::SourceFamilyNotEvidenced => false,
+            // The document was produced and judged, and the rename to its final
+            // name failed. Nothing here measures whether that is transient, and
+            // an unmeasured retry of a rename is a retry that can succeed into
+            // a name something else has since taken.
+            ConversionRunFailure::NotFinalized { .. } => false,
+            // The backend ran and reached a verdict: it rejected the input, or
+            // ended without completing. The crate deliberately refuses to
+            // interpret backend text, so there is nothing here that says a
+            // second identical run would be judged differently.
+            ConversionRunFailure::BackendRejected { .. }
+            | ConversionRunFailure::BackendDidNotComplete => false,
+            // The document that came out failed the integrity contract and was
+            // discarded. The contract already tolerates every legal
+            // re-serialization, so a rerun that differed only legally would be
+            // judged the same way -- which argues against a retry, not for one.
+            ConversionRunFailure::OutputRejected(_) => false,
+            // Every execution failure. The crate's own failure contract reaches
+            // `AfterCorrection` for the launch, executable and source cases --
+            // never `Retryable` -- and the three its catch-all calls retryable
+            // (`NotSupervised`, `NotAwaited`, `OutputNotCaptured`) get there
+            // through an unmeasured default arm belonging to a spike that does
+            // not classify conversions at all. Three more are unreachable from
+            // a conversion by construction.
+            ConversionRunFailure::Backend(
+                BackendExecutionFailure::ExecutableNotReverified { .. }
+                | BackendExecutionFailure::ExecutableChanged
+                | BackendExecutionFailure::SourceNotReverified { .. }
+                | BackendExecutionFailure::SourceChanged
+                | BackendExecutionFailure::StagedDestinationExists
+                | BackendExecutionFailure::StagedDestinationNotInspectable { .. }
+                | BackendExecutionFailure::StagingDirectoryNotEmpty
+                | BackendExecutionFailure::StagingDirectoryNotInspectable { .. }
+                | BackendExecutionFailure::OutputInsideSource
+                | BackendExecutionFailure::EnvironmentInvalid
+                | BackendExecutionFailure::NotLaunched { .. }
+                | BackendExecutionFailure::NotSupervised
+                | BackendExecutionFailure::NotAwaited
+                | BackendExecutionFailure::OutputNotCaptured { .. }
+                | BackendExecutionFailure::NotTerminated,
+            ) => false,
+        },
+    }
+}
+
+/// Whether another attempt at this exact plan could plausibly end differently.
+///
+/// Residue blocks a retry whatever else was wrong. A staging directory is named
+/// deterministically from the plan, so the next attempt at this exact plan
+/// would find it there and refuse with `staging_target_exists` -- and
+/// reclaiming someone else's directory is not something this workflow offers.
+///
+/// Written as its own function because the two halves answer different
+/// questions and only one of them is reachable today: nothing that this
+/// repository classifies as retryable happens after a staging directory exists.
+/// The guard is kept because a later classification would need it, and it is
+/// tested directly rather than left to look load-bearing.
+pub(super) fn run_is_retryable(
+    residue: Option<StagingResidue>,
+    outcome: &ConversionRunOutcome,
+) -> bool {
+    residue.is_none() && outcome_is_retryable(outcome)
+}
+
+/// Whether an attempt that never reached a conversion could plausibly go
+/// differently.
+///
+/// These are the session's own refusals rather than the conversion boundary's,
+/// so they are matched by the stable identifier this boundary itself issues.
+/// The default is deliberately "no": a refusal this side did not enumerate is
+/// one nobody has decided is transient.
+pub(super) fn refusal_is_retryable(kind: &str) -> bool {
+    // Two identifiers, and they are one condition seen through two opens.
+    //
+    // Measured on this path: when another program holds the acquisition open
+    // for writing, the crate's source admission refuses first, and it refuses
+    // with `file_unreadable`. The replacement lock -- which reports the same
+    // condition as `source_in_use` -- is never reached, because revalidating
+    // the row is what runs first. Both are listed anyway: which of the two
+    // opens loses the race is an ordering detail inside this file, not a
+    // different thing happening to the user's acquisition.
+    //
+    // Both mean the object is there and could not be read *now*. Everything
+    // else the session can refuse with is a statement about what the row or
+    // the request *is* -- the bytes are not an acquisition, the name refers
+    // elsewhere, the handle names nothing -- and rerunning the same plan
+    // against the same object would reach the same verdict.
+    matches!(kind, "source_in_use" | "file_unreadable")
 }
 
 /// Property sets as their stable identifiers, in the crate's own order.
@@ -260,6 +455,20 @@ pub(super) const fn is_convertible(kind: DatasetSourceKind) -> bool {
     }
 }
 
+/// The name one item's output will take, from the name of its source.
+///
+/// Derived from the display name the roster already carries, through the very
+/// function the plan uses, so a queue can tell the user what it will produce --
+/// and refuse two items that would produce one name -- before a folder is
+/// chosen and before anything is created.
+///
+/// Nothing here touches a path. What an output is called is decided by what its
+/// source is called.
+pub(super) fn planned_output_name(file_name: &str) -> Option<String> {
+    conversion_output_file_name(Path::new(file_name), OpenFormat::MzMl)
+        .map(|name| name.to_string_lossy().into_owned())
+}
+
 /// The conversion boundary's name for a family the session accepted.
 ///
 /// A total function over the session's families, so a family added to the
@@ -267,6 +476,7 @@ pub(super) const fn is_convertible(kind: DatasetSourceKind) -> bool {
 /// rather than a run-time surprise. There is deliberately no fallback: a family
 /// the crate cannot name is a family it cannot convert, and guessing one would
 /// admit an acquisition under another family's rules.
+#[cfg(test)]
 pub(super) const fn conversion_source_kind(kind: DatasetSourceKind) -> ConversionSourceKind {
     match kind {
         DatasetSourceKind::Mzml => ConversionSourceKind::MzmlFile,

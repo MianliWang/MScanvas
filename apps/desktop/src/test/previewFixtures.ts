@@ -14,7 +14,8 @@ import type { WorkspaceDropTransport } from "../features/mzml-preview/dropTransp
 import type {
   BackendAvailability,
   ConversionConflictPolicy,
-  ConversionPlanSummary,
+  ConversionQueuePlan,
+  ConversionQueueItem,
   FolderDiscoverySummary,
   FolderIngestionResult,
   Preview,
@@ -427,7 +428,7 @@ export interface FakePreviewApiOptions {
   /** What the conversion slot holds when the webview mounts. */
   readonly initialConversion?: WorkspaceConversionState;
   /** What `describeConversion` answers. Defaults to a plan for the named row. */
-  readonly conversionPlan?: (handle: string) => Promise<ConversionPlanSummary>;
+  readonly conversionPlan?: (handles: readonly string[]) => Promise<ConversionQueuePlan>;
   /**
    * What one conversion does.
    *
@@ -437,6 +438,10 @@ export interface FakePreviewApiOptions {
    */
   readonly conversion?: (
     request: ConversionRequest,
+    publish: (state: WorkspaceConversionState) => void,
+  ) => Promise<WorkspaceConversionState>;
+  /** What `Retry failed` does. */
+  readonly retry?: (
     publish: (state: WorkspaceConversionState) => void,
   ) => Promise<WorkspaceConversionState>;
   /** Replaces the roster read entirely, for the cases where it fails. */
@@ -519,8 +524,57 @@ export interface FakePreviewApi extends PreviewApi {
 
 /** One conversion the fake was asked for. */
 export interface ConversionRequest {
-  readonly handle: string;
+  readonly handles: readonly string[];
   readonly conflictPolicy: ConversionConflictPolicy;
+}
+
+/** One queue item, as a test describes it. */
+export function queueItem(
+  handle: string,
+  fileName: string,
+  overrides: Partial<ConversionQueueItem> = {},
+): ConversionQueueItem {
+  return {
+    datasetHandle: handle,
+    fileName,
+    sourceKind: "thermo_raw",
+    outputFileName: fileName.replace(/\.raw$/i, ".mzML"),
+    state: "pending",
+    attempts: 0,
+    retryable: false,
+    report: null,
+    error: null,
+    ...overrides,
+  };
+}
+
+/** A whole queue from its items, with the counts Rust would derive. */
+export function queueOf(items: readonly ConversionQueueItem[]) {
+  const count = (state: ConversionQueueItem["state"]) =>
+    items.filter((item) => item.state === state).length;
+  const failed = count("failed");
+  const retryable = items.filter((item) => item.state === "failed" && item.retryable).length;
+  return {
+    items,
+    // What Rust holds, and the two answers are different. While an item runs,
+    // the position *is* that item; between items it is how many are done, which
+    // after the last one is the item count. A fixture that only ever counted
+    // would describe a running queue as one item further on than it is.
+    currentIndex:
+      items.findIndex((item) => item.state === "running") === -1
+        ? items.filter((item) => item.state !== "pending").length
+        : items.findIndex((item) => item.state === "running"),
+    itemCount: items.length,
+    retryRound: 0,
+    conflictPolicy: "fail" as const,
+    finalizedCount: count("finalized"),
+    skippedCount: count("skipped"),
+    failedCount: failed,
+    retryableFailedCount: retryable,
+    nonRetryableFailedCount: failed - retryable,
+    error: null,
+    installationGeneration: 0,
+  };
 }
 
 /**
@@ -572,31 +626,39 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     conversionSequence += 1;
   };
   const defaultConversion = (request: ConversionRequest): WorkspaceConversionState => ({
-    status: "completed",
+    status: "terminal",
     operationId: String(conversionSequence + 1),
-    report: {
-      datasetHandle: request.handle,
-      sourceKind: "thermo_raw",
-      outcome: "finalized",
-      detailedOutcome: null,
-      outputFileName: "acquisition.mzML",
-      output: {
-        byteLength: 28_655,
-        sha256: "6CE2ACE65485488F4A337EE17B71559E737C1944B641F279744932C3C3D8648C",
-        spectrumCount: 1,
-        chromatogramCount: 1,
-      },
-      validation: {
-        mode: "output_only",
-        fullyVerified: false,
-        verified: ["source_unchanged", "output_declared_counts"],
-        unverified: [],
-        inapplicable: ["spectrum_count", "binary_array_lengths"],
-      },
-      backend: { exitCode: 0, elapsedMilliseconds: 663 },
-      stagingResidue: null,
-      installationGeneration: 0,
-    },
+    queue: queueOf(
+      request.handles.map((handle, index) =>
+        queueItem(handle, `acquisition-${String(index)}.raw`, {
+          state: "finalized",
+          attempts: 1,
+          report: {
+            datasetHandle: handle,
+            sourceKind: "thermo_raw",
+            outcome: "finalized",
+            detailedOutcome: null,
+            outputFileName: `acquisition-${String(index)}.mzML`,
+            output: {
+              byteLength: 28_655,
+              sha256: "6CE2ACE65485488F4A337EE17B71559E737C1944B641F279744932C3C3D8648C",
+              spectrumCount: 1,
+              chromatogramCount: 1,
+            },
+            validation: {
+              mode: "output_only",
+              fullyVerified: false,
+              verified: ["source_unchanged"],
+              unverified: [],
+              inapplicable: ["spectrum_count"],
+            },
+            backend: { exitCode: 0, elapsedMilliseconds: 663 },
+            stagingResidue: null,
+            installationGeneration: 0,
+          },
+        }),
+      ),
+    ),
   });
 
   const deliveredVerdicts: BackendAvailability[] = [];
@@ -804,26 +866,38 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         ? Promise.resolve({ outcome: "spectrum", spectrum: buildSpectrum(index, 12) })
         : options.spectrum(index);
     },
-    describeConversion: (handle) => {
+    describeConversion: (handles) => {
       if (options.conversionPlan !== undefined) {
-        return options.conversionPlan(handle);
+        return options.conversionPlan(handles);
       }
-      const row = snapshot().datasets.find((dataset) => dataset.handle === handle);
-      if (row === undefined) {
+      const rows = handles.map((handle) =>
+        snapshot().datasets.find((dataset) => dataset.handle === handle),
+      );
+      if (rows.some((row) => row === undefined)) {
         return Promise.reject(
           previewError({ kind: "unknown_file_handle", summary: "That file is no longer open." }),
         );
       }
       return Promise.resolve({
-        dataset: row,
+        items: rows.map((row) => ({
+          datasetHandle: row!.handle,
+          fileName: row!.fileName,
+          outputFileName: row!.fileName.replace(/\.raw$/i, ".mzML"),
+        })),
         outputFormat: "mzML",
         compression: "zlib",
         validationMode: "output_only",
+        capacity: 16,
       });
     },
     getConversionState: () => Promise.resolve({ sequence: conversionSequence, state: conversion }),
-    convertDataset: async (handle, conflictPolicy, onReserved) => {
-      const request = { handle, conflictPolicy };
+    retryConversions: async () => {
+      const settled = options.retry === undefined ? conversion : await options.retry(publishConversion);
+      publishConversion(settled);
+      return { sequence: conversionSequence, state: conversion };
+    },
+    convertDatasets: async (handles, conflictPolicy, onReserved) => {
+      const request = { handles, conflictPolicy };
       conversionRequests.push(request);
       // Started before the reservation edge is announced, so a conversion that
       // publishes `running` has published it by the time the caller reads the

@@ -1,23 +1,33 @@
-//! The session's one conversion slot.
+//! The session's one conversion queue.
 //!
-//! This is not a queue and is deliberately shaped so it cannot become one. There
-//! is one operation, it is replaced rather than appended to, and the only
-//! history it keeps is the report of the operation that finished last. A second
-//! conversion asked for while one is under way is refused, not enqueued.
+//! One queue, bounded and ordered, replacing the single slot this evolved from
+//! rather than sitting beside it. A single-dataset conversion is a queue of one,
+//! so there is one protocol and one state machine; a second queue asked for
+//! while one is under way is refused, not appended to.
+//!
+//! It is not a job system and is shaped so it cannot become one. There is no
+//! persistence, no scheduler, no priority and no cancellation. What it holds is
+//! one ordered list of datasets, the destination they all go to, and the latest
+//! result of each — replaced whole by the next queue.
 //!
 //! It exists because a conversion outlives the request that started it. The
 //! webview can reload at any point, and Tauri dispatches Windows invokes as
-//! independent fetches, so the reply to the command that started a conversion is
-//! not a reliable place to learn how it went. Rust holds the answer instead, and
-//! the interface reads it — on mount, and again while something is running.
+//! independent fetches, so the reply to the command that started a queue is not
+//! a reliable place to learn how it went. Rust holds the answer instead, and the
+//! interface reads it — on mount, and again while something is running.
 
 use std::fmt;
+use std::path::{Path, PathBuf};
 
+use super::destination::DestinationIdentity;
 use super::dto::{
-    ConversionConflictPolicyDto, PreviewErrorDto, SelectedFileDto,
+    ConversionConflictPolicyDto, ConversionQueueDto, ConversionQueueItemDto,
+    ConversionQueueItemStateDto, MAX_CONVERSION_QUEUE_ITEMS, PreviewErrorDto, SelectedFileDto,
     WorkspaceConversionReservationDto, WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
-    conversion_busy, invalid_conversion_reservation,
+    conversion_busy, invalid_conversion_reservation, queue_duplicate_dataset,
+    queue_installation_changed, queue_is_empty, queue_too_large,
 };
+use super::installation::InstallationIdentity;
 use super::selection::{DatasetId, DatasetSourceKind};
 
 const CONVERSION_RESERVATION_PREFIX: &str = "conversion-reservation-";
@@ -53,45 +63,119 @@ impl fmt::Debug for ConversionReservationId {
     }
 }
 
-/// What one conversion request was bound to when it was made.
+/// The folder a whole queue writes into, and the object it was admitted as.
 ///
-/// Every field is decided by Rust at begin and none of them can be changed
-/// afterwards, which is what makes the picker that follows a picker *for this
-/// request* rather than a picker whose result is applied to whatever the
-/// workspace happens to hold when it closes.
-#[derive(Clone)]
-pub(super) struct BoundConversion {
-    /// The main document that asked. A reload advances this, so a reservation
-    /// issued to a replaced document cannot be claimed by its replacement.
-    document_epoch: u64,
-    dataset: DatasetId,
-    /// The dataset's request epoch as it stood at begin, read rather than
-    /// claimed. Claiming here would supersede whatever the user was already
-    /// doing with the row merely by opening a picker they might cancel.
-    request_epoch: u64,
-    kind: DatasetSourceKind,
-    conflict: ConversionConflictPolicyDto,
-    /// The row as the roster described it at begin, so a state read can name it
-    /// without taking the workspace lock again.
-    dataset_dto: SelectedFileDto,
+/// Retained for the length of the queue so a retry runs against the same
+/// directory without asking for it again — and so it can be *proved* to be the
+/// same directory rather than assumed. The path never leaves this module.
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct AdmittedDestination {
+    root: PathBuf,
+    /// The volume serial and file id the directory was admitted with, where the
+    /// platform names objects that way. A path is not an object, and a queue
+    /// that retried on a name alone could write into whatever had since taken
+    /// it.
+    identity: Option<DestinationIdentity>,
 }
 
-impl BoundConversion {
+impl AdmittedDestination {
+    pub(super) const fn new(root: PathBuf, identity: Option<DestinationIdentity>) -> Self {
+        Self { root, identity }
+    }
+
+    pub(super) fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Whether a fresh admission of the same name reached the same object.
+    ///
+    /// A platform that will not answer with an identity says so, and every
+    /// caller here reads that as a refusal rather than as agreement: there is
+    /// no weaker comparison to fall back to.
+    pub(super) fn is_still(&self, other: &Self) -> bool {
+        self.root == other.root && self.identity.is_some() && self.identity == other.identity
+    }
+}
+
+impl fmt::Debug for AdmittedDestination {
+    /// Deliberately opaque. This is the one absolute path a queue holds, and a
+    /// `{:?}` of anything containing it would put a user's filesystem into a log.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<admitted-destination>")
+    }
+}
+
+/// Where one item is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ItemState {
+    Pending,
+    Running,
+    Finalized,
+    Skipped,
+    Failed,
+}
+
+impl ItemState {
+    const fn to_dto(self) -> ConversionQueueItemStateDto {
+        match self {
+            Self::Pending => ConversionQueueItemStateDto::Pending,
+            Self::Running => ConversionQueueItemStateDto::Running,
+            Self::Finalized => ConversionQueueItemStateDto::Finalized,
+            Self::Skipped => ConversionQueueItemStateDto::Skipped,
+            Self::Failed => ConversionQueueItemStateDto::Failed,
+        }
+    }
+}
+
+/// The item state one run's outcome puts an item into.
+pub(super) const fn item_state_of(class: super::conversion::OutcomeClass) -> ItemState {
+    match class {
+        super::conversion::OutcomeClass::Finalized => ItemState::Finalized,
+        super::conversion::OutcomeClass::Skipped => ItemState::Skipped,
+        super::conversion::OutcomeClass::Failed => ItemState::Failed,
+    }
+}
+
+/// One dataset of a queue, and the latest thing that happened to it.
+#[derive(Clone)]
+pub(super) struct QueueItem {
+    dataset: DatasetId,
+    /// The dataset's request epoch as it stood when the queue was created, read
+    /// rather than claimed. Claiming would supersede whatever the user was
+    /// already doing with the row merely by opening a picker they might cancel.
+    request_epoch: u64,
+    kind: DatasetSourceKind,
+    dataset_dto: SelectedFileDto,
+    /// Derived before the queue existed, so two items that would fight over one
+    /// name are refused before a picker opens.
+    output_file_name: String,
+    state: ItemState,
+    attempts: u64,
+    report: Option<super::conversion::WorkspaceConversionReport>,
+    /// An attempt that never reached a conversion at all.
+    error: Option<PreviewErrorDto>,
+    retryable: bool,
+}
+
+impl QueueItem {
     pub(super) const fn new(
-        document_epoch: u64,
         dataset: DatasetId,
         request_epoch: u64,
         kind: DatasetSourceKind,
-        conflict: ConversionConflictPolicyDto,
         dataset_dto: SelectedFileDto,
+        output_file_name: String,
     ) -> Self {
         Self {
-            document_epoch,
             dataset,
             request_epoch,
             kind,
-            conflict,
             dataset_dto,
+            output_file_name,
+            state: ItemState::Pending,
+            attempts: 0,
+            report: None,
+            error: None,
+            retryable: false,
         }
     }
 
@@ -107,20 +191,165 @@ impl BoundConversion {
         self.kind
     }
 
+    pub(super) fn handle(&self) -> &str {
+        &self.dataset_dto.handle
+    }
+
+    pub(super) fn output_file_name(&self) -> &str {
+        &self.output_file_name
+    }
+
+    pub(super) fn file_name(&self) -> &str {
+        &self.dataset_dto.file_name
+    }
+
+    fn to_dto(&self) -> ConversionQueueItemDto {
+        ConversionQueueItemDto {
+            dataset_handle: self.dataset_dto.handle.clone(),
+            file_name: self.dataset_dto.file_name.clone(),
+            source_kind: self.dataset_dto.source_kind,
+            output_file_name: self.output_file_name.clone(),
+            state: self.state.to_dto(),
+            attempts: self.attempts,
+            retryable: self.retryable,
+            report: self
+                .report
+                .as_ref()
+                .map(super::conversion::WorkspaceConversionReport::to_dto),
+            error: self.error.clone(),
+        }
+    }
+}
+
+impl fmt::Debug for QueueItem {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<queue-item>")
+    }
+}
+
+/// One bounded, ordered queue.
+#[derive(Debug, Clone)]
+pub(super) struct ConversionQueue {
+    /// The main document that asked. A reload advances this, so a reservation
+    /// issued to a replaced document cannot be claimed by its replacement.
+    document_epoch: u64,
+    conflict: ConversionConflictPolicyDto,
+    items: Vec<QueueItem>,
+    /// Which item is running, or how many have finished when none is.
+    current: usize,
+    retry_round: u64,
+    /// Set when a destination has been admitted, and kept for the queue's life
+    /// so a retry does not ask for one again.
+    destination: Option<AdmittedDestination>,
+    /// Where the backend sequence stood when this queue last resolved one.
+    installation_generation: u64,
+    /// Which installation this queue's items were converted on.
+    ///
+    /// The identity itself, not the sequence that counts changes to it. A
+    /// counter only ever goes up, so a user who switched away from an
+    /// installation and back again would have a queue that could never be
+    /// retried -- the restored installation is the same build wearing a higher
+    /// number.
+    installation: Option<InstallationIdentity>,
+    /// A refusal that stopped the whole queue rather than one item.
+    error: Option<PreviewErrorDto>,
+}
+
+impl ConversionQueue {
+    /// Builds one queue from an ordered list, or says why it is not a queue.
+    ///
+    /// Every refusal here happens before a picker opens and before anything is
+    /// created: an empty selection, a list longer than one session may run, and
+    /// a list naming one dataset twice.
+    pub(super) fn new(
+        document_epoch: u64,
+        conflict: ConversionConflictPolicyDto,
+        items: Vec<QueueItem>,
+    ) -> Result<Self, PreviewErrorDto> {
+        if items.is_empty() {
+            return Err(queue_is_empty());
+        }
+        if items.len() > MAX_CONVERSION_QUEUE_ITEMS {
+            return Err(queue_too_large());
+        }
+        // Quadratic over at most sixteen items, and deliberately so: a set
+        // would need one more thing to keep in step with the order, and the
+        // order is the part that matters here.
+        for (index, item) in items.iter().enumerate() {
+            if items[..index]
+                .iter()
+                .any(|earlier| earlier.dataset == item.dataset)
+            {
+                return Err(queue_duplicate_dataset());
+            }
+        }
+        Ok(Self {
+            document_epoch,
+            conflict,
+            items,
+            current: 0,
+            retry_round: 0,
+            destination: None,
+            installation_generation: 0,
+            installation: None,
+            error: None,
+        })
+    }
+
     pub(super) const fn conflict(&self) -> ConversionConflictPolicyDto {
         self.conflict
     }
 
-    pub(super) fn dataset_handle(&self) -> &str {
-        &self.dataset_dto.handle
+    pub(super) fn destination(&self) -> Option<&AdmittedDestination> {
+        self.destination.as_ref()
     }
-}
 
-/// Deliberately opaque. It holds a described row and two authority counters,
-/// and a `{:?}` of anything containing one would put them into a log.
-impl fmt::Debug for BoundConversion {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("<bound-conversion>")
+    /// Whether this dataset belongs to the queue, at any state.
+    pub(super) fn holds(&self, dataset: DatasetId) -> bool {
+        self.items.iter().any(|item| item.dataset == dataset)
+    }
+
+    /// The next item to run, with the index that names it.
+    pub(super) fn next_pending(&self) -> Option<(usize, QueueItem)> {
+        self.items
+            .iter()
+            .enumerate()
+            .find(|(_, item)| item.state == ItemState::Pending)
+            .map(|(index, item)| (index, item.clone()))
+    }
+
+    /// Whether any failed item could plausibly succeed on another attempt.
+    pub(super) fn has_retryable_failure(&self) -> bool {
+        self.items
+            .iter()
+            .any(|item| item.state == ItemState::Failed && item.retryable)
+    }
+
+    fn count(&self, state: ItemState) -> usize {
+        self.items.iter().filter(|item| item.state == state).count()
+    }
+
+    fn to_dto(&self) -> ConversionQueueDto {
+        let failed = self.count(ItemState::Failed);
+        let retryable = self
+            .items
+            .iter()
+            .filter(|item| item.state == ItemState::Failed && item.retryable)
+            .count();
+        ConversionQueueDto {
+            items: self.items.iter().map(QueueItem::to_dto).collect(),
+            current_index: self.current,
+            item_count: self.items.len(),
+            retry_round: self.retry_round,
+            conflict_policy: self.conflict,
+            finalized_count: self.count(ItemState::Finalized),
+            skipped_count: self.count(ItemState::Skipped),
+            failed_count: failed,
+            retryable_failed_count: retryable,
+            non_retryable_failed_count: failed - retryable,
+            error: self.error.clone(),
+            installation_generation: self.installation_generation,
+        }
     }
 }
 
@@ -134,30 +363,19 @@ enum SlotState {
     AwaitingDestination {
         reservation: ConversionReservationId,
         claimed: bool,
-        bound: BoundConversion,
+        queue: ConversionQueue,
     },
     Running {
-        bound: BoundConversion,
+        queue: ConversionQueue,
     },
-    /// One report, replaced by the next conversion. Not a history: a list here
-    /// would be an unbounded one, and nothing in this workflow reads a second
-    /// entry.
-    Terminal(TerminalOutcome),
-}
-
-/// How the last operation ended.
-#[derive(Debug, Clone)]
-enum TerminalOutcome {
-    /// A conversion ran and reached an outcome, which may itself be a failure.
-    Reported(Box<super::conversion::WorkspaceConversionReport>),
-    /// The operation never reached a conversion at all.
-    Refused {
-        dataset_handle: String,
-        error: PreviewErrorDto,
+    /// One queue, replaced by the next. Not a history: a list here would be an
+    /// unbounded one, and nothing in this workflow reads a second entry.
+    Terminal {
+        queue: ConversionQueue,
     },
 }
 
-/// The session's single conversion slot.
+/// The session's single conversion slot, holding at most one queue.
 ///
 /// `sequence` is the ordering key the interface uses to discard a stale read.
 /// It advances on every observable transition and never rewinds, so a reply
@@ -186,9 +404,9 @@ impl Default for ConversionSlot {
 }
 
 impl ConversionSlot {
-    /// Whether a conversion currently occupies the machine or the workspace.
+    /// Whether a queue currently occupies the machine or the workspace.
     ///
-    /// A terminal report does not: it is a thing to read, not work in flight.
+    /// A terminal queue does not: it is a thing to read, not work in flight.
     /// This is what every workspace mutation asks before it proceeds.
     pub(super) const fn is_busy(&self) -> bool {
         matches!(
@@ -197,28 +415,28 @@ impl ConversionSlot {
         )
     }
 
-    /// The row a busy slot is working on, if any.
+    /// Whether a busy queue holds this row.
     ///
-    /// Used to refuse removing exactly that row while leaving every other row
-    /// removable. A terminal report names no row that must be protected: the
-    /// work is over.
-    pub(super) fn busy_dataset(&self) -> Option<DatasetId> {
+    /// Used to refuse removing any row a live queue names while leaving every
+    /// other row removable. A terminal queue protects nothing: the work is over,
+    /// and its report is about rows the user may now curate.
+    pub(super) fn busy_holds(&self, dataset: DatasetId) -> bool {
         match &self.state {
-            SlotState::AwaitingDestination { bound, .. } | SlotState::Running { bound } => {
-                Some(bound.dataset())
+            SlotState::AwaitingDestination { queue, .. } | SlotState::Running { queue } => {
+                queue.holds(dataset)
             }
-            SlotState::Idle | SlotState::Terminal(_) => None,
+            SlotState::Idle | SlotState::Terminal { .. } => false,
         }
     }
 
-    /// Issues one reservation, refusing while another conversion is live.
+    /// Issues one reservation for one queue, refusing while another is live.
     ///
-    /// Replaces a terminal report rather than accumulating beside it: starting a
+    /// Replaces a terminal queue rather than accumulating beside it: starting a
     /// conversion is the user saying the previous result is no longer what they
     /// are looking at.
     pub(super) fn begin(
         &mut self,
-        bound: BoundConversion,
+        queue: ConversionQueue,
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
         if self.is_busy() {
             return Err(conversion_busy());
@@ -236,7 +454,7 @@ impl ConversionSlot {
         self.state = SlotState::AwaitingDestination {
             reservation,
             claimed: false,
-            bound,
+            queue,
         };
         self.advance();
         Ok(WorkspaceConversionReservationDto {
@@ -254,51 +472,56 @@ impl ConversionSlot {
         &mut self,
         reservation_id: &str,
         document_epoch: u64,
-    ) -> Result<BoundConversion, PreviewErrorDto> {
+    ) -> Result<u64, PreviewErrorDto> {
         let requested = ConversionReservationId::parse(reservation_id)
             .ok_or_else(invalid_conversion_reservation)?;
         let SlotState::AwaitingDestination {
             reservation,
             claimed,
-            bound,
+            queue,
         } = &self.state
         else {
             return Err(invalid_conversion_reservation());
         };
-        if *reservation != requested || *claimed {
+        if *reservation != requested || *claimed || queue.document_epoch != document_epoch {
             return Err(invalid_conversion_reservation());
         }
-        if bound.document_epoch != document_epoch {
-            return Err(invalid_conversion_reservation());
-        }
-        let bound = bound.clone();
+        let queue = queue.clone();
         self.state = SlotState::AwaitingDestination {
             reservation: requested,
             claimed: true,
-            bound: bound.clone(),
+            queue,
         };
         // No sequence advance: nothing a reader can see has changed. The picker
         // is open either way, and a claim that did advance it would make a
         // cancelled picker look like two transitions.
-        Ok(bound)
+        Ok(self.operation)
     }
 
-    /// The request a claimed reservation bound, for the run that follows.
+    /// The queue a claimed reservation bound, for the run that follows.
     ///
     /// Read from the slot rather than handed back by `claim`, so the value that
     /// decides what is converted never leaves this module and a caller cannot
-    /// run a conversion for a request it was not given.
-    pub(super) fn claimed(&self) -> Option<(u64, BoundConversion)> {
+    /// run a queue it was not given.
+    pub(super) fn claimed(&self) -> Option<(u64, ConversionQueue)> {
         match &self.state {
             SlotState::AwaitingDestination {
                 claimed: true,
-                bound,
+                queue,
                 ..
-            } => Some((self.operation, bound.clone())),
+            } => Some((self.operation, queue.clone())),
             SlotState::AwaitingDestination { .. }
             | SlotState::Idle
             | SlotState::Running { .. }
-            | SlotState::Terminal(_) => None,
+            | SlotState::Terminal { .. } => None,
+        }
+    }
+
+    /// The queue currently running, for the worker that owns it.
+    pub(super) fn running(&self, operation: u64) -> Option<ConversionQueue> {
+        match &self.state {
+            SlotState::Running { queue } if self.operation == operation => Some(queue.clone()),
+            _ => None,
         }
     }
 
@@ -306,17 +529,12 @@ impl ConversionSlot {
     ///
     /// A webview can reload between Rust issuing a reservation and the document
     /// receiving it. The replacement never learns the identifier, so it can
-    /// neither claim it nor begin another conversion -- and the slot would stay
-    /// busy, with adding, clearing and previewing refused, until the
-    /// application restarted.
+    /// neither claim it nor begin another queue -- and the slot would stay busy,
+    /// with adding, clearing and previewing refused, until the application
+    /// restarted.
     ///
-    /// Releases a claimed reservation as well as an unclaimed one. A claimed
-    /// one means a modal picker is open for a document that no longer exists;
-    /// when it closes, the command finds nothing claimed and converts nothing,
-    /// which is the same answer as a dismissed picker and the right one.
-    ///
-    /// A conversion already running is deliberately left alone. Its process is
-    /// under way, its result is what the replacement document will read, and
+    /// A queue already running is deliberately left alone. Its process is under
+    /// way, its results are what the replacement document will read, and
     /// nothing here can stop it.
     pub(super) fn release_awaiting_destination(&mut self) {
         if matches!(self.state, SlotState::AwaitingDestination { .. }) {
@@ -325,25 +543,28 @@ impl ConversionSlot {
         }
     }
 
-    /// Marks one exact claimed operation as running.
+    /// Marks one exact claimed operation as running, against one destination.
     ///
     /// Named rather than implied, because the slot lock is released while a
-    /// destination is admitted and a row revalidated -- filesystem work that
-    /// takes as long as it takes. A reload in that window releases the slot,
-    /// and a caller that transitioned whatever it found could mark a
-    /// *replacement* operation as running and then overwrite it with the old
-    /// one's report. `false` means this operation is no longer the slot's, and
-    /// the caller must convert nothing.
-    pub(super) fn start_running(&mut self, operation: u64) -> bool {
+    /// destination is admitted -- filesystem work that takes as long as it
+    /// takes. A reload in that window releases the slot, and a caller that
+    /// transitioned whatever it found could mark a *replacement* operation as
+    /// running and then overwrite it with the old one's results.
+    pub(super) fn start_running(
+        &mut self,
+        operation: u64,
+        destination: AdmittedDestination,
+    ) -> bool {
         if self.operation != operation {
             return false;
         }
-        let SlotState::AwaitingDestination { bound, .. } = &self.state else {
+        let SlotState::AwaitingDestination { queue, .. } = &self.state else {
             return false;
         };
-        self.state = SlotState::Running {
-            bound: bound.clone(),
-        };
+        let mut queue = queue.clone();
+        queue.destination = Some(destination);
+        queue.current = 0;
+        self.state = SlotState::Running { queue };
         self.advance();
         true
     }
@@ -362,57 +583,229 @@ impl ConversionSlot {
         }
     }
 
-    /// Stores the report of a conversion that reached an outcome.
-    /// Stores the report of one exact operation.
+    /// Fixes the installation this queue runs on, or refuses a changed one.
     ///
-    /// Silently does nothing for an operation the slot has moved past. A run
-    /// whose slot was released by a reload still finishes -- its process is
-    /// under way and nothing can stop it -- but its report describes work
-    /// nobody is waiting for, and installing it would overwrite whatever the
-    /// replacement document has since started.
-    pub(super) fn complete(
+    /// The first pass records what it bound; every later pass must find the
+    /// same answer. A queue whose files came from two ProteoWizard builds is
+    /// not a batch, and silently mixing them would put outputs that cannot be
+    /// compared under one result.
+    pub(super) fn bind_installation(
         &mut self,
         operation: u64,
-        report: super::conversion::WorkspaceConversionReport,
-    ) {
+        installation: Option<InstallationIdentity>,
+        generation: u64,
+    ) -> Result<(), PreviewErrorDto> {
+        let Some(queue) = self.running_mut(operation) else {
+            // Not this worker's queue any more. Whatever replaced it will bind
+            // its own installation, and the caller stops either way.
+            return Ok(());
+        };
+        // Recorded before the comparison below, so a queue refused *for* the
+        // installation having changed still reports the one it resolved. That
+        // pass produces no item and therefore no report, and a reader with only
+        // the earlier reports would go on naming the installation those results
+        // came from until the user rechecked by hand.
+        queue.installation_generation = generation;
+        match &queue.installation {
+            // Both sides must say which build they are. An installation that
+            // will not identify itself is not evidence that it is the same one,
+            // and there is no weaker comparison to fall back on -- the same rule
+            // the destination's identity follows.
+            Some(bound) => {
+                if installation.as_ref() == Some(bound) {
+                    Ok(())
+                } else {
+                    Err(queue_installation_changed())
+                }
+            }
+            None => {
+                queue.installation = installation;
+                Ok(())
+            }
+        }
+    }
+
+    /// Marks one item of the running queue as under way.
+    pub(super) fn start_item(&mut self, operation: u64, index: usize) -> bool {
+        let Some(queue) = self.running_mut(operation) else {
+            return false;
+        };
+        let Some(item) = queue.items.get_mut(index) else {
+            return false;
+        };
+        if item.state != ItemState::Pending {
+            return false;
+        }
+        item.state = ItemState::Running;
+        item.attempts = item
+            .attempts
+            .checked_add(1)
+            .expect("an item is attempted fewer than u64::MAX times");
+        queue.current = index;
+        self.advance();
+        true
+    }
+
+    /// Records what one item's attempt did, and moves on.
+    ///
+    /// The item's own outcome, never the queue's: one file failing marks that
+    /// file and nothing else, and everything already finalized stays finalized.
+    pub(super) fn settle_item(
+        &mut self,
+        operation: u64,
+        index: usize,
+        outcome: ItemOutcome,
+    ) -> bool {
+        let Some(queue) = self.running_mut(operation) else {
+            return false;
+        };
+        let Some(item) = queue.items.get_mut(index) else {
+            return false;
+        };
+        match outcome {
+            ItemOutcome::Reported {
+                state,
+                retryable,
+                report,
+            } => {
+                item.state = state;
+                item.retryable = retryable;
+                item.report = Some(report);
+                item.error = None;
+            }
+            ItemOutcome::Refused { retryable, error } => {
+                item.state = ItemState::Failed;
+                item.retryable = retryable;
+                item.report = None;
+                item.error = Some(error);
+            }
+        }
+        // Counted rather than incremented: the queue's own position is "how
+        // many are done", and after the last item that is the item count.
+        queue.current = queue
+            .items
+            .iter()
+            .filter(|item| item.state != ItemState::Pending)
+            .count();
+        self.advance();
+        true
+    }
+
+    /// Ends the running queue, with an optional queue-level refusal.
+    pub(super) fn finish(&mut self, operation: u64, error: Option<PreviewErrorDto>) {
+        let Some(queue) = self.running_mut(operation) else {
+            return;
+        };
+        if error.is_some() {
+            queue.error = error;
+        }
+        let queue = queue.clone();
+        self.state = SlotState::Terminal { queue };
+        self.advance();
+    }
+
+    /// Refuses the whole queue before any item of this pass ran.
+    ///
+    /// Distinct from an item failing: nothing was converted by this pass, and
+    /// the queue becomes terminal carrying the refusal.
+    ///
+    /// Anything a retry moved back to pending is put back as it was. Without
+    /// that, a refused retry would leave its failures neither failed nor run --
+    /// counted nowhere, and no longer retryable, so a user whose retry was
+    /// refused for a reason they can fix would have lost the failures they
+    /// meant to fix. A pass that never started cannot have moved anything, so
+    /// on a first pass this restores nothing.
+    pub(super) fn refuse(&mut self, operation: u64, error: PreviewErrorDto) {
         if self.operation != operation {
             return;
         }
-        self.state = SlotState::Terminal(TerminalOutcome::Reported(Box::new(report)));
-        self.advance();
-    }
-
-    /// Stores an operation that never reached a conversion.
-    pub(super) fn refuse(
-        &mut self,
-        operation: u64,
-        dataset_handle: String,
-        error: PreviewErrorDto,
-    ) {
-        if !self.still_live(operation) {
-            return;
+        let queue = match &self.state {
+            SlotState::AwaitingDestination { queue, .. } | SlotState::Running { queue } => {
+                queue.clone()
+            }
+            SlotState::Idle | SlotState::Terminal { .. } => return,
+        };
+        let mut queue = queue;
+        for item in &mut queue.items {
+            if item.state != ItemState::Pending {
+                continue;
+            }
+            // What it carries says what it was. An item that never ran carries
+            // neither and stays pending, which is the truth about it.
+            if item.error.is_some() {
+                item.state = ItemState::Failed;
+            } else if let Some(report) = item.report.as_ref() {
+                item.state = item_state_of(report.outcome_class());
+            }
         }
-        self.state = SlotState::Terminal(TerminalOutcome::Refused {
-            dataset_handle,
-            error,
-        });
+        queue.current = queue
+            .items
+            .iter()
+            .filter(|item| item.state != ItemState::Pending)
+            .count();
+        queue.error = Some(error);
+        self.state = SlotState::Terminal { queue };
         self.advance();
     }
 
-    /// Whether this operation is still the one the slot is working on.
+    /// Moves every retryable failure back to pending for another pass.
     ///
-    /// The number alone is not enough. `release_awaiting_destination` returns
-    /// the slot to idle without allocating a new operation, so a released
-    /// operation still matches by number -- and a refusal that checked only
-    /// that would install an abandoned document's failure into the replacement
-    /// document's empty slot. What has to be true is that the slot is still
-    /// *doing* this operation.
-    const fn still_live(&self, operation: u64) -> bool {
-        self.operation == operation
-            && matches!(
-                self.state,
-                SlotState::AwaitingDestination { .. } | SlotState::Running { .. }
-            )
+    /// Successes, skips and non-retryable failures are left exactly as they
+    /// are, and the order never changes: a retry is the same queue again, not a
+    /// new one made of what is left.
+    pub(super) fn begin_retry(&mut self) -> Option<u64> {
+        let SlotState::Terminal { queue } = &self.state else {
+            return None;
+        };
+        if !queue.has_retryable_failure() {
+            return None;
+        }
+        let mut queue = queue.clone();
+        for item in &mut queue.items {
+            if item.state == ItemState::Failed && item.retryable {
+                item.state = ItemState::Pending;
+            }
+        }
+        queue.error = None;
+        queue.retry_round = queue
+            .retry_round
+            .checked_add(1)
+            .expect("a queue is retried fewer than u64::MAX times");
+        queue.current = queue
+            .items
+            .iter()
+            .filter(|item| item.state != ItemState::Pending)
+            .count();
+        self.state = SlotState::Running { queue };
+        self.advance();
+        // The same operation, deliberately. Only `finish` and `refuse` produce a
+        // terminal slot and both are called by the worker itself before it
+        // returns, so no live worker still holds this identifier -- and a retry
+        // is the same queue again rather than a new piece of work. What orders
+        // two reads is the sequence, which advanced just above.
+        Some(self.operation)
+    }
+
+    fn running_mut(&mut self, operation: u64) -> Option<&mut ConversionQueue> {
+        if self.operation != operation {
+            return None;
+        }
+        match &mut self.state {
+            SlotState::Running { queue } => Some(queue),
+            SlotState::Idle
+            | SlotState::AwaitingDestination { .. }
+            | SlotState::Terminal { .. } => None,
+        }
+    }
+
+    /// The folder a terminal queue was run against, for a retry.
+    pub(super) fn terminal_destination(&self) -> Option<AdmittedDestination> {
+        match &self.state {
+            SlotState::Terminal { queue } => queue.destination.clone(),
+            SlotState::Idle | SlotState::AwaitingDestination { .. } | SlotState::Running { .. } => {
+                None
+            }
+        }
     }
 
     /// The current state, as the webview reads it.
@@ -420,29 +813,19 @@ impl ConversionSlot {
         let operation_id = self.operation.to_string();
         let state = match &self.state {
             SlotState::Idle => WorkspaceConversionStateDto::Idle,
-            SlotState::AwaitingDestination { bound, .. } => {
+            SlotState::AwaitingDestination { queue, .. } => {
                 WorkspaceConversionStateDto::AwaitingDestination {
                     operation_id,
-                    dataset: bound.dataset_dto.clone(),
+                    queue: queue.to_dto(),
                 }
             }
-            SlotState::Running { bound } => WorkspaceConversionStateDto::Running {
+            SlotState::Running { queue } => WorkspaceConversionStateDto::Running {
                 operation_id,
-                dataset: bound.dataset_dto.clone(),
+                queue: queue.to_dto(),
             },
-            SlotState::Terminal(TerminalOutcome::Reported(report)) => {
-                WorkspaceConversionStateDto::Completed {
-                    operation_id,
-                    report: report.to_dto(),
-                }
-            }
-            SlotState::Terminal(TerminalOutcome::Refused {
-                dataset_handle,
-                error,
-            }) => WorkspaceConversionStateDto::Failed {
+            SlotState::Terminal { queue } => WorkspaceConversionStateDto::Terminal {
                 operation_id,
-                dataset_handle: dataset_handle.clone(),
-                error: error.clone(),
+                queue: queue.to_dto(),
             },
         };
         WorkspaceConversionUpdateDto {
@@ -457,4 +840,20 @@ impl ConversionSlot {
             .checked_add(1)
             .expect("a session makes fewer than u64::MAX conversion transitions");
     }
+}
+
+/// What one item's attempt produced.
+#[derive(Debug)]
+pub(super) enum ItemOutcome {
+    /// A conversion ran and reached an outcome, which may itself be a failure.
+    Reported {
+        state: ItemState,
+        retryable: bool,
+        report: super::conversion::WorkspaceConversionReport,
+    },
+    /// The attempt never reached a conversion at all.
+    Refused {
+        retryable: bool,
+        error: PreviewErrorDto,
+    },
 }

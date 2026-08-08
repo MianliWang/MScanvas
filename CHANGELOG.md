@@ -6,6 +6,29 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
+- A serial conversion queue for selected Thermo Scientific RAW workspace rows.
+  Select up to **16** of them and MSCanvas shows the ordered list it would run,
+  the mzML name each item would write, and how many selected rows are excluded
+  for being mzML already; two rows that would write one name are refused before
+  anything is chosen or created. One Fail-or-Skip choice and one Rust-owned local
+  destination picker settle the whole queue. Items convert one at a time, in the
+  order shown, on one provider binding, and the panel says which item of how many
+  is running — there is no percentage, and still no cancellation. One file's
+  failure marks that file and the queue carries on; nothing already converted is
+  undone. Each item reports its own outcome and the queue reports how many
+  converted, were skipped and failed. `Retry N failed` reruns only the failures
+  Rust explicitly classifies as retryable, in their original places, into the same
+  folder under the same policy, leaving converted and skipped files alone. Every
+  queued row stays visible through a search and cannot be removed until the queue
+  ends. Nothing on the wire names a location.
+
+  Replaces the single-conversion state machine rather than sitting beside it: one
+  focused row is a queue of one. `begin_workspace_conversion` is now
+  `begin_workspace_conversion_queue` and takes an ordered list of handles;
+  `describe_workspace_conversion_queue` and `retry_workspace_conversion_queue`
+  are new. The conversion state's `completed` and `failed` members are gone,
+  folded into one `terminal` whose queue says which items did which.
+
 - The first visible conversion: one focused Thermo Scientific RAW workspace row
   to mzML. `Add files…` now admits that one evidenced vendor family alongside
   `.mzML`, recognizing it by its file signature rather than its name; folder

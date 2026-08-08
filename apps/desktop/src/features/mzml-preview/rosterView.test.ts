@@ -29,6 +29,7 @@ interface Options {
   readonly active?: string | null;
   readonly rowState?: readonly (readonly [string, RowPresentation])[];
   readonly converting?: string | null;
+  readonly queued?: readonly string[];
 }
 
 function input(datasets: readonly SelectedFile[], options: Options = {}): RosterProjectionInput {
@@ -40,6 +41,7 @@ function input(datasets: readonly SelectedFile[], options: Options = {}): Roster
     active: options.active ?? null,
     rowState: new Map(options.rowState ?? []),
     converting: options.converting ?? null,
+    queued: new Set(options.queued ?? []),
   };
 }
 

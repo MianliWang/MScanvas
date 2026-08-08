@@ -16,11 +16,34 @@ use std::path::{Path, PathBuf};
 
 use super::dto::PreviewErrorDto;
 
+/// The volume serial number and 128-bit file ID of one admitted folder.
+///
+/// Enough to say whether a name still refers to the same directory object, and
+/// deliberately nothing more: it locates nothing and is never serialized.
+pub(super) type DestinationIdentity = (u64, [u8; 16]);
+
+/// The open directory admission judged, kept alive by whoever admitted it.
+///
+/// Holding it is what makes the admission still true afterwards: the share mode
+/// welcomes other readers and writers and refuses only rename and delete, so a
+/// caller that keeps it stops the one thing that could make the path mean a
+/// different object without stopping anything the conversion itself needs.
+#[cfg(windows)]
+pub(super) type DestinationHold = std::fs::File;
+
+/// POSIX has no equivalent: a directory can always be renamed out from under an
+/// open descriptor, so there is no hold to keep. The identity comparison is the
+/// guarantee there, exactly as it is for a source file.
+#[cfg(not(windows))]
+pub(super) type DestinationHold = ();
+
 /// Admits one chosen folder as a destination root, or says why not.
 ///
 /// Every refusal is decided before the conversion boundary is entered, so a
 /// rejected destination costs no plan, no staging directory and no process.
-pub(super) fn admit_destination_root(chosen: &Path) -> Result<PathBuf, PreviewErrorDto> {
+pub(super) fn admit_destination_root(
+    chosen: &Path,
+) -> Result<(PathBuf, Option<DestinationIdentity>, DestinationHold), PreviewErrorDto> {
     // The chosen object itself, before its name is resolved. `canonicalize`
     // follows links, so inspecting the result would inspect a link's *target*
     // and accept the link -- which is exactly what this refuses. A junction to
@@ -29,7 +52,7 @@ pub(super) fn admit_destination_root(chosen: &Path) -> Result<PathBuf, PreviewEr
     // Held first, and for the whole of admission. Everything below judges an
     // object nothing can rename or delete in the meantime, so the name still
     // means what it meant when it was inspected.
-    let _held = hold_chosen_directory(chosen)?;
+    let held = hold_chosen_directory(chosen)?;
     let chosen_metadata = std::fs::symlink_metadata(chosen).map_err(|_| destination_unusable())?;
     if is_reparse_point(&chosen_metadata) {
         return Err(destination_is_a_link());
@@ -50,7 +73,68 @@ pub(super) fn admit_destination_root(chosen: &Path) -> Result<PathBuf, PreviewEr
     if !is_local_volume(&canonical)? {
         return Err(destination_is_remote());
     }
-    Ok(canonical)
+    // Read from the handle this admission is already holding, so the identity
+    // describes the object that passed every check above rather than whatever
+    // the name means by the time somebody asks again. A queue keeps it, and a
+    // retry compares against it: a folder is not a name.
+    // The hold goes back to the caller rather than being dropped here. An
+    // admission that ended the moment it answered would be a statement about a
+    // directory that no longer has to be the one written into.
+    let identity = directory_identity(&held);
+    Ok((canonical, identity, held))
+}
+
+/// The volume serial and 128-bit file id behind one open directory handle.
+///
+/// `None` where the platform does not name objects that way, which every caller
+/// reads as a refusal rather than as agreement.
+#[cfg(windows)]
+fn directory_identity(held: &std::fs::File) -> Option<DestinationIdentity> {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+
+    /// `FileIdInfo`, the information class that answers with the whole file ID.
+    const FILE_ID_INFO_CLASS: i32 = 0x12;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileIdInformation {
+        volume_serial_number: u64,
+        file_id: [u8; 16],
+    }
+
+    // The equivalent std accessors are still unstable, and the whole file ID is
+    // what this needs: the 64-bit index is documented as unique only on volumes
+    // that have one, and ReFS is the counter-example its successor exists for.
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        #[link_name = "GetFileInformationByHandleEx"]
+        fn get_file_information_by_handle_ex(
+            file: *mut c_void,
+            information_class: i32,
+            information: *mut c_void,
+            information_size: u32,
+        ) -> i32;
+    }
+
+    let mut information = FileIdInformation::default();
+    // SAFETY: the handle outlives the call, and the out parameter is a fully
+    // initialized value of the layout this information class writes.
+    let succeeded = unsafe {
+        get_file_information_by_handle_ex(
+            held.as_raw_handle().cast::<c_void>(),
+            FILE_ID_INFO_CLASS,
+            std::ptr::from_mut(&mut information).cast::<c_void>(),
+            u32::try_from(std::mem::size_of::<FileIdInformation>())
+                .expect("FILE_ID_INFO fits in DWORD"),
+        )
+    };
+    (succeeded != 0).then_some((information.volume_serial_number, information.file_id))
+}
+
+#[cfg(not(windows))]
+const fn directory_identity(_held: &()) -> Option<DestinationIdentity> {
+    None
 }
 
 /// Holds the chosen directory open, without following it, for the length of
@@ -215,9 +299,14 @@ mod tests {
     #[test]
     fn a_local_folder_is_admitted_and_reported_canonically() {
         let root = std::env::temp_dir();
-        let admitted = admit_destination_root(&root).expect("a local temporary folder is usable");
+        let (admitted, identity, _held) =
+            admit_destination_root(&root).expect("a local temporary folder is usable");
 
         assert!(admitted.is_absolute());
+        assert!(
+            identity.is_some(),
+            "a Windows directory answers with a volume and a file id"
+        );
         assert!(
             is_local_volume(&admitted).expect("a local folder has a volume"),
             "the temporary folder of a Windows test run is on a local volume"

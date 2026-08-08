@@ -205,7 +205,11 @@ not exist, or worse, one that does and that this run deliberately did not touch.
 - **No widening of ingestion.** The picker, folder discovery and the Explorer
   drop remain mzML-only, and the suite asserts it directly: a Thermo acquisition
   offered to any of them is refused as an unsupported extension.
-- **No queue, cancellation, progress, retry or persistence.**
+- **No queue, cancellation, progress, retry or persistence.** *The queue and
+  retry are closed above this path by
+  [ADR 0013](0013-serial-conversion-queue.md); this path is still what one item
+  of that queue runs through, one plan at a time. Cancellation, a progress
+  percentage and persistence remain open on the same terms.*
 - **No second source family.** Bruker, Waters and directory acquisitions remain
   where ADR 0010 left them: unevidenced and unnamed.
 

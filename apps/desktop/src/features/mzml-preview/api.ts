@@ -4,7 +4,7 @@ import { createContext, useContext } from "react";
 import type {
   BackendAvailability,
   ConversionConflictPolicy,
-  ConversionPlanSummary,
+  ConversionQueuePlan,
   FolderIngestionResult,
   Preview,
   SelectedSpectrumOutcome,
@@ -109,7 +109,7 @@ export interface PreviewApi {
    * Describes the conversion one row would get. Starts nothing: no picker, no
    * reservation, no process.
    */
-  describeConversion(handle: string): Promise<ConversionPlanSummary>;
+  describeConversion(handles: readonly string[]): Promise<ConversionQueuePlan>;
   /**
    * Reads the session's one conversion slot.
    *
@@ -131,11 +131,19 @@ export interface PreviewApi {
    * read and nothing else. A dismissed picker resolves to the idle state, which
    * is an ordinary outcome: nothing was created and nothing ran.
    */
-  convertDataset(
-    handle: string,
+  convertDatasets(
+    handles: readonly string[],
     conflictPolicy: ConversionConflictPolicy,
     onReserved: () => void,
   ): Promise<WorkspaceConversionUpdate>;
+  /**
+   * Runs every retryable failure of the terminal queue again.
+   *
+   * Takes nothing: the queue already holds its destination, its order and its
+   * policy, and asking for any of them again would make a retry a new decision
+   * rather than the same one repeated.
+   */
+  retryConversions(): Promise<WorkspaceConversionUpdate>;
 }
 
 export const tauriPreviewApi: PreviewApi = {
@@ -158,17 +166,17 @@ export const tauriPreviewApi: PreviewApi = {
   openPreview: (handle) => invoke<Preview>("open_mzml_preview", { handle }),
   loadSpectrum: (handle, index) =>
     invoke<SelectedSpectrumOutcome>("load_selected_spectrum", { handle, index }),
-  describeConversion: (handle) =>
-    invoke<ConversionPlanSummary>("describe_workspace_conversion", { handle }),
+  describeConversion: (handles) =>
+    invoke<ConversionQueuePlan>("describe_workspace_conversion_queue", { handles }),
   getConversionState: () =>
     invoke<WorkspaceConversionUpdate>("get_workspace_conversion_state"),
-  convertDataset: (handle, conflictPolicy, onReserved) => {
+  convertDatasets: (handles, conflictPolicy, onReserved) => {
     const invokeOptions = {
       headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() },
     };
     return invoke<ConversionReservation>(
-      "begin_workspace_conversion",
-      { handle, conflictPolicy },
+      "begin_workspace_conversion_queue",
+      { handles, conflictPolicy },
       invokeOptions,
     ).then((reservation) => {
       const converted = invoke<WorkspaceConversionUpdate>(
@@ -180,6 +188,12 @@ export const tauriPreviewApi: PreviewApi = {
       return converted;
     });
   },
+  retryConversions: () =>
+    invoke<WorkspaceConversionUpdate>(
+      "retry_workspace_conversion_queue",
+      {},
+      { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } },
+    ),
 };
 
 const PreviewApiContext = createContext<PreviewApi>(tauriPreviewApi);

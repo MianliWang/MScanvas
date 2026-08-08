@@ -43,9 +43,25 @@ export function PreviewWorkspace() {
   // Derived once per roster change and handed down, so the rows the list
   // renders are the same list the reducer ranges over rather than a second
   // answer to the same question.
+  // The row a queue is converting right now, and every other row it holds.
+  const queueHandles = workspace.conversion.busyHandles;
+  const converting = useMemo(() => {
+    const state = workspace.conversion.state;
+    if (state.status !== "running") {
+      return null;
+    }
+    // The item that says it is running, not an index. The index counts what is
+    // done, and during a run the two agree -- but a reader that trusted the
+    // index would pin the wrong row the moment they did not.
+    return state.queue.items.find((item) => item.state === "running")?.datasetHandle ?? null;
+  }, [workspace.conversion.state]);
+  const queued = useMemo(
+    () => new Set(queueHandles.filter((handle) => handle !== converting)),
+    [queueHandles, converting],
+  );
   const projection = useMemo(
-    () => rosterProjection(roster, workspace.conversion.busyHandle),
-    [roster, workspace.conversion.busyHandle],
+    () => rosterProjection(roster, converting, queued),
+    [roster, converting, queued],
   );
 
   // A preview response describes the row as it was when the read was produced,
@@ -143,9 +159,7 @@ export function PreviewWorkspace() {
   // so every other row stays the user's to prune -- which matters most during a
   // conversion, because that is when the list is unusable for longest.
   const canRemove =
-    canMutate &&
-    (workspace.conversion.busyHandle === null ||
-      !roster.selected.has(workspace.conversion.busyHandle));
+    canMutate && !queueHandles.some((handle) => roster.selected.has(handle));
   // Reading the list back is not an escape route. It is a pure, gate-linearized
   // snapshot, but during a scan it would add a loading state and a projection
   // whose usefulness depends on whether the scan committed before or after it.
@@ -175,13 +189,53 @@ export function PreviewWorkspace() {
   // Asked for whenever the focused row changes, and cleared when it is not
   // convertible. The summary is read from Rust rather than composed here so it
   // describes the plan the run is actually fixed with.
-  const { describe: describeConversion } = workspace.conversion;
+  // What a conversion would act on, in the order the user is looking at.
+  //
+  // The selection when it holds convertible rows, and the focused row
+  // otherwise -- so `Convert focused…` stays exactly what it was and a
+  // multi-row selection becomes a queue without a second control. The order is
+  // the projection's, which is the order on screen after search and sort.
+  const selectedConvertible = useMemo(
+    () =>
+      projection.datasets.filter(
+        (dataset) => roster.selected.has(dataset.handle) && dataset.sourceKind === "thermo_raw",
+      ),
+    [projection, roster.selected],
+  );
+  // Stated, never silently dropped: a user who selected ten rows and sees a
+  // queue of six is owed the other four.
+  const excludedSelectedCount = useMemo(
+    () =>
+      projection.datasets.filter(
+        (dataset) => roster.selected.has(dataset.handle) && dataset.sourceKind !== "thermo_raw",
+      ).length,
+    [projection, roster.selected],
+  );
   const focusedConvertible =
     focusedDataset !== null && focusedDataset.sourceKind === "thermo_raw";
-  const focusedConvertibleHandle = focusedConvertible ? focusedDataset.handle : null;
+  const queueHandlesToConvert = useMemo(
+    () =>
+      selectedConvertible.length > 0
+        ? selectedConvertible.map((dataset) => dataset.handle)
+        : focusedConvertible
+          ? [focusedDataset.handle]
+          : [],
+    [selectedConvertible, focusedConvertible, focusedDataset],
+  );
+
+  const { describe: describeConversion } = workspace.conversion;
+  // The joined key is the dependency; the array itself is the input. A fresh
+  // array is built on every render, so depending on it would re-describe the
+  // same queue on every keystroke in the search box -- and splitting the key
+  // back apart to rebuild the input would turn a handle that ever held the
+  // separator into a different queue. A unit separator is the one thing an
+  // opaque handle cannot contain.
+  const describeKey = queueHandlesToConvert.join("\u001f");
   useEffect(() => {
-    describeConversion(focusedConvertibleHandle);
-  }, [describeConversion, focusedConvertibleHandle]);
+    describeConversion(queueHandlesToConvert);
+    // `queueHandlesToConvert` is deliberately absent: `describeKey` is its
+    // content, and the content is what decides whether to ask again.
+  }, [describeConversion, describeKey]);
 
   const handleTableRendered = useCallback(
     (renderedRowCount: number, milliseconds: number) => {
@@ -542,7 +596,9 @@ export function PreviewWorkspace() {
           <ConversionPanel
             canConvert={canConvert}
             conversion={workspace.conversion}
-            focused={focusedDataset}
+            excludedSelectedCount={excludedSelectedCount}
+            handles={queueHandlesToConvert}
+            scope={selectedConvertible.length > 0 ? "selection" : "focused"}
           />
           {preview.status === "loaded" ? (
             <PreviewSummary
@@ -663,33 +719,6 @@ function announceNotice(notice: WorkspaceNotice): string {
 }
 
 /**
- * What a reader is told about the one conversion.
- *
- * One sentence per state and nothing while idle, so an empty region stays empty
- * rather than announcing that nothing is happening. Nothing here is a
- * percentage: nothing measures one.
- */
-function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): string {
-  const state = workspace.conversion.state;
-  switch (state.status) {
-    case "awaitingDestination":
-      return `Choose where to save the converted mzML for ${state.dataset.fileName}.`;
-    case "running":
-      return `Converting ${state.dataset.fileName}. This cannot be cancelled.`;
-    case "completed":
-      return state.report.outcome === "finalized"
-        ? `Converted ${state.report.outputFileName ?? "the acquisition"}. Output-only validation.`
-        : state.report.outcome === "skipped_existing_destination"
-          ? "A file of that name was already there and was left untouched."
-          : "The conversion did not finish, so no file was written.";
-    case "failed":
-      return state.error.summary;
-    case "idle":
-      return "";
-  }
-}
-
-/**
  * What each refusal says. Exhaustive over the reasons, so one added to the
  * boundary fails compilation here rather than being dropped in silence.
  */
@@ -698,6 +727,53 @@ const DROP_REJECTION_STATUS: Readonly<Record<WorkspaceDropRejectionReason, strin
   conversion_busy:
     "MSCanvas is converting an acquisition, so those files were not added. Try again once the conversion has finished.",
 };
+
+/**
+ * What a reader is told about the conversion queue.
+ *
+ * One sentence per state and nothing while idle, so an empty region stays empty
+ * rather than announcing that nothing is happening. Nothing here is a
+ * percentage: nothing measures one.
+ */
+function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): string {
+  const state = workspace.conversion.state;
+  if (state.status === "idle") {
+    return "";
+  }
+  const { queue } = state;
+  // Said as soon as the retry is dispatched. Rust answers once, when the whole
+  // rerun is over, so a region that waited for it would repeat the finished
+  // counts back at a screen-reader user who had just pressed Retry, and stay
+  // silent for as long as the rerun took.
+  if (workspace.conversion.retrying && state.status === "terminal") {
+    return `Retrying ${String(queue.retryableFailedCount)} failed. This cannot be cancelled.`;
+  }
+  if (state.status === "awaitingDestination") {
+    return "Choose where to save the converted mzML.";
+  }
+  if (state.status === "running") {
+    // The item that says it is running, which is the same row the roster pins.
+    // Deriving one of them from the position and the other from the state would
+    // let the sentence name one acquisition while the list marked another.
+    const position = queue.items.findIndex((item) => item.state === "running");
+    const current = position === -1 ? undefined : queue.items[position];
+    // Named rather than counted alone, so a repeated poll that finds the same
+    // item says the same sentence and is not announced twice.
+    return current === undefined
+      ? `Converting ${String(queue.itemCount)} acquisitions. This cannot be cancelled.`
+      : `Converting item ${String(position + 1)} of ${String(queue.itemCount)}, ${current.fileName}. This cannot be cancelled.`;
+  }
+  if (queue.error !== null) {
+    return queue.error.summary;
+  }
+  // The same condition the visible panel applies, because it is the same claim.
+  // A queue whose items were all skipped judged nothing, and a skipped item's
+  // existing file was explicitly not inspected.
+  const judged = queue.items.some((item) => item.report?.validation != null);
+  return `${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed.${
+    judged ? " Output-only validation." : ""
+  }`;
+}
 
 function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>): string {
   if (workspace.dropSubscriptionStatus === "unavailable") {

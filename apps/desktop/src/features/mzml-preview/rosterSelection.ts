@@ -263,6 +263,7 @@ export function rowPresentation(state: RosterState, handle: string): RowPresenta
 export function rosterProjection(
   state: RosterState,
   converting: string | null = null,
+  queued: ReadonlySet<string> = new Set(),
 ): RosterProjection {
   return projectRoster({
     datasets: state.datasets,
@@ -272,6 +273,7 @@ export function rosterProjection(
     active: state.active,
     rowState: state.rowState,
     converting,
+    queued,
   });
 }
 

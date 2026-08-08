@@ -6,9 +6,9 @@ MSCanvas aims to be a Windows-first, local-first desktop application for importi
 
 > Status: **pre-alpha**. The application has two real end-to-end paths: curate a
 > session workspace of local `.mzML` files and inspect one of them against a
-> user-installed ProteoWizard, and convert one focused Thermo Scientific RAW row
-> to mzML on one evidenced ProteoWizard build. It is not yet the batch workspace
-> described under [Product scope](#product-scope).
+> user-installed ProteoWizard, and queue up to sixteen selected Thermo Scientific
+> RAW rows for serial conversion to mzML on one evidenced ProteoWizard build. It
+> is not yet the batch workspace described under [Product scope](#product-scope).
 
 Canonical repository: [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas) (currently private).
 
@@ -87,21 +87,32 @@ Build a session workspace of local `.mzML` files and inspect one of them:
 Not implemented yet: vendor RAW preview; TIC, BPC and chromatogram views;
 directory-formatted acquisition recognition; filtering the workspace by
 anything other than filename, and grouping it; a workspace that outlives the
-session, which includes remembering a search or a sort; a conversion *queue*
-with its progress, retry and cancellation; and figure export. mzXML output stays
-disabled and fail-closed until representative multi-source integrity checks pass.
+session, which includes remembering a search or a sort; conversion progress as a
+percentage; conversion cancellation; a conversion queue that survives closing the
+application; and figure export. mzXML output stays disabled and fail-closed until
+representative multi-source integrity checks pass.
 
-One conversion is reachable, and its limits are the claim. `Add files…` admits
-regular `.mzML` files and one evidenced Thermo Scientific RAW family — recognized
-by its signature, never by its name — and a focused Thermo row can be converted
-to mzML: a fixed plan, a Fail-or-Skip choice with no overwrite, a Rust-owned
-picker for a folder on this computer, and a result that says what was measured
-of the output. It converts one acquisition at a time, on one exact ProteoWizard
-build the repository has a recorded conversion for, and it cannot be cancelled.
-Validation is output-only: the converted document's own postconditions are
-established, and nothing is compared against a vendor-source spectrum model,
-because MSCanvas cannot read one. Folder ingestion and Explorer drop stay
-mzML-only. The converted file is not added to the workspace for you.
+A conversion queue is reachable, and its limits are the claim. `Add files…`
+admits regular `.mzML` files and one evidenced Thermo Scientific RAW family —
+recognized by its signature, never by its name. Select up to **16** Thermo rows
+and MSCanvas shows the ordered list it would run and the name each item would
+write; you choose Fail or Skip for names already taken, with no overwrite, and
+one folder on this computer through a Rust-owned picker. The items convert one at
+a time, in the order shown, and each reports what was measured of its own output.
+
+One file's failure does not stop the files after it, and nothing already
+converted is undone. `Retry` reruns only the failures MSCanvas can say another
+attempt might change — a destination folder that is there but will not open, or
+an acquisition that is there but could not be read — and leaves everything else
+exactly as it is.
+
+It runs on one exact ProteoWizard build the repository has a recorded conversion
+for, one file at a time, and it cannot be cancelled; there is no percentage
+either, because nothing measures one. Validation is output-only: the converted
+document's own postconditions are established, and nothing is compared against a
+vendor-source spectrum model, because MSCanvas cannot read one. Folder ingestion
+and Explorer drop stay mzML-only. Converted files are not added to the workspace
+for you.
 
 ## Product scope
 
