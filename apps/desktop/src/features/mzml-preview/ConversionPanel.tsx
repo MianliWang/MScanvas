@@ -421,8 +421,15 @@ function QueueState({
  * and still has a number to show.
  */
 function runningPosition(queue: ConversionQueue): number {
-  const found = queue.items.findIndex((item) => item.state === "running");
-  return found === -1 ? Math.min(queue.currentIndex + 1, queue.itemCount) : found + 1;
+  const running = queue.items.findIndex((item) => item.state === "running");
+  if (running !== -1) {
+    return running + 1;
+  }
+  // Between items, the next one is the first still pending -- not the count of
+  // what is done. A retry reruns failures wherever they sit, so with items 2
+  // and 4 failed the count says three and the answer is two.
+  const next = queue.items.findIndex((item) => item.state === "pending");
+  return next === -1 ? Math.min(queue.currentIndex + 1, queue.itemCount) : next + 1;
 }
 
 /** What each item state says, in words rather than in colour. */

@@ -9433,6 +9433,7 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "error",
             "failedCount",
             "finalizedCount",
+            "installationGeneration",
             "itemCount",
             "items",
             "nonRetryableFailedCount",

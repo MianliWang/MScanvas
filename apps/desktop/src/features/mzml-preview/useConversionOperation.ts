@@ -143,12 +143,17 @@ export function useConversionOperation(
       // them separately would start a backend probe per item before any of them
       // had answered, which for a full queue is sixteen serial help probes with
       // preview and conversion disabled throughout.
-      const generations = update.state.queue.items
-        .map((item) => item.report?.installationGeneration)
-        .filter((generation): generation is number => generation !== undefined);
-      if (generations.length > 0) {
-        onInstallationGeneration(Math.max(...generations));
-      }
+      const generations = [
+        // The queue's own reading first. A pass refused for running on a
+        // different installation produced no item, so the reports alone would
+        // leave the banner naming the installation the earlier results came
+        // from until the user rechecked by hand.
+        update.state.queue.installationGeneration,
+        ...update.state.queue.items
+          .map((item) => item.report?.installationGeneration)
+          .filter((generation): generation is number => generation !== undefined),
+      ];
+      onInstallationGeneration(Math.max(...generations));
     }
   }, [onInstallationGeneration]);
 

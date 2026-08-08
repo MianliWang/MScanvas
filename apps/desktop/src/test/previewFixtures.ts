@@ -573,6 +573,7 @@ export function queueOf(items: readonly ConversionQueueItem[]) {
     retryableFailedCount: retryable,
     nonRetryableFailedCount: failed - retryable,
     error: null,
+    installationGeneration: 0,
   };
 }
 

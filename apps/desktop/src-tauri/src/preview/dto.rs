@@ -414,6 +414,15 @@ pub struct ConversionQueueDto {
     /// destination this boundary will not write to, a backend that cannot
     /// convert, a reservation that is no longer valid.
     pub error: Option<PreviewErrorDto>,
+    /// Where the sequence of backend changes stood when this queue last
+    /// resolved one.
+    ///
+    /// Carried by the queue and not only by its items, because the pass that
+    /// matters most for this may produce no item at all: a queue refused for
+    /// running on a different installation resolved that installation first,
+    /// and a reader with only the old items' reports would go on showing the
+    /// installation those results came from.
+    pub installation_generation: u64,
 }
 
 /// One item of a queue.

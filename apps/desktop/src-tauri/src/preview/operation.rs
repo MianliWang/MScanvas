@@ -241,6 +241,8 @@ pub(super) struct ConversionQueue {
     /// Set when a destination has been admitted, and kept for the queue's life
     /// so a retry does not ask for one again.
     destination: Option<AdmittedDestination>,
+    /// Where the backend sequence stood when this queue last resolved one.
+    installation_generation: u64,
     /// Which installation this queue's items were converted on.
     ///
     /// The identity itself, not the sequence that counts changes to it. A
@@ -288,6 +290,7 @@ impl ConversionQueue {
             current: 0,
             retry_round: 0,
             destination: None,
+            installation_generation: 0,
             installation: None,
             error: None,
         })
@@ -345,6 +348,7 @@ impl ConversionQueue {
             retryable_failed_count: retryable,
             non_retryable_failed_count: failed - retryable,
             error: self.error.clone(),
+            installation_generation: self.installation_generation,
         }
     }
 }
@@ -589,12 +593,19 @@ impl ConversionSlot {
         &mut self,
         operation: u64,
         installation: Option<InstallationIdentity>,
+        generation: u64,
     ) -> Result<(), PreviewErrorDto> {
         let Some(queue) = self.running_mut(operation) else {
             // Not this worker's queue any more. Whatever replaced it will bind
             // its own installation, and the caller stops either way.
             return Ok(());
         };
+        // Recorded before the comparison below, so a queue refused *for* the
+        // installation having changed still reports the one it resolved. That
+        // pass produces no item and therefore no report, and a reader with only
+        // the earlier reports would go on naming the installation those results
+        // came from until the user rechecked by hand.
+        queue.installation_generation = generation;
         match &queue.installation {
             // Both sides must say which build they are. An installation that
             // will not identify itself is not evidence that it is the same one,

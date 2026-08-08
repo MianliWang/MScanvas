@@ -451,6 +451,15 @@ export interface ConversionQueue {
   readonly nonRetryableFailedCount: number;
   /** A refusal that stopped the whole queue rather than one item. */
   readonly error: PreviewError | null;
+  /**
+   * Where the sequence of backend changes stood when this queue last resolved
+   * one.
+   *
+   * Carried by the queue and not only by its items, because the pass that
+   * matters most may produce no item at all: a queue refused for running on a
+   * different installation resolved that installation first.
+   */
+  readonly installationGeneration: number;
 }
 
 /**

@@ -124,6 +124,7 @@ const QUEUE = {
   retryableFailedCount: 1,
   nonRetryableFailedCount: 0,
   error: null,
+  installationGeneration: 0,
 } as const satisfies ConversionQueue;
 
 /** Every string the value carries, at any depth, keys included. */
@@ -193,6 +194,7 @@ describe("the conversion wire contract", () => {
         "error",
         "failedCount",
         "finalizedCount",
+        "installationGeneration",
         "itemCount",
         "items",
         "nonRetryableFailedCount",

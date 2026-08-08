@@ -1279,9 +1279,11 @@ impl PreviewService {
         // Bound to a local first, and every lock below it likewise. A guard
         // produced inside an `if` condition lives until the end of that `if`,
         // body included -- and each of these bodies takes the same lock again.
-        let bound = self
-            .conversion_slot()
-            .bind_installation(operation, backend.installation.clone());
+        let bound = self.conversion_slot().bind_installation(
+            operation,
+            backend.installation.clone(),
+            generation,
+        );
         if let Err(error) = bound {
             drop(running);
             return self.refuse_queue(operation, error);
