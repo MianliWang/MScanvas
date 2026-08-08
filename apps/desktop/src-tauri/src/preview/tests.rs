@@ -13,9 +13,9 @@ use std::time::Duration;
 
 use mscanvas_proteowizard::{
     BackendTool, CancellationToken, CapturedHelpStream, CommandSpec, CompleteHelpCapture,
-    ConflictPolicy, InstalledHelpCapabilities, PreviewOperation, PreviewOutcome,
-    PreviewOutputEntry, PreviewOutputManifest, ProcessError, ProcessOutput, ProcessRunner,
-    Sha256Digest, Termination, interpret_preview,
+    ConflictPolicy, ConversionCancellation, InstalledHelpCapabilities, PreviewOperation,
+    PreviewOutcome, PreviewOutputEntry, PreviewOutputManifest, ProcessError, ProcessOutput,
+    ProcessRunner, Sha256Digest, Termination, interpret_preview,
 };
 
 use super::backend::{ConversionBackend, OperationAttempt, PreviewProvider, interpretation_error};
@@ -40,11 +40,15 @@ use super::dto::{
     ValidationModeDto, WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
 };
 use super::installation::InstallationIdentity;
+use super::operation::{
+    AdmittedDestination, ConversionQueue, ConversionSlot, QueueItem, StopAccepted,
+};
 /// The share-mode probe that answers whether a file is still held open. It
 /// lives beside the flags the lease is opened with, because that is what makes
 /// its answer exact rather than a guess.
 #[cfg(windows)]
 use super::selection::nothing_else_holds_open;
+use super::selection::{DatasetId, DatasetSourceKind};
 use super::selection::{FileIdentity, accept_thermo_raw_file, open_conversion_source};
 use super::service::PreviewService;
 
@@ -11202,5 +11206,182 @@ fn the_serialized_stopped_queue_carries_no_location_and_names_no_output() {
             !value.contains('\\') && !value.contains('/'),
             "a stopped queue names no path, and {value:?} carries a separator"
         );
+    }
+}
+
+/// A stopped queue holding a genuinely retryable failure is still not retried.
+///
+/// The failure would be offered again in an ordinary queue -- that is what
+/// `retryable` means -- and a stopped queue still refuses, because the user
+/// asked for the whole batch to stop rather than for part of it to be rerun.
+#[test]
+fn a_stopped_queue_is_not_retried_even_when_it_holds_a_retryable_failure() {
+    let fixture = TestFile::new("queue-stop-retry");
+    let destination = destination_root(&fixture, "out");
+    let (runner, started, release) = StopAwareRunner::parked(StopEnding::Confirmed);
+    let service = Arc::new(PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    ))));
+    // The first item's source is locked open by something else, which is the
+    // one refusal this workflow classifies as retryable.
+    let blocked = fixture.thermo_raw("blocked.raw");
+    let handles: Vec<String> = [blocked.clone(), fixture.thermo_raw("two.raw")]
+        .iter()
+        .map(|path| add_one_acquisition(&service, path))
+        .collect();
+    let held = fs::OpenOptions::new()
+        .read(true)
+        .open(&blocked)
+        .expect("hold the acquisition open");
+
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("the queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    drop(held);
+
+    let worker = {
+        let service = Arc::clone(&service);
+        let destination = destination.clone();
+        std::thread::spawn(move || service.run_claimed_conversion(operation, &destination))
+    };
+    started
+        .recv_timeout(Duration::from_secs(10))
+        .expect("an item reaches its process");
+    service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("stoppable");
+    release.send(()).expect("release the parked conversion");
+    let update = worker.join().expect("the queue worker finishes");
+
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Stopped
+    );
+    // Whatever this queue holds, the stopped one is terminal. Asserted through
+    // the same command the interface calls rather than through the slot.
+    assert!(
+        service
+            .retry_conversion_queue(current_document(&service))
+            .is_err(),
+        "a stopped queue is never rerun in place"
+    );
+    // And a queue that was *not* stopped still is, on the same service.
+    let completed = queue_and_run(&service, &handles[1..], &destination);
+    assert_eq!(
+        terminal_reason(&completed),
+        ConversionQueueTerminalReasonDto::Completed
+    );
+}
+
+/// The stop handle belongs to one exact attempt.
+///
+/// Released by operation, item and attempt number, so a release that names any
+/// other attempt leaves the live handle alone. The queue's own loop never
+/// produces a mismatched release today -- one worker settles one attempt before
+/// binding the next -- which is why this asks the slot directly: the identity is
+/// what makes the binding provable rather than incidental, and a second worker
+/// or a reordered loop would depend on it.
+#[test]
+fn releasing_another_attempt_leaves_the_live_stop_handle_alone() {
+    let mut slot = ConversionSlot::default();
+    let cancellation = ConversionCancellation::new();
+    let request = cancellation.request_handle();
+
+    // A queue of one, marked running, with one attempt bound to it.
+    let queue = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        vec![test_queue_item()],
+    )
+    .expect("one item is a queue");
+    let _ = slot
+        .begin(queue)
+        .expect("an idle slot issues a reservation");
+    let operation = slot
+        .claim(&reservation_handle(&slot), 0)
+        .expect("claim the reservation");
+    assert!(slot.start_running(operation, test_destination()));
+    let attempt = slot.start_item(operation, 0).expect("the item starts");
+    slot.bind_attempt(operation, 0, attempt, request);
+
+    // Every way of naming a different attempt leaves it bound.
+    slot.release_attempt(operation, 1, attempt);
+    slot.release_attempt(operation, 0, attempt + 1);
+    slot.release_attempt(operation + 1, 0, attempt);
+    match slot.request_stop(operation).expect("stoppable") {
+        StopAccepted::Requested(handle) => {
+            handle
+                .expect("the live attempt is still reachable")
+                .request();
+        }
+        StopAccepted::AlreadyRequested => panic!("the first request is not a repeat"),
+    }
+    assert!(
+        cancellation.request_handle().is_requested(),
+        "the stop reached the attempt it was bound to"
+    );
+
+    // And the exact one clears it, so a later stop finds nothing stale.
+    let mut slot = ConversionSlot::default();
+    let cancellation = ConversionCancellation::new();
+    let queue = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        vec![test_queue_item()],
+    )
+    .expect("one item is a queue");
+    let _ = slot.begin(queue).expect("reservation");
+    let operation = slot
+        .claim(&reservation_handle(&slot), 0)
+        .expect("claim the reservation");
+    assert!(slot.start_running(operation, test_destination()));
+    let attempt = slot.start_item(operation, 0).expect("the item starts");
+    slot.bind_attempt(operation, 0, attempt, cancellation.request_handle());
+    slot.release_attempt(operation, 0, attempt);
+    match slot.request_stop(operation).expect("stoppable") {
+        StopAccepted::Requested(handle) => assert!(
+            handle.is_none(),
+            "a settled attempt leaves no handle for a later stop to ask"
+        ),
+        StopAccepted::AlreadyRequested => panic!("the first request is not a repeat"),
+    }
+    assert!(!cancellation.request_handle().is_requested());
+}
+
+/// One queue item, for the slot tests that need a queue and not a filesystem.
+fn test_queue_item() -> QueueItem {
+    QueueItem::new(
+        DatasetId::parse("file-0").expect("a dataset handle"),
+        0,
+        DatasetSourceKind::ThermoRaw,
+        SelectedFileDto {
+            handle: String::from("file-0"),
+            file_name: String::from("one.raw"),
+            byte_length: 78_309,
+            source_kind: DatasetSourceKindDto::ThermoRaw,
+            relative_context: None,
+        },
+        String::from("one.mzML"),
+    )
+}
+
+/// A destination the slot can hold without one existing.
+fn test_destination() -> AdmittedDestination {
+    AdmittedDestination::new(PathBuf::from("destination"), None)
+}
+
+/// The reservation the slot currently holds, as the webview would return it.
+fn reservation_handle(slot: &ConversionSlot) -> String {
+    let update = slot.read(false);
+    match update.state {
+        WorkspaceConversionStateDto::AwaitingDestination { operation_id, .. } => {
+            format!("conversion-reservation-{operation_id}")
+        }
+        other => panic!("the slot is awaiting a destination; got {other:?}"),
     }
 }
