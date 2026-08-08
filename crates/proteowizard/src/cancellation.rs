@@ -113,15 +113,23 @@ impl fmt::Debug for CancellationRequest {
 ///
 /// The two are not degrees of the same thing. `BeforeRun` is decided by the run
 /// before it inspects, creates, plans or launches anything, so it is a
-/// statement that none of that happened. `DuringRun` is everything else.
+/// statement that none of that happened. `DuringRun` is everything else, and
+/// it is deliberately not a statement about how far the run got.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CancellationObservation {
     /// The request was already made when the attempt began. Nothing was
     /// inspected, created, planned or launched, so there was no process tree to
     /// terminate and no staging area to clean.
     BeforeRun,
-    /// The request arrived after the attempt had begun. A staging area existed
-    /// and the backend command had been handed to the process boundary.
+    /// The request arrived after the attempt had begun, and nothing more.
+    ///
+    /// It covers everything from a request that landed while the acquisition
+    /// was still being rehashed — no staging area, no command, no process — to
+    /// one that terminated a backend mid-write. **It is not evidence that a
+    /// staging area existed or that a process ran.** Those are separate facts
+    /// and the report carries them separately: whether a backend ran is
+    /// `backend_was_run`, and what the staging area held is
+    /// `staged_content`, which is absent when there was none.
     DuringRun,
 }
 

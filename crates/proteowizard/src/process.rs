@@ -44,6 +44,23 @@ pub enum Termination {
 }
 
 impl Termination {
+    /// The stable identifier for how a run ended.
+    ///
+    /// Every outcome variant this crate publishes carries one, so a caller can
+    /// record or render the distinction without depending on a Rust variant
+    /// name or on `Debug`. It matters most here: "terminated" and "never
+    /// started" are the two facts a cancellation diagnostic must not confuse,
+    /// and a caller that has only a rendered enum name to go on has no
+    /// contract to rely on.
+    #[must_use]
+    pub const fn stable_id(self) -> &'static str {
+        match self {
+            Self::Exited => "exited",
+            Self::Cancelled => "cancelled",
+            Self::NotStarted => "not_started",
+        }
+    }
+
     /// Whether the run ended because a cancellation request was honoured,
     /// whether or not a process had been created by the time it was.
     ///
@@ -1118,6 +1135,37 @@ mod tests {
 
     use super::*;
     use crate::BackendTool;
+
+    /// Every way a run can end has its own identifier, and the two that a
+    /// cancellation diagnostic must not confuse are not the same string.
+    #[test]
+    fn every_termination_has_its_own_stable_identifier() {
+        let terminations = [
+            Termination::Exited,
+            Termination::Cancelled,
+            Termination::NotStarted,
+        ];
+        let ids = terminations.map(Termination::stable_id);
+        let unique = ids.iter().collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(unique.len(), ids.len(), "{ids:?}");
+        assert_ne!(
+            Termination::Cancelled.stable_id(),
+            Termination::NotStarted.stable_id()
+        );
+
+        for termination in terminations {
+            assert_eq!(
+                termination.is_cancellation(),
+                termination != Termination::Exited,
+                "{termination:?}"
+            );
+            assert_eq!(
+                termination.launched(),
+                termination != Termination::NotStarted,
+                "{termination:?}"
+            );
+        }
+    }
 
     #[test]
     fn missing_executable_is_distinct_from_non_zero_exit() {
