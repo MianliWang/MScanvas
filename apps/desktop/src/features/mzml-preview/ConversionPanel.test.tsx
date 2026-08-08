@@ -81,6 +81,35 @@ describe("queueing selected Thermo RAW conversions", () => {
     });
   });
 
+  it("calls one selected row selected, because that is what it is", async () => {
+    // A queue of one built from a selection is not the focused row's
+    // conversion, even though it is the same size. Labelling it `Convert
+    // focused…` would name a row the action need not be acting on: the user can
+    // select one row and focus another.
+    const api = createFakePreviewApi({
+      initialDatasets: [first, second],
+      availability: availableBackend,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /run-2\.raw/ });
+
+    // Select the second row, which also focuses it; then move focus to the
+    // first with the keyboard, which leaves the selection where it was.
+    fireEvent.click(rows()[1]);
+    fireEvent.keyDown(screen.getByRole("listbox", { name: "Workspace" }), { key: "ArrowUp" });
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(within(panel).getByRole("button", { name: "Convert 1 selected…" })).toBeVisible();
+    });
+    expect(within(panel).queryByRole("button", { name: "Convert focused…" })).toBeNull();
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Convert 1 selected…" }));
+    await waitFor(() => {
+      expect(api.conversionRequests).toEqual([{ handles: ["file-2"], conflictPolicy: "fail" }]);
+    });
+  });
+
   it("queues several selected rows and says what it excluded", async () => {
     const api = createFakePreviewApi({
       // An mzML row between two Thermo rows, so exclusion is not merely the

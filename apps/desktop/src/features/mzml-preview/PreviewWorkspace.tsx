@@ -598,6 +598,7 @@ export function PreviewWorkspace() {
             conversion={workspace.conversion}
             excludedSelectedCount={excludedSelectedCount}
             handles={queueHandlesToConvert}
+            scope={selectedConvertible.length > 0 ? "selection" : "focused"}
           />
           {preview.status === "loaded" ? (
             <PreviewSummary

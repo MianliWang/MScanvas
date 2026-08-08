@@ -1556,8 +1556,13 @@ describe("the session workspace roster", () => {
     expect(screen.queryByRole("grid", { name: "Spectra" })).toBeNull();
     expect(screen.getByText(/Cleared 2 files from the list\./, VISIBLE)).toBeVisible();
     expect(screen.getByText(/The files on disk were not changed\./, VISIBLE)).toBeVisible();
-    // Focus lands somewhere it can be used rather than on the body.
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add files…" }));
+    // Focus lands somewhere it can be used rather than on the body. Awaited,
+    // because restoring it is an effect keyed on a token: the emptied list
+    // commits first, and under load a bare read here finds the body and fails a
+    // test about behaviour that is not wrong.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
+    });
     expect(screen.queryByRole("button", { name: "Clear list" })).toBeNull();
   });
 
@@ -2737,8 +2742,13 @@ describe("adding a folder of mzML files", () => {
     expect(screen.getByText("No files in this session yet")).toBeVisible();
     expect(api.openCount()).toBe(0);
     // And paid on the commit that makes the control usable, rather than leaving
-    // a keyboard user on the body with no way back into the workspace.
-    expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
+    // a keyboard user on the body with no way back into the workspace. Awaited,
+    // because the wait above is for the control becoming enabled and paying the
+    // debt is a further effect: reading it bare passes only if those two land in
+    // the same flush, which under load they need not.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
+    });
   });
 
   it("keeps an empty workspace empty when Clear list supersedes its first import", async () => {

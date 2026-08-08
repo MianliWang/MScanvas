@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 
 import type {
   ConversionConflictPolicy,
+  ConversionQueue,
   ConversionQueueItem,
   ConversionReport,
 } from "./contracts";
@@ -35,6 +36,13 @@ const RESIDUE_EXPLANATION = "MSCanvas could not remove its own temporary folder 
 
 export interface ConversionPanelProps {
   readonly conversion: ConversionOperation;
+  /**
+   * Where the rows came from, which is what the action may call them.
+   *
+   * One selected row is still a selected row: labelling it `Convert focused…`
+   * would name a row the action might not be acting on.
+   */
+  readonly scope: "selection" | "focused";
   /** The rows this panel would queue, in the order they would run. */
   readonly handles: readonly string[];
   /** How many selected rows are not convertible and are therefore excluded. */
@@ -44,15 +52,18 @@ export interface ConversionPanelProps {
 }
 
 /**
- * The focused row's conversion: what it would do, and what it did.
+ * The conversion queue: what it would do, and what it did.
  *
- * Acts on exactly one row — the focused one — and never on the selection. A
- * selection is a set the user built for removing rows; converting is one
- * acquisition at a time, and an action that read the selection would be an
- * action whose scope changed as they curated the list.
+ * Acts on the selection where there is one and on the focused row otherwise, so
+ * a multi-row selection becomes a queue without a second control. The scope a
+ * selection gives is a set the user curates, so the whole of it — the ordered
+ * list, the name each item would write, and the rows excluded for being mzML
+ * already — is on screen before the action is pressed, and it is bound at that
+ * moment rather than tracked afterwards.
  */
 export function ConversionPanel({
   conversion,
+  scope,
   handles,
   excludedSelectedCount,
   canConvert,
@@ -103,6 +114,7 @@ export function ConversionPanel({
           excludedSelectedCount={excludedSelectedCount}
           handles={handles}
           repeating={terminal}
+          scope={scope}
         />
       )}
     </section>
@@ -116,11 +128,13 @@ function PlanState({
   excludedSelectedCount,
   canConvert,
   repeating,
+  scope,
 }: {
   readonly conversion: ConversionOperation;
   readonly handles: readonly string[];
   readonly excludedSelectedCount: number;
   readonly canConvert: boolean;
+  readonly scope: "selection" | "focused";
   /** Whether a previous result is on screen above this plan. */
   readonly repeating: boolean;
 }): ReactElement | null {
@@ -221,7 +235,7 @@ function PlanState({
           }}
           type="button"
         >
-          {count === 1 ? "Convert focused…" : `Convert ${String(count)} selected…`}
+          {scope === "focused" ? "Convert focused…" : `Convert ${String(count)} selected…`}
         </button>
       </div>
     </div>
@@ -253,7 +267,7 @@ function QueueState({
       ) : state.status === "running" ? (
         <>
           <p>
-            {`Converting item ${String(Math.min(queue.currentIndex + 1, queue.itemCount))} of ${String(queue.itemCount)}…`}
+            {`Converting item ${String(runningPosition(queue))} of ${String(queue.itemCount)}…`}
           </p>
           <p className="quiet-text" role="note">
             This conversion workflow cannot cancel a running queue.
@@ -342,6 +356,21 @@ function QueueState({
       ) : null}
     </div>
   );
+}
+
+/**
+ * Which item is running, counting from one.
+ *
+ * The item that says it is running, not the queue's position. The position
+ * counts what is done, and during a run the two agree -- but the live region and
+ * the roster both read the state, and a third reader that trusted the position
+ * would name a different acquisition than they marked the moment they did not.
+ * Falls back to the position, because a queue between items has no running item
+ * and still has a number to show.
+ */
+function runningPosition(queue: ConversionQueue): number {
+  const found = queue.items.findIndex((item) => item.state === "running");
+  return found === -1 ? Math.min(queue.currentIndex + 1, queue.itemCount) : found + 1;
 }
 
 /** What each item state says, in words rather than in colour. */
