@@ -209,16 +209,19 @@ fn run_scenarios(
 
     match cli.thermo_input.as_deref() {
         Some(input) => {
-            // The vendor route gets the earliest post-staging milestone this
-            // harness has, because the lawful fixture is small: the point is
-            // that the evidenced vendor reader can be terminated, not that it
-            // can be caught mid-write.
+            // The point of this one is that the evidenced *vendor reader* can
+            // be terminated, so the milestone has to be one only a launched
+            // process can reach. The staging area is not: it exists before the
+            // command is planned, and the executor's pre-spawn checks are long
+            // enough that a request made then is refused before any process
+            // exists — correct behaviour, and no evidence at all about the
+            // reader. A staged entry is written by the reader itself.
             scenario(
                 "thermo_early",
                 capabilities,
                 workspace,
                 input,
-                Milestone::StagingCreated,
+                Milestone::StagedOutputAppeared,
             )?;
         }
         None => println!("thermo_early.skipped=no_thermo_input_supplied"),
@@ -407,9 +410,6 @@ fn encode_base64(bytes: &[u8], out: &mut String) {
 enum Milestone {
     /// Before the attempt begins.
     BeforeRun,
-    /// The private staging area exists. MSCanvas creates it immediately before
-    /// the backend command is planned and launched.
-    StagingCreated,
     /// The staging area holds an entry the backend put there, which means the
     /// process launched, was assigned to the owned job before the capture
     /// threads started, and has begun writing.
@@ -425,7 +425,6 @@ impl Milestone {
     const fn stable_id(self) -> &'static str {
         match self {
             Self::BeforeRun => "before_run",
-            Self::StagingCreated => "staging_created",
             Self::StagedOutputAppeared => "staged_output_appeared",
             Self::StagedOutputGrew => "staged_output_grew",
             Self::Elapsed(_) => "measured_natural_duration",
@@ -453,9 +452,15 @@ fn measure_natural_run(
 
     println!("baseline.outcome={}", report.outcome().stable_id());
     println!("baseline.detail={}", report.outcome().detailed_stable_id());
+    // A baseline that never launched has no natural backend duration to be a
+    // baseline of. Folding that into zero would time the race at nothing, turn
+    // it into an immediate cancellation, and still record it under a label
+    // that claims it raced a natural exit. Refusing is the only honest answer:
+    // there is no ordering evidence to be had from a run that did not happen.
     let backend_elapsed = report
         .backend()
-        .map_or(Duration::ZERO, BackendRunFacts::elapsed);
+        .map(BackendRunFacts::elapsed)
+        .ok_or("the baseline never ran a backend, so there is no natural duration to race")?;
     println!(
         "baseline.backend_elapsed_ms={}",
         backend_elapsed.as_millis()
@@ -864,11 +869,6 @@ fn watch_staging(
             thread::sleep(POLL_INTERVAL);
             continue;
         };
-        if matches!(milestone, Milestone::StagingCreated) {
-            observation.reached = true;
-            observation.waited = started.elapsed();
-            return observation;
-        }
         let Ok(snapshot) = snapshot_output_directory(&staging_output) else {
             if observation.stop_on(settled) {
                 break;
@@ -907,7 +907,7 @@ fn watch_staging(
             Milestone::StagedOutputGrew => {
                 observation.growth_observed && observation.last_bytes.is_some_and(|bytes| bytes > 0)
             }
-            Milestone::BeforeRun | Milestone::StagingCreated | Milestone::Elapsed(_) => true,
+            Milestone::BeforeRun | Milestone::Elapsed(_) => true,
         };
         if reached {
             observation.reached = true;
