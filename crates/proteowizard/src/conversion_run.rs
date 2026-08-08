@@ -25,8 +25,12 @@
 //! or is skipped, and a destination that appears while the run is in flight
 //! fails the move rather than replacing what arrived.
 //!
-//! This boundary offers no cancellation. Real-backend cancellation and
-//! partial-output behavior remain unmeasured, so nothing here claims them.
+//! Cancellation is opt-in and private. [`run_conversion`] requests none and
+//! behaves exactly as it always has; [`run_conversion_cancellable`] takes one
+//! [`ConversionCancellation`] bound to that single attempt and reports a
+//! distinct result when the owned process tree was confirmed gone. Nothing here
+//! is reachable from the product: there is no command, transfer object, queue
+//! semantics or surface for it.
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -38,6 +42,7 @@ use std::time::Duration;
 
 use thiserror::Error;
 
+use crate::cancellation::{CancellationObservation, ConversionCancellation};
 use crate::capability::{InstalledHelpCapabilities, Sha256Digest};
 use crate::command::{
     InputSpelling, OpenFormat, PlanError, SourceIdentity, build_msconvert_command_for_source,
@@ -48,7 +53,7 @@ use crate::conversion::{
     conversion_output_file_name, verify_mzml_conversion_retaining_output,
     verify_vendor_conversion_retaining_output,
 };
-use crate::fs_guard::{self, RegularFileError};
+use crate::fs_guard::{self, OutputEntryKind, RegularFileError, snapshot_output_directory};
 use crate::mzml::{MzmlFacts, MzmlScanError, MzmlScanLimits};
 use crate::process::{LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner, Termination};
 
@@ -1084,6 +1089,16 @@ impl ConversionRunOutcome {
             Self::Failed(failure) => failure.stable_id(),
         }
     }
+
+    /// The precise identifier, reaching into the embedded failure where one
+    /// exists.
+    #[must_use]
+    pub const fn detailed_stable_id(&self) -> &'static str {
+        match self {
+            Self::Failed(failure) => failure.detailed_stable_id(),
+            other => other.stable_id(),
+        }
+    }
 }
 
 /// Bounded, path-free facts about the backend process that ran. Raw stdout and
@@ -1321,6 +1336,206 @@ impl ConversionRunReport {
             outcome,
             backend: None,
             residue: None,
+        }
+    }
+}
+
+/// The bounded shape of what the private staging area held when a cancellation
+/// was settled.
+///
+/// It is evidence and only evidence. Cleanup decides what to remove from the
+/// objects it holds and the identities it proves, never from this, so an
+/// observation that fails, races or reads a directory mid-write changes nothing
+/// about what is deleted. Names are absent because a staged output name is
+/// derived from the acquisition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StagedContentObservation {
+    entry_count: usize,
+    directory_count: usize,
+    non_empty_file_observed: bool,
+}
+
+impl StagedContentObservation {
+    #[must_use]
+    pub const fn entry_count(self) -> usize {
+        self.entry_count
+    }
+
+    #[must_use]
+    pub const fn directory_count(self) -> usize {
+        self.directory_count
+    }
+
+    /// Whether any ordinary staged file held bytes at the moment this was taken.
+    /// This is the only partial-output claim a run itself makes.
+    #[must_use]
+    pub const fn non_empty_file_observed(self) -> bool {
+        self.non_empty_file_observed
+    }
+}
+
+/// Records the shape of the staging output directory without judging it.
+///
+/// A failure to read it produces `None` rather than an error: a run that has
+/// already confirmed its process tree is gone does not become a different
+/// outcome because an observation for the record could not be taken.
+fn observe_staged_content(staging: &Path) -> Option<StagedContentObservation> {
+    let snapshot = snapshot_output_directory(staging).ok()?;
+    let mut directory_count = 0;
+    let mut non_empty_file_observed = false;
+    for entry in snapshot.entries() {
+        if entry.kind() == OutputEntryKind::Directory {
+            directory_count += 1;
+        } else if entry.byte_length() > 0 {
+            non_empty_file_observed = true;
+        }
+    }
+    Some(StagedContentObservation {
+        entry_count: snapshot.len(),
+        directory_count,
+        non_empty_file_observed,
+    })
+}
+
+/// What a confirmed cancellation established. Path-free, name-free and
+/// identifier-free by construction: no process identifier, job handle, source,
+/// staging or destination path, and no raw backend stream.
+///
+/// This type exists only where the owned process tree was confirmed gone. A
+/// request that could not be confirmed is [`CancellationFailure`], never this.
+#[derive(Debug, PartialEq)]
+pub struct CancellationReport {
+    observation: CancellationObservation,
+    backend: Option<BackendRunFacts>,
+    surviving_processes: Option<u32>,
+    staged: Option<StagedContentObservation>,
+    residue: Option<StagingResidue>,
+}
+
+impl CancellationReport {
+    /// When the request was observed relative to the attempt's own beginning.
+    #[must_use]
+    pub const fn observation(&self) -> CancellationObservation {
+        self.observation
+    }
+
+    /// Whether a backend process was handed to the process boundary at all.
+    #[must_use]
+    pub const fn backend_was_run(&self) -> bool {
+        self.backend.is_some()
+    }
+
+    /// Bounded facts about the supervised process, when one ran. The elapsed
+    /// time is the whole supervised interval, from spawn to a reaped tree, not
+    /// the interval from the request alone.
+    #[must_use]
+    pub const fn backend(&self) -> Option<BackendRunFacts> {
+        self.backend
+    }
+
+    /// Active processes the owned job reported once the run had finished with
+    /// it. `Some(0)` is the confirmation that no descendant survived; `None`
+    /// means the platform exposes no equivalent bounded accounting, or that no
+    /// process was launched.
+    #[must_use]
+    pub const fn surviving_processes(&self) -> Option<u32> {
+        self.surviving_processes
+    }
+
+    /// What the staging area held when the cancellation settled.
+    #[must_use]
+    pub const fn staged_content(&self) -> Option<StagedContentObservation> {
+        self.staged
+    }
+
+    /// What identity-bound cleanup could not remove, if anything. A cancelled
+    /// run is still cancelled; this is reported beside it, never instead of it.
+    #[must_use]
+    pub const fn residue(&self) -> Option<StagingResidue> {
+        self.residue
+    }
+}
+
+/// A cancellation that was requested and could not be confirmed.
+///
+/// The distinction from [`CancellationReport`] is the whole point. "The tree is
+/// gone" and "the tree may still be running" are different facts about the
+/// user's machine, and collapsing the second into the first would let a caller
+/// report a stopped conversion that is still writing.
+#[derive(Debug, PartialEq)]
+pub struct CancellationFailure {
+    cause: BackendExecutionFailure,
+    staged: Option<StagedContentObservation>,
+    residue: Option<StagingResidue>,
+}
+
+impl CancellationFailure {
+    /// Why the request could not be confirmed. It keeps the process boundary's
+    /// own typed reason rather than a cancellation-specific restatement of it.
+    #[must_use]
+    pub const fn cause(&self) -> BackendExecutionFailure {
+        self.cause
+    }
+
+    #[must_use]
+    pub const fn staged_content(&self) -> Option<StagedContentObservation> {
+        self.staged
+    }
+
+    /// Cleanup residue, kept separate from the primary failure above.
+    #[must_use]
+    pub const fn residue(&self) -> Option<StagingResidue> {
+        self.residue
+    }
+}
+
+/// What one cancellable conversion attempt did.
+///
+/// Deliberately not a widening of [`ConversionRunOutcome`]. That enum is what a
+/// caller with no cancellation object can reach, and the queue and the desktop
+/// boundary both match it exhaustively; a cancellation state added to it would
+/// become a state they must classify before any product decision about
+/// cancellation has been made.
+#[derive(Debug, PartialEq)]
+pub enum ConversionAttempt {
+    /// The attempt ran to a verdict of its own. That verdict may be a success,
+    /// a skip or a failure; cancellation simply did not decide it.
+    Completed(ConversionRunReport),
+    /// The request was confirmed: no process of the owned tree survived, and no
+    /// output was finalized.
+    Cancelled(CancellationReport),
+    /// The request was made and could not be confirmed.
+    CancellationFailed(CancellationFailure),
+}
+
+impl ConversionAttempt {
+    #[must_use]
+    pub const fn stable_id(&self) -> &'static str {
+        match self {
+            Self::Completed(report) => report.outcome.stable_id(),
+            Self::Cancelled(report) => report.observation.stable_id(),
+            Self::CancellationFailed(_) => "cancellation_failed",
+        }
+    }
+
+    /// The precise identifier, reaching into the embedded failure where one
+    /// exists.
+    #[must_use]
+    pub const fn detailed_stable_id(&self) -> &'static str {
+        match self {
+            Self::Completed(report) => report.outcome.detailed_stable_id(),
+            Self::CancellationFailed(failure) => failure.cause.stable_id(),
+            other => other.stable_id(),
+        }
+    }
+
+    /// The finalized conversion, when the attempt produced one. A cancelled or
+    /// unconfirmed attempt has none, by construction rather than by convention.
+    #[must_use]
+    pub const fn finalized(&self) -> Option<&ValidConversion> {
+        match self {
+            Self::Completed(report) => report.finalized(),
+            Self::Cancelled(_) | Self::CancellationFailed(_) => None,
         }
     }
 }
@@ -1585,7 +1800,94 @@ pub fn run_conversion(
     capabilities: &InstalledHelpCapabilities,
     runner: &dyn ProcessRunner,
 ) -> ConversionRunReport {
-    run_admitted(plan, capabilities, runner, || {})
+    run_admitted(plan, capabilities, runner, None, || {}).into_uncancellable_report()
+}
+
+/// Runs one planned conversion that the caller may ask to stop.
+///
+/// The cancellation object is taken by value and is not `Clone`, so it belongs
+/// to this attempt and to no other: there is no way to reuse it, reset it or
+/// aim it at a second run. The caller keeps a
+/// [`CancellationRequest`](crate::CancellationRequest) taken from it before the
+/// call.
+///
+/// Everything else is [`run_conversion`], unchanged. The sequence, the staging
+/// area, the judgement, the finalization and the identity-bound cleanup are the
+/// same ones, and an attempt nobody asks to stop reaches exactly the result
+/// that function would have returned.
+///
+/// This is a private evidence primitive. Nothing about the visible conversion
+/// queue is cancellable, and no product surface reaches this.
+#[must_use]
+pub fn run_conversion_cancellable(
+    plan: &ConversionPlan,
+    capabilities: &InstalledHelpCapabilities,
+    runner: &dyn ProcessRunner,
+    cancellation: ConversionCancellation,
+) -> ConversionAttempt {
+    // Before anything is opened, inspected, created, planned or launched. This
+    // is what makes `BeforeRun` a statement that none of that happened rather
+    // than a guess about how far a run got.
+    if cancellation.is_requested() {
+        return ConversionAttempt::Cancelled(CancellationReport {
+            observation: CancellationObservation::BeforeRun,
+            backend: None,
+            surviving_processes: None,
+            staged: None,
+            residue: None,
+        });
+    }
+
+    match run_admitted(plan, capabilities, runner, Some(&cancellation), || {}) {
+        RunResult::Settled(report) => ConversionAttempt::Completed(report),
+        RunResult::Cancelled(report) => ConversionAttempt::Cancelled(report),
+        RunResult::CancellationFailed(failure) => ConversionAttempt::CancellationFailed(failure),
+    }
+}
+
+/// What a run reached, before it is presented to a caller that may or may not
+/// hold a cancellation object.
+enum RunResult {
+    Settled(ConversionRunReport),
+    Cancelled(CancellationReport),
+    CancellationFailed(CancellationFailure),
+}
+
+impl RunResult {
+    /// The report a caller that supplied no cancellation object receives.
+    ///
+    /// Neither cancellation state is reachable for such a caller: both are
+    /// decided from the cancellation object itself, not from what a runner
+    /// reported. They are translated rather than asserted, because a boundary
+    /// whose purpose is to survive a substituted runner must not acquire a
+    /// panic that a substituted runner could aim at.
+    fn into_uncancellable_report(self) -> ConversionRunReport {
+        match self {
+            Self::Settled(report) => report,
+            Self::Cancelled(report) => ConversionRunReport {
+                outcome: ConversionRunOutcome::Failed(ConversionRunFailure::BackendDidNotComplete),
+                backend: report.backend,
+                residue: report.residue,
+            },
+            Self::CancellationFailed(failure) => ConversionRunReport {
+                outcome: ConversionRunOutcome::Failed(ConversionRunFailure::Backend(failure.cause)),
+                backend: None,
+                residue: failure.residue,
+            },
+        }
+    }
+}
+
+/// The uncancellable body, with the validation seam the boundary's central
+/// claim is tested through.
+#[cfg(test)]
+fn run_admitted_seamed(
+    plan: &ConversionPlan,
+    capabilities: &InstalledHelpCapabilities,
+    runner: &dyn ProcessRunner,
+    after_validation: impl FnOnce(),
+) -> ConversionRunReport {
+    run_admitted(plan, capabilities, runner, None, after_validation).into_uncancellable_report()
 }
 
 /// The body of a run, with a seam at the one interval this boundary's central
@@ -1596,8 +1898,9 @@ fn run_admitted(
     plan: &ConversionPlan,
     capabilities: &InstalledHelpCapabilities,
     runner: &dyn ProcessRunner,
+    cancellation: Option<&ConversionCancellation>,
     after_validation: impl FnOnce(),
-) -> ConversionRunReport {
+) -> RunResult {
     // Order matters here. The root is held before it is judged, not after: a
     // pinned directory cannot be renamed or removed, so the identity check
     // below decides about the object this run will actually use. Checking first
@@ -1607,9 +1910,9 @@ fn run_admitted(
     {
         Ok(directory) => directory,
         Err(error) => {
-            return ConversionRunReport::settled(ConversionRunOutcome::Failed(
-                ConversionRunFailure::DestinationRootNotOpened { kind: error.kind() },
-            ));
+            return settled_failure(ConversionRunFailure::DestinationRootNotOpened {
+                kind: error.kind(),
+            });
         }
     };
 
@@ -1618,32 +1921,30 @@ fn run_admitted(
     match plan.destination_root_is_current() {
         Ok(true) => {}
         Ok(false) => {
-            return ConversionRunReport::settled(ConversionRunOutcome::Failed(
-                ConversionRunFailure::DestinationRootChanged,
-            ));
+            return settled_failure(ConversionRunFailure::DestinationRootChanged);
         }
         Err(error) => {
-            return ConversionRunReport::settled(ConversionRunOutcome::Failed(
-                ConversionRunFailure::DestinationRootNotRechecked { kind: error.kind() },
-            ));
+            return settled_failure(ConversionRunFailure::DestinationRootNotRechecked {
+                kind: error.kind(),
+            });
         }
     }
 
     let destination = plan.destination();
     match std::fs::symlink_metadata(&destination) {
         Ok(_) => {
-            return ConversionRunReport::settled(match plan.conflict {
+            return RunResult::Settled(ConversionRunReport::settled(match plan.conflict {
                 ConflictPolicy::Fail => {
                     ConversionRunOutcome::Failed(ConversionRunFailure::DestinationExists)
                 }
                 ConflictPolicy::Skip => ConversionRunOutcome::SkippedExistingDestination,
-            });
+            }));
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => {
-            return ConversionRunReport::settled(ConversionRunOutcome::Failed(
-                ConversionRunFailure::DestinationNotInspectable { kind: error.kind() },
-            ));
+            return settled_failure(ConversionRunFailure::DestinationNotInspectable {
+                kind: error.kind(),
+            });
         }
     }
 
@@ -1651,9 +1952,7 @@ fn run_admitted(
     // staging area exists, so an ungated build never gets as far as creating a
     // directory or launching anything.
     if !provider_build_is_evidenced(capabilities, plan.source.kind()) {
-        return ConversionRunReport::settled(ConversionRunOutcome::Failed(
-            ConversionRunFailure::SourceFamilyNotEvidenced,
-        ));
+        return settled_failure(ConversionRunFailure::SourceFamilyNotEvidenced);
     }
 
     // The source is held for the whole run, not merely checked before it. A
@@ -1666,35 +1965,79 @@ fn run_admitted(
     // nothing ever admitted.
     let _pinned_source = match pin_planned_source(&plan.source) {
         Ok(pinned) => pinned,
-        Err(failure) => {
-            return ConversionRunReport::settled(ConversionRunOutcome::Failed(failure));
-        }
+        Err(failure) => return settled_failure(failure),
     };
+
+    // Rehashing the whole source above is the longest thing this run does
+    // before it creates anything, so a request that arrives during it is
+    // answered here rather than by creating a directory only to remove it. It
+    // is `DuringRun` and not `BeforeRun`: the attempt had begun, it opened and
+    // read the acquisition, and only the launch is what did not happen.
+    if let Some(cancellation) = cancellation
+        && cancellation.is_requested()
+    {
+        return RunResult::Cancelled(CancellationReport {
+            observation: CancellationObservation::DuringRun,
+            backend: None,
+            surviving_processes: None,
+            staged: None,
+            residue: None,
+        });
+    }
 
     let staging = match OwnedStagingArea::create(plan.staging_directory()) {
         Ok(staging) => staging,
-        Err(failure) => {
-            return ConversionRunReport::settled(ConversionRunOutcome::Failed(failure));
-        }
+        Err(failure) => return settled_failure(failure),
     };
 
-    let (outcome, backend) = run_staged(
+    let staged = run_staged(
         plan,
         capabilities,
         runner,
+        cancellation,
         &staging.output_directory(),
         &destination_directory,
         after_validation,
     );
     // Every handle this run held on anything inside the staging area is gone by
     // now: the validated output is consumed by finalization and dropped by every
-    // other path, so cleanup is never blocked by this run's own reading.
+    // other path, so cleanup is never blocked by this run's own reading. It runs
+    // for a cancelled attempt exactly as for a completed one — the whole point
+    // of a cancellation being safe is that whatever the terminated backend left
+    // behind is removed by the same object-bound teardown.
     let residue = staging.discard();
-    ConversionRunReport {
-        outcome,
-        backend,
-        residue,
+    match staged {
+        StagedResult::Settled(outcome, backend) => RunResult::Settled(ConversionRunReport {
+            outcome,
+            backend,
+            residue,
+        }),
+        StagedResult::Cancelled {
+            backend,
+            surviving_processes,
+            staged,
+        } => RunResult::Cancelled(CancellationReport {
+            observation: CancellationObservation::DuringRun,
+            backend,
+            surviving_processes,
+            staged,
+            residue,
+        }),
+        StagedResult::CancellationFailed { cause, staged } => {
+            RunResult::CancellationFailed(CancellationFailure {
+                cause,
+                staged,
+                residue,
+            })
+        }
     }
+}
+
+/// A settled failure that reached no backend and created no staging area.
+fn settled_failure(failure: ConversionRunFailure) -> RunResult {
+    RunResult::Settled(ConversionRunReport::settled(ConversionRunOutcome::Failed(
+        failure,
+    )))
 }
 
 /// Refuses a source that is no longer the acquisition the plan accepted.
@@ -1825,14 +2168,35 @@ fn open_pinned_source(path: &Path) -> io::Result<File> {
     File::open(path)
 }
 
+/// What the staged half of a run reached.
+enum StagedResult {
+    Settled(ConversionRunOutcome, Option<BackendRunFacts>),
+    Cancelled {
+        backend: Option<BackendRunFacts>,
+        surviving_processes: Option<u32>,
+        staged: Option<StagedContentObservation>,
+    },
+    CancellationFailed {
+        cause: BackendExecutionFailure,
+        staged: Option<StagedContentObservation>,
+    },
+}
+
+impl StagedResult {
+    fn failed(failure: ConversionRunFailure) -> Self {
+        Self::Settled(ConversionRunOutcome::Failed(failure), None)
+    }
+}
+
 fn run_staged(
     plan: &ConversionPlan,
     capabilities: &InstalledHelpCapabilities,
     runner: &dyn ProcessRunner,
+    cancellation: Option<&ConversionCancellation>,
     staging: &Path,
     destination_directory: &finalize::DestinationDirectory,
     after_validation: impl FnOnce(),
-) -> (ConversionRunOutcome, Option<BackendRunFacts>) {
+) -> StagedResult {
     let command = match build_msconvert_command_for_source(
         capabilities,
         plan.source.canonical_path(),
@@ -1842,33 +2206,76 @@ fn run_staged(
         plan.source.kind().input_spelling(),
     ) {
         Ok(command) => command,
-        Err(error) => {
-            return (
-                ConversionRunOutcome::Failed(ConversionRunFailure::NotPlannable(error)),
-                None,
-            );
-        }
+        Err(error) => return StagedResult::failed(ConversionRunFailure::NotPlannable(error)),
     };
 
-    let output = match runner.run(&command) {
+    // The one production runner stays the authority for child creation, the
+    // environment, job assignment, stream capture, the wait and process-tree
+    // teardown. This chooses which of its two entry points to use and nothing
+    // else; there is no second subprocess implementation here.
+    let result = match cancellation {
+        Some(cancellation) => runner.run_cancellable(&command, cancellation.token()),
+        None => runner.run(&command),
+    };
+    let requested = cancellation.is_some_and(ConversionCancellation::is_requested);
+
+    let output = match result {
         Ok(output) => output,
         Err(error) => {
-            return (
-                ConversionRunOutcome::Failed(ConversionRunFailure::Backend((&error).into())),
-                None,
-            );
+            let cause = BackendExecutionFailure::from(&error);
+            // A request that was made and whose teardown could not be completed
+            // is neither a cancellation nor an ordinary backend failure: what
+            // it means is that this boundary cannot say the tree is gone. Only
+            // the two failures that describe exactly that are reclassified, so
+            // a launch or capture failure that happens to coincide with a
+            // request keeps the reason that is true of it.
+            if requested
+                && matches!(
+                    cause,
+                    BackendExecutionFailure::NotTerminated | BackendExecutionFailure::NotAwaited
+                )
+            {
+                return StagedResult::CancellationFailed {
+                    cause,
+                    staged: observe_staged_content(staging),
+                };
+            }
+            return StagedResult::failed(ConversionRunFailure::Backend(cause));
         }
     };
     let backend = Some(BackendRunFacts::from(&output));
 
     if output.termination != Termination::Exited {
-        return (
-            ConversionRunOutcome::Failed(ConversionRunFailure::BackendDidNotComplete),
+        // Three things must all hold before this is called a cancellation: a
+        // request was actually made, this attempt holds the object it was made
+        // on, and the owned job reported no surviving process. A runner that
+        // reports a non-ordinary termination without them is reporting a run
+        // that did not complete, which is the meaning this boundary has always
+        // given it.
+        if !requested {
+            return StagedResult::Settled(
+                ConversionRunOutcome::Failed(ConversionRunFailure::BackendDidNotComplete),
+                backend,
+            );
+        }
+        let staged = observe_staged_content(staging);
+        if output
+            .final_active_processes
+            .is_some_and(|active| active > 0)
+        {
+            return StagedResult::CancellationFailed {
+                cause: BackendExecutionFailure::NotTerminated,
+                staged,
+            };
+        }
+        return StagedResult::Cancelled {
             backend,
-        );
+            surviving_processes: output.final_active_processes,
+            staged,
+        };
     }
     if !output.success() {
-        return (
+        return StagedResult::Settled(
             ConversionRunOutcome::Failed(ConversionRunFailure::BackendRejected {
                 exit_code: output.exit_code,
             }),
@@ -1903,7 +2310,7 @@ fn run_staged(
     let validated = match verified {
         VerifiedConversion::Valid(validated) => validated,
         VerifiedConversion::Rejected(rejected) => {
-            return (
+            return StagedResult::Settled(
                 ConversionRunOutcome::Failed(ConversionRunFailure::OutputRejected(rejected)),
                 backend,
             );
@@ -1927,8 +2334,10 @@ fn run_staged(
     let finalized =
         finalize::finalize_validated(*validated, destination_directory, plan.output_file_name());
     match finalized {
-        Ok(valid) => (ConversionRunOutcome::Finalized(Box::new(valid)), backend),
-        Err(error) => (
+        Ok(valid) => {
+            StagedResult::Settled(ConversionRunOutcome::Finalized(Box::new(valid)), backend)
+        }
+        Err(error) => StagedResult::Settled(
             ConversionRunOutcome::Failed(match error.kind() {
                 io::ErrorKind::AlreadyExists => ConversionRunFailure::DestinationAppearedDuringRun,
                 kind => ConversionRunFailure::NotFinalized { kind },
