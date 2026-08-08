@@ -3,7 +3,7 @@
 - **Status:** Real-backend cancellation measured and a private cancellation
   primitive landed beneath the queue. No user-visible cancellation exists.
 - **Date:** 2026-08-08
-- **Exact code head:** `d5db4b0` — pinned below
+- **Exact code head:** `b56fd2b00c96a9b231e6ccf6bc000d01719d0258`
   (measured on eight heads over seven review rounds: `99d4be7`, `cf309dd`,
   `0f46a6c`, `abdb1ed`, `3d1452b`, `0538e50`, `a8daded` and this one. Review changed what an
   unconfirmed cancellation carries, what counts as a staged partial document,
