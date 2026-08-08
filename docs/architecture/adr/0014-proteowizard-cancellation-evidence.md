@@ -105,7 +105,7 @@ Each poll consults `try_wait` before it consults the cancellation flag. So:
   reports**.
 
 The second half has a measured consequence worth stating plainly. A run
-cancelled 1,604 ms into a 1,598 ms conversion reported `Cancelled` with an exit
+cancelled 1,092 ms into a 1,087 ms conversion reported `Cancelled` with an exit
 code of `0`: the process finished its work in the window between `try_wait`
 returning "still running" and `TerminateJobObject` landing. Nothing was
 finalized and the destination root stayed empty. That is the conservative
@@ -158,11 +158,11 @@ and the only one the harness will run against.
 - **Early cancellation.** Requested when the staged output file first appeared:
   the owned tree terminated with `STATUS_CANCELLED`, the Job reported zero
   surviving processes, the staging area was removed, the destination root stayed
-  empty and there was no residue. Request to return: 94 ms.
+  empty and there was no residue. Request to return: 62 ms.
 - **Mid-write cancellation.** Requested after the staged file was observed
-  growing, at 107,323 bytes of a 12,283,969-byte finished output. Same result:
+  growing, at 222,923 bytes of a 12,283,969-byte finished output. Same result:
   tree gone, partial document removed, destination empty, no residue. Request to
-  return: 80 ms.
+  return: 60 ms.
 - **Partial-output shape.** This build writes its output **directly under the
   planned name and grows it in place**. No `.part`, `.partial` or `.tmp`
   suffix appeared in any observation, so a partial output is indistinguishable
@@ -175,7 +175,7 @@ and the only one the harness will run against.
   ADR 0009's exactly-one-entry rule already depended on for completed runs and
   extends it to interrupted ones.
 - **Thermo route.** The evidenced vendor reader was terminated too: requested as
-  soon as the staging area existed, the process ran 119 ms, exited
+  soon as the staging area existed, the process ran 103 ms, exited
   `STATUS_CANCELLED`, left zero surviving processes and had written nothing at
   all. Cancellation of the vendor path is therefore established; a *mid-write*
   observation of it is not, because the one lawful fixture is 78,309 bytes.
@@ -215,7 +215,7 @@ None of these is answered here, and none may be assumed.
   correct. Offering the same retry affordance as a failed item would say
   something untrue about why it stopped.
 - **What the user is told while termination is in flight.** Confirmation took
-  51–133 ms in every measurement here, on one machine with one backend. That is
+  52–109 ms in every measurement here, on one machine with one backend. That is
   not a budget and no threshold derives from it.
 - **A queue-wide request.** This primitive is per-attempt. A queue-level request
   is a different object with a different lifetime, and building it as "a set of

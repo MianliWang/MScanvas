@@ -3,7 +3,12 @@
 - **Status:** Real-backend cancellation measured and a private cancellation
   primitive landed beneath the queue. No user-visible cancellation exists.
 - **Date:** 2026-08-08
-- **Exact code head:** `99d4be7e1ba2eb8d8567f660b2202796be0bb7f2`
+- **Exact code head:** `cf309dd6008dfc3efbd50966e58f65362edf81b8`
+  (first measured at `99d4be7`. Review then made an unconfirmed cancellation
+  keep its process facts and narrowed what counts as a staged partial document,
+  so every figure below is from one complete run of all six scenarios on this
+  head rather than carried forward. Every conclusion was identical on both, and
+  the documentation commits after this head change no code.)
 - **Decision recorded in:** [ADR 0014](../architecture/adr/0014-proteowizard-cancellation-evidence.md)
 
 This closes ADR 0009's second open evidence gate — *"Real cancellation and
@@ -48,8 +53,8 @@ generates a bounded mzML document outside the repository.
 | Retention | Written inside the harness workspace and removed with it. Not committed, and it must not be |
 
 It is a real workload rather than a filler file: the same document converts to a
-finalized `12,283,969`-byte output through the unchanged boundary, with
-output-side validation and no residue, in `1,598 ms` of backend time.
+finalized `12,283,969`-byte output through the unchanged boundary, with no
+residue, in `1,087 ms` of backend time.
 
 **The recipe, not the artifact, is the reproducible thing.** The generator is
 deterministic for a given `--spectra`/`--peaks`, but the digest above pins what
@@ -88,11 +93,11 @@ destination, with no user input.
 | Scenario | Milestone | Milestone at | Request to return | Attempt | Backend exit | Surviving owned processes |
 | --- | --- | ---: | ---: | --- | --- | ---: |
 | Before run | request precedes the attempt | `0 ms` | `0 ms` | `cancelled_before_run` | no process | not applicable |
-| Early | the staged output file first appeared | `474 ms` | `94 ms` | `cancelled_during_run` | `0xC000013A` | `0` |
-| Mid-write | the staged file was observed growing | `591 ms` | `80 ms` | `cancelled_during_run` | `0xC000013A` | `0` |
-| Natural-exit race | the measured natural backend duration | `1,604 ms` | `51 ms` | `cancelled_during_run` | `0` | `0` |
+| Early | the staged output file first appeared | `338 ms` | `62 ms` | `cancelled_during_run` | `0xC000013A` | `0` |
+| Mid-write | the staged file was observed growing | `366 ms` | `60 ms` | `cancelled_during_run` | `0xC000013A` | `0` |
+| Natural-exit race | the measured natural backend duration | `1,092 ms` | `52 ms` | `cancelled_during_run` | `0` | `0` |
 | Request after exit | issued once the process was observed to exit | not applicable | not applicable | `finalized` | `0` | not applicable |
-| Thermo, early | the staging area existed | `10 ms` | `133 ms` | `cancelled_during_run` | `0xC000013A` | `0` |
+| Thermo, early | the staging area existed | `11 ms` | `109 ms` | `cancelled_during_run` | `0xC000013A` | `0` |
 
 `0xC000013A` is `STATUS_CONTROL_C_EXIT`, the code `TerminateJobObject` is called
 with. Rust reports it as `-1073741510`.
@@ -101,29 +106,31 @@ with. Rust reports it as `-1073741510`.
 
 | Scenario | Staged bytes, first observed | Staged bytes, last observed | Growth seen | Staged entries at settle | Non-empty file at settle | Partial-name suffix |
 | --- | ---: | ---: | --- | ---: | --- | --- |
-| Early | `0` | `0` | no | `1` | `false` | `false` |
-| Mid-write | `0` | `107,323` | **yes** | `1` | **`true`** | `false` |
-| Natural-exit race | `11,314` | `12,283,960` | **yes** | `1` | **`true`** | `false` |
+| Early | `19,310` | `19,310` | no | `1` | **`true`** | `false` |
+| Mid-write | `59,387` | `222,923` | **yes** | `1` | **`true`** | `false` |
+| Natural-exit race | `0` | `12,149,852` | **yes** | `1` | **`true`** | `false` |
 | Thermo, early | none | none | no | `0` | `false` | `false` |
 
 Four facts come out of this and all four are load-bearing.
 
 **A partial output exists and it is observable.** The mid-write run was
-terminated with `107,323` bytes on disk of what would have been `12,283,969`.
-The race run was terminated `9` bytes short of the finished size. There is
+terminated with `222,923` bytes on disk of what would have been `12,283,969`.
+The race run was terminated `134,117` bytes short of the finished size. There is
 nothing hypothetical about the state a cancellation has to clean up.
 
 **This build writes directly under the planned name and grows the file in
 place.** No `.part`, `.partial` or `.tmp` suffix appeared in any observation, at
-any milestone, on either workload. A partial output is therefore
-*indistinguishable from a finished one by name*. That is the measurement that
-makes private staging a requirement rather than a preference: pointed at the
-destination root, this backend would leave a truncated `.mzML` in the user's
-folder under exactly the name a good conversion takes.
+any milestone, on either workload, across every run taken. A partial output is
+therefore *indistinguishable from a finished one by name*. That is the
+measurement that makes private staging a requirement rather than a preference:
+pointed at the destination root, this backend would leave a truncated `.mzML` in
+the user's folder under exactly the name a good conversion takes.
 
-**The file is created before anything is written to it.** The early run caught
-it at `0` bytes, so "the staged output exists" is a milestone that fires before
-any content does.
+**The staged file appears before it is complete but not reliably before it has
+content.** Its first observation was `0` bytes in some runs and already tens of
+kilobytes in others, at a `10 ms` poll interval. "The staged output exists" is
+therefore a milestone that fires early, and it is not evidence that the file was
+empty when it did.
 
 **Nothing else is written, even mid-write.** Every observation held exactly one
 staging entry. No sidecar, index, log or scratch file appeared, including in
@@ -162,7 +169,7 @@ still running makes successful Job termination decisive.
 Both halves are measured.
 
 - **Cancellation wins when termination is accepted first.** The race run
-  requested at `1,604 ms` against a `1,598 ms` measured backend. The process
+  requested at `1,092 ms` against a `1,087 ms` measured backend. The process
   finished its work in the window between `try_wait` reporting "still running"
   and `TerminateJobObject` landing, so the exit code is `0` — and the run is
   still `cancelled_during_run`, with nothing finalized and an empty destination
@@ -181,7 +188,7 @@ Only one is ever reported. There is no state that is both.
 Recorded separately from the process and partial-output evidence, because it
 supports less.
 
-The evidenced vendor reader was terminated: the process ran `119 ms`, exited
+The evidenced vendor reader was terminated: the process ran `103 ms`, exited
 `STATUS_CANCELLED`, left zero surviving owned processes and left an empty
 staging area, which was removed with no residue. The destination root stayed
 empty.
@@ -209,8 +216,9 @@ supervisor.
 - On build `3.0.26013 (47b13cf)`, a real `msconvert` process launched through
   the reviewed boundary and assigned to an owned Job Object is terminated on
   request, and the Job reports no surviving process afterwards.
-- Termination was confirmed in `51`–`133 ms` from request to result, in six
-  measured runs across two source families.
+- Termination was confirmed in `52`–`109 ms` from request to result, in the
+  four measured runs that terminated a running process, across two source
+  families.
 - A request made before an attempt begins launches no process, creates no
   staging area and leaves the destination root untouched.
 - A partial document exists during a real conversion, is removed by
@@ -274,7 +282,8 @@ skipped and says so rather than being quietly absent.
 
 Ordinary CI runs none of this, downloads nothing and reaches no backend. The
 deterministic coverage of the same behaviour is 315 tests in
-`mscanvas-proteowizard`, none of which needs an installation.
+`mscanvas-proteowizard`, plus an encoder test beside the harness itself, none
+of which needs an installation.
 
 ## Mutation evidence
 
