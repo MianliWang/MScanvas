@@ -31,6 +31,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -507,10 +508,21 @@ fn scenario(
     // say — would cost the full timeout per scenario to learn nothing.
     let settled = AtomicBool::new(false);
     let settled_watch = &settled;
+    // The moment the run hands its command to the process boundary. A duration
+    // measured from the scenario's own start would include opening and holding
+    // the destination root, rehashing the whole acquisition and creating the
+    // staging area — none of which the backend's own elapsed time covers — so
+    // an interval timed against a backend duration would land the request
+    // proportionally earlier the larger the acquisition is.
+    let (launch_sender, launch) = mpsc::sync_channel(1);
+    let runner = LaunchSignallingRunner {
+        inner: SystemProcessRunner,
+        launched: launch_sender,
+    };
+    let runner = &runner;
     let (attempt, observation, request_to_return, run_elapsed) = thread::scope(|scope| {
         let worker = scope.spawn(move || {
-            let attempt =
-                run_conversion_cancellable(plan, capabilities, &SystemProcessRunner, cancellation);
+            let attempt = run_conversion_cancellable(plan, capabilities, runner, cancellation);
             settled_watch.store(true, Ordering::Release);
             (attempt, started.elapsed())
         });
@@ -518,7 +530,7 @@ fn scenario(
         let observation = match milestone {
             Milestone::BeforeRun => StagingObservation::not_watched(),
             Milestone::Elapsed(interval) => {
-                wait_for_interval(started, interval, &destination, &settled)
+                wait_for_interval(&launch, interval, &destination, &settled)
             }
             other => watch_staging(&destination, other, &settled),
         };
@@ -707,6 +719,34 @@ fn scenario_after_process_exit(
     Ok(())
 }
 
+/// Delegates to the production runner and records when it was entered.
+///
+/// It owns no child, no job, no capture and no wait. It sends one timestamp, so
+/// an interval expressed in backend time can be timed from something close to
+/// the launch rather than from the scenario's own beginning.
+struct LaunchSignallingRunner {
+    inner: SystemProcessRunner,
+    launched: mpsc::SyncSender<Instant>,
+}
+
+impl ProcessRunner for LaunchSignallingRunner {
+    fn run(&self, spec: &CommandSpec) -> Result<ProcessOutput, ProcessError> {
+        let _ = self.launched.try_send(Instant::now());
+        self.inner.run(spec)
+    }
+
+    fn run_cancellable(
+        &self,
+        spec: &CommandSpec,
+        cancellation: &CancellationToken,
+    ) -> Result<ProcessOutput, ProcessError> {
+        // Sent before delegating, and never allowed to block: a scenario that
+        // is not watching for it must not be able to wedge the conversion.
+        let _ = self.launched.try_send(Instant::now());
+        self.inner.run_cancellable(spec, cancellation)
+    }
+}
+
 /// Delegates every decision to the production runner and issues the request the
 /// instant that runner reports an ordinary exit.
 ///
@@ -883,19 +923,38 @@ fn watch_staging(
     observation
 }
 
-/// Waits a fixed interval from the moment the attempt began, sampling the
-/// staging tree on the way so the record still says what was there.
+/// Waits a fixed interval from the moment the run handed its command to the
+/// process boundary, sampling the staging tree on the way so the record still
+/// says what was there.
+///
+/// Timed from the launch rather than from the scenario's start, because the
+/// interval it is given is a *backend* duration: everything the run does before
+/// the launch — holding the destination root, rehashing the acquisition,
+/// creating the staging area — is outside that measurement, and counting it
+/// would land the request earlier the larger the acquisition is, until a
+/// near-completion race quietly became an ordinary early cancellation.
+///
+/// A residual remains and is not claimed away: the signal is sent as the runner
+/// is entered, and the runner reverifies the executable's digest before it
+/// spawns. That is one bounded hash of the backend executable, not of the
+/// acquisition, so it does not grow with the workload.
 ///
 /// An attempt that settles inside the interval ends the wait: the race it was
 /// timed for has already resolved to natural completion, and continuing to wait
 /// would only delay recording that.
 fn wait_for_interval(
-    started: Instant,
+    launch: &mpsc::Receiver<Instant>,
     interval: Duration,
     destination: &Path,
     settled: &AtomicBool,
 ) -> StagingObservation {
     let mut observation = StagingObservation::default();
+    // A run that never reaches the process boundary never sends this. Falling
+    // back to now rather than waiting out the bound keeps the scenario a
+    // scenario; whatever it then observes is reported as what it is.
+    let started = launch
+        .recv_timeout(MILESTONE_TIMEOUT)
+        .unwrap_or_else(|_| Instant::now());
     while started.elapsed() < interval {
         if let Some(staging_output) = staging_output_directory(destination)
             && let Ok(snapshot) = snapshot_output_directory(&staging_output)
