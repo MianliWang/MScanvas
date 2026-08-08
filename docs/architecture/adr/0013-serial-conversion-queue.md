@@ -206,6 +206,14 @@ closed policy member. No path crosses in either direction. The destination is
 still chosen by a Rust-owned native picker behind ADR 0012's two-phase
 reservation, with the same per-document authority proof.
 
+`retry_workspace_conversion_queue` takes nothing at all, and proves the calling
+document anyway. It opens no dialog, but it launches processes and writes files
+this application creates, and authority over that is not weaker because the
+folder was chosen a minute earlier. What it proves is that the caller is the
+*current* document rather than the one that built the queue — a reloaded document
+recovered the queue and is entitled to retry it, which is the same reason the
+slot is read rather than pushed.
+
 Nothing on the wire carries a source path, a destination root, a staging path, an
 absolute output path, a raw handle, a filesystem identity, an internal epoch, a
 backend token, process output, or a raw OS error.

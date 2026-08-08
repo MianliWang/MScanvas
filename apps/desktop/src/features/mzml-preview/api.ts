@@ -189,7 +189,11 @@ export const tauriPreviewApi: PreviewApi = {
     });
   },
   retryConversions: () =>
-    invoke<WorkspaceConversionUpdate>("retry_workspace_conversion_queue"),
+    invoke<WorkspaceConversionUpdate>(
+      "retry_workspace_conversion_queue",
+      {},
+      { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } },
+    ),
 };
 
 const PreviewApiContext = createContext<PreviewApi>(tauriPreviewApi);

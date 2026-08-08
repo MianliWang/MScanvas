@@ -1164,7 +1164,10 @@ impl PreviewService {
     /// non-retryable failures keep their results and their places, and the
     /// destination and policy are the ones the queue was created with. Nothing
     /// asks the user for a folder again.
-    pub fn retry_conversion_queue(&self) -> Result<WorkspaceConversionUpdateDto, PreviewErrorDto> {
+    pub fn retry_conversion_queue(
+        &self,
+        document_epoch: u64,
+    ) -> Result<WorkspaceConversionUpdateDto, PreviewErrorDto> {
         // The folder must still be the folder. A name is not an object, and a
         // retry that trusted the name could write into whatever had since taken
         // it. Checked before any state moves, so a changed destination costs
@@ -1184,6 +1187,12 @@ impl PreviewService {
 
         let gate = self.enter_workspace_mutation_after_drop();
         let mut slot = self.conversion_slot();
+        // Under the slot lock and immediately before the slot moves, exactly as
+        // beginning a queue checks it. The current document, not the one that
+        // built the queue: a reload is entitled to retry what it recovered.
+        if document_epoch != self.workspace_drop_document_epoch() {
+            return Err(invalid_conversion_reservation());
+        }
         // The same folder, and the same queue holding it. Admitting a directory
         // is filesystem work, so the check above cannot be done under this lock
         // -- which leaves a window in which another document could have run a

@@ -286,12 +286,22 @@ async fn describe_workspace_conversion_queue(
 /// for either again would make a retry a new decision rather than the same one
 /// repeated. Refused unless the queue is terminal and something in it is
 /// actually retryable.
+///
+/// Proves the calling document for the same reason the two halves of the picker
+/// reservation do. A retry opens no dialog, but it does launch processes and
+/// write files this application creates, and authority over that is not weaker
+/// because the folder was chosen earlier. The proof is that the caller is the
+/// *current* document, not the one that built the queue -- a reloaded document
+/// is entitled to retry what it recovered.
 #[tauri::command]
 async fn retry_workspace_conversion_queue(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
     service: State<'_, SharedService>,
 ) -> Result<WorkspaceConversionUpdateDto, PreviewErrorDto> {
+    let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
     let service = Arc::clone(&service);
-    off_the_async_runtime(move || service.retry_conversion_queue()).await?
+    off_the_async_runtime(move || service.retry_conversion_queue(document_epoch)).await?
 }
 
 /// Reads the session's one conversion slot.

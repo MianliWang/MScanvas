@@ -9089,7 +9089,7 @@ fn retry_reruns_only_retryable_failures_and_leaves_the_rest_alone() {
 
     drop(writer);
     let retried = service
-        .retry_conversion_queue()
+        .retry_conversion_queue(current_document(&service))
         .expect("a retryable failure can be retried");
 
     let queue = terminal_queue(&retried);
@@ -9129,7 +9129,7 @@ fn a_queue_with_no_retryable_failure_refuses_a_retry() {
 
     assert_eq!(
         service
-            .retry_conversion_queue()
+            .retry_conversion_queue(current_document(&service))
             .expect_err("there is nothing a retry could change")
             .kind,
         "invalid_conversion_reservation"
@@ -9154,7 +9154,7 @@ fn a_retry_refuses_when_its_destination_is_no_longer_the_same_object() {
     fs::create_dir_all(&destination).expect("and put a different one in its place");
 
     let error = service
-        .retry_conversion_queue()
+        .retry_conversion_queue(current_document(&service))
         .expect_err("a folder that is no longer the folder is not written into");
     assert_eq!(error.kind, "queue_destination_changed");
     // Existing results are untouched.
@@ -9884,4 +9884,41 @@ fn a_real_queue_isolates_one_failure_and_converts_the_rest() {
         "wire: {}",
         serde_json::to_string(&update).expect("the update serializes")
     );
+}
+
+/// A retry writes files, so it proves the calling document like every other
+/// command that does.
+#[test]
+fn a_retry_from_a_document_that_is_not_the_current_one_is_refused() {
+    let fixture = TestFile::new("queue-retry-authority");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let held = fixture.thermo_raw("held.raw");
+    let handle = add_one_acquisition(&service, &held);
+
+    let writer = hold_for_writing(&held);
+    let update = queue_and_run(&service, &[handle], &destination);
+    assert_eq!(terminal_queue(&update).retryable_failed_count, 1);
+    drop(writer);
+
+    let document = current_document(&service);
+    assert_eq!(
+        service
+            .retry_conversion_queue(document.wrapping_add(1))
+            .expect_err("a document that is not the current one cannot rerun a conversion")
+            .kind,
+        "invalid_conversion_reservation"
+    );
+    // Nothing moved: the queue is still terminal with its failure intact.
+    let state = service.conversion_state();
+    assert_eq!(terminal_queue(&state).retryable_failed_count, 1);
+    assert_eq!(entry_names(&destination), Vec::<String>::new());
+
+    // And a reload is entitled to retry what it recovered: the proof is that
+    // the caller is the current document, not the one that built the queue.
+    service.begin_webview_document();
+    let retried = service
+        .retry_conversion_queue(current_document(&service))
+        .expect("the document that recovered the queue may rerun it");
+    assert_eq!(terminal_queue(&retried).finalized_count, 1);
 }
