@@ -8229,44 +8229,47 @@ fn a_native_drop_during_a_conversion_is_refused_with_its_own_reason() {
     );
 }
 
-/// A row removed while its reservation is outstanding never converts.
+/// Every route by which a bound row could move on is refused while a conversion
+/// holds the slot.
+///
+/// This replaces a test that drove the bound-request recheck through a spectrum
+/// load. That route is now closed -- a spectrum is refused like every other
+/// backend request -- and so is every other one: adding, the folder picker,
+/// clearing, removing the converting row, opening a preview and dropping files
+/// all answer `conversion_busy`. The recheck inside the run is therefore
+/// unreachable defence in depth rather than a live guard, and ADR 0012 records
+/// it as such. What is worth asserting is the thing that made it unreachable.
 #[test]
-fn a_conversion_whose_row_moved_on_is_refused_rather_than_run() {
-    let fixture = TestFile::new("superseded-conversion");
+fn nothing_can_move_the_bound_row_on_while_a_conversion_holds_the_slot() {
+    let fixture = TestFile::new("bound-row-protected");
     let acquisition = fixture.thermo_raw("acquisition.raw");
-    let destination = destination_root(&fixture, "out");
-    let runner = FakeConversionRunner::new(BackendAct::Convert);
-    let launches = runner.launches();
-    let service = PreviewService::new(Box::new(ConvertingProvider::new(
-        evidenced_capabilities(),
-        runner,
-    )));
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
     let handle = add_one_acquisition(&service, &acquisition);
     let document = current_document(&service);
-
-    let reservation = service
-        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
-        .expect("one reservation");
-    let operation = service
-        .claim_conversion(&reservation.reservation_id, document)
-        .expect("claim it");
-    // The row moves on underneath the open picker. Every roster mutation is
-    // refused while a conversion holds the workspace, so what is left is a read
-    // of this very row -- which claims its epoch before it discovers it has no
-    // preview to read from.
     service
-        .load_spectrum(&handle, 0)
-        .expect_err("there is no preview to select a spectrum from");
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("the conversion holds the slot from here");
 
-    let update = service.run_claimed_conversion(operation, &destination);
-
-    assert!(
-        matches!(update.state, WorkspaceConversionStateDto::Failed { .. }),
-        "a superseded request is refused; got {:?}",
-        update.state
-    );
-    assert_eq!(launches.load(Ordering::SeqCst), 0);
-    assert_eq!(entry_names(&destination), Vec::<String>::new());
+    for refusal in [
+        service
+            .load_spectrum(&handle, 0)
+            .expect_err("a spectrum is backend work like any other"),
+        service.open_preview(&handle).expect_err("so is an open"),
+        service
+            .remove_datasets(std::slice::from_ref(&handle))
+            .expect_err("the converting row cannot be removed"),
+        service
+            .clear_workspace()
+            .expect_err("nor can the list be emptied"),
+        service
+            .add_files(std::slice::from_ref(&fixture.path))
+            .expect_err("nor can rows be added beside it"),
+        service
+            .begin_folder_import()
+            .expect_err("nor a folder import started"),
+    ] {
+        assert_eq!(refusal.kind, "conversion_busy");
+    }
 }
 
 /// The terminal report survives the document that started the conversion, and

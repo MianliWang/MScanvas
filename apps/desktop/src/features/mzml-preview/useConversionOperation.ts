@@ -44,6 +44,14 @@ export interface ConversionOperation {
   readonly busy: boolean;
   /** The row a busy slot is working on, so a roster can pin it. */
   readonly busyHandle: string | null;
+  /**
+   * The same answer as `busy`, readable from a handler.
+   *
+   * A click handler that read the rendered value could start work inside a
+   * render that has not committed the transition yet, which is the same reason
+   * every other gate in this workspace is a paired state and ref.
+   */
+  readonly busyRef: { readonly current: boolean };
   readonly plan: ConversionPlanState;
   /** A request that never reached Rust's slot, kept apart from a conversion's own outcome. */
   readonly error: PreviewError | null;
@@ -245,6 +253,7 @@ export function useConversionOperation(
     state,
     busy,
     busyHandle,
+    busyRef,
     plan,
     error,
     conflictPolicy,

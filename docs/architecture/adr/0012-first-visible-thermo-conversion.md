@@ -227,6 +227,17 @@ reservation the destination picker claims — against the evidenced build.
 The acquisition and the output were deleted afterwards. No vendor data is
 committed.
 
+### What the ordering rules ended up making unreachable
+
+Every route by which the bound row could move on while a conversion holds the
+slot is refused: adding, the folder picker, clearing, removing that row, opening
+a preview, loading a spectrum and dropping files all answer `conversion_busy`,
+and the reservation itself waits for an accepted native drop through the same
+gate every mutation uses. The bound-request recheck inside the run is therefore
+defence in depth rather than a live guard. It is kept — a route added later
+would need it, and it costs one comparison — but it is recorded here as
+unreachable rather than left looking load-bearing.
+
 ## Open gates
 
 - **One acquisition, one build, one family.** Unchanged from ADR 0010. Widening

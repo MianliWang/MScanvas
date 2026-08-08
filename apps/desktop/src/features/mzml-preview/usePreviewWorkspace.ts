@@ -1635,7 +1635,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       // being probed, this either reads the backend being replaced or queues
       // behind the change and then fails on it -- one process launch either
       // way, for a result that was never going to be shown.
-      if (backendBusyRef.current) {
+      if (backendBusyRef.current || conversionBusyRef.current) {
         return;
       }
       // A repeat of the row already being read is dropped. Every selection is
@@ -1761,6 +1761,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     [checkBackend],
   );
   const conversion = useConversionOperation(reconcileConversionGeneration);
+  // Read by the spectrum guard below. A conversion owns the one backend lane,
+  // and Rust refuses a spectrum while it does; this is what stops the interface
+  // asking and leaving a panel loading for the length of a conversion.
+  const conversionBusyRef = conversion.busyRef;
 
   const activeDataset = useMemo(
     () => roster.datasets.find((dataset) => dataset.handle === roster.active) ?? null,

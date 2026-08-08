@@ -1003,7 +1003,12 @@ impl PreviewService {
         // batch cannot both be admitted by each reading the other's state
         // before either committed. Held only for the transition below: this is
         // not backend work and nothing here waits on a process.
-        let gate = self.enter_workspace_mutation();
+        // `_after_drop` rather than the plain gate: a drop is accepted by a
+        // lock-free callback that reads the busy flag and installs its claim
+        // without waiting on any mutex, so a reservation taken beside one would
+        // let that drop commit rows into the workspace a conversion is reading.
+        // Waiting for it is what the existing mechanism is for.
+        let gate = self.enter_workspace_mutation_after_drop();
         let mut slot = self.conversion_slot();
         // Under the slot lock, and immediately before the slot is taken. The
         // authority proof is awaited, so a reload can start any time after it
@@ -2396,6 +2401,13 @@ impl PreviewService {
         handle: &str,
         index: u64,
     ) -> Result<SelectedSpectrumOutcomeDto, PreviewErrorDto> {
+        // Refused rather than queued, for the reason an open is: the backend
+        // gate would serialize it anyway, but a spectrum waiting behind a whole
+        // conversion sits in a loading state for as long as one takes, and
+        // every further selection adds another queued request nobody sees.
+        if self.conversion_is_busy() {
+            return Err(conversion_busy());
+        }
         let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
         // Claimed before the wait, so a request that arrives after this one
         // supersedes it. Per dataset: a spectrum chosen in one dataset says
