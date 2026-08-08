@@ -288,13 +288,13 @@ impl ConversionSlot {
     /// Read from the slot rather than handed back by `claim`, so the value that
     /// decides what is converted never leaves this module and a caller cannot
     /// run a conversion for a request it was not given.
-    pub(super) fn claimed(&self) -> Option<BoundConversion> {
+    pub(super) fn claimed(&self) -> Option<(u64, BoundConversion)> {
         match &self.state {
             SlotState::AwaitingDestination {
                 claimed: true,
                 bound,
                 ..
-            } => Some(bound.clone()),
+            } => Some((self.operation, bound.clone())),
             SlotState::AwaitingDestination { .. }
             | SlotState::Idle
             | SlotState::Running { .. }
@@ -325,14 +325,27 @@ impl ConversionSlot {
         }
     }
 
-    /// Marks the claimed operation as running.
-    pub(super) fn start_running(&mut self) {
-        if let SlotState::AwaitingDestination { bound, .. } = &self.state {
-            self.state = SlotState::Running {
-                bound: bound.clone(),
-            };
-            self.advance();
+    /// Marks one exact claimed operation as running.
+    ///
+    /// Named rather than implied, because the slot lock is released while a
+    /// destination is admitted and a row revalidated -- filesystem work that
+    /// takes as long as it takes. A reload in that window releases the slot,
+    /// and a caller that transitioned whatever it found could mark a
+    /// *replacement* operation as running and then overwrite it with the old
+    /// one's report. `false` means this operation is no longer the slot's, and
+    /// the caller must convert nothing.
+    pub(super) fn start_running(&mut self, operation: u64) -> bool {
+        if self.operation != operation {
+            return false;
         }
+        let SlotState::AwaitingDestination { bound, .. } = &self.state else {
+            return false;
+        };
+        self.state = SlotState::Running {
+            bound: bound.clone(),
+        };
+        self.advance();
+        true
     }
 
     /// Returns the slot to idle after a cancelled picker.
@@ -348,13 +361,35 @@ impl ConversionSlot {
     }
 
     /// Stores the report of a conversion that reached an outcome.
-    pub(super) fn complete(&mut self, report: super::conversion::WorkspaceConversionReport) {
+    /// Stores the report of one exact operation.
+    ///
+    /// Silently does nothing for an operation the slot has moved past. A run
+    /// whose slot was released by a reload still finishes -- its process is
+    /// under way and nothing can stop it -- but its report describes work
+    /// nobody is waiting for, and installing it would overwrite whatever the
+    /// replacement document has since started.
+    pub(super) fn complete(
+        &mut self,
+        operation: u64,
+        report: super::conversion::WorkspaceConversionReport,
+    ) {
+        if self.operation != operation {
+            return;
+        }
         self.state = SlotState::Terminal(TerminalOutcome::Reported(Box::new(report)));
         self.advance();
     }
 
     /// Stores an operation that never reached a conversion.
-    pub(super) fn refuse(&mut self, dataset_handle: String, error: PreviewErrorDto) {
+    pub(super) fn refuse(
+        &mut self,
+        operation: u64,
+        dataset_handle: String,
+        error: PreviewErrorDto,
+    ) {
+        if self.operation != operation {
+            return;
+        }
         self.state = SlotState::Terminal(TerminalOutcome::Refused {
             dataset_handle,
             error,

@@ -183,6 +183,14 @@ export interface DropIngestionResult {
  * `operationId` is an opaque decimal string rather than a JavaScript number,
  * so a native counter never crosses the safe-integer boundary.
  */
+/**
+ * Why one native drop was refused before any of its paths were retained.
+ *
+ * Two reasons, because the user does something different about each: another
+ * drop finishes on its own, and a conversion is work they started.
+ */
+export type WorkspaceDropRejectionReason = "drop_busy" | "conversion_busy";
+
 export type WorkspaceDropState =
   | { readonly status: "idle" }
   | { readonly status: "hovering"; readonly itemCount: number }
@@ -201,7 +209,7 @@ export type WorkspaceDropState =
       readonly operationId: string;
       readonly error: PreviewError;
     }
-  | { readonly status: "rejected"; readonly reason: "drop_busy" | "conversion_busy" };
+  | { readonly status: "rejected"; readonly reason: WorkspaceDropRejectionReason };
 
 /** One monotonically sequenced native drop update. */
 export interface WorkspaceDropUpdate {

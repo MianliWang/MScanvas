@@ -1062,13 +1062,13 @@ impl PreviewService {
         // held the bound request could run one for a reservation the slot has
         // since replaced; asking the slot means the request that runs is the
         // request the slot says is claimed, or none at all.
-        let Some(bound) = self.conversion_slot().claimed() else {
+        let Some((operation, bound)) = self.conversion_slot().claimed() else {
             return self.conversion_state();
         };
         let handle = bound.dataset_handle().to_owned();
         let root = match admit_destination_root(destination) {
             Ok(root) => root,
-            Err(error) => return self.refuse_conversion(handle, error),
+            Err(error) => return self.refuse_conversion(operation, handle, error),
         };
         let workspace = self.workspace();
         let still_bound = workspace
@@ -1079,19 +1079,26 @@ impl PreviewService {
                 .is_some_and(|dataset| dataset.file().source_kind() == bound.kind());
         drop(workspace);
         if !still_bound {
-            return self.refuse_conversion(handle, superseded());
+            return self.refuse_conversion(operation, handle, superseded());
         }
+        // The transition names this operation. The slot lock was released for
+        // the admission and revalidation above, and a reload in that window
+        // releases the slot -- so a caller that ran whatever it found could
+        // convert for an operation the session has moved past.
         let mut slot = self.conversion_slot();
-        slot.start_running();
+        let started = slot.start_running(operation);
         self.publish_conversion_busy(&slot);
         drop(slot);
+        if !started {
+            return self.conversion_state();
+        }
 
         let report =
             self.convert_workspace_dataset(&handle, &root, conflict_policy(bound.conflict()));
         let mut slot = self.conversion_slot();
         match report {
-            Ok(report) => slot.complete(report),
-            Err(error) => slot.refuse(handle, error),
+            Ok(report) => slot.complete(operation, report),
+            Err(error) => slot.refuse(operation, handle, error),
         }
         self.publish_conversion_busy(&slot);
         slot.read()
@@ -1099,11 +1106,12 @@ impl PreviewService {
 
     fn refuse_conversion(
         &self,
+        operation: u64,
         handle: String,
         error: PreviewErrorDto,
     ) -> WorkspaceConversionUpdateDto {
         let mut slot = self.conversion_slot();
-        slot.refuse(handle, error);
+        slot.refuse(operation, handle, error);
         self.publish_conversion_busy(&slot);
         slot.read()
     }

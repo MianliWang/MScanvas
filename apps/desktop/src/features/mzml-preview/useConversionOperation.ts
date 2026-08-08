@@ -70,6 +70,13 @@ export function useConversionOperation(): ConversionOperation {
   const [plan, setPlan] = useState<ConversionPlanState>({ status: "none" });
   const [error, setError] = useState<PreviewError | null>(null);
   const [conflictPolicy, setConflictPolicy] = useState<ConversionConflictPolicy>("fail");
+  /**
+   * Bumped when an authoritative read failed, to ask again.
+   *
+   * A counter rather than a timer handle, so the retry is an effect dependency
+   * and a document that unmounts mid-wait cancels it with everything else.
+   */
+  const [readAttempt, setReadAttempt] = useState(0);
 
   const mounted = useRef(true);
   // The highest sequence this document has installed. Rust advances one per
@@ -111,16 +118,32 @@ export function useConversionOperation(): ConversionOperation {
         }
       })
       .catch(() => {
-        // A slot that cannot be read is not a conversion that failed. The next
-        // read is the way out, and inventing a terminal state here would put a
-        // result on screen that Rust never reported.
+        // A slot that cannot be read is not a conversion that failed, and
+        // inventing a terminal state here would put a result on screen Rust
+        // never reported. But there is no other reader to fall back on: polling
+        // starts only once this document knows something is running, so a
+        // failed first read would leave it idle for ever -- offering actions
+        // Rust refuses and hiding a result that already exists. So it asks
+        // again.
+        if (mounted.current && token === stateToken.current) {
+          setReadAttempt((attempt) => attempt + 1);
+        }
       });
   }, [api, applyUpdate]);
 
-  // On mount, and only on mount. This is what recovers a conversion the
-  // replaced document started: the reply to the command that began it went
-  // nowhere, and the slot is where the answer actually lives.
-  useEffect(readState, [readState]);
+  // On mount, and again after a read that failed. This is what recovers a
+  // conversion the replaced document started: the reply to the command that
+  // began it went nowhere, and the slot is where the answer actually lives.
+  useEffect(() => {
+    if (readAttempt === 0) {
+      readState();
+      return undefined;
+    }
+    const timer = setTimeout(readState, POLL_INTERVAL_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [readAttempt, readState]);
 
   const busy = state.status === "awaitingDestination" || state.status === "running";
 

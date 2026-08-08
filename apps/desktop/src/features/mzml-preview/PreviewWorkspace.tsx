@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 
 import { BackendStatus } from "./BackendStatus";
+import type { WorkspaceDropRejectionReason } from "./contracts";
 import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
 import { PreviewSummary } from "./PreviewSummary";
@@ -331,7 +332,7 @@ export function PreviewWorkspace() {
         {workspace.dropRejectedToken > 0 ? (
           <div className="notice notice-warning">
             <strong>Drop not accepted</strong>
-            <span>{DROP_BUSY_STATUS}</span>
+            <span>{DROP_REJECTION_STATUS[workspace.dropRejectedReason]}</span>
           </div>
         ) : null}
 
@@ -688,6 +689,16 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
   }
 }
 
+/**
+ * What each refusal says. Exhaustive over the reasons, so one added to the
+ * boundary fails compilation here rather than being dropped in silence.
+ */
+const DROP_REJECTION_STATUS: Readonly<Record<WorkspaceDropRejectionReason, string>> = {
+  drop_busy: DROP_BUSY_STATUS,
+  conversion_busy:
+    "MSCanvas is converting an acquisition, so those files were not added. Try again once the conversion has finished.",
+};
+
 function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>): string {
   if (workspace.dropSubscriptionStatus === "unavailable") {
     return `Explorer drag-and-drop is unavailable. ${workspace.dropSubscriptionError?.summary ?? "Use the Add actions below."}`;
@@ -696,7 +707,9 @@ function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>): string
     return "Connecting Explorer drag-and-drop.";
   }
   if (workspace.dropRejectedToken > 0) {
-    return `${DROP_BUSY_STATUS}${workspace.dropRejectedToken % 2 === 1 ? "\u00a0" : ""}`;
+    return `${DROP_REJECTION_STATUS[workspace.dropRejectedReason]}${
+      workspace.dropRejectedToken % 2 === 1 ? "\u00a0" : ""
+    }`;
   }
   if (workspace.dropError !== null) {
     return `The dropped items could not be added. ${workspace.dropError.summary}`;

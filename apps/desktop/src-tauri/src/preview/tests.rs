@@ -8362,6 +8362,43 @@ fn a_reload_releases_a_reservation_no_document_can_claim() {
         .expect("the workspace is no longer held by a conversion nobody can finish");
 }
 
+/// A reload during destination admission does not let the released operation
+/// convert anyway.
+///
+/// The slot lock is not held across admission and revalidation -- that is
+/// filesystem work -- so a reload lands in the middle of it. Without an
+/// operation-exact transition, this thread would mark a replacement operation
+/// as running and then overwrite the slot with the old one's report.
+#[test]
+fn an_operation_released_mid_flight_converts_nothing_and_reports_nothing() {
+    let fixture = TestFile::new("released-mid-flight");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = destination_root(&fixture, "out");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    )));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("one reservation");
+    service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+
+    // The document is replaced while the picker is open. The command that was
+    // dispatched for it still returns, and must convert nothing.
+    service.begin_webview_document();
+    let update = service.run_claimed_conversion(&destination);
+
+    assert!(matches!(update.state, WorkspaceConversionStateDto::Idle));
+    assert_eq!(launches.load(Ordering::SeqCst), 0);
+    assert_eq!(entry_names(&destination), Vec::<String>::new());
+}
+
 /// A running conversion is not released by a reload. Its process is under way,
 /// and its result is what the replacement document will read.
 #[test]

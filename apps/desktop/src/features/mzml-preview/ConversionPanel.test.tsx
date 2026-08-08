@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { PreviewApiProvider } from "./api";
@@ -35,6 +35,9 @@ function renderApp(api: FakePreviewApi): void {
 function rows(): HTMLElement[] {
   return within(screen.getByRole("listbox", { name: "Workspace" })).queryAllByRole("option");
 }
+
+/** Names the visible copy of a sentence rather than its polite mirror. */
+const VISIBLE = { ignore: "[aria-live], script, style" } as const;
 
 function liveRegion(): string {
   return document.querySelector("[data-live-region='conversion']")?.textContent ?? "";
@@ -286,6 +289,60 @@ describe("converting one focused Thermo RAW acquisition", () => {
     // The viewer still belongs to the mzML row it was opened for.
     expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
     expect(rows()[0]).toHaveAccessibleName(expect.stringContaining("Showing"));
+  });
+
+  it("refuses every route into a preview of a vendor row, not just the button", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile, acquisition],
+      availability: availableBackend,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /FT-HCD-MSX\.raw/ });
+
+    // A preview of the mzML row first, so there is something to lose.
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+    await screen.findByRole("grid", { name: "Spectra" });
+    const openedAfterPreview = api.openedHandles.length;
+
+    // Enter on the focused vendor row, and a double-click on it.
+    fireEvent.click(rows()[1]);
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Enter" });
+    fireEvent.doubleClick(rows()[1]);
+
+    // Nothing was asked of the backend, and the viewer still belongs to the
+    // row it was opened for.
+    expect(api.openedHandles).toHaveLength(openedAfterPreview);
+    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+  });
+
+  it("says why a drop was refused while a conversion runs", async () => {
+    const transport = createFakeWorkspaceDropTransport();
+    const api = createFakePreviewApi({
+      initialDatasets: [acquisition],
+      availability: availableBackend,
+    });
+    render(
+      <WorkspaceDropTransportProvider value={transport}>
+        <PreviewApiProvider value={api}>
+          <App />
+        </PreviewApiProvider>
+      </WorkspaceDropTransportProvider>,
+    );
+    await screen.findByRole("option", { name: /FT-HCD-MSX\.raw/ });
+
+    await act(async () => {
+      transport.emit({ sequence: 1, state: { status: "rejected", reason: "conversion_busy" } });
+      await Promise.resolve();
+    });
+
+    // Its own sentence, not the one a second drop gets: the two are refused for
+    // different lengths of time and the user does something different about
+    // each.
+    // The visible notice, named apart from its polite mirror: both say it, and
+    // that is the established shape here.
+    const spoken = /MSCanvas is converting an acquisition, so those files were not added/;
+    expect(screen.getByText(spoken, VISIBLE)).toBeVisible();
+    expect(document.querySelector("[data-live-region='drop']")?.textContent ?? "").toMatch(spoken);
   });
 
   it("makes acquiring and curating unavailable while a conversion holds the workspace", async () => {

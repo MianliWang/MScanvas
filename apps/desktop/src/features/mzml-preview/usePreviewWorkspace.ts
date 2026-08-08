@@ -9,6 +9,7 @@ import type {
   PreviewError,
   SelectedFile,
   SelectedSpectrum,
+  WorkspaceDropRejectionReason,
   WorkspaceDropUpdate,
 } from "./contracts";
 import { toPreviewError } from "./contracts";
@@ -146,6 +147,8 @@ export interface PreviewWorkspace {
    * again without replacing the current import state.
    */
   readonly dropRejectedToken: number;
+  /** Why the last drop was refused, for the sentence that says so. */
+  readonly dropRejectedReason: WorkspaceDropRejectionReason;
   /** Whether this document currently owns the native Explorer-drop Channel. */
   readonly dropSubscriptionStatus: DropSubscriptionStatus;
   /** A Channel registration failure, separate from any accepted Drop failure. */
@@ -417,6 +420,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     status: "idle",
   });
   const [dropRejectedToken, setDropRejectedToken] = useState(0);
+  /**
+   * Why the last drop was refused.
+   *
+   * Beside the token rather than folded into it, because the token's job is to
+   * re-announce an identical sentence and this decides which sentence it is.
+   */
+  const [dropRejectedReason, setDropRejectedReason] =
+    useState<WorkspaceDropRejectionReason>("drop_busy");
   const [dropError, setDropError] = useState<PreviewError | null>(null);
   const [dropSubscriptionStatus, setDropSubscriptionStatus] =
     useState<DropSubscriptionStatus>("connecting");
@@ -1054,12 +1065,16 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         }
 
         case "rejected":
-          // A second Drop is feedback about the attempted operation, not a
+          // A refusal is feedback about the attempted operation, not a
           // transition of the one already running. In particular, do not clear
           // its owner or its busy gate.
-          if (state.reason === "drop_busy") {
-            setDropRejectedToken((token) => token + 1);
-          }
+          //
+          // Both reasons are announced. They are refused for different lengths
+          // of time and the user does something different about each — another
+          // drop finishes on its own, a conversion is work they started — so a
+          // reason with no handling would be a drop that vanished in silence.
+          setDropRejectedReason(state.reason);
+          setDropRejectedToken((token) => token + 1);
           return;
       }
     },
@@ -1141,6 +1156,18 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const activateDataset = useCallback(
     (handle: string) => {
       if (backendBusyRef.current || viewerRequests.current > 0) {
+        return;
+      }
+      // Here rather than on the button, because a button is one of three ways
+      // in: Enter and a double-click reach this too. Without it, activating a
+      // vendor row would clear the mzML preview on screen and replace it with
+      // the refusal Rust is about to send -- losing a working view to learn
+      // something the row already says.
+      if (
+        rosterRef.current.datasets.some(
+          (dataset) => dataset.handle === handle && dataset.sourceKind !== "mzml",
+        )
+      ) {
         return;
       }
       if (!backendUsableRef.current) {
@@ -1742,6 +1769,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     dropBusy,
     dropPresentation,
     dropRejectedToken,
+    dropRejectedReason,
     dropSubscriptionStatus,
     dropSubscriptionError,
     retryDropSubscription,
