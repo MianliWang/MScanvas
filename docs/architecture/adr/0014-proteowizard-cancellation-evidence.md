@@ -71,15 +71,38 @@ admits it cannot.
 ### A confirmed cancellation is the only cancellation
 
 `run_conversion_cancellable` returns `Cancelled` only when the owned Job Object
-reported no surviving process. Everything else is something else:
+reported `Some(0)` surviving processes, or when no process was created at all.
+
+Those two are the whole rule, and both halves are load-bearing.
+
+`Some(0)` and nothing else. `None` from the job accounting does not mean the
+tree is empty; it means no bounded query was available, which is exactly the
+state in which a caller must not be told the conversion stopped. A run that
+cannot establish the tree is gone gets `CancellationFailed`. Nothing real
+regresses: on Windows a supervised cancellation always reports `Some(0)`, and
+off Windows job termination is unsupported, so a successful `Cancelled` is
+unreachable there.
+
+And a run that never launched is not a terminated tree. `Termination` therefore
+carries `NotStarted` beside `Cancelled`: a refusal has no exit code, no elapsed
+time and no job accounting at all, because no job was ever created. Without that
+distinction a request landing between the pre-staging check and the spawn — an
+ordinary race window — would be reported with backend facts for a process that
+never existed. `Termination::is_cancellation()` is what a caller asks when it
+only cares that the request stopped the run; `launched()` is what it asks when
+it cares whether there was a process.
+
+Everything else is something else:
 
 | Situation | Result |
 | --- | --- |
 | Request preceded the attempt | `Cancelled`, observation `BeforeRun`: nothing inspected, created, planned or launched |
 | Request arrived before the launch decision | `Cancelled`, observation `DuringRun`, no backend facts, no staging area |
+| Request arrived after staging and before the spawn | `Cancelled`, observation `DuringRun`, no backend facts, an empty staging area reported as one |
 | Request confirmed, owned tree empty | `Cancelled`, observation `DuringRun`, with bounded backend facts |
 | Request made, termination or wait failed | `CancellationFailed`, carrying the process boundary's own typed reason |
 | Request made, runner claims cancelled with surviving owned processes | `CancellationFailed(NotTerminated)` |
+| Request made, runner claims cancelled with no job accounting at all | `CancellationFailed(NotTerminated)` |
 | Process exited on its own, request pending | `Completed` — finalized, rejected or failed on its own merits |
 | Launch or capture failure coinciding with a request | `Completed(Failed(Backend(…)))`, keeping the reason true of it |
 | No cancellation object supplied | exactly what `run_conversion` always returned |
@@ -105,7 +128,7 @@ Each poll consults `try_wait` before it consults the cancellation flag. So:
   reports**.
 
 The second half has a measured consequence worth stating plainly. A run
-cancelled 1,092 ms into a 1,087 ms conversion reported `Cancelled` with an exit
+cancelled 1,107 ms into a 1,097 ms conversion reported `Cancelled` with an exit
 code of `0`: the process finished its work in the window between `try_wait`
 returning "still running" and `TerminateJobObject` landing. Nothing was
 finalized and the destination root stayed empty. That is the conservative
@@ -158,11 +181,11 @@ and the only one the harness will run against.
 - **Early cancellation.** Requested when the staged output file first appeared:
   the owned tree terminated with `STATUS_CANCELLED`, the Job reported zero
   surviving processes, the staging area was removed, the destination root stayed
-  empty and there was no residue. Request to return: 62 ms.
+  empty and there was no residue. Request to return: 66 ms.
 - **Mid-write cancellation.** Requested after the staged file was observed
-  growing, at 222,923 bytes of a 12,283,969-byte finished output. Same result:
+  growing, at 151,167 bytes of a 12,283,969-byte finished output. Same result:
   tree gone, partial document removed, destination empty, no residue. Request to
-  return: 60 ms.
+  return: 71 ms.
 - **Partial-output shape.** This build writes its output **directly under the
   planned name and grows it in place**. No `.part`, `.partial` or `.tmp`
   suffix appeared in any observation, so a partial output is indistinguishable
@@ -175,7 +198,7 @@ and the only one the harness will run against.
   ADR 0009's exactly-one-entry rule already depended on for completed runs and
   extends it to interrupted ones.
 - **Thermo route.** The evidenced vendor reader was terminated too: requested as
-  soon as the staging area existed, the process ran 103 ms, exited
+  soon as the staging area existed, the process ran 132 ms, exited
   `STATUS_CANCELLED`, left zero surviving processes and had written nothing at
   all. Cancellation of the vendor path is therefore established; a *mid-write*
   observation of it is not, because the one lawful fixture is 78,309 bytes.
@@ -215,7 +238,7 @@ None of these is answered here, and none may be assumed.
   correct. Offering the same retry affordance as a failed item would say
   something untrue about why it stopped.
 - **What the user is told while termination is in flight.** Confirmation took
-  52–109 ms in every measurement here, on one machine with one backend. That is
+  66–146 ms in every measurement here, on one machine with one backend. That is
   not a budget and no threshold derives from it.
 - **A queue-wide request.** This primitive is per-attempt. A queue-level request
   is a different object with a different lifetime, and building it as "a set of
