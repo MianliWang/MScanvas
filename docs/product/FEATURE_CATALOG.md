@@ -30,6 +30,14 @@ Implementation notes for the two folder-bearing features follow. The acceptance
 table remains the target, including the unsupported portions called out below:
 
 - **WSP-002 — Partially implemented.** M1.4.0 built the private discovery foundation and M1.4.1 exposed `Add mzML folder…` over it ([ADR 0007](../architecture/adr/0007-logical-acquisition-discovery-and-folder-traversal.md)). What works today: one chosen local Windows folder is scanned recursively for regular `.mzML` files, in a deterministic order, under four named limits, without following any linked or special filesystem entry, and an incomplete scan says so. What is still absent from the acceptance above: directory-formatted acquisitions are not recognized, so there is nothing to stop descending inside. They remain evidence-gated — MSCanvas recognizes none of them today, and will only claim one once this repository can convert it.
+- **WSP-008 — Partially implemented.** M3.2 converts the selection, in the order
+  it is displayed, at up to 16 items per queue ([ADR 0013](../architecture/adr/0013-serial-conversion-queue.md)).
+  The scope is visible before execution — the ordered list, the name each item
+  would write, and how many selected rows are excluded for being mzML already —
+  and unrelated rows are untouched, including when an item fails. What is absent
+  from the acceptance above: "all" is not an option, because a queue is bounded
+  at 16 and a workspace holds up to 1,024 rows; and only the one evidenced Thermo
+  family can be queued.
 - **WSP-003 — Implemented for the current mzML surface.** M1.5 accepts one or
   many regular `.mzML` files, ordinary local folders containing regular `.mzML`
   files, or a mixture of both from Windows Explorer
@@ -67,15 +75,27 @@ table remains the target, including the unsupported portions called out below:
 | CNV-008 | Conflict policy | P0 | Default is fail/skip; overwrite requires explicit confirmation. |
 | CNV-009 | Natural-language summary | P0 | Before running, state file count, format, processing and output root. |
 
-**One conversion is reachable: exactly one focused Thermo Scientific RAW row at
-a time, to mzML, on one evidenced ProteoWizard build.** `Add files…` admits that
-family alongside mzML, a focused vendor row offers a fixed plan and a Fail/Skip
-choice, and `Convert focused…` opens a Rust-owned local destination picker and
-converts. CNV-001 and CNV-008's fail/skip half are reachable that far and no
-further; CNV-003 exposes no location choice beyond the folder itself; CNV-007's
-zlib is shown but not selectable; CNV-002, CNV-004 to CNV-006 and CNV-009's
-batch summary remain unreachable. There is no queue, no cancellation, no
-progress, no retry and no overwrite. See
+**A serial conversion queue is reachable: one to sixteen selected Thermo
+Scientific RAW rows, to mzML, one after another, on one evidenced ProteoWizard
+build.** `Add files…` admits that family alongside mzML; selecting Thermo rows
+offers the ordered list that would run, the names it would write, and one
+Fail/Skip choice; and one Rust-owned local destination picker settles where all
+of them go. Items convert one at a time in the order shown. One file's failure
+marks that file and the queue continues, and `Retry N failed` reruns only the
+failures Rust marks retryable.
+
+Reachable that far and no further. CNV-001 and CNV-008's fail/skip half are
+reachable; CNV-009's batch summary is reachable as an item count, an ordered list
+and the planned output names, but not as processing options it does not have.
+CNV-003 exposes no location choice beyond the folder itself. CNV-007's zlib is
+shown but not selectable. CNV-002 and CNV-004 to CNV-006 remain unreachable.
+
+The named limits: at most **16** items per queue, one vendor family, regular
+files only, one folder, no overwrite, no cancellation, no percentage, no
+parallelism, and no queue that survives closing the application. Retry is narrow
+by construction — only a destination folder that exists but would not open, and
+an acquisition that exists but could not be read, are classified retryable. See
+[ADR 0013](../architecture/adr/0013-serial-conversion-queue.md) and
 [ADR 0012](../architecture/adr/0012-first-visible-thermo-conversion.md).
 
 Beneath it, the private Rust conversion boundary is unchanged and is covered by

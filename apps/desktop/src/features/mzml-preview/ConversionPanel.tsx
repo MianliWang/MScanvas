@@ -89,10 +89,14 @@ export function ConversionPanel({
         </div>
       )}
 
-      {conversion.busy || terminal ? (
-        <QueueState conversion={conversion} />
-      ) : null}
-      {plan.status === "none" ? null : (
+      {conversion.busy || terminal ? <QueueState conversion={conversion} /> : null}
+      {/* Not while a queue is under way. The plan is an ordered list of file to
+          output and so is the running queue, and two of them one above the other
+          — one live, one hypothetical, and the hypothetical one's button
+          disabled — is the panel describing two different things in the same
+          shape. A finished queue is different: there the plan is how the user
+          converts something else, so it stays. */}
+      {conversion.busy || plan.status === "none" ? null : (
         <PlanState
           canConvert={canConvert}
           conversion={conversion}

@@ -119,32 +119,48 @@ until this repository can convert one.
 
 **Success:** valid outputs are easy to locate and failures do not require rebuilding the batch.
 
-**Not built as a batch.** Steps 1, 4 and 5 are unreachable: there is no scope
-choice, no queue advancing per file, and no retry. What exists is WF-004a below.
-See [ADR 0009](../architecture/adr/0009-mzml-conversion-execution-boundary.md).
+**Partly built.** Steps 4 and 5 are reachable for one vendor family, as WF-004a
+below. Step 1's "all" is not: a queue holds at most 16 items. Steps 2's semantic
+settings, its output-root choice and "Open file/folder" remain unreachable. See
+[ADR 0009](../architecture/adr/0009-mzml-conversion-execution-boundary.md) and
+[ADR 0013](../architecture/adr/0013-serial-conversion-queue.md).
 
-## WF-004a — Convert one focused Thermo RAW acquisition
+## WF-004a — Convert a queue of Thermo RAW acquisitions
 
-1. `Add files…` and choose one or more acquisitions. mzML and evidenced Thermo
-   RAW are both admitted; a folder or a drop still admits mzML only.
-2. Focus the Thermo RAW row. It cannot be previewed, and says so.
-3. Review the fixed summary: source, family, mzML output, compression, and the
-   output-only validation disclosure.
+1. `Add files…` and choose acquisitions. mzML and evidenced Thermo RAW are both
+   admitted; a folder or a drop still admits mzML only.
+2. Select the Thermo RAW rows to convert, or focus one. Vendor rows cannot be
+   previewed, and say so.
+3. Review the plan: the ordered list of what will run, the name each item will
+   write, how many selected rows are excluded for being mzML already, and the
+   output-only validation disclosure. Two rows that would write one name are
+   refused here, before anything is chosen or created.
 4. Choose Fail or Skip if a file of that name already exists. There is no
-   overwrite.
-5. `Convert focused…` opens a Rust-owned picker for a local folder.
-6. The conversion runs. It cannot be cancelled, and says so. Adding, clearing
-   and previewing are unavailable until it ends; searching, sorting and reading
-   the list are not.
-7. The result reports the output's name, size and record counts, or that a name
-   was already taken and left alone, or that nothing was written.
+   overwrite. The choice applies to the whole queue.
+5. `Convert N selected…` opens a Rust-owned picker for one local folder, which
+   every item of the queue writes into.
+6. Items convert one at a time, in the order shown, and the panel says which item
+   of how many is running. The queue cannot be cancelled, and says so. Adding,
+   clearing and previewing are unavailable until it ends; searching, sorting and
+   reading the list are not, and every queued row stays visible through a search.
+7. Each item reports its own outcome: the output's name, size and record counts;
+   or that a name was already taken and left alone; or why nothing was written.
+   The queue reports how many converted, were skipped, and failed.
+8. `Retry N failed` reruns only the failures another attempt could change, in
+   their original places, into the same folder under the same policy. Converted
+   and skipped files are left exactly as they are.
 
-**Success:** one acquisition becomes one mzML the user can find, and the
-interface never claims more about it than output-only validation established.
+**Success:** a set of acquisitions becomes a set of mzML files the user can
+find, one file's failure costs only that file, and the interface never claims
+more about any of them than output-only validation established.
 
-**Not included:** multiple files, cancellation, progress, retry, persistence
-across restarts, and adding the output to the workspace. See
-[ADR 0012](../architecture/adr/0012-first-visible-thermo-conversion.md).
+**Not included:** more than 16 items in one queue, any other vendor family,
+cancellation, a progress percentage, parallel conversion, a queue that survives
+closing the application, overwrite, and adding the outputs to the workspace.
+Retry is offered only where Rust classifies the failure as retryable, which today
+means a destination folder that exists but would not open and an acquisition that
+exists but could not be read. See
+[ADR 0013](../architecture/adr/0013-serial-conversion-queue.md).
 
 ## WF-005 — Clear the workspace
 

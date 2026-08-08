@@ -1,8 +1,11 @@
 # ADR 0012 — The first visible Thermo RAW → mzML conversion
 
-- Status: Accepted for one focused dataset at a time, on one evidenced provider
-  build, for one named vendor family; queueing, cancellation, retry and every
-  other family separately gated
+- Status: Superseded in part by
+  [ADR 0013](0013-serial-conversion-queue.md), which generalises the one
+  conversion into a queue of one to sixteen. Everything else here — the widened
+  ingestion surface, the source family on a row, the Rust-owned destination and
+  its two-phase reservation, the concurrency rules, and the path-free result —
+  stands unchanged and is what the queue is built on
 - Date: 2026-08-07
 
 ## Context
@@ -68,6 +71,12 @@ process; a batch of acquisitions costs none.
 
 ### Conversion acts on the focused row
 
+*Superseded by [ADR 0013](0013-serial-conversion-queue.md): conversion now acts
+on the selection where there is one and on the focused row otherwise. The
+objection below — an action whose scope changes as the user curates the list — is
+answered there by binding the queue when the button is pressed and by showing the
+whole ordered list, and its exclusions, before anything runs.*
+
 Not on the selection. A selection is a set the user built for removing rows;
 converting is one acquisition at a time, and an action whose scope changed as
 they curated the list would be an action they could not predict.
@@ -122,6 +131,14 @@ and no internal epoch. A cancelled picker is an ordinary no-op: nothing is
 created, the slot returns to idle, and no counter rewinds.
 
 ### One slot, and it is not a queue
+
+*Superseded by [ADR 0013](0013-serial-conversion-queue.md). The slot still holds
+at most one thing; that thing is now a queue of one to sixteen items, and a
+single conversion is a queue of one. The two properties this section was really
+about — one slot, and a state that is read rather than pushed — are unchanged,
+and are why reload recovery still falls out rather than being built. What did
+change: `completed` and `failed` were folded into one `terminal`, whose queue
+says which items did which.*
 
 `ConversionSlot` holds `idle | awaitingDestination | running | terminal`, one
 report, and a sequence that only advances. A second conversion is refused, not
@@ -242,10 +259,12 @@ unreachable rather than left looking load-bearing.
 
 - **One acquisition, one build, one family.** Unchanged from ADR 0010. Widening
   any of them is a measurement.
-- **No queue, no cancellation, no retry, no persistence.** The next conversion
-  work is a serial multi-file queue with per-file failure isolation and retry,
-  and cancellation stays out of it until there is evidence that a `msconvert`
-  process tree can be terminated cleanly.
+- **No queue, no cancellation, no retry, no persistence.** *Closed for the queue
+  and for retry by [ADR 0013](0013-serial-conversion-queue.md); still open for
+  cancellation and persistence, on the same terms.* The next conversion work is a
+  serial multi-file queue with per-file failure isolation and retry, and
+  cancellation stays out of it until there is evidence that a `msconvert` process
+  tree can be terminated cleanly.
 - **The native picker is contract-tested, not physically operated.** Its option
   policy, ordering and failure classification have unit coverage; that a modal
   Windows dialog appears is not something this suite can assert.

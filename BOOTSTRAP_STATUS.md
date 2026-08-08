@@ -3150,3 +3150,92 @@ Validation on the final head: `cargo fmt --all --check`,
 No queue, cancellation, progress percentage, retry, persistence, mzXML,
 overwrite, second vendor family, directory-formatted acquisition support, output
 auto-import or output auto-preview. No dependency and no capability was added.
+
+## M3.2 serial Thermo RAW conversion queue, 2026-08-08
+
+The one-conversion slot became a bounded, serial, session-scoped queue. A single
+focused conversion is now a queue of one rather than a second protocol beside it:
+`WorkspaceConversionStateDto::{Completed, Failed}` are gone, folded into one
+`Terminal` whose queue says which items did which.
+
+Selecting Thermo RAW rows shows the ordered list that would run — in the roster's
+visible order, after the user's search and sort — with the mzML name each item
+would write and how many selected rows are excluded for already being mzML. Two
+items that would write one name are refused during planning, before a picker
+opens and before anything is created, because the conflict policy answers a
+question about the folder and not about the queue.
+
+The bound is **16**, enforced in Rust, reported to the interface as the plan's
+capacity, and refused with `queue_too_large`. It was chosen for one reason and
+recorded in the ADR: the queue is serial and cannot be cancelled, so whatever is
+started is waited out. At one to three minutes per real acquisition that is
+roughly sixteen to fifty minutes of unstoppable work — deliberate, and far below
+the 1,024-row workspace capacity, so "select everything and convert" is refused by
+a rule rather than accepted into an hours-long run.
+
+One folder, admitted once under ADR 0012's rules and retained as an *object*: the
+volume serial number and 128-bit file ID are read from the handle admission
+already holds, and a retry re-admits the name and refuses with
+`queue_destination_changed` unless it reaches the same object. One provider
+binding and one evidence question for the whole queue, and the backend lane held
+from the first item to the last — not because the busy slot needs it for previews,
+which it already refuses, but for the callers it does not refuse, such as a
+backend recheck.
+
+A failure belongs to its item. The queue continues, nothing already finalized is
+undone, and a run that finalized nothing names no output file. `Retry` reruns only
+what Rust classifies as retryable, in place, at the same folder and policy, and
+counts the attempt.
+
+The retry classifier is **total over the boundary's failure types, matched by
+type rather than by identifier**. Matching by type means the compiler refuses to
+build when the crate gains a variant; matching by string would also have been
+wrong, because `source_not_rehashed` is emitted by two variants at two phases and
+the identifiers are therefore not a partition. What it says is narrow: a
+destination root that exists but would not open, and an acquisition that exists
+but could not be read (`file_unreadable`, and `source_in_use` for the same
+physical condition through the other open). Everything else answers no. The M0
+spike's `Retryability` contract was not inherited — it classifies only
+`ProcessError`/`ProcessOutput`, where it speaks to this path it says
+`AfterCorrection`, and its `Retryable` arms come from an unmeasured catch-all.
+
+Deterministic coverage: 376 Rust tests and 486 frontend tests, none needing an
+installation or a WebView.
+
+Thirteen focused mutations were applied one at a time. Eleven died against the
+suite as written. Two survived and were closed rather than argued away: sorting
+the queue back into registry insertion order survived because the order test added
+its acquisitions in the order it queued them, and releasing the backend lane
+between items survived because every interleaving the concurrency test tried was
+already refused by the busy slot. Both tests were strengthened and both mutations
+now die.
+
+The real queue ran on the implementation head through the product path —
+`add_files`, then the reservation the destination picker claims — on the evidenced
+build (release `3.0.26013`, revision `47b13cf`, `msconvert.exe` SHA-256
+`9BB6F5D5…D590BD`, verified first). Three distinct copies of `FT-HCD-MSX.raw`
+(78,309 bytes, SHA-256 `B3D97B38…DD7B`) were admitted as `alpha.raw`,
+`bravo.raw`, `charlie.raw` and queued as `charlie`, `alpha`, `bravo` — an order
+the workspace does not hold. All three finalized in that order at one attempt
+each, producing 28,652 / 28,646 / 28,646 bytes with distinct digests, 1 spectrum
+and 1 chromatogram each, exactly three files in the destination, no sidecars and
+no staging residue; validation was output-only on every item, 9 verified, 0
+unverified, 11 inapplicable, none fully verified. Serial execution was measured
+twice: peak 1 concurrent `msconvert.exe` across 4 samples, and 2,057 ms of wall
+time against 1,614 ms of summed backend time. Failure isolation was measured on
+the same build by occupying the middle item's output name: `one.mzML` finalized,
+`two` failed `destination_exists` with no process, no output name, no residue and
+not retryable, `three.mzML` finalized, and the occupying file was unchanged byte
+for byte. The serialized updates name no path. The acquisition, the copies and
+the outputs were deleted afterwards; no vendor data is committed.
+
+Validation on the final head: `cargo fmt --all --check`,
+`cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --locked --workspace --all-targets`,
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build`, `git diff --check`.
+
+No cancellation, progress percentage, parallel conversion, app-restart
+persistence, mzXML, overwrite, second vendor family, directory-formatted
+acquisition support, output auto-import or output auto-preview. No dependency and
+no capability was added.

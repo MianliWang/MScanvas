@@ -556,7 +556,14 @@ export function queueOf(items: readonly ConversionQueueItem[]) {
   const retryable = items.filter((item) => item.state === "failed" && item.retryable).length;
   return {
     items,
-    currentIndex: items.filter((item) => item.state !== "pending").length,
+    // What Rust holds, and the two answers are different. While an item runs,
+    // the position *is* that item; between items it is how many are done, which
+    // after the last one is the item count. A fixture that only ever counted
+    // would describe a running queue as one item further on than it is.
+    currentIndex:
+      items.findIndex((item) => item.state === "running") === -1
+        ? items.filter((item) => item.state !== "pending").length
+        : items.findIndex((item) => item.state === "running"),
     itemCount: items.length,
     retryRound: 0,
     conflictPolicy: "fail" as const,
