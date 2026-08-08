@@ -30,6 +30,7 @@ use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -500,17 +501,26 @@ fn scenario(
 
     let plan = &plan;
     let started = Instant::now();
+    // The watcher waits for something the backend may never do. Without this it
+    // would be waiting on a process that has already gone, and a run whose
+    // milestone is unreachable — a workload too small to be caught mid-write,
+    // say — would cost the full timeout per scenario to learn nothing.
+    let settled = AtomicBool::new(false);
+    let settled_watch = &settled;
     let (attempt, observation, request_to_return, run_elapsed) = thread::scope(|scope| {
         let worker = scope.spawn(move || {
             let attempt =
                 run_conversion_cancellable(plan, capabilities, &SystemProcessRunner, cancellation);
+            settled_watch.store(true, Ordering::Release);
             (attempt, started.elapsed())
         });
 
         let observation = match milestone {
             Milestone::BeforeRun => StagingObservation::not_watched(),
-            Milestone::Elapsed(interval) => wait_for_interval(started, interval, &destination),
-            other => watch_staging(&destination, other),
+            Milestone::Elapsed(interval) => {
+                wait_for_interval(started, interval, &destination, &settled)
+            }
+            other => watch_staging(&destination, other, &settled),
         };
         let requested_at = Instant::now();
         request.request();
@@ -521,6 +531,10 @@ fn scenario(
     })?;
 
     println!("{label}.request_reached_milestone={}", observation.reached);
+    println!(
+        "{label}.attempt_settled_before_milestone={}",
+        observation.settled_first
+    );
     println!(
         "{label}.milestone_wait_ms={}",
         observation.waited.as_millis()
@@ -761,6 +775,10 @@ struct StagingObservation {
     last_bytes: Option<u64>,
     growth_observed: bool,
     partial_suffix_observed: bool,
+    /// The attempt returned before the milestone was reached. The record says
+    /// so, because "the milestone was missed" and "the conversion was over" are
+    /// different reasons for the same missing observation.
+    settled_first: bool,
 }
 
 impl StagingObservation {
@@ -770,20 +788,39 @@ impl StagingObservation {
             ..Self::default()
         }
     }
+
+    /// Whether the wait should stop because the attempt is over.
+    ///
+    /// Checked after an observation rather than before one, so a milestone the
+    /// backend reached in its last moments is still recorded.
+    fn stop_on(&mut self, settled: &AtomicBool) -> bool {
+        if settled.load(Ordering::Acquire) {
+            self.settled_first = true;
+            return true;
+        }
+        false
+    }
 }
 
 /// Polls the destination root for the staging tree MSCanvas creates inside it,
-/// until `milestone` is reached or the bound expires.
+/// until `milestone` is reached, the attempt settles, or the bound expires.
 ///
 /// It resolves the staging root by shape — the one directory a run puts in the
 /// destination root — rather than by reconstructing its name, so it depends on
 /// nothing the boundary keeps private and cannot be made to watch a path the
 /// run never used.
-fn watch_staging(destination: &Path, milestone: Milestone) -> StagingObservation {
+fn watch_staging(
+    destination: &Path,
+    milestone: Milestone,
+    settled: &AtomicBool,
+) -> StagingObservation {
     let started = Instant::now();
     let mut observation = StagingObservation::default();
     while started.elapsed() < MILESTONE_TIMEOUT {
         let Some(staging_output) = staging_output_directory(destination) else {
+            if observation.stop_on(settled) {
+                break;
+            }
             thread::sleep(POLL_INTERVAL);
             continue;
         };
@@ -793,6 +830,9 @@ fn watch_staging(destination: &Path, milestone: Milestone) -> StagingObservation
             return observation;
         }
         let Ok(snapshot) = snapshot_output_directory(&staging_output) else {
+            if observation.stop_on(settled) {
+                break;
+            }
             thread::sleep(POLL_INTERVAL);
             continue;
         };
@@ -834,6 +874,9 @@ fn watch_staging(destination: &Path, milestone: Milestone) -> StagingObservation
             observation.waited = started.elapsed();
             return observation;
         }
+        if observation.stop_on(settled) {
+            break;
+        }
         thread::sleep(POLL_INTERVAL);
     }
     observation.waited = started.elapsed();
@@ -842,10 +885,15 @@ fn watch_staging(destination: &Path, milestone: Milestone) -> StagingObservation
 
 /// Waits a fixed interval from the moment the attempt began, sampling the
 /// staging tree on the way so the record still says what was there.
+///
+/// An attempt that settles inside the interval ends the wait: the race it was
+/// timed for has already resolved to natural completion, and continuing to wait
+/// would only delay recording that.
 fn wait_for_interval(
     started: Instant,
     interval: Duration,
     destination: &Path,
+    settled: &AtomicBool,
 ) -> StagingObservation {
     let mut observation = StagingObservation::default();
     while started.elapsed() < interval {
@@ -870,9 +918,12 @@ fn wait_for_interval(
                 observation.last_bytes = Some(bytes);
             }
         }
+        if observation.stop_on(settled) {
+            break;
+        }
         thread::sleep(POLL_INTERVAL);
     }
-    observation.reached = true;
+    observation.reached = !observation.settled_first;
     observation.waited = started.elapsed();
     observation
 }
@@ -1049,7 +1100,29 @@ fn remove_workspace_contents(root: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::encode_base64;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use super::{StagingObservation, encode_base64};
+
+    /// A milestone the backend never reaches must not cost the full timeout.
+    ///
+    /// The watcher waits for something a conversion may simply not do — a
+    /// workload too small to be caught mid-write, say — so the attempt settling
+    /// is the other way out. It is recorded rather than silent, because "the
+    /// milestone was missed" and "the conversion was over" are different
+    /// reasons for the same missing observation.
+    #[test]
+    fn a_settled_attempt_ends_the_wait_and_says_it_did() {
+        let settled = AtomicBool::new(false);
+        let mut observation = StagingObservation::default();
+
+        assert!(!observation.stop_on(&settled));
+        assert!(!observation.settled_first);
+
+        settled.store(true, Ordering::Release);
+        assert!(observation.stop_on(&settled));
+        assert!(observation.settled_first);
+    }
 
     /// The generated workload is only a workload if the arrays in it decode to
     /// what the declared lengths and precisions say they are. RFC 4648 vectors,
