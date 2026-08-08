@@ -26,6 +26,10 @@ pub(super) fn admit_destination_root(chosen: &Path) -> Result<PathBuf, PreviewEr
     // and accept the link -- which is exactly what this refuses. A junction to
     // a perfectly ordinary local folder is still a destination whose contents
     // are decided somewhere this boundary has not looked.
+    // Held first, and for the whole of admission. Everything below judges an
+    // object nothing can rename or delete in the meantime, so the name still
+    // means what it meant when it was inspected.
+    let _held = hold_chosen_directory(chosen)?;
     let chosen_metadata = std::fs::symlink_metadata(chosen).map_err(|_| destination_unusable())?;
     if is_reparse_point(&chosen_metadata) {
         return Err(destination_is_a_link());
@@ -43,25 +47,50 @@ pub(super) fn admit_destination_root(chosen: &Path) -> Result<PathBuf, PreviewEr
         return Err(destination_is_a_link());
     }
 
-    // The name is resolved twice, and the two answers must agree. Between the
-    // inspection above and this resolution another process can rename the
-    // directory away and leave a junction behind, and canonicalization would
-    // then follow it to an ordinary folder that never passed admission --
-    // giving a verdict about one object and a path naming another.
-    //
-    // Re-resolving detects exactly that: a canonical path is already fully
-    // resolved, so canonicalizing it again answers with itself unless the name
-    // now means something else. This is the same technique the conversion
-    // boundary's own identity capture uses, and the plan formed from this root
-    // additionally binds it by filesystem identity and rechecks it before
-    // anything is created -- so a swap after this point is refused there.
-    if std::fs::canonicalize(&canonical).map_err(|_| destination_unusable())? != canonical {
-        return Err(destination_unusable());
-    }
     if !is_local_volume(&canonical)? {
         return Err(destination_is_remote());
     }
     Ok(canonical)
+}
+
+/// Holds the chosen directory open, without following it, for the length of
+/// admission.
+///
+/// Comparing the name twice cannot detect a swap: rename the directory away,
+/// leave a junction behind, and canonicalization follows it to an ordinary
+/// folder whose every check passes. Holding the object removes the window
+/// instead of trying to observe it — a directory this process has open cannot
+/// be renamed or deleted, so the name still means the object that was
+/// inspected when the path is resolved below.
+///
+/// Deny-write sharing is not requested: a destination folder is one other
+/// programs may legitimately be writing into, and refusing every busy folder
+/// would be a stricter rule than this boundary needs. What is withheld is
+/// rename and delete of the directory itself.
+#[cfg(windows)]
+fn hold_chosen_directory(chosen: &Path) -> Result<std::fs::File, PreviewErrorDto> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    /// Needed to open a directory at all.
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    /// Opens a link itself rather than its target, so a reparse point is
+    /// refused above rather than followed here.
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    /// Readers and writers are welcome; renaming and deleting this directory
+    /// out from under the admission that is judging it are not.
+    const FILE_SHARE_READ_WRITE: u32 = 0x0000_0003;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(chosen)
+        .map_err(|_| destination_unusable())
+}
+
+#[cfg(not(windows))]
+fn hold_chosen_directory(_chosen: &Path) -> Result<(), PreviewErrorDto> {
+    Ok(())
 }
 
 /// Whether this object carries a reparse tag of any kind.

@@ -1560,6 +1560,18 @@ impl PreviewService {
     ) -> Option<DropIngestionResultDto> {
         let delivery = self.drop_updates.begin_delivery();
         let mut gate = self.enter_workspace_mutation();
+        // The callback that accepted this drop cannot wait on a mutex, so it
+        // reads the conversion flag without one and a reservation can be taken
+        // immediately afterwards. This is the linearization point where that is
+        // decided: a drop may be accepted, but nothing commits into a workspace
+        // a conversion is reading.
+        if self.conversion_is_busy() {
+            drop(gate);
+            self.drop_updates
+                .publish_transient(delivery, conversion_busy_state());
+            self.clear_native_drop_claim(token.operation_id);
+            return None;
+        }
         let current = gate.active_drop.is_some_and(|active| {
             active.generation == token.generation
                 && active.operation_id == token.operation_id
@@ -1775,15 +1787,21 @@ impl PreviewService {
     /// in flight for one of the emptied datasets must not land on whatever is
     /// added next.
     pub fn clear_workspace(&self) -> Result<WorkspaceRosterDto, PreviewErrorDto> {
-        // Emptying the workspace would revoke the very row a conversion is
-        // reading, and this workflow cannot cancel one. Refusing is the honest
-        // answer; the alternative is a list the user believes they emptied
-        // while a process still holds a file in it.
-        if self.conversion_is_busy() {
-            return Err(conversion_busy());
-        }
         let delivery = self.drop_updates.begin_delivery();
         let (batch, _generation, pending_busy) = self.begin_superseding_mutation();
+        // Under the gate. Emptying the workspace would revoke the very row a
+        // conversion is reading, and this workflow cannot cancel one -- so the
+        // question has to be asked where the answer cannot change between
+        // asking it and acting on it.
+        if self.conversion_is_busy() {
+            drop(batch);
+            self.drop_updates.publish_terminal_with_busy(
+                delivery,
+                pending_busy,
+                WorkspaceDropStateDto::Idle,
+            );
+            return Err(conversion_busy());
+        }
         let mut workspace = self.workspace();
         workspace.clear(RevocationReason::Cleared);
         let roster = roster_of(&workspace);
