@@ -441,6 +441,19 @@ export interface FakePreviewApiOptions {
     publish: (state: WorkspaceConversionState) => void,
   ) => Promise<WorkspaceConversionState>;
   /** What `Retry failed` does. */
+  /** Whether the session begins already quarantined, as a reload can find it. */
+  readonly initialBackendQuarantined?: boolean;
+  /**
+   * What a stop settles the queue to.
+   *
+   * Receives the operation identifier the caller named and the publisher, so a
+   * test can model a stop that lands mid-item, between items, or one that
+   * cannot be confirmed.
+   */
+  readonly stop?: (
+    operationId: string,
+    publish: (state: WorkspaceConversionState) => void,
+  ) => Promise<WorkspaceConversionState>;
   readonly retry?: (
     publish: (state: WorkspaceConversionState) => void,
   ) => Promise<WorkspaceConversionState>;
@@ -518,6 +531,10 @@ export interface FakePreviewApi extends PreviewApi {
    * exercising the same staleness rule the real transport imposes.
    */
   readonly publishConversion: (state: WorkspaceConversionState) => void;
+  /** Puts the session into backend quarantine, as an unconfirmed stop does. */
+  readonly quarantineBackend: () => void;
+  /** Every operation identifier a stop was asked for, in order. */
+  readonly stopRequests: readonly string[];
   /** Every conversion this fake was asked to start, in order. */
   readonly conversionRequests: readonly ConversionRequest[];
 }
@@ -544,6 +561,7 @@ export function queueItem(
     retryable: false,
     report: null,
     error: null,
+    cancellation: null,
     ...overrides,
   };
 }
@@ -572,6 +590,9 @@ export function queueOf(items: readonly ConversionQueueItem[]) {
     failedCount: failed,
     retryableFailedCount: retryable,
     nonRetryableFailedCount: failed - retryable,
+    cancelledCount: count("cancelled"),
+    notRunCount: count("notRun"),
+    cancellationFailedCount: count("cancellationFailed"),
     error: null,
     installationGeneration: 0,
   };
@@ -621,12 +642,20 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   let conversion: WorkspaceConversionState = options.initialConversion ?? { status: "idle" };
   let conversionSequence = options.initialConversion === undefined ? 0 : 1;
   const conversionRequests: ConversionRequest[] = [];
+  const stopRequests: string[] = [];
+  // The session's own verdict on the backend, which outlives any one queue and
+  // is never cleared -- exactly as Rust holds it.
+  let backendQuarantined = options.initialBackendQuarantined ?? false;
   const publishConversion = (state: WorkspaceConversionState): void => {
     conversion = state;
     conversionSequence += 1;
   };
+  const quarantineBackend = (): void => {
+    backendQuarantined = true;
+  };
   const defaultConversion = (request: ConversionRequest): WorkspaceConversionState => ({
     status: "terminal",
+    reason: "completed",
     operationId: String(conversionSequence + 1),
     queue: queueOf(
       request.handles.map((handle, index) =>
@@ -754,6 +783,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     datasets,
     deliveredVerdicts,
     publishConversion,
+    quarantineBackend,
+    stopRequests,
     conversionRequests,
     inspectBackend: () =>
       (typeof options.availability === "function"
@@ -890,11 +921,16 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         capacity: 16,
       });
     },
-    getConversionState: () => Promise.resolve({ sequence: conversionSequence, state: conversion }),
+    getConversionState: () =>
+      Promise.resolve({
+        sequence: conversionSequence,
+        state: conversion,
+        backendQuarantined,
+      }),
     retryConversions: async () => {
       const settled = options.retry === undefined ? conversion : await options.retry(publishConversion);
       publishConversion(settled);
-      return { sequence: conversionSequence, state: conversion };
+      return { sequence: conversionSequence, state: conversion, backendQuarantined };
     },
     convertDatasets: async (handles, conflictPolicy, onReserved) => {
       const request = { handles, conflictPolicy };
@@ -911,7 +947,17 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       onReserved();
       const settled = await settling;
       publishConversion(settled);
-      return { sequence: conversionSequence, state: conversion };
+      return { sequence: conversionSequence, state: conversion, backendQuarantined };
+    },
+    stopConversion: async (operationId) => {
+      stopRequests.push(operationId);
+      // Modelled as Rust behaves: the request is recorded and the
+      // authoritative state is answered with. A test that wants the queue to
+      // settle differently publishes that itself.
+      const settled =
+        options.stop === undefined ? conversion : await options.stop(operationId, publishConversion);
+      publishConversion(settled);
+      return { sequence: conversionSequence, state: conversion, backendQuarantined };
     },
   };
 

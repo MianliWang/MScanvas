@@ -607,7 +607,7 @@ describe("the conversion queue at each checked window size", () => {
   ] as const;
 
   for (const viewport of VIEWPORTS) {
-    it(`shows one queue and no way to cancel it at ${viewport.name}`, async () => {
+    it(`shows one queue and one way to stop it at ${viewport.name}`, async () => {
       window.innerWidth = viewport.width;
       window.innerHeight = viewport.height;
       window.dispatchEvent(new Event("resize"));
@@ -648,11 +648,25 @@ describe("the conversion queue at each checked window size", () => {
         ),
       ).toEqual(["finalized", "running", "pending"]);
 
-      // The two things this workflow must never grow without evidence.
+      // The action is one, is about the queue, and fits the column at every
+      // checked width. Cancel is deliberately not its name: it ends the whole
+      // queue and undoes nothing that finished.
+      const stop = screen.getByRole("button", { name: "Stop queue" });
+      expect(stop).toBeVisible();
+      expect(stop).toBeEnabled();
       expect(screen.queryByRole("button", { name: /cancel/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /resume/i })).toBeNull();
+      const panel = document.querySelector(".conversion-panel");
+      expect(panel).not.toBeNull();
+      expect(stop.getBoundingClientRect().width).toBeLessThanOrEqual(
+        panel?.getBoundingClientRect().width ?? 0,
+      );
+      // The one thing this workflow must never grow without evidence.
       expect(document.body.textContent).not.toMatch(/\d+\s?%/);
       expect(
-        screen.getByText("This conversion workflow cannot cancel a running queue."),
+        screen.getByText(
+          "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.",
+        ),
       ).toBeVisible();
     });
   }

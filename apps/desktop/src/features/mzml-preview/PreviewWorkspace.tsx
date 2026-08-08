@@ -47,7 +47,10 @@ export function PreviewWorkspace() {
   const queueHandles = workspace.conversion.busyHandles;
   const converting = useMemo(() => {
     const state = workspace.conversion.state;
-    if (state.status !== "running") {
+    // A stopping queue still has an item under way, and that row is still being
+    // read. Dropping the pin here would let a search hide the very acquisition
+    // the stop is waiting on.
+    if (state.status !== "running" && state.status !== "stopping") {
       return null;
     }
     // The item that says it is running, not an index. The index counts what is
@@ -169,11 +172,17 @@ export function PreviewWorkspace() {
   // One viewer read at a time. Rust supersedes an older open of one dataset
   // anyway; this is what stops a queue of them forming behind the single
   // backend gate in the first place.
+  //
+  // A quarantined session refuses every one of these outright: MSCanvas has
+  // lost track of a converter process of its own and will not start another
+  // until it is restarted. Rust enforces it; this is what stops the interface
+  // offering a control that can only answer with a refusal.
   const canPreview =
     backendUsable &&
     !workspace.backendBusy &&
     !workspace.previewBackendBusy &&
-    !workspace.conversion.busy;
+    !workspace.conversion.busy &&
+    !workspace.conversion.backendQuarantined;
   // Converting needs the same backend a preview does, and the same free lane.
   const canConvert = canPreview && !workspace.workspaceBusy;
 
@@ -746,10 +755,21 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
   // counts back at a screen-reader user who had just pressed Retry, and stay
   // silent for as long as the rerun took.
   if (workspace.conversion.retrying && state.status === "terminal") {
-    return `Retrying ${String(queue.retryableFailedCount)} failed. This cannot be cancelled.`;
+    return `Retrying ${String(queue.retryableFailedCount)} failed.`;
   }
   if (state.status === "awaitingDestination") {
     return "Choose where to save the converted mzML.";
+  }
+  // Before the running branch, and read from the operation rather than only
+  // from the slot, so it is said the moment this document asks rather than on
+  // whichever poll first sees Rust agree. One sentence for the whole of that
+  // window: a repeated poll produces the same string and is not announced
+  // again.
+  if (
+    state.status === "stopping" ||
+    (workspace.conversion.stopping && state.status === "running")
+  ) {
+    return "Stopping queue. No further items will start.";
   }
   if (state.status === "running") {
     // The item that says it is running, which is the same row the roster pins.
@@ -760,8 +780,16 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
     // Named rather than counted alone, so a repeated poll that finds the same
     // item says the same sentence and is not announced twice.
     return current === undefined
-      ? `Converting ${String(queue.itemCount)} acquisitions. This cannot be cancelled.`
-      : `Converting item ${String(position + 1)} of ${String(queue.itemCount)}, ${current.fileName}. This cannot be cancelled.`;
+      ? `Converting ${String(queue.itemCount)} acquisitions.`
+      : `Converting item ${String(position + 1)} of ${String(queue.itemCount)}, ${current.fileName}.`;
+  }
+  if (state.status === "terminal" && state.reason === "stopFailed") {
+    return workspace.conversion.backendQuarantined
+      ? "Queue stopped. MSCanvas could not confirm that the backend process stopped. Restart MSCanvas before starting another preview or conversion."
+      : "Queue stopped. MSCanvas could not confirm that the backend process stopped.";
+  }
+  if (state.status === "terminal" && state.reason === "stopped") {
+    return `Queue stopped. ${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed, ${String(queue.cancelledCount)} cancelled, ${String(queue.notRunCount)} not run.`;
   }
   if (queue.error !== null) {
     return queue.error.summary;

@@ -144,6 +144,18 @@ export interface PreviewApi {
    * rather than the same one repeated.
    */
   retryConversions(): Promise<WorkspaceConversionUpdate>;
+  /**
+   * Stops the running conversion queue.
+   *
+   * Takes the operation identifier the caller is looking at and nothing else.
+   * Which queue is the only thing a caller may say; everything about how it
+   * ends is Rust's.
+   *
+   * Resolves to the authoritative state, like every other conversion command,
+   * so a reply lost with a replaced document costs the replacement one read.
+   * Repeating it for a queue already stopping is not an error.
+   */
+  stopConversion(operationId: string): Promise<WorkspaceConversionUpdate>;
 }
 
 export const tauriPreviewApi: PreviewApi = {
@@ -192,6 +204,12 @@ export const tauriPreviewApi: PreviewApi = {
     invoke<WorkspaceConversionUpdate>(
       "retry_workspace_conversion_queue",
       {},
+      { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } },
+    ),
+  stopConversion: (operationId) =>
+    invoke<WorkspaceConversionUpdate>(
+      "stop_workspace_conversion_queue",
+      { operationId },
       { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } },
     ),
 };

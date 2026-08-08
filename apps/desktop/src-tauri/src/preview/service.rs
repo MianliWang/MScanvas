@@ -9,6 +9,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use mscanvas_proteowizard::{
     ConversionSourceKind, MetadataEntry, MetadataResult, MetadataSectionKind, MsLevelBucket,
@@ -22,14 +23,19 @@ use mscanvas_proteowizard::{
 use super::conversion::conversion_source_kind;
 #[cfg(test)]
 use mscanvas_proteowizard::ConflictPolicy;
+#[allow(clippy::wildcard_imports)]
+use mscanvas_proteowizard::{BackendRunFacts, ConversionAttempt, ConversionCancellation};
 
 use super::backend::{
     ConversionBackend, PreviewProvider, open_operations, reporting_redactor,
     selected_spectrum_operation,
 };
+#[cfg(test)]
+use super::conversion::run_planned_conversion;
 use super::conversion::{
-    WorkspaceConversionReport, conflict_policy, fixed_compression, is_convertible, plan_conversion,
-    planned_output_name, refusal_is_retryable, refuse_unevidenced_build, run_planned_conversion,
+    ConvertedItem, WorkspaceConversionReport, conflict_policy, fixed_compression, is_convertible,
+    plan_conversion, planned_output_name, refusal_is_retryable, refuse_unevidenced_build,
+    run_planned_conversion_cancellable,
 };
 use super::destination::admit_destination_root;
 use super::discovery::{
@@ -41,7 +47,6 @@ use super::drop_ingestion::{
     NativeDropDispatch, NativeDropSignal, NativeDropWork, conversion_busy_state, drop_busy_state,
     expand_drop_paths,
 };
-use super::dto::MAX_WORKSPACE_DATASETS;
 use super::dto::{
     BackendAvailabilityDto, ConversionConflictPolicyDto, ConversionOutputFormatDto,
     ConversionQueuePlanDto, ConversionQueuePlanItemDto, DropIngestionResultDto,
@@ -62,9 +67,11 @@ use super::dto::{
     FolderDiscoverySummaryDto, FolderImportReservationDto, FolderIngestionResultDto,
     FolderScanLimitDto, SelectedFileDto, import_superseded, invalid_folder_import_reservation,
 };
+use super::dto::{MAX_WORKSPACE_DATASETS, backend_quarantined, conversion_not_stoppable};
 use super::installation::InstallationIdentity;
 use super::operation::{
-    AdmittedDestination, ConversionQueue, ConversionSlot, ItemOutcome, QueueItem, item_state_of,
+    AdmittedDestination, CancellationFacts, ConversionQueue, ConversionSlot, ItemOutcome,
+    ItemState, QueueItem, QueueItemAttempt, StopAccepted, TerminalReason, item_state_of,
 };
 use super::selection::{
     AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity, RevocationReason,
@@ -447,6 +454,18 @@ pub struct PreviewService {
     /// drop claim itself. Written only while the slot lock is held, so it
     /// cannot come to disagree with what it mirrors.
     conversion_busy: AtomicBool,
+    /// Whether this session has stopped trusting the backend.
+    ///
+    /// Set once, by a stop whose owned process tree could not be confirmed
+    /// gone, and never cleared. Nothing in this session can establish that the
+    /// process it lost track of has ended, so there is no observation a reset
+    /// could be conditioned on -- and a flag that cleared itself would be
+    /// telling the user something MSCanvas does not know.
+    ///
+    /// Read without a lock for the same reason the busy mirror is: every
+    /// backend entry point asks it, and one of them is asked from the native
+    /// drop callback.
+    backend_quarantined: AtomicBool,
     /// Which backend the last look actually resolved to.
     ///
     /// Not the folder that was requested. A request names a configuration; what
@@ -485,6 +504,7 @@ impl PreviewService {
             drop_updates: DropUpdateHub::default(),
             conversion: Mutex::new(ConversionSlot::default()),
             conversion_busy: AtomicBool::new(false),
+            backend_quarantined: AtomicBool::new(false),
             installation_generation: AtomicU64::new(0),
             resolved: Mutex::new(ObservedBackend::default()),
         }
@@ -503,6 +523,12 @@ impl PreviewService {
     /// installed tools' help, which is as much a process as a preview is, and
     /// "at most one at a time" has to mean all of them or it means nothing.
     pub fn inspect_backend(&self) -> BackendAvailabilityDto {
+        // A probe launches the tools it is probing, so it is a backend
+        // operation like any other. A quarantined session answers with the
+        // reading it already had rather than starting two more processes.
+        if self.backend_is_quarantined() {
+            return self.stamped_availability();
+        }
         let _running = self.enter_backend();
         self.stamped_availability()
     }
@@ -516,6 +542,11 @@ impl PreviewService {
     /// separately could render the old answer in between. There is no interval
     /// here in which the two can disagree.
     pub fn use_installation(&self, home: Option<PathBuf>) -> BackendAvailabilityDto {
+        // Changing installation re-probes, which launches processes. Refused
+        // by leaving the session on the reading it already has.
+        if self.backend_is_quarantined() {
+            return self.stamped_availability();
+        }
         let _running = self.enter_backend();
         // Told unconditionally. Whether this is a change is not decided by what
         // was asked for -- the same request can resolve to a different backend
@@ -943,7 +974,66 @@ impl PreviewService {
     /// running; the reply to the command that started it is not a reliable
     /// place to learn how it went, because that document may be gone.
     pub fn conversion_state(&self) -> WorkspaceConversionUpdateDto {
-        self.conversion_slot().read()
+        let quarantined = self.backend_is_quarantined();
+        self.conversion_slot().read(quarantined)
+    }
+
+    /// Whether this session has stopped trusting the backend.
+    ///
+    /// Set exactly once, by a stop whose process-tree termination could not be
+    /// confirmed, and never cleared: nothing in this session can establish that
+    /// the process it lost track of has ended, and a flag that could be cleared
+    /// would need something that can.
+    pub(super) fn backend_is_quarantined(&self) -> bool {
+        self.backend_quarantined.load(Ordering::Acquire)
+    }
+
+    /// Refuses anything that would launch a backend process while quarantined.
+    ///
+    /// Asked by every backend entry point rather than by the gate itself. The
+    /// gate is a mutex and holding it forever would wedge the application on
+    /// exit; what quarantine changes is not who may take the gate but whether
+    /// MSCanvas is willing to start another process at all.
+    fn require_usable_backend(&self) -> Result<(), PreviewErrorDto> {
+        if self.backend_is_quarantined() {
+            return Err(backend_quarantined());
+        }
+        Ok(())
+    }
+
+    /// Stops the running queue of the calling document.
+    ///
+    /// The request is recorded and the state moves under the slot lock; the
+    /// cancellation itself is asked afterwards, with no lock held. Job
+    /// termination is not instantaneous, and holding the lock every reader
+    /// needs across it would stop the interface answering for as long as it
+    /// took -- including the read that would tell the user their stop was
+    /// accepted.
+    pub fn stop_conversion_queue(
+        &self,
+        operation_id: &str,
+        document_epoch: u64,
+    ) -> Result<WorkspaceConversionUpdateDto, PreviewErrorDto> {
+        let operation: u64 = operation_id
+            .parse()
+            .map_err(|_| conversion_not_stoppable())?;
+        let mut slot = self.conversion_slot();
+        // The current document, exactly as a retry checks it, and under the
+        // same lock the state moves under. A reload is entitled to stop the
+        // queue it recovered; a document that has been replaced is not
+        // entitled to stop its replacement's work.
+        if document_epoch != self.workspace_drop_document_epoch() {
+            return Err(conversion_not_stoppable());
+        }
+        let accepted = slot.request_stop(operation)?;
+        self.publish_conversion_busy(&slot);
+        let update = slot.read(self.backend_is_quarantined());
+        drop(slot);
+
+        if let StopAccepted::Requested(Some(request)) = accepted {
+            request.request();
+        }
+        Ok(update)
     }
 
     /// Whether a conversion currently occupies the workspace.
@@ -1089,6 +1179,9 @@ impl PreviewService {
         conflict: ConversionConflictPolicyDto,
         document_epoch: u64,
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
+        // Before the plan, so a quarantined session refuses a queue without
+        // first describing one it will never run.
+        self.require_usable_backend()?;
         let items = self.plan_queue_items(handles)?;
         // The same gate every workspace mutation takes, so a queue and a batch
         // cannot both be admitted by each reading the other's state before
@@ -1136,7 +1229,7 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.cancel(operation);
         self.publish_conversion_busy(&slot);
-        slot.read()
+        slot.read(self.backend_is_quarantined())
     }
 
     /// Runs one claimed queue into one chosen folder.
@@ -1195,6 +1288,10 @@ impl PreviewService {
         // Answers `invalid_conversion_reservation` when the slot is not terminal
         // or holds no destination -- a queue refused before its picker ever
         // opened has nothing to rerun and no folder to rerun it in.
+        // Before the folder is touched. A quarantined session runs nothing, and
+        // a retry is the one action that would otherwise start a process
+        // without the user choosing anything again.
+        self.require_usable_backend()?;
         let stored = self
             .terminal_destination()
             .ok_or_else(invalid_conversion_reservation)?;
@@ -1228,6 +1325,31 @@ impl PreviewService {
         drop(slot);
         drop(gate);
         Ok(self.drain_queue(operation))
+    }
+
+    /// Marks a claimed queue as running without draining it.
+    ///
+    /// The two halves of `run_claimed_conversion`, separated, so a test can
+    /// occupy the interval between them: a queue that is running and whose
+    /// worker has not begun is exactly the state a queue is in while it waits
+    /// behind another backend operation for the gate, and a stop made then must
+    /// launch nothing.
+    #[cfg(test)]
+    pub(super) fn start_running_for_test(&self, operation: u64, destination: &Path) -> bool {
+        let admitted = match admit_destination_root(destination) {
+            Ok((root, identity, _held)) => AdmittedDestination::new(root, identity),
+            Err(_) => return false,
+        };
+        let mut slot = self.conversion_slot();
+        let started = slot.start_running(operation, admitted);
+        self.publish_conversion_busy(&slot);
+        started
+    }
+
+    /// The worker half, for a queue a test already marked running.
+    #[cfg(test)]
+    pub(super) fn drain_queue_for_test(&self, operation: u64) -> WorkspaceConversionUpdateDto {
+        self.drain_queue(operation)
     }
 
     /// The destination a terminal queue was run against.
@@ -1289,6 +1411,15 @@ impl PreviewService {
             return self.refuse_queue(operation, error);
         }
 
+        // Asked after the gate, which is where a stop made while this queue was
+        // waiting behind another backend operation lands. Nothing has been
+        // launched at this point, so the whole queue is stranded and no process
+        // is spent proving it.
+        if self.conversion_slot().stop_requested(operation) {
+            drop(running);
+            return self.finish_queue(operation, TerminalReason::Stopped);
+        }
+
         loop {
             let Some(queue) = self.conversion_slot().running(operation) else {
                 // The slot moved on -- a reload released it, or a newer queue
@@ -1296,6 +1427,13 @@ impl PreviewService {
                 drop(running);
                 return self.conversion_state();
             };
+            // Before every item. A stop that landed while the previous one was
+            // converting is honoured here rather than after one more file has
+            // been written.
+            if self.conversion_slot().stop_requested(operation) {
+                drop(running);
+                return self.finish_queue(operation, TerminalReason::Stopped);
+            }
             let Some((index, item)) = queue.next_pending() else {
                 break;
             };
@@ -1327,16 +1465,57 @@ impl PreviewService {
                 }
             };
             let root = admitted.root().to_path_buf();
-            let started = self.conversion_slot().start_item(operation, index);
-            if !started {
+            // Refuses once a stop has been accepted, whatever this worker
+            // believed a moment ago. The check above narrows the window; this
+            // closes it, because the transition and the refusal are the same
+            // lock acquisition.
+            let Some(attempt) = self.conversion_slot().start_item(operation, index) else {
                 drop(running);
-                return self.conversion_state();
-            }
+                return if self.conversion_slot().stop_requested(operation) {
+                    self.finish_queue(operation, TerminalReason::Stopped)
+                } else {
+                    self.conversion_state()
+                };
+            };
             self.publish_conversion_busy(&self.conversion_slot());
 
-            let outcome =
-                self.convert_queue_item(&item, &root, queue.conflict(), &backend, generation);
+            // One cancellation object for this exact attempt, and its
+            // request-only handle bound to the operation, item and attempt
+            // number that name it. A handle left over from an earlier item or
+            // an earlier retry round cannot be mistaken for this one.
+            let cancellation = ConversionCancellation::new();
+            self.conversion_slot().bind_attempt(
+                operation,
+                index,
+                attempt,
+                cancellation.request_handle(),
+            );
+            // Bound after the handle is stored, so a stop accepted in the
+            // interval between the two still reaches this attempt: the request
+            // it made is on the object this run is about to consume.
+            let started_at = Instant::now();
+            let outcome = self.convert_queue_item(
+                &item,
+                &root,
+                queue.conflict(),
+                &backend,
+                generation,
+                cancellation,
+            );
+            let elapsed = started_at.elapsed();
             drop(held);
+            // Released for this exact attempt only, and before the queue moves,
+            // so a stop arriving now finds no handle rather than a stale one.
+            self.conversion_slot()
+                .release_attempt(operation, index, attempt);
+            let outcome = self.classify_attempt(outcome, elapsed);
+            let unconfirmed = matches!(
+                outcome,
+                ItemOutcome::Stopped {
+                    state: ItemState::CancellationFailed,
+                    ..
+                }
+            );
             let settled = self
                 .conversion_slot()
                 .settle_item(operation, index, outcome);
@@ -1344,15 +1523,87 @@ impl PreviewService {
                 drop(running);
                 return self.conversion_state();
             }
+            // The one state in which this session stops being willing to launch
+            // anything. Entered before the gate is released, so no operation
+            // queued behind this one can slip through between the two.
+            if unconfirmed {
+                self.quarantine_backend();
+                drop(running);
+                return self.finish_queue(operation, TerminalReason::StopFailed);
+            }
+            // After the item settles, and before the next one is constructed.
+            if self.conversion_slot().stop_requested(operation) {
+                drop(running);
+                return self.finish_queue(operation, TerminalReason::Stopped);
+            }
         }
 
-        let mut slot = self.conversion_slot();
-        slot.finish(operation, None);
-        self.publish_conversion_busy(&slot);
-        let update = slot.read();
-        drop(slot);
+        let reason = if self.conversion_slot().stop_requested(operation) {
+            // Every item ran, and the user asked for it to stop. There is
+            // nothing left to strand, and it is still a stopped queue: it is
+            // not offered a retry, because the batch is not what the user is
+            // waiting on any more.
+            TerminalReason::Stopped
+        } else {
+            TerminalReason::Completed
+        };
+        let update = self.finish_queue(operation, reason);
         drop(running);
         update
+    }
+
+    /// Ends the queue and answers with the authoritative state.
+    fn finish_queue(&self, operation: u64, reason: TerminalReason) -> WorkspaceConversionUpdateDto {
+        let mut slot = self.conversion_slot();
+        slot.finish(operation, None, reason);
+        self.publish_conversion_busy(&slot);
+        let update = slot.read(self.backend_is_quarantined());
+        drop(slot);
+        update
+    }
+
+    /// Stops trusting the backend for the rest of this session.
+    fn quarantine_backend(&self) {
+        self.backend_quarantined.store(true, Ordering::Release);
+    }
+
+    /// Turns one attempt's result into what the queue records.
+    ///
+    /// The two stopped states are not one. `Cancelled` is a claim that the
+    /// owned process tree is gone, which only the conversion boundary's own
+    /// confirmation establishes; `CancellationFailed` is the admission that it
+    /// could not be established, and it is what puts the session into
+    /// quarantine.
+    fn classify_attempt(&self, attempt: QueueItemAttempt, elapsed: Duration) -> ItemOutcome {
+        match attempt {
+            QueueItemAttempt::Settled(outcome) => outcome,
+            QueueItemAttempt::Cancelled(report) => ItemOutcome::Stopped {
+                state: ItemState::Cancelled,
+                facts: CancellationFacts {
+                    process_launched: report.backend_was_run(),
+                    tree_termination_confirmed: true,
+                    elapsed,
+                    termination: report.backend().map(BackendRunFacts::termination),
+                    partial_output_observed: report
+                        .staged_content()
+                        .is_some_and(|staged| staged.entry_count() > 0),
+                    staging_residue: report.residue(),
+                },
+            },
+            QueueItemAttempt::CancellationFailed(failure) => ItemOutcome::Stopped {
+                state: ItemState::CancellationFailed,
+                facts: CancellationFacts {
+                    process_launched: failure.backend().is_some(),
+                    tree_termination_confirmed: false,
+                    elapsed,
+                    termination: failure.backend().map(BackendRunFacts::termination),
+                    partial_output_observed: failure
+                        .staged_content()
+                        .is_some_and(|staged| staged.entry_count() > 0),
+                    staging_residue: failure.residue(),
+                },
+            },
+        }
     }
 
     /// One item, on a binding and a gate the queue already owns.
@@ -1368,7 +1619,8 @@ impl PreviewService {
         conflict: ConversionConflictPolicyDto,
         backend: &ConversionBackend<'_>,
         generation: u64,
-    ) -> ItemOutcome {
+        cancellation: ConversionCancellation,
+    ) -> QueueItemAttempt {
         let handle = item.handle().to_owned();
         let workspace = self.workspace();
         let still_bound = workspace.bound_request_is_current(item.dataset(), item.request_epoch())
@@ -1382,45 +1634,62 @@ impl PreviewService {
             .map(|dataset| dataset.file().clone());
         drop(workspace);
         if !still_bound {
-            return ItemOutcome::Refused {
+            return QueueItemAttempt::Settled(ItemOutcome::Refused {
                 // The row moved on under the queue. Another attempt against the
                 // same plan would find the same thing.
                 retryable: false,
                 error: superseded(),
-            };
+            });
         }
         let Some(remembered) = remembered else {
-            return ItemOutcome::Refused {
+            return QueueItemAttempt::Settled(ItemOutcome::Refused {
                 retryable: false,
                 error: unknown_dataset(),
-            };
+            });
         };
 
-        let outcome = (|| -> Result<WorkspaceConversionReport, PreviewErrorDto> {
+        let outcome = (|| -> Result<ConvertedItem, PreviewErrorDto> {
             let file = revalidate(&remembered)?;
             let guard = lock_against_replacement(file.path())?;
             let source = open_conversion_source(&file)?;
             let plan = plan_conversion(source, root, conflict_policy(conflict))?;
-            let report = run_planned_conversion(&plan, backend);
+            // The one call that can be stopped. Everything above it is this
+            // side's own revalidation, which is fast and produces nothing to
+            // clean up; everything a stop has to be safe about is inside it.
+            let attempt = run_planned_conversion_cancellable(&plan, backend, cancellation);
             drop(guard);
-            Ok(WorkspaceConversionReport::of(
-                handle.clone(),
-                file.source_kind(),
-                generation,
-                &plan,
-                &report,
-            ))
+            Ok(match attempt {
+                ConversionAttempt::Completed(report) => {
+                    ConvertedItem::Reported(WorkspaceConversionReport::of(
+                        handle.clone(),
+                        file.source_kind(),
+                        generation,
+                        &plan,
+                        &report,
+                    ))
+                }
+                ConversionAttempt::Cancelled(report) => ConvertedItem::Cancelled(report),
+                ConversionAttempt::CancellationFailed(failure) => {
+                    ConvertedItem::CancellationFailed(failure)
+                }
+            })
         })();
 
         match outcome {
-            Ok(report) => ItemOutcome::Reported {
-                state: item_state_of(report.outcome_class()),
-                retryable: report.is_retryable(),
-                report,
-            },
+            Ok(ConvertedItem::Reported(report)) => {
+                QueueItemAttempt::Settled(ItemOutcome::Reported {
+                    state: item_state_of(report.outcome_class()),
+                    retryable: report.is_retryable(),
+                    report,
+                })
+            }
+            Ok(ConvertedItem::Cancelled(report)) => QueueItemAttempt::Cancelled(report),
+            Ok(ConvertedItem::CancellationFailed(failure)) => {
+                QueueItemAttempt::CancellationFailed(failure)
+            }
             Err(error) => {
                 let retryable = refusal_is_retryable(&error.kind);
-                ItemOutcome::Refused { retryable, error }
+                QueueItemAttempt::Settled(ItemOutcome::Refused { retryable, error })
             }
         }
     }
@@ -1429,7 +1698,7 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.refuse(operation, error);
         self.publish_conversion_busy(&slot);
-        slot.read()
+        slot.read(self.backend_is_quarantined())
     }
 
     /// Reserves the right to claim the workspace's next state without opening
@@ -2527,6 +2796,10 @@ impl PreviewService {
     }
 
     pub fn open_preview(&self, handle: &str) -> Result<PreviewDto, PreviewErrorDto> {
+        // Asked before anything else. Once a stop could not be confirmed this
+        // session does not start another process at all, and a preview is a
+        // process.
+        self.require_usable_backend()?;
         // Refused rather than queued. The backend gate would serialize it
         // anyway, but a preview that waited behind a whole conversion would sit
         // there for as long as one takes with nothing on screen saying why.
@@ -2735,6 +3008,7 @@ impl PreviewService {
         handle: &str,
         index: u64,
     ) -> Result<SelectedSpectrumOutcomeDto, PreviewErrorDto> {
+        self.require_usable_backend()?;
         // Refused rather than queued, for the reason an open is: the backend
         // gate would serialize it anyway, but a spectrum waiting behind a whole
         // conversion sits in a loading state for as long as one takes, and

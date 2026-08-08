@@ -12,10 +12,10 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use mscanvas_proteowizard::{
-    BackendTool, CapturedHelpStream, CommandSpec, CompleteHelpCapture, ConflictPolicy,
-    InstalledHelpCapabilities, PreviewOperation, PreviewOutcome, PreviewOutputEntry,
-    PreviewOutputManifest, ProcessError, ProcessOutput, ProcessRunner, Sha256Digest, Termination,
-    interpret_preview,
+    BackendTool, CancellationToken, CapturedHelpStream, CommandSpec, CompleteHelpCapture,
+    ConflictPolicy, InstalledHelpCapabilities, PreviewOperation, PreviewOutcome,
+    PreviewOutputEntry, PreviewOutputManifest, ProcessError, ProcessOutput, ProcessRunner,
+    Sha256Digest, Termination, interpret_preview,
 };
 
 use super::backend::{ConversionBackend, OperationAttempt, PreviewProvider, interpretation_error};
@@ -36,8 +36,8 @@ use super::dto::{
 };
 use super::dto::{
     ConversionConflictPolicyDto, ConversionOutputFormatDto, ConversionQueueDto,
-    ConversionQueueItemStateDto, DatasetSourceKindDto, ValidationModeDto,
-    WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
+    ConversionQueueItemStateDto, ConversionQueueTerminalReasonDto, DatasetSourceKindDto,
+    ValidationModeDto, WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
 };
 use super::installation::InstallationIdentity;
 /// The share-mode probe that answers whether a file is still held open. It
@@ -3562,6 +3562,7 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "begin_workspace_conversion_queue",
             "choose_workspace_conversion_destination",
             "retry_workspace_conversion_queue",
+            "stop_workspace_conversion_queue",
         ]
     );
     // The picker command is named for the workspace it fills rather than for
@@ -6677,10 +6678,10 @@ impl ProcessRunner for FakeConversionRunner {
 ///
 /// Preview answers come from the ordinary fake, so a test can drive an open and
 /// a conversion through one service and watch them contend for the one gate.
-struct ConvertingProvider {
+struct ConvertingProvider<R = FakeConversionRunner> {
     inner: FakeProvider,
     capabilities: InstalledHelpCapabilities,
-    runner: FakeConversionRunner,
+    runner: R,
     /// Parks the first preview operation, for the tests that need a preview to
     /// be holding the backend gate while a conversion asks for it. The
     /// conversion side has its own pair on the runner, so either can be made to
@@ -6694,8 +6695,8 @@ struct ConvertingProvider {
     installation_label: Arc<Mutex<String>>,
 }
 
-impl ConvertingProvider {
-    fn new(capabilities: InstalledHelpCapabilities, runner: FakeConversionRunner) -> Self {
+impl<R: ProcessRunner + Send + Sync> ConvertingProvider<R> {
+    fn new(capabilities: InstalledHelpCapabilities, runner: R) -> Self {
         Self {
             inner: FakeProvider::available(Vec::new()),
             capabilities,
@@ -6726,7 +6727,9 @@ impl ConvertingProvider {
             .expect("preview release channel") = Some(parked);
         (self, observe_start, release)
     }
+}
 
+impl ConvertingProvider<FakeConversionRunner> {
     /// The default: an evidenced build and a backend that converts faithfully.
     fn faithful() -> Self {
         Self::new(
@@ -6736,7 +6739,7 @@ impl ConvertingProvider {
     }
 }
 
-impl PreviewProvider for ConvertingProvider {
+impl<R: ProcessRunner + Send + Sync> PreviewProvider for ConvertingProvider<R> {
     fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
         self.inner.availability()
     }
@@ -9428,6 +9431,8 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
     assert_eq!(
         sorted_keys(queue),
         vec![
+            "cancellationFailedCount",
+            "cancelledCount",
             "conflictPolicy",
             "currentIndex",
             "error",
@@ -9437,6 +9442,7 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "itemCount",
             "items",
             "nonRetryableFailedCount",
+            "notRunCount",
             "retryRound",
             "retryableFailedCount",
             "skippedCount",
@@ -9447,6 +9453,7 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
         sorted_keys(item),
         vec![
             "attempts",
+            "cancellation",
             "datasetHandle",
             "error",
             "fileName",
@@ -10122,4 +10129,644 @@ fn restoring_the_original_installation_makes_the_queue_retryable_again() {
     assert_eq!(queue.failed_count, 0);
     assert_eq!(queue.items[0].attempts, 2);
     assert_eq!(entry_names(&destination), vec!["held.mzML"]);
+}
+
+// --- Stopping a running queue -----------------------------------------------
+
+/// How a stop-aware runner ends the attempt a stop reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StopEnding {
+    /// The owned tree was terminated and confirmed empty.
+    Confirmed,
+    /// Termination was attempted and could not be confirmed: the owned job
+    /// still reports processes.
+    Survivors,
+    /// The boundary could not complete the teardown at all.
+    Unterminated,
+    /// The process finished on its own before the request was observed.
+    NaturalSuccess,
+}
+
+/// A `msconvert` stand-in that answers a cancellation request.
+///
+/// It parks inside the process until the test releases it, and only then reads
+/// the token. That is what makes a mid-run stop deterministic rather than a
+/// race: the request is made while the runner is provably inside the call, and
+/// the answer is decided afterwards.
+struct StopAwareRunner {
+    ending: StopEnding,
+    calls: Arc<AtomicUsize>,
+    started: Mutex<Option<mpsc::Sender<()>>>,
+    release: Mutex<Option<mpsc::Receiver<()>>>,
+}
+
+impl StopAwareRunner {
+    fn parked(ending: StopEnding) -> (Self, mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (started, observe_start) = mpsc::channel();
+        let (release, parked) = mpsc::channel();
+        (
+            Self {
+                ending,
+                calls: Arc::new(AtomicUsize::new(0)),
+                started: Mutex::new(Some(started)),
+                release: Mutex::new(Some(parked)),
+            },
+            observe_start,
+            release,
+        )
+    }
+
+    fn launches(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.calls)
+    }
+}
+
+impl ProcessRunner for StopAwareRunner {
+    fn run(&self, spec: &CommandSpec) -> Result<ProcessOutput, ProcessError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let destination = spec
+            .output_destination()
+            .expect("a conversion plan carries an output destination")
+            .to_path_buf();
+        fs::write(destination, mzml_document(2, true)).expect("write staged output");
+        Ok(ProcessOutput {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            stdout_total_bytes: 0,
+            stderr_total_bytes: 0,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            exit_code: Some(0),
+            elapsed: Duration::from_millis(3),
+            termination: Termination::Exited,
+            max_active_processes: Some(1),
+            final_active_processes: Some(0),
+            peak_job_memory_bytes: Some(2_048),
+        })
+    }
+
+    fn run_cancellable(
+        &self,
+        spec: &CommandSpec,
+        cancellation: &CancellationToken,
+    ) -> Result<ProcessOutput, ProcessError> {
+        // The default's own guarantee first, so a request made before the
+        // launch is refused here exactly as the production runner refuses it.
+        if cancellation.is_cancelled() {
+            return Ok(ProcessOutput {
+                exit_code: None,
+                termination: Termination::NotStarted,
+                max_active_processes: None,
+                final_active_processes: None,
+                elapsed: Duration::ZERO,
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                stdout_total_bytes: 0,
+                stderr_total_bytes: 0,
+                stdout_truncated: false,
+                stderr_truncated: false,
+                peak_job_memory_bytes: None,
+            });
+        }
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        // Announced and parked, so the request the test makes next provably
+        // lands while this attempt is running.
+        if let Some(started) = self.started.lock().expect("started channel").take() {
+            started.send(()).expect("announce the started conversion");
+            let parked = self
+                .release
+                .lock()
+                .expect("release channel")
+                .take()
+                .expect("a parked runner is released exactly once");
+            parked
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the parked conversion is released");
+        }
+        // A partial document, as a terminated backend leaves behind. Written
+        // whatever the ending, so the staging area a stop has to clean is real.
+        let destination = spec
+            .output_destination()
+            .expect("a conversion plan carries an output destination")
+            .to_path_buf();
+        if !cancellation.is_cancelled() || self.ending == StopEnding::NaturalSuccess {
+            fs::write(&destination, mzml_document(2, true)).expect("write staged output");
+            return Ok(ProcessOutput {
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                stdout_total_bytes: 0,
+                stderr_total_bytes: 0,
+                stdout_truncated: false,
+                stderr_truncated: false,
+                exit_code: Some(0),
+                elapsed: Duration::from_millis(3),
+                termination: Termination::Exited,
+                max_active_processes: Some(1),
+                final_active_processes: Some(0),
+                peak_job_memory_bytes: Some(2_048),
+            });
+        }
+        fs::write(&destination, b"<indexedmzML><mzML").expect("write a partial staged output");
+        if self.ending == StopEnding::Unterminated {
+            return Err(ProcessError::Terminate {
+                detail: "the owned job refused termination".to_owned(),
+            });
+        }
+        Ok(ProcessOutput {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            stdout_total_bytes: 0,
+            stderr_total_bytes: 0,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            exit_code: Some(-1_073_741_510),
+            elapsed: Duration::from_millis(4),
+            termination: Termination::Cancelled,
+            max_active_processes: Some(1),
+            final_active_processes: if self.ending == StopEnding::Survivors {
+                Some(2)
+            } else {
+                Some(0)
+            },
+            peak_job_memory_bytes: Some(2_048),
+        })
+    }
+}
+
+/// The queue as a terminal state, with the reason it is over.
+fn terminal_reason(update: &WorkspaceConversionUpdateDto) -> ConversionQueueTerminalReasonDto {
+    let WorkspaceConversionStateDto::Terminal { reason, .. } = &update.state else {
+        panic!("the queue reaches a terminal state; got {:?}", update.state);
+    };
+    *reason
+}
+
+fn item_states(queue: &ConversionQueueDto) -> Vec<ConversionQueueItemStateDto> {
+    queue.items.iter().map(|item| item.state).collect()
+}
+
+/// Runs a three-item queue against a parked stop-aware runner, stops it while
+/// the first item is provably inside its process, and returns what settled.
+fn stop_mid_item(
+    ending: StopEnding,
+) -> (
+    TestFile,
+    PathBuf,
+    Arc<PreviewService>,
+    WorkspaceConversionUpdateDto,
+    Arc<AtomicUsize>,
+) {
+    let fixture = TestFile::new("queue-stop");
+    let destination = destination_root(&fixture, "out");
+    let (runner, started, release) = StopAwareRunner::parked(ending);
+    let launches = runner.launches();
+    let service = Arc::new(PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    ))));
+    let handles: Vec<String> = ["one.raw", "two.raw", "three.raw"]
+        .iter()
+        .map(|name| add_one_acquisition(&service, &fixture.thermo_raw(name)))
+        .collect();
+
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("the queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+
+    let worker = {
+        let service = Arc::clone(&service);
+        let destination = destination.clone();
+        std::thread::spawn(move || service.run_claimed_conversion(operation, &destination))
+    };
+    started
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the first item reaches its process");
+
+    let stopped = service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("the running queue of this document is stoppable");
+    // Accepted immediately, and said so before anything has settled.
+    assert!(matches!(
+        stopped.state,
+        WorkspaceConversionStateDto::Stopping { .. }
+    ));
+
+    release.send(()).expect("release the parked conversion");
+    let update = worker.join().expect("the queue worker finishes");
+    (fixture, destination, service, update, launches)
+}
+
+/// A stop reaching a running item cancels it, runs nothing after it, and keeps
+/// everything already finished.
+#[test]
+fn a_confirmed_stop_cancels_the_running_item_and_runs_no_other() {
+    let (_fixture, destination, service, update, launches) = stop_mid_item(StopEnding::Confirmed);
+
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Stopped
+    );
+    let queue = terminal_queue(&update);
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Cancelled,
+            ConversionQueueItemStateDto::NotRun,
+            ConversionQueueItemStateDto::NotRun,
+        ]
+    );
+    assert_eq!(queue.cancelled_count, 1);
+    assert_eq!(queue.not_run_count, 2);
+    assert_eq!(queue.finalized_count, 0);
+    // Not failures. A cancelled item is what the user asked for and a not-run
+    // item never ran, and calling either a failure would offer a retry over it.
+    assert_eq!(queue.failed_count, 0);
+    assert_eq!(queue.cancellation_failed_count, 0);
+    // Exactly one process, for the item that was running.
+    assert_eq!(launches.load(Ordering::SeqCst), 1);
+    // Nothing was finalized, and the partial document is gone with its staging
+    // area rather than left in the folder the user chose.
+    assert!(
+        fs::read_dir(&destination)
+            .expect("read the destination")
+            .next()
+            .is_none(),
+        "a stopped queue finalizes nothing and leaves no staging behind"
+    );
+    let cancelled = &queue.items[0];
+    assert!(cancelled.output_file_name.ends_with(".mzML"));
+    assert!(
+        cancelled.report.is_none(),
+        "a cancelled item produced nothing for a report to describe"
+    );
+    let facts = cancelled
+        .cancellation
+        .as_ref()
+        .expect("a stop that reached an attempt says what it established");
+    assert!(facts.process_launched);
+    assert!(facts.termination_requested);
+    assert!(facts.tree_termination_confirmed);
+    assert!(facts.partial_output_observed);
+    assert_eq!(facts.staging_residue, None);
+    // A not-run item launched nothing, so there is nothing to have established.
+    assert!(queue.items[1].cancellation.is_none());
+    assert_eq!(queue.items[1].attempts, 0);
+    // And the session still trusts the backend.
+    assert!(!service.backend_is_quarantined());
+    assert!(!service.conversion_state().backend_quarantined);
+}
+
+/// The whole point of the copy: what finished stays finished.
+#[test]
+fn a_stop_between_items_keeps_every_finished_output_and_starts_no_more() {
+    let fixture = TestFile::new("queue-stop-between");
+    let destination = destination_root(&fixture, "out");
+    let (runner, started, release) = StopAwareRunner::parked(StopEnding::NaturalSuccess);
+    let launches = runner.launches();
+    let service = Arc::new(PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    ))));
+    let handles: Vec<String> = ["one.raw", "two.raw", "three.raw"]
+        .iter()
+        .map(|name| add_one_acquisition(&service, &fixture.thermo_raw(name)))
+        .collect();
+
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("the queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let worker = {
+        let service = Arc::clone(&service);
+        let destination = destination.clone();
+        std::thread::spawn(move || service.run_claimed_conversion(operation, &destination))
+    };
+    // The first item is inside its process. The stop is requested now, and the
+    // runner is told to finish naturally -- so completion is observed before
+    // the request can be, which is the ordering rule ADR 0014 records.
+    started
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the first item reaches its process");
+    service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("stoppable");
+    release.send(()).expect("release the parked conversion");
+    let update = worker.join().expect("the queue worker finishes");
+
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Stopped
+    );
+    let queue = terminal_queue(&update);
+    // The item that finished keeps its ordinary result. It is not relabelled
+    // as cancelled because the user pressed Stop near its end.
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Finalized,
+            ConversionQueueItemStateDto::NotRun,
+            ConversionQueueItemStateDto::NotRun,
+        ]
+    );
+    assert_eq!(queue.finalized_count, 1);
+    assert_eq!(queue.cancelled_count, 0);
+    assert_eq!(queue.not_run_count, 2);
+    assert!(queue.items[0].cancellation.is_none());
+    assert_eq!(
+        queue.items[0]
+            .report
+            .as_ref()
+            .map(|report| report.outcome.as_str()),
+        Some("finalized")
+    );
+    // One process for one item, and the output it produced is in the folder.
+    assert_eq!(launches.load(Ordering::SeqCst), 1);
+    let produced: Vec<_> = fs::read_dir(&destination)
+        .expect("read the destination")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    assert_eq!(produced.len(), 1, "{produced:?}");
+    // A stopped queue is terminal and is not rerun in place, whatever it holds.
+    assert!(
+        service
+            .retry_conversion_queue(current_document(&service))
+            .is_err(),
+        "a stopped queue is not retried in place"
+    );
+}
+
+/// An unconfirmed stop is neither cancelled nor an ordinary failure, and it
+/// stops this session running anything else.
+#[test]
+fn an_unconfirmed_stop_quarantines_the_backend_and_refuses_every_operation() {
+    for ending in [StopEnding::Unterminated, StopEnding::Survivors] {
+        let (fixture, destination, service, update, launches) = stop_mid_item(ending);
+
+        assert_eq!(
+            terminal_reason(&update),
+            ConversionQueueTerminalReasonDto::StopFailed,
+            "{ending:?}"
+        );
+        let queue = terminal_queue(&update);
+        assert_eq!(
+            item_states(queue),
+            vec![
+                ConversionQueueItemStateDto::CancellationFailed,
+                ConversionQueueItemStateDto::NotRun,
+                ConversionQueueItemStateDto::NotRun,
+            ],
+            "{ending:?}"
+        );
+        assert_eq!(queue.cancellation_failed_count, 1);
+        assert_eq!(queue.cancelled_count, 0, "never called cancelled");
+        let facts = queue.items[0]
+            .cancellation
+            .as_ref()
+            .expect("a stop that reached an attempt says what it established");
+        assert!(facts.termination_requested);
+        assert!(
+            !facts.tree_termination_confirmed,
+            "the whole reason this state exists"
+        );
+        // No later item ran.
+        assert_eq!(launches.load(Ordering::SeqCst), 1);
+        assert!(
+            fs::read_dir(&destination)
+                .expect("read the destination")
+                .next()
+                .is_none()
+        );
+
+        // The session has stopped trusting the backend, and says so.
+        assert!(service.backend_is_quarantined(), "{ending:?}");
+        assert!(service.conversion_state().backend_quarantined);
+        // Every operation that would launch a process is refused.
+        let handle = queue.items[0].dataset_handle.clone();
+        assert_eq!(
+            service.open_preview(&handle).unwrap_err().kind,
+            "backend_quarantined"
+        );
+        assert_eq!(
+            service.load_spectrum(&handle, 0).unwrap_err().kind,
+            "backend_quarantined"
+        );
+        let document = current_document(&service);
+        assert_eq!(
+            service
+                .begin_conversion_queue(
+                    std::slice::from_ref(&handle),
+                    ConversionConflictPolicyDto::Fail,
+                    document
+                )
+                .unwrap_err()
+                .kind,
+            "backend_quarantined"
+        );
+        assert_eq!(
+            service.retry_conversion_queue(document).unwrap_err().kind,
+            "backend_quarantined"
+        );
+        // And the roster is still the user's to read and curate.
+        assert_eq!(service.roster().datasets.len(), 3);
+        let _ = &fixture;
+    }
+}
+
+/// A stop before the first item launches nothing at all.
+#[test]
+fn a_stop_before_the_first_item_launches_no_process() {
+    let fixture = TestFile::new("queue-stop-early");
+    let destination = destination_root(&fixture, "out");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    )));
+    let handles: Vec<String> = ["one.raw", "two.raw"]
+        .iter()
+        .map(|name| add_one_acquisition(&service, &fixture.thermo_raw(name)))
+        .collect();
+
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("the queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    // Marked running without starting the worker, which is the state a queue is
+    // in while it waits behind another backend operation for the gate.
+    let started = service.start_running_for_test(operation, &destination);
+    assert!(started);
+    service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("a running queue is stoppable before its first item");
+    let update = service.drain_queue_for_test(operation);
+
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Stopped
+    );
+    let queue = terminal_queue(&update);
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::NotRun,
+            ConversionQueueItemStateDto::NotRun,
+        ]
+    );
+    assert_eq!(queue.not_run_count, 2);
+    assert_eq!(
+        launches.load(Ordering::SeqCst),
+        0,
+        "no process was launched"
+    );
+    assert!(queue.items.iter().all(|item| item.attempts == 0));
+    assert!(
+        fs::read_dir(&destination)
+            .expect("read the destination")
+            .next()
+            .is_none()
+    );
+}
+
+/// Who may stop what.
+#[test]
+fn only_the_current_document_may_stop_its_own_running_queue() {
+    let fixture = TestFile::new("queue-stop-authority");
+    let destination = destination_root(&fixture, "out");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    )));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    let document = current_document(&service);
+
+    // An idle slot has nothing of anybody's to stop.
+    assert_eq!(
+        service
+            .stop_conversion_queue("1", document)
+            .unwrap_err()
+            .kind,
+        "conversion_not_stoppable"
+    );
+
+    let reservation = service
+        .begin_conversion_queue(
+            std::slice::from_ref(&handle),
+            ConversionConflictPolicyDto::Fail,
+            document,
+        )
+        .expect("the queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    // A picker still open is closed by cancelling it, not by stopping a queue
+    // that has not begun.
+    assert_eq!(
+        service
+            .stop_conversion_queue(&operation.to_string(), document)
+            .unwrap_err()
+            .kind,
+        "conversion_not_stoppable"
+    );
+
+    assert!(service.start_running_for_test(operation, &destination));
+    // A document that has been replaced cannot stop its replacement's work.
+    assert_eq!(
+        service
+            .stop_conversion_queue(&operation.to_string(), document.wrapping_sub(1))
+            .unwrap_err()
+            .kind,
+        "conversion_not_stoppable"
+    );
+    // Nor can an identifier that names another queue, or nothing at all.
+    for wrong in [&(operation + 1).to_string()[..], "0", "not-a-number", ""] {
+        assert_eq!(
+            service
+                .stop_conversion_queue(wrong, document)
+                .unwrap_err()
+                .kind,
+            "conversion_not_stoppable",
+            "{wrong:?}"
+        );
+    }
+
+    // The right document and the right queue is accepted, and repeating it is
+    // the same answer rather than an error.
+    let first = service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("stoppable");
+    let second = service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("a repeated stop is idempotent");
+    assert!(matches!(
+        first.state,
+        WorkspaceConversionStateDto::Stopping { .. }
+    ));
+    assert!(matches!(
+        second.state,
+        WorkspaceConversionStateDto::Stopping { .. }
+    ));
+    // Idempotent, and not a second transition: nothing a reader can see moved.
+    assert_eq!(first.sequence, second.sequence);
+    let _ = service.drain_queue_for_test(operation);
+}
+
+/// A queue stopped and then replaced starts clean.
+#[test]
+fn a_new_queue_is_not_born_stopped() {
+    let fixture = TestFile::new("queue-stop-reset");
+    let destination = destination_root(&fixture, "out");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    )));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion_queue(
+            std::slice::from_ref(&handle),
+            ConversionConflictPolicyDto::Fail,
+            document,
+        )
+        .expect("the queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    assert!(service.start_running_for_test(operation, &destination));
+    service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("stoppable");
+    let stopped = service.drain_queue_for_test(operation);
+    assert_eq!(
+        terminal_reason(&stopped),
+        ConversionQueueTerminalReasonDto::Stopped
+    );
+    assert_eq!(launches.load(Ordering::SeqCst), 0);
+
+    // The next queue is a new operation, and the stop that ended the last one
+    // does not reach it.
+    let update = queue_and_run(&service, std::slice::from_ref(&handle), &destination);
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Completed
+    );
+    assert_eq!(
+        item_states(terminal_queue(&update)),
+        vec![ConversionQueueItemStateDto::Finalized]
+    );
+    assert_eq!(launches.load(Ordering::SeqCst), 1);
 }

@@ -352,6 +352,15 @@ pub struct WorkspaceConversionUpdateDto {
     /// generation, not a request epoch and carries no filesystem authority.
     pub sequence: u64,
     pub state: WorkspaceConversionStateDto,
+    /// Whether this session has stopped trusting the backend.
+    ///
+    /// Set when a stop request could not be confirmed, which is the one state
+    /// in which MSCanvas cannot say whether a converter process of its own is
+    /// still running. It rides on the conversion read because that is what a
+    /// document already asks for on mount and while work is under way, so a
+    /// reload recovers the quarantine with the queue that caused it rather
+    /// than needing a second question.
+    pub backend_quarantined: bool,
 }
 
 /// The complete conversion-state vocabulary exposed to the webview.
@@ -379,13 +388,42 @@ pub enum WorkspaceConversionStateDto {
         operation_id: String,
         queue: ConversionQueueDto,
     },
-    /// Every item reached an outcome, or the queue was refused before any of
-    /// them could.
+    /// A stop was requested and the queue has not settled yet.
+    ///
+    /// Its own state rather than a flag on `running`, because what a reader may
+    /// do differs: no further item will start, and the one that is running may
+    /// still finish naturally. Nothing here predicts which.
     #[serde(rename_all = "camelCase")]
-    Terminal {
+    Stopping {
         operation_id: String,
         queue: ConversionQueueDto,
     },
+    /// Every item reached an outcome, or the queue was refused before any of
+    /// them could, or the queue was stopped.
+    #[serde(rename_all = "camelCase")]
+    Terminal {
+        operation_id: String,
+        /// Why this queue is over. A stopped queue is terminal in a different
+        /// way from a completed one -- it is not retried in place -- so the
+        /// reason is carried rather than inferred from the item states, which
+        /// a completed queue of only failures would otherwise imitate.
+        reason: ConversionQueueTerminalReasonDto,
+        queue: ConversionQueueDto,
+    },
+}
+
+/// Why a terminal queue is over.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ConversionQueueTerminalReasonDto {
+    /// Every item reached an outcome of its own, or the queue was refused.
+    Completed,
+    /// The user asked for it to stop, and MSCanvas knows no converter process
+    /// of its own survives.
+    Stopped,
+    /// The user asked for it to stop, and MSCanvas could not confirm that the
+    /// converter process ended. Deliberately not called stopped.
+    StopFailed,
 }
 
 /// One queue, in facts that name no location.
@@ -410,6 +448,17 @@ pub struct ConversionQueueDto {
     /// source, destination, policy and build.
     pub retryable_failed_count: usize,
     pub non_retryable_failed_count: usize,
+    /// Items whose running conversion was stopped with the process tree
+    /// confirmed gone. Counted apart from failures: a cancelled item is
+    /// something the user asked for, not something that went wrong.
+    pub cancelled_count: usize,
+    /// Items a stopped queue never began. They did not fail and launched no
+    /// process, and counting them as failures would report work that was never
+    /// attempted as work that went wrong.
+    pub not_run_count: usize,
+    /// Items whose stop could not be confirmed. Apart from both of the above,
+    /// because what is unknown here is whether a process survived.
+    pub cancellation_failed_count: usize,
     /// A refusal that stopped the whole queue rather than one item -- a
     /// destination this boundary will not write to, a backend that cannot
     /// convert, a reservation that is no longer valid.
@@ -447,6 +496,10 @@ pub struct ConversionQueueItemDto {
     /// Why an attempt never reached a conversion at all. Distinct from a
     /// conversion that ran and failed, which is a `report`.
     pub error: Option<PreviewErrorDto>,
+    /// What a stop established about this item's attempt. Present only for an
+    /// item a stop actually reached; a `notRun` item has none, because nothing
+    /// ran for it to establish anything about.
+    pub cancellation: Option<ConversionCancellationDto>,
 }
 
 /// Where one item is.
@@ -461,6 +514,45 @@ pub enum ConversionQueueItemStateDto {
     /// inspected and nothing was written.
     Skipped,
     Failed,
+    /// The running conversion was stopped and its owned process tree was
+    /// confirmed gone. No output was finalized.
+    Cancelled,
+    /// A stopped queue never began this item. Not a failure: no process was
+    /// launched and nothing was created.
+    NotRun,
+    /// The stop was requested and could not be confirmed. Whether a converter
+    /// process survived is unknown, which is why this is neither cancelled nor
+    /// an ordinary failure.
+    CancellationFailed,
+}
+
+/// What a stop established about one attempt.
+///
+/// Path-free and identifier-free by construction. There is no process
+/// identifier, job handle, staging path or backend text here, and no field one
+/// could reach through.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionCancellationDto {
+    /// Whether a converter process was handed to the process boundary at all.
+    pub process_launched: bool,
+    /// Always true for an item a stop reached; carried rather than implied so a
+    /// reader never has to infer it from the item state.
+    pub termination_requested: bool,
+    /// Whether the owned process tree was confirmed empty. False is the whole
+    /// reason `cancellationFailed` exists.
+    pub tree_termination_confirmed: bool,
+    /// How long the stop request took to produce a result, measured by the
+    /// queue around the attempt. Milliseconds, matching the one time format
+    /// already on this wire.
+    pub elapsed_milliseconds: u64,
+    /// How the process ended, by the process boundary's own identifier.
+    pub termination: Option<String>,
+    /// Whether the private staging area held anything when the stop settled.
+    /// A shape, never a name.
+    pub partial_output_observed: bool,
+    /// What identity-bound cleanup could not remove, by stable identifier.
+    pub staging_residue: Option<String>,
 }
 
 /// What the interface shows before a queue is started.
@@ -650,6 +742,32 @@ pub fn conversion_busy() -> PreviewErrorDto {
         "conversion_busy",
         "MSCanvas converts one acquisition at a time. Wait for the current conversion to finish.",
         true,
+    )
+}
+
+/// What a stop answers with when there is no running queue of the caller's to
+/// stop.
+///
+/// One refusal for every way of naming the wrong thing -- a replaced document,
+/// an operation the slot no longer holds, an idle slot, a queue that is already
+/// over. Telling them apart would describe the session's internal state to a
+/// caller that, by construction, is not the one running it.
+pub fn conversion_not_stoppable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_not_stoppable",
+        "There is no conversion of yours to stop.",
+        false,
+    )
+}
+
+/// What every backend operation answers with once a stop could not be
+/// confirmed.
+pub fn backend_quarantined() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "backend_quarantined",
+        "MSCanvas could not confirm that the converter process stopped. Restart MSCanvas before \
+         starting another preview or conversion.",
+        false,
     )
 }
 

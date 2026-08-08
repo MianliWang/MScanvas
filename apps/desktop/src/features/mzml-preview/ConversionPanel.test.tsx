@@ -175,7 +175,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     });
   });
 
-  it("shows item-count progress while a queue runs, and no way to cancel it", async () => {
+  it("shows item-count progress while a queue runs, and one way to stop it", async () => {
     const api = createFakePreviewApi({
       initialDatasets: [first, second],
       availability: availableBackend,
@@ -206,12 +206,24 @@ describe("queueing selected Thermo RAW conversions", () => {
     await waitFor(() => {
       expect(within(panel).getByText("Converting item 2 of 2…")).toBeVisible();
     });
+    // The action, and the two sentences it is described by. `Cancel` is
+    // deliberately not its name: it ends the whole queue and undoes nothing
+    // already written.
+    const stop = within(panel).getByRole("button", { name: "Stop queue" });
+    expect(stop).toBeEnabled();
     expect(
-      within(panel).getByText("This conversion workflow cannot cancel a running queue."),
+      within(panel).getByText(
+        "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.",
+      ),
     ).toBeVisible();
+    expect(stop).toHaveAccessibleDescription(
+      "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.",
+    );
     expect(within(panel).queryByRole("button", { name: /cancel/i })).toBeNull();
+    expect(within(panel).queryByRole("button", { name: /resume/i })).toBeNull();
     // No fractional progress anywhere: nothing measures one.
     expect(within(panel).queryByRole("progressbar")).toBeNull();
+    expect(panel.textContent ?? "").not.toMatch(/\d+\s?%/);
     await waitFor(() => {
       expect(liveRegion()).toContain("Converting item 2 of 2, run-2.raw");
     });
@@ -223,6 +235,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
+      reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", {
@@ -272,6 +285,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
+      reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", { state: "finalized", attempts: 1 }),
@@ -291,6 +305,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       retry: () =>
         Promise.resolve({
           status: "terminal",
+      reason: "completed" as const,
           operationId: "1",
           queue: {
             ...queueOf([
@@ -328,6 +343,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
+      reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", {
@@ -389,6 +405,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
+      reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", {
@@ -439,6 +456,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
+      reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", { state: "failed", attempts: 1, retryable: true }),
@@ -449,6 +467,7 @@ describe("queueing selected Thermo RAW conversions", () => {
           releaseRetry = () => {
             resolve({
               status: "terminal",
+      reason: "completed" as const,
               operationId: "1",
               queue: queueOf([
                 queueItem("file-1", "run-1.raw", { state: "finalized", attempts: 2 }),
@@ -473,7 +492,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     fireEvent.click(rows()[0]);
     expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
     // And a screen reader is told now, rather than at the next poll.
-    expect(liveRegion()).toContain("Retrying 1 failed. This cannot be cancelled.");
+    expect(liveRegion()).toContain("Retrying 1 failed.");
 
     act(() => {
       releaseRetry?.();
@@ -494,6 +513,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: unavailableBackend,
       initialConversion: {
         status: "terminal",
+      reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", { state: "failed", attempts: 1, retryable: true }),
@@ -610,6 +630,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       conversion: () =>
         Promise.resolve({
           status: "terminal",
+      reason: "completed" as const,
           operationId: "1",
           queue: {
             ...queueOf([queueItem("file-1", "run-1.raw"), queueItem("file-2", "run-2.raw")]),
@@ -649,6 +670,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
+      reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", { state: "finalized", attempts: 1 }),

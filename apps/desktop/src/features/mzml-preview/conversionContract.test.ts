@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type {
+  ConversionCancellation,
   ConversionConflictPolicy,
   ConversionQueue,
   ConversionQueueItem,
   ConversionQueueItemState,
+  ConversionQueueTerminalReason,
   ConversionReport,
   DatasetSourceKind,
   ValidationMode,
@@ -32,8 +34,14 @@ type ExpectedWorkspaceConversionState =
       readonly queue: ConversionQueue;
     }
   | {
+      readonly status: "stopping";
+      readonly operationId: string;
+      readonly queue: ConversionQueue;
+    }
+  | {
       readonly status: "terminal";
       readonly operationId: string;
+      readonly reason: ConversionQueueTerminalReason;
       readonly queue: ConversionQueue;
     };
 
@@ -55,7 +63,18 @@ const validationIsExact: Equal<ValidationMode, "source_comparison" | "output_onl
 const conflictIsExact: Equal<ConversionConflictPolicy, "fail" | "skip"> = true;
 const itemStateIsExact: Equal<
   ConversionQueueItemState,
-  "pending" | "running" | "finalized" | "skipped" | "failed"
+  | "pending"
+  | "running"
+  | "finalized"
+  | "skipped"
+  | "failed"
+  | "cancelled"
+  | "notRun"
+  | "cancellationFailed"
+> = true;
+const terminalReasonIsExact: Equal<
+  ConversionQueueTerminalReason,
+  "completed" | "stopped" | "stopFailed"
 > = true;
 
 /** The report the M3.1 implementation head produced against the evidenced build. */
@@ -93,6 +112,7 @@ const CONVERTED_ITEM = {
   retryable: false,
   report: FINALIZED_REPORT,
   error: null,
+  cancellation: null,
 } as const satisfies ConversionQueueItem;
 
 const FAILED_ITEM = {
@@ -110,6 +130,7 @@ const FAILED_ITEM = {
     detail: null,
     retryable: true,
   },
+  cancellation: null,
 } as const satisfies ConversionQueueItem;
 
 const QUEUE = {
@@ -123,6 +144,64 @@ const QUEUE = {
   failedCount: 1,
   retryableFailedCount: 1,
   nonRetryableFailedCount: 0,
+  cancelledCount: 0,
+  notRunCount: 0,
+  cancellationFailedCount: 0,
+  error: null,
+  installationGeneration: 0,
+} as const satisfies ConversionQueue;
+
+/** What a stop establishes, as the M3.4 head reports it. */
+const CANCELLATION = {
+  processLaunched: true,
+  terminationRequested: true,
+  treeTerminationConfirmed: true,
+  elapsedMilliseconds: 71,
+  termination: "cancelled",
+  partialOutputObserved: true,
+  stagingResidue: null,
+} as const satisfies ConversionCancellation;
+
+const CANCELLED_ITEM = {
+  datasetHandle: "file-2",
+  fileName: "third.raw",
+  sourceKind: "thermo_raw",
+  outputFileName: "third.mzML",
+  state: "cancelled",
+  attempts: 1,
+  retryable: false,
+  report: null,
+  error: null,
+  cancellation: CANCELLATION,
+} as const satisfies ConversionQueueItem;
+
+const NOT_RUN_ITEM = {
+  datasetHandle: "file-3",
+  fileName: "fourth.raw",
+  sourceKind: "thermo_raw",
+  outputFileName: "fourth.mzML",
+  state: "notRun",
+  attempts: 0,
+  retryable: false,
+  report: null,
+  error: null,
+  cancellation: null,
+} as const satisfies ConversionQueueItem;
+
+const STOPPED_QUEUE = {
+  items: [CONVERTED_ITEM, CANCELLED_ITEM, NOT_RUN_ITEM],
+  currentIndex: 3,
+  itemCount: 3,
+  retryRound: 0,
+  conflictPolicy: "fail",
+  finalizedCount: 1,
+  skippedCount: 0,
+  failedCount: 0,
+  retryableFailedCount: 0,
+  nonRetryableFailedCount: 0,
+  cancelledCount: 1,
+  notRunCount: 1,
+  cancellationFailedCount: 0,
   error: null,
   installationGeneration: 0,
 } as const satisfies ConversionQueue;
@@ -148,22 +227,63 @@ describe("the conversion wire contract", () => {
     expect(validationIsExact).toBe(true);
     expect(conflictIsExact).toBe(true);
     expect(itemStateIsExact).toBe(true);
+    expect(terminalReasonIsExact).toBe(true);
   });
 
   it("round-trips the whole state vocabulary through JSON unchanged", () => {
     const updates = [
-      { sequence: 0, state: { status: "idle" } },
-      { sequence: 1, state: { status: "awaitingDestination", operationId: "1", queue: QUEUE } },
-      { sequence: 2, state: { status: "running", operationId: "1", queue: QUEUE } },
-      { sequence: 3, state: { status: "terminal", operationId: "1", queue: QUEUE } },
+      { sequence: 0, state: { status: "idle" }, backendQuarantined: false },
+      {
+        sequence: 1,
+        state: { status: "awaitingDestination", operationId: "1", queue: QUEUE },
+        backendQuarantined: false,
+      },
+      {
+        sequence: 2,
+        state: { status: "running", operationId: "1", queue: QUEUE },
+        backendQuarantined: false,
+      },
+      {
+        sequence: 3,
+        state: { status: "stopping", operationId: "1", queue: QUEUE },
+        backendQuarantined: false,
+      },
+      {
+        sequence: 4,
+        state: {
+          status: "terminal",
+          operationId: "1",
+          reason: "stopped",
+          queue: STOPPED_QUEUE,
+        },
+        backendQuarantined: false,
+      },
+      {
+        sequence: 5,
+        state: {
+          status: "terminal",
+          operationId: "1",
+          reason: "stopFailed",
+          queue: STOPPED_QUEUE,
+        },
+        backendQuarantined: true,
+      },
+      {
+        sequence: 6,
+        state: { status: "terminal", operationId: "1", reason: "completed", queue: QUEUE },
+        backendQuarantined: false,
+      },
     ] as const satisfies readonly WorkspaceConversionUpdate[];
 
     expect(JSON.parse(JSON.stringify(updates))).toEqual(updates);
-    expect(Object.keys(updates[0])).toEqual(["sequence", "state"]);
+    expect(Object.keys(updates[0])).toEqual(["sequence", "state", "backendQuarantined"]);
     expect(updates.map((update) => update.state.status)).toEqual([
       "idle",
       "awaitingDestination",
       "running",
+      "stopping",
+      "terminal",
+      "terminal",
       "terminal",
     ]);
   });
@@ -172,12 +292,35 @@ describe("the conversion wire contract", () => {
     // Every non-idle state names `queue`, singular, and the terminal one is no
     // exception: a finished queue is replaced by the next, not appended to.
     for (const update of [
-      { sequence: 1, state: { status: "awaitingDestination", operationId: "1", queue: QUEUE } },
-      { sequence: 2, state: { status: "running", operationId: "1", queue: QUEUE } },
-      { sequence: 3, state: { status: "terminal", operationId: "1", queue: QUEUE } },
+      {
+        sequence: 1,
+        state: { status: "awaitingDestination", operationId: "1", queue: QUEUE },
+        backendQuarantined: false,
+      },
+      {
+        sequence: 2,
+        state: { status: "running", operationId: "1", queue: QUEUE },
+        backendQuarantined: false,
+      },
+      {
+        sequence: 3,
+        state: { status: "stopping", operationId: "1", queue: QUEUE },
+        backendQuarantined: false,
+      },
     ] as const satisfies readonly WorkspaceConversionUpdate[]) {
       expect(Object.keys(update.state).sort()).toEqual(["operationId", "queue", "status"]);
     }
+    // The terminal state carries one more member and only that one: why it is
+    // over. A stopped queue is terminal in a different way from a completed
+    // one, and no count of item states tells them apart.
+    expect(
+      Object.keys({
+        status: "terminal",
+        operationId: "1",
+        reason: "stopped",
+        queue: STOPPED_QUEUE,
+      }).sort(),
+    ).toEqual(["operationId", "queue", "reason", "status"]);
     // And an item holds its latest attempt, not every attempt it has had.
     expect(FAILED_ITEM.attempts).toBe(2);
     expect(Object.keys(FAILED_ITEM)).not.toContain("reports");
@@ -198,6 +341,9 @@ describe("the conversion wire contract", () => {
         "itemCount",
         "items",
         "nonRetryableFailedCount",
+        "cancelledCount",
+        "notRunCount",
+        "cancellationFailedCount",
         "retryRound",
         "retryableFailedCount",
         "skippedCount",
@@ -206,6 +352,7 @@ describe("the conversion wire contract", () => {
     expect(Object.keys(CONVERTED_ITEM).sort()).toEqual(
       [
         "attempts",
+        "cancellation",
         "datasetHandle",
         "error",
         "fileName",
@@ -216,6 +363,27 @@ describe("the conversion wire contract", () => {
         "state",
       ].sort(),
     );
+    // What a stop is allowed to say about an attempt: whether a process ran,
+    // whether its tree was confirmed gone, how long the request took, and two
+    // shapes. No process identifier, no job handle, no location.
+    expect(Object.keys(CANCELLATION).sort()).toEqual(
+      [
+        "elapsedMilliseconds",
+        "partialOutputObserved",
+        "processLaunched",
+        "stagingResidue",
+        "termination",
+        "terminationRequested",
+        "treeTerminationConfirmed",
+      ].sort(),
+    );
+    // A cancelled item finalized nothing, so it names no output file and
+    // carries no report to name one from.
+    expect(CANCELLED_ITEM.report).toBeNull();
+    // A not-run item launched nothing, so there is nothing for a stop to have
+    // established about it.
+    expect(NOT_RUN_ITEM.cancellation).toBeNull();
+    expect(NOT_RUN_ITEM.attempts).toBe(0);
     expect(Object.keys(FINALIZED_REPORT).sort()).toEqual(
       [
         "backend",

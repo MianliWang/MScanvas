@@ -1108,6 +1108,7 @@ impl ConversionRunOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackendRunFacts {
     exit_code: Option<i32>,
+    termination: Termination,
     elapsed: Duration,
     stdout_truncated: bool,
     stderr_truncated: bool,
@@ -1118,6 +1119,19 @@ impl BackendRunFacts {
     #[must_use]
     pub const fn exit_code(self) -> Option<i32> {
         self.exit_code
+    }
+
+    /// How the process ended.
+    ///
+    /// Carried beside the exit code rather than derived from it, because the
+    /// two can disagree: a process terminated in the window between being
+    /// observed running and the job termination landing reports an ordinary
+    /// exit status and is still a termination. A caller that must say what
+    /// happened needs the one that describes the ending, not the one the
+    /// racing process happened to hand back.
+    #[must_use]
+    pub const fn termination(self) -> Termination {
+        self.termination
     }
 
     #[must_use]
@@ -1145,6 +1159,7 @@ impl From<&ProcessOutput> for BackendRunFacts {
     fn from(output: &ProcessOutput) -> Self {
         Self {
             exit_code: output.exit_code,
+            termination: output.termination,
             elapsed: output.elapsed,
             stdout_truncated: output.stdout_truncated,
             stderr_truncated: output.stderr_truncated,

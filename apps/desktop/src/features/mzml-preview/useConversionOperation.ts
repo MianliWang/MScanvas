@@ -74,6 +74,26 @@ export interface ConversionOperation {
   /** Every row a live queue holds, so a roster can pin them. */
   readonly busyHandles: readonly string[];
   readonly dismissError: () => void;
+  /** Asks Rust to stop the running queue. */
+  readonly stop: () => void;
+  /** Whether there is a running queue of this document's to stop. */
+  readonly canStop: boolean;
+  /**
+   * Whether a stop has been asked for and the queue has not settled.
+   *
+   * True from the moment this document dispatches the request, not only once
+   * Rust answers: the request is one command that may take as long as a
+   * process takes to end, and leaving Stop queue live throughout would let a
+   * user press it repeatedly at something already happening.
+   */
+  readonly stopping: boolean;
+  /**
+   * Whether this session has stopped trusting the backend.
+   *
+   * Read from the authoritative slot rather than derived from the terminal
+   * reason, so a reload recovers it with everything else.
+   */
+  readonly backendQuarantined: boolean;
 }
 
 /**
@@ -116,6 +136,12 @@ export function useConversionOperation(
   // answered for. Rendered, unlike `busyRef`, because the interface has to stop
   // offering actions for the whole of that window.
   const [retrying, setRetrying] = useState(false);
+  // Whether this document has dispatched a stop and has not seen the queue
+  // settle. Rendered, because Stop queue has to stop being offered for the
+  // whole of that window rather than only once Rust answers.
+  const [stopRequested, setStopRequested] = useState(false);
+  // The session's own verdict on the backend, which outlives any one queue.
+  const [backendQuarantined, setBackendQuarantined] = useState(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -130,8 +156,22 @@ export function useConversionOperation(
     }
     installedSequence.current = update.sequence;
     busyRef.current =
-      update.state.status === "awaitingDestination" || update.state.status === "running";
+      update.state.status === "awaitingDestination" ||
+      update.state.status === "running" ||
+      update.state.status === "stopping";
     setState(update.state);
+    // Never cleared here. Rust sets it once and cannot unset it, so a document
+    // that lowered it on a later read would be claiming something the session
+    // does not know.
+    if (update.backendQuarantined) {
+      setBackendQuarantined(true);
+    }
+    // The queue is over, so this document is no longer inside a stop it asked
+    // for. Cleared from the authoritative state rather than from the reply to
+    // the stop command, because a reload has no reply to read.
+    if (update.state.status === "terminal" || update.state.status === "idle") {
+      setStopRequested(false);
+    }
     // A conversion is a backend operation like any other, and it can be the
     // first to notice that the installed ProteoWizard changed. Without this the
     // banner and a preview read from the replaced installation would stay on
@@ -209,7 +249,10 @@ export function useConversionOperation(
   // report elsewhere. The authoritative queue arrives on the first poll and
   // takes over from there.
   const busy =
-    retrying || state.status === "awaitingDestination" || state.status === "running";
+    retrying ||
+    state.status === "awaitingDestination" ||
+    state.status === "running" ||
+    state.status === "stopping";
 
   // While something is under way, and not otherwise. An idle slot changes only
   // when this document changes it, and a terminal report does not change at
@@ -288,7 +331,11 @@ export function useConversionOperation(
   // cannot be removed and cannot be searched away either, because the user has
   // already committed it to work they cannot stop.
   const busyHandles = useMemo(() => {
-    if (state.status === "awaitingDestination" || state.status === "running") {
+    if (
+      state.status === "awaitingDestination" ||
+      state.status === "running" ||
+      state.status === "stopping"
+    ) {
       return state.queue.items.map((item) => item.datasetHandle);
     }
     // A dispatched retry holds the same rows, and Rust will refuse to let them
@@ -301,8 +348,49 @@ export function useConversionOperation(
     return [];
   }, [state, retrying]);
 
+  // Only a queue that ran to its own end. A stopped queue is a decision the
+  // user made about the whole batch, and a queue whose stop could not be
+  // confirmed must launch nothing at all -- Rust refuses both, and this is what
+  // stops the interface offering them.
   const canRetry =
-    state.status === "terminal" && state.queue.retryableFailedCount > 0;
+    state.status === "terminal" &&
+    state.reason === "completed" &&
+    state.queue.retryableFailedCount > 0 &&
+    !backendQuarantined;
+
+  // A running queue, and one this document has not already asked to stop.
+  // stopping covers both the window before Rust answers and the state Rust
+  // reports afterwards, so the action does not flicker back on between them.
+  const stopping = stopRequested || state.status === "stopping";
+  const canStop = state.status === "running" && !stopping;
+
+  const stop = useCallback(() => {
+    if (state.status !== "running") {
+      return;
+    }
+    // Marked before the request leaves. Rust is idempotent about a repeated
+    // stop, but a button that stayed live until the reply came back would
+    // invite a user to press it at something already under way.
+    setStopRequested(true);
+    setError(null);
+    const { operationId } = state;
+    api
+      .stopConversion(operationId)
+      .then((update) => {
+        applyUpdate(update);
+      })
+      .catch((cause: unknown) => {
+        if (!mounted.current) {
+          return;
+        }
+        // The request never reached the slot, so nothing was stopped and this
+        // document must not go on saying it was. What the slot holds is still
+        // authoritative, so it asks.
+        setStopRequested(false);
+        setError(toPreviewError(cause));
+        readState();
+      });
+  }, [api, applyUpdate, readState, state]);
 
   const retry = useCallback(() => {
     if (busyRef.current) {
@@ -349,5 +437,9 @@ export function useConversionOperation(
     describe,
     convert,
     dismissError,
+    stop,
+    canStop,
+    stopping,
+    backendQuarantined,
   };
 }
