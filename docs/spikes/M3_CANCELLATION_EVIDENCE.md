@@ -3,16 +3,16 @@
 - **Status:** Real-backend cancellation measured and a private cancellation
   primitive landed beneath the queue. No user-visible cancellation exists.
 - **Date:** 2026-08-08
-- **Exact code head:** `0538e509ca6b3a1be01aaaa2c2010a089df24f01`
-  (measured on six heads over four review rounds: `99d4be7`, `cf309dd`,
-  `0f46a6c`, `abdb1ed`, `3d1452b` and this one. Review changed what an
+- **Exact code head:** `a8daded6d0ed2cefc74d23cc3a3ca71b7fb52db8`
+  (measured on seven heads over six review rounds: `99d4be7`, `cf309dd`,
+  `0f46a6c`, `abdb1ed`, `3d1452b`, `0538e50` and this one. Review changed what an
   unconfirmed cancellation carries, what counts as a staged partial document,
   what a run that never launched reports at all, how the harness waits, what
   the natural-exit race times against, when the executor last asks before
-  spawning, and which milestone the vendor route uses. Every figure below is
-  from one complete run of all six scenarios on this head rather than carried
-  forward, every conclusion was the same on all six, and the documentation
-  commits after this head change no code.)
+  spawning, which milestone the vendor route uses, and what the record counts.
+  Every figure below is from one complete run of all six scenarios on this head
+  rather than carried forward, every conclusion was the same on all seven, and
+  the documentation commits after this head change no code.)
 - **Decision recorded in:** [ADR 0014](../architecture/adr/0014-proteowizard-cancellation-evidence.md)
 
 This closes ADR 0009's second open evidence gate — *"Real cancellation and
@@ -58,7 +58,7 @@ generates a bounded mzML document outside the repository.
 
 It is a real workload rather than a filler file: the same document converts to a
 finalized `12,283,969`-byte output through the unchanged boundary, with no
-residue, in `1,051 ms` of backend time.
+residue, in `1,061 ms` of backend time.
 
 **The recipe, not the artifact, is the reproducible thing.** The generator is
 deterministic for a given `--spectra`/`--peaks`, but the digest above pins what
@@ -103,11 +103,11 @@ destination, with no user input.
 | Scenario | Milestone | Milestone at | Request to return | Attempt | Backend exit | Surviving owned processes |
 | --- | --- | ---: | ---: | --- | --- | ---: |
 | Before run | request precedes the attempt | `0 ms` | `0 ms` | `cancelled_before_run` | no process | not applicable |
-| Early | the staged output file first appeared | `346 ms` | `88 ms` | `cancelled_during_run` | `0xC000013A` | `0` |
-| Mid-write | the staged file was observed growing | `334 ms` | `57 ms` | `cancelled_during_run` | `0xC000013A` | `0` |
-| Natural-exit race | the measured natural backend duration, from the launch | `1,052 ms` | `46 ms` | `cancelled_during_run` | `0` | `0` |
+| Early | the staged output file first appeared | `348 ms` | `71 ms` | `cancelled_during_run` | `0xC000013A` | `0` |
+| Mid-write | the staged file was observed growing | `369 ms` | `72 ms` | `cancelled_during_run` | `0xC000013A` | `0` |
+| Natural-exit race | the measured natural backend duration, from the launch | `1,067 ms` | `71 ms` | `cancelled_during_run` | `0` | `0` |
 | Request after exit | issued once the process was observed to exit | not applicable | not applicable | `finalized` | `0` | not applicable |
-| Thermo, early | the staged output file first appeared | `379 ms` | `53 ms` | `cancelled_during_run` | `0xC000013A` | `0` |
+| Thermo, early | the staged output file first appeared | `416 ms` | `72 ms` | `cancelled_during_run` | `0xC000013A` | `0` |
 
 `0xC000013A` is `STATUS_CONTROL_C_EXIT`, the code `TerminateJobObject` is called
 with. Rust reports it as `-1073741510`.
@@ -123,15 +123,15 @@ and spawning — the same one the documented spawn-to-assignment race lives in.
 
 | Scenario | Staged bytes, first observed | Staged bytes, last observed | Growth seen | Staged entries at settle | Non-empty file at settle | Partial-name suffix |
 | --- | ---: | ---: | --- | ---: | --- | --- |
-| Early | `0` | `0` | no | `1` | **`true`** | `false` |
-| Mid-write | `0` | `111,295` | **yes** | `1` | **`true`** | `false` |
-| Natural-exit race | `7,292` | `12,283,960` | **yes** | `1` | **`true`** | `false` |
+| Early | `11,302` | `11,302` | no | `1` | **`true`** | `false` |
+| Mid-write | `0` | `107,323` | **yes** | `1` | **`true`** | `false` |
+| Natural-exit race | `0` | `12,283,960` | **yes** | `1` | **`true`** | `false` |
 | Thermo, early | `0` | `0` | no | `1` | `false` | `false` |
 
 Four facts come out of this and all four are load-bearing.
 
 **A partial output exists and it is observable.** The mid-write run was
-terminated with `111,295` bytes on disk of what would have been `12,283,969`.
+terminated with `107,323` bytes on disk of what would have been `12,283,969`.
 The race run was terminated `9` bytes short of the finished size. There is
 nothing hypothetical about the state a cancellation has to clean up.
 
@@ -150,8 +150,9 @@ therefore a milestone that fires early, and it is not evidence that the file was
 empty when it did.
 
 **Nothing else is written, even mid-write.** Every observation held exactly one
-staging entry. No sidecar, index, log or scratch file appeared, including in
-runs terminated while the backend was writing.
+staging entry and zero directories, on both source families. No sidecar, index,
+log or scratch entry appeared, including in runs terminated while the backend
+was writing.
 
 ## Destination and cleanup
 
@@ -186,7 +187,7 @@ still running makes successful Job termination decisive.
 Both halves are measured.
 
 - **Cancellation wins when termination is accepted first.** The race run
-  requested `1,052 ms` after the launch, against a `1,051 ms` measured backend,
+  requested `1,067 ms` after the launch, against a `1,061 ms` measured backend,
   and reported `cancelled_during_run` with an exit code of **`0`** — the process
   finished its work inside the window between `try_wait` reporting "still
   running" and `TerminateJobObject` landing, `9` bytes short of the finished
@@ -216,7 +217,7 @@ Recorded separately from the process and partial-output evidence, because it
 supports less.
 
 The evidenced vendor reader was terminated while it was running: the request was
-made once the reader had created its staged output, the process ran `415 ms`,
+made once the reader had created its staged output, the process ran `468 ms`,
 exited `STATUS_CANCELLED`, left zero surviving owned processes, and its staged
 entry was removed with no residue. The destination root stayed empty.
 
@@ -239,10 +240,12 @@ fixture, exactly as ADR 0010 admitted it.
 ## Streams
 
 No capture was truncated on any run, cancelled or completed, and no capture
-deadlocked. A separate deterministic test pushes more than `512 KiB` through
-both pipes — comfortably past a Windows pipe buffer — and cancels while the
-child is still attached; the supervisor completes, the Job empties and both
-totals are recovered. The capture threads start before the wait rather than
+deadlocked. A separate deterministic test pushes `512 KiB` through each pipe —
+comfortably past a Windows pipe buffer, and the same volume through both, so a
+capture thread that abandoned one of them would block the child rather than pass
+unnoticed — and cancels while the child is still attached. The supervisor
+completes, the Job empties, and each total is recovered and asserted
+separately. The capture threads start before the wait rather than
 after it, which is why a backend that has outrun a pipe cannot wedge the
 supervisor.
 
@@ -251,7 +254,7 @@ supervisor.
 - On build `3.0.26013 (47b13cf)`, a real `msconvert` process launched through
   the reviewed boundary and assigned to an owned Job Object is terminated on
   request, and the Job reports no surviving process afterwards.
-- Termination was confirmed in `46`–`88 ms` from request to result, in the
+- Termination was confirmed in `71`–`72 ms` from request to result, in the
   four measured runs that terminated a running process, across two source
   families.
 - A request made before an attempt begins launches no process, creates no
@@ -322,7 +325,7 @@ an installation.
 
 ## Mutation evidence
 
-Fourteen mutations were applied one at a time against the code head above, and
+Fifteen mutations were applied one at a time against the code head above, and
 each was caught by the test written for it.
 
 | Mutation | Caught by |
@@ -341,6 +344,7 @@ each was caught by the test written for it.
 | A refusal reports an empty owned job instead of no job | `a_request_made_before_the_run_launches_no_process_at_all`, and the two runner-entry-point tests |
 | A refusal is described as a terminated process | `cancellation_is_not_classified_as_failure` |
 | The executor stops asking before it spawns | `a_request_that_lands_during_the_pre_spawn_checks_launches_nothing` |
+| One capture thread stops draining | `cancellation_completes_while_a_child_is_filling_its_output_pipes` |
 
 One of the first nine survived on first application and is recorded here because
 the repair is the interesting part. Dropping the refusal that sits between the
@@ -349,7 +353,7 @@ residue, so nothing failed — but it made the run report that a backend had run
 when none had, and create and remove a directory for nothing. The test that
 names that property was written and the mutation now dies.
 
-The last five of the fourteen exist because review found the holes they close,
+The last six of the fifteen exist because review found the holes they close,
 not because a mutation found them. They are recorded in the same table because a
 hole a reviewer names and a hole a mutation names both need a test that dies
 without the fix, and these now have one each.
