@@ -3875,6 +3875,40 @@ fn a_request_made_before_the_run_reaches_no_backend_and_creates_no_staging_area(
     assert_eq!(attempt.stable_id(), "cancelled_before_run");
 }
 
+/// A request that lands after the acquisition has been rehashed and before the
+/// launch decision creates no staging area, and does not claim a backend ran.
+///
+/// The rehash is the longest thing a run does before it creates anything, so
+/// this interval is where a real request most often arrives. Reported as
+/// `DuringRun` rather than `BeforeRun`, because the attempt had begun: it
+/// opened and read the acquisition, and only the launch did not happen.
+#[test]
+fn a_request_made_before_the_launch_decision_creates_no_staging_area() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let cancellation = ConversionCancellation::new();
+    cancellation.request_handle().request();
+
+    let result = run_admitted_cancellable(&fixture.plan, &capabilities(), &runner, &cancellation);
+
+    let RunResult::Cancelled(report) = result else {
+        panic!("a request before the launch decision is a cancellation");
+    };
+    assert_eq!(report.observation(), CancellationObservation::DuringRun);
+    assert!(
+        !report.backend_was_run(),
+        "no process ran, so no backend facts may be reported"
+    );
+    assert_eq!(report.staged_content(), None);
+    assert_eq!(report.residue(), None);
+    assert_eq!(runner.calls(), 0, "a refused run reached the backend");
+    assert!(
+        entry_names(&fixture.root).is_empty(),
+        "a staging area was created for a run that never launched"
+    );
+}
+
 /// The central claim: a request that lands while the backend is running ends
 /// with the partial document removed and the destination root untouched.
 #[test]

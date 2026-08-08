@@ -1878,6 +1878,22 @@ impl RunResult {
     }
 }
 
+/// The body a cancellable attempt enters after its own pre-run refusal.
+///
+/// A test reaches it directly so it can exercise the second refusal — the one
+/// that belongs to the interval between the pre-run check and the launch
+/// decision, which the whole source rehash sits inside and which no caller can
+/// aim a request at from outside.
+#[cfg(test)]
+fn run_admitted_cancellable(
+    plan: &ConversionPlan,
+    capabilities: &InstalledHelpCapabilities,
+    runner: &dyn ProcessRunner,
+    cancellation: &ConversionCancellation,
+) -> RunResult {
+    run_admitted(plan, capabilities, runner, Some(cancellation), || {})
+}
+
 /// The uncancellable body, with the validation seam the boundary's central
 /// claim is tested through.
 #[cfg(test)]
