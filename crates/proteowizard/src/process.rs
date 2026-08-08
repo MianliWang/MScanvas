@@ -286,6 +286,16 @@ fn execute_command_after_assignment(
     require_executable_identity(spec)?;
     require_source_identity(spec)?;
     require_output_safety(spec)?;
+    // Asked again here, not only at the entry above. The three checks include a
+    // hash of the whole backend executable, so a request arriving inside them
+    // is one that unambiguously preceded process creation, and launching for it
+    // would report a terminated tree where none needed to exist. What remains
+    // is the interval stable `std::process` leaves between deciding to spawn
+    // and spawning — the same one the documented spawn-to-assignment race lives
+    // in — which is instructions rather than a file hash.
+    if cancellation.is_cancelled() {
+        return Ok(ProcessOutput::cancelled_before_launch());
+    }
     let started = Instant::now();
     let mut child = command
         .stdout(Stdio::piped())
@@ -1878,6 +1888,49 @@ mod tests {
         assert_eq!(output.max_active_processes, None);
         assert!(output.stdout.is_empty() && output.stderr.is_empty());
         assert!(!output.success());
+    }
+
+    /// A request arriving during the pre-spawn checks still launches nothing.
+    ///
+    /// Entered past the executor's own entry check with the request already
+    /// made, which is exactly the window the identity, source and output-safety
+    /// checks occupy — and the first of those hashes the whole backend
+    /// executable, so it is not a window that can be waved away as
+    /// instantaneous.
+    #[cfg(windows)]
+    #[test]
+    fn a_request_that_lands_during_the_pre_spawn_checks_launches_nothing() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let executable = std::env::current_exe().expect("test executable");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            &executable,
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        )
+        .with_executable_identity(
+            Sha256Digest::calculate_file(&executable).expect("hash the test executable"),
+        );
+        let command = process_command(&spec).expect("construct the controlled child command");
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        let output = execute_command_after_assignment(command, &spec, &cancellation, || {})
+            .expect("a refusal is not a failure");
+
+        assert!(
+            !marker.exists(),
+            "a request made during the pre-spawn checks still launched the child"
+        );
+        assert_eq!(output.termination, Termination::NotStarted);
+        assert_eq!(output.final_active_processes, None);
     }
 
     /// A substituted runner keeps the one guarantee it can keep without owning
