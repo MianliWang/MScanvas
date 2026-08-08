@@ -45,8 +45,8 @@ use super::dto::{
     WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto, WorkspaceDropStateDto,
     WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto, WorkspaceRemoveResultDto,
     WorkspaceRosterDto, bounded_text, conversion_busy, dataset_not_convertible,
-    dataset_not_previewable, redact_absolute_paths, require_finite, require_finite_option,
-    workspace_full,
+    dataset_not_previewable, invalid_conversion_reservation, redact_absolute_paths, require_finite,
+    require_finite_option, workspace_full,
 };
 use super::dto::{
     FolderDiscoverySummaryDto, FolderImportReservationDto, FolderIngestionResultDto,
@@ -987,6 +987,15 @@ impl PreviewService {
         conflict: ConversionConflictPolicyDto,
         document_epoch: u64,
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
+        // Rechecked here, not only sampled before the authority proof. That
+        // proof is awaited, and a reload can start after it succeeds and before
+        // this runs -- at which point page-load has already looked at an idle
+        // slot and found nothing to release. Without this, the slot would then
+        // be taken for a document that can never receive the identifier, and
+        // nothing could free it short of another reload.
+        if document_epoch != self.workspace_drop_document_epoch() {
+            return Err(invalid_conversion_reservation());
+        }
         let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
         let workspace = self.workspace();
         let dataset = workspace.registry.get(id).ok_or_else(unknown_dataset)?;
@@ -1017,23 +1026,31 @@ impl PreviewService {
     /// An unknown, replayed or replaced identifier never disturbs the live slot,
     /// and one issued to a document that has since been replaced is refused: the
     /// document that would receive the answer is gone.
+    /// Answers with the operation the claim belongs to.
+    ///
+    /// The caller carries it through the picker and back. Without it, a dialog
+    /// abandoned by a reloaded document would return a folder that the command
+    /// applied to whatever the slot currently holds -- converting the
+    /// replacement document's dataset into a directory nobody chose for it.
     pub fn claim_conversion(
         &self,
         reservation_id: &str,
         document_epoch: u64,
-    ) -> Result<(), PreviewErrorDto> {
-        self.conversion_slot()
-            .claim(reservation_id, document_epoch)
-            .map(|_| ())
+    ) -> Result<u64, PreviewErrorDto> {
+        let mut slot = self.conversion_slot();
+        slot.claim(reservation_id, document_epoch)?;
+        slot.claimed()
+            .map(|(operation, _)| operation)
+            .ok_or_else(invalid_conversion_reservation)
     }
 
     /// Returns the slot to idle after a cancelled picker.
     ///
     /// An ordinary outcome. Nothing was created, nothing ran, and the operation
     /// identifier is not reused.
-    pub fn cancel_conversion(&self) -> WorkspaceConversionUpdateDto {
+    pub fn cancel_conversion(&self, operation: u64) -> WorkspaceConversionUpdateDto {
         let mut slot = self.conversion_slot();
-        slot.cancel();
+        slot.cancel(operation);
         self.publish_conversion_busy(&slot);
         slot.read()
     }
@@ -1057,14 +1074,25 @@ impl PreviewService {
     ///
     /// A failure before step 4 is a refusal: the operation never reached a
     /// conversion. A failure inside it is a report, because a conversion ran.
-    pub fn run_claimed_conversion(&self, destination: &Path) -> WorkspaceConversionUpdateDto {
+    pub fn run_claimed_conversion(
+        &self,
+        operation: u64,
+        destination: &Path,
+    ) -> WorkspaceConversionUpdateDto {
         // Read from the slot rather than carried by the caller. A command that
         // held the bound request could run one for a reservation the slot has
         // since replaced; asking the slot means the request that runs is the
         // request the slot says is claimed, or none at all.
-        let Some((operation, bound)) = self.conversion_slot().claimed() else {
+        let Some((claimed, bound)) = self.conversion_slot().claimed() else {
             return self.conversion_state();
         };
+        // The operation this picker was opened for, not whichever one the slot
+        // now holds. A dialog abandoned by a reloaded document still returns a
+        // folder, and applying it to a replacement operation would convert the
+        // wrong dataset into a directory nobody chose for it.
+        if claimed != operation {
+            return self.conversion_state();
+        }
         let handle = bound.dataset_handle().to_owned();
         let root = match admit_destination_root(destination) {
             Ok(root) => root,

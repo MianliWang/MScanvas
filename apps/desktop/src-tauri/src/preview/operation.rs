@@ -353,8 +353,10 @@ impl ConversionSlot {
     /// An ordinary no-op, not a failure: the user closed a dialog. The operation
     /// identifier is not reused and the allocator does not rewind, so a reply
     /// still in flight for it cannot land on whatever is started next.
-    pub(super) fn cancel(&mut self) {
-        if matches!(self.state, SlotState::AwaitingDestination { .. }) {
+    pub(super) fn cancel(&mut self, operation: u64) {
+        if self.operation == operation
+            && matches!(self.state, SlotState::AwaitingDestination { .. })
+        {
             self.state = SlotState::Idle;
             self.advance();
         }

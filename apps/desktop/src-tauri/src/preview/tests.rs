@@ -7973,10 +7973,10 @@ fn one_focused_thermo_row_converts_through_the_product_path_and_reports_path_fre
         "the slot says a destination is being chosen"
     );
 
-    service
+    let operation = service
         .claim_conversion(&reservation.reservation_id, document)
         .expect("the exact reservation is claimed once");
-    let update = service.run_claimed_conversion(&destination);
+    let update = service.run_claimed_conversion(operation, &destination);
 
     let rendered = serde_json::to_string(&update).expect("the update serializes");
     let WorkspaceConversionStateDto::Completed { report, .. } = &update.state else {
@@ -8066,10 +8066,10 @@ fn a_cancelled_destination_picker_creates_nothing_and_returns_to_idle() {
     let reservation = service
         .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
         .expect("one reservation");
-    service
+    let operation = service
         .claim_conversion(&reservation.reservation_id, document)
         .expect("claim it");
-    let cancelled = service.cancel_conversion();
+    let cancelled = service.cancel_conversion(operation);
 
     assert!(matches!(cancelled.state, WorkspaceConversionStateDto::Idle));
     assert_eq!(entry_names(&destination), Vec::<String>::new());
@@ -8129,10 +8129,10 @@ fn a_destination_that_is_not_a_local_folder_is_refused_before_anything_is_create
         let reservation = service
             .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
             .expect("one reservation per attempt");
-        service
+        let operation = service
             .claim_conversion(&reservation.reservation_id, document)
             .expect("claim it");
-        let update = service.run_claimed_conversion(&destination);
+        let update = service.run_claimed_conversion(operation, &destination);
         let WorkspaceConversionStateDto::Failed { error, .. } = update.state else {
             panic!("a refused destination is a refusal; got {:?}", update.state);
         };
@@ -8247,7 +8247,7 @@ fn a_conversion_whose_row_moved_on_is_refused_rather_than_run() {
     let reservation = service
         .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
         .expect("one reservation");
-    service
+    let operation = service
         .claim_conversion(&reservation.reservation_id, document)
         .expect("claim it");
     // The row moves on underneath the open picker. Every roster mutation is
@@ -8258,7 +8258,7 @@ fn a_conversion_whose_row_moved_on_is_refused_rather_than_run() {
         .load_spectrum(&handle, 0)
         .expect_err("there is no preview to select a spectrum from");
 
-    let update = service.run_claimed_conversion(&destination);
+    let update = service.run_claimed_conversion(operation, &destination);
 
     assert!(
         matches!(update.state, WorkspaceConversionStateDto::Failed { .. }),
@@ -8283,10 +8283,10 @@ fn the_terminal_report_outlives_its_document_and_is_replaced_not_accumulated() {
     let reservation = service
         .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
         .expect("one reservation");
-    service
+    let operation = service
         .claim_conversion(&reservation.reservation_id, document)
         .expect("claim it");
-    let first = service.run_claimed_conversion(&destination);
+    let first = service.run_claimed_conversion(operation, &destination);
 
     // The document is replaced. The slot is Rust's, so the answer is still here.
     service.begin_webview_document();
@@ -8311,10 +8311,10 @@ fn the_terminal_report_outlives_its_document_and_is_replaced_not_accumulated() {
         after_begin.sequence > recovered.sequence,
         "the key only advances"
     );
-    service
+    let operation = service
         .claim_conversion(&reservation.reservation_id, document)
         .expect("claim it");
-    let second = service.run_claimed_conversion(&destination);
+    let second = service.run_claimed_conversion(operation, &destination);
     let WorkspaceConversionStateDto::Completed { report, .. } = second.state else {
         panic!("the second conversion reaches an outcome");
     };
@@ -8385,14 +8385,14 @@ fn an_operation_released_mid_flight_converts_nothing_and_reports_nothing() {
     let reservation = service
         .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
         .expect("one reservation");
-    service
+    let operation = service
         .claim_conversion(&reservation.reservation_id, document)
         .expect("claim it");
 
     // The document is replaced while the picker is open. The command that was
     // dispatched for it still returns, and must convert nothing.
     service.begin_webview_document();
-    let update = service.run_claimed_conversion(&destination);
+    let update = service.run_claimed_conversion(operation, &destination);
 
     assert!(matches!(update.state, WorkspaceConversionStateDto::Idle));
     assert_eq!(launches.load(Ordering::SeqCst), 0);
@@ -8416,13 +8416,13 @@ fn a_released_operation_reports_no_refusal_into_the_slot_that_replaced_it() {
     let reservation = service
         .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
         .expect("one reservation");
-    service
+    let operation = service
         .claim_conversion(&reservation.reservation_id, document)
         .expect("claim it");
 
     service.begin_webview_document();
     // A destination this boundary refuses, from the operation that was released.
-    let update = service.run_claimed_conversion(&fixture.absent("no-such-folder"));
+    let update = service.run_claimed_conversion(operation, &fixture.absent("no-such-folder"));
 
     assert!(
         matches!(update.state, WorkspaceConversionStateDto::Idle),
@@ -8455,17 +8455,103 @@ fn a_link_to_a_usable_folder_is_still_refused_as_a_destination() {
     let reservation = service
         .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
         .expect("one reservation");
-    service
+    let operation = service
         .claim_conversion(&reservation.reservation_id, document)
         .expect("claim it");
 
-    let update = service.run_claimed_conversion(&link);
+    let update = service.run_claimed_conversion(operation, &link);
 
     let WorkspaceConversionStateDto::Failed { error, .. } = update.state else {
         panic!("a link is refused; got {:?}", update.state);
     };
     assert_eq!(error.kind, "destination_is_a_link");
     assert_eq!(entry_names(&real), Vec::<String>::new());
+}
+
+/// A reservation is refused for a document that reloaded after its authority
+/// was proved.
+///
+/// The proof is awaited, so a reload can land after it succeeds and before the
+/// slot is taken -- at which point page-load has already looked at an idle slot
+/// and found nothing to release. Without a recheck the slot would be taken for
+/// a document that can never receive the identifier.
+#[test]
+fn a_reservation_is_refused_when_its_document_reloaded_during_the_authority_proof() {
+    let fixture = TestFile::new("stale-epoch-begin");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let stale = current_document(&service);
+
+    service.begin_webview_document();
+
+    let error = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, stale)
+        .expect_err("a reservation for a replaced document is never issued");
+    assert_eq!(error.kind, "invalid_conversion_reservation");
+    // And the slot is still free for the document that is actually here.
+    assert!(matches!(
+        service.conversion_state().state,
+        WorkspaceConversionStateDto::Idle
+    ));
+    service
+        .clear_workspace()
+        .expect("nothing is holding the workspace");
+}
+
+/// A picker abandoned by a reloaded document cannot convert the operation that
+/// replaced it, nor cancel it.
+#[test]
+fn an_abandoned_picker_neither_converts_nor_cancels_the_operation_that_replaced_it() {
+    let fixture = TestFile::new("abandoned-picker");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = destination_root(&fixture, "out");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    )));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+    let first = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("the first reservation");
+    let abandoned = service
+        .claim_conversion(&first.reservation_id, document)
+        .expect("claim it");
+
+    // The document reloads and its replacement starts its own conversion.
+    service.begin_webview_document();
+    let document = current_document(&service);
+    let second = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("the replacement's reservation");
+    let live = service
+        .claim_conversion(&second.reservation_id, document)
+        .expect("claim it");
+    assert_ne!(abandoned, live, "operations do not repeat");
+
+    // The old dialog now returns. It must touch neither the live operation nor
+    // the destination it was never about.
+    let update = service.run_claimed_conversion(abandoned, &destination);
+    assert!(
+        matches!(
+            update.state,
+            WorkspaceConversionStateDto::AwaitingDestination { .. }
+        ),
+        "the live operation is untouched; got {:?}",
+        update.state
+    );
+    assert_eq!(launches.load(Ordering::SeqCst), 0);
+    assert_eq!(entry_names(&destination), Vec::<String>::new());
+
+    // And a cancel from the abandoned dialog does not clear the live one.
+    let cancelled = service.cancel_conversion(abandoned);
+    assert!(matches!(
+        cancelled.state,
+        WorkspaceConversionStateDto::AwaitingDestination { .. }
+    ));
 }
 
 /// A running conversion is not released by a reload. Its process is under way,
@@ -8486,14 +8572,14 @@ fn a_reload_does_not_release_a_conversion_that_is_already_running() {
     let reservation = service
         .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
         .expect("one reservation");
-    service
+    let operation = service
         .claim_conversion(&reservation.reservation_id, document)
         .expect("claim it");
 
     let converting = std::thread::spawn({
         let service = Arc::clone(&service);
         let destination = destination.clone();
-        move || service.run_claimed_conversion(&destination)
+        move || service.run_claimed_conversion(operation, &destination)
     });
     observe_start
         .recv_timeout(Duration::from_secs(10))
@@ -8541,11 +8627,11 @@ fn capability_evidence_from_the_wrong_tool_cannot_convert() {
     let reservation = service
         .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
         .expect("one reservation");
-    service
+    let operation = service
         .claim_conversion(&reservation.reservation_id, document)
         .expect("claim it");
 
-    let update = service.run_claimed_conversion(&destination);
+    let update = service.run_claimed_conversion(operation, &destination);
 
     let WorkspaceConversionStateDto::Completed { report, .. } = update.state else {
         panic!("the run reaches an outcome; got {:?}", update.state);
@@ -8611,10 +8697,10 @@ fn the_visible_workflow_converts_a_real_thermo_acquisition_end_to_end() {
     let reservation = service
         .begin_conversion(&dataset.handle, ConversionConflictPolicyDto::Fail, document)
         .expect("one reservation");
-    service
+    let operation = service
         .claim_conversion(&reservation.reservation_id, document)
         .expect("claim it");
-    let update = service.run_claimed_conversion(&destination);
+    let update = service.run_claimed_conversion(operation, &destination);
 
     println!("state: {update:?}");
     let WorkspaceConversionStateDto::Completed { report, .. } = &update.state else {

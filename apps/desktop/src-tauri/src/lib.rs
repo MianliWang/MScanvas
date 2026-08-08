@@ -341,7 +341,7 @@ async fn choose_workspace_conversion_destination(
     let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
     let owner = main_window_handle(&app);
     let service = Arc::clone(&service);
-    service.claim_conversion(&reservation_id, document_epoch)?;
+    let operation = service.claim_conversion(&reservation_id, document_epoch)?;
     let (sender, receiver) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
         let _ = sender.send(preview::dialog::choose_conversion_destination(owner));
@@ -358,14 +358,14 @@ async fn choose_workspace_conversion_destination(
                 // The picker itself failed. That is a refusal of this
                 // operation, not a conversion that went wrong, and the slot has
                 // to leave `awaitingDestination` either way.
-                service.cancel_conversion();
+                service.cancel_conversion(operation);
                 return Err(error);
             }
         };
         let Some(destination) = chosen else {
-            return Ok(service.cancel_conversion());
+            return Ok(service.cancel_conversion(operation));
         };
-        Ok(service.run_claimed_conversion(&destination))
+        Ok(service.run_claimed_conversion(operation, &destination))
     })
     .await?
 }
