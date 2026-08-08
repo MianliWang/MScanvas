@@ -111,9 +111,15 @@ a real directory, not a link, not UNC, not a mapped or otherwise remote volume.
 The queue retains that folder for its whole life, including across a retry, so
 the user is not asked again. It retains it as an **object**, not as a name: the
 volume serial number and the 128-bit file ID are read from the handle admission
-already holds, and a retry re-admits the name and refuses unless it reaches the
-same object. A platform that will not answer with an identity is read as a
-refusal, because there is no weaker comparison worth falling back to.
+already holds, and the name is re-admitted and refused unless it reaches the same
+object. A platform that will not answer with an identity is read as a refusal,
+because there is no weaker comparison worth falling back to.
+
+That proof is repeated before **every item**, not once for the queue. Admission
+holds the directory only while it is judging it, so between one item and the next
+the name could come to mean a different directory — and that item's plan would
+take the substitute as its baseline and write into it. The crate's own root lock
+covers the run itself; this covers the gap in front of it.
 
 ### One backend binding and one lane, for the whole queue
 
@@ -275,7 +281,7 @@ and for sixteen.
 
 ### Deterministic coverage
 
-Rust: 379 tests, none needing an installation. Frontend: 493, none needing a
+Rust: 380 tests, none needing an installation. Frontend: 493, none needing a
 WebView. Between them they cover queue planning and every one of its refusals,
 the visible order surviving a sort, serial execution observed while parked at the
 first item, one binding and one lane, failure isolation with a later item still
@@ -344,6 +350,13 @@ are worth recording, because a survivor is a gap in the tests and not a curiosit
   refuses the same condition first, with `file_unreadable`. The identifier stays
   in the classifier because it is the same condition and because the preview path
   does reach it.
+- **The per-item destination recheck, as a scheduled event.** The rule it applies
+  is pinned directly; the window it runs in is not something these fakes can
+  schedule. Releasing a parked item and racing the next item's recheck to swap a
+  directory between them is a coin toss, and a test that loses it would fail for
+  a reason the product is not wrong about. What is tested is the comparison the
+  recheck is built on, including the two cases where it must refuse although the
+  name still resolves.
 - **The retry's second destination check.** Admitting a directory is filesystem
   work, so proving the folder is still the same object cannot be done while
   holding the slot lock. That leaves a window in which another document could run

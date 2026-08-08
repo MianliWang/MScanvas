@@ -1285,9 +1285,23 @@ impl PreviewService {
             let Some((index, item)) = queue.next_pending() else {
                 break;
             };
-            let Some(root) = queue.destination().map(|held| held.root().to_path_buf()) else {
+            let Some(admitted) = queue.destination().cloned() else {
                 break;
             };
+            // Re-proved before every item, not once for the queue. Admission
+            // holds the directory only while it is judging it, so between that
+            // and this item's own run the name could come to mean a different
+            // directory -- and the plan would take that one as its baseline and
+            // write into it. The crate's own root lock covers the run itself;
+            // this covers the gap in front of it.
+            let still = admit_destination_root(admitted.root()).is_ok_and(|(root, identity)| {
+                admitted.is_still(&AdmittedDestination::new(root, identity))
+            });
+            if !still {
+                drop(running);
+                return self.refuse_queue(operation, queue_destination_changed());
+            }
+            let root = admitted.root().to_path_buf();
             let started = self.conversion_slot().start_item(operation, index);
             if !started {
                 drop(running);

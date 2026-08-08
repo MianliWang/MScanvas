@@ -10005,3 +10005,54 @@ fn a_retry_after_the_installation_changed_is_refused() {
     assert_eq!(queue.items[1].attempts, 1);
     assert_eq!(entry_names(&destination), vec!["done.mzML"]);
 }
+
+/// The comparison the per-item destination recheck is built on.
+///
+/// The recheck itself runs between two items of a live queue, and nothing in
+/// these fakes can schedule a directory swap into that window: releasing a
+/// parked item and racing the next one's recheck is a coin toss, and a test that
+/// loses it fails for a reason the product is not wrong about. What is pinned
+/// here is the rule the recheck applies -- and the two cases where it must say
+/// no even though the name still resolves.
+#[test]
+fn a_folder_is_the_same_folder_only_when_it_is_the_same_object() {
+    let root = PathBuf::from(r"C:\\fake\\out");
+    let admitted = super::operation::AdmittedDestination::new(root.clone(), Some((7, [1_u8; 16])));
+
+    assert!(
+        admitted.is_still(&super::operation::AdmittedDestination::new(
+            root.clone(),
+            Some((7, [1_u8; 16]))
+        )),
+        "the same name reaching the same object is the same folder"
+    );
+    assert!(
+        !admitted.is_still(&super::operation::AdmittedDestination::new(
+            root.clone(),
+            Some((7, [2_u8; 16]))
+        )),
+        "a different directory wearing the same name is not"
+    );
+    assert!(
+        !admitted.is_still(&super::operation::AdmittedDestination::new(
+            root.clone(),
+            Some((9, [1_u8; 16]))
+        )),
+        "and neither is the same file id on another volume"
+    );
+    // A platform that will not answer is read as a refusal in both directions.
+    // There is no weaker comparison to fall back on, and agreeing by default
+    // would make the check say yes exactly where it knows least.
+    assert!(
+        !admitted.is_still(&super::operation::AdmittedDestination::new(
+            root.clone(),
+            None
+        ))
+    );
+    assert!(!super::operation::AdmittedDestination::new(root.clone(), None).is_still(&admitted));
+    assert!(
+        !super::operation::AdmittedDestination::new(root, None).is_still(
+            &super::operation::AdmittedDestination::new(PathBuf::from(r"C:\\fake\\out"), None)
+        )
+    );
+}
