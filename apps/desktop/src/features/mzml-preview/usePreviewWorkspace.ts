@@ -1748,7 +1748,19 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     }
   }, [selectSpectrum, selectedIndex]);
 
-  const conversion = useConversionOperation();
+  // A conversion's report carries the installation sequence it ran at. If it is
+  // newer than what this document has applied, the banner and everything read
+  // from the previous installation are stale -- so the backend is re-read
+  // through the one path that knows how to discard them.
+  const reconcileConversionGeneration = useCallback(
+    (generation: number) => {
+      if (generation > appliedGeneration.current) {
+        checkBackend();
+      }
+    },
+    [checkBackend],
+  );
+  const conversion = useConversionOperation(reconcileConversionGeneration);
 
   const activeDataset = useMemo(
     () => roster.datasets.find((dataset) => dataset.handle === roster.active) ?? null,

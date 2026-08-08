@@ -64,7 +64,9 @@ export interface ConversionOperation {
  * destination and no reservation — those live in Rust for the whole of an
  * operation, which is what lets a reload recover one it did not start.
  */
-export function useConversionOperation(): ConversionOperation {
+export function useConversionOperation(
+  onInstallationGeneration: (generation: number) => void,
+): ConversionOperation {
   const api = usePreviewApi();
   const [state, setState] = useState<WorkspaceConversionState>({ status: "idle" });
   const [plan, setPlan] = useState<ConversionPlanState>({ status: "none" });
@@ -105,7 +107,15 @@ export function useConversionOperation(): ConversionOperation {
     busyRef.current =
       update.state.status === "awaitingDestination" || update.state.status === "running";
     setState(update.state);
-  }, []);
+    // A conversion is a backend operation like any other, and it can be the
+    // first to notice that the installed ProteoWizard changed. Without this the
+    // banner and a preview read from the replaced installation would stay on
+    // screen beside a conversion done by its successor, until some later
+    // backend operation happened to reconcile them.
+    if (update.state.status === "completed") {
+      onInstallationGeneration(update.state.report.installationGeneration);
+    }
+  }, [onInstallationGeneration]);
 
   const readState = useCallback(() => {
     stateToken.current += 1;

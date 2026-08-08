@@ -987,15 +987,6 @@ impl PreviewService {
         conflict: ConversionConflictPolicyDto,
         document_epoch: u64,
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
-        // Rechecked here, not only sampled before the authority proof. That
-        // proof is awaited, and a reload can start after it succeeds and before
-        // this runs -- at which point page-load has already looked at an idle
-        // slot and found nothing to release. Without this, the slot would then
-        // be taken for a document that can never receive the identifier, and
-        // nothing could free it short of another reload.
-        if document_epoch != self.workspace_drop_document_epoch() {
-            return Err(invalid_conversion_reservation());
-        }
         let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
         let workspace = self.workspace();
         let dataset = workspace.registry.get(id).ok_or_else(unknown_dataset)?;
@@ -1009,6 +1000,18 @@ impl PreviewService {
         let dto = dataset_dto(&workspace, id).ok_or_else(unknown_dataset)?;
         drop(workspace);
         let mut slot = self.conversion_slot();
+        // Under the slot lock, and immediately before the slot is taken. The
+        // authority proof is awaited, so a reload can start any time after it
+        // succeeds -- and page-load releases what it finds *now*. Checking
+        // earlier would leave the window this closes: an epoch that was current
+        // when it was read, a release pass that saw an idle slot, and then this
+        // request taking the slot for a document that has already gone.
+        //
+        // Page-load's release takes this same lock, so one of the two happens
+        // first and the other sees the result.
+        if document_epoch != self.workspace_drop_document_epoch() {
+            return Err(invalid_conversion_reservation());
+        }
         let reservation = slot.begin(BoundConversion::new(
             document_epoch,
             id,

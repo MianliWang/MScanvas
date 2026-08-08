@@ -307,6 +307,55 @@ describe("converting one focused Thermo RAW acquisition", () => {
     });
   });
 
+  it("re-reads the backend when a conversion is the first to notice it changed", async () => {
+    // A conversion is a backend operation like any other and can be the first
+    // to observe a replaced installation. Without reconciliation the banner and
+    // anything read from the previous one would stay on screen beside it.
+    const api = createFakePreviewApi({
+      initialDatasets: [acquisition],
+      availability: availableBackend,
+      conversion: (request) =>
+        Promise.resolve({
+          status: "completed",
+          operationId: "1",
+          report: {
+            datasetHandle: request.handle,
+            sourceKind: "thermo_raw",
+            outcome: "finalized",
+            detailedOutcome: null,
+            outputFileName: "acquisition.mzML",
+            output: {
+              byteLength: 1,
+              sha256: "0".repeat(64),
+              spectrumCount: 1,
+              chromatogramCount: 0,
+            },
+            validation: {
+              mode: "output_only",
+              fullyVerified: false,
+              verified: [],
+              unverified: [],
+              inapplicable: [],
+            },
+            backend: null,
+            stagingResidue: null,
+            // Newer than anything this document has applied.
+            installationGeneration: 9,
+          },
+        }),
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /FT-HCD-MSX\.raw/ });
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const readsBefore = api.deliveredVerdicts.length;
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Convert focused…" }));
+
+    await waitFor(() => {
+      expect(api.deliveredVerdicts.length).toBeGreaterThan(readsBefore);
+    });
+  });
+
   it("keeps an mzML preview on screen when focus moves to a vendor row", async () => {
     const api = createFakePreviewApi({
       initialDatasets: [selectedFile, acquisition],
