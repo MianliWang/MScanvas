@@ -251,7 +251,8 @@ describe("narrow desktop layout markup", () => {
     // there, rather than being clipped alongside the names.
     const status = requireStyleRule(
       app,
-      ".conversion-queue-status, .conversion-queue-attempts, .conversion-queue-reason",
+      ".conversion-queue-status, .conversion-queue-attempts, .conversion-queue-facts, " +
+        ".conversion-queue-reason, .conversion-queue-residue",
     ).style;
     expect(status.getPropertyValue("flex")).toBe("1 0 100%");
     expect(status.getPropertyValue("overflow-wrap")).toBe("anywhere");

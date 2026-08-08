@@ -6687,6 +6687,11 @@ struct ConvertingProvider {
     /// hold the gate while the other waits.
     preview_started: Mutex<Option<mpsc::Sender<()>>>,
     preview_release: Mutex<Option<mpsc::Receiver<()>>>,
+    /// Which installation this provider reports resolving to, shared with the
+    /// test so it can be changed after the provider has been handed over. A
+    /// fixed answer can never advance the service's installation sequence, and
+    /// a queue that spans two installations is the thing being tested.
+    installation_label: Arc<Mutex<String>>,
 }
 
 impl ConvertingProvider {
@@ -6697,7 +6702,13 @@ impl ConvertingProvider {
             runner,
             preview_started: Mutex::new(None),
             preview_release: Mutex::new(None),
+            installation_label: Arc::new(Mutex::new(String::from("msconvert"))),
         }
+    }
+
+    /// The name this provider will answer with, changeable from the test.
+    fn installation_label(&self) -> Arc<Mutex<String>> {
+        Arc::clone(&self.installation_label)
     }
 
     /// The same provider, answering previews and parking inside the first one.
@@ -6762,7 +6773,13 @@ impl PreviewProvider for ConvertingProvider {
     fn conversion_backend(&self) -> Result<ConversionBackend<'_>, PreviewErrorDto> {
         Ok(ConversionBackend {
             capabilities: self.capabilities.clone(),
-            installation: Some(backend("msconvert", EVIDENCED_RELEASE)),
+            installation: Some(backend(
+                &self
+                    .installation_label
+                    .lock()
+                    .expect("the installation label is never poisoned"),
+                EVIDENCED_RELEASE,
+            )),
             runner: &self.runner,
         })
     }
@@ -9921,4 +9938,70 @@ fn a_retry_from_a_document_that_is_not_the_current_one_is_refused() {
         .retry_conversion_queue(current_document(&service))
         .expect("the document that recovered the queue may rerun it");
     assert_eq!(terminal_queue(&retried).finalized_count, 1);
+}
+
+/// Two names a Windows folder answers with one file are one name here too.
+#[test]
+fn output_names_that_differ_only_in_case_are_a_collision() {
+    let fixture = TestFile::new("queue-case-collision");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let nested = fixture.directory.join("nested");
+    fs::create_dir_all(&nested).expect("create the nested folder");
+    let one = add_one_acquisition(&service, &fixture.thermo_raw("Sample.raw"));
+    let other = nested.join("sample.raw");
+    fs::write(&other, thermo_raw_bytes()).expect("write the twin");
+    let two = add_one_acquisition(&service, &other);
+
+    // Distinct strings, and the same file on the volume this queue writes to.
+    let error = service
+        .conversion_queue_plan(&[one, two])
+        .expect_err("an ordinary Windows folder resolves both of these to one file");
+    assert_eq!(error.kind, "queue_output_name_collision");
+    assert!(matches!(
+        service.conversion_state().state,
+        WorkspaceConversionStateDto::Idle
+    ));
+}
+
+/// One queue is one installation, and a retry after the installation changed is
+/// refused rather than quietly mixing two builds into one result.
+#[test]
+fn a_retry_after_the_installation_changed_is_refused() {
+    let fixture = TestFile::new("queue-installation-changed");
+    let destination = destination_root(&fixture, "out");
+    let provider = ConvertingProvider::faithful();
+    let label = provider.installation_label();
+    let service = PreviewService::new(Box::new(provider));
+    let done = add_one_acquisition(&service, &fixture.thermo_raw("done.raw"));
+    let held = fixture.thermo_raw("held.raw");
+    let blocked = add_one_acquisition(&service, &held);
+
+    let writer = hold_for_writing(&held);
+    let update = queue_and_run(&service, &[done, blocked], &destination);
+    assert_eq!(terminal_queue(&update).retryable_failed_count, 1);
+    drop(writer);
+
+    // A different ProteoWizard resolves between the run and the retry, which is
+    // what advances the service's installation sequence.
+    *label.lock().expect("the installation label") = String::from("other-msconvert");
+
+    let update = service
+        .retry_conversion_queue(current_document(&service))
+        .expect("the retry answers, and says why it converted nothing");
+
+    let queue = terminal_queue(&update);
+    assert_eq!(
+        queue.error.as_ref().expect("a queue-level refusal").kind,
+        "queue_installation_changed"
+    );
+    // And the queue is left as it was, with its failure still there to retry
+    // once the original installation is back -- not stranded as pending, which
+    // would count nowhere and could never be retried again.
+    assert_eq!(queue.finalized_count, 1);
+    assert_eq!(queue.failed_count, 1);
+    assert_eq!(queue.retryable_failed_count, 1);
+    assert_eq!(queue.items[1].state, ConversionQueueItemStateDto::Failed);
+    assert_eq!(queue.items[0].attempts, 1, "nothing was converted again");
+    assert_eq!(queue.items[1].attempts, 1);
+    assert_eq!(entry_names(&destination), vec!["done.mzML"]);
 }

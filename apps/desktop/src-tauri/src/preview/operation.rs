@@ -24,8 +24,8 @@ use super::dto::{
     ConversionConflictPolicyDto, ConversionQueueDto, ConversionQueueItemDto,
     ConversionQueueItemStateDto, MAX_CONVERSION_QUEUE_ITEMS, PreviewErrorDto, SelectedFileDto,
     WorkspaceConversionReservationDto, WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
-    conversion_busy, invalid_conversion_reservation, queue_duplicate_dataset, queue_is_empty,
-    queue_too_large,
+    conversion_busy, invalid_conversion_reservation, queue_duplicate_dataset,
+    queue_installation_changed, queue_is_empty, queue_too_large,
 };
 use super::selection::{DatasetId, DatasetSourceKind};
 
@@ -240,6 +240,10 @@ pub(super) struct ConversionQueue {
     /// Set when a destination has been admitted, and kept for the queue's life
     /// so a retry does not ask for one again.
     destination: Option<AdmittedDestination>,
+    /// Which installation this queue's items were converted on, as the
+    /// service's own sequence counts it. Set by the first pass and required to
+    /// match on every later one, so one queue is one build.
+    installation_generation: Option<u64>,
     /// A refusal that stopped the whole queue rather than one item.
     error: Option<PreviewErrorDto>,
 }
@@ -279,6 +283,7 @@ impl ConversionQueue {
             current: 0,
             retry_round: 0,
             destination: None,
+            installation_generation: None,
             error: None,
         })
     }
@@ -569,6 +574,32 @@ impl ConversionSlot {
         }
     }
 
+    /// Fixes the installation this queue runs on, or refuses a changed one.
+    ///
+    /// The first pass records what it bound; every later pass must find the
+    /// same answer. A queue whose files came from two ProteoWizard builds is
+    /// not a batch, and silently mixing them would put outputs that cannot be
+    /// compared under one result.
+    pub(super) fn bind_installation(
+        &mut self,
+        operation: u64,
+        generation: u64,
+    ) -> Result<(), PreviewErrorDto> {
+        let Some(queue) = self.running_mut(operation) else {
+            // Not this worker's queue any more. Whatever replaced it will bind
+            // its own installation, and the caller stops either way.
+            return Ok(());
+        };
+        match queue.installation_generation {
+            Some(bound) if bound != generation => Err(queue_installation_changed()),
+            Some(_) => Ok(()),
+            None => {
+                queue.installation_generation = Some(generation);
+                Ok(())
+            }
+        }
+    }
+
     /// Marks one item of the running queue as under way.
     pub(super) fn start_item(&mut self, operation: u64, index: usize) -> bool {
         let Some(queue) = self.running_mut(operation) else {
@@ -648,10 +679,17 @@ impl ConversionSlot {
         self.advance();
     }
 
-    /// Refuses the whole queue before any item ran.
+    /// Refuses the whole queue before any item of this pass ran.
     ///
-    /// Distinct from an item failing: nothing was converted, and the queue is
-    /// terminal with every item still pending.
+    /// Distinct from an item failing: nothing was converted by this pass, and
+    /// the queue becomes terminal carrying the refusal.
+    ///
+    /// Anything a retry moved back to pending is put back as it was. Without
+    /// that, a refused retry would leave its failures neither failed nor run --
+    /// counted nowhere, and no longer retryable, so a user whose retry was
+    /// refused for a reason they can fix would have lost the failures they
+    /// meant to fix. A pass that never started cannot have moved anything, so
+    /// on a first pass this restores nothing.
     pub(super) fn refuse(&mut self, operation: u64, error: PreviewErrorDto) {
         if self.operation != operation {
             return;
@@ -663,6 +701,23 @@ impl ConversionSlot {
             SlotState::Idle | SlotState::Terminal { .. } => return,
         };
         let mut queue = queue;
+        for item in &mut queue.items {
+            if item.state != ItemState::Pending {
+                continue;
+            }
+            // What it carries says what it was. An item that never ran carries
+            // neither and stays pending, which is the truth about it.
+            if item.error.is_some() {
+                item.state = ItemState::Failed;
+            } else if let Some(report) = item.report.as_ref() {
+                item.state = item_state_of(report.outcome_class());
+            }
+        }
+        queue.current = queue
+            .items
+            .iter()
+            .filter(|item| item.state != ItemState::Pending)
+            .count();
         queue.error = Some(error);
         self.state = SlotState::Terminal { queue };
         self.advance();

@@ -398,7 +398,9 @@ button:disabled {
    sentence is a sentence -- so it wraps instead of being clipped. */
 .conversion-queue-status,
 .conversion-queue-attempts,
-.conversion-queue-reason {
+.conversion-queue-facts,
+.conversion-queue-reason,
+.conversion-queue-residue {
   min-width: 0;
   flex: 1 0 100%;
   padding-left: 2.2em;
@@ -417,6 +419,12 @@ button:disabled {
 .conversion-queue-list > li[data-item-state="failed"] > .conversion-queue-status,
 .conversion-queue-reason {
   color: var(--color-danger);
+}
+
+/* A warning rather than a failure: the file was produced and is fine, and what
+   is left behind is a folder MSCanvas could not clear out of the user's way. */
+.conversion-queue-residue {
+  color: var(--color-warning);
 }
 
 .conversion-queue-list > li[data-item-state="finalized"] > .conversion-queue-status {

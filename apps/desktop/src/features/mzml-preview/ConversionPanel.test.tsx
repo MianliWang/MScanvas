@@ -43,6 +43,15 @@ function rows(): HTMLElement[] {
   return within(screen.getByRole("listbox", { name: "Workspace" })).queryAllByRole("option");
 }
 
+/** The queue's own result block, as distinct from the plan beneath it. */
+function queueResult(): HTMLElement {
+  const result = document.querySelector(".conversion-running");
+  if (result === null) {
+    throw new Error("expected a queue result on screen");
+  }
+  return result as HTMLElement;
+}
+
 function liveRegion(): string {
   return document.querySelector("[data-live-region='conversion']")?.textContent ?? "";
 }
@@ -307,6 +316,160 @@ describe("queueing selected Thermo RAW conversions", () => {
     const items = within(panel).getAllByRole("listitem");
     expect(items[0]).not.toHaveTextContent("attempt");
     expect(items[1]).toHaveTextContent("attempt 2");
+  });
+
+  it("says what each converted file actually is, not only that it converted", async () => {
+    // The single-file panel reported size and record counts, and a queue that
+    // said only `Converted` would take away the one thing that separates a real
+    // conversion from an empty file with the right name.
+    const api = createFakePreviewApi({
+      initialDatasets: [first],
+      availability: availableBackend,
+      initialConversion: {
+        status: "terminal",
+        operationId: "1",
+        queue: queueOf([
+          queueItem("file-1", "run-1.raw", {
+            state: "finalized",
+            attempts: 1,
+            report: {
+              datasetHandle: "file-1",
+              sourceKind: "thermo_raw",
+              outcome: "finalized",
+              detailedOutcome: null,
+              outputFileName: "run-1.mzML",
+              output: {
+                byteLength: 28_655,
+                sha256: "6CE2ACE6",
+                spectrumCount: 12,
+                chromatogramCount: 3,
+              },
+              validation: {
+                mode: "output_only",
+                fullyVerified: false,
+                verified: ["source_unchanged"],
+                unverified: [],
+                inapplicable: [],
+              },
+              backend: { exitCode: 0, elapsedMilliseconds: 568 },
+              // Cleanup failed, and what it left behind is in the folder the
+              // user chose, so they are owed the warning.
+              stagingResidue: "not_removed",
+              installationGeneration: 0,
+            },
+          }),
+        ]),
+      },
+    });
+    renderApp(api);
+
+    await screen.findByRole("region", { name: "Convert" });
+    // Scoped to the result: the plan beneath it names the same output, because
+    // it is offering to convert the same row again.
+    const item = within(queueResult()).getByText("run-1.mzML").closest("li");
+    expect(item).not.toBeNull();
+    expect(item).toHaveTextContent("12 spectra");
+    expect(item).toHaveTextContent("3 chromatograms");
+    // 28,655 bytes, as this app renders sizes everywhere else.
+    expect(item).toHaveTextContent("28.0 KiB");
+    expect(item).toHaveTextContent(
+      "MSCanvas could not remove its own temporary folder afterwards.",
+    );
+    // And a run that produced something did have its output judged.
+    expect(within(queueResult()).getByText(/Output-only validation\./, VISIBLE)).toBeVisible();
+  });
+
+  it("does not claim output-only validation over files it never inspected", async () => {
+    // Every item skipped: the existing files were explicitly not looked at, and
+    // nothing was produced to judge. Saying `Output-only validation` here would
+    // tell the user their existing files passed a check nobody ran.
+    const api = createFakePreviewApi({
+      initialDatasets: [first, second],
+      availability: availableBackend,
+      initialConversion: {
+        status: "terminal",
+        operationId: "1",
+        queue: queueOf([
+          queueItem("file-1", "run-1.raw", {
+            state: "skipped",
+            attempts: 1,
+            report: {
+              datasetHandle: "file-1",
+              sourceKind: "thermo_raw",
+              outcome: "skipped_existing_destination",
+              detailedOutcome: "destination_exists",
+              outputFileName: null,
+              output: null,
+              validation: null,
+              backend: null,
+              stagingResidue: null,
+              installationGeneration: 0,
+            },
+          }),
+          queueItem("file-2", "run-2.raw", { state: "skipped", attempts: 1 }),
+        ]),
+      },
+    });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    expect(within(panel).getByText(/0 converted, 2 skipped, 0 failed of 2\./)).toBeVisible();
+    // Scoped to the result. The plan below it says the same sentence about the
+    // conversion the user could start next, which is a different claim and a
+    // true one.
+    expect(within(queueResult()).queryByText(/Output-only validation\./, VISIBLE)).toBeNull();
+  });
+
+  it("stops offering actions for the whole of a retry, not only for its first moment", async () => {
+    // A retry is one command that does not answer until the entire serial rerun
+    // is over, and unlike starting a queue it has no reservation half to say
+    // that something began. Without a busy state the panel would keep showing
+    // the old terminal result -- and keep offering Retry, Add and Clear -- for
+    // however long the rerun took.
+    let releaseRetry: (() => void) | null = null;
+    const api = createFakePreviewApi({
+      initialDatasets: [first],
+      availability: availableBackend,
+      initialConversion: {
+        status: "terminal",
+        operationId: "1",
+        queue: queueOf([
+          queueItem("file-1", "run-1.raw", { state: "failed", attempts: 1, retryable: true }),
+        ]),
+      },
+      retry: () =>
+        new Promise((resolve) => {
+          releaseRetry = () => {
+            resolve({
+              status: "terminal",
+              operationId: "1",
+              queue: queueOf([
+                queueItem("file-1", "run-1.raw", { state: "finalized", attempts: 2 }),
+              ]),
+            });
+          };
+        }),
+    });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    fireEvent.click(within(panel).getByRole("button", { name: "Retry 1 failed" }));
+
+    // The retry has not answered, and the interface has stopped offering work.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    });
+    expect(within(panel).queryByRole("button", { name: "Retry 1 failed" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
+
+    act(() => {
+      releaseRetry?.();
+    });
+
+    await waitFor(() => {
+      expect(within(panel).getByText(/1 converted, 0 skipped, 0 failed of 1\./)).toBeVisible();
+    });
+    expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
   });
 
   it("recovers a queue this document did not start", async () => {

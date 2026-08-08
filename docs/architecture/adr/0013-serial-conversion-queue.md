@@ -93,6 +93,16 @@ before a reservation exists, before anything is created — and it names the
 colliding output names so the interface can say which rows to fix. The same rule
 refuses a list naming one row twice, which would collide with itself.
 
+Names are compared the way the destination will resolve them, not the way Rust
+compares strings. The folder is a local Windows directory by admission, and an
+ordinary one answers `Sample.mzML` and `sample.mzML` with the same file — so a
+case-sensitive comparison would call that pair distinct and then discover the
+conflict after the picker, as the second item failing or being skipped. The fold
+used is Unicode simple lowercasing rather than the uppercase table a volume
+actually applies; where the two disagree this refuses a pair the volume might
+have kept apart, which is the safe direction for a rule whose whole purpose is to
+refuse.
+
 ### One destination and one policy for the whole queue
 
 One folder, chosen once, admitted once, under ADR 0012's rules unchanged: local,
@@ -117,6 +127,18 @@ slot already refuses previews and workspace mutations; what the gate adds is the
 callers the slot does not refuse — a backend recheck is not a workspace mutation,
 and its process would otherwise slip between two items of a batch the user is
 watching.
+
+One installation, and a retry is not an exception. The queue records the
+installation its first pass resolved to and every later pass must find the same
+one, or the queue is refused with `queue_installation_changed`. Without that, a
+user who switched ProteoWizard between a run and its retry would get some of one
+queue's files from one build and the rest from another, which is not a batch
+anybody can compare — and the interface would present it as one result.
+
+A refusal that lands on a retry puts back what the retry moved. `begin_retry`
+returns retryable failures to pending, so a refusal after that point would leave
+them neither failed nor run: counted nowhere, no longer retryable, and lost to a
+user whose retry was refused for a reason they could have fixed.
 
 No workspace lock, no mutation gate and no slot lock is held while a process
 runs. Each is taken briefly to read a row or commit a transition and released
@@ -189,8 +211,24 @@ Progress is `Converting item N of M`. Nothing measures a fraction of an
 percentage and no Cancel, and the panel says so while it runs.
 
 Each item shows its position, its source name, its planned output name, its
-state in words, its attempt count once it exceeds one, and its failure sentence
-if it has one. Colour reinforces the words and never carries the state alone.
+state in words, its attempt count once it exceeds one, its failure sentence if it
+has one, and — where it produced a file — that file's size, spectrum and
+chromatogram counts and elapsed time. The last of those is what separates a real
+conversion from a file with the right name and nothing in it, and a queue that
+said only `Converted` would have taken it away. A staging residue is said too,
+because what was left behind is in the folder the user chose.
+
+The output-only disclosure appears only where something was actually judged. A
+queue whose items were all skipped validated nothing, and a skipped item's
+existing file was explicitly not inspected — claiming output-only validation over
+it would claim a check nobody ran.
+
+A retry is one command that does not answer until the whole rerun is over, and it
+has no reservation half to announce that it began. The interface therefore treats
+its own dispatched-and-unanswered retry as busy: it stops offering Retry, Add and
+Clear for the length of the rerun rather than for its first moment. That is not
+an invented conversion state — it reports that this document asked and is
+waiting, which is what `pickerBusy` and `folderBusy` already report elsewhere.
 
 Every member of a live queue stays visible outside a search, and the row being
 converted says so above the rest. `Retry N failed` states its scope in an
@@ -237,7 +275,7 @@ and for sixteen.
 
 ### Deterministic coverage
 
-Rust: 376 tests, none needing an installation. Frontend: 486, none needing a
+Rust: 379 tests, none needing an installation. Frontend: 493, none needing a
 WebView. Between them they cover queue planning and every one of its refusals,
 the visible order surviving a sort, serial execution observed while parked at the
 first item, one binding and one lane, failure isolation with a later item still

@@ -6,6 +6,7 @@ import type {
   ConversionQueueItem,
   ConversionReport,
 } from "./contracts";
+import { formatByteLength, formatCount, formatDuration } from "./format";
 import type { ConversionOperation } from "./useConversionOperation";
 
 /**
@@ -259,10 +260,21 @@ function QueueState({
     return null;
   }
   const { queue } = state;
-  const done = queue.finalizedCount + queue.skippedCount + queue.failedCount;
+  // A retry this document dispatched and has not been answered for. The slot
+  // still reads `terminal` -- Rust answers once, when the whole rerun is over --
+  // so without this the panel would go on showing the old result and go on
+  // offering the very control that is already running.
+  const retrying = conversion.busy && state.status === "terminal";
   return (
     <div className="conversion-running">
-      {state.status === "awaitingDestination" ? (
+      {retrying ? (
+        <>
+          <p>Retrying the failures…</p>
+          <p className="quiet-text" role="note">
+            This conversion workflow cannot cancel a running queue.
+          </p>
+        </>
+      ) : state.status === "awaitingDestination" ? (
         <p>Choose where to save the converted mzML.</p>
       ) : state.status === "running" ? (
         <>
@@ -313,13 +325,41 @@ function QueueState({
                 <span className="conversion-queue-reason">{itemFailureSentence(item)}</span>
               </>
             ) : null}
+            {/* What was actually produced, per item. A queue that said only
+                `Converted` would have taken away the one thing that lets a user
+                tell a real conversion from an empty one. */}
+            {item.report?.output == null ? null : (
+              <>
+                <span className="visually-hidden">, </span>
+                <span className="conversion-queue-facts">
+                  {`${formatByteLength(item.report.output.byteLength)}, ${formatCount(
+                    item.report.output.spectrumCount,
+                  )} spectra, ${formatCount(item.report.output.chromatogramCount)} chromatograms`}
+                  {item.report.backend === null
+                    ? ""
+                    : `, ${formatDuration(item.report.backend.elapsedMilliseconds)}`}
+                </span>
+              </>
+            )}
+            {/* Cleanup failing is the user's problem, not only MSCanvas', because
+                what is left behind is in the folder they chose. */}
+            {item.report?.stagingResidue == null ? null : (
+              <>
+                <span className="visually-hidden">, </span>
+                <span className="conversion-queue-residue">{RESIDUE_EXPLANATION}</span>
+              </>
+            )}
           </li>
         ))}
       </ol>
 
-      {state.status === "terminal" ? (
+      {state.status === "terminal" && !retrying ? (
         <>
-          {done > 0 ? (
+          {/* Only where something was actually judged. A queue whose items were
+              all skipped or all failed validated nothing -- and a skipped item's
+              existing file was explicitly not inspected, so claiming
+              output-only validation over it would claim a check nobody ran. */}
+          {queue.items.some((item) => item.report?.validation != null) ? (
             <p className="quiet-text" role="note">
               {OUTPUT_ONLY_DISCLOSURE}
             </p>

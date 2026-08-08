@@ -568,8 +568,13 @@ pub fn dataset_not_previewable() -> PreviewErrorDto {
 pub fn queue_too_large() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "queue_too_large",
-        "MSCanvas converts up to 16 acquisitions in one queue. Select fewer and convert the rest \
-         afterwards.",
+        // Formatted from the bound rather than restating it. A sentence naming
+        // its own number is a second copy of the limit, free to be right today
+        // and wrong after the constant moves.
+        format!(
+            "MSCanvas converts up to {MAX_CONVERSION_QUEUE_ITEMS} acquisitions in one queue. \
+             Select fewer and convert the rest afterwards."
+        ),
         false,
     )
 }
@@ -616,6 +621,17 @@ pub fn queue_destination_changed() -> PreviewErrorDto {
         "The folder those conversions were saved to is no longer the same folder, so nothing was \
          retried. Start a new conversion to choose it again.",
         true,
+    )
+}
+
+/// What a retry answers with when the installed ProteoWizard is no longer the
+/// one the queue's earlier items were converted on.
+pub fn queue_installation_changed() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "queue_installation_changed",
+        "The installed ProteoWizard has changed since those conversions ran, so nothing was \
+         retried. Start a new conversion so every file in it comes from one installation.",
+        false,
     )
 }
 

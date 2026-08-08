@@ -1034,14 +1034,26 @@ impl PreviewService {
         // something that was already there, so the conflict policy cannot
         // settle it -- and letting queue order pick the winner would make the
         // result depend on a sort the user can change. Refused outright.
+        // Compared the way the destination will resolve them, not the way Rust
+        // compares strings. The folder is a local Windows directory by
+        // admission, and an ordinary one answers `Sample.mzML` and
+        // `sample.mzML` with the same file -- so a case-sensitive comparison
+        // would call that pair distinct here and then discover the conflict
+        // after the picker, as the second item failing or being skipped.
+        //
+        // `to_lowercase` is Unicode simple case folding rather than the
+        // uppercase table a Windows volume actually uses. Where the two
+        // disagree, this one refuses a pair the volume might have kept apart --
+        // the safe direction for a rule whose whole purpose is to refuse, and
+        // the honest limit of comparing names without asking the volume.
+        let folded = |name: &str| name.to_lowercase();
         let mut collisions: Vec<String> = Vec::new();
         for (index, item) in items.iter().enumerate() {
-            if items[..index]
+            if items[..index].iter().any(|earlier| {
+                folded(earlier.output_file_name()) == folded(item.output_file_name())
+            }) && !collisions
                 .iter()
-                .any(|earlier| earlier.output_file_name() == item.output_file_name())
-                && !collisions
-                    .iter()
-                    .any(|name| name == item.output_file_name())
+                .any(|name| folded(name) == folded(item.output_file_name()))
             {
                 collisions.push(item.output_file_name().to_owned());
             }
@@ -1246,6 +1258,22 @@ impl PreviewService {
             drop(running);
             return self.refuse_queue(operation, error);
         }
+        // One installation for one queue, retries included. Noted once here
+        // rather than per item, and compared against what the queue's earlier
+        // pass ran on: a user who switches ProteoWizard between a run and its
+        // retry would otherwise get some of one queue's files from one build
+        // and the rest from another, which is not a batch anybody can compare.
+        let generation = self.note_resolved(backend.installation.clone());
+        // Bound to a local first, and every lock below it likewise. A guard
+        // produced inside an `if` condition lives until the end of that `if`,
+        // body included -- and each of these bodies takes the same lock again.
+        let bound = self
+            .conversion_slot()
+            .bind_installation(operation, generation);
+        if let Err(error) = bound {
+            drop(running);
+            return self.refuse_queue(operation, error);
+        }
 
         loop {
             let Some(queue) = self.conversion_slot().running(operation) else {
@@ -1260,17 +1288,19 @@ impl PreviewService {
             let Some(root) = queue.destination().map(|held| held.root().to_path_buf()) else {
                 break;
             };
-            if !self.conversion_slot().start_item(operation, index) {
+            let started = self.conversion_slot().start_item(operation, index);
+            if !started {
                 drop(running);
                 return self.conversion_state();
             }
             self.publish_conversion_busy(&self.conversion_slot());
 
-            let outcome = self.convert_queue_item(&item, &root, queue.conflict(), &backend);
-            if !self
+            let outcome =
+                self.convert_queue_item(&item, &root, queue.conflict(), &backend, generation);
+            let settled = self
                 .conversion_slot()
-                .settle_item(operation, index, outcome)
-            {
+                .settle_item(operation, index, outcome);
+            if !settled {
                 drop(running);
                 return self.conversion_state();
             }
@@ -1297,6 +1327,7 @@ impl PreviewService {
         root: &Path,
         conflict: ConversionConflictPolicyDto,
         backend: &ConversionBackend<'_>,
+        generation: u64,
     ) -> ItemOutcome {
         let handle = item.handle().to_owned();
         let workspace = self.workspace();
@@ -1331,7 +1362,6 @@ impl PreviewService {
             let source = open_conversion_source(&file)?;
             let plan = plan_conversion(source, root, conflict_policy(conflict))?;
             let report = run_planned_conversion(&plan, backend);
-            let generation = self.note_resolved(backend.installation.clone());
             drop(guard);
             Ok(WorkspaceConversionReport::of(
                 handle.clone(),

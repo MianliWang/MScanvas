@@ -104,6 +104,10 @@ export function useConversionOperation(
   // that read the rendered value could start a second conversion inside the
   // render that has not committed the first one yet.
   const busyRef = useRef(false);
+  // Whether this document is inside a retry it dispatched and has not been
+  // answered for. Rendered, unlike `busyRef`, because the interface has to stop
+  // offering actions for the whole of that window.
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -172,7 +176,21 @@ export function useConversionOperation(
     };
   }, [readAttempt, readState]);
 
-  const busy = state.status === "awaitingDestination" || state.status === "running";
+  // The authoritative slot, plus the window this document is knowingly inside.
+  //
+  // A retry is one command that does not answer until the whole serial rerun is
+  // over, and unlike starting a queue it has no reservation half to tell the
+  // interface that something began. Without this the panel would show the old
+  // terminal result -- and offer Retry, Clear, Add and Preview as usable -- for
+  // as long as the rerun took, with every one of them then silently ignored by
+  // the local guard or refused by Rust.
+  //
+  // Not an invented conversion state: what it reports is that this document has
+  // asked and is waiting, which is the same thing `pickerBusy` and `folderBusy`
+  // report elsewhere. The authoritative queue arrives on the first poll and
+  // takes over from there.
+  const busy =
+    retrying || state.status === "awaitingDestination" || state.status === "running";
 
   // While something is under way, and not otherwise. An idle slot changes only
   // when this document changes it, and a terminal report does not change at
@@ -265,15 +283,22 @@ export function useConversionOperation(
       return;
     }
     busyRef.current = true;
+    setRetrying(true);
     setError(null);
     api
       .retryConversions()
-      .then(applyUpdate)
+      .then((update) => {
+        if (mounted.current) {
+          setRetrying(false);
+        }
+        applyUpdate(update);
+      })
       .catch((cause: unknown) => {
         if (!mounted.current) {
           return;
         }
         busyRef.current = false;
+        setRetrying(false);
         setError(toPreviewError(cause));
         readState();
       });

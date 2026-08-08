@@ -3199,7 +3199,7 @@ spike's `Retryability` contract was not inherited — it classifies only
 `ProcessError`/`ProcessOutput`, where it speaks to this path it says
 `AfterCorrection`, and its `Retryable` arms come from an unmeasured catch-all.
 
-Deterministic coverage: 376 Rust tests and 486 frontend tests, none needing an
+Deterministic coverage: 379 Rust tests and 493 frontend tests, none needing an
 installation or a WebView.
 
 Thirteen focused mutations were applied one at a time. Eleven died against the
