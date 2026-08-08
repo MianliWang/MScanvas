@@ -3283,17 +3283,17 @@ own gate, which refuses any other installation). The lawful `78,309`-byte Thermo
 fixture converts in about half a second, so a bounded mzML workload was generated
 outside the repository — `3,000` spectra of `500` peaks, `36,014,923` bytes, no
 personal or proprietary content, deleted with the workspace — and it converts to
-a finalized `12,283,969`-byte output in `1,531 ms` of backend time through the
+a finalized `12,283,969`-byte output in `1,759 ms` of backend time through the
 unchanged boundary.
 
 A request made before an attempt launched no process and created no staging area.
 Early and mid-write requests terminated the owned tree with `STATUS_CANCELLED` in
-`71`–`80 ms`, leaving zero surviving owned processes. The mid-write run was
-terminated with `111,295` bytes of partial document on disk; the race run
-`23,525` bytes short of the finished size. Every cancelled run left the
+`90`–`97 ms`, leaving zero surviving owned processes. The mid-write run was
+terminated with `67,411` bytes of partial document on disk; the race run
+`1,007,442` bytes short of the finished size. Every cancelled run left the
 destination root empty, removed the partial document by identity-bound cleanup
 with no residue, and finalized nothing. The evidenced Thermo reader was terminated too, in
-`119 ms`, having written nothing at all.
+`134 ms`, having written nothing at all.
 
 The partial-output measurement changed what private staging means here. This
 build writes its output **directly under the planned name and grows it in
@@ -3305,10 +3305,11 @@ no sidecar, index, log or scratch file, even mid-write.
 
 One ordering rule, decided by observation order inside the supervision loop, and
 both halves are measured. A request observed while the process is still running
-makes successful job termination decisive — a run cancelled at `1,533 ms` against
-a `1,531 ms` backend reported `Cancelled` with an exit code of `0`, because the
-process finished in the window between `try_wait` and `TerminateJobObject`, and
-nothing was finalized. A completion already observed makes the run an ordinary
+makes successful job termination decisive, whatever exit status the racing
+process then reports — a run cancelled at the moment its conversion was due to
+finish has been observed to report `Cancelled` with an exit code of `0`, the
+process having finished inside the window between `try_wait` and
+`TerminateJobObject`, with nothing finalized either way. A completion already observed makes the run an ordinary
 exit, proved deterministically by a runner that issues the request only after the
 real process has returned: `finalized`, one output, no residue. Only one is ever
 reported.
