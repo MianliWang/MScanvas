@@ -28,8 +28,54 @@ const _: () = assert!(CAPTURE_LIMIT_BYTES as u64 >= crate::MAX_PREVIEW_TEXT_BYTE
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Termination {
+    /// A process was created and supervised until it left the owned job.
     Exited,
+    /// A process was created and its owned process tree was terminated after a
+    /// cancellation request.
     Cancelled,
+    /// No process was ever created: cancellation had already been requested
+    /// when the run was asked to start.
+    ///
+    /// Distinct from `Cancelled` because the two say different things about the
+    /// user's machine. `Cancelled` is a claim that a tree that existed is gone;
+    /// this is a statement that none existed. Collapsing them would let a
+    /// result carry process facts for a process that never ran.
+    NotStarted,
+}
+
+impl Termination {
+    /// The stable identifier for how a run ended.
+    ///
+    /// Every outcome variant this crate publishes carries one, so a caller can
+    /// record or render the distinction without depending on a Rust variant
+    /// name or on `Debug`. It matters most here: "terminated" and "never
+    /// started" are the two facts a cancellation diagnostic must not confuse,
+    /// and a caller that has only a rendered enum name to go on has no
+    /// contract to rely on.
+    #[must_use]
+    pub const fn stable_id(self) -> &'static str {
+        match self {
+            Self::Exited => "exited",
+            Self::Cancelled => "cancelled",
+            Self::NotStarted => "not_started",
+        }
+    }
+
+    /// Whether the run ended because a cancellation request was honoured,
+    /// whether or not a process had been created by the time it was.
+    ///
+    /// This is what a caller that only distinguishes "the request stopped it"
+    /// from "it ran to an end of its own" should ask.
+    #[must_use]
+    pub const fn is_cancellation(self) -> bool {
+        matches!(self, Self::Cancelled | Self::NotStarted)
+    }
+
+    /// Whether a process was created at all.
+    #[must_use]
+    pub const fn launched(self) -> bool {
+        matches!(self, Self::Exited | Self::Cancelled)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +127,31 @@ impl ProcessOutput {
     #[must_use]
     pub fn success(&self) -> bool {
         self.termination == Termination::Exited && self.exit_code == Some(0)
+    }
+
+    /// The result of a run that never started, because cancellation had already
+    /// been requested when it was asked to.
+    ///
+    /// `NotStarted` with no exit code, no elapsed time and no job accounting at
+    /// all — not an empty job, because no job was ever created. Reporting
+    /// `Some(0)` here would be literally true of a tree that does not exist and
+    /// indistinguishable from the confirmation that a tree that did exist is
+    /// gone, and those are the two facts this type must never conflate.
+    pub(crate) fn cancelled_before_launch() -> Self {
+        Self {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            stdout_total_bytes: 0,
+            stderr_total_bytes: 0,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            exit_code: None,
+            elapsed: Duration::ZERO,
+            termination: Termination::NotStarted,
+            max_active_processes: None,
+            final_active_processes: None,
+            peak_job_memory_bytes: None,
+        }
     }
 }
 
@@ -146,6 +217,30 @@ impl CancellationToken {
 
 pub trait ProcessRunner {
     fn run(&self, spec: &CommandSpec) -> Result<ProcessOutput, ProcessError>;
+
+    /// Runs `spec` under a cancellation request.
+    ///
+    /// The default keeps the one guarantee a runner can keep without owning
+    /// process supervision: a request already made launches nothing. It then
+    /// delegates to [`ProcessRunner::run`], so a substituted runner reports the
+    /// ordinary result it always did rather than a mid-run cancellation it did
+    /// not perform. Reporting one it did not perform is the failure this
+    /// default exists to make impossible by construction — a caller cannot tell
+    /// the two apart from the outside, and a queue that believed it would stop
+    /// a running conversion that it cannot stop is worse than one that admits
+    /// it cannot.
+    ///
+    /// [`SystemProcessRunner`] overrides it, because it does own supervision.
+    fn run_cancellable(
+        &self,
+        spec: &CommandSpec,
+        cancellation: &CancellationToken,
+    ) -> Result<ProcessOutput, ProcessError> {
+        if cancellation.is_cancelled() {
+            return Ok(ProcessOutput::cancelled_before_launch());
+        }
+        self.run(spec)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -154,6 +249,14 @@ pub struct SystemProcessRunner;
 impl ProcessRunner for SystemProcessRunner {
     fn run(&self, spec: &CommandSpec) -> Result<ProcessOutput, ProcessError> {
         execute(spec)
+    }
+
+    fn run_cancellable(
+        &self,
+        spec: &CommandSpec,
+        cancellation: &CancellationToken,
+    ) -> Result<ProcessOutput, ProcessError> {
+        execute_cancellable(spec, cancellation)
     }
 }
 
@@ -166,21 +269,7 @@ pub fn execute_cancellable(
     cancellation: &CancellationToken,
 ) -> Result<ProcessOutput, ProcessError> {
     if cancellation.is_cancelled() {
-        let empty_count = cfg!(windows).then_some(0);
-        return Ok(ProcessOutput {
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-            stdout_total_bytes: 0,
-            stderr_total_bytes: 0,
-            stdout_truncated: false,
-            stderr_truncated: false,
-            exit_code: None,
-            elapsed: Duration::ZERO,
-            termination: Termination::Cancelled,
-            max_active_processes: empty_count,
-            final_active_processes: empty_count,
-            peak_job_memory_bytes: None,
-        });
+        return Ok(ProcessOutput::cancelled_before_launch());
     }
 
     execute_command_after_assignment(process_command(spec)?, spec, cancellation, || {})
@@ -197,6 +286,16 @@ fn execute_command_after_assignment(
     require_executable_identity(spec)?;
     require_source_identity(spec)?;
     require_output_safety(spec)?;
+    // Asked again here, not only at the entry above. The three checks include a
+    // hash of the whole backend executable, so a request arriving inside them
+    // is one that unambiguously preceded process creation, and launching for it
+    // would report a terminated tree where none needed to exist. What remains
+    // is the interval stable `std::process` leaves between deciding to spawn
+    // and spawning — the same one the documented spawn-to-assignment race lives
+    // in — which is instructions rather than a file hash.
+    if cancellation.is_cancelled() {
+        return Ok(ProcessOutput::cancelled_before_launch());
+    }
     let started = Instant::now();
     let mut child = command
         .stdout(Stdio::piped())
@@ -1029,6 +1128,7 @@ mod windows_job {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::ffi::OsString;
     #[cfg(windows)]
     use std::fs;
@@ -1045,6 +1145,37 @@ mod tests {
 
     use super::*;
     use crate::BackendTool;
+
+    /// Every way a run can end has its own identifier, and the two that a
+    /// cancellation diagnostic must not confuse are not the same string.
+    #[test]
+    fn every_termination_has_its_own_stable_identifier() {
+        let terminations = [
+            Termination::Exited,
+            Termination::Cancelled,
+            Termination::NotStarted,
+        ];
+        let ids = terminations.map(Termination::stable_id);
+        let unique = ids.iter().collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(unique.len(), ids.len(), "{ids:?}");
+        assert_ne!(
+            Termination::Cancelled.stable_id(),
+            Termination::NotStarted.stable_id()
+        );
+
+        for termination in terminations {
+            assert_eq!(
+                termination.is_cancellation(),
+                termination != Termination::Exited,
+                "{termination:?}"
+            );
+            assert_eq!(
+                termination.launched(),
+                termination != Termination::NotStarted,
+                "{termination:?}"
+            );
+        }
+    }
 
     #[test]
     fn missing_executable_is_distinct_from_non_zero_exit() {
@@ -1724,6 +1855,269 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn a_request_made_before_the_run_launches_no_process_at_all() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        );
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        let output = execute_cancellable(&spec, &cancellation).expect("a refusal is not a failure");
+
+        assert!(!marker.exists(), "a refused run launched the child anyway");
+        assert_eq!(output.termination, Termination::NotStarted);
+        assert!(output.termination.is_cancellation());
+        assert!(!output.termination.launched());
+        assert_eq!(output.exit_code, None);
+        assert_eq!(output.elapsed, Duration::ZERO);
+        // No job was ever created, so there is no accounting to report. An
+        // empty count here would be indistinguishable from the confirmation
+        // that a tree which did exist is gone.
+        assert_eq!(output.final_active_processes, None);
+        assert_eq!(output.max_active_processes, None);
+        assert!(output.stdout.is_empty() && output.stderr.is_empty());
+        assert!(!output.success());
+    }
+
+    /// A request arriving during the pre-spawn checks still launches nothing.
+    ///
+    /// Entered past the executor's own entry check with the request already
+    /// made, which is exactly the window the identity, source and output-safety
+    /// checks occupy — and the first of those hashes the whole backend
+    /// executable, so it is not a window that can be waved away as
+    /// instantaneous.
+    #[cfg(windows)]
+    #[test]
+    fn a_request_that_lands_during_the_pre_spawn_checks_launches_nothing() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let executable = std::env::current_exe().expect("test executable");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            &executable,
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        )
+        .with_executable_identity(
+            Sha256Digest::calculate_file(&executable).expect("hash the test executable"),
+        );
+        let command = process_command(&spec).expect("construct the controlled child command");
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        let output = execute_command_after_assignment(command, &spec, &cancellation, || {})
+            .expect("a refusal is not a failure");
+
+        assert!(
+            !marker.exists(),
+            "a request made during the pre-spawn checks still launched the child"
+        );
+        assert_eq!(output.termination, Termination::NotStarted);
+        assert_eq!(output.final_active_processes, None);
+    }
+
+    /// A substituted runner keeps the one guarantee it can keep without owning
+    /// supervision, and claims nothing beyond it.
+    #[test]
+    fn the_default_runner_refuses_to_launch_after_a_request_and_delegates_otherwise() {
+        struct CountingRunner(Cell<usize>);
+
+        impl ProcessRunner for CountingRunner {
+            fn run(&self, _spec: &CommandSpec) -> Result<ProcessOutput, ProcessError> {
+                self.0.set(self.0.get() + 1);
+                Ok(ProcessOutput {
+                    exit_code: Some(0),
+                    ..ProcessOutput::cancelled_before_launch()
+                })
+            }
+        }
+
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_dir().expect("current directory"),
+            std::iter::empty::<OsString>(),
+            std::env::current_dir().expect("current directory"),
+        );
+        let runner = CountingRunner(Cell::new(0));
+        let cancellation = CancellationToken::new();
+
+        let delegated = runner
+            .run_cancellable(&spec, &cancellation)
+            .expect("an unrequested run delegates");
+        assert_eq!(runner.0.get(), 1);
+        assert_eq!(delegated.exit_code, Some(0));
+
+        cancellation.cancel();
+        let refused = runner
+            .run_cancellable(&spec, &cancellation)
+            .expect("a requested run is refused rather than failing");
+        assert_eq!(runner.0.get(), 1, "the refused run reached the runner");
+        assert_eq!(refused.termination, Termination::NotStarted);
+        assert_eq!(refused.exit_code, None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_system_runner_cancels_the_owned_tree_through_its_cancellable_entry_point() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        );
+        let cancellation = CancellationToken::new();
+
+        let ran = SystemProcessRunner
+            .run_cancellable(&spec, &cancellation)
+            .expect("an unrequested run executes");
+        assert!(ran.success());
+        assert!(marker.is_file());
+
+        fs::remove_file(&marker).expect("clear the launch marker");
+        cancellation.cancel();
+        let refused = SystemProcessRunner
+            .run_cancellable(&spec, &cancellation)
+            .expect("a requested run is refused rather than failing");
+
+        assert_eq!(refused.termination, Termination::NotStarted);
+        assert!(
+            !marker.exists(),
+            "the system runner launched a child after a request"
+        );
+    }
+
+    /// A backend that has written more than a pipe holds must not be able to
+    /// wedge the supervisor. The capture threads start before the wait, so the
+    /// child never blocks on a full pipe and cancellation still completes.
+    #[cfg(windows)]
+    #[test]
+    fn cancellation_completes_while_a_child_is_filling_its_output_pipes() {
+        let test_directory = TestDirectory::new();
+        let release = test_directory.path().join("release");
+        let flooded = test_directory.path().join("flooded");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_flooding_child",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            std::env::current_dir().expect("current directory"),
+        );
+        let mut command = process_command(&spec).expect("construct the flooding child command");
+        command.env("MSCANVAS_PROCESS_TEST_DIRECTORY", test_directory.path());
+
+        let cancellation = CancellationToken::new();
+        let run_cancellation = cancellation.clone();
+        let (assigned_sender, assigned_receiver) = mpsc::channel();
+        let run = thread::spawn(move || {
+            execute_command_after_assignment(command, &spec, &run_cancellation, || {
+                let _ = assigned_sender.send(());
+            })
+        });
+
+        let assigned = assigned_receiver.recv_timeout(Duration::from_secs(5));
+        if assigned.is_ok() {
+            fs::write(&release, b"release").expect("release the flooding child");
+        }
+        // The marker is written only after the child has pushed far more than a
+        // pipe buffer through stdout and stderr, so reaching it proves the
+        // capture threads were draining rather than that the child was small.
+        let ready = assigned.is_ok() && wait_for_paths(&[&flooded], Duration::from_secs(10));
+        cancellation.cancel();
+        let output = run
+            .join()
+            .expect("executor thread")
+            .expect("cancel the flooding child");
+
+        assert!(assigned.is_ok(), "executor did not establish job ownership");
+        assert!(ready, "the flooding child never filled its pipes");
+        assert_eq!(output.termination, Termination::Cancelled);
+        assert_eq!(output.final_active_processes, Some(0));
+        // Asserted per stream. A combined total would pass on a run that
+        // drained one pipe and abandoned the other, which is exactly the
+        // regression this is here to catch.
+        assert!(
+            output.stdout_total_bytes >= FLOOD_BYTES as u64,
+            "stdout: {}",
+            output.stdout_total_bytes
+        );
+        assert!(
+            output.stderr_total_bytes >= FLOOD_BYTES as u64,
+            "stderr: {}",
+            output.stderr_total_bytes
+        );
+    }
+
+    /// A job that refuses to terminate is a wait failure, never a cancellation.
+    #[test]
+    fn a_job_that_cannot_be_terminated_fails_rather_than_reporting_cancellation() {
+        struct UnterminableJob;
+
+        impl ProcessJob for UnterminableJob {
+            fn terminate(&self) -> io::Result<()> {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "the owned job refused termination",
+                ))
+            }
+
+            fn active_process_count(&self) -> io::Result<Option<u32>> {
+                Ok(Some(1))
+            }
+
+            fn peak_memory_bytes(&self) -> io::Result<Option<u64>> {
+                Ok(None)
+            }
+        }
+
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let mut max_active_processes = None;
+
+        let error = wait_for_job_empty_with_timeout(
+            &UnterminableJob,
+            &cancellation,
+            false,
+            &mut max_active_processes,
+            Duration::from_millis(50),
+        )
+        .expect_err("a job that refuses termination cannot report an empty tree");
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(max_active_processes, Some(1));
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn cancellation_after_root_exit_terminates_a_surviving_owned_descendant() {
         let (_test_directory, owned_job) = owned_job_with_surviving_descendant();
 
@@ -1870,6 +2264,38 @@ mod tests {
                 .is_file(),
             "controlled environment child did not write its marker"
         );
+    }
+
+    /// Comfortably more than a Windows anonymous pipe buffer, per stream.
+    #[cfg(windows)]
+    const FLOOD_BYTES: usize = 512 * 1024;
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "controlled subprocess entry point"]
+    fn controlled_flooding_child() {
+        let test_directory = controlled_test_directory();
+        let release = test_directory.join("release");
+        assert!(
+            wait_for_paths(&[&release], Duration::from_secs(5)),
+            "controlled flooding child was not released after job assignment"
+        );
+
+        // Both streams, and the same volume through each. A token byte on
+        // stderr would leave that pipe far short of its buffer, so a capture
+        // thread that stopped draining it would never block the child and this
+        // would quietly stop being a test about pipes at all.
+        let payload = vec![b'o'; 8192];
+        let mut written = 0;
+        while written < FLOOD_BYTES {
+            io::stdout().write_all(&payload).expect("flood stdout");
+            io::stderr().write_all(&payload).expect("flood stderr");
+            written += payload.len();
+        }
+        io::stdout().flush().expect("flush flooded stdout");
+        io::stderr().flush().expect("flush flooded stderr");
+        fs::write(test_directory.join("flooded"), b"flooded").expect("write flood marker");
+        thread::sleep(Duration::from_secs(8));
     }
 
     #[cfg(windows)]

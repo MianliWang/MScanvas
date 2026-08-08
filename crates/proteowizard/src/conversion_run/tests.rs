@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::*;
 use super::{OwnedStagingArea, StagingResidue};
+use crate::cancellation::CancellationRequest;
 use crate::capability::{CapturedHelpStream, CompleteHelpCapture};
 use crate::command::{BackendTool, CommandSpec};
 use crate::conversion::{
@@ -1532,7 +1533,7 @@ fn the_object_that_receives_the_final_name_is_the_object_that_was_validated() {
     let staged = staged_output_of(&fixture.plan);
     let witness = fixture.root.parent().expect("a parent").join("witness");
 
-    let report = run_admitted(&fixture.plan, &capabilities(), &runner, || {
+    let report = run_admitted_seamed(&fixture.plan, &capabilities(), &runner, || {
         // Bound after the judgement and before the final name is taken, so the
         // witness names exactly the object that was judged.
         witness_object(&staged, &witness);
@@ -1585,7 +1586,7 @@ fn a_staging_path_replaced_after_validation_never_reaches_the_final_name() {
     let witness = outside.join("witness");
     let decoy = document(2, Serialization::Output).replace("R1", "DECOY");
 
-    let report = run_admitted(&fixture.plan, &capabilities(), &runner, || {
+    let report = run_admitted_seamed(&fixture.plan, &capabilities(), &runner, || {
         witness_object(&staged, &witness);
         // The validated object keeps living, under a name this run never knew,
         // and something else answers to the name it was staged under.
@@ -1632,7 +1633,7 @@ fn a_staging_path_unlinked_after_validation_never_finalizes_the_replacement() {
     let staged = staged_output_of(&fixture.plan);
     let decoy = document(2, Serialization::Output).replace("R1", "DECOY");
 
-    let report = run_admitted(&fixture.plan, &capabilities(), &runner, || {
+    let report = run_admitted_seamed(&fixture.plan, &capabilities(), &runner, || {
         fs::remove_file(&staged).expect("unlink the validated object's name");
         fs::write(&staged, &decoy).expect("write a different document at that name");
     });
@@ -1669,13 +1670,16 @@ fn a_destination_taken_after_validation_is_never_replaced() {
         let neighbour = fixture.root.join("neighbour.txt");
         fs::write(&neighbour, b"an unrelated file").expect("write neighbour");
 
-        let report = run_admitted(&fixture.plan, &capabilities(), &runner, || match occupant {
-            "directory" => fs::create_dir(&finalized).expect("take the name with a directory"),
-            "hard-link" => {
-                fs::hard_link(&neighbour, &finalized).expect("take the name with a hard link");
-            }
-            _ => fs::write(&finalized, b"something else took this name").expect("take the name"),
-        });
+        let report =
+            run_admitted_seamed(&fixture.plan, &capabilities(), &runner, || match occupant {
+                "directory" => fs::create_dir(&finalized).expect("take the name with a directory"),
+                "hard-link" => {
+                    fs::hard_link(&neighbour, &finalized).expect("take the name with a hard link");
+                }
+                _ => {
+                    fs::write(&finalized, b"something else took this name").expect("take the name")
+                }
+            });
 
         assert_eq!(
             *report.outcome(),
@@ -1719,7 +1723,7 @@ fn the_admitted_destination_root_cannot_be_moved_out_from_under_a_run() {
     let elsewhere = fixture.root.with_extension("moved");
     let refusal = Cell::new(None);
 
-    let report = run_admitted(&fixture.plan, &capabilities(), &runner, || {
+    let report = run_admitted_seamed(&fixture.plan, &capabilities(), &runner, || {
         refusal.set(Some(
             fs::rename(&fixture.root, &elsewhere)
                 .err()
@@ -1754,7 +1758,7 @@ fn a_failed_finalization_produces_no_result_and_leaves_no_staging_behind() {
     let finalized = fixture.root.join("sample.mzML");
     let staged = staged_output_of(&fixture.plan);
 
-    let report = run_admitted(&fixture.plan, &capabilities(), &runner, || {
+    let report = run_admitted_seamed(&fixture.plan, &capabilities(), &runner, || {
         fs::write(&finalized, b"taken").expect("take the destination");
     });
 
@@ -1873,7 +1877,7 @@ fn a_unicode_name_with_a_space_survives_the_object_bound_rename() {
         .expect("a parent")
         .join("見証 witness");
 
-    let report = run_admitted(&fixture.plan, &capabilities(), &runner, || {
+    let report = run_admitted_seamed(&fixture.plan, &capabilities(), &runner, || {
         witness_object(&staged_output_of(&fixture.plan), &witness);
     });
 
@@ -1904,7 +1908,7 @@ fn a_validated_object_cannot_be_written_to_while_it_is_held() {
     let staged = staged_output_of(&fixture.plan);
     let refusal = Cell::new(None);
 
-    let report = run_admitted(&fixture.plan, &capabilities(), &runner, || {
+    let report = run_admitted_seamed(&fixture.plan, &capabilities(), &runner, || {
         refusal.set(Some(
             fs::OpenOptions::new()
                 .write(true)
@@ -3753,4 +3757,610 @@ fn the_vendor_raw_evidence_run_is_reproducible() {
     assert!(!valid.is_fully_verified());
     assert!(report.residue().is_none());
     assert_eq!(entry_names(&root).len(), 1);
+}
+
+// --- Private cancellation ---------------------------------------------------
+
+/// A `msconvert` stand-in that acts on the cancellation request the boundary
+/// hands it, so a cancellation can be exercised with no process at all.
+///
+/// It never invents supervision facts the real runner would have to establish:
+/// what it reports about the owned job is supplied by each test, which is how
+/// the "reported cancelled before the tree was confirmed empty" case can be
+/// written at all.
+struct CancellingRunner<'a> {
+    act: &'a dyn Fn(&CommandSpec) -> Result<i32, ProcessError>,
+    /// Whether this runner makes the request itself while it is running, which
+    /// is what a user pressing a button during a real conversion does.
+    requests: Option<CancellationRequest>,
+    termination: Termination,
+    final_active_processes: Option<u32>,
+    calls: Cell<usize>,
+}
+
+impl<'a> CancellingRunner<'a> {
+    fn new(act: &'a dyn Fn(&CommandSpec) -> Result<i32, ProcessError>) -> Self {
+        Self {
+            act,
+            requests: None,
+            termination: Termination::Exited,
+            final_active_processes: Some(0),
+            calls: Cell::new(0),
+        }
+    }
+
+    fn requesting(mut self, request: CancellationRequest) -> Self {
+        self.requests = Some(request);
+        self
+    }
+
+    const fn reporting(mut self, termination: Termination) -> Self {
+        self.termination = termination;
+        self
+    }
+
+    const fn leaving_active_processes(mut self, active: Option<u32>) -> Self {
+        self.final_active_processes = active;
+        self
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.get()
+    }
+}
+
+impl ProcessRunner for CancellingRunner<'_> {
+    fn run(&self, spec: &CommandSpec) -> Result<ProcessOutput, ProcessError> {
+        self.calls.set(self.calls.get() + 1);
+        // The staged bytes are written before the request is made, so what a
+        // cancellation has to clean up is already there when it lands.
+        let exit_code = (self.act)(spec)?;
+        if let Some(request) = &self.requests {
+            request.request();
+        }
+        Ok(ProcessOutput {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            stdout_total_bytes: 0,
+            stderr_total_bytes: 0,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            exit_code: Some(exit_code),
+            elapsed: Duration::from_millis(11),
+            termination: self.termination,
+            max_active_processes: Some(1),
+            final_active_processes: self.final_active_processes,
+            peak_job_memory_bytes: Some(2_048),
+        })
+    }
+}
+
+/// Writes the partial document a terminated backend leaves behind: the planned
+/// name, real bytes, and nothing that finishes it.
+fn write_partial_output(spec: &CommandSpec) -> Result<i32, ProcessError> {
+    fs::write(
+        staged_destination(spec),
+        b"<indexedmzML><mzML version=\"1.1.0\"><run",
+    )
+    .expect("write a partial staged output");
+    Ok(0)
+}
+
+/// A run whose request preceded it inspects, creates, plans and launches
+/// nothing.
+#[test]
+fn a_request_made_before_the_run_reaches_no_backend_and_creates_no_staging_area() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let cancellation = ConversionCancellation::new();
+    cancellation.request_handle().request();
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    let ConversionAttempt::Cancelled(report) = &attempt else {
+        panic!("a request made before the run is a cancellation: {attempt:?}");
+    };
+    assert_eq!(report.observation(), CancellationObservation::BeforeRun);
+    assert!(!report.backend_was_run());
+    assert_eq!(report.backend(), None);
+    assert_eq!(report.staged_content(), None);
+    assert_eq!(report.residue(), None);
+    assert_eq!(runner.calls(), 0, "a refused run reached the backend");
+    assert!(
+        entry_names(&fixture.root).is_empty(),
+        "a refused run left something in the destination root"
+    );
+    assert!(attempt.finalized().is_none());
+    assert_eq!(attempt.stable_id(), "cancelled_before_run");
+}
+
+/// A request that lands after the acquisition has been rehashed and before the
+/// launch decision creates no staging area, and does not claim a backend ran.
+///
+/// The rehash is the longest thing a run does before it creates anything, so
+/// this interval is where a real request most often arrives. Reported as
+/// `DuringRun` rather than `BeforeRun`, because the attempt had begun: it
+/// opened and read the acquisition, and only the launch did not happen.
+#[test]
+fn a_request_made_before_the_launch_decision_creates_no_staging_area() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let cancellation = ConversionCancellation::new();
+    cancellation.request_handle().request();
+
+    let result = run_admitted_cancellable(&fixture.plan, &capabilities(), &runner, &cancellation);
+
+    let RunResult::Cancelled(report) = result else {
+        panic!("a request before the launch decision is a cancellation");
+    };
+    assert_eq!(report.observation(), CancellationObservation::DuringRun);
+    assert!(
+        !report.backend_was_run(),
+        "no process ran, so no backend facts may be reported"
+    );
+    assert_eq!(report.staged_content(), None);
+    assert_eq!(report.residue(), None);
+    assert_eq!(runner.calls(), 0, "a refused run reached the backend");
+    assert!(
+        entry_names(&fixture.root).is_empty(),
+        "a staging area was created for a run that never launched"
+    );
+}
+
+/// The central claim: a request that lands while the backend is running ends
+/// with the partial document removed and the destination root untouched.
+#[test]
+fn a_cancelled_run_removes_its_partial_output_and_finalizes_nothing() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let cancellation = ConversionCancellation::new();
+    let act = write_partial_output;
+    let runner = CancellingRunner::new(&act)
+        .requesting(cancellation.request_handle())
+        .reporting(Termination::Cancelled);
+    let staged = staged_output_of(&fixture.plan);
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    let ConversionAttempt::Cancelled(report) = &attempt else {
+        panic!("a confirmed request is a cancellation: {attempt:?}");
+    };
+    assert_eq!(report.observation(), CancellationObservation::DuringRun);
+    assert!(report.backend_was_run());
+    assert_eq!(report.surviving_processes(), Some(0));
+    let staged_content = report
+        .staged_content()
+        .expect("the staging area was observed before it was removed");
+    assert_eq!(staged_content.entry_count(), 1);
+    assert_eq!(staged_content.directory_count(), 0);
+    assert!(staged_content.non_empty_file_observed());
+    assert_eq!(report.residue(), None);
+    assert!(attempt.finalized().is_none());
+    assert!(
+        !staged.exists(),
+        "the partial document survived identity-bound cleanup"
+    );
+    assert!(
+        entry_names(&fixture.root).is_empty(),
+        "a cancelled run left something in the destination root"
+    );
+}
+
+/// A backend that made a directory beside its output has that removed too.
+#[test]
+fn a_cancelled_run_removes_a_nested_tree_the_backend_left_behind() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let cancellation = ConversionCancellation::new();
+    let act = |spec: &CommandSpec| {
+        let staged = staged_destination(spec);
+        let staging = staged.parent().expect("the staged output has a parent");
+        let sidecar = staging.join("scratch");
+        fs::create_dir(&sidecar).expect("create a backend sidecar directory");
+        fs::write(sidecar.join("index"), b"partial index").expect("write a sidecar file");
+        fs::write(&staged, b"<indexedmzML").expect("write a partial staged output");
+        Ok(0)
+    };
+    let runner = CancellingRunner::new(&act)
+        .requesting(cancellation.request_handle())
+        .reporting(Termination::Cancelled);
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    let ConversionAttempt::Cancelled(report) = &attempt else {
+        panic!("a confirmed request is a cancellation: {attempt:?}");
+    };
+    let staged_content = report
+        .staged_content()
+        .expect("the staging area was observed before it was removed");
+    assert_eq!(staged_content.entry_count(), 2);
+    assert_eq!(staged_content.directory_count(), 1);
+    assert!(staged_content.non_empty_file_observed());
+    assert_eq!(report.residue(), None);
+    assert!(
+        entry_names(&fixture.root).is_empty(),
+        "a nested tree survived a cancelled run"
+    );
+}
+
+/// A request the boundary cannot confirm is never reported as a cancellation.
+#[test]
+fn a_termination_that_could_not_be_confirmed_is_a_distinct_failure() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let cancellation = ConversionCancellation::new();
+    let request = cancellation.request_handle();
+    let act = |spec: &CommandSpec| {
+        write_partial_output(spec)?;
+        request.request();
+        Err(ProcessError::Terminate {
+            detail: "the owned job refused termination".to_owned(),
+        })
+    };
+    let runner = CancellingRunner::new(&act);
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    let ConversionAttempt::CancellationFailed(failure) = &attempt else {
+        panic!("an unconfirmed termination is not a cancellation: {attempt:?}");
+    };
+    assert_eq!(failure.cause(), BackendExecutionFailure::NotTerminated);
+    // The runner returned an error rather than a result, so there are no
+    // process facts to report and none are invented.
+    assert_eq!(failure.backend(), None);
+    // The primary failure and the cleanup result are separate facts: cleanup
+    // still ran, and it succeeded.
+    assert_eq!(failure.residue(), None);
+    assert!(
+        failure
+            .staged_content()
+            .is_some_and(|staged| staged.non_empty_file_observed())
+    );
+    assert_eq!(attempt.stable_id(), "cancellation_failed");
+    assert_eq!(attempt.detailed_stable_id(), "backend_not_terminated");
+    assert!(attempt.finalized().is_none());
+    assert!(
+        entry_names(&fixture.root).is_empty(),
+        "an unconfirmed cancellation left something in the destination root"
+    );
+}
+
+/// A runner that says it cancelled while the owned job still holds processes is
+/// reporting a tree that may still be writing. That is a failure, not a
+/// cancellation.
+#[test]
+fn a_cancellation_claimed_before_the_owned_tree_is_empty_is_a_failure() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let cancellation = ConversionCancellation::new();
+    let act = write_partial_output;
+    let runner = CancellingRunner::new(&act)
+        .requesting(cancellation.request_handle())
+        .reporting(Termination::Cancelled)
+        .leaving_active_processes(Some(2));
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    let ConversionAttempt::CancellationFailed(failure) = &attempt else {
+        panic!("a surviving owned process is not a confirmed cancellation: {attempt:?}");
+    };
+    assert_eq!(failure.cause(), BackendExecutionFailure::NotTerminated);
+    // A tree that may still be running is the outcome a reader most needs
+    // described, so the process facts the boundary did establish are kept.
+    let backend = failure
+        .backend()
+        .expect("a process ran, so its facts are reported");
+    assert_eq!(backend.elapsed(), Duration::from_millis(11));
+    assert_eq!(backend.peak_job_memory_bytes(), Some(2_048));
+    assert!(attempt.finalized().is_none());
+}
+
+/// An owned job that reports no accounting at all has not confirmed anything.
+///
+/// `None` means the platform exposed no bounded query, which is precisely the
+/// state in which a caller must not be told the conversion stopped. Only
+/// `Some(0)` is the confirmation, and a runner that supplies neither gets the
+/// failure rather than the cancellation.
+#[test]
+fn a_cancellation_with_no_owned_job_accounting_is_a_failure() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let cancellation = ConversionCancellation::new();
+    let act = write_partial_output;
+    let runner = CancellingRunner::new(&act)
+        .requesting(cancellation.request_handle())
+        .reporting(Termination::Cancelled)
+        .leaving_active_processes(None);
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    let ConversionAttempt::CancellationFailed(failure) = &attempt else {
+        panic!("an unconfirmed owned tree is not a cancellation: {attempt:?}");
+    };
+    assert_eq!(failure.cause(), BackendExecutionFailure::NotTerminated);
+    assert!(attempt.finalized().is_none());
+    assert!(
+        entry_names(&fixture.root).is_empty(),
+        "an unconfirmed cancellation left something in the destination root"
+    );
+}
+
+/// A refusal inside the runner is not a terminated process, and the report says
+/// so rather than attributing process facts to a process that never existed.
+///
+/// This is the ordinary race window: the request arrives after the run has made
+/// its staging area and before the runner spawns anything. The staging area is
+/// real and empty, and both of those are reported.
+#[test]
+fn a_refusal_inside_the_runner_reports_no_backend_and_an_empty_staging_area() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let cancellation = ConversionCancellation::new();
+    let act = |_spec: &CommandSpec| Ok(0);
+    let runner = CancellingRunner::new(&act)
+        .requesting(cancellation.request_handle())
+        .reporting(Termination::NotStarted)
+        .leaving_active_processes(None);
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    let ConversionAttempt::Cancelled(report) = &attempt else {
+        panic!("a refusal before launch is a cancellation: {attempt:?}");
+    };
+    assert_eq!(report.observation(), CancellationObservation::DuringRun);
+    assert!(
+        !report.backend_was_run(),
+        "no process ran, so no backend facts may be reported"
+    );
+    assert_eq!(report.backend(), None);
+    assert_eq!(report.surviving_processes(), None);
+    let staged = report
+        .staged_content()
+        .expect("the staging area existed and was observed");
+    assert_eq!(staged.entry_count(), 0);
+    assert!(!staged.non_empty_file_observed());
+    assert_eq!(report.residue(), None);
+    assert!(
+        entry_names(&fixture.root).is_empty(),
+        "a refused run left something in the destination root"
+    );
+}
+
+/// The ordering rule, from the completed side. A request that arrives after the
+/// process was observed to exit does not relabel the run, and does not stop the
+/// document it produced from taking its name.
+#[test]
+fn a_request_that_arrives_after_a_natural_exit_still_finalizes_the_conversion() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let cancellation = ConversionCancellation::new();
+    let act = convert_faithfully;
+    let runner = CancellingRunner::new(&act).requesting(cancellation.request_handle());
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    let ConversionAttempt::Completed(report) = &attempt else {
+        panic!("a natural exit is a completed run: {attempt:?}");
+    };
+    assert!(matches!(
+        report.outcome(),
+        ConversionRunOutcome::Finalized(_)
+    ));
+    assert!(attempt.finalized().is_some());
+    assert_eq!(attempt.stable_id(), "finalized");
+    assert_eq!(entry_names(&fixture.root).len(), 1);
+}
+
+/// A backend that failed on its own keeps the reason that is true of it.
+#[test]
+fn a_natural_backend_failure_is_never_relabelled_as_a_cancellation() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let cancellation = ConversionCancellation::new();
+    let act = |spec: &CommandSpec| {
+        write_partial_output(spec)?;
+        Ok(2)
+    };
+    let runner = CancellingRunner::new(&act).requesting(cancellation.request_handle());
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    let ConversionAttempt::Completed(report) = &attempt else {
+        panic!("a backend that exited on its own is a completed run: {attempt:?}");
+    };
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::BackendRejected { exit_code: Some(2) })
+    );
+    assert!(
+        entry_names(&fixture.root).is_empty(),
+        "a rejected backend's partial output was finalized"
+    );
+}
+
+/// A launch failure that coincides with a request keeps its own reason.
+#[test]
+fn a_launch_failure_under_a_request_is_not_reported_as_a_cancellation() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let cancellation = ConversionCancellation::new();
+    let request = cancellation.request_handle();
+    let act = |_spec: &CommandSpec| {
+        request.request();
+        Err(ProcessError::Launch {
+            executable: "msconvert.exe".to_owned(),
+            kind: LaunchFailureKind::PermissionDenied,
+            detail: "access denied".to_owned(),
+        })
+    };
+    let runner = CancellingRunner::new(&act);
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    let ConversionAttempt::Completed(report) = &attempt else {
+        panic!("a launch failure is not a cancellation: {attempt:?}");
+    };
+    assert_eq!(
+        report.outcome().detailed_stable_id(),
+        "backend_not_launched"
+    );
+}
+
+/// A cancellation object nobody asked to cancel changes nothing at all.
+#[test]
+fn an_unrequested_cancellation_object_leaves_the_run_exactly_as_it_was() {
+    let uncancellable = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let plain = run_conversion(&uncancellable.plan, &capabilities(), &FakeRunner::new(&act));
+
+    let cancellable = fixture("sample.mzML", ConflictPolicy::Fail);
+    let attempt = run_conversion_cancellable(
+        &cancellable.plan,
+        &capabilities(),
+        &FakeRunner::new(&act),
+        ConversionCancellation::new(),
+    );
+
+    let ConversionAttempt::Completed(report) = &attempt else {
+        panic!("an unrequested attempt is a completed run: {attempt:?}");
+    };
+    assert_eq!(plain.outcome().stable_id(), report.outcome().stable_id());
+    assert_eq!(plain.backend(), report.backend());
+    assert_eq!(plain.residue(), report.residue());
+    assert_eq!(entry_names(&cancellable.root).len(), 1);
+}
+
+/// A substituted runner that reports a non-ordinary termination without a
+/// request is still reporting a run that did not complete, whether or not a
+/// cancellation object is present.
+#[test]
+fn an_unrequested_non_ordinary_termination_is_still_not_a_cancellation() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = CancellingRunner::new(&act).reporting(Termination::Cancelled);
+
+    let attempt = run_conversion_cancellable(
+        &fixture.plan,
+        &capabilities(),
+        &runner,
+        ConversionCancellation::new(),
+    );
+
+    let ConversionAttempt::Completed(report) = &attempt else {
+        panic!("an unrequested termination is not a cancellation: {attempt:?}");
+    };
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::BackendDidNotComplete)
+    );
+    assert!(entry_names(&fixture.root).is_empty());
+}
+
+/// A destination the plan refuses is refused before a cancellation object can
+/// change anything, and what holds the name is not touched.
+#[test]
+fn a_cancellable_attempt_never_disturbs_an_existing_destination() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let destination = fixture.root.join("sample.mzML");
+    fs::write(&destination, b"the user's own file").expect("occupy the destination");
+    let act = convert_faithfully;
+    let runner = CancellingRunner::new(&act);
+
+    let attempt = run_conversion_cancellable(
+        &fixture.plan,
+        &capabilities(),
+        &runner,
+        ConversionCancellation::new(),
+    );
+
+    let ConversionAttempt::Completed(report) = &attempt else {
+        panic!("an occupied destination is a completed run: {attempt:?}");
+    };
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::DestinationExists)
+    );
+    assert_eq!(runner.calls(), 0, "a refused plan reached the backend");
+    assert_eq!(
+        fs::read(&destination).expect("read the occupant"),
+        b"the user's own file"
+    );
+}
+
+/// Every attempt renders a distinct identifier, and nothing it renders is a
+/// path, a name or a process identifier.
+#[test]
+fn every_attempt_renders_a_distinct_identifier_and_no_path() {
+    let cancelled = CancellationReportFixture::cancelled();
+    let failed = CancellationFailureFixture::failed();
+    let ids = [
+        cancelled.before_run.stable_id(),
+        cancelled.during_run.stable_id(),
+        failed.attempt.stable_id(),
+    ];
+    let unique = ids.iter().collect::<BTreeSet<_>>();
+    assert_eq!(unique.len(), ids.len(), "{ids:?}");
+
+    let rendered = format!(
+        "{:?} {:?} {:?}",
+        cancelled.before_run, cancelled.during_run, failed.attempt
+    );
+    assert!(!rendered.contains('/'), "{rendered}");
+    assert!(!rendered.contains('\\'), "{rendered}");
+    assert!(!rendered.contains("sample"), "{rendered}");
+    assert!(!rendered.contains("mzML"), "{rendered}");
+}
+
+struct CancellationReportFixture {
+    before_run: ConversionAttempt,
+    during_run: ConversionAttempt,
+}
+
+struct CancellationFailureFixture {
+    attempt: ConversionAttempt,
+}
+
+impl CancellationReportFixture {
+    fn cancelled() -> Self {
+        let refused = fixture("sample.mzML", ConflictPolicy::Fail);
+        let refused_cancellation = ConversionCancellation::new();
+        refused_cancellation.request_handle().request();
+        let act = write_partial_output;
+        let before_run = run_conversion_cancellable(
+            &refused.plan,
+            &capabilities(),
+            &FakeRunner::new(&act),
+            refused_cancellation,
+        );
+
+        let running = fixture("sample.mzML", ConflictPolicy::Fail);
+        let cancellation = ConversionCancellation::new();
+        let runner = CancellingRunner::new(&act)
+            .requesting(cancellation.request_handle())
+            .reporting(Termination::Cancelled);
+        let during_run =
+            run_conversion_cancellable(&running.plan, &capabilities(), &runner, cancellation);
+
+        Self {
+            before_run,
+            during_run,
+        }
+    }
+}
+
+impl CancellationFailureFixture {
+    fn failed() -> Self {
+        let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+        let cancellation = ConversionCancellation::new();
+        let request = cancellation.request_handle();
+        let act = |spec: &CommandSpec| {
+            write_partial_output(spec)?;
+            request.request();
+            Err(ProcessError::Terminate {
+                detail: "refused".to_owned(),
+            })
+        };
+        let runner = CancellingRunner::new(&act);
+        Self {
+            attempt: run_conversion_cancellable(
+                &fixture.plan,
+                &capabilities(),
+                &runner,
+                cancellation,
+            ),
+        }
+    }
 }

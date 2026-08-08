@@ -276,10 +276,20 @@ to.
 
 ### Cancellation
 
-Out of scope, deliberately. Real backend cancellation and partial-output
-behavior are unmeasured, so this boundary requests none and claims none. A
-substituted runner that reports a non-ordinary termination is a typed failure
-rather than a cancellation feature.
+Out of scope for `run_conversion`, and it stays that way. That function requests
+no cancellation and claims none, and a substituted runner reporting a
+non-ordinary termination to it is still the typed failure it always was.
+
+**Amended 2026-08-08 (M3.3): cancellation is measured and has its own entry
+point.** [ADR 0014](0014-proteowizard-cancellation-evidence.md) adds
+`run_conversion_cancellable`, which takes one cancellation object bound to that
+attempt and reports `Cancelled` only when the owned Job Object confirmed no
+surviving process. `run_conversion` is byte-for-byte the same for every caller
+that supplies none, and `ConversionRunOutcome` is deliberately not widened, so
+nothing that matches it exhaustively acquires a state to classify. The gate this
+ADR left open is closed by measurement, not by relaxation: what is now known
+about real termination, partial output and cleanup is in the
+[M3.3 evidence record](../../spikes/M3_CANCELLATION_EVIDENCE.md).
 
 ### Privacy
 
@@ -447,8 +457,18 @@ dependency was added to imitate it.
   one family on 2026-08-07** by [ADR 0010](0010-first-vendor-raw-source-admission.md)
   and the [M3.0.3 evidence record](../../spikes/M3_VENDOR_RAW_EVIDENCE.md).
   Every other family, and every other provider build, is still gated.
-- **Real cancellation and partial-output behavior.** Rated **D**. Required
-  before a queue can offer cancellation.
+- ~~**Real cancellation and partial-output behavior.** Rated **D**. Required
+  before a queue can offer cancellation.~~ **Measured 2026-08-08** by
+  [ADR 0014](0014-proteowizard-cancellation-evidence.md) and the
+  [M3.3 evidence record](../../spikes/M3_CANCELLATION_EVIDENCE.md). A real
+  `msconvert` process is terminated on request through the owned Job Object with
+  no surviving descendant, and the partial document it was writing — this build
+  grows its output in place under the planned name, with no partial-name suffix
+  — is removed by identity-bound cleanup with no residue and never reaches the
+  destination root. Still gated: any mid-write observation of the *vendor*
+  route, since the one lawful fixture is terminated before its reader writes
+  anything; and every product question about what a queue should offer, which
+  ADR 0014 lists rather than answers.
 - **Backend overwrite semantics.** Never measured: the M0 existing-output case
   was refused by MSCanvas before launch, so what `msconvert` itself does to an
   existing file is unknown. This boundary does not depend on it, and must not

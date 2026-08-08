@@ -1,4 +1,4 @@
-use crate::{BackendTool, ProcessError, ProcessOutput, Termination};
+use crate::{BackendTool, ProcessError, ProcessOutput};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FailureKind {
@@ -141,11 +141,18 @@ pub fn classify_process_failure(
         }
     };
 
-    if output.termination == Termination::Cancelled {
-        let failure = NormalizedFailure::new(
-            FailureKind::Cancelled,
-            "The owned backend process was terminated after cancellation.",
-        );
+    if output.termination.is_cancellation() {
+        // One kind, two facts. A refusal before launch guarantees that no
+        // process and no job ever existed, so telling a reader that a process
+        // was terminated would make the diagnostic contradict the evidence
+        // beside it — and this detail is the only place the difference would
+        // otherwise be visible, because the kind is deliberately the same.
+        let detail = if output.termination.launched() {
+            "The owned backend process was terminated after cancellation."
+        } else {
+            "No backend process was started: cancellation had already been requested."
+        };
+        let failure = NormalizedFailure::new(FailureKind::Cancelled, detail);
         return Some(add_partial_condition(failure, partial_output_present));
     }
     if output.success() {
@@ -264,6 +271,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::Termination;
 
     fn failed_output(stderr: &str) -> ProcessOutput {
         ProcessOutput {
@@ -282,16 +290,36 @@ mod tests {
         }
     }
 
+    /// Both cancellation shapes classify the same way and describe themselves
+    /// differently.
+    ///
+    /// A run refused before it launched has no exit code, so a classifier that
+    /// asked only about `Cancelled` would let it fall through to the exit-code
+    /// path and report a backend failure for a backend that never ran. And
+    /// because the kind is deliberately the same for both, the detail is the
+    /// only place a reader can see that no process existed — so it must not
+    /// say one was terminated.
     #[test]
     fn cancellation_is_not_classified_as_failure() {
-        let output = ProcessOutput {
-            termination: Termination::Cancelled,
-            ..failed_output("")
-        };
-        let failure = classify_process_failure(BackendTool::MsConvert, Ok(&output), false)
-            .expect("cancelled classification");
-        assert_eq!(failure.kind, FailureKind::Cancelled);
-        assert_eq!(failure.retryability, Retryability::Retryable);
+        for termination in [Termination::Cancelled, Termination::NotStarted] {
+            let output = ProcessOutput {
+                termination,
+                ..failed_output("")
+            };
+            let failure = classify_process_failure(BackendTool::MsConvert, Ok(&output), false)
+                .expect("cancelled classification");
+            assert_eq!(failure.kind, FailureKind::Cancelled, "{termination:?}");
+            assert_eq!(
+                failure.retryability,
+                Retryability::Retryable,
+                "{termination:?}"
+            );
+            assert_eq!(
+                failure.technical_detail.contains("terminated"),
+                termination.launched(),
+                "{termination:?} described itself as the other one"
+            );
+        }
     }
 
     #[test]

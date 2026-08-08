@@ -18,6 +18,7 @@ compile_error!(
      an optimized build; it exists for tests, which are not optimized"
 );
 
+mod cancellation;
 mod capability;
 mod command;
 mod conversion;
@@ -31,6 +32,7 @@ mod preview;
 mod process;
 mod sha256;
 
+pub use cancellation::{CancellationObservation, CancellationRequest, ConversionCancellation};
 pub use capability::{
     CapabilityRequirementError, CapturedHelpStream, CompleteHelpCapture, DeclarationKind,
     HelpCapabilityError, HelpExample, HelpStream, InstalledHelpCapabilities,
@@ -50,10 +52,11 @@ pub use conversion::{
     inspect_conversion_output, verify_mzml_conversion,
 };
 pub use conversion_run::{
-    BackendExecutionFailure, BackendRunFacts, BackendStream, ConflictPolicy, ConversionPlan,
-    ConversionPlanError, ConversionRunFailure, ConversionRunOutcome, ConversionRunReport,
-    ConversionSource, ConversionSourceKind, ConversionSourceRejection, StagingReclaimError,
-    StagingResidue, provider_build_is_evidenced, run_conversion,
+    BackendExecutionFailure, BackendRunFacts, BackendStream, CancellationFailure,
+    CancellationReport, ConflictPolicy, ConversionAttempt, ConversionPlan, ConversionPlanError,
+    ConversionRunFailure, ConversionRunOutcome, ConversionRunReport, ConversionSource,
+    ConversionSourceKind, ConversionSourceRejection, StagedContentObservation, StagingReclaimError,
+    StagingResidue, provider_build_is_evidenced, run_conversion, run_conversion_cancellable,
 };
 pub use diagnostics::{Redactor, ReportableProcessOutput};
 pub use discovery::{
