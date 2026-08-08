@@ -12,8 +12,8 @@ use std::sync::Arc;
 use mscanvas_proteowizard::{ConversionSource, ConversionSourceRejection, MzmlScanLimits};
 
 use super::dto::{
-    MAX_CANDIDATE_NAME_CHARS, MAX_RELATIVE_CONTEXT_CHARS, MAX_WORKSPACE_DATASETS, PreviewErrorDto,
-    SelectedFileDto, bounded_text,
+    DatasetSourceKindDto, MAX_CANDIDATE_NAME_CHARS, MAX_RELATIVE_CONTEXT_CHARS,
+    MAX_WORKSPACE_DATASETS, PreviewErrorDto, SelectedFileDto, bounded_text,
 };
 
 /// What the filesystem itself calls one file, wide enough to be told apart from
@@ -238,27 +238,58 @@ pub(super) enum DatasetSourceKind {
     /// Accepted as a Thermo Scientific RAW acquisition, by the reviewed
     /// signature admission in `mscanvas-proteowizard`.
     ///
-    /// Unreachable from every ingestion surface the product offers. The picker,
-    /// folder discovery and the Explorer drop all go through
-    /// [`accept_mzml_file`], and none of them can produce this.
+    /// Reachable from the file picker and from nowhere else. Folder discovery
+    /// and the Explorer drop remain regular-mzML-only: both walk a tree the
+    /// user did not enumerate, and admitting a vendor family from a walk is a
+    /// wider claim than admitting one the user named.
     ThermoRaw,
 }
 
 impl DatasetSourceKind {
-    /// The identifier this family is named by in a report.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "ADR 0011: the private conversion path lands before the surface it serves"
-        )
-    )]
-    pub(super) const fn stable_id(self) -> &'static str {
+    /// Whether this family can be previewed as it stands.
+    ///
+    /// A vendor acquisition cannot: the preview boundary reads mzML, and
+    /// nothing in this product reads a RAW file directly. Asked here rather
+    /// than at the call site so the answer cannot be given differently by the
+    /// roster, the preview command and the interface.
+    pub(super) const fn is_previewable(self) -> bool {
         match self {
-            Self::Mzml => "mzml",
-            Self::ThermoRaw => "thermo_raw",
+            Self::Mzml => true,
+            Self::ThermoRaw => false,
         }
     }
+}
+
+/// The extension the installed vendor reader requires of a Thermo acquisition.
+///
+/// A filter in front of the signature, not a substitute for it. ADR 0010
+/// measured that the vendor library refuses the very same object under another
+/// name, so a file without this extension cannot be converted whatever its
+/// bytes say -- and a file with it is still admitted only by its signature.
+const THERMO_RAW_EXTENSION: &str = "raw";
+
+/// Whether a name ends in the extension the vendor reader requires.
+fn has_thermo_raw_extension(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(THERMO_RAW_EXTENSION))
+}
+
+/// Admits one file the user named, under the rule its name proposes.
+///
+/// The single entry point for the picker, and the only place the product widens
+/// what it accepts. The extension chooses *which admission runs*; it never
+/// admits anything itself. A `.raw` candidate is put to the signature rule and
+/// is refused when its bytes are not an acquisition; everything else is put to
+/// mzML admission, which refuses an unsupported name with the error it always
+/// has, so a candidate the product does not open reads the same as before.
+///
+/// No backend process is launched here, for any family. Admission is filesystem
+/// work and stays filesystem work.
+pub(super) fn accept_workspace_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
+    if has_thermo_raw_extension(path) {
+        return accept_thermo_raw_file(path);
+    }
+    accept_mzml_file(path)
 }
 
 /// Validates a caller-supplied path and describes it without leaking it.
@@ -354,13 +385,6 @@ pub(super) fn accept_thermo_raw_file(path: &Path) -> Result<AcceptedFile, Previe
 /// admission rules and everything a run is planned from. Neither can produce
 /// the other, so what this does is open the second against the first and refuse
 /// unless they name one object.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "ADR 0011: the private conversion path lands before the surface it serves"
-    )
-)]
 pub(super) fn open_conversion_source(
     file: &AcceptedFile,
 ) -> Result<ConversionSource, PreviewErrorDto> {
@@ -788,13 +812,6 @@ impl AcceptedFile {
 
     /// The family this file was accepted as.
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "ADR 0011: the private conversion path lands before the surface it serves"
-        )
-    )]
     pub(super) const fn source_kind(&self) -> DatasetSourceKind {
         self.kind
     }
@@ -1220,7 +1237,19 @@ pub(super) fn selected_file_dto(
         handle: id.handle(),
         file_name: file.file_name().to_owned(),
         byte_length: file.byte_length(),
+        source_kind: source_kind_dto(file.source_kind()),
         relative_context,
+    }
+}
+
+/// The wire name for one admitted family.
+///
+/// Total over the session's families, so a family added without a wire member
+/// is a compile error rather than a row the interface cannot describe.
+pub(super) const fn source_kind_dto(kind: DatasetSourceKind) -> DatasetSourceKindDto {
+    match kind {
+        DatasetSourceKind::Mzml => DatasetSourceKindDto::Mzml,
+        DatasetSourceKind::ThermoRaw => DatasetSourceKindDto::ThermoRaw,
     }
 }
 

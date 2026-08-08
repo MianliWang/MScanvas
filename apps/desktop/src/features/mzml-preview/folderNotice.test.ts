@@ -17,7 +17,13 @@ const CLEAN: FolderDiscoverySummary = {
 };
 
 function file(name: string, relativeContext: string | null = null): SelectedFile {
-  return { handle: `handle-${name}`, fileName: name, byteLength: 1_024, relativeContext };
+  return {
+    handle: `handle-${name}`,
+    fileName: name,
+    byteLength: 1_024,
+    sourceKind: "mzml",
+    relativeContext,
+  };
 }
 
 function added(name: string, relativeContext: string | null = null): WorkspaceAddOutcome {

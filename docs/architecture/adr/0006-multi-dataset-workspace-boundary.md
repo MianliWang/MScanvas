@@ -39,6 +39,12 @@
   [ADR 0010](0010-first-vendor-raw-source-admission.md) and
   [ADR 0011](0011-private-workspace-conversion-path.md). What the registry
   accepts from a user is unchanged and still mzML-only.
+- Amended: 2026-08-07 (M3.1) — the family a row was admitted as crosses the
+  roster boundary. `SelectedFileDto` carries a required, closed `sourceKind`,
+  which is not identity, not searched and not a sort key. `Add files…` admits
+  the one evidenced vendor family as well as mzML; folder ingestion and
+  Explorer drop are unchanged and remain regular-mzML-only. See
+  [ADR 0012](0012-first-visible-thermo-conversion.md).
 
 ## Context
 

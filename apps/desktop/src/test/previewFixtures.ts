@@ -13,6 +13,8 @@ import type { WorkspaceDropUpdate } from "../features/mzml-preview/contracts";
 import type { WorkspaceDropTransport } from "../features/mzml-preview/dropTransport";
 import type {
   BackendAvailability,
+  ConversionConflictPolicy,
+  ConversionPlanSummary,
   FolderDiscoverySummary,
   FolderIngestionResult,
   Preview,
@@ -22,6 +24,7 @@ import type {
   SelectedSpectrumOutcome,
   SpectrumRow,
   WorkspaceAddOutcome,
+  WorkspaceConversionState,
   WorkspaceRemoveResult,
   WorkspaceRoster,
 } from "../features/mzml-preview/contracts";
@@ -107,6 +110,7 @@ export const selectedFile: SelectedFile = {
   handle: "file-0",
   fileName: "QC_pool_01.mzML",
   byteLength: 208_408_454,
+  sourceKind: "mzml",
   relativeContext: null,
 };
 
@@ -114,6 +118,7 @@ export const secondFile: SelectedFile = {
   handle: "file-1",
   fileName: "QC_pool_02.mzML",
   byteLength: 191_004_112,
+  sourceKind: "mzml",
   relativeContext: null,
 };
 
@@ -121,6 +126,7 @@ export const thirdFile: SelectedFile = {
   handle: "file-2",
   fileName: "Blank_03.mzML",
   byteLength: 12_004_112,
+  sourceKind: "mzml",
   relativeContext: null,
 };
 
@@ -134,6 +140,7 @@ export const collidingFile: SelectedFile = {
   handle: "file-3",
   fileName: "sample.mzML",
   byteLength: 4_000_000,
+  sourceKind: "mzml",
   relativeContext: null,
 };
 
@@ -141,6 +148,7 @@ export const otherCollidingFile: SelectedFile = {
   handle: "file-4",
   fileName: "sample.mzML",
   byteLength: 6_000_000,
+  sourceKind: "mzml",
   relativeContext: null,
 };
 
@@ -416,6 +424,21 @@ export interface FakePreviewApiOptions {
     | (() => Promise<BackendAvailability | null>);
   /** What the session already holds when the webview mounts. */
   readonly initialDatasets?: readonly HeldFile[];
+  /** What the conversion slot holds when the webview mounts. */
+  readonly initialConversion?: WorkspaceConversionState;
+  /** What `describeConversion` answers. Defaults to a plan for the named row. */
+  readonly conversionPlan?: (handle: string) => Promise<ConversionPlanSummary>;
+  /**
+   * What one conversion does.
+   *
+   * Given the state publisher, so a test can move the slot through `running`
+   * before settling it — which is what a conversion actually does, and what a
+   * canned reply cannot express.
+   */
+  readonly conversion?: (
+    request: ConversionRequest,
+    publish: (state: WorkspaceConversionState) => void,
+  ) => Promise<WorkspaceConversionState>;
   /** Replaces the roster read entirely, for the cases where it fails. */
   readonly roster?: () => Promise<WorkspaceRoster>;
   /**
@@ -481,6 +504,23 @@ export interface FakePreviewApi extends PreviewApi {
   readonly datasets: () => readonly SelectedFile[];
   /** Every verdict this fake has handed back, oldest first. */
   readonly deliveredVerdicts: BackendAvailability[];
+  /**
+   * Publishes one conversion state, as Rust would when its slot moves.
+   *
+   * The slot is modelled rather than canned: the fake holds the current state
+   * and a sequence that only advances, so a test can drive a whole operation --
+   * awaiting, running, terminal -- and a test that installs an older sequence is
+   * exercising the same staleness rule the real transport imposes.
+   */
+  readonly publishConversion: (state: WorkspaceConversionState) => void;
+  /** Every conversion this fake was asked to start, in order. */
+  readonly conversionRequests: readonly ConversionRequest[];
+}
+
+/** One conversion the fake was asked for. */
+export interface ConversionRequest {
+  readonly handle: string;
+  readonly conflictPolicy: ConversionConflictPolicy;
 }
 
 /**
@@ -520,6 +560,44 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     };
   };
   const datasets = (): readonly SelectedFile[] => snapshot().datasets;
+
+  // The conversion slot, modelled. One state and a sequence that only
+  // advances, which is exactly what Rust holds -- so a test that publishes an
+  // older sequence is exercising the real staleness rule rather than a fiction.
+  let conversion: WorkspaceConversionState = options.initialConversion ?? { status: "idle" };
+  let conversionSequence = options.initialConversion === undefined ? 0 : 1;
+  const conversionRequests: ConversionRequest[] = [];
+  const publishConversion = (state: WorkspaceConversionState): void => {
+    conversion = state;
+    conversionSequence += 1;
+  };
+  const defaultConversion = (request: ConversionRequest): WorkspaceConversionState => ({
+    status: "completed",
+    operationId: String(conversionSequence + 1),
+    report: {
+      datasetHandle: request.handle,
+      sourceKind: "thermo_raw",
+      outcome: "finalized",
+      detailedOutcome: null,
+      outputFileName: "acquisition.mzML",
+      output: {
+        byteLength: 28_655,
+        sha256: "6CE2ACE65485488F4A337EE17B71559E737C1944B641F279744932C3C3D8648C",
+        spectrumCount: 1,
+        chromatogramCount: 1,
+      },
+      validation: {
+        mode: "output_only",
+        fullyVerified: false,
+        verified: ["source_unchanged", "output_declared_counts"],
+        unverified: [],
+        inapplicable: ["spectrum_count", "binary_array_lengths"],
+      },
+      backend: { exitCode: 0, elapsedMilliseconds: 663 },
+      stagingResidue: null,
+      installationGeneration: 0,
+    },
+  });
 
   const deliveredVerdicts: BackendAvailability[] = [];
   // Counted here as the service counts it: a change advances it, a plain
@@ -613,6 +691,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     calls: () => [...calls],
     datasets,
     deliveredVerdicts,
+    publishConversion,
+    conversionRequests,
     inspectBackend: () =>
       (typeof options.availability === "function"
         ? options.availability()
@@ -723,6 +803,41 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       return options.spectrum === undefined
         ? Promise.resolve({ outcome: "spectrum", spectrum: buildSpectrum(index, 12) })
         : options.spectrum(index);
+    },
+    describeConversion: (handle) => {
+      if (options.conversionPlan !== undefined) {
+        return options.conversionPlan(handle);
+      }
+      const row = snapshot().datasets.find((dataset) => dataset.handle === handle);
+      if (row === undefined) {
+        return Promise.reject(
+          previewError({ kind: "unknown_file_handle", summary: "That file is no longer open." }),
+        );
+      }
+      return Promise.resolve({
+        dataset: row,
+        outputFormat: "mzML",
+        compression: "zlib",
+        validationMode: "output_only",
+      });
+    },
+    getConversionState: () => Promise.resolve({ sequence: conversionSequence, state: conversion }),
+    convertDataset: async (handle, conflictPolicy, onReserved) => {
+      const request = { handle, conflictPolicy };
+      conversionRequests.push(request);
+      // Started before the reservation edge is announced, so a conversion that
+      // publishes `running` has published it by the time the caller reads the
+      // slot. Rust marks running inside the destination command for the same
+      // reason: the read that follows the claim must find the state the claim
+      // produced, not the one before it.
+      const settling =
+        options.conversion === undefined
+          ? Promise.resolve(defaultConversion(request))
+          : options.conversion(request, publishConversion);
+      onReserved();
+      const settled = await settling;
+      publishConversion(settled);
+      return { sequence: conversionSequence, state: conversion };
     },
   };
 

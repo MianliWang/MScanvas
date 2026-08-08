@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import { usePreviewApi } from "./api";
+import type { ConversionOperation } from "./useConversionOperation";
+import { useConversionOperation } from "./useConversionOperation";
 import type {
   BackendAvailability,
   Preview,
@@ -80,6 +82,15 @@ export type DropPresentation =
 export type DropSubscriptionStatus = "connecting" | "available" | "unavailable";
 
 export interface PreviewWorkspace {
+  /**
+   * The session's one conversion, as this document sees it.
+   *
+   * Its own lane, with its own tokens and its own authoritative read. It is
+   * composed here rather than inlined so that everything about a conversion --
+   * the slot, the poll, the staleness rule -- lives in one module a reader can
+   * hold in their head.
+   */
+  readonly conversion: ConversionOperation;
   readonly backend: BackendState;
   readonly preview: PreviewState;
   readonly spectrum: SpectrumState;
@@ -1183,6 +1194,16 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         const added = result.outcomes.flatMap((outcome) =>
           outcome.outcome === "added" ? [outcome.dataset.handle] : [],
         );
+        // Only an mzML row can be read, so only an mzML row is read. A mixed
+        // batch into an empty workspace still costs one process, and a batch of
+        // vendor acquisitions costs none: reading the first row whatever it was
+        // would send a `.raw` to a preview boundary that cannot open one, and
+        // open a first-run session with a failure nobody asked for.
+        const firstPreviewable = result.outcomes.flatMap((outcome) =>
+          outcome.outcome === "added" && outcome.dataset.sourceKind === "mzml"
+            ? [outcome.dataset.handle]
+            : [],
+        )[0];
         // Whether the session was empty is Rust's answer, not this side's
         // projection of it. A webview can reload while Rust still holds rows,
         // and a first read that is slow or failed leaves the roster on screen
@@ -1198,15 +1219,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         // This is what keeps one picker operation costing one process rather
         // than one per file, while a first-run session still ends up looking at
         // something.
-        const first = added[0];
         if (
           wasEmpty &&
-          first !== undefined &&
+          firstPreviewable !== undefined &&
           backendUsableRef.current &&
           !backendBusyRef.current &&
           viewerRequests.current === 0
         ) {
-          loadPreview(first, startedAt);
+          loadPreview(firstPreviewable, startedAt);
         }
       })
       .catch((cause: unknown) => {
@@ -1701,6 +1721,8 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     }
   }, [selectSpectrum, selectedIndex]);
 
+  const conversion = useConversionOperation();
+
   const activeDataset = useMemo(
     () => roster.datasets.find((dataset) => dataset.handle === roster.active) ?? null,
     [roster.active, roster.datasets],
@@ -1754,6 +1776,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     retrySpectrum,
     completeRenderMeasurements,
     recordMeasurement,
+    conversion,
   };
 }
 

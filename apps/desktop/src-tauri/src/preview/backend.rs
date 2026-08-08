@@ -107,13 +107,6 @@ pub trait PreviewProvider: Send + Sync {
     /// The default refuses. A provider that has not been taught to convert must
     /// say so, because the alternative -- inheriting some other provider's
     /// backend -- is how a test double ends up launching a real process.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "ADR 0011: the private conversion path lands before the surface it serves"
-        )
-    )]
     fn conversion_backend(&self) -> Result<ConversionBackend<'_>, PreviewErrorDto> {
         Err(PreviewErrorDto::new(
             "conversion_unsupported",
@@ -129,13 +122,6 @@ pub trait PreviewProvider: Send + Sync {
 /// the process a conversion launches is the one its provider owns: production
 /// runs the reviewed system runner, and a test double runs whatever it was
 /// built with, without either being able to reach the other's.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "ADR 0011: the private conversion path lands before the surface it serves"
-    )
-)]
 pub struct ConversionBackend<'a> {
     /// Capability evidence read from the installed `msconvert`'s own help.
     ///
@@ -152,13 +138,6 @@ pub struct ConversionBackend<'a> {
 
 /// Which installed executable a capability binding reads its help from.
 #[derive(Clone, Copy)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "ADR 0011: the private conversion path lands before the surface it serves"
-    )
-)]
 enum BoundTool {
     /// Answers preview questions.
     Msaccess,

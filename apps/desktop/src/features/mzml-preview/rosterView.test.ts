@@ -19,7 +19,7 @@ function dataset(
   byteLength = 4_096,
   relativeContext: string | null = null,
 ): SelectedFile {
-  return { handle, fileName, byteLength, relativeContext };
+  return { handle, fileName, byteLength, sourceKind: "mzml", relativeContext };
 }
 
 interface Options {
@@ -28,6 +28,7 @@ interface Options {
   readonly selected?: readonly string[];
   readonly active?: string | null;
   readonly rowState?: readonly (readonly [string, RowPresentation])[];
+  readonly converting?: string | null;
 }
 
 function input(datasets: readonly SelectedFile[], options: Options = {}): RosterProjectionInput {
@@ -38,6 +39,7 @@ function input(datasets: readonly SelectedFile[], options: Options = {}): Roster
     selected: new Set(options.selected ?? []),
     active: options.active ?? null,
     rowState: new Map(options.rowState ?? []),
+    converting: options.converting ?? null,
   };
 }
 

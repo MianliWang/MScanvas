@@ -4,6 +4,10 @@
   conversion surface, every queue concern and every other source family
   separately gated
 - Date: 2026-08-07
+- Amended: 2026-08-07 (M3.1) — the path is no longer private. Both open gates
+  below are closed: a surface exists, and the msconvert help binding now has
+  deterministic coverage from both ends. See
+  [ADR 0012](0012-first-visible-thermo-conversion.md).
 
 ## Context
 

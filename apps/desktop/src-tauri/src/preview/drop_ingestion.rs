@@ -108,6 +108,9 @@ pub(crate) enum NativeDropDispatch {
     Busy {
         observed_claim: DropOperationId,
     },
+    /// A conversion holds the workspace. Refused at the callback without
+    /// waiting on any service mutex, and without retaining a path.
+    ConversionBusy,
     Start(NativeDropWork),
 }
 
@@ -115,7 +118,9 @@ impl NativeDropDispatch {
     pub(crate) const fn operation_id(&self) -> Option<DropOperationId> {
         match self {
             Self::Start(work) => Some(work.operation_id()),
-            Self::Enter { .. } | Self::Leave { .. } | Self::Busy { .. } => None,
+            Self::Enter { .. } | Self::Leave { .. } | Self::Busy { .. } | Self::ConversionBusy => {
+                None
+            }
         }
     }
 }
@@ -129,6 +134,7 @@ impl fmt::Debug for NativeDropDispatch {
                 .finish(),
             Self::Leave { .. } => formatter.write_str("Leave"),
             Self::Busy { .. } => formatter.write_str("Busy"),
+            Self::ConversionBusy => formatter.write_str("ConversionBusy"),
             Self::Start(work) => formatter
                 .debug_struct("Start")
                 .field("item_count", &work.top_level_item_count)
@@ -831,5 +837,16 @@ impl DropUpdateState {
 pub(super) const fn drop_busy_state() -> WorkspaceDropStateDto {
     WorkspaceDropStateDto::Rejected {
         reason: DropRejectionReasonDto::DropBusy,
+    }
+}
+
+/// What a drop is answered with while a conversion holds the workspace.
+///
+/// A distinct reason rather than the busy one above. They are refused for
+/// different lengths of time and the user does something different about each:
+/// another drop finishes on its own, and a conversion is work they started.
+pub(super) const fn conversion_busy_state() -> WorkspaceDropStateDto {
+    WorkspaceDropStateDto::Rejected {
+        reason: DropRejectionReasonDto::ConversionBusy,
     }
 }

@@ -119,11 +119,32 @@ until this repository can convert one.
 
 **Success:** valid outputs are easy to locate and failures do not require rebuilding the batch.
 
-**Not built.** No step of this workflow is reachable. A private Rust boundary
-converts one planned file — staged, validated and finalized without overwrite —
-and step 4's independent queue, step 5's retry and the cancellation this
-workflow implies do not exist. See
-[ADR 0009](../architecture/adr/0009-mzml-conversion-execution-boundary.md).
+**Not built as a batch.** Steps 1, 4 and 5 are unreachable: there is no scope
+choice, no queue advancing per file, and no retry. What exists is WF-004a below.
+See [ADR 0009](../architecture/adr/0009-mzml-conversion-execution-boundary.md).
+
+## WF-004a — Convert one focused Thermo RAW acquisition
+
+1. `Add files…` and choose one or more acquisitions. mzML and evidenced Thermo
+   RAW are both admitted; a folder or a drop still admits mzML only.
+2. Focus the Thermo RAW row. It cannot be previewed, and says so.
+3. Review the fixed summary: source, family, mzML output, compression, and the
+   output-only validation disclosure.
+4. Choose Fail or Skip if a file of that name already exists. There is no
+   overwrite.
+5. `Convert focused…` opens a Rust-owned picker for a local folder.
+6. The conversion runs. It cannot be cancelled, and says so. Adding, clearing
+   and previewing are unavailable until it ends; searching, sorting and reading
+   the list are not.
+7. The result reports the output's name, size and record counts, or that a name
+   was already taken and left alone, or that nothing was written.
+
+**Success:** one acquisition becomes one mzML the user can find, and the
+interface never claims more about it than output-only validation established.
+
+**Not included:** multiple files, cancellation, progress, retry, persistence
+across restarts, and adding the output to the workspace. See
+[ADR 0012](../architecture/adr/0012-first-visible-thermo-conversion.md).
 
 ## WF-005 — Clear the workspace
 

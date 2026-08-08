@@ -8,6 +8,11 @@
   now reachable from an accepted workspace dataset through a private, surfaceless
   path; see [ADR 0011](0011-private-workspace-conversion-path.md). Nothing
   user-visible converts a RAW file, and every evidence gate below is unchanged.
+- Amended: 2026-08-07 (M3.1) — follow-up slice 2 below is done. The family
+  admitted here is now reachable from `Add files…` and convertible from the
+  interface, and the output-only validation it produces is presented without
+  implying fidelity. Every evidence gate below is unchanged. See
+  [ADR 0012](0012-first-visible-thermo-conversion.md).
 
 ## Context
 

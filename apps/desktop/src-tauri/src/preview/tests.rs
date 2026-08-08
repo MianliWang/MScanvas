@@ -15,7 +15,7 @@ use mscanvas_proteowizard::{
     BackendTool, CapturedHelpStream, CommandSpec, CompleteHelpCapture, ConflictPolicy,
     InstalledHelpCapabilities, PreviewOperation, PreviewOutcome, PreviewOutputEntry,
     PreviewOutputManifest, ProcessError, ProcessOutput, ProcessRunner, Sha256Digest, Termination,
-    ValidationMode, interpret_preview,
+    interpret_preview,
 };
 
 use super::backend::{ConversionBackend, OperationAttempt, PreviewProvider, interpretation_error};
@@ -33,6 +33,10 @@ use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, DropIngestionResultDto, DropScanLimitDto,
     MAX_WORKSPACE_DATASETS, PreviewErrorDto, SelectedFileDto, SelectedSpectrumOutcomeDto,
     WorkspaceAddOutcomeDto, WorkspaceDropUpdateDto,
+};
+use super::dto::{
+    ConversionConflictPolicyDto, ConversionOutputFormatDto, DatasetSourceKindDto,
+    ValidationModeDto, WorkspaceConversionStateDto,
 };
 use super::installation::InstallationIdentity;
 /// The share-mode probe that answers whether a file is still held open. It
@@ -3040,7 +3044,7 @@ fn one_picker_operation_adds_every_file_it_chose_in_the_order_it_chose_them() {
     let third = file.sibling("third.mzML");
     let service = PreviewService::new(Box::new(NoProcess));
 
-    let result = service.add_files(&[file.path.clone(), second, third]);
+    let result = service.add_files_now(&[file.path.clone(), second, third]);
 
     assert_eq!(result.outcomes.len(), 3);
     assert!(
@@ -3082,7 +3086,7 @@ fn adding_one_file_is_one_row_and_reading_the_roster_is_no_work() {
         "a session starts empty"
     );
 
-    let result = service.add_files(std::slice::from_ref(&file.path));
+    let result = service.add_files_now(std::slice::from_ref(&file.path));
 
     assert_eq!(roster_handles(&result.roster), ["file-0"]);
     assert_eq!(result.roster.datasets[0].file_name, "sample.mzML");
@@ -3099,10 +3103,10 @@ fn a_batch_that_chose_nothing_leaves_the_workspace_exactly_as_it_was() {
     // that removed anything either.
     let file = TestFile::new("add-nothing");
     let service = PreviewService::new(Box::new(NoProcess));
-    service.add_files(std::slice::from_ref(&file.path));
+    service.add_files_now(std::slice::from_ref(&file.path));
     let before = service.roster();
 
-    let result = service.add_files(&[]);
+    let result = service.add_files_now(&[]);
 
     assert!(result.outcomes.is_empty());
     assert_eq!(result.roster, before);
@@ -3115,7 +3119,7 @@ fn one_file_under_two_names_in_one_batch_is_one_row_and_one_duplicate() {
     let alias = file.hard_link("another-name.mzML");
     let service = PreviewService::new(Box::new(NoProcess));
 
-    let result = service.add_files(&[file.path.clone(), alias, file.path.clone()]);
+    let result = service.add_files_now(&[file.path.clone(), alias, file.path.clone()]);
 
     assert_eq!(
         roster_handles(&result.roster),
@@ -3139,7 +3143,7 @@ fn one_file_under_two_names_in_one_batch_is_one_row_and_one_duplicate() {
         assert_eq!(existing.file_name, "sample.mzML");
     }
     // A duplicate spends no identifier: the next real addition is file-1.
-    let next = service.add_files(&[file.sibling("second.mzML")]);
+    let next = service.add_files_now(&[file.sibling("second.mzML")]);
     assert_eq!(outcome_handle(&next.outcomes[0]), "file-1");
 }
 
@@ -3151,7 +3155,7 @@ fn a_byte_identical_copy_is_a_second_row_rather_than_a_duplicate() {
     let copy = file.copy("copy.mzML");
     let service = PreviewService::new(Box::new(NoProcess));
 
-    let result = service.add_files(&[file.path.clone(), copy]);
+    let result = service.add_files_now(&[file.path.clone(), copy]);
 
     assert_eq!(roster_handles(&result.roster), ["file-0", "file-1"]);
     assert_eq!(
@@ -3171,7 +3175,7 @@ fn one_file_that_cannot_be_read_does_not_roll_back_the_ones_that_arrived() {
     let last = file.sibling("last.mzML");
     let service = PreviewService::new(Box::new(NoProcess));
 
-    let result = service.add_files(&[file.path.clone(), unsupported, absent, last]);
+    let result = service.add_files_now(&[file.path.clone(), unsupported, absent, last]);
 
     assert_eq!(roster_handles(&result.roster), ["file-0", "file-1"]);
     assert_eq!(
@@ -3214,7 +3218,7 @@ fn a_full_workspace_refuses_new_files_and_still_answers_for_the_ones_it_holds() 
         .map(|index| file.sibling(&format!("held-{index}.mzML")))
         .collect();
 
-    let filled = service.add_files(&held);
+    let filled = service.add_files_now(&held);
 
     assert_eq!(filled.roster.datasets.len(), MAX_WORKSPACE_DATASETS);
     assert!(
@@ -3226,7 +3230,7 @@ fn a_full_workspace_refuses_new_files_and_still_answers_for_the_ones_it_holds() 
 
     // A file the workspace already holds is still a file it holds. Answering
     // "full" would tell the user to make space for something that needs none.
-    let again = service.add_files(&[held[0].clone(), file.path.clone(), held[7].clone()]);
+    let again = service.add_files_now(&[held[0].clone(), file.path.clone(), held[7].clone()]);
 
     assert_eq!(outcome_handle(&again.outcomes[0]), "file-0");
     let WorkspaceAddOutcomeDto::Rejected {
@@ -3252,8 +3256,8 @@ fn a_full_workspace_refuses_new_files_and_still_answers_for_the_ones_it_holds() 
     // No identifier was spent on anything the session refused: making room for
     // one file admits exactly one, under the identifier after the last one
     // actually registered.
-    service.remove_datasets(&["file-3".to_owned()]);
-    let admitted = service.add_files(std::slice::from_ref(&file.path));
+    service.remove_datasets_now(&["file-3".to_owned()]);
+    let admitted = service.add_files_now(std::slice::from_ref(&file.path));
     assert_eq!(
         outcome_handle(&admitted.outcomes[0]),
         &format!("file-{MAX_WORKSPACE_DATASETS}")
@@ -3267,7 +3271,7 @@ fn emptying_a_full_workspace_reaches_every_row_without_rewinding_the_allocator()
     let held: Vec<PathBuf> = (0..MAX_WORKSPACE_DATASETS)
         .map(|index| file.sibling(&format!("held-{index}.mzML")))
         .collect();
-    let filled = service.add_files(&held);
+    let filled = service.add_files_now(&held);
     let witnesses: Vec<_> = filled
         .roster
         .datasets
@@ -3279,7 +3283,7 @@ fn emptying_a_full_workspace_reaches_every_row_without_rewinding_the_allocator()
         })
         .collect();
 
-    let roster = service.clear_workspace();
+    let roster = service.clear_workspace_now();
 
     assert!(roster.datasets.is_empty());
     assert_eq!(roster.capacity, MAX_WORKSPACE_DATASETS);
@@ -3296,7 +3300,7 @@ fn emptying_a_full_workspace_reaches_every_row_without_rewinding_the_allocator()
     assert!(held.iter().all(|path| path.exists()));
     // And the allocator does not rewind: a reply still in flight for one of the
     // emptied datasets cannot land on whatever is added next.
-    let readded = service.add_files(&held[..1]);
+    let readded = service.add_files_now(&held[..1]);
     assert_eq!(
         outcome_handle(&readded.outcomes[0]),
         &format!("file-{MAX_WORKSPACE_DATASETS}")
@@ -3309,9 +3313,9 @@ fn removing_rows_says_what_went_and_what_named_nothing() {
     let second = file.sibling("second.mzML");
     let third = file.sibling("third.mzML");
     let service = PreviewService::new(Box::new(NoProcess));
-    service.add_files(&[file.path.clone(), second, third]);
+    service.add_files_now(&[file.path.clone(), second, third]);
 
-    let result = service.remove_datasets(&[
+    let result = service.remove_datasets_now(&[
         "file-2".to_owned(),
         "file-0".to_owned(),
         // The same row twice is one removal, not one removal and one stale
@@ -3333,7 +3337,7 @@ fn removing_a_row_releases_its_hold_and_leaves_its_file_where_it_was() {
     let file = TestFile::new("remove-lease");
     let second = file.sibling("second.mzML");
     let service = PreviewService::new(Box::new(NoProcess));
-    let added = service.add_files(&[file.path.clone(), second.clone()]);
+    let added = service.add_files_now(&[file.path.clone(), second.clone()]);
     let held: Vec<_> = added
         .roster
         .datasets
@@ -3341,7 +3345,7 @@ fn removing_a_row_releases_its_hold_and_leaves_its_file_where_it_was() {
         .map(|dataset| service.lease_witness(&dataset.handle).expect("registered"))
         .collect();
 
-    service.remove_datasets(&["file-0".to_owned()]);
+    service.remove_datasets_now(&["file-0".to_owned()]);
 
     assert!(held[0].is_released(), "the removed row let its file go");
     assert!(!held[1].is_released(), "and the row that stayed did not");
@@ -3364,14 +3368,14 @@ fn removing_the_row_a_preview_belongs_to_takes_its_facts_with_it() {
         &[(445.12, 9000.0)],
     )));
     let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
-    service.add_files(&[file.path.clone(), other]);
+    service.add_files_now(&[file.path.clone(), other]);
     service.open_preview("file-0").expect("the preview loads");
     service
         .load_spectrum("file-0", 0)
         .expect("the spectrum loads");
     assert!(service.holds_preview_state("file-0"));
 
-    let result = service.remove_datasets(&["file-0".to_owned()]);
+    let result = service.remove_datasets_now(&["file-0".to_owned()]);
 
     assert_eq!(roster_handles(&result.roster), ["file-1"]);
     assert!(
@@ -3405,7 +3409,7 @@ fn a_workspace_emptied_while_a_read_runs_answers_at_once_and_keeps_nothing() {
         started,
         release: Mutex::new(Some(wait_for_release)),
     })));
-    service.add_files(std::slice::from_ref(&file.path));
+    service.add_files_now(std::slice::from_ref(&file.path));
 
     let opening = {
         let service = Arc::clone(&service);
@@ -3420,7 +3424,7 @@ fn a_workspace_emptied_while_a_read_runs_answers_at_once_and_keeps_nothing() {
     // they cannot empty, for as long as one file is being read would make the
     // interface unusable exactly when they most want out of it.
     assert_eq!(service.roster().datasets.len(), 1);
-    let roster = service.clear_workspace();
+    let roster = service.clear_workspace_now();
     assert!(roster.datasets.is_empty());
 
     release.send(()).expect("the provider is still waiting");
@@ -3447,10 +3451,10 @@ fn curating_the_workspace_never_reaches_the_backend() {
     // Every roster operation there is, including the ones that fail an item and
     // the ones that empty rows the session had.
     service.roster();
-    service.add_files(&[file.path.clone(), unsupported, second]);
+    service.add_files_now(&[file.path.clone(), unsupported, second]);
     service.roster();
-    service.remove_datasets(&["file-0".to_owned(), "file-404".to_owned()]);
-    service.clear_workspace();
+    service.remove_datasets_now(&["file-0".to_owned(), "file-404".to_owned()]);
+    service.clear_workspace_now();
 
     assert!(service.roster().datasets.is_empty());
 }
@@ -3462,9 +3466,9 @@ fn nothing_the_roster_transfers_carries_a_path_a_folder_or_an_identity() {
     let unsupported = file.unsupported("acquisition.mzXML");
     let service = PreviewService::new(Box::new(NoProcess));
 
-    let added = service.add_files(&[file.path.clone(), unsupported, second]);
-    let removed = service.remove_datasets(&["file-0".to_owned(), "file-77".to_owned()]);
-    let cleared = service.clear_workspace();
+    let added = service.add_files_now(&[file.path.clone(), unsupported, second]);
+    let removed = service.remove_datasets_now(&["file-0".to_owned(), "file-77".to_owned()]);
+    let cleared = service.clear_workspace_now();
 
     let directory = file.directory.to_string_lossy().into_owned();
     for rendered in [
@@ -3544,7 +3548,7 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "choose_backend_installation",
             "use_automatic_backend_discovery",
             "get_workspace_roster",
-            "choose_mzml_files",
+            "choose_workspace_files",
             "begin_mzml_folder_import",
             "choose_mzml_folder",
             "subscribe_workspace_drop_updates",
@@ -3552,7 +3556,18 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "clear_workspace",
             "open_mzml_preview",
             "load_selected_spectrum",
+            "describe_workspace_conversion",
+            "get_workspace_conversion_state",
+            "begin_workspace_conversion",
+            "choose_workspace_conversion_destination",
         ]
+    );
+    // The picker command is named for the workspace it fills rather than for
+    // one format, because it now admits two families and `choose_mzml_files`
+    // had become a name that said something false about what it does.
+    assert!(
+        !registered.contains(&"choose_mzml_files"),
+        "the picker's old name is retired, not kept beside the truthful one"
     );
     // The retired single-file picker is gone rather than left beside its
     // replacement. Two registered pickers with opposite semantics -- one that
@@ -3922,6 +3937,7 @@ fn reserve_drop_work(service: &PreviewService, paths: &[PathBuf]) -> NativeDropW
     {
         NativeDropDispatch::Start(work) => work,
         NativeDropDispatch::Busy { .. } => panic!("the drop claim was unexpectedly busy"),
+        NativeDropDispatch::ConversionBusy => panic!("no conversion is running in this test"),
         NativeDropDispatch::Enter { .. } | NativeDropDispatch::Leave { .. } => {
             panic!("a Drop cannot normalize to hover or leave")
         }
@@ -4209,7 +4225,7 @@ fn remove_supersedes_an_active_native_drop() {
         .recv_timeout(Duration::from_secs(2))
         .expect("the native drop reaches its unlocked scan");
 
-    let removal = service.remove_datasets(&["file-does-not-exist".to_owned()]);
+    let removal = service.remove_datasets_now(&["file-does-not-exist".to_owned()]);
     assert!(removal.removed_handles.is_empty());
     assert_eq!(removal.unknown_handles, vec!["file-does-not-exist"]);
     release.send(()).expect("release the superseded scan");
@@ -4230,13 +4246,13 @@ fn add_folder_and_roster_operations_wait_for_an_active_native_drop() {
     let (add_tx, add_rx) = mpsc::channel();
     let add_service = Arc::clone(&service);
     let add = std::thread::spawn(move || {
-        let result = add_service.add_files(&[]);
+        let result = add_service.add_files_now(&[]);
         add_tx.send(result).expect("return Add files result");
     });
     let (folder_tx, folder_rx) = mpsc::channel();
     let folder_service = Arc::clone(&service);
     let folder = std::thread::spawn(move || {
-        let reservation = folder_service.begin_folder_import();
+        let reservation = folder_service.begin_folder_import_now();
         folder_tx
             .send(reservation)
             .expect("return folder reservation");
@@ -4536,7 +4552,7 @@ fn actual_channel_orders_hover_busy_replacement_clear_and_reload() {
     assert_eq!(status(&replacement[0]), "importing");
     assert_eq!(replacement[0]["sequence"], 5);
 
-    assert!(service.clear_workspace().datasets.is_empty());
+    assert!(service.clear_workspace_now().datasets.is_empty());
     let after_clear = captured(&replacement_messages);
     assert_eq!(
         status(after_clear.last().expect("clear publishes idle")),
@@ -5383,7 +5399,7 @@ fn a_scan_the_user_moved_past_by_emptying_the_list_adds_nothing() {
     tree.file("sample.mzML", b"<mzML/>");
     let elsewhere = TestFile::new("kept-through-clear");
     let service = Arc::new(PreviewService::new(Box::new(NoProcess)));
-    service.add_files(std::slice::from_ref(&elsewhere.path));
+    service.add_files_now(std::slice::from_ref(&elsewhere.path));
     let (started, observe_start) = mpsc::channel();
     let (release, wait_for_release) = mpsc::channel();
 
@@ -5406,7 +5422,7 @@ fn a_scan_the_user_moved_past_by_emptying_the_list_adds_nothing() {
         .recv_timeout(std::time::Duration::from_secs(10))
         .expect("the scan reached its walk");
 
-    assert!(service.clear_workspace().datasets.is_empty());
+    assert!(service.clear_workspace_now().datasets.is_empty());
     release.send(()).expect("the scan is still waiting");
 
     assert_eq!(
@@ -5570,7 +5586,7 @@ fn a_context_goes_when_the_row_that_made_it_necessary_does() {
         ]
     );
 
-    let remaining = service.remove_datasets(&["file-0".to_owned()]);
+    let remaining = service.remove_datasets_now(&["file-0".to_owned()]);
 
     assert_eq!(remaining.roster.datasets.len(), 1);
     assert_eq!(
@@ -5591,7 +5607,7 @@ fn a_directly_added_file_and_a_discovered_one_of_one_name_are_told_apart() {
     tree.file("sample.mzML", b"<mzML> discovered </mzML>");
     let service = PreviewService::new(Box::new(NoProcess));
 
-    service.add_files(std::slice::from_ref(&picked.path));
+    service.add_files_now(std::slice::from_ref(&picked.path));
     service
         .add_mzml_folder(tree.path(), service.reserve_folder_import())
         .expect("an ordinary folder is scanned");
@@ -5616,7 +5632,7 @@ fn two_rows_that_would_say_the_same_thing_are_told_apart_by_the_session() {
     let second = TestFile::new("same-words-b");
     let service = PreviewService::new(Box::new(NoProcess));
 
-    service.add_files(&[first.path.clone(), second.path.clone()]);
+    service.add_files_now(&[first.path.clone(), second.path.clone()]);
 
     let contexts: Vec<String> = service
         .roster()
@@ -5874,7 +5890,7 @@ fn a_refused_walk_leaves_the_workspace_exactly_as_it_was() {
 
     let file = TestFile::new("refused-walk");
     let service = PreviewService::new(Box::new(NoProcess));
-    service.add_files(std::slice::from_ref(&file.path));
+    service.add_files_now(std::slice::from_ref(&file.path));
     let before = service.roster();
 
     service
@@ -5889,7 +5905,7 @@ fn a_refused_walk_leaves_the_workspace_exactly_as_it_was() {
 #[test]
 fn a_folder_reservation_is_exact_and_single_use() {
     let service = PreviewService::new(Box::new(NoProcess));
-    let reservation = service.begin_folder_import();
+    let reservation = service.begin_folder_import_now();
 
     let token = service
         .claim_folder_import(&reservation.reservation_id)
@@ -5907,7 +5923,7 @@ fn a_folder_reservation_is_exact_and_single_use() {
 #[test]
 fn a_wrong_folder_reservation_does_not_consume_the_live_one() {
     let service = PreviewService::new(Box::new(NoProcess));
-    let reservation = service.begin_folder_import();
+    let reservation = service.begin_folder_import_now();
 
     assert_eq!(
         service
@@ -5924,11 +5940,11 @@ fn a_wrong_folder_reservation_does_not_consume_the_live_one() {
 #[test]
 fn a_delayed_begin_at_the_same_baseline_reuses_the_live_reservation() {
     let service = PreviewService::new(Box::new(NoProcess));
-    let current = service.begin_folder_import();
+    let current = service.begin_folder_import_now();
     // This can be an old document's fetch reaching Rust after the replacement
     // document already began. Arrival order cannot make it a newer workspace
     // decision: both saw the same baseline, so both name the one bounded slot.
-    let delayed = service.begin_folder_import();
+    let delayed = service.begin_folder_import_now();
 
     assert_eq!(delayed.reservation_id, current.reservation_id);
     assert_eq!(
@@ -5950,13 +5966,13 @@ fn a_delayed_begin_at_the_same_baseline_reuses_the_live_reservation() {
 #[test]
 fn a_delayed_begin_after_clear_replaces_only_the_stale_slot() {
     let service = PreviewService::new(Box::new(NoProcess));
-    let current = service.begin_folder_import();
+    let current = service.begin_folder_import_now();
 
-    service.clear_workspace();
+    service.clear_workspace_now();
     // The old document's begin reaches Rust after Clear and replaces the stale
     // slot at the new baseline. The current document's now-wrong identifier
     // must not consume that replacement.
-    let delayed = service.begin_folder_import();
+    let delayed = service.begin_folder_import_now();
     assert_ne!(delayed.reservation_id, current.reservation_id);
     assert_eq!(
         service
@@ -5981,7 +5997,7 @@ fn a_delayed_begin_after_claim_does_not_supersede_the_active_import() {
     tree.file("sample.mzML", b"<mzML/>");
     let service = PreviewService::new(Box::new(NoProcess));
 
-    let current = service.begin_folder_import();
+    let current = service.begin_folder_import_now();
     let token = service
         .claim_folder_import(&current.reservation_id)
         .expect("the current document claimed before its picker");
@@ -5989,7 +6005,7 @@ fn a_delayed_begin_after_claim_does_not_supersede_the_active_import() {
     // The old document's begin reaches Rust only now. It may occupy the one
     // pending slot, but begin is not a workspace decision and cannot advance
     // beyond the live token.
-    let delayed = service.begin_folder_import();
+    let delayed = service.begin_folder_import_now();
     assert_ne!(delayed.reservation_id, current.reservation_id);
 
     service
@@ -6006,7 +6022,7 @@ fn a_delayed_roster_read_from_the_old_document_does_not_supersede_the_new_import
     let service = PreviewService::new(Box::new(NoProcess));
 
     service.begin_webview_document();
-    let current = service.begin_folder_import();
+    let current = service.begin_folder_import_now();
     let token = service
         .claim_folder_import(&current.reservation_id)
         .expect("the replacement document claimed its import");
@@ -6048,7 +6064,7 @@ fn folder_import_reservations_use_one_bounded_pending_slot() {
 #[test]
 fn a_reload_between_begin_and_claim_refuses_before_a_picker_can_use_the_token() {
     let service = PreviewService::new(Box::new(NoProcess));
-    let reservation = service.begin_folder_import();
+    let reservation = service.begin_folder_import_now();
 
     // Native page-load start advances before the replacement document can ask
     // for its pure roster snapshot.
@@ -6119,18 +6135,18 @@ fn every_workspace_decision_taken_while_the_picker_is_open_supersedes_the_import
         // whichever `sample.mzML` happens to be in the list.
         tree.file("folder-run.mzML", b"<mzML/>");
         let service = PreviewService::new(Box::new(NoProcess));
-        service.add_files(std::slice::from_ref(&elsewhere.path));
+        service.add_files_now(std::slice::from_ref(&elsewhere.path));
 
         let token = service.reserve_folder_import();
         match decision {
             "clear" => {
-                service.clear_workspace();
+                service.clear_workspace_now();
             }
             "remove" => {
-                service.remove_datasets(&["file-0".to_owned()]);
+                service.remove_datasets_now(&["file-0".to_owned()]);
             }
             _ => {
-                service.add_files(std::slice::from_ref(&elsewhere.path));
+                service.add_files_now(std::slice::from_ref(&elsewhere.path));
             }
         }
 
@@ -6385,6 +6401,29 @@ fn the_folder_chooser_claims_one_reservation_before_it_opens_the_picker() {
 // is written, and where, is decided by the boundary under test rather than by
 // the test.
 
+/// The family a report names, as the wire spells it.
+fn source_kind_id(report: &super::conversion::WorkspaceConversionReport) -> String {
+    serde_json::to_value(report.to_dto().source_kind)
+        .expect("the family serializes")
+        .as_str()
+        .expect("the family is a string")
+        .to_owned()
+}
+
+/// The subset of installed `msaccess` help its own commands require.
+///
+/// A different executable with a different option grammar, so a conversion
+/// planned against it cannot be expressed at all. It exists here so a test can
+/// hand a run the capability evidence a provider bound from the wrong tool,
+/// which is the substance of ADR 0011's open binding gate.
+const MSACCESS_HELP: &str = r"Usage: msaccess [options] [file]
+Inspect mass spec data files.
+
+Options:
+  -o [ --outdir ] arg (=.)           : set output directory
+  -x [ --exec ] arg                  : execute a command
+";
+
 /// The subset of installed `msconvert` help a conversion plan requires.
 const MSCONVERT_HELP: &str = r"Usage: msconvert [options] [filemasks]
 Convert mass spec data file formats.
@@ -6470,16 +6509,34 @@ fn conversion_capabilities(
     revision: Option<&str>,
     executable_sha256: &str,
 ) -> InstalledHelpCapabilities {
+    conversion_capabilities_for(BackendTool::MsConvert, release, revision, executable_sha256)
+}
+
+/// The same, for a named tool.
+///
+/// Which tool the help belongs to is a parameter because that is the thing
+/// under test in one place: capability evidence read from the wrong executable
+/// describes an option grammar that cannot express a conversion.
+fn conversion_capabilities_for(
+    tool: BackendTool,
+    release: &str,
+    revision: Option<&str>,
+    executable_sha256: &str,
+) -> InstalledHelpCapabilities {
     let executable = fs::canonicalize(std::env::current_exe().expect("test executable"))
         .expect("canonical test executable");
     let reported = revision.map_or_else(
         || release.to_owned(),
         |revision| format!("{release} ({revision})"),
     );
-    let help =
-        format!("ProteoWizard release: {reported}\nBuild date: Jan 13 2026\n{MSCONVERT_HELP}");
+    let body = if tool == BackendTool::MsConvert {
+        MSCONVERT_HELP
+    } else {
+        MSACCESS_HELP
+    };
+    let help = format!("ProteoWizard release: {reported}\nBuild date: Jan 13 2026\n{body}");
     InstalledHelpCapabilities::parse_unbound_capture_for_tests(
-        BackendTool::MsConvert,
+        tool,
         executable,
         executable_sha256
             .parse()
@@ -6774,43 +6831,56 @@ fn a_thermo_dataset_converts_through_its_handle_and_is_judged_on_the_output_alon
         .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
 
-    assert_eq!(report.outcome(), "finalized");
-    assert_eq!(report.dataset(), dataset.handle);
-    assert_eq!(report.source_kind().stable_id(), "thermo_raw");
-    assert_eq!(report.output_file_name(), Some("FT-HCD-MSX.mzML"));
+    assert_eq!(report.to_dto().outcome, "finalized");
+    assert_eq!(report.to_dto().dataset_handle, dataset.handle);
+    assert_eq!(source_kind_id(&report), "thermo_raw");
+    assert_eq!(
+        report.to_dto().output_file_name.as_deref(),
+        Some("FT-HCD-MSX.mzML")
+    );
     assert_eq!(entry_names(&destination), vec!["FT-HCD-MSX.mzML"]);
 
-    let validation = report.validation().expect("a finalized run was judged");
-    assert_eq!(validation.mode(), ValidationMode::OutputOnly);
+    let validation = report
+        .to_dto()
+        .validation
+        .expect("a finalized run was judged");
+    assert_eq!(validation.mode, ValidationModeDto::OutputOnly);
     assert!(
-        !validation.is_fully_verified(),
+        !validation.fully_verified,
         "a conversion with no source reading is never fully verified, whatever passed"
     );
     assert!(
-        validation.verified().contains(&"source_unchanged"),
+        validation
+            .verified
+            .iter()
+            .any(|property| property == "source_unchanged"),
         "the acquisition itself is still bound and rechecked; got {:?}",
-        validation.verified()
+        validation.verified
     );
     for comparison in ["spectrum_count", "binary_array_lengths", "precursor_counts"] {
         assert!(
-            validation.inapplicable().contains(&comparison),
+            validation
+                .inapplicable
+                .iter()
+                .any(|property| property == comparison),
             "{comparison} compares the output to a source document that was never read; got {:?}",
-            validation.inapplicable()
+            validation.inapplicable
         );
     }
     assert!(
-        validation.unverified().is_empty(),
+        validation.unverified.is_empty(),
         "nothing here failed a check that could have been made; got {:?}",
-        validation.unverified()
+        validation.unverified
     );
 
     let output = report
-        .output()
+        .to_dto()
+        .output
         .expect("a finalized run measured its output");
-    assert_eq!(output.spectra(), 2);
-    assert_eq!(output.chromatograms(), 0);
-    assert!(output.byte_length() > 0);
-    assert_eq!(output.sha256().len(), 64);
+    assert_eq!(output.spectrum_count, 2);
+    assert_eq!(output.chromatogram_count, 0);
+    assert!(output.byte_length > 0);
+    assert_eq!(output.sha256.len(), 64);
 }
 
 /// The same path over a source that *was* read as mzML compares the two
@@ -6827,19 +6897,25 @@ fn an_mzml_dataset_converts_through_the_same_path_and_is_compared_to_its_source(
         .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
 
-    assert_eq!(report.outcome(), "finalized");
-    assert_eq!(report.source_kind().stable_id(), "mzml");
-    let validation = report.validation().expect("a finalized run was judged");
-    assert_eq!(validation.mode(), ValidationMode::SourceComparison);
+    assert_eq!(report.to_dto().outcome, "finalized");
+    assert_eq!(source_kind_id(&report), "mzml");
+    let validation = report
+        .to_dto()
+        .validation
+        .expect("a finalized run was judged");
+    assert_eq!(validation.mode, ValidationModeDto::SourceComparison);
     assert!(
-        validation.inapplicable().is_empty(),
+        validation.inapplicable.is_empty(),
         "an mzML source can be compared against, so nothing is inapplicable; got {:?}",
-        validation.inapplicable()
+        validation.inapplicable
     );
     assert!(
-        validation.verified().contains(&"source_unchanged"),
+        validation
+            .verified
+            .iter()
+            .any(|property| property == "source_unchanged"),
         "the comparison the mode names has to have been made; got {:?}",
-        validation.verified()
+        validation.verified
     );
 }
 
@@ -6945,7 +7021,7 @@ fn an_unevidenced_build_still_converts_an_open_format_source() {
         .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
 
-    assert_eq!(report.outcome(), "finalized");
+    assert_eq!(report.to_dto().outcome, "finalized");
 }
 
 /// A provider that has not been taught to convert refuses, rather than
@@ -6987,10 +7063,10 @@ fn an_output_with_no_records_is_refused_and_never_takes_the_destination_name() {
         .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
 
-    assert_ne!(report.outcome(), "finalized");
-    assert!(report.output().is_none());
+    assert_ne!(report.to_dto().outcome, "finalized");
+    assert!(report.to_dto().output.is_none());
     assert_eq!(
-        report.output_file_name(),
+        report.to_dto().output_file_name.as_deref(),
         None,
         "a run that finalized nothing names no file, planned or otherwise"
     );
@@ -7021,12 +7097,12 @@ fn a_backend_that_produced_no_file_leaves_no_staging_directory() {
         .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
 
-    assert_ne!(report.outcome(), "finalized");
-    assert_eq!(report.output_file_name(), None);
+    assert_ne!(report.to_dto().outcome, "finalized");
+    assert_eq!(report.to_dto().output_file_name.as_deref(), None);
     assert!(
-        report.residue().is_none(),
+        report.to_dto().staging_residue.is_none(),
         "the run reclaimed its own staging area; got {:?}",
-        report.residue()
+        report.to_dto().staging_residue
     );
     assert_eq!(entry_names(&destination), Vec::<String>::new());
 }
@@ -7051,9 +7127,12 @@ fn a_failed_backend_is_reported_with_bounded_process_facts() {
         .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
 
-    assert_ne!(report.outcome(), "finalized");
-    let backend = report.backend().expect("a process ran, so it has facts");
-    assert_eq!(backend.exit_code(), Some(1));
+    assert_ne!(report.to_dto().outcome, "finalized");
+    let backend = report
+        .to_dto()
+        .backend
+        .expect("a process ran, so it has facts");
+    assert_eq!(backend.exit_code, Some(1));
     assert_eq!(entry_names(&destination), Vec::<String>::new());
 }
 
@@ -7075,9 +7154,9 @@ fn an_occupied_destination_name_is_skipped_or_refused_and_never_overwritten() {
     let skipped = service
         .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Skip)
         .expect("a skipped conversion is an outcome, not an error");
-    assert_eq!(skipped.outcome(), "skipped_existing_destination");
+    assert_eq!(skipped.to_dto().outcome, "skipped_existing_destination");
     assert_eq!(
-        skipped.output_file_name(),
+        skipped.to_dto().output_file_name.as_deref(),
         None,
         "the name is occupied by a file this run deliberately did not touch, so it is \
          not this run's output"
@@ -7086,7 +7165,7 @@ fn an_occupied_destination_name_is_skipped_or_refused_and_never_overwritten() {
     let refused = service
         .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("a refused conversion is an outcome, not an error");
-    assert_eq!(refused.outcome(), "destination_exists");
+    assert_eq!(refused.to_dto().outcome, "destination_exists");
 
     assert_eq!(
         fs::read(&occupant).expect("read the occupant"),
@@ -7134,7 +7213,7 @@ fn a_dataset_removed_before_the_conversion_starts_converts_nothing() {
     let dataset = service
         .add_thermo_dataset(&acquisition)
         .expect("admit the acquisition");
-    let removed = service.remove_datasets(std::slice::from_ref(&dataset.handle));
+    let removed = service.remove_datasets_now(std::slice::from_ref(&dataset.handle));
     assert_eq!(removed.removed_handles, vec![dataset.handle.clone()]);
 
     let error = service
@@ -7226,27 +7305,46 @@ fn a_thermo_acquisition_under_another_extension_is_not_admitted() {
     assert_eq!(error.kind, "unsupported_extension");
 }
 
-/// Product ingestion is unchanged. A vendor acquisition is not something the
-/// picker, folder discovery or a drop can add.
+/// The picker admits a vendor acquisition; the mzML-only doors do not.
+///
+/// ADR 0012 widens exactly one ingestion surface. The other two walk a tree the
+/// user did not enumerate, and admitting a vendor family from a walk is a wider
+/// claim than admitting one the user named -- so this states both halves
+/// together, where a change to either is visible against the other.
 #[test]
-fn normal_ingestion_still_refuses_a_vendor_acquisition() {
-    let fixture = TestFile::new("ingestion-unchanged");
+fn the_picker_admits_a_vendor_acquisition_and_the_mzml_only_doors_still_refuse_one() {
+    let fixture = TestFile::new("ingestion-widened");
     let acquisition = fixture.thermo_raw("acquisition.raw");
     let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
 
+    let batch = service.add_files_now(std::slice::from_ref(&acquisition));
+    assert_eq!(batch.roster.datasets.len(), 1);
+    assert_eq!(
+        batch.roster.datasets[0].source_kind,
+        DatasetSourceKindDto::ThermoRaw
+    );
+    assert_eq!(service.dataset_count(), 1);
+
+    // The retired single-file picker path stays mzML-only, which is what its
+    // one remaining caller -- a focused regression test -- is about.
     let picked = service
         .accept_file(&acquisition)
-        .expect_err("the picker opens mzML only");
+        .expect_err("the replaced picker opens mzML only");
     assert_eq!(picked.kind, "unsupported_extension");
 
-    let added = service
-        .add_dataset(&acquisition)
-        .expect_err("adding to the roster opens mzML only");
-    assert_eq!(added.kind, "unsupported_extension");
-
-    let batch = service.add_files(std::slice::from_ref(&acquisition));
-    assert_eq!(batch.roster.datasets.len(), 0);
-    assert_eq!(service.dataset_count(), 0);
+    // And folder discovery proposes nothing for it, whatever the folder holds.
+    let discovered =
+        service.add_mzml_folder(fixture.directory.as_path(), service.reserve_folder_import());
+    let discovered = discovered.expect("a folder scan is an outcome");
+    assert!(
+        discovered.outcomes.iter().all(
+            |outcome| !matches!(outcome, WorkspaceAddOutcomeDto::Added { dataset } if dataset
+                .source_kind
+                == DatasetSourceKindDto::ThermoRaw)
+        ),
+        "folder discovery proposes no vendor acquisition; got {:?}",
+        discovered.outcomes
+    );
 }
 
 /// Every use of a dataset re-applies the rule it was accepted under. A vendor
@@ -7323,7 +7421,7 @@ fn a_conversion_waits_for_a_preview_holding_the_backend_gate() {
         .join()
         .expect("the conversion thread")
         .expect("the conversion reaches an outcome once the gate is free");
-    assert_eq!(report.outcome(), "finalized");
+    assert_eq!(report.to_dto().outcome, "finalized");
 }
 
 /// And the other way round: a preview queues behind a running conversion rather
@@ -7362,11 +7460,14 @@ fn a_preview_waits_for_a_conversion_holding_the_backend_gate() {
         move || service.open_preview(&handle)
     });
 
+    // Deliberately not a request count: claiming an epoch happens before the
+    // wait and is not a process. What a preview parked on the gate has not done
+    // is record anything, and that is observable without racing the thread that
+    // is about to block.
     std::thread::yield_now();
-    assert_eq!(
-        service.requests_made(&preview_source.handle),
-        0,
-        "a preview waiting for the gate has asked the backend for nothing"
+    assert!(
+        !service.holds_preview_state(&preview_source.handle),
+        "a preview waiting for the gate has recorded nothing"
     );
 
     release.send(()).expect("release the conversion");
@@ -7374,7 +7475,7 @@ fn a_preview_waits_for_a_conversion_holding_the_backend_gate() {
         .join()
         .expect("the conversion thread")
         .expect("the conversion reaches an outcome");
-    assert_eq!(report.outcome(), "finalized");
+    assert_eq!(report.to_dto().outcome, "finalized");
     opening
         .join()
         .expect("the preview thread")
@@ -7409,14 +7510,14 @@ fn the_workspace_answers_while_a_conversion_is_running() {
     // Both answer immediately, or neither returns and this test hangs -- which
     // is the failure, stated as one.
     assert_eq!(service.roster().datasets.len(), 1);
-    assert_eq!(service.clear_workspace().datasets.len(), 0);
+    assert_eq!(service.clear_workspace_now().datasets.len(), 0);
 
     release.send(()).expect("release the conversion");
     let report = converting
         .join()
         .expect("the conversion thread")
         .expect("a conversion is not cancelled by the workspace moving on");
-    assert_eq!(report.outcome(), "finalized");
+    assert_eq!(report.to_dto().outcome, "finalized");
 }
 
 /// A conversion still waiting for the gate when the user moves on never
@@ -7478,7 +7579,8 @@ fn a_conversion_superseded_while_it_waits_never_starts() {
     assert_eq!(
         second
             .expect("the newer conversion reaches an outcome")
-            .outcome(),
+            .to_dto()
+            .outcome,
         "finalized"
     );
     assert_eq!(entry_names(&destination), vec!["acquisition.mzML"]);
@@ -7529,7 +7631,7 @@ fn the_source_cannot_be_replaced_while_its_conversion_is_running() {
         .join()
         .expect("the conversion thread")
         .expect("the conversion reaches an outcome");
-    assert_eq!(report.outcome(), "finalized");
+    assert_eq!(report.to_dto().outcome, "finalized");
 }
 
 /// A source another program is writing is not converted.
@@ -7574,7 +7676,7 @@ fn a_source_another_program_is_writing_is_refused_rather_than_read_anyway() {
     let report = service
         .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the same dataset converts once nothing else holds it");
-    assert_eq!(report.outcome(), "finalized");
+    assert_eq!(report.to_dto().outcome, "finalized");
 }
 
 /// A conversion never records anything against the dataset it read. The preview
@@ -7685,15 +7787,18 @@ fn a_real_thermo_acquisition_converts_through_a_workspace_handle() {
 
     println!("report: {report:?}");
     assert_eq!(
-        report.outcome(),
+        report.to_dto().outcome,
         "finalized",
         "the evidenced build converts this family"
     );
-    assert_eq!(report.dataset(), dataset.handle);
-    assert_eq!(report.source_kind().stable_id(), "thermo_raw");
-    let validation = report.validation().expect("a finalized run was judged");
-    assert_eq!(validation.mode(), ValidationMode::OutputOnly);
-    assert!(!validation.is_fully_verified());
+    assert_eq!(report.to_dto().dataset_handle, dataset.handle);
+    assert_eq!(source_kind_id(&report), "thermo_raw");
+    let validation = report
+        .to_dto()
+        .validation
+        .expect("a finalized run was judged");
+    assert_eq!(validation.mode, ValidationModeDto::OutputOnly);
+    assert!(!validation.fully_verified);
 }
 
 /// The conversion is stamped with the installation sequence as it stood when
@@ -7716,8 +7821,661 @@ fn a_conversion_is_stamped_with_the_installation_it_ran_on() {
         .expect("the second conversion reaches an outcome");
 
     assert_eq!(
-        first.installation_generation(),
-        second.installation_generation(),
+        first.to_dto().installation_generation,
+        second.to_dto().installation_generation,
         "two runs on one unchanged installation belong to one point in the sequence"
     );
+}
+
+// --- The visible conversion workflow ----------------------------------------
+//
+// One focused Thermo RAW row, one destination the user chooses, one conversion.
+// Everything below drives the same service the commands adapt, so what is under
+// test is the boundary rather than a stand-in for it.
+
+/// A destination folder beside the fixture, for outputs to land in.
+fn destination_root(fixture: &TestFile, name: &str) -> PathBuf {
+    let path = fixture.directory.join(name);
+    fs::create_dir_all(&path).expect("create a destination root");
+    path
+}
+
+/// The document epoch the current main document would prove.
+fn current_document(service: &PreviewService) -> u64 {
+    service.workspace_drop_document_epoch()
+}
+
+/// Adds one Thermo acquisition through the product's own picker path.
+fn add_one_acquisition(service: &PreviewService, path: &Path) -> String {
+    let batch = service.add_files_now(std::slice::from_ref(&path.to_path_buf()));
+    match batch.outcomes.first() {
+        Some(WorkspaceAddOutcomeDto::Added { dataset }) => dataset.handle.clone(),
+        other => panic!("the picker admits an evidenced acquisition; got {other:?}"),
+    }
+}
+
+/// The picker admits both families, in the order the dialog reported them, and
+/// says which family each row is.
+#[test]
+fn one_picker_batch_admits_mzml_and_thermo_rows_in_picker_order() {
+    let fixture = TestFile::new("mixed-batch");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let source = fixture.readable_mzml("second.mzML");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+
+    let batch = service.add_files_now(&[acquisition, fixture.path.clone(), source]);
+
+    let kinds: Vec<DatasetSourceKindDto> = batch
+        .roster
+        .datasets
+        .iter()
+        .map(|dataset| dataset.source_kind)
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            DatasetSourceKindDto::ThermoRaw,
+            DatasetSourceKindDto::Mzml,
+            DatasetSourceKindDto::Mzml,
+        ],
+        "the roster is the order the picker reported, and every row says its family"
+    );
+    assert_eq!(batch.outcomes.len(), 3);
+}
+
+/// A `.raw` name whose bytes are not an acquisition is refused, and consumes no
+/// dataset identifier: the next real file is still the first row.
+#[test]
+fn a_misnamed_raw_candidate_is_refused_and_costs_no_dataset_identifier() {
+    let fixture = TestFile::new("misnamed-in-batch");
+    let impostor = fixture.directory.join("impostor.raw");
+    fs::write(&impostor, b"not an acquisition").expect("write the impostor");
+    let acquisition = fixture.thermo_raw("real.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+
+    let batch = service.add_files_now(&[impostor, acquisition]);
+
+    assert!(
+        matches!(
+            batch.outcomes.first(),
+            Some(WorkspaceAddOutcomeDto::Rejected { error, .. })
+                if error.kind == "unrecognized_acquisition"
+        ),
+        "a name is not a recognition; got {:?}",
+        batch.outcomes.first()
+    );
+    assert_eq!(batch.roster.datasets.len(), 1);
+    assert_eq!(
+        batch.roster.datasets[0].handle, "file-0",
+        "a refused candidate never allocates an identifier"
+    );
+}
+
+/// A vendor row is refused a preview by Rust, with the sentence the interface
+/// shows beside the disabled action.
+#[test]
+fn a_vendor_row_is_refused_a_preview_by_rust_not_only_by_a_disabled_button() {
+    let fixture = TestFile::new("preview-refused");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+
+    let error = service
+        .open_preview(&handle)
+        .expect_err("nothing in this product reads a vendor acquisition");
+
+    assert_eq!(error.kind, "dataset_not_previewable");
+    assert_eq!(service.requests_made(&handle), 0, "no backend was asked");
+}
+
+/// The plan summary is derived from the run, and refuses a row that has nothing
+/// to convert.
+#[test]
+fn the_plan_summary_describes_the_fixed_plan_and_refuses_an_mzml_row() {
+    let fixture = TestFile::new("plan-summary");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let mzml = service.add_dataset(&fixture.path).expect("add an mzML row");
+
+    let summary = service
+        .conversion_plan_summary(&handle)
+        .expect("a vendor row has a plan");
+    assert_eq!(summary.dataset.handle, handle);
+    assert_eq!(summary.output_format, ConversionOutputFormatDto::MzMl);
+    assert_eq!(summary.compression, "zlib");
+    assert_eq!(summary.validation_mode, ValidationModeDto::OutputOnly);
+
+    let refused = service
+        .conversion_plan_summary(&mzml.handle)
+        .expect_err("an mzML row is already the output format");
+    assert_eq!(refused.kind, "dataset_not_convertible");
+}
+
+/// The whole visible vertical: begin, claim, choose a folder, convert, report.
+#[test]
+fn one_focused_thermo_row_converts_through_the_product_path_and_reports_path_free() {
+    let fixture = TestFile::new("visible-vertical");
+    let acquisition = fixture.thermo_raw("FT-HCD-MSX.raw");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("a vendor row can be converted");
+    assert!(
+        matches!(
+            service.conversion_state().state,
+            WorkspaceConversionStateDto::AwaitingDestination { .. }
+        ),
+        "the slot says a destination is being chosen"
+    );
+
+    service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the exact reservation is claimed once");
+    let update = service.run_claimed_conversion(&destination);
+
+    let rendered = serde_json::to_string(&update).expect("the update serializes");
+    let WorkspaceConversionStateDto::Completed { report, .. } = &update.state else {
+        panic!("the conversion reaches an outcome; got {:?}", update.state);
+    };
+    assert_eq!(report.outcome, "finalized");
+    assert_eq!(report.dataset_handle, handle);
+    assert_eq!(report.source_kind, DatasetSourceKindDto::ThermoRaw);
+    assert_eq!(report.output_file_name.as_deref(), Some("FT-HCD-MSX.mzML"));
+    let validation = report
+        .validation
+        .as_ref()
+        .expect("a finalized run was judged");
+    assert_eq!(validation.mode, ValidationModeDto::OutputOnly);
+    assert!(!validation.fully_verified);
+    assert_eq!(entry_names(&destination), vec!["FT-HCD-MSX.mzML"]);
+
+    for fragment in [
+        fixture.directory.to_string_lossy().into_owned(),
+        destination.to_string_lossy().into_owned(),
+        String::from("FT-HCD-MSX.raw"),
+    ] {
+        assert!(
+            !rendered.contains(&fragment),
+            "the update names {fragment:?}: {rendered}"
+        );
+    }
+    assert!(
+        rendered.contains("FT-HCD-MSX.mzML"),
+        "the output's own name is a display name: {rendered}"
+    );
+}
+
+/// A reservation is single use, document-bound and refused once replaced.
+#[test]
+fn a_conversion_reservation_is_single_use_and_bound_to_the_document_that_asked() {
+    let fixture = TestFile::new("reservation-rules");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("one reservation");
+
+    // Another document cannot claim it.
+    assert_eq!(
+        service
+            .claim_conversion(&reservation.reservation_id, document + 1)
+            .expect_err("a replaced document cannot claim what its predecessor reserved")
+            .kind,
+        "invalid_conversion_reservation"
+    );
+    // Nor can a value nobody issued.
+    assert_eq!(
+        service
+            .claim_conversion("conversion-reservation-999", document)
+            .expect_err("an unknown identifier claims nothing")
+            .kind,
+        "invalid_conversion_reservation"
+    );
+
+    service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the exact reservation, once");
+    assert_eq!(
+        service
+            .claim_conversion(&reservation.reservation_id, document)
+            .expect_err("and only once")
+            .kind,
+        "invalid_conversion_reservation"
+    );
+}
+
+/// A cancelled picker is an ordinary no-op: nothing is created and the slot is
+/// idle again, with the operation identifier not reused.
+#[test]
+fn a_cancelled_destination_picker_creates_nothing_and_returns_to_idle() {
+    let fixture = TestFile::new("cancelled-picker");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("one reservation");
+    service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let cancelled = service.cancel_conversion();
+
+    assert!(matches!(cancelled.state, WorkspaceConversionStateDto::Idle));
+    assert_eq!(entry_names(&destination), Vec::<String>::new());
+
+    // The next conversion is a new operation, not the cancelled one resumed.
+    let second = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("a cancelled picker leaves the slot free");
+    assert_ne!(
+        second.reservation_id, reservation.reservation_id,
+        "identifiers do not rewind"
+    );
+}
+
+/// A second conversion is refused while one is under way.
+#[test]
+fn a_second_conversion_is_refused_rather_than_queued() {
+    let fixture = TestFile::new("one-slot");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+
+    service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("the first conversion");
+    let refused = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect_err("one at a time, and not a queue");
+
+    assert_eq!(refused.kind, "conversion_busy");
+    assert!(refused.retryable, "the answer changes when the first ends");
+}
+
+/// Only a local folder is a destination, and a refused one costs no staging.
+#[test]
+fn a_destination_that_is_not_a_local_folder_is_refused_before_anything_is_created() {
+    let fixture = TestFile::new("destination-posture");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    )));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+
+    for (destination, expected) in [
+        (fixture.absent("no-such-folder"), "destination_unusable"),
+        (acquisition.clone(), "destination_not_a_folder"),
+        (
+            PathBuf::from(r"\\server\share\outputs"),
+            "destination_unusable",
+        ),
+    ] {
+        let reservation = service
+            .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+            .expect("one reservation per attempt");
+        service
+            .claim_conversion(&reservation.reservation_id, document)
+            .expect("claim it");
+        let update = service.run_claimed_conversion(&destination);
+        let WorkspaceConversionStateDto::Failed { error, .. } = update.state else {
+            panic!("a refused destination is a refusal; got {:?}", update.state);
+        };
+        assert_eq!(error.kind, expected, "{destination:?}");
+    }
+    assert_eq!(
+        launches.load(Ordering::SeqCst),
+        0,
+        "a destination this boundary will not write to costs no process"
+    );
+}
+
+/// While a conversion holds the workspace, every mutation is refused by Rust
+/// and every read still answers.
+#[test]
+fn a_running_conversion_refuses_workspace_mutations_and_still_answers_reads() {
+    let fixture = TestFile::new("mutation-guards");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let other = service
+        .add_dataset(&fixture.path)
+        .expect("a second, unrelated row");
+    let document = current_document(&service);
+    service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("the conversion holds the workspace from here");
+
+    assert_eq!(
+        service
+            .add_files(std::slice::from_ref(&fixture.path))
+            .expect_err("adding files is refused")
+            .kind,
+        "conversion_busy"
+    );
+    assert_eq!(
+        service
+            .begin_folder_import()
+            .expect_err("adding a folder is refused")
+            .kind,
+        "conversion_busy"
+    );
+    assert_eq!(
+        service
+            .clear_workspace()
+            .expect_err("clearing is refused")
+            .kind,
+        "conversion_busy"
+    );
+    assert_eq!(
+        service
+            .remove_datasets(std::slice::from_ref(&handle))
+            .expect_err("removing the converting row is refused")
+            .kind,
+        "conversion_busy"
+    );
+    assert_eq!(
+        service
+            .open_preview(&other.handle)
+            .expect_err("a new preview is refused rather than queued")
+            .kind,
+        "conversion_busy"
+    );
+
+    // An unrelated row is still the user's to prune, and reads still answer.
+    let removed = service
+        .remove_datasets(std::slice::from_ref(&other.handle))
+        .expect("removing an unrelated row is allowed");
+    assert_eq!(removed.removed_handles, vec![other.handle]);
+    assert_eq!(service.roster().datasets.len(), 1);
+}
+
+/// A native drop that arrives while a conversion runs is refused at the
+/// callback, with its own reason, and retains no path.
+#[test]
+fn a_native_drop_during_a_conversion_is_refused_with_its_own_reason() {
+    let fixture = TestFile::new("drop-during-conversion");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+    service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("the conversion holds the workspace");
+
+    let paths = vec![fixture.path.clone()];
+    let dispatch = service
+        .reserve_native_drop_signal(NativeDropSignal::Drop { paths: &paths })
+        .expect("a native Drop always creates a dispatch");
+
+    assert!(
+        matches!(dispatch, NativeDropDispatch::ConversionBusy),
+        "the drop is refused before its paths are retained; got {dispatch:?}"
+    );
+}
+
+/// A row removed while its reservation is outstanding never converts.
+#[test]
+fn a_conversion_whose_row_moved_on_is_refused_rather_than_run() {
+    let fixture = TestFile::new("superseded-conversion");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = destination_root(&fixture, "out");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    )));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("one reservation");
+    service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    // The row moves on underneath the open picker. Every roster mutation is
+    // refused while a conversion holds the workspace, so what is left is a read
+    // of this very row -- which claims its epoch before it discovers it has no
+    // preview to read from.
+    service
+        .load_spectrum(&handle, 0)
+        .expect_err("there is no preview to select a spectrum from");
+
+    let update = service.run_claimed_conversion(&destination);
+
+    assert!(
+        matches!(update.state, WorkspaceConversionStateDto::Failed { .. }),
+        "a superseded request is refused; got {:?}",
+        update.state
+    );
+    assert_eq!(launches.load(Ordering::SeqCst), 0);
+    assert_eq!(entry_names(&destination), Vec::<String>::new());
+}
+
+/// The terminal report survives the document that started the conversion, and
+/// a later conversion replaces it rather than accumulating beside it.
+#[test]
+fn the_terminal_report_outlives_its_document_and_is_replaced_not_accumulated() {
+    let fixture = TestFile::new("reload-recovery");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("one reservation");
+    service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let first = service.run_claimed_conversion(&destination);
+
+    // The document is replaced. The slot is Rust's, so the answer is still here.
+    service.begin_webview_document();
+    let recovered = service.conversion_state();
+    assert_eq!(recovered.state, first.state, "a reload recovers the report");
+    assert_eq!(recovered.sequence, first.sequence);
+
+    // A second conversion replaces it. There is no history to grow.
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Skip, document)
+        .expect("the slot is free again");
+    let after_begin = service.conversion_state();
+    assert!(
+        matches!(
+            after_begin.state,
+            WorkspaceConversionStateDto::AwaitingDestination { .. }
+        ),
+        "starting a conversion clears the previous report"
+    );
+    assert!(
+        after_begin.sequence > recovered.sequence,
+        "the key only advances"
+    );
+    service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let second = service.run_claimed_conversion(&destination);
+    let WorkspaceConversionStateDto::Completed { report, .. } = second.state else {
+        panic!("the second conversion reaches an outcome");
+    };
+    assert_eq!(
+        report.outcome, "skipped_existing_destination",
+        "the name is taken by the first output and Skip leaves it alone"
+    );
+    assert_eq!(report.output_file_name, None);
+}
+
+/// The wrong tool's help cannot convert, whatever else is right.
+///
+/// The deterministic half of ADR 0011's open binding gate: a provider that
+/// bound `msaccess` help instead of `msconvert` gets capability evidence for a
+/// tool whose option grammar cannot express a conversion, and the run refuses.
+#[test]
+fn capability_evidence_from_the_wrong_tool_cannot_convert() {
+    let fixture = TestFile::new("wrong-tool-help");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = destination_root(&fixture, "out");
+    let provider = ConvertingProvider::new(
+        conversion_capabilities_for(
+            BackendTool::MsAccess,
+            EVIDENCED_RELEASE,
+            Some(EVIDENCED_REVISION),
+            EVIDENCED_EXECUTABLE_SHA256,
+        ),
+        FakeConversionRunner::new(BackendAct::Convert),
+    );
+    let service = PreviewService::new(Box::new(provider));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("one reservation");
+    service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+
+    let update = service.run_claimed_conversion(&destination);
+
+    let WorkspaceConversionStateDto::Completed { report, .. } = update.state else {
+        panic!("the run reaches an outcome; got {:?}", update.state);
+    };
+    assert_ne!(report.outcome, "finalized");
+    assert_eq!(entry_names(&destination), Vec::<String>::new());
+}
+
+/// The visible workflow, end to end, against a local installation and a real
+/// vendor acquisition.
+///
+/// Ignored by default. Everything else here runs against a substituted backend
+/// so the suite is deterministic and needs no installation; this one exists
+/// because a deterministic suite cannot tell you that a vendor library on this
+/// machine reads this acquisition through the path a user actually takes.
+///
+/// It enters through `add_files`, which is what `Add files…` calls, and it
+/// converts through the reservation the destination picker claims — so what it
+/// exercises is the product path and not the private coordinator beneath it.
+///
+/// ```text
+/// set MSCANVAS_THERMO_FIXTURE=<path to the acquisition>
+/// set MSCANVAS_CONVERSION_DESTINATION=<path to an empty folder>
+/// cargo test -p mscanvas-desktop --lib -- --ignored --nocapture visible_thermo
+/// ```
+#[test]
+#[ignore = "needs a local ProteoWizard installation and a real vendor acquisition"]
+fn the_visible_workflow_converts_a_real_thermo_acquisition_end_to_end() {
+    let Ok(fixture) = std::env::var("MSCANVAS_THERMO_FIXTURE") else {
+        panic!("set MSCANVAS_THERMO_FIXTURE to the acquisition to convert");
+    };
+    let Ok(destination) = std::env::var("MSCANVAS_CONVERSION_DESTINATION") else {
+        panic!("set MSCANVAS_CONVERSION_DESTINATION to an empty folder");
+    };
+    let acquisition = PathBuf::from(fixture);
+    let destination = PathBuf::from(destination);
+
+    // The production provider. Nothing is substituted: this resolves a real
+    // installation, reads its real msconvert help, and launches it.
+    let service = PreviewService::new(Box::new(super::backend::ProteoWizardProvider::new()));
+
+    // Through Add files…, which is the only surface that admits this family.
+    let batch = service
+        .add_files(std::slice::from_ref(&acquisition))
+        .expect("no conversion is running");
+    let Some(WorkspaceAddOutcomeDto::Added { dataset }) = batch.outcomes.first() else {
+        panic!(
+            "the picker admits the acquisition; got {:?}",
+            batch.outcomes
+        );
+    };
+    println!("dataset handle: {}", dataset.handle);
+    println!("admitted bytes: {}", dataset.byte_length);
+    println!("source kind: {:?}", dataset.source_kind);
+    assert_eq!(dataset.source_kind, DatasetSourceKindDto::ThermoRaw);
+
+    let summary = service
+        .conversion_plan_summary(&dataset.handle)
+        .expect("a vendor row has a plan");
+    println!("plan: {summary:?}");
+
+    let document = service.workspace_drop_document_epoch();
+    let reservation = service
+        .begin_conversion(&dataset.handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("one reservation");
+    service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let update = service.run_claimed_conversion(&destination);
+
+    println!("state: {update:?}");
+    let WorkspaceConversionStateDto::Completed { report, .. } = &update.state else {
+        panic!("the conversion reaches an outcome; got {:?}", update.state);
+    };
+    assert_eq!(report.outcome, "finalized");
+    assert_eq!(report.source_kind, DatasetSourceKindDto::ThermoRaw);
+    let validation = report
+        .validation
+        .as_ref()
+        .expect("a finalized run was judged");
+    assert_eq!(validation.mode, ValidationModeDto::OutputOnly);
+    assert!(!validation.fully_verified);
+
+    // And nothing in what the webview would receive names a location.
+    let rendered = serde_json::to_string(&update).expect("the update serializes");
+    for fragment in [
+        acquisition.to_string_lossy().into_owned(),
+        destination.to_string_lossy().into_owned(),
+    ] {
+        assert!(
+            !rendered.contains(&fragment),
+            "the update names {fragment:?}"
+        );
+    }
+    println!("wire: {rendered}");
+}
+
+/// And the production provider binds the tool each operation actually needs.
+///
+/// The other half, asserted against the source because a substituted provider
+/// is exactly what a deterministic test replaces. Swapping either binding is a
+/// one-word edit, and this is what makes it visible.
+#[test]
+fn the_production_provider_binds_msconvert_for_conversion_and_msaccess_for_preview() {
+    let source = include_str!("backend.rs");
+
+    assert!(
+        source.contains("self.bind_help_of(BoundTool::Msconvert)"),
+        "a conversion is planned against msconvert's own help"
+    );
+    assert!(
+        source.contains("self.bind_help_of(BoundTool::Msaccess)"),
+        "and preview questions are answered from msaccess'"
+    );
+    assert_eq!(
+        source.matches("bind_help_of(BoundTool::").count(),
+        2,
+        "exactly two bindings, each naming its own tool"
+    );
+
+    // And each name reaches the tool it says it does.
+    assert!(source.contains("BoundTool::Msaccess => &discovery.msaccess"));
+    assert!(source.contains("BoundTool::Msconvert => &discovery.msconvert"));
 }
