@@ -101,7 +101,9 @@ export function ConversionPanel({
         </div>
       )}
 
-      {conversion.busy || terminal ? <QueueState conversion={conversion} /> : null}
+      {conversion.busy || terminal ? (
+        <QueueState canConvert={canConvert} conversion={conversion} />
+      ) : null}
       {/* Not while a queue is under way. The plan is an ordered list of file to
           output and so is the running queue, and two of them one above the other
           — one live, one hypothetical, and the hypothetical one's button
@@ -252,8 +254,11 @@ function PlanState({
  */
 function QueueState({
   conversion,
+  canConvert,
 }: {
   readonly conversion: ConversionOperation;
+  /** Whether anything else is already occupying the one backend lane. */
+  readonly canConvert: boolean;
 }): ReactElement | null {
   const state = conversion.state;
   if (state.status === "idle") {
@@ -381,6 +386,12 @@ function QueueState({
               <button
                 aria-describedby="conversion-retry-scope"
                 className="secondary-button"
+                // The same gate the primary action answers to. A retry is a
+                // conversion, so an unavailable ProteoWizard, a recheck in
+                // flight or a preview still holding the lane refuse it for the
+                // same reasons -- and offering it anyway would buy a certain
+                // error or a long silent wait.
+                disabled={!canConvert}
                 onClick={conversion.retry}
                 type="button"
               >

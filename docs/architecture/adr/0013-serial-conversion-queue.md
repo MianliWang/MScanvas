@@ -121,11 +121,15 @@ already holds, and the name is re-admitted and refused unless it reaches the sam
 object. A platform that will not answer with an identity is read as a refusal,
 because there is no weaker comparison worth falling back to.
 
-That proof is repeated before **every item**, not once for the queue. Admission
-holds the directory only while it is judging it, so between one item and the next
-the name could come to mean a different directory — and that item's plan would
-take the substitute as its baseline and write into it. The crate's own root lock
-covers the run itself; this covers the gap in front of it.
+That proof is repeated before **every item**, not once for the queue, and the
+directory admission opened is *held* for the length of that item rather than
+released the moment it answers. Admission's share mode welcomes other readers and
+writers and refuses only rename and delete, so holding it stops the one thing that
+could make the path mean a different object without stopping anything the
+conversion itself needs. Checking and letting go would have left a window in which
+a rename put a substitute directory at the name, and the plan would have adopted
+*that* as its baseline — which the crate's own root lock would then have faithfully
+protected.
 
 ### One backend binding and one lane, for the whole queue
 
@@ -139,6 +143,13 @@ slot already refuses previews and workspace mutations; what the gate adds is the
 callers the slot does not refuse — a backend recheck is not a workspace mutation,
 and its process would otherwise slip between two items of a batch the user is
 watching.
+
+Removing rows asks whether the queue holds them twice: once cheaply, and once
+more under the mutation gate a queue is admitted through. Only the second is
+ordered against `begin_conversion_queue`. Without it a removal could see an idle
+slot, a queue could be admitted, and the removal could then delete a row that
+queue was about to convert — which would surface as that item failing
+`superseded`, blaming the user's own list for a race.
 
 One installation, and a retry is not an exception. The queue records the
 installation its first pass resolved to and every later pass must find the same
@@ -243,6 +254,11 @@ queue whose items were all skipped validated nothing, and a skipped item's
 existing file was explicitly not inspected — claiming output-only validation over
 it would claim a check nobody ran.
 
+A retry answers to the same availability gate the primary action does. It is a
+conversion, so an unavailable ProteoWizard, a recheck in flight or a preview still
+holding the lane disable it for the same reasons — offering it there would buy a
+certain error or a long silent wait.
+
 A retry is one command that does not answer until the whole rerun is over, and it
 has no reservation half to announce that it began. The interface therefore treats
 its own dispatched-and-unanswered retry as busy: it stops offering Retry, Add and
@@ -302,7 +318,7 @@ and for sixteen.
 
 ### Deterministic coverage
 
-Rust: 381 tests, none needing an installation. Frontend: 493, none needing a
+Rust: 381 tests, none needing an installation. Frontend: 494, none needing a
 WebView. Between them they cover queue planning and every one of its refusals,
 the visible order surviving a sort, serial execution observed while parked at the
 first item, one binding and one lane, failure isolation with a later item still

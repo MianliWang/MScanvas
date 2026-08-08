@@ -22,13 +22,28 @@ use super::dto::PreviewErrorDto;
 /// deliberately nothing more: it locates nothing and is never serialized.
 pub(super) type DestinationIdentity = (u64, [u8; 16]);
 
+/// The open directory admission judged, kept alive by whoever admitted it.
+///
+/// Holding it is what makes the admission still true afterwards: the share mode
+/// welcomes other readers and writers and refuses only rename and delete, so a
+/// caller that keeps it stops the one thing that could make the path mean a
+/// different object without stopping anything the conversion itself needs.
+#[cfg(windows)]
+pub(super) type DestinationHold = std::fs::File;
+
+/// POSIX has no equivalent: a directory can always be renamed out from under an
+/// open descriptor, so there is no hold to keep. The identity comparison is the
+/// guarantee there, exactly as it is for a source file.
+#[cfg(not(windows))]
+pub(super) type DestinationHold = ();
+
 /// Admits one chosen folder as a destination root, or says why not.
 ///
 /// Every refusal is decided before the conversion boundary is entered, so a
 /// rejected destination costs no plan, no staging directory and no process.
 pub(super) fn admit_destination_root(
     chosen: &Path,
-) -> Result<(PathBuf, Option<DestinationIdentity>), PreviewErrorDto> {
+) -> Result<(PathBuf, Option<DestinationIdentity>, DestinationHold), PreviewErrorDto> {
     // The chosen object itself, before its name is resolved. `canonicalize`
     // follows links, so inspecting the result would inspect a link's *target*
     // and accept the link -- which is exactly what this refuses. A junction to
@@ -37,7 +52,7 @@ pub(super) fn admit_destination_root(
     // Held first, and for the whole of admission. Everything below judges an
     // object nothing can rename or delete in the meantime, so the name still
     // means what it meant when it was inspected.
-    let _held = hold_chosen_directory(chosen)?;
+    let held = hold_chosen_directory(chosen)?;
     let chosen_metadata = std::fs::symlink_metadata(chosen).map_err(|_| destination_unusable())?;
     if is_reparse_point(&chosen_metadata) {
         return Err(destination_is_a_link());
@@ -62,7 +77,11 @@ pub(super) fn admit_destination_root(
     // describes the object that passed every check above rather than whatever
     // the name means by the time somebody asks again. A queue keeps it, and a
     // retry compares against it: a folder is not a name.
-    Ok((canonical, directory_identity(&_held)))
+    // The hold goes back to the caller rather than being dropped here. An
+    // admission that ended the moment it answered would be a statement about a
+    // directory that no longer has to be the one written into.
+    let identity = directory_identity(&held);
+    Ok((canonical, identity, held))
 }
 
 /// The volume serial and 128-bit file id behind one open directory handle.
@@ -280,7 +299,7 @@ mod tests {
     #[test]
     fn a_local_folder_is_admitted_and_reported_canonically() {
         let root = std::env::temp_dir();
-        let (admitted, identity) =
+        let (admitted, identity, _held) =
             admit_destination_root(&root).expect("a local temporary folder is usable");
 
         assert!(admitted.is_absolute());

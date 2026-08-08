@@ -1164,7 +1164,7 @@ impl PreviewService {
             return self.conversion_state();
         }
         let admitted = match admit_destination_root(destination) {
-            Ok((root, identity)) => AdmittedDestination::new(root, identity),
+            Ok((root, identity, _held)) => AdmittedDestination::new(root, identity),
             Err(error) => return self.refuse_queue(operation, error),
         };
         let mut slot = self.conversion_slot();
@@ -1198,7 +1198,7 @@ impl PreviewService {
         let stored = self
             .terminal_destination()
             .ok_or_else(invalid_conversion_reservation)?;
-        let (root, identity) =
+        let (root, identity, _held) =
             admit_destination_root(stored.root()).map_err(|_| queue_destination_changed())?;
         if !stored.is_still(&AdmittedDestination::new(root, identity)) {
             return Err(queue_destination_changed());
@@ -1306,13 +1306,24 @@ impl PreviewService {
             // directory -- and the plan would take that one as its baseline and
             // write into it. The crate's own root lock covers the run itself;
             // this covers the gap in front of it.
-            let still = admit_destination_root(admitted.root()).is_ok_and(|(root, identity)| {
-                admitted.is_still(&AdmittedDestination::new(root, identity))
-            });
-            if !still {
-                drop(running);
-                return self.refuse_queue(operation, queue_destination_changed());
-            }
+            // Held, not merely checked. Compressing this to a boolean would
+            // drop admission's directory handle at the end of the statement,
+            // and a rename between there and the plan would leave the plan
+            // taking a substitute directory as its own baseline -- which the
+            // crate's root lock would then faithfully protect. Kept until the
+            // item is done, so the object cannot be renamed or deleted out from
+            // under the plan that is about to adopt it.
+            let held = match admit_destination_root(admitted.root()) {
+                Ok((root, identity, held))
+                    if admitted.is_still(&AdmittedDestination::new(root.clone(), identity)) =>
+                {
+                    held
+                }
+                _ => {
+                    drop(running);
+                    return self.refuse_queue(operation, queue_destination_changed());
+                }
+            };
             let root = admitted.root().to_path_buf();
             let started = self.conversion_slot().start_item(operation, index);
             if !started {
@@ -1323,6 +1334,7 @@ impl PreviewService {
 
             let outcome =
                 self.convert_queue_item(&item, &root, queue.conflict(), &backend, generation);
+            drop(held);
             let settled = self
                 .conversion_slot()
                 .settle_item(operation, index, outcome);
@@ -2024,6 +2036,20 @@ impl PreviewService {
         // committed across that would repopulate a list they had just pruned.
         let delivery = self.drop_updates.begin_delivery();
         let (batch, _generation, pending_busy) = self.begin_superseding_mutation();
+        // Asked again, now that the gate a queue is admitted under is held. The
+        // check above is the cheap one and answers before anything is
+        // superseded; this is the one that is ordered against
+        // `begin_conversion_queue`, which takes this same gate. Without it a
+        // removal could see an idle slot, a queue could be admitted, and the
+        // removal could then delete a row that queue is about to convert -- and
+        // the item would fail as `superseded`, blaming the user's own list.
+        if handles
+            .iter()
+            .filter_map(|handle| DatasetId::parse(handle))
+            .any(|id| self.conversion_slot().busy_holds(id))
+        {
+            return Err(conversion_busy());
+        }
         let mut removed = Vec::new();
         let mut unknown = Vec::new();
         // The same handle twice is one row to remove, not one removal and one

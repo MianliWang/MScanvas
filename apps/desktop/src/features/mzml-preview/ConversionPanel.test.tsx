@@ -6,6 +6,7 @@ import { WorkspaceDropTransportProvider } from "./dropTransport";
 import { App } from "../../app/App";
 import {
   availableBackend,
+  unavailableBackend,
   createFakePreviewApi,
   createFakeWorkspaceDropTransport,
   queueItem,
@@ -482,6 +483,34 @@ describe("queueing selected Thermo RAW conversions", () => {
       expect(within(panel).getByText(/1 converted, 0 skipped, 0 failed of 1\./)).toBeVisible();
     });
     expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
+  });
+
+  it("does not offer a retry the backend cannot serve", async () => {
+    // A retry is a conversion. With no usable ProteoWizard the primary action
+    // is already disabled, and a Retry that stayed live would buy a certain
+    // failure and mark the conversion surface busy on the way to it.
+    const api = createFakePreviewApi({
+      initialDatasets: [first],
+      availability: unavailableBackend,
+      initialConversion: {
+        status: "terminal",
+        operationId: "1",
+        queue: queueOf([
+          queueItem("file-1", "run-1.raw", { state: "failed", attempts: 1, retryable: true }),
+        ]),
+      },
+    });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toBeDisabled();
+    });
+    // And it still says what it would do, so the reason it is unavailable is
+    // the backend rather than the control having quietly changed meaning.
+    expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toHaveAccessibleDescription(
+      /Reruns only the failures another attempt could change/,
+    );
   });
 
   it("recovers a queue this document did not start", async () => {
