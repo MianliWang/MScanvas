@@ -60,6 +60,14 @@ remains the authority for child creation, the environment, Job assignment,
 stream capture, the wait and process-tree teardown, and it overrides the method
 with the reviewed `execute_cancellable`.
 
+The executor asks for the request twice: once when it is called, and again
+immediately before it spawns. The checks between them include a hash of the
+whole backend executable, so a request arriving inside that window is one that
+unambiguously preceded process creation and it launches nothing. The interval
+that remains is the one stable `std::process` leaves between deciding to spawn
+and spawning, which is the same one the documented spawn-to-assignment race
+lives in and is not claimed to be closed.
+
 The default matters as much as the override. It keeps the one guarantee a
 substituted runner can keep without owning supervision — a request already made
 launches nothing — and then delegates to `run`. It does **not** report a mid-run
@@ -187,11 +195,11 @@ and the only one the harness will run against.
 - **Early cancellation.** Requested when the staged output file first appeared:
   the owned tree terminated with `STATUS_CANCELLED`, the Job reported zero
   surviving processes, the staging area was removed, the destination root stayed
-  empty and there was no residue. Request to return: 90 ms.
+  empty and there was no residue. Request to return: 88 ms.
 - **Mid-write cancellation.** Requested after the staged file was observed
-  growing, at 67,411 bytes of a 12,283,969-byte finished output. Same result:
+  growing, at 111,295 bytes of a 12,283,969-byte finished output. Same result:
   tree gone, partial document removed, destination empty, no residue. Request to
-  return: 97 ms.
+  return: 57 ms.
 - **Partial-output shape.** This build writes its output **directly under the
   planned name and grows it in place**. No `.part`, `.partial` or `.tmp`
   suffix appeared in any observation, so a partial output is indistinguishable
@@ -204,7 +212,7 @@ and the only one the harness will run against.
   ADR 0009's exactly-one-entry rule already depended on for completed runs and
   extends it to interrupted ones.
 - **Thermo route.** The evidenced vendor reader was terminated too: requested as
-  soon as the staging area existed, the process ran 134 ms, exited
+  once the reader had created its staged output, the process ran 415 ms, exited
   `STATUS_CANCELLED`, left zero surviving processes and had written nothing at
   all. Cancellation of the vendor path is therefore established; a *mid-write*
   observation of it is not, because the one lawful fixture is 78,309 bytes.
@@ -244,7 +252,7 @@ None of these is answered here, and none may be assumed.
   correct. Offering the same retry affordance as a failed item would say
   something untrue about why it stopped.
 - **What the user is told while termination is in flight.** Confirmation took
-  70–145 ms in every measurement here, on one machine with one backend. That is
+  46–88 ms in every measurement here, on one machine with one backend. That is
   not a budget and no threshold derives from it.
 - **A queue-wide request.** This primitive is per-attempt. A queue-level request
   is a different object with a different lifetime, and building it as "a set of

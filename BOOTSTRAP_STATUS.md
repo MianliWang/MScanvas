@@ -3283,17 +3283,17 @@ own gate, which refuses any other installation). The lawful `78,309`-byte Thermo
 fixture converts in about half a second, so a bounded mzML workload was generated
 outside the repository — `3,000` spectra of `500` peaks, `36,014,923` bytes, no
 personal or proprietary content, deleted with the workspace — and it converts to
-a finalized `12,283,969`-byte output in `1,759 ms` of backend time through the
+a finalized `12,283,969`-byte output in `1,051 ms` of backend time through the
 unchanged boundary.
 
 A request made before an attempt launched no process and created no staging area.
 Early and mid-write requests terminated the owned tree with `STATUS_CANCELLED` in
-`90`–`97 ms`, leaving zero surviving owned processes. The mid-write run was
-terminated with `67,411` bytes of partial document on disk; the race run
-`1,007,442` bytes short of the finished size. Every cancelled run left the
+`57`–`88 ms`, leaving zero surviving owned processes. The mid-write run was
+terminated with `111,295` bytes of partial document on disk; the race run
+`9` bytes short of the finished size. Every cancelled run left the
 destination root empty, removed the partial document by identity-bound cleanup
-with no residue, and finalized nothing. The evidenced Thermo reader was terminated too, in
-`134 ms`, having written nothing at all.
+with no residue, and finalized nothing. The evidenced Thermo reader was terminated too, once it had created its staged
+output, after `415 ms`.
 
 The partial-output measurement changed what private staging means here. This
 build writes its output **directly under the planned name and grows it in
@@ -3316,12 +3316,12 @@ reported.
 
 Validation on the final head: `cargo fmt --all --check`,
 `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
-`cargo test --locked --workspace --all-targets` (317 ProteoWizard tests, up from
+`cargo test --locked --workspace --all-targets` (319 ProteoWizard tests, up from
 297), `python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`,
 `pnpm test`, `pnpm build`, `git diff --check`. Ordinary CI runs no backend and
 downloads nothing; the real evidence is an explicit developer-only example.
 
-Thirteen mutations were applied one at a time and each was caught by the test
+Fourteen mutations were applied one at a time and each was caught by the test
 written for it: the system runner ignoring its token; the default runner
 ignoring a request already made; the parent killed while the owned job is left
 alone; a cancellation reported before the owned tree is confirmed empty; a
@@ -3331,11 +3331,12 @@ cancellation; a termination failure reported as a cancellation; both pre-launch
 refusals dropped; absent owned-job accounting accepted as a confirmed
 cancellation; a refusal inside the runner claiming a backend ran; and a refusal
 reporting an empty owned job instead of no job; and a refusal described as a
-terminated process. One of the first nine survived
+terminated process; and the executor no longer asking before it spawns. One of
+the first nine survived
 on first application — dropping the refusal between the source rehash and
 staging creation broke no destination but made the run claim a backend had run
 when none had — and the test naming that property was written rather than the
-mutation argued away. The last four exist because review found the holes they
+mutation argued away. The last five exist because review found the holes they
 close; each now has a test that dies without the fix. Two intended mutations are
 structurally unreachable and recorded as such: a cancellation object controlling a
 second run does not compile, and a raw process identifier cannot be exposed
