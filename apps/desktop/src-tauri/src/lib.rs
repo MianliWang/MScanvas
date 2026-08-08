@@ -11,7 +11,7 @@ use tauri::webview::PageLoadEvent;
 use tauri::{Manager, State};
 
 use preview::dto::{
-    BackendAvailabilityDto, ConversionConflictPolicyDto, ConversionPlanSummaryDto,
+    BackendAvailabilityDto, ConversionConflictPolicyDto, ConversionQueuePlanDto,
     FolderImportReservationDto, FolderIngestionResultDto, PreviewDto, PreviewErrorDto,
     SelectedSpectrumOutcomeDto, WorkspaceAddResultDto, WorkspaceConversionReservationDto,
     WorkspaceConversionUpdateDto, WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
@@ -272,12 +272,26 @@ async fn subscribe_workspace_drop_updates(
 /// actually do, rather than composed in the webview from constants that are
 /// free to drift from it.
 #[tauri::command]
-async fn describe_workspace_conversion(
-    handle: String,
+async fn describe_workspace_conversion_queue(
+    handles: Vec<String>,
     service: State<'_, SharedService>,
-) -> Result<ConversionPlanSummaryDto, PreviewErrorDto> {
+) -> Result<ConversionQueuePlanDto, PreviewErrorDto> {
     let service = Arc::clone(&service);
-    off_the_async_runtime(move || service.conversion_plan_summary(&handle)).await?
+    off_the_async_runtime(move || service.conversion_queue_plan(&handles)).await?
+}
+
+/// Runs every retryable failure of the terminal queue again.
+///
+/// Takes no destination and no list: the queue already holds both, and asking
+/// for either again would make a retry a new decision rather than the same one
+/// repeated. Refused unless the queue is terminal and something in it is
+/// actually retryable.
+#[tauri::command]
+async fn retry_workspace_conversion_queue(
+    service: State<'_, SharedService>,
+) -> Result<WorkspaceConversionUpdateDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.retry_conversion_queue()).await?
 }
 
 /// Reads the session's one conversion slot.
@@ -304,8 +318,8 @@ async fn get_workspace_conversion_state(
 /// reservation issued to a document that has since been replaced is refused,
 /// because the document that would receive the answer is gone.
 #[tauri::command]
-async fn begin_workspace_conversion(
-    handle: String,
+async fn begin_workspace_conversion_queue(
+    handles: Vec<String>,
     conflict_policy: ConversionConflictPolicyDto,
     ipc_request: tauri::ipc::Request<'_>,
     webview: tauri::Webview<tauri::Wry>,
@@ -314,7 +328,7 @@ async fn begin_workspace_conversion(
     let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
     let service = Arc::clone(&service);
     off_the_async_runtime(move || {
-        service.begin_conversion(&handle, conflict_policy, document_epoch)
+        service.begin_conversion_queue(&handles, conflict_policy, document_epoch)
     })
     .await?
 }
@@ -609,10 +623,11 @@ pub fn run() {
             clear_workspace,
             open_mzml_preview,
             load_selected_spectrum,
-            describe_workspace_conversion,
+            describe_workspace_conversion_queue,
             get_workspace_conversion_state,
-            begin_workspace_conversion,
-            choose_workspace_conversion_destination
+            begin_workspace_conversion_queue,
+            choose_workspace_conversion_destination,
+            retry_workspace_conversion_queue
         ])
         .run(tauri::generate_context!())
         .expect("failed to run the MSCanvas desktop application");

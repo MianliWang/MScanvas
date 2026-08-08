@@ -11,17 +11,25 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex};
 
 use mscanvas_proteowizard::{
-    ConflictPolicy, MetadataEntry, MetadataResult, MetadataSectionKind, MsLevelBucket,
+    ConversionSourceKind, MetadataEntry, MetadataResult, MetadataSectionKind, MsLevelBucket,
     PreviewNoResult, PreviewOutcome, PreviewValue, Redactor, RunSummaryResult,
     SelectedSpectrumResult, SpectrumIdentity, SpectrumTableResult,
 };
 
+// Both are used only by the one-item conversion the private orchestration
+// tests drive; the queue reaches the same body through its own path.
+#[cfg(test)]
+use super::conversion::conversion_source_kind;
+#[cfg(test)]
+use mscanvas_proteowizard::ConflictPolicy;
+
 use super::backend::{
-    PreviewProvider, open_operations, reporting_redactor, selected_spectrum_operation,
+    ConversionBackend, PreviewProvider, open_operations, reporting_redactor,
+    selected_spectrum_operation,
 };
 use super::conversion::{
-    WorkspaceConversionReport, conflict_policy, conversion_source_kind, fixed_compression,
-    is_convertible, plan_conversion, refuse_unevidenced_build, run_planned_conversion,
+    WorkspaceConversionReport, conflict_policy, fixed_compression, is_convertible, plan_conversion,
+    planned_output_name, refusal_is_retryable, refuse_unevidenced_build, run_planned_conversion,
 };
 use super::destination::admit_destination_root;
 use super::discovery::{
@@ -36,24 +44,28 @@ use super::drop_ingestion::{
 use super::dto::MAX_WORKSPACE_DATASETS;
 use super::dto::{
     BackendAvailabilityDto, ConversionConflictPolicyDto, ConversionOutputFormatDto,
-    ConversionPlanSummaryDto, DropIngestionResultDto, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES,
+    ConversionQueuePlanDto, ConversionQueuePlanItemDto, DropIngestionResultDto,
+    MAX_CONVERSION_QUEUE_ITEMS, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES,
     MAX_METADATA_LINE_CHARS, MAX_MS_LEVELS, MAX_PRECURSORS, MAX_SPECTRUM_POINTS,
     MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto, MsLevelCountDto, PrecursorDto,
     PreviewDto, PreviewErrorDto, RetentionTimeDto, RetentionTimeRangeDto, RunSummaryDto,
     SelectedSpectrumDto, SelectedSpectrumOutcomeDto, SpectrumRowDto, SpectrumTableDto,
     ValidationModeDto, WorkspaceAddOutcomeDto, WorkspaceAddResultDto,
-    WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto, WorkspaceDropStateDto,
-    WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto, WorkspaceRemoveResultDto,
-    WorkspaceRosterDto, bounded_text, conversion_busy, dataset_not_convertible,
-    dataset_not_previewable, invalid_conversion_reservation, redact_absolute_paths, require_finite,
-    require_finite_option, workspace_full,
+    WorkspaceConversionReservationDto, WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
+    WorkspaceDropStateDto, WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
+    WorkspaceRemoveResultDto, WorkspaceRosterDto, bounded_text, conversion_busy,
+    dataset_not_convertible, dataset_not_previewable, invalid_conversion_reservation,
+    queue_destination_changed, queue_is_empty, queue_output_name_collision, queue_too_large,
+    redact_absolute_paths, require_finite, require_finite_option, workspace_full,
 };
 use super::dto::{
     FolderDiscoverySummaryDto, FolderImportReservationDto, FolderIngestionResultDto,
     FolderScanLimitDto, SelectedFileDto, import_superseded, invalid_folder_import_reservation,
 };
 use super::installation::InstallationIdentity;
-use super::operation::{BoundConversion, ConversionSlot};
+use super::operation::{
+    AdmittedDestination, ConversionQueue, ConversionSlot, ItemOutcome, QueueItem, item_state_of,
+};
 use super::selection::{
     AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity, RevocationReason,
     accept_mzml_file, accept_workspace_file, candidate_display_name, file_identity,
@@ -184,6 +196,7 @@ impl Workspace {
     /// anything the user does next.
     ///
     /// `None` when the dataset is not registered.
+    #[cfg(test)]
     fn begin_reading_request(&mut self, id: DatasetId) -> Option<(u64, AcceptedFile)> {
         let file = self.registry.get(id)?.file().clone();
         let state = self.runtime.entry(id).or_default();
@@ -941,95 +954,141 @@ impl PreviewService {
         self.conversion_busy.load(Ordering::Acquire)
     }
 
-    /// Describes the conversion one focused row would get.
+    /// Describes the queue a set of selected rows would get.
     ///
-    /// Everything in it is derived from what the run will actually do. A
-    /// summary the interface composed from constants would be a second
-    /// description of the plan, free to drift from the first.
-    pub fn conversion_plan_summary(
+    /// Read-only and free: no picker, no reservation, no process. Everything in
+    /// it is derived from what the runs will actually do -- above all each
+    /// item's planned output name, which is what makes a collision something
+    /// the user is told about before choosing a folder rather than after.
+    ///
+    /// The order is the caller's, and the caller's order is the order the user
+    /// is looking at. Rust does not re-sort it: a queue that ran in registry
+    /// insertion order would run in an order nothing on screen shows.
+    pub fn conversion_queue_plan(
         &self,
-        handle: &str,
-    ) -> Result<ConversionPlanSummaryDto, PreviewErrorDto> {
-        let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
-        let workspace = self.workspace();
-        let dataset = workspace.registry.get(id).ok_or_else(unknown_dataset)?;
-        if !is_convertible(dataset.file().source_kind()) {
-            return Err(dataset_not_convertible());
-        }
-        let dto = dataset_dto(&workspace, id).ok_or_else(unknown_dataset)?;
-        drop(workspace);
-        Ok(ConversionPlanSummaryDto {
-            dataset: dto,
+        handles: &[String],
+    ) -> Result<ConversionQueuePlanDto, PreviewErrorDto> {
+        let items = self.plan_queue_items(handles)?;
+        Ok(ConversionQueuePlanDto {
+            items: items
+                .iter()
+                .map(|item| ConversionQueuePlanItemDto {
+                    dataset_handle: item.handle().to_owned(),
+                    file_name: item.file_name().to_owned(),
+                    output_file_name: item.output_file_name().to_owned(),
+                })
+                .collect(),
             output_format: ConversionOutputFormatDto::MzMl,
             compression: fixed_compression().to_owned(),
             // Stated before the run rather than after it. A vendor acquisition
-            // has no mzML reading, so nothing about the output can be compared
-            // to a source model -- and a user deciding whether to convert is
-            // entitled to know that before they choose a folder.
+            // has no mzML reading, so nothing about any output can be compared
+            // to a source model -- and a user deciding whether to convert a
+            // batch is entitled to know that before they choose a folder.
             validation_mode: ValidationModeDto::OutputOnly,
+            capacity: MAX_CONVERSION_QUEUE_ITEMS,
         })
     }
 
-    /// Binds one conversion request and reserves the right to choose a folder.
+    /// Turns an ordered list of handles into queue items, or says why it is not
+    /// a queue.
+    ///
+    /// Every refusal here happens before a picker opens and before anything is
+    /// created. The bound, the duplicate rule and the empty rule live in the
+    /// queue's own constructor; what this adds is that every handle names a
+    /// live, convertible row, and that no two of them would write one name.
+    fn plan_queue_items(&self, handles: &[String]) -> Result<Vec<QueueItem>, PreviewErrorDto> {
+        // Refused before the workspace is even read. A list longer than a
+        // session may run is not a queue whose rows are worth resolving.
+        if handles.is_empty() {
+            return Err(queue_is_empty());
+        }
+        if handles.len() > MAX_CONVERSION_QUEUE_ITEMS {
+            return Err(queue_too_large());
+        }
+        let workspace = self.workspace();
+        let mut items = Vec::with_capacity(handles.len());
+        for handle in handles {
+            let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
+            let dataset = workspace.registry.get(id).ok_or_else(unknown_dataset)?;
+            let kind = dataset.file().source_kind();
+            // mzML rows are refused rather than silently dropped. The interface
+            // states how many selected rows are excluded, and a boundary that
+            // quietly shortened the list would make that count a fiction.
+            if !is_convertible(kind) {
+                return Err(dataset_not_convertible());
+            }
+            let epoch = workspace
+                .current_request_epoch(id)
+                .ok_or_else(unknown_dataset)?;
+            let dto = dataset_dto(&workspace, id).ok_or_else(unknown_dataset)?;
+            // Derived from the display name the roster already carries, through
+            // the same function the plan itself uses. Nothing here touches a
+            // path: what an output is called is decided by what its source is
+            // called.
+            let output = planned_output_name(&dto.file_name).ok_or_else(dataset_not_convertible)?;
+            items.push(QueueItem::new(id, epoch, kind, dto, output));
+        }
+        drop(workspace);
+
+        // Two items writing one name into one folder is not a conflict with
+        // something that was already there, so the conflict policy cannot
+        // settle it -- and letting queue order pick the winner would make the
+        // result depend on a sort the user can change. Refused outright.
+        let mut collisions: Vec<String> = Vec::new();
+        for (index, item) in items.iter().enumerate() {
+            if items[..index]
+                .iter()
+                .any(|earlier| earlier.output_file_name() == item.output_file_name())
+                && !collisions
+                    .iter()
+                    .any(|name| name == item.output_file_name())
+            {
+                collisions.push(item.output_file_name().to_owned());
+            }
+        }
+        if !collisions.is_empty() {
+            return Err(queue_output_name_collision(&collisions));
+        }
+        Ok(items)
+    }
+
+    /// Binds one queue and reserves the right to choose a folder for it.
     ///
     /// The synchronous half of the two-command boundary, and the same shape a
     /// folder import uses for the same reason: a webview can reload between any
     /// two IPC fetches, so the reservation is retained in Rust and a document
     /// that never receives the identifier can never open a picker.
     ///
-    /// What is bound here cannot change afterwards -- the document, the row, its
-    /// request epoch, its family and the conflict policy -- so the picker that
-    /// follows is a picker *for this request*, not one whose result is applied
-    /// to whatever the workspace holds when it closes.
-    pub fn begin_conversion(
+    /// What is bound here cannot change afterwards -- the document, the ordered
+    /// rows, their request epochs, their family and the conflict policy -- so
+    /// the picker that follows is a picker *for this queue*, and re-sorting or
+    /// re-selecting while it is open changes what is on screen and not what
+    /// will run.
+    pub fn begin_conversion_queue(
         &self,
-        handle: &str,
+        handles: &[String],
         conflict: ConversionConflictPolicyDto,
         document_epoch: u64,
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
-        let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
-        let workspace = self.workspace();
-        let dataset = workspace.registry.get(id).ok_or_else(unknown_dataset)?;
-        let kind = dataset.file().source_kind();
-        if !is_convertible(kind) {
-            return Err(dataset_not_convertible());
-        }
-        let epoch = workspace
-            .current_request_epoch(id)
-            .ok_or_else(unknown_dataset)?;
-        let dto = dataset_dto(&workspace, id).ok_or_else(unknown_dataset)?;
-        drop(workspace);
-        // The same gate every workspace mutation takes, so a conversion and a
-        // batch cannot both be admitted by each reading the other's state
-        // before either committed. Held only for the transition below: this is
-        // not backend work and nothing here waits on a process.
-        // `_after_drop` rather than the plain gate: a drop is accepted by a
-        // lock-free callback that reads the busy flag and installs its claim
-        // without waiting on any mutex, so a reservation taken beside one would
-        // let that drop commit rows into the workspace a conversion is reading.
-        // Waiting for it is what the existing mechanism is for.
+        let items = self.plan_queue_items(handles)?;
+        // The same gate every workspace mutation takes, so a queue and a batch
+        // cannot both be admitted by each reading the other's state before
+        // either committed. `_after_drop` because a drop is accepted by a
+        // lock-free callback that installs its claim without waiting on any
+        // mutex, so a reservation taken beside one would let that drop commit
+        // rows into the workspace a queue is about to read.
         let gate = self.enter_workspace_mutation_after_drop();
         let mut slot = self.conversion_slot();
         // Under the slot lock, and immediately before the slot is taken. The
         // authority proof is awaited, so a reload can start any time after it
-        // succeeds -- and page-load releases what it finds *now*. Checking
-        // earlier would leave the window this closes: an epoch that was current
-        // when it was read, a release pass that saw an idle slot, and then this
-        // request taking the slot for a document that has already gone.
-        //
-        // Page-load's release takes this same lock, so one of the two happens
-        // first and the other sees the result.
+        // succeeds -- and page-load releases what it finds *now*. Page-load's
+        // release takes this same lock, so one of the two happens first and the
+        // other sees the result.
         if document_epoch != self.workspace_drop_document_epoch() {
             return Err(invalid_conversion_reservation());
         }
-        let reservation = slot.begin(BoundConversion::new(
-            document_epoch,
-            id,
-            epoch,
-            kind,
-            conflict,
-            dto,
-        ));
+        let queue = ConversionQueue::new(document_epoch, conflict, items)?;
+        let reservation = slot.begin(queue);
         self.publish_conversion_busy(&slot);
         drop(slot);
         drop(gate);
@@ -1038,25 +1097,16 @@ impl PreviewService {
 
     /// Consumes one exact reservation before its picker is dispatched.
     ///
-    /// An unknown, replayed or replaced identifier never disturbs the live slot,
-    /// and one issued to a document that has since been replaced is refused: the
-    /// document that would receive the answer is gone.
-    /// Answers with the operation the claim belongs to.
-    ///
-    /// The caller carries it through the picker and back. Without it, a dialog
-    /// abandoned by a reloaded document would return a folder that the command
-    /// applied to whatever the slot currently holds -- converting the
-    /// replacement document's dataset into a directory nobody chose for it.
+    /// Answers with the operation the claim belongs to. The caller carries it
+    /// through the picker and back: without it, a dialog abandoned by a
+    /// reloaded document would return a folder that the command applied to
+    /// whatever the slot currently holds.
     pub fn claim_conversion(
         &self,
         reservation_id: &str,
         document_epoch: u64,
     ) -> Result<u64, PreviewErrorDto> {
-        let mut slot = self.conversion_slot();
-        slot.claim(reservation_id, document_epoch)?;
-        slot.claimed()
-            .map(|(operation, _)| operation)
-            .ok_or_else(invalid_conversion_reservation)
+        self.conversion_slot().claim(reservation_id, document_epoch)
     }
 
     /// Returns the slot to idle after a cancelled picker.
@@ -1070,91 +1120,229 @@ impl PreviewService {
         slot.read()
     }
 
-    /// Runs one claimed conversion into one chosen folder.
+    /// Runs one claimed queue into one chosen folder.
     ///
-    /// The order here is the whole of what this command adds, and every step is
-    /// placed against something that can change underneath it:
-    ///
-    /// 1. admit the destination **before** the slot says "running", so a folder
-    ///    this boundary will not write to costs no state transition and no
-    ///    staging area;
-    /// 2. recheck that the bound row is still the row, and still at the epoch it
-    ///    was bound at, so a conversion the user moved past never starts;
-    /// 3. mark running, then release the slot -- it is not held across the
-    ///    conversion, because the whole point of the slot is to stay readable
-    ///    while one runs;
-    /// 4. convert through the private coordinator, which owns identity, the
-    ///    build gate, the backend gate, staging and validation;
-    /// 5. store the terminal answer, whatever it is.
-    ///
-    /// A failure before step 4 is a refusal: the operation never reached a
-    /// conversion. A failure inside it is a report, because a conversion ran.
+    /// The destination is admitted **before** the slot says running, so a folder
+    /// this boundary will not write to costs no state transition and no staging
+    /// area.
     pub fn run_claimed_conversion(
         &self,
         operation: u64,
         destination: &Path,
     ) -> WorkspaceConversionUpdateDto {
         // Read from the slot rather than carried by the caller. A command that
-        // held the bound request could run one for a reservation the slot has
-        // since replaced; asking the slot means the request that runs is the
-        // request the slot says is claimed, or none at all.
-        let Some((claimed, bound)) = self.conversion_slot().claimed() else {
+        // held the bound queue could run one for a reservation the slot has
+        // since replaced; asking the slot means the queue that runs is the one
+        // the slot says is claimed, or none at all.
+        let Some((claimed, _)) = self.conversion_slot().claimed() else {
             return self.conversion_state();
         };
         // The operation this picker was opened for, not whichever one the slot
         // now holds. A dialog abandoned by a reloaded document still returns a
         // folder, and applying it to a replacement operation would convert the
-        // wrong dataset into a directory nobody chose for it.
+        // wrong datasets into a directory nobody chose for them.
         if claimed != operation {
             return self.conversion_state();
         }
-        let handle = bound.dataset_handle().to_owned();
-        let root = match admit_destination_root(destination) {
-            Ok(root) => root,
-            Err(error) => return self.refuse_conversion(operation, handle, error),
+        let admitted = match admit_destination_root(destination) {
+            Ok((root, identity)) => AdmittedDestination::new(root, identity),
+            Err(error) => return self.refuse_queue(operation, error),
         };
-        let workspace = self.workspace();
-        let still_bound = workspace
-            .bound_request_is_current(bound.dataset(), bound.request_epoch())
-            && workspace
-                .registry
-                .get(bound.dataset())
-                .is_some_and(|dataset| dataset.file().source_kind() == bound.kind());
-        drop(workspace);
-        if !still_bound {
-            return self.refuse_conversion(operation, handle, superseded());
-        }
-        // The transition names this operation. The slot lock was released for
-        // the admission and revalidation above, and a reload in that window
-        // releases the slot -- so a caller that ran whatever it found could
-        // convert for an operation the session has moved past.
         let mut slot = self.conversion_slot();
-        let started = slot.start_running(operation);
+        let started = slot.start_running(operation, admitted);
         self.publish_conversion_busy(&slot);
         drop(slot);
         if !started {
             return self.conversion_state();
         }
-
-        let report =
-            self.convert_workspace_dataset(&handle, &root, conflict_policy(bound.conflict()));
-        let mut slot = self.conversion_slot();
-        match report {
-            Ok(report) => slot.complete(operation, report),
-            Err(error) => slot.refuse(operation, handle, error),
-        }
-        self.publish_conversion_busy(&slot);
-        slot.read()
+        self.drain_queue(operation)
     }
 
-    fn refuse_conversion(
-        &self,
-        operation: u64,
-        handle: String,
-        error: PreviewErrorDto,
-    ) -> WorkspaceConversionUpdateDto {
+    /// Runs every retryable failure of the terminal queue again.
+    ///
+    /// The same queue, not a new one made of what is left: successes, skips and
+    /// non-retryable failures keep their results and their places, and the
+    /// destination and policy are the ones the queue was created with. Nothing
+    /// asks the user for a folder again.
+    pub fn retry_conversion_queue(&self) -> Result<WorkspaceConversionUpdateDto, PreviewErrorDto> {
+        // The folder must still be the folder. A name is not an object, and a
+        // retry that trusted the name could write into whatever had since taken
+        // it. Checked before any state moves, so a changed destination costs
+        // nothing and leaves every existing result exactly as it is.
+        let stored = {
+            let slot = self.conversion_slot();
+            let update = slot.read();
+            let WorkspaceConversionStateDto::Terminal { .. } = update.state else {
+                return Err(invalid_conversion_reservation());
+            };
+            drop(slot);
+            self.terminal_destination()
+                .ok_or_else(invalid_conversion_reservation)?
+        };
+        let (root, identity) =
+            admit_destination_root(stored.root()).map_err(|_| queue_destination_changed())?;
+        if !stored.is_still(&AdmittedDestination::new(root, identity)) {
+            return Err(queue_destination_changed());
+        }
+
+        let gate = self.enter_workspace_mutation_after_drop();
         let mut slot = self.conversion_slot();
-        slot.refuse(operation, handle, error);
+        let Some(operation) = slot.begin_retry() else {
+            return Err(invalid_conversion_reservation());
+        };
+        self.publish_conversion_busy(&slot);
+        drop(slot);
+        drop(gate);
+        Ok(self.drain_queue(operation))
+    }
+
+    /// The destination a terminal queue was run against.
+    fn terminal_destination(&self) -> Option<AdmittedDestination> {
+        self.conversion_slot().terminal_destination()
+    }
+
+    /// Converts every pending item, in order, on one backend binding.
+    ///
+    /// The gate is taken once for the whole queue and released only when it
+    /// reaches terminal. That is what makes the batch one provider build, one
+    /// process lane and one deterministic order -- and what stops a preview
+    /// interleaving between two items of a batch the user is watching.
+    ///
+    /// No workspace lock, no mutation gate and no slot lock is held while a
+    /// process runs. Each is taken briefly to read a row or commit a
+    /// transition, and released before the next item starts.
+    fn drain_queue(&self, operation: u64) -> WorkspaceConversionUpdateDto {
+        let running = self.enter_backend();
+        // Bound once, for the whole queue. Binding per item would let a batch
+        // span two installations, and the evidence a conversion is gated on is
+        // a statement about one exact build.
+        let backend = match self.provider.conversion_backend() {
+            Ok(backend) => backend,
+            Err(error) => {
+                drop(running);
+                return self.refuse_queue(operation, error);
+            }
+        };
+        // Asked once, before any item creates a staging directory. Every item
+        // of this queue is the same family, so one answer settles all of them.
+        if let Err(error) =
+            refuse_unevidenced_build(&backend.capabilities, ConversionSourceKind::ThermoRawFile)
+        {
+            drop(running);
+            return self.refuse_queue(operation, error);
+        }
+
+        loop {
+            let Some(queue) = self.conversion_slot().running(operation) else {
+                // The slot moved on -- a reload released it, or a newer queue
+                // replaced it. Nothing further is this worker's to run.
+                drop(running);
+                return self.conversion_state();
+            };
+            let Some((index, item)) = queue.next_pending() else {
+                break;
+            };
+            let Some(root) = queue.destination().map(|held| held.root().to_path_buf()) else {
+                break;
+            };
+            if !self.conversion_slot().start_item(operation, index) {
+                drop(running);
+                return self.conversion_state();
+            }
+            self.publish_conversion_busy(&self.conversion_slot());
+
+            let outcome = self.convert_queue_item(&item, &root, queue.conflict(), &backend);
+            if !self
+                .conversion_slot()
+                .settle_item(operation, index, outcome)
+            {
+                drop(running);
+                return self.conversion_state();
+            }
+        }
+
+        let mut slot = self.conversion_slot();
+        slot.finish(operation, None);
+        self.publish_conversion_busy(&slot);
+        let update = slot.read();
+        drop(slot);
+        drop(running);
+        update
+    }
+
+    /// One item, on a binding and a gate the queue already owns.
+    ///
+    /// Everything that decides what is converted is re-established here rather
+    /// than remembered: the row is revalidated under the family it was queued
+    /// as, held against replacement, and re-admitted as a conversion source
+    /// whose object identity must match the one the session holds.
+    fn convert_queue_item(
+        &self,
+        item: &QueueItem,
+        root: &Path,
+        conflict: ConversionConflictPolicyDto,
+        backend: &ConversionBackend<'_>,
+    ) -> ItemOutcome {
+        let handle = item.handle().to_owned();
+        let workspace = self.workspace();
+        let still_bound = workspace.bound_request_is_current(item.dataset(), item.request_epoch())
+            && workspace
+                .registry
+                .get(item.dataset())
+                .is_some_and(|dataset| dataset.file().source_kind() == item.kind());
+        let remembered = workspace
+            .registry
+            .get(item.dataset())
+            .map(|dataset| dataset.file().clone());
+        drop(workspace);
+        if !still_bound {
+            return ItemOutcome::Refused {
+                // The row moved on under the queue. Another attempt against the
+                // same plan would find the same thing.
+                retryable: false,
+                error: superseded(),
+            };
+        }
+        let Some(remembered) = remembered else {
+            return ItemOutcome::Refused {
+                retryable: false,
+                error: unknown_dataset(),
+            };
+        };
+
+        let outcome = (|| -> Result<WorkspaceConversionReport, PreviewErrorDto> {
+            let file = revalidate(&remembered)?;
+            let guard = lock_against_replacement(file.path())?;
+            let source = open_conversion_source(&file)?;
+            let plan = plan_conversion(source, root, conflict_policy(conflict))?;
+            let report = run_planned_conversion(&plan, backend);
+            let generation = self.note_resolved(backend.installation.clone());
+            drop(guard);
+            Ok(WorkspaceConversionReport::of(
+                handle.clone(),
+                file.source_kind(),
+                generation,
+                &plan,
+                &report,
+            ))
+        })();
+
+        match outcome {
+            Ok(report) => ItemOutcome::Reported {
+                state: item_state_of(report.outcome_class()),
+                retryable: report.is_retryable(),
+                report,
+            },
+            Err(error) => {
+                let retryable = refusal_is_retryable(&error.kind);
+                ItemOutcome::Refused { retryable, error }
+            }
+        }
+    }
+
+    fn refuse_queue(&self, operation: u64, error: PreviewErrorDto) -> WorkspaceConversionUpdateDto {
+        let mut slot = self.conversion_slot();
+        slot.refuse(operation, error);
         self.publish_conversion_busy(&slot);
         slot.read()
     }
@@ -1268,6 +1456,32 @@ impl PreviewService {
     pub(super) fn begin_folder_import_now(&self) -> FolderImportReservationDto {
         self.begin_folder_import()
             .expect("no conversion is running in this test")
+    }
+
+    /// One dataset's queue plan, for the tests that are about one dataset.
+    ///
+    /// A queue of one is the single-conversion workflow, so these read the way
+    /// they always did while going through the queue the product uses.
+    #[cfg(test)]
+    pub(super) fn conversion_plan_summary(
+        &self,
+        handle: &str,
+    ) -> Result<ConversionQueuePlanDto, PreviewErrorDto> {
+        self.conversion_queue_plan(std::slice::from_ref(&handle.to_owned()))
+    }
+
+    #[cfg(test)]
+    pub(super) fn begin_conversion(
+        &self,
+        handle: &str,
+        conflict: ConversionConflictPolicyDto,
+        document_epoch: u64,
+    ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
+        self.begin_conversion_queue(
+            std::slice::from_ref(&handle.to_owned()),
+            conflict,
+            document_epoch,
+        )
     }
 
     /// Direct token allocation for deterministic service tests.
@@ -1727,11 +1941,10 @@ impl PreviewService {
         // to prune while a conversion runs, because removing one says nothing
         // about the acquisition being read and the roster has to stay usable
         // for as long as a process takes.
-        if let Some(converting) = self.conversion_slot().busy_dataset()
-            && handles
-                .iter()
-                .filter_map(|handle| DatasetId::parse(handle))
-                .any(|id| id == converting)
+        if handles
+            .iter()
+            .filter_map(|handle| DatasetId::parse(handle))
+            .any(|id| self.conversion_slot().busy_holds(id))
         {
             return Err(conversion_busy());
         }
@@ -2172,6 +2385,13 @@ impl PreviewService {
     /// Nothing is recorded against the dataset. A conversion reads it and writes
     /// elsewhere, so there is no per-dataset state to commit and no reason to
     /// recheck the epoch a third time.
+    /// Converts one dataset, taking its own gate and binding its own backend.
+    ///
+    /// The one-item path the private orchestration tests drive, kept because a
+    /// queue of one goes through the queue machinery instead and this is where
+    /// the per-item contract is stated on its own. It is the same body the
+    /// queue runs, with the gate and the binding around it rather than shared.
+    #[cfg(test)]
     pub(super) fn convert_workspace_dataset(
         &self,
         handle: &str,
@@ -2191,9 +2411,6 @@ impl PreviewService {
         let backend = self.provider.conversion_backend()?;
         let kind = conversion_source_kind(file.source_kind());
         refuse_unevidenced_build(&backend.capabilities, kind)?;
-        // Held for the whole run. The crate pins the source again for itself,
-        // and this is not that: this is what stops the object being replaced
-        // between the session's revalidation above and that pin.
         let guard = lock_against_replacement(file.path())?;
         let source = open_conversion_source(&file)?;
         let plan = plan_conversion(source, destination_root, conflict)?;

@@ -48,11 +48,12 @@ export function isSortMode(value: string): value is SortMode {
  * the roster's marker was repaired for. `kept` is that state: still the row an
  * explicit re-read acts on, with nothing to show for it yet.
  */
-export type PinReason = "converting" | "reading" | "showing" | "selected" | "kept";
+export type PinReason = "converting" | "queued" | "reading" | "showing" | "selected" | "kept";
 
 /** What each reason says beside the row, in words rather than in colour. */
 export const PIN_REASON_LABEL: Record<PinReason, string> = {
   converting: "Converting — outside search",
+  queued: "Queued — outside search",
   reading: "Reading — outside search",
   showing: "Showing — outside search",
   selected: "Selected — outside search",
@@ -79,6 +80,14 @@ export interface RosterProjectionInput {
    * whether a row stays visible, not where it sits or whether it matched.
    */
   readonly converting: string | null;
+  /**
+   * Every other row a live queue holds.
+   *
+   * Pinned for the same reason the converting one is: the user has committed
+   * them to work they cannot stop and cannot remove them, so a search that hid
+   * them would hide rows they can do nothing about.
+   */
+  readonly queued: ReadonlySet<string>;
 }
 
 export interface RosterProjection {
@@ -192,6 +201,9 @@ function pinReason(
   // the row cannot be removed and the conversion cannot be cancelled.
   if (input.converting === handle) {
     return "converting";
+  }
+  if (input.queued.has(handle)) {
+    return "queued";
   }
   if (presentation === "opening") {
     return "reading";

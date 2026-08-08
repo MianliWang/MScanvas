@@ -335,13 +335,92 @@ button:disabled {
 }
 
 .conversion-plan,
-.conversion-running,
-.conversion-result {
+.conversion-running {
   display: flex;
   min-width: 0;
   flex-direction: column;
   padding: 8px 12px;
   gap: 8px;
+}
+
+/* The queue, both as a plan and as it runs. An ordered list, because the order
+   is the claim: these acquisitions convert in exactly this sequence, one at a
+   time. The marker is suppressed and the position rendered instead, so the
+   number is a cell the names can align against rather than a glyph the browser
+   places outside the box. */
+.conversion-queue-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  gap: 4px;
+  font-size: 0.85rem;
+  list-style: none;
+}
+
+.conversion-queue-list > li {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+}
+
+/* Wide enough for the bound's two digits, so the names start at one place all
+   the way down and item 10 does not shift the column that item 9 established. */
+.conversion-queue-order {
+  min-width: 1.6em;
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Both names shrink, and neither wins. A long acquisition name must not push
+   the name it converts to out of the panel; the ellipsis and the `title` are
+   what keep the whole of each one available. */
+.conversion-queue-name,
+.conversion-queue-output {
+  min-width: 0;
+  flex: 1 1 6em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversion-queue-output {
+  color: var(--color-text-secondary);
+}
+
+/* The state takes the next line whole rather than competing with the names for
+   the first. It is the part that changes while the user watches, and a failure
+   sentence is a sentence -- so it wraps instead of being clipped. */
+.conversion-queue-status,
+.conversion-queue-attempts,
+.conversion-queue-reason {
+  min-width: 0;
+  flex: 1 0 100%;
+  padding-left: 2.2em;
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* Weight and hue reinforce what `ITEM_STATE_LABEL` already says in words, so
+   the list still reads on a monochrome display and to anyone who cannot
+   separate these two colours. */
+.conversion-queue-list > li[data-item-state="running"] > .conversion-queue-status {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.conversion-queue-list > li[data-item-state="failed"] > .conversion-queue-status,
+.conversion-queue-reason {
+  color: var(--color-danger);
+}
+
+.conversion-queue-list > li[data-item-state="finalized"] > .conversion-queue-status {
+  color: var(--color-success);
 }
 
 /* Native radios in a native fieldset. The policy is a two-way choice with a
@@ -375,11 +454,6 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-}
-
-.conversion-result-headline {
-  min-width: 0;
-  overflow-wrap: anywhere;
 }
 
 /* The family, beside the size and read like it: a fixed cell that never takes

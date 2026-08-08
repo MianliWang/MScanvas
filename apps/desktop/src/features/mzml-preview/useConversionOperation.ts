@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePreviewApi } from "./api";
 import type {
   ConversionConflictPolicy,
-  ConversionPlanSummary,
+  ConversionQueuePlan,
   PreviewError,
   WorkspaceConversionState,
   WorkspaceConversionUpdate,
@@ -27,9 +27,9 @@ const POLL_INTERVAL_MS = 2_000;
 /** The plan summary for one row, and how the reading of it went. */
 export type ConversionPlanState =
   | { readonly status: "none" }
-  | { readonly status: "loading"; readonly handle: string }
-  | { readonly status: "loaded"; readonly plan: ConversionPlanSummary }
-  | { readonly status: "failed"; readonly handle: string; readonly error: PreviewError };
+  | { readonly status: "loading"; readonly handles: readonly string[] }
+  | { readonly status: "loaded"; readonly plan: ConversionQueuePlan }
+  | { readonly status: "failed"; readonly handles: readonly string[]; readonly error: PreviewError };
 
 export interface ConversionOperation {
   /** The authoritative slot, as Rust last reported it. */
@@ -42,8 +42,7 @@ export interface ConversionOperation {
    * controls are offered rather than which are permitted.
    */
   readonly busy: boolean;
-  /** The row a busy slot is working on, so a roster can pin it. */
-  readonly busyHandle: string | null;
+
   /**
    * The same answer as `busy`, readable from a handler.
    *
@@ -57,9 +56,15 @@ export interface ConversionOperation {
   readonly error: PreviewError | null;
   readonly conflictPolicy: ConversionConflictPolicy;
   readonly setConflictPolicy: (policy: ConversionConflictPolicy) => void;
-  /** Describes the conversion one row would get, or clears the description. */
-  readonly describe: (handle: string | null) => void;
-  readonly convert: (handle: string) => void;
+  /** Describes the queue these rows would get, or clears the description. */
+  readonly describe: (handles: readonly string[]) => void;
+  readonly convert: (handles: readonly string[]) => void;
+  /** Reruns every retryable failure of the terminal queue. */
+  readonly retry: () => void;
+  /** Whether the terminal queue has anything worth retrying. */
+  readonly canRetry: boolean;
+  /** Every row a live queue holds, so a roster can pin them. */
+  readonly busyHandles: readonly string[];
   readonly dismissError: () => void;
 }
 
@@ -120,8 +125,12 @@ export function useConversionOperation(
     // banner and a preview read from the replaced installation would stay on
     // screen beside a conversion done by its successor, until some later
     // backend operation happened to reconcile them.
-    if (update.state.status === "completed") {
-      onInstallationGeneration(update.state.report.installationGeneration);
+    if (update.state.status === "terminal") {
+      for (const item of update.state.queue.items) {
+        if (item.report !== null) {
+          onInstallationGeneration(item.report.installationGeneration);
+        }
+      }
     }
   }, [onInstallationGeneration]);
 
@@ -180,16 +189,16 @@ export function useConversionOperation(
   }, [busy, readState]);
 
   const describe = useCallback(
-    (handle: string | null) => {
+    (handles: readonly string[]) => {
       planToken.current += 1;
       const token = planToken.current;
-      if (handle === null) {
+      if (handles.length === 0) {
         setPlan({ status: "none" });
         return;
       }
-      setPlan({ status: "loading", handle });
+      setPlan({ status: "loading", handles });
       api
-        .describeConversion(handle)
+        .describeConversion(handles)
         .then((summary) => {
           if (mounted.current && token === planToken.current) {
             setPlan({ status: "loaded", plan: summary });
@@ -197,7 +206,7 @@ export function useConversionOperation(
         })
         .catch((cause: unknown) => {
           if (mounted.current && token === planToken.current) {
-            setPlan({ status: "failed", handle, error: toPreviewError(cause) });
+            setPlan({ status: "failed", handles, error: toPreviewError(cause) });
           }
         });
     },
@@ -205,7 +214,7 @@ export function useConversionOperation(
   );
 
   const convert = useCallback(
-    (handle: string) => {
+    (handles: readonly string[]) => {
       if (busyRef.current) {
         return;
       }
@@ -215,7 +224,7 @@ export function useConversionOperation(
       busyRef.current = true;
       setError(null);
       api
-        .convertDataset(handle, conflictPolicy, () => {
+        .convertDatasets(handles, conflictPolicy, () => {
           // The reservation exists and the claim has been dispatched. From here
           // the operation is Rust's, and a read will find it even if this
           // document goes away.
@@ -238,12 +247,37 @@ export function useConversionOperation(
     [api, applyUpdate, conflictPolicy, readState],
   );
 
-  const busyHandle = useMemo(() => {
+  // Every row a live queue holds, not only the one running: a queued row
+  // cannot be removed and cannot be searched away either, because the user has
+  // already committed it to work they cannot stop.
+  const busyHandles = useMemo(() => {
     if (state.status === "awaitingDestination" || state.status === "running") {
-      return state.dataset.handle;
+      return state.queue.items.map((item) => item.datasetHandle);
     }
-    return null;
+    return [];
   }, [state]);
+
+  const canRetry =
+    state.status === "terminal" && state.queue.retryableFailedCount > 0;
+
+  const retry = useCallback(() => {
+    if (busyRef.current) {
+      return;
+    }
+    busyRef.current = true;
+    setError(null);
+    api
+      .retryConversions()
+      .then(applyUpdate)
+      .catch((cause: unknown) => {
+        if (!mounted.current) {
+          return;
+        }
+        busyRef.current = false;
+        setError(toPreviewError(cause));
+        readState();
+      });
+  }, [api, applyUpdate, readState]);
 
   const dismissError = useCallback(() => {
     setError(null);
@@ -252,8 +286,10 @@ export function useConversionOperation(
   return {
     state,
     busy,
-    busyHandle,
+    busyHandles,
     busyRef,
+    canRetry,
+    retry,
     plan,
     error,
     conflictPolicy,

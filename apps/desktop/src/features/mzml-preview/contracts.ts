@@ -369,15 +369,6 @@ export type ValidationMode = "source_comparison" | "output_only";
  */
 export type ConversionConflictPolicy = "fail" | "skip";
 
-/** What the interface shows before a conversion is started. */
-export interface ConversionPlanSummary {
-  readonly dataset: SelectedFile;
-  readonly outputFormat: ConversionOutputFormat;
-  /** Taken from the policy the plan is actually fixed with. */
-  readonly compression: string;
-  readonly validationMode: ValidationMode;
-}
-
 /** What was measured of a finalized output. */
 export interface ConversionOutput {
   readonly byteLength: number;
@@ -421,41 +412,93 @@ export interface ConversionReport {
   readonly installationGeneration: number;
 }
 
+/** Where one queue item is. */
+export type ConversionQueueItemState =
+  | "pending"
+  | "running"
+  | "finalized"
+  | "skipped"
+  | "failed";
+
+/** One item of a queue. */
+export interface ConversionQueueItem {
+  readonly datasetHandle: string;
+  readonly fileName: string;
+  readonly sourceKind: DatasetSourceKind;
+  /** Derived before the queue was created, so collisions are refused early. */
+  readonly outputFileName: string;
+  readonly state: ConversionQueueItemState;
+  readonly attempts: number;
+  readonly retryable: boolean;
+  /** The latest attempt's report. Only the latest — never a history. */
+  readonly report: ConversionReport | null;
+  /** Why an attempt never reached a conversion at all. */
+  readonly error: PreviewError | null;
+}
+
+/** One queue, in facts that name no location. */
+export interface ConversionQueue {
+  readonly items: readonly ConversionQueueItem[];
+  /** Which item is running, or how many are done when none is. */
+  readonly currentIndex: number;
+  readonly itemCount: number;
+  readonly retryRound: number;
+  readonly conflictPolicy: ConversionConflictPolicy;
+  readonly finalizedCount: number;
+  readonly skippedCount: number;
+  readonly failedCount: number;
+  readonly retryableFailedCount: number;
+  readonly nonRetryableFailedCount: number;
+  /** A refusal that stopped the whole queue rather than one item. */
+  readonly error: PreviewError | null;
+}
+
 /**
  * The session's one conversion slot.
  *
- * One operation, never a list. `completed` carries the report of a run that
- * reached an outcome — which may itself be a failed conversion; `failed` is an
- * operation that never reached one.
+ * One queue, never a list of queues: `terminal` is replaced by the next queue
+ * and never accumulated. A single-dataset conversion is a queue of one, so
+ * there is one protocol rather than two.
  */
 export type WorkspaceConversionState =
   | { readonly status: "idle" }
   | {
       readonly status: "awaitingDestination";
       readonly operationId: string;
-      readonly dataset: SelectedFile;
+      readonly queue: ConversionQueue;
     }
   | {
       readonly status: "running";
       readonly operationId: string;
-      readonly dataset: SelectedFile;
+      readonly queue: ConversionQueue;
     }
   | {
-      readonly status: "completed";
+      readonly status: "terminal";
       readonly operationId: string;
-      readonly report: ConversionReport;
-    }
-  | {
-      readonly status: "failed";
-      readonly operationId: string;
-      readonly datasetHandle: string;
-      readonly error: PreviewError;
+      readonly queue: ConversionQueue;
     };
 
 /** One bounded read of that slot, with the key that orders two reads. */
 export interface WorkspaceConversionUpdate {
   readonly sequence: number;
   readonly state: WorkspaceConversionState;
+}
+
+/** One row of a queue plan. */
+export interface ConversionQueuePlanItem {
+  readonly datasetHandle: string;
+  readonly fileName: string;
+  readonly outputFileName: string;
+}
+
+/** What the interface shows before a queue is started. */
+export interface ConversionQueuePlan {
+  readonly items: readonly ConversionQueuePlanItem[];
+  readonly outputFormat: ConversionOutputFormat;
+  readonly compression: string;
+  readonly validationMode: ValidationMode;
+  /** The most items one queue may hold, as Rust enforces it. */
+  readonly capacity: number;
 }
 
 export function isPreviewError(value: unknown): value is PreviewError {

@@ -35,8 +35,9 @@ use super::dto::{
     WorkspaceAddOutcomeDto, WorkspaceDropUpdateDto,
 };
 use super::dto::{
-    ConversionConflictPolicyDto, ConversionOutputFormatDto, DatasetSourceKindDto,
-    ValidationModeDto, WorkspaceConversionStateDto,
+    ConversionConflictPolicyDto, ConversionOutputFormatDto, ConversionQueueDto,
+    ConversionQueueItemStateDto, DatasetSourceKindDto, ValidationModeDto,
+    WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
 };
 use super::installation::InstallationIdentity;
 /// The share-mode probe that answers whether a file is still held open. It
@@ -3556,10 +3557,11 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "clear_workspace",
             "open_mzml_preview",
             "load_selected_spectrum",
-            "describe_workspace_conversion",
+            "describe_workspace_conversion_queue",
             "get_workspace_conversion_state",
-            "begin_workspace_conversion",
+            "begin_workspace_conversion_queue",
             "choose_workspace_conversion_destination",
+            "retry_workspace_conversion_queue",
         ]
     );
     // The picker command is named for the workspace it fills rather than for
@@ -7827,11 +7829,48 @@ fn a_conversion_is_stamped_with_the_installation_it_ran_on() {
     );
 }
 
+/// The one report of a queue of one, whatever terminal shape it took.
+fn sole_report(state: &WorkspaceConversionStateDto) -> Option<super::dto::ConversionReportDto> {
+    let WorkspaceConversionStateDto::Terminal { queue, .. } = state else {
+        return None;
+    };
+    queue.items.first().and_then(|item| item.report.clone())
+}
+
+/// The queue-level refusal of a terminal queue, if it has one.
+fn queue_error(state: &WorkspaceConversionStateDto) -> Option<super::dto::PreviewErrorDto> {
+    let WorkspaceConversionStateDto::Terminal { queue, .. } = state else {
+        return None;
+    };
+    queue
+        .error
+        .clone()
+        .or_else(|| queue.items.first().and_then(|item| item.error.clone()))
+}
+
 // --- The visible conversion workflow ----------------------------------------
 //
 // One focused Thermo RAW row, one destination the user chooses, one conversion.
 // Everything below drives the same service the commands adapt, so what is under
 // test is the boundary rather than a stand-in for it.
+
+/// Holds one acquisition open for writing, as another program would.
+///
+/// Readers are welcome, which is what lets the queue get as far as the hold it
+/// then cannot take -- the one condition this repository has evidence for as
+/// transient, and therefore the one a retry is offered for.
+#[cfg(windows)]
+fn hold_for_writing(path: &Path) -> std::fs::File {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+    std::fs::OpenOptions::new()
+        .write(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(path)
+        .expect("hold the acquisition open for writing")
+}
 
 /// A destination folder beside the fixture, for outputs to land in.
 fn destination_root(fixture: &TestFile, name: &str) -> PathBuf {
@@ -7941,7 +7980,10 @@ fn the_plan_summary_describes_the_fixed_plan_and_refuses_an_mzml_row() {
     let summary = service
         .conversion_plan_summary(&handle)
         .expect("a vendor row has a plan");
-    assert_eq!(summary.dataset.handle, handle);
+    assert_eq!(summary.items.len(), 1);
+    assert_eq!(summary.items[0].dataset_handle, handle);
+    assert_eq!(summary.items[0].output_file_name, "acquisition.mzML");
+    assert_eq!(summary.capacity, 16);
     assert_eq!(summary.output_format, ConversionOutputFormatDto::MzMl);
     assert_eq!(summary.compression, "zlib");
     assert_eq!(summary.validation_mode, ValidationModeDto::OutputOnly);
@@ -7979,7 +8021,7 @@ fn one_focused_thermo_row_converts_through_the_product_path_and_reports_path_fre
     let update = service.run_claimed_conversion(operation, &destination);
 
     let rendered = serde_json::to_string(&update).expect("the update serializes");
-    let WorkspaceConversionStateDto::Completed { report, .. } = &update.state else {
+    let Some(report) = sole_report(&update.state) else {
         panic!("the conversion reaches an outcome; got {:?}", update.state);
     };
     assert_eq!(report.outcome, "finalized");
@@ -7997,17 +8039,23 @@ fn one_focused_thermo_row_converts_through_the_product_path_and_reports_path_fre
     for fragment in [
         fixture.directory.to_string_lossy().into_owned(),
         destination.to_string_lossy().into_owned(),
-        String::from("FT-HCD-MSX.raw"),
     ] {
         assert!(
             !rendered.contains(&fragment),
             "the update names {fragment:?}: {rendered}"
         );
     }
-    assert!(
-        rendered.contains("FT-HCD-MSX.mzML"),
-        "the output's own name is a display name: {rendered}"
-    );
+    // Display names, and only display names. The source's own filename is what
+    // the roster already shows, and a queue that could not name its items would
+    // be a list of anonymous rows; what must never appear is a folder.
+    assert!(rendered.contains("FT-HCD-MSX.raw"), "{rendered}");
+    assert!(rendered.contains("FT-HCD-MSX.mzML"), "{rendered}");
+    for separator in ["\\\\", "/"] {
+        assert!(
+            !rendered.contains(separator),
+            "the update carries a path separator: {rendered}"
+        );
+    }
 }
 
 /// A reservation is single use, document-bound and refused once replaced.
@@ -8133,7 +8181,7 @@ fn a_destination_that_is_not_a_local_folder_is_refused_before_anything_is_create
             .claim_conversion(&reservation.reservation_id, document)
             .expect("claim it");
         let update = service.run_claimed_conversion(operation, &destination);
-        let WorkspaceConversionStateDto::Failed { error, .. } = update.state else {
+        let Some(error) = queue_error(&update.state) else {
             panic!("a refused destination is a refusal; got {:?}", update.state);
         };
         assert_eq!(error.kind, expected, "{destination:?}");
@@ -8318,8 +8366,11 @@ fn the_terminal_report_outlives_its_document_and_is_replaced_not_accumulated() {
         .claim_conversion(&reservation.reservation_id, document)
         .expect("claim it");
     let second = service.run_claimed_conversion(operation, &destination);
-    let WorkspaceConversionStateDto::Completed { report, .. } = second.state else {
-        panic!("the second conversion reaches an outcome");
+    let Some(report) = sole_report(&second.state) else {
+        panic!(
+            "the second conversion reaches an outcome; got {:?}",
+            second.state
+        );
     };
     assert_eq!(
         report.outcome, "skipped_existing_destination",
@@ -8464,7 +8515,7 @@ fn a_link_to_a_usable_folder_is_still_refused_as_a_destination() {
 
     let update = service.run_claimed_conversion(operation, &link);
 
-    let WorkspaceConversionStateDto::Failed { error, .. } = update.state else {
+    let Some(error) = queue_error(&update.state) else {
         panic!("a link is refused; got {:?}", update.state);
     };
     assert_eq!(error.kind, "destination_is_a_link");
@@ -8601,7 +8652,7 @@ fn a_reload_does_not_release_a_conversion_that_is_already_running() {
     let update = converting.join().expect("the conversion thread");
     assert!(matches!(
         update.state,
-        WorkspaceConversionStateDto::Completed { .. }
+        WorkspaceConversionStateDto::Terminal { .. }
     ));
 }
 
@@ -8636,7 +8687,7 @@ fn capability_evidence_from_the_wrong_tool_cannot_convert() {
 
     let update = service.run_claimed_conversion(operation, &destination);
 
-    let WorkspaceConversionStateDto::Completed { report, .. } = update.state else {
+    let Some(report) = sole_report(&update.state) else {
         panic!("the run reaches an outcome; got {:?}", update.state);
     };
     assert_ne!(report.outcome, "finalized");
@@ -8706,7 +8757,7 @@ fn the_visible_workflow_converts_a_real_thermo_acquisition_end_to_end() {
     let update = service.run_claimed_conversion(operation, &destination);
 
     println!("state: {update:?}");
-    let WorkspaceConversionStateDto::Completed { report, .. } = &update.state else {
+    let Some(report) = sole_report(&update.state) else {
         panic!("the conversion reaches an outcome; got {:?}", update.state);
     };
     assert_eq!(report.outcome, "finalized");
@@ -8758,4 +8809,388 @@ fn the_production_provider_binds_msconvert_for_conversion_and_msaccess_for_previ
     // And each name reaches the tool it says it does.
     assert!(source.contains("BoundTool::Msaccess => &discovery.msaccess"));
     assert!(source.contains("BoundTool::Msconvert => &discovery.msconvert"));
+}
+
+// --- The serial conversion queue ---------------------------------------------
+
+/// Queues several acquisitions and runs them, in the order they were given.
+fn queue_and_run(
+    service: &PreviewService,
+    handles: &[String],
+    destination: &Path,
+) -> WorkspaceConversionUpdateDto {
+    let document = current_document(service);
+    let reservation = service
+        .begin_conversion_queue(handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("the queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    service.run_claimed_conversion(operation, destination)
+}
+
+fn terminal_queue(update: &WorkspaceConversionUpdateDto) -> &ConversionQueueDto {
+    let WorkspaceConversionStateDto::Terminal { queue, .. } = &update.state else {
+        panic!("the queue reaches a terminal state; got {:?}", update.state);
+    };
+    queue
+}
+
+/// Items run in the order the caller gave, one at a time, and every one of them
+/// produces its own output.
+#[test]
+fn a_queue_runs_its_items_in_order_one_at_a_time() {
+    let fixture = TestFile::new("queue-order");
+    let destination = destination_root(&fixture, "out");
+    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let launches = runner.launches();
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    )));
+    // Named so the order the queue is given is not the alphabetical one.
+    let handles: Vec<String> = ["c.raw", "a.raw", "b.raw"]
+        .iter()
+        .map(|name| add_one_acquisition(&service, &fixture.thermo_raw(name)))
+        .collect();
+
+    let update = queue_and_run(&service, &handles, &destination);
+
+    let queue = terminal_queue(&update);
+    assert_eq!(queue.item_count, 3);
+    assert_eq!(queue.finalized_count, 3);
+    assert_eq!(queue.failed_count, 0);
+    assert_eq!(
+        queue
+            .items
+            .iter()
+            .map(|item| item.output_file_name.clone())
+            .collect::<Vec<_>>(),
+        vec!["c.mzML", "a.mzML", "b.mzML"],
+        "the queue runs the order it was given, not the registry's or the alphabet's"
+    );
+    assert_eq!(launches.load(Ordering::SeqCst), 3, "one process per item");
+    assert_eq!(
+        entry_names(&destination),
+        vec!["a.mzML", "b.mzML", "c.mzML"],
+        "one output per finalized item, and no sidecars"
+    );
+    for item in &queue.items {
+        let report = item.report.as_ref().expect("a finalized item reports");
+        let validation = report.validation.as_ref().expect("and was judged");
+        assert_eq!(validation.mode, ValidationModeDto::OutputOnly);
+        assert!(!validation.fully_verified);
+        assert_eq!(report.staging_residue, None);
+    }
+}
+
+/// One item failing marks that item and nothing else, and the queue carries on.
+#[test]
+fn one_item_failing_neither_stops_the_queue_nor_rolls_back_what_came_before() {
+    let fixture = TestFile::new("queue-isolation");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let first = add_one_acquisition(&service, &fixture.thermo_raw("first.raw"));
+    let broken = fixture.thermo_raw("broken.raw");
+    let second = add_one_acquisition(&service, &broken);
+    let third = add_one_acquisition(&service, &fixture.thermo_raw("third.raw"));
+    // The middle acquisition stops being one after it was queued, so its own
+    // revalidation refuses it while the rows either side are untouched.
+    fs::write(&broken, b"not an acquisition at all").expect("rewrite the middle acquisition");
+
+    let update = queue_and_run(&service, &[first, second, third], &destination);
+
+    let queue = terminal_queue(&update);
+    assert_eq!(queue.finalized_count, 2);
+    assert_eq!(queue.failed_count, 1);
+    assert_eq!(queue.items[0].state, ConversionQueueItemStateDto::Finalized);
+    assert_eq!(queue.items[1].state, ConversionQueueItemStateDto::Failed);
+    assert_eq!(
+        queue.items[2].state,
+        ConversionQueueItemStateDto::Finalized,
+        "a later item runs after an earlier one failed"
+    );
+    assert_eq!(queue.items[1].output_file_name, "broken.mzML");
+    assert!(
+        queue.items[1].report.is_none(),
+        "an item that never reached a conversion reports no run"
+    );
+    assert_eq!(
+        entry_names(&destination),
+        vec!["first.mzML", "third.mzML"],
+        "the earlier output survives the later failure"
+    );
+}
+
+/// Two items that would write one name are refused before a picker opens.
+#[test]
+fn a_queue_whose_items_would_share_an_output_name_is_refused_before_anything_runs() {
+    let fixture = TestFile::new("queue-collision");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    // Different folders, same basename -- so the same planned output name.
+    let nested = fixture.directory.join("nested");
+    fs::create_dir_all(&nested).expect("create the nested folder");
+    let one = add_one_acquisition(&service, &fixture.thermo_raw("run.raw"));
+    let other = nested.join("run.raw");
+    fs::write(&other, thermo_raw_bytes()).expect("write the twin");
+    let two = add_one_acquisition(&service, &other);
+
+    let error = service
+        .conversion_queue_plan(&[one.clone(), two.clone()])
+        .expect_err("two items cannot write one name");
+    assert_eq!(error.kind, "queue_output_name_collision");
+    assert_eq!(error.detail.as_deref(), Some("run.mzML"));
+
+    // And no reservation exists to claim.
+    let document = current_document(&service);
+    assert_eq!(
+        service
+            .begin_conversion_queue(&[one, two], ConversionConflictPolicyDto::Fail, document)
+            .expect_err("the queue is refused, not created")
+            .kind,
+        "queue_output_name_collision"
+    );
+    assert!(matches!(
+        service.conversion_state().state,
+        WorkspaceConversionStateDto::Idle
+    ));
+}
+
+/// A queue larger than one session may run is refused, as is an empty one and
+/// one naming a row twice or naming a row that cannot be converted.
+#[test]
+fn a_queue_is_bounded_deduplicated_and_convertible_or_it_is_refused() {
+    let fixture = TestFile::new("queue-admission");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("run.raw"));
+    let mzml = service.add_dataset(&fixture.path).expect("an mzML row");
+
+    assert_eq!(
+        service.conversion_queue_plan(&[]).expect_err("empty").kind,
+        "queue_is_empty"
+    );
+    let too_many: Vec<String> = (0..17).map(|_| handle.clone()).collect();
+    assert_eq!(
+        service
+            .conversion_queue_plan(&too_many)
+            .expect_err("seventeen is more than a session runs")
+            .kind,
+        "queue_too_large"
+    );
+    assert_eq!(
+        service
+            .conversion_queue_plan(&[handle.clone(), handle.clone()])
+            .expect_err("one row twice is one row")
+            .kind,
+        "queue_output_name_collision",
+        "the same row twice would also write one name, and that is refused first"
+    );
+    assert_eq!(
+        service
+            .conversion_queue_plan(&[handle.clone(), mzml.handle])
+            .expect_err("an mzML row is not queued silently")
+            .kind,
+        "dataset_not_convertible"
+    );
+    assert_eq!(
+        service
+            .conversion_queue_plan(&[handle, String::from("file-404")])
+            .expect_err("a handle naming nothing")
+            .kind,
+        "unknown_file_handle"
+    );
+}
+
+/// Every row a live queue holds is protected, not only the one running.
+#[test]
+fn every_queued_row_is_protected_while_the_queue_is_live() {
+    let fixture = TestFile::new("queue-protection");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let first = add_one_acquisition(&service, &fixture.thermo_raw("first.raw"));
+    let second = add_one_acquisition(&service, &fixture.thermo_raw("second.raw"));
+    let unrelated = service
+        .add_dataset(&fixture.path)
+        .expect("an unrelated row");
+    let document = current_document(&service);
+    service
+        .begin_conversion_queue(
+            &[first.clone(), second.clone()],
+            ConversionConflictPolicyDto::Fail,
+            document,
+        )
+        .expect("the queue holds the workspace from here");
+
+    for handle in [&first, &second] {
+        assert_eq!(
+            service
+                .remove_datasets(std::slice::from_ref(handle))
+                .expect_err("a queued row cannot be removed")
+                .kind,
+            "conversion_busy"
+        );
+    }
+    for refusal in [
+        service.clear_workspace().expect_err("clearing is refused"),
+        service
+            .add_files(std::slice::from_ref(&fixture.path))
+            .expect_err("adding is refused"),
+        service
+            .open_preview(&unrelated.handle)
+            .expect_err("a new preview is refused"),
+        service
+            .load_spectrum(&unrelated.handle, 0)
+            .expect_err("and so is a spectrum"),
+        service
+            .begin_conversion_queue(&[first], ConversionConflictPolicyDto::Fail, document)
+            .expect_err("and a second queue"),
+    ] {
+        assert_eq!(refusal.kind, "conversion_busy");
+    }
+
+    // An unrelated row is still the user's to prune, and reads still answer.
+    let removed = service
+        .remove_datasets(std::slice::from_ref(&unrelated.handle))
+        .expect("removing an unrelated row is allowed");
+    assert_eq!(removed.removed_handles, vec![unrelated.handle]);
+    assert_eq!(service.roster().datasets.len(), 2);
+}
+
+/// Retry reruns only what another attempt could change, keeps everything else,
+/// and counts the attempt.
+#[test]
+fn retry_reruns_only_retryable_failures_and_leaves_the_rest_alone() {
+    let fixture = TestFile::new("queue-retry");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let done = add_one_acquisition(&service, &fixture.thermo_raw("done.raw"));
+    let held = fixture.thermo_raw("held.raw");
+    let blocked = add_one_acquisition(&service, &held);
+
+    // Another program holds the second acquisition open for writing -- the one
+    // condition this repository has measured as transient. Revalidating the row
+    // is what meets it first, so the identifier is that open's, not the
+    // replacement lock's.
+    let writer = hold_for_writing(&held);
+    let update = queue_and_run(&service, &[done, blocked], &destination);
+    let queue = terminal_queue(&update);
+    assert_eq!(queue.finalized_count, 1);
+    assert_eq!(queue.failed_count, 1);
+    assert_eq!(
+        queue.items[1].error.as_ref().expect("a refusal").kind,
+        "file_unreadable"
+    );
+    assert_eq!(queue.retryable_failed_count, 1);
+    assert_eq!(queue.non_retryable_failed_count, 0);
+    assert_eq!(queue.items[0].attempts, 1);
+    assert_eq!(queue.items[1].attempts, 1);
+
+    drop(writer);
+    let retried = service
+        .retry_conversion_queue()
+        .expect("a retryable failure can be retried");
+
+    let queue = terminal_queue(&retried);
+    assert_eq!(queue.retry_round, 1);
+    assert_eq!(queue.finalized_count, 2);
+    assert_eq!(queue.failed_count, 0);
+    assert_eq!(
+        queue.items[0].attempts, 1,
+        "an item that already succeeded is not run again"
+    );
+    assert_eq!(
+        queue.items[1].attempts, 2,
+        "and the retried one counts its attempt"
+    );
+    assert_eq!(entry_names(&destination), vec!["done.mzML", "held.mzML"]);
+}
+
+/// Nothing retryable means nothing to retry.
+#[test]
+fn a_queue_with_no_retryable_failure_refuses_a_retry() {
+    let fixture = TestFile::new("queue-no-retry");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::ConvertEmpty),
+    )));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("run.raw"));
+
+    let update = queue_and_run(&service, &[handle], &destination);
+    let queue = terminal_queue(&update);
+    assert_eq!(queue.failed_count, 1);
+    assert_eq!(
+        queue.retryable_failed_count, 0,
+        "a document that failed the integrity contract would fail it again"
+    );
+    assert_eq!(queue.non_retryable_failed_count, 1);
+
+    assert_eq!(
+        service
+            .retry_conversion_queue()
+            .expect_err("there is nothing a retry could change")
+            .kind,
+        "invalid_conversion_reservation"
+    );
+}
+
+/// A retry refuses when the folder is no longer the folder.
+#[test]
+fn a_retry_refuses_when_its_destination_is_no_longer_the_same_object() {
+    let fixture = TestFile::new("queue-destination-changed");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let held = fixture.thermo_raw("held.raw");
+    let handle = add_one_acquisition(&service, &held);
+    let writer = hold_for_writing(&held);
+    let update = queue_and_run(&service, &[handle], &destination);
+    assert_eq!(terminal_queue(&update).retryable_failed_count, 1);
+    drop(writer);
+
+    // The folder is replaced by a different directory of the same name.
+    fs::remove_dir_all(&destination).expect("remove the admitted folder");
+    fs::create_dir_all(&destination).expect("and put a different one in its place");
+
+    let error = service
+        .retry_conversion_queue()
+        .expect_err("a folder that is no longer the folder is not written into");
+    assert_eq!(error.kind, "queue_destination_changed");
+    // Existing results are untouched.
+    let state = service.conversion_state();
+    assert_eq!(terminal_queue(&state).failed_count, 1);
+    assert_eq!(entry_names(&destination), Vec::<String>::new());
+}
+
+/// A reload recovers a terminal queue whole, and a new queue replaces it.
+#[test]
+fn a_reload_recovers_the_queue_and_a_new_queue_replaces_it() {
+    let fixture = TestFile::new("queue-reload");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let first = add_one_acquisition(&service, &fixture.thermo_raw("first.raw"));
+    let second = add_one_acquisition(&service, &fixture.thermo_raw("second.raw"));
+
+    let update = queue_and_run(&service, &[first.clone(), second], &destination);
+    service.begin_webview_document();
+    let recovered = service.conversion_state();
+    assert_eq!(
+        recovered.state, update.state,
+        "a reload recovers the queue whole"
+    );
+    assert_eq!(recovered.sequence, update.sequence);
+
+    // A new queue replaces it rather than accumulating beside it.
+    let document = current_document(&service);
+    service
+        .begin_conversion_queue(&[first], ConversionConflictPolicyDto::Skip, document)
+        .expect("the slot is free again");
+    let WorkspaceConversionStateDto::AwaitingDestination { queue, .. } =
+        service.conversion_state().state
+    else {
+        panic!("a new queue is awaiting a destination");
+    };
+    assert_eq!(
+        queue.item_count, 1,
+        "there is one queue, not a history of them"
+    );
+    assert_eq!(queue.conflict_policy, ConversionConflictPolicyDto::Skip);
 }
