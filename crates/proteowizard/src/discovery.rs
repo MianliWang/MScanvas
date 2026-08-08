@@ -16,8 +16,7 @@ use std::os::windows::ffi::OsStrExt;
 
 use crate::command::{BackendTool, CommandSpec};
 use crate::process::{
-    CancellationToken, LaunchFailureKind, ProcessError, ProcessOutput, Termination,
-    execute_cancellable,
+    CancellationToken, LaunchFailureKind, ProcessError, ProcessOutput, execute_cancellable,
 };
 use crate::{InstalledHelpCapabilities, PreviewOperation, Sha256Digest};
 
@@ -506,7 +505,7 @@ impl ProbeExecutor for SystemProbeExecutor {
             .join()
             .map_err(|_| io::Error::other("the ProteoWizard probe timer thread panicked"))?;
         let output = result.map_err(process_error_as_io)?;
-        if output.termination == Termination::Cancelled {
+        if output.termination.is_cancellation() {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!("the ProteoWizard help probe exceeded {PROBE_TIMEOUT:?}"),

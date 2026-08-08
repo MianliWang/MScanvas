@@ -1,4 +1,4 @@
-use crate::{BackendTool, ProcessError, ProcessOutput, Termination};
+use crate::{BackendTool, ProcessError, ProcessOutput};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FailureKind {
@@ -141,7 +141,7 @@ pub fn classify_process_failure(
         }
     };
 
-    if output.termination == Termination::Cancelled {
+    if output.termination.is_cancellation() {
         let failure = NormalizedFailure::new(
             FailureKind::Cancelled,
             "The owned backend process was terminated after cancellation.",
@@ -264,6 +264,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::Termination;
 
     fn failed_output(stderr: &str) -> ProcessOutput {
         ProcessOutput {
@@ -282,16 +283,27 @@ mod tests {
         }
     }
 
+    /// Both cancellation shapes classify the same way here.
+    ///
+    /// A run refused before it launched has no exit code, so a classifier that
+    /// asked only about `Cancelled` would let it fall through to the exit-code
+    /// path and report a backend failure for a backend that never ran.
     #[test]
     fn cancellation_is_not_classified_as_failure() {
-        let output = ProcessOutput {
-            termination: Termination::Cancelled,
-            ..failed_output("")
-        };
-        let failure = classify_process_failure(BackendTool::MsConvert, Ok(&output), false)
-            .expect("cancelled classification");
-        assert_eq!(failure.kind, FailureKind::Cancelled);
-        assert_eq!(failure.retryability, Retryability::Retryable);
+        for termination in [Termination::Cancelled, Termination::NotStarted] {
+            let output = ProcessOutput {
+                termination,
+                ..failed_output("")
+            };
+            let failure = classify_process_failure(BackendTool::MsConvert, Ok(&output), false)
+                .expect("cancelled classification");
+            assert_eq!(failure.kind, FailureKind::Cancelled, "{termination:?}");
+            assert_eq!(
+                failure.retryability,
+                Retryability::Retryable,
+                "{termination:?}"
+            );
+        }
     }
 
     #[test]

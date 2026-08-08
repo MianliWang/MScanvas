@@ -2289,12 +2289,10 @@ fn run_staged(
     let backend = Some(BackendRunFacts::from(&output));
 
     if output.termination != Termination::Exited {
-        // Three things must all hold before this is called a cancellation: a
-        // request was actually made, this attempt holds the object it was made
-        // on, and the owned job reported no surviving process. A runner that
-        // reports a non-ordinary termination without them is reporting a run
-        // that did not complete, which is the meaning this boundary has always
-        // given it.
+        // A request must actually have been made on the object this attempt
+        // holds. A runner that reports a non-ordinary termination nobody asked
+        // for is reporting a run that did not complete, which is the meaning
+        // this boundary has always given it.
         if !requested {
             return StagedResult::Settled(
                 ConversionRunOutcome::Failed(ConversionRunFailure::BackendDidNotComplete),
@@ -2302,20 +2300,33 @@ fn run_staged(
             );
         }
         let staged = observe_staged_content(staging);
-        if output
-            .final_active_processes
-            .is_some_and(|active| active > 0)
-        {
-            return StagedResult::CancellationFailed {
+        return match output.termination {
+            // No process was created, so there are no process facts to report
+            // and no tree whose disappearance could be confirmed. The staging
+            // area exists — the run made it before it asked — and is reported
+            // as what it is.
+            Termination::NotStarted => StagedResult::Cancelled {
+                backend: None,
+                surviving_processes: None,
+                staged,
+            },
+            // A tree existed, so `Cancelled` is a claim that it is gone, and
+            // only the owned job saying so makes it one. `None` is not that
+            // claim: it means no bounded accounting was available, which is
+            // exactly the state in which a caller must not be told the
+            // conversion stopped while it may still be writing.
+            Termination::Cancelled if output.final_active_processes == Some(0) => {
+                StagedResult::Cancelled {
+                    backend,
+                    surviving_processes: Some(0),
+                    staged,
+                }
+            }
+            _ => StagedResult::CancellationFailed {
                 cause: BackendExecutionFailure::NotTerminated,
                 backend,
                 staged,
-            };
-        }
-        return StagedResult::Cancelled {
-            backend,
-            surviving_processes: output.final_active_processes,
-            staged,
+            },
         };
     }
     if !output.success() {

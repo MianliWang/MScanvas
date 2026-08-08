@@ -28,8 +28,37 @@ const _: () = assert!(CAPTURE_LIMIT_BYTES as u64 >= crate::MAX_PREVIEW_TEXT_BYTE
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Termination {
+    /// A process was created and supervised until it left the owned job.
     Exited,
+    /// A process was created and its owned process tree was terminated after a
+    /// cancellation request.
     Cancelled,
+    /// No process was ever created: cancellation had already been requested
+    /// when the run was asked to start.
+    ///
+    /// Distinct from `Cancelled` because the two say different things about the
+    /// user's machine. `Cancelled` is a claim that a tree that existed is gone;
+    /// this is a statement that none existed. Collapsing them would let a
+    /// result carry process facts for a process that never ran.
+    NotStarted,
+}
+
+impl Termination {
+    /// Whether the run ended because a cancellation request was honoured,
+    /// whether or not a process had been created by the time it was.
+    ///
+    /// This is what a caller that only distinguishes "the request stopped it"
+    /// from "it ran to an end of its own" should ask.
+    #[must_use]
+    pub const fn is_cancellation(self) -> bool {
+        matches!(self, Self::Cancelled | Self::NotStarted)
+    }
+
+    /// Whether a process was created at all.
+    #[must_use]
+    pub const fn launched(self) -> bool {
+        matches!(self, Self::Exited | Self::Cancelled)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,12 +115,12 @@ impl ProcessOutput {
     /// The result of a run that never started, because cancellation had already
     /// been requested when it was asked to.
     ///
-    /// It is `Cancelled` with no exit code and no elapsed time, and on a
-    /// platform with owned-job accounting it reports an empty job, because no
-    /// process was ever placed in one. Nothing here is a claim that a tree was
-    /// terminated; there was none.
+    /// `NotStarted` with no exit code, no elapsed time and no job accounting at
+    /// all — not an empty job, because no job was ever created. Reporting
+    /// `Some(0)` here would be literally true of a tree that does not exist and
+    /// indistinguishable from the confirmation that a tree that did exist is
+    /// gone, and those are the two facts this type must never conflate.
     pub(crate) fn cancelled_before_launch() -> Self {
-        let empty_count = cfg!(windows).then_some(0);
         Self {
             stdout: Vec::new(),
             stderr: Vec::new(),
@@ -101,9 +130,9 @@ impl ProcessOutput {
             stderr_truncated: false,
             exit_code: None,
             elapsed: Duration::ZERO,
-            termination: Termination::Cancelled,
-            max_active_processes: empty_count,
-            final_active_processes: empty_count,
+            termination: Termination::NotStarted,
+            max_active_processes: None,
+            final_active_processes: None,
             peak_job_memory_bytes: None,
         }
     }
@@ -1789,13 +1818,16 @@ mod tests {
         let output = execute_cancellable(&spec, &cancellation).expect("a refusal is not a failure");
 
         assert!(!marker.exists(), "a refused run launched the child anyway");
-        assert_eq!(output.termination, Termination::Cancelled);
+        assert_eq!(output.termination, Termination::NotStarted);
+        assert!(output.termination.is_cancellation());
+        assert!(!output.termination.launched());
         assert_eq!(output.exit_code, None);
         assert_eq!(output.elapsed, Duration::ZERO);
-        // No process was ever placed in a job, so the owned-job accounting says
-        // the tree is empty rather than saying nothing.
-        assert_eq!(output.final_active_processes, Some(0));
-        assert_eq!(output.max_active_processes, Some(0));
+        // No job was ever created, so there is no accounting to report. An
+        // empty count here would be indistinguishable from the confirmation
+        // that a tree which did exist is gone.
+        assert_eq!(output.final_active_processes, None);
+        assert_eq!(output.max_active_processes, None);
         assert!(output.stdout.is_empty() && output.stderr.is_empty());
         assert!(!output.success());
     }
@@ -1836,7 +1868,7 @@ mod tests {
             .run_cancellable(&spec, &cancellation)
             .expect("a requested run is refused rather than failing");
         assert_eq!(runner.0.get(), 1, "the refused run reached the runner");
-        assert_eq!(refused.termination, Termination::Cancelled);
+        assert_eq!(refused.termination, Termination::NotStarted);
         assert_eq!(refused.exit_code, None);
     }
 
@@ -1871,7 +1903,7 @@ mod tests {
             .run_cancellable(&spec, &cancellation)
             .expect("a requested run is refused rather than failing");
 
-        assert_eq!(refused.termination, Termination::Cancelled);
+        assert_eq!(refused.termination, Termination::NotStarted);
         assert!(
             !marker.exists(),
             "the system runner launched a child after a request"

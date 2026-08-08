@@ -11,7 +11,7 @@ use std::fmt;
 
 use thiserror::Error;
 
-use crate::{PreviewOperation, ProcessOutput, Termination};
+use crate::{PreviewOperation, ProcessOutput};
 
 /// The largest preview output this crate will interpret.
 ///
@@ -1101,7 +1101,7 @@ pub fn interpret_preview(
     process: &ProcessOutput,
     manifest: &PreviewOutputManifest,
 ) -> Result<PreviewOutcome, PreviewInterpretError> {
-    if process.termination == Termination::Cancelled {
+    if process.termination.is_cancellation() {
         return Err(PreviewInterpretError::Cancelled);
     }
     match process.exit_code {
@@ -1961,6 +1961,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::Termination;
 
     // These small test-only protocol fixtures use the exact structures from
     // the self-test strings committed and exercised at f0d7957. The explicitly
@@ -3025,11 +3026,18 @@ mod tests {
             interpret_preview(&operation, &process, &malformed),
             Err(PreviewInterpretError::BackendNonZeroExit { exit_code: 7 })
         );
-        process.termination = Termination::Cancelled;
-        assert_eq!(
-            interpret_preview(&operation, &process, &malformed),
-            Err(PreviewInterpretError::Cancelled)
-        );
+        // Both cancellation shapes take precedence. A run refused before it
+        // launched carries no exit code, so an interpreter that asked only
+        // about `Cancelled` would fall through and report a missing exit
+        // status for a backend that never ran.
+        for termination in [Termination::Cancelled, Termination::NotStarted] {
+            process.termination = termination;
+            assert_eq!(
+                interpret_preview(&operation, &process, &malformed),
+                Err(PreviewInterpretError::Cancelled),
+                "{termination:?}"
+            );
+        }
         process.termination = Termination::Exited;
         process.exit_code = None;
         assert_eq!(

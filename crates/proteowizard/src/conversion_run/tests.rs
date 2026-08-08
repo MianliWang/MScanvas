@@ -4053,6 +4053,75 @@ fn a_cancellation_claimed_before_the_owned_tree_is_empty_is_a_failure() {
     assert!(attempt.finalized().is_none());
 }
 
+/// An owned job that reports no accounting at all has not confirmed anything.
+///
+/// `None` means the platform exposed no bounded query, which is precisely the
+/// state in which a caller must not be told the conversion stopped. Only
+/// `Some(0)` is the confirmation, and a runner that supplies neither gets the
+/// failure rather than the cancellation.
+#[test]
+fn a_cancellation_with_no_owned_job_accounting_is_a_failure() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let cancellation = ConversionCancellation::new();
+    let act = write_partial_output;
+    let runner = CancellingRunner::new(&act)
+        .requesting(cancellation.request_handle())
+        .reporting(Termination::Cancelled)
+        .leaving_active_processes(None);
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    let ConversionAttempt::CancellationFailed(failure) = &attempt else {
+        panic!("an unconfirmed owned tree is not a cancellation: {attempt:?}");
+    };
+    assert_eq!(failure.cause(), BackendExecutionFailure::NotTerminated);
+    assert!(attempt.finalized().is_none());
+    assert!(
+        entry_names(&fixture.root).is_empty(),
+        "an unconfirmed cancellation left something in the destination root"
+    );
+}
+
+/// A refusal inside the runner is not a terminated process, and the report says
+/// so rather than attributing process facts to a process that never existed.
+///
+/// This is the ordinary race window: the request arrives after the run has made
+/// its staging area and before the runner spawns anything. The staging area is
+/// real and empty, and both of those are reported.
+#[test]
+fn a_refusal_inside_the_runner_reports_no_backend_and_an_empty_staging_area() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let cancellation = ConversionCancellation::new();
+    let act = |_spec: &CommandSpec| Ok(0);
+    let runner = CancellingRunner::new(&act)
+        .requesting(cancellation.request_handle())
+        .reporting(Termination::NotStarted)
+        .leaving_active_processes(None);
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    let ConversionAttempt::Cancelled(report) = &attempt else {
+        panic!("a refusal before launch is a cancellation: {attempt:?}");
+    };
+    assert_eq!(report.observation(), CancellationObservation::DuringRun);
+    assert!(
+        !report.backend_was_run(),
+        "no process ran, so no backend facts may be reported"
+    );
+    assert_eq!(report.backend(), None);
+    assert_eq!(report.surviving_processes(), None);
+    let staged = report
+        .staged_content()
+        .expect("the staging area existed and was observed");
+    assert_eq!(staged.entry_count(), 0);
+    assert!(!staged.non_empty_file_observed());
+    assert_eq!(report.residue(), None);
+    assert!(
+        entry_names(&fixture.root).is_empty(),
+        "a refused run left something in the destination root"
+    );
+}
+
 /// The ordering rule, from the completed side. A request that arrives after the
 /// process was observed to exit does not relabel the run, and does not stop the
 /// document it produced from taking its name.
