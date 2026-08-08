@@ -26,7 +26,13 @@ import {
 const CAPACITY = 1_024;
 
 function dataset(handle: string): SelectedFile {
-  return { handle, fileName: `${handle}.mzML`, byteLength: 4_096, relativeContext: null };
+  return {
+    handle,
+    fileName: `${handle}.mzML`,
+    byteLength: 4_096,
+    sourceKind: "mzml",
+    relativeContext: null,
+  };
 }
 
 function roster(...handles: string[]): WorkspaceRoster {
@@ -692,6 +698,7 @@ describe("saying what a workspace action did", () => {
       handle: "file-0",
       fileName: "sample.mzML",
       byteLength: 4_096,
+      sourceKind: "mzml",
       relativeContext: "batch-2",
     };
     const notice = describeAddResult({
@@ -730,7 +737,7 @@ describe("saying what a workspace action did", () => {
 
 describe("looking at the roster through a search and a sort", () => {
   function sized(handle: string, fileName: string, byteLength: number): SelectedFile {
-    return { handle, fileName, byteLength, relativeContext: null };
+    return { handle, fileName, byteLength, sourceKind: "mzml", relativeContext: null };
   }
 
   /** Four rows whose added, name and size orders are all different. */

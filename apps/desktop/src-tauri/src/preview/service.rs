@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex};
 
 use mscanvas_proteowizard::{
@@ -20,38 +20,45 @@ use super::backend::{
     PreviewProvider, open_operations, reporting_redactor, selected_spectrum_operation,
 };
 use super::conversion::{
-    WorkspaceConversionReport, conversion_source_kind, plan_conversion, refuse_unevidenced_build,
-    run_planned_conversion,
+    WorkspaceConversionReport, conflict_policy, conversion_source_kind, fixed_compression,
+    is_convertible, plan_conversion, refuse_unevidenced_build, run_planned_conversion,
 };
+use super::destination::admit_destination_root;
 use super::discovery::{
     DiscoveryBudget, DiscoveryError, DiscoveryErrorKind, DiscoveryLimit, DiscoveryResult,
     discover_mzml_candidates,
 };
 use super::drop_ingestion::{
     ActiveDrop, DropBatch, DropCandidateOrigin, DropImportToken, DropOperationId, DropUpdateHub,
-    NativeDropDispatch, NativeDropSignal, NativeDropWork, drop_busy_state, expand_drop_paths,
+    NativeDropDispatch, NativeDropSignal, NativeDropWork, conversion_busy_state, drop_busy_state,
+    expand_drop_paths,
 };
 use super::dto::MAX_WORKSPACE_DATASETS;
 use super::dto::{
-    BackendAvailabilityDto, DropIngestionResultDto, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES,
+    BackendAvailabilityDto, ConversionConflictPolicyDto, ConversionOutputFormatDto,
+    ConversionPlanSummaryDto, DropIngestionResultDto, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES,
     MAX_METADATA_LINE_CHARS, MAX_MS_LEVELS, MAX_PRECURSORS, MAX_SPECTRUM_POINTS,
     MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto, MsLevelCountDto, PrecursorDto,
     PreviewDto, PreviewErrorDto, RetentionTimeDto, RetentionTimeRangeDto, RunSummaryDto,
     SelectedSpectrumDto, SelectedSpectrumOutcomeDto, SpectrumRowDto, SpectrumTableDto,
-    WorkspaceAddOutcomeDto, WorkspaceAddResultDto, WorkspaceDropStateDto,
+    ValidationModeDto, WorkspaceAddOutcomeDto, WorkspaceAddResultDto,
+    WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto, WorkspaceDropStateDto,
     WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto, WorkspaceRemoveResultDto,
-    WorkspaceRosterDto, bounded_text, redact_absolute_paths, require_finite, require_finite_option,
-    workspace_full,
+    WorkspaceRosterDto, bounded_text, conversion_busy, dataset_not_convertible,
+    dataset_not_previewable, invalid_conversion_reservation, redact_absolute_paths, require_finite,
+    require_finite_option, workspace_full,
 };
 use super::dto::{
     FolderDiscoverySummaryDto, FolderImportReservationDto, FolderIngestionResultDto,
     FolderScanLimitDto, SelectedFileDto, import_superseded, invalid_folder_import_reservation,
 };
 use super::installation::InstallationIdentity;
+use super::operation::{BoundConversion, ConversionSlot};
 use super::selection::{
     AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity, RevocationReason,
-    accept_mzml_file, candidate_display_name, file_identity, lock_against_replacement,
-    open_conversion_source, relative_contexts, revalidate, selected_file_dto, unknown_dataset,
+    accept_mzml_file, accept_workspace_file, candidate_display_name, file_identity,
+    lock_against_replacement, open_conversion_source, relative_contexts, revalidate,
+    selected_file_dto, unknown_dataset,
 };
 
 const DROP_CLAIM_OPERATION_SHIFT: u32 = 32;
@@ -177,18 +184,37 @@ impl Workspace {
     /// anything the user does next.
     ///
     /// `None` when the dataset is not registered.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "ADR 0011: the private conversion path lands before the surface it serves"
-        )
-    )]
     fn begin_reading_request(&mut self, id: DatasetId) -> Option<(u64, AcceptedFile)> {
         let file = self.registry.get(id)?.file().clone();
         let state = self.runtime.entry(id).or_default();
         state.request_epoch += 1;
         Some((state.request_epoch, file))
+    }
+
+    /// The dataset's current request epoch, without claiming one.
+    ///
+    /// Read rather than claimed because a conversion binds this at the moment
+    /// the user asks, and asking opens a picker they may cancel. Claiming here
+    /// would supersede whatever they were already doing with the row merely
+    /// because a dialog appeared.
+    fn current_request_epoch(&self, id: DatasetId) -> Option<u64> {
+        self.registry
+            .contains(id)
+            .then(|| self.runtime.get(&id).map_or(0, |state| state.request_epoch))
+    }
+
+    /// Whether a request bound by [`Self::current_request_epoch`] is still the
+    /// one to honour.
+    ///
+    /// Deliberately the exact inverse of that reader, and deliberately not
+    /// `request_is_current`. That one answers about an epoch a caller *claimed*,
+    /// so a dataset with no runtime row yet is not current by it -- correctly,
+    /// because nobody claimed anything. A conversion binds by reading, and a
+    /// row nobody has read yet reads as zero, so the two have to agree about
+    /// what zero means or a first conversion of a fresh row is superseded by
+    /// nothing at all.
+    fn bound_request_is_current(&self, id: DatasetId, epoch: u64) -> bool {
+        self.current_request_epoch(id) == Some(epoch)
     }
 
     /// Whether this request is still the newest one for a dataset that is still
@@ -394,6 +420,20 @@ pub struct PreviewService {
     /// ordering could show the installation a choice replaced while every
     /// later operation used the chosen one.
     installation_generation: AtomicU64,
+    /// The session's one conversion slot.
+    ///
+    /// A leaf: never held while any other lock is taken, and never held across
+    /// a picker, a filesystem inspection or a backend process. Every transition
+    /// is a short read-modify-write, which is what lets the workspace stay
+    /// answerable for the whole of a conversion.
+    conversion: Mutex<ConversionSlot>,
+    /// Whether the slot above is busy, readable without taking its lock.
+    ///
+    /// The native drop callback must be able to refuse a drop without waiting
+    /// on any service mutex, which is a rule this file already keeps for the
+    /// drop claim itself. Written only while the slot lock is held, so it
+    /// cannot come to disagree with what it mirrors.
+    conversion_busy: AtomicBool,
     /// Which backend the last look actually resolved to.
     ///
     /// Not the folder that was requested. A request names a configuration; what
@@ -430,6 +470,8 @@ impl PreviewService {
             next_drop_operation: AtomicU64::new(1),
             native_drop_event_ticket: AtomicU64::new(0),
             drop_updates: DropUpdateHub::default(),
+            conversion: Mutex::new(ConversionSlot::default()),
+            conversion_busy: AtomicBool::new(false),
             installation_generation: AtomicU64::new(0),
             resolved: Mutex::new(ObservedBackend::default()),
         }
@@ -524,6 +566,13 @@ impl PreviewService {
         let (gate, _, _pending_busy) = self.begin_superseding_mutation();
         drop(gate);
         self.drop_updates.reset_document(delivery);
+        // A reservation belongs to the document that asked for it. The
+        // replacement never learns the identifier, so one left awaiting a
+        // destination would hold the slot -- and every workspace mutation
+        // behind it -- for the rest of the session.
+        let mut slot = self.conversion_slot();
+        slot.release_awaiting_destination();
+        self.publish_conversion_busy(&slot);
     }
 
     /// Returns the native document epoch captured before a Channel handshake.
@@ -602,6 +651,15 @@ impl PreviewService {
                 ),
             }),
             NativeDropSignal::Drop { paths } => {
+                // Read lock-free, before the paths are retained. The callback
+                // must never wait on a service mutex, and refusing here means
+                // no dropped path is held for a workspace that cannot take it.
+                if self.conversion_is_busy() {
+                    // `paths` is borrowed from the platform event and is not
+                    // retained: returning without building a `Start` is what
+                    // makes this a drop whose paths never entered the session.
+                    return Some(NativeDropDispatch::ConversionBusy);
+                }
                 let mut claim = self.native_drop_claim.load(Ordering::Acquire);
                 loop {
                     if claim == 0 {
@@ -793,7 +851,14 @@ impl PreviewService {
     ///
     /// No preview is launched for any of them. Adding a file makes it something
     /// the user can see and remove; reading one is a thing they ask for.
-    pub fn add_files(&self, paths: &[PathBuf]) -> WorkspaceAddResultDto {
+    pub fn add_files(&self, paths: &[PathBuf]) -> Result<WorkspaceAddResultDto, PreviewErrorDto> {
+        // Rust decides this, not a disabled button. A conversion is reading one
+        // of these rows and holding it open; changing the roster underneath it
+        // is what the request epoch would otherwise have to refuse later, at a
+        // point where a process is already running.
+        if self.conversion_is_busy() {
+            return Err(conversion_busy());
+        }
         // Held for the whole batch so two of these cannot interleave their
         // rows. It is not the workspace lock and never becomes it: acceptance
         // opens and inspects a file, which is filesystem work, and holding the
@@ -805,7 +870,7 @@ impl PreviewService {
             // Taken before acceptance, because acceptance is what may fail and
             // the user still has to be told which file it was.
             let candidate = candidate_display_name(path);
-            let accepted = match accept_mzml_file(path) {
+            let accepted = match accept_workspace_file(path) {
                 Ok(accepted) => accepted,
                 Err(error) => {
                     outcomes.push(PendingOutcome::Rejected {
@@ -835,7 +900,263 @@ impl PreviewService {
         let roster = roster_of(&workspace);
         let outcomes = describe_outcomes(&workspace, outcomes);
         drop(workspace);
-        WorkspaceAddResultDto { roster, outcomes }
+        Ok(WorkspaceAddResultDto { roster, outcomes })
+    }
+
+    /// The session's conversion slot, locked.
+    ///
+    /// A leaf lock. Nothing else is ever taken while it is held, so a caller
+    /// that needs a described row reads it first and takes this afterwards.
+    fn conversion_slot(&self) -> std::sync::MutexGuard<'_, ConversionSlot> {
+        self.conversion
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Republishes the lock-free busy mirror from the slot that owns it.
+    ///
+    /// Called with the slot lock still held, which is what makes the mirror a
+    /// mirror: a writer that released first could be overtaken by another
+    /// transition and leave the flag describing a state that no longer exists.
+    fn publish_conversion_busy(&self, slot: &ConversionSlot) {
+        self.conversion_busy
+            .store(slot.is_busy(), Ordering::Release);
+    }
+
+    /// What the one conversion slot currently holds.
+    ///
+    /// The authoritative answer, and the only one. A document reads this on
+    /// mount to recover a conversion it did not start, and again while one is
+    /// running; the reply to the command that started it is not a reliable
+    /// place to learn how it went, because that document may be gone.
+    pub fn conversion_state(&self) -> WorkspaceConversionUpdateDto {
+        self.conversion_slot().read()
+    }
+
+    /// Whether a conversion currently occupies the workspace.
+    ///
+    /// Asked by every mutation before it proceeds. Rust enforces this; a
+    /// disabled button is a courtesy, not the rule.
+    fn conversion_is_busy(&self) -> bool {
+        self.conversion_busy.load(Ordering::Acquire)
+    }
+
+    /// Describes the conversion one focused row would get.
+    ///
+    /// Everything in it is derived from what the run will actually do. A
+    /// summary the interface composed from constants would be a second
+    /// description of the plan, free to drift from the first.
+    pub fn conversion_plan_summary(
+        &self,
+        handle: &str,
+    ) -> Result<ConversionPlanSummaryDto, PreviewErrorDto> {
+        let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
+        let workspace = self.workspace();
+        let dataset = workspace.registry.get(id).ok_or_else(unknown_dataset)?;
+        if !is_convertible(dataset.file().source_kind()) {
+            return Err(dataset_not_convertible());
+        }
+        let dto = dataset_dto(&workspace, id).ok_or_else(unknown_dataset)?;
+        drop(workspace);
+        Ok(ConversionPlanSummaryDto {
+            dataset: dto,
+            output_format: ConversionOutputFormatDto::MzMl,
+            compression: fixed_compression().to_owned(),
+            // Stated before the run rather than after it. A vendor acquisition
+            // has no mzML reading, so nothing about the output can be compared
+            // to a source model -- and a user deciding whether to convert is
+            // entitled to know that before they choose a folder.
+            validation_mode: ValidationModeDto::OutputOnly,
+        })
+    }
+
+    /// Binds one conversion request and reserves the right to choose a folder.
+    ///
+    /// The synchronous half of the two-command boundary, and the same shape a
+    /// folder import uses for the same reason: a webview can reload between any
+    /// two IPC fetches, so the reservation is retained in Rust and a document
+    /// that never receives the identifier can never open a picker.
+    ///
+    /// What is bound here cannot change afterwards -- the document, the row, its
+    /// request epoch, its family and the conflict policy -- so the picker that
+    /// follows is a picker *for this request*, not one whose result is applied
+    /// to whatever the workspace holds when it closes.
+    pub fn begin_conversion(
+        &self,
+        handle: &str,
+        conflict: ConversionConflictPolicyDto,
+        document_epoch: u64,
+    ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
+        let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
+        let workspace = self.workspace();
+        let dataset = workspace.registry.get(id).ok_or_else(unknown_dataset)?;
+        let kind = dataset.file().source_kind();
+        if !is_convertible(kind) {
+            return Err(dataset_not_convertible());
+        }
+        let epoch = workspace
+            .current_request_epoch(id)
+            .ok_or_else(unknown_dataset)?;
+        let dto = dataset_dto(&workspace, id).ok_or_else(unknown_dataset)?;
+        drop(workspace);
+        // The same gate every workspace mutation takes, so a conversion and a
+        // batch cannot both be admitted by each reading the other's state
+        // before either committed. Held only for the transition below: this is
+        // not backend work and nothing here waits on a process.
+        // `_after_drop` rather than the plain gate: a drop is accepted by a
+        // lock-free callback that reads the busy flag and installs its claim
+        // without waiting on any mutex, so a reservation taken beside one would
+        // let that drop commit rows into the workspace a conversion is reading.
+        // Waiting for it is what the existing mechanism is for.
+        let gate = self.enter_workspace_mutation_after_drop();
+        let mut slot = self.conversion_slot();
+        // Under the slot lock, and immediately before the slot is taken. The
+        // authority proof is awaited, so a reload can start any time after it
+        // succeeds -- and page-load releases what it finds *now*. Checking
+        // earlier would leave the window this closes: an epoch that was current
+        // when it was read, a release pass that saw an idle slot, and then this
+        // request taking the slot for a document that has already gone.
+        //
+        // Page-load's release takes this same lock, so one of the two happens
+        // first and the other sees the result.
+        if document_epoch != self.workspace_drop_document_epoch() {
+            return Err(invalid_conversion_reservation());
+        }
+        let reservation = slot.begin(BoundConversion::new(
+            document_epoch,
+            id,
+            epoch,
+            kind,
+            conflict,
+            dto,
+        ));
+        self.publish_conversion_busy(&slot);
+        drop(slot);
+        drop(gate);
+        reservation
+    }
+
+    /// Consumes one exact reservation before its picker is dispatched.
+    ///
+    /// An unknown, replayed or replaced identifier never disturbs the live slot,
+    /// and one issued to a document that has since been replaced is refused: the
+    /// document that would receive the answer is gone.
+    /// Answers with the operation the claim belongs to.
+    ///
+    /// The caller carries it through the picker and back. Without it, a dialog
+    /// abandoned by a reloaded document would return a folder that the command
+    /// applied to whatever the slot currently holds -- converting the
+    /// replacement document's dataset into a directory nobody chose for it.
+    pub fn claim_conversion(
+        &self,
+        reservation_id: &str,
+        document_epoch: u64,
+    ) -> Result<u64, PreviewErrorDto> {
+        let mut slot = self.conversion_slot();
+        slot.claim(reservation_id, document_epoch)?;
+        slot.claimed()
+            .map(|(operation, _)| operation)
+            .ok_or_else(invalid_conversion_reservation)
+    }
+
+    /// Returns the slot to idle after a cancelled picker.
+    ///
+    /// An ordinary outcome. Nothing was created, nothing ran, and the operation
+    /// identifier is not reused.
+    pub fn cancel_conversion(&self, operation: u64) -> WorkspaceConversionUpdateDto {
+        let mut slot = self.conversion_slot();
+        slot.cancel(operation);
+        self.publish_conversion_busy(&slot);
+        slot.read()
+    }
+
+    /// Runs one claimed conversion into one chosen folder.
+    ///
+    /// The order here is the whole of what this command adds, and every step is
+    /// placed against something that can change underneath it:
+    ///
+    /// 1. admit the destination **before** the slot says "running", so a folder
+    ///    this boundary will not write to costs no state transition and no
+    ///    staging area;
+    /// 2. recheck that the bound row is still the row, and still at the epoch it
+    ///    was bound at, so a conversion the user moved past never starts;
+    /// 3. mark running, then release the slot -- it is not held across the
+    ///    conversion, because the whole point of the slot is to stay readable
+    ///    while one runs;
+    /// 4. convert through the private coordinator, which owns identity, the
+    ///    build gate, the backend gate, staging and validation;
+    /// 5. store the terminal answer, whatever it is.
+    ///
+    /// A failure before step 4 is a refusal: the operation never reached a
+    /// conversion. A failure inside it is a report, because a conversion ran.
+    pub fn run_claimed_conversion(
+        &self,
+        operation: u64,
+        destination: &Path,
+    ) -> WorkspaceConversionUpdateDto {
+        // Read from the slot rather than carried by the caller. A command that
+        // held the bound request could run one for a reservation the slot has
+        // since replaced; asking the slot means the request that runs is the
+        // request the slot says is claimed, or none at all.
+        let Some((claimed, bound)) = self.conversion_slot().claimed() else {
+            return self.conversion_state();
+        };
+        // The operation this picker was opened for, not whichever one the slot
+        // now holds. A dialog abandoned by a reloaded document still returns a
+        // folder, and applying it to a replacement operation would convert the
+        // wrong dataset into a directory nobody chose for it.
+        if claimed != operation {
+            return self.conversion_state();
+        }
+        let handle = bound.dataset_handle().to_owned();
+        let root = match admit_destination_root(destination) {
+            Ok(root) => root,
+            Err(error) => return self.refuse_conversion(operation, handle, error),
+        };
+        let workspace = self.workspace();
+        let still_bound = workspace
+            .bound_request_is_current(bound.dataset(), bound.request_epoch())
+            && workspace
+                .registry
+                .get(bound.dataset())
+                .is_some_and(|dataset| dataset.file().source_kind() == bound.kind());
+        drop(workspace);
+        if !still_bound {
+            return self.refuse_conversion(operation, handle, superseded());
+        }
+        // The transition names this operation. The slot lock was released for
+        // the admission and revalidation above, and a reload in that window
+        // releases the slot -- so a caller that ran whatever it found could
+        // convert for an operation the session has moved past.
+        let mut slot = self.conversion_slot();
+        let started = slot.start_running(operation);
+        self.publish_conversion_busy(&slot);
+        drop(slot);
+        if !started {
+            return self.conversion_state();
+        }
+
+        let report =
+            self.convert_workspace_dataset(&handle, &root, conflict_policy(bound.conflict()));
+        let mut slot = self.conversion_slot();
+        match report {
+            Ok(report) => slot.complete(operation, report),
+            Err(error) => slot.refuse(operation, handle, error),
+        }
+        self.publish_conversion_busy(&slot);
+        slot.read()
+    }
+
+    fn refuse_conversion(
+        &self,
+        operation: u64,
+        handle: String,
+        error: PreviewErrorDto,
+    ) -> WorkspaceConversionUpdateDto {
+        let mut slot = self.conversion_slot();
+        slot.refuse(operation, handle, error);
+        self.publish_conversion_busy(&slot);
+        slot.read()
     }
 
     /// Reserves the right to claim the workspace's next state without opening
@@ -852,7 +1173,10 @@ impl PreviewService {
     /// a newer document's reservation or supersede a scan it already claimed.
     /// The next begin after any other workspace decision replaces the one stale
     /// slot, so abandoned replies cannot grow an unbounded registry.
-    pub fn begin_folder_import(&self) -> FolderImportReservationDto {
+    pub fn begin_folder_import(&self) -> Result<FolderImportReservationDto, PreviewErrorDto> {
+        if self.conversion_is_busy() {
+            return Err(conversion_busy());
+        }
         let mut gate = self.enter_workspace_mutation_after_drop();
         let generation = gate.generation;
         if let Some(reservation_id) = gate
@@ -861,9 +1185,9 @@ impl PreviewService {
             .filter(|pending| pending.baseline_generation == generation)
             .map(|pending| pending.reservation_id)
         {
-            return FolderImportReservationDto {
+            return Ok(FolderImportReservationDto {
                 reservation_id: reservation_id.handle(),
-            };
+            });
         }
         let reservation_id = gate.allocate_folder_import_reservation();
         gate.pending_folder_import = Some(PendingFolderImport {
@@ -871,9 +1195,9 @@ impl PreviewService {
             baseline_generation: generation,
         });
         drop(gate);
-        FolderImportReservationDto {
+        Ok(FolderImportReservationDto {
             reservation_id: reservation_id.handle(),
-        }
+        })
     }
 
     /// Consumes one exact reservation before its picker is dispatched.
@@ -888,6 +1212,11 @@ impl PreviewService {
         &self,
         reservation_id: &str,
     ) -> Result<FolderImportToken, PreviewErrorDto> {
+        // Asked again here, not only at begin: a conversion can start while the
+        // reservation is in flight, and the claim is what dispatches a picker.
+        if self.conversion_is_busy() {
+            return Err(conversion_busy());
+        }
         let requested = FolderImportReservationId::parse(reservation_id)
             .ok_or_else(invalid_folder_import_reservation)?;
         let mut gate = self.enter_workspace_mutation_after_drop();
@@ -907,6 +1236,38 @@ impl PreviewService {
         }
         let generation = gate.advance();
         Ok(FolderImportToken { generation })
+    }
+
+    /// The three guarded workspace mutations, for the tests that are not about
+    /// the guard.
+    ///
+    /// Each one panics rather than returning the refusal, which is the point: a
+    /// test that unexpectedly hits the conversion guard fails loudly at the
+    /// line that hit it instead of quietly asserting on an error value it never
+    /// meant to produce. The tests that *are* about the guard call the real
+    /// methods and read the refusal.
+    #[cfg(test)]
+    pub(super) fn add_files_now(&self, paths: &[PathBuf]) -> WorkspaceAddResultDto {
+        self.add_files(paths)
+            .expect("no conversion is running in this test")
+    }
+
+    #[cfg(test)]
+    pub(super) fn remove_datasets_now(&self, handles: &[String]) -> WorkspaceRemoveResultDto {
+        self.remove_datasets(handles)
+            .expect("no conversion is running in this test")
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_workspace_now(&self) -> WorkspaceRosterDto {
+        self.clear_workspace()
+            .expect("no conversion is running in this test")
+    }
+
+    #[cfg(test)]
+    pub(super) fn begin_folder_import_now(&self) -> FolderImportReservationDto {
+        self.begin_folder_import()
+            .expect("no conversion is running in this test")
     }
 
     /// Direct token allocation for deterministic service tests.
@@ -1111,6 +1472,12 @@ impl PreviewService {
                 }
                 None
             }
+            NativeDropDispatch::ConversionBusy => {
+                let delivery = self.drop_updates.begin_delivery();
+                self.drop_updates
+                    .publish_transient(delivery, conversion_busy_state());
+                None
+            }
             NativeDropDispatch::Start(work) => {
                 self.process_native_drop_with(work, expand_drop_paths)
             }
@@ -1193,6 +1560,18 @@ impl PreviewService {
     ) -> Option<DropIngestionResultDto> {
         let delivery = self.drop_updates.begin_delivery();
         let mut gate = self.enter_workspace_mutation();
+        // The callback that accepted this drop cannot wait on a mutex, so it
+        // reads the conversion flag without one and a reservation can be taken
+        // immediately afterwards. This is the linearization point where that is
+        // decided: a drop may be accepted, but nothing commits into a workspace
+        // a conversion is reading.
+        if self.conversion_is_busy() {
+            drop(gate);
+            self.drop_updates
+                .publish_transient(delivery, conversion_busy_state());
+            self.clear_native_drop_claim(token.operation_id);
+            return None;
+        }
         let current = gate.active_drop.is_some_and(|active| {
             active.generation == token.generation
                 && active.operation_id == token.operation_id
@@ -1340,7 +1719,22 @@ impl PreviewService {
     ///
     /// The source acquisitions are never touched. Removing a row removes a row
     /// and releases the handle that row was holding.
-    pub fn remove_datasets(&self, handles: &[String]) -> WorkspaceRemoveResultDto {
+    pub fn remove_datasets(
+        &self,
+        handles: &[String],
+    ) -> Result<WorkspaceRemoveResultDto, PreviewErrorDto> {
+        // Only the converting row is protected. Every other row is the user's
+        // to prune while a conversion runs, because removing one says nothing
+        // about the acquisition being read and the roster has to stay usable
+        // for as long as a process takes.
+        if let Some(converting) = self.conversion_slot().busy_dataset()
+            && handles
+                .iter()
+                .filter_map(|handle| DatasetId::parse(handle))
+                .any(|id| id == converting)
+        {
+            return Err(conversion_busy());
+        }
         // Advances the generation even when every handle names nothing. The
         // user said "this is the workspace now", and a folder scan that
         // committed across that would repopulate a list they had just pruned.
@@ -1381,7 +1775,7 @@ impl PreviewService {
             pending_busy,
             WorkspaceDropStateDto::Idle,
         );
-        result
+        Ok(result)
     }
 
     /// Empties the workspace, and answers with the empty roster that is now
@@ -1392,9 +1786,22 @@ impl PreviewService {
     /// every row in it. The identifier allocator does not rewind: a reply still
     /// in flight for one of the emptied datasets must not land on whatever is
     /// added next.
-    pub fn clear_workspace(&self) -> WorkspaceRosterDto {
+    pub fn clear_workspace(&self) -> Result<WorkspaceRosterDto, PreviewErrorDto> {
         let delivery = self.drop_updates.begin_delivery();
         let (batch, _generation, pending_busy) = self.begin_superseding_mutation();
+        // Under the gate. Emptying the workspace would revoke the very row a
+        // conversion is reading, and this workflow cannot cancel one -- so the
+        // question has to be asked where the answer cannot change between
+        // asking it and acting on it.
+        if self.conversion_is_busy() {
+            drop(batch);
+            self.drop_updates.publish_terminal_with_busy(
+                delivery,
+                pending_busy,
+                WorkspaceDropStateDto::Idle,
+            );
+            return Err(conversion_busy());
+        }
         let mut workspace = self.workspace();
         workspace.clear(RevocationReason::Cleared);
         let roster = roster_of(&workspace);
@@ -1405,7 +1812,7 @@ impl PreviewService {
             pending_busy,
             WorkspaceDropStateDto::Idle,
         );
-        roster
+        Ok(roster)
     }
 
     /// Serialises one workspace mutation against another.
@@ -1765,13 +2172,6 @@ impl PreviewService {
     /// Nothing is recorded against the dataset. A conversion reads it and writes
     /// elsewhere, so there is no per-dataset state to commit and no reason to
     /// recheck the epoch a third time.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "ADR 0011: the private conversion path lands before the surface it serves"
-        )
-    )]
     pub(super) fn convert_workspace_dataset(
         &self,
         handle: &str,
@@ -1811,7 +2211,29 @@ impl PreviewService {
     }
 
     pub fn open_preview(&self, handle: &str) -> Result<PreviewDto, PreviewErrorDto> {
+        // Refused rather than queued. The backend gate would serialize it
+        // anyway, but a preview that waited behind a whole conversion would sit
+        // there for as long as one takes with nothing on screen saying why.
+        if self.conversion_is_busy() {
+            return Err(conversion_busy());
+        }
         let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
+        // Asked before anything is claimed. The preview boundary reads mzML and
+        // nothing in this product reads a vendor acquisition directly, so a row
+        // of that family is refused here rather than left to a disabled button
+        // and a backend failure.
+        // Only about a row that exists. A handle naming nothing is an unknown
+        // handle and must keep saying so: answering "convert it first" about a
+        // dataset the session does not have would send the user to look for a
+        // row that is not there.
+        if self
+            .workspace()
+            .registry
+            .get(id)
+            .is_some_and(|dataset| !dataset.file().source_kind().is_previewable())
+        {
+            return Err(dataset_not_previewable());
+        }
         // Claimed before the wait, so a request that arrives after this one
         // supersedes it -- and claimed by the same per-dataset counter a
         // spectrum uses, because an open and a spectrum are both requests about
@@ -1997,6 +2419,13 @@ impl PreviewService {
         handle: &str,
         index: u64,
     ) -> Result<SelectedSpectrumOutcomeDto, PreviewErrorDto> {
+        // Refused rather than queued, for the reason an open is: the backend
+        // gate would serialize it anyway, but a spectrum waiting behind a whole
+        // conversion sits in a loading state for as long as one takes, and
+        // every further selection adds another queued request nobody sees.
+        if self.conversion_is_busy() {
+            return Err(conversion_busy());
+        }
         let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
         // Claimed before the wait, so a request that arrives after this one
         // supersedes it. Per dataset: a spectrum chosen in one dataset says

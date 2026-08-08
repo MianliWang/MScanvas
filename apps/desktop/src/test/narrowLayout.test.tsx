@@ -182,6 +182,45 @@ describe("narrow desktop layout rules", () => {
 });
 
 describe("narrow desktop layout markup", () => {
+  it("keeps the conversion panel inside the column rather than beside it", () => {
+    const app = mountStyles(appStyles);
+    const panel = requireStyleRule(app, ".conversion-panel").style;
+
+    // As tall as its own content and no taller. A share of the column would
+    // take height from the list on every window that has the panel and leave an
+    // empty box on every window that does not.
+    expect(panel.getPropertyValue("flex")).toBe("0 1 auto");
+    // Its own overflow, inside `.panel`'s hidden. A long failure sentence or a
+    // long output name scrolls here rather than pushing the roster out.
+    expect(panel.getPropertyValue("overflow")).toBe("auto");
+    expect(panel.getPropertyValue("min-width")).toBe("0px");
+    // The header alone, so a squeezed panel still says which panel it is.
+    expect(panel.getPropertyValue("min-height")).toBe("54px");
+
+    // The one primary action wraps rather than being clipped at any width.
+    expect(requireStyleRule(app, ".conversion-actions").style.getPropertyValue("flex-wrap")).toBe(
+      "wrap",
+    );
+    // And a long output name breaks rather than widening the column.
+    expect(
+      requireStyleRule(app, ".conversion-result-headline").style.getPropertyValue("overflow-wrap"),
+    ).toBe("anywhere");
+  });
+
+  it("gives the source family a track of its own without taking the name's", () => {
+    const app = mountStyles(appStyles);
+
+    // Six tracks: two markers, the name's flexible column, the family, the
+    // size, and the notes. The name is the only one that may grow.
+    expect(
+      requireStyleRule(app, ".dataset-row").style.getPropertyValue("grid-template-columns"),
+    ).toBe("12px 12px minmax(72px, 1fr) auto auto minmax(0, auto)");
+    const kind = requireStyleRule(app, ".dataset-row-kind").style;
+    expect(kind.getPropertyValue("white-space")).toBe("nowrap");
+    expect(kind.getPropertyValue("min-width")).toBe("0px");
+  });
+
+
   it("keeps one set of actions, whatever the width", async () => {
     // A narrow layout that duplicates the actions would pass a screenshot and
     // give a keyboard user two of everything, or a hidden one that still takes
@@ -323,7 +362,7 @@ describe("narrow desktop layout markup", () => {
     // both `Could not be read` and `Selected — outside search` left the name
     // exactly 0px wide.
     expect(requireStyleRule(app, ".dataset-row").style.getPropertyValue("grid-template-columns")).toBe(
-      "12px 12px minmax(72px, 1fr) auto minmax(0, auto)",
+      "12px 12px minmax(72px, 1fr) auto auto minmax(0, auto)",
     );
     const notes = requireStyleRule(app, ".dataset-row-notes").style;
     expect(notes.getPropertyValue("min-width")).toBe("0px");
@@ -364,11 +403,13 @@ describe("narrow desktop layout markup", () => {
     expect(context.getPropertyValue("overflow")).toBe("hidden");
     expect(context.getPropertyValue("text-overflow")).toBe("ellipsis");
     expect(context.getPropertyValue("white-space")).toBe("nowrap");
-    // And it keeps the row's five tracks exactly as they were: the context
-    // lives inside the name's cell rather than taking one of its own.
+    // And it keeps the row's tracks exactly as they were: the context lives
+    // inside the name's cell rather than taking one of its own. The sixth track
+    // is the source family, which is a fixed short word beside the size and not
+    // something the context may be folded into.
     expect(
       requireStyleRule(app, ".dataset-row").style.getPropertyValue("grid-template-columns"),
-    ).toBe("12px 12px minmax(72px, 1fr) auto minmax(0, auto)");
+    ).toBe("12px 12px minmax(72px, 1fr) auto auto minmax(0, auto)");
   });
 
   it("gives a row's collision context a colour that can be read", () => {

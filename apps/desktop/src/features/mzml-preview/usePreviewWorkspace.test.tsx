@@ -214,6 +214,11 @@ function harness(
     loadSpectrum: () =>
       options.spectrum?.() ??
       Promise.resolve<SelectedSpectrumOutcome>({ outcome: "unavailable", requestedIndex: 0 }),
+    // This file is about installation ordering, so the conversion slot answers
+    // idle and nothing here starts one.
+    describeConversion: () => Promise.reject(new Error("not used in this file")),
+    getConversionState: () => Promise.resolve({ sequence: 0, state: { status: "idle" } }),
+    convertDataset: () => Promise.reject(new Error("not used in this file")),
   };
   return {
     service,

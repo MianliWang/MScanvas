@@ -6,6 +6,20 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
+- The first visible conversion: one focused Thermo Scientific RAW workspace row
+  to mzML. `Add files…` now admits that one evidenced vendor family alongside
+  `.mzML`, recognizing it by its file signature rather than its name; folder
+  ingestion and Explorer drop remain mzML-only. Every roster row says which
+  family it is, and a Thermo row cannot be previewed until it is converted.
+  Focusing one shows a fixed plan — mzML output, zlib compression, and an
+  explicit statement that validation is output-only — with a Fail-or-Skip choice
+  and no overwrite. `Convert focused…` opens a Rust-owned picker for a folder on
+  this computer; network and mapped locations are refused before anything is
+  created. One conversion runs at a time, it cannot be cancelled and says so,
+  and it survives a window reload. The result reports the output's name, size
+  and record counts without ever naming a location, and the converted file is
+  not added to the workspace for you.
+
 - Windows Explorer drag-and-drop for one or many regular `.mzML` files, ordinary
   local folders, or a mixture of both. Direct files use the same acceptance
   boundary as `Add files…`; folders use the same recursive, deterministic and

@@ -8,6 +8,12 @@
   conversion surface, every additional source posture and every queue concern
   separately gated
 - Date: 2026-08-06
+- Amended: 2026-08-07 (M3.1) — this boundary is now reachable from the
+  interface, for one focused vendor row at a time. Its guarantees are
+  unchanged; what M3.1 adds in front of them is a destination admission that
+  refuses a remote root, because the finalization and cleanup guarantees here
+  are local Windows guarantees. See
+  [ADR 0012](0012-first-visible-thermo-conversion.md).
 
 ## Context
 

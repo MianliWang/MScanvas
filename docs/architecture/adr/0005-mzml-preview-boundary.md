@@ -9,6 +9,11 @@
   number the boundary was always going to outgrow; what it was protecting — no
   command takes a path, and every one is typed on both sides — is stated
   directly instead. ADR 0006 records the roster itself.
+- Amended: 2026-08-07 (M3.1) — the preview boundary now refuses a row whose
+  family it cannot read. A dataset admitted as a vendor acquisition answers
+  `dataset_not_previewable` rather than reaching a backend that has nothing to
+  open. See [ADR 0012](0012-first-visible-thermo-conversion.md); everything
+  this ADR says about reading mzML is unchanged.
 
 ## Context
 

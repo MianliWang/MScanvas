@@ -21,7 +21,10 @@ type ExpectedWorkspaceDropState =
       readonly operationId: string;
       readonly error: PreviewError;
     }
-  | { readonly status: "rejected"; readonly reason: "drop_busy" };
+  | {
+      readonly status: "rejected";
+      readonly reason: "drop_busy" | "conversion_busy";
+    };
 
 type Equal<Left, Right> =
   (<Value>() => Value extends Left ? 1 : 2) extends <Value>() =>

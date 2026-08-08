@@ -1,6 +1,8 @@
-import { useCallback, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 
 import { BackendStatus } from "./BackendStatus";
+import type { WorkspaceDropRejectionReason } from "./contracts";
+import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
 import { PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel } from "./SelectedSpectrumPanel";
@@ -41,7 +43,10 @@ export function PreviewWorkspace() {
   // Derived once per roster change and handed down, so the rows the list
   // renders are the same list the reducer ranges over rather than a second
   // answer to the same question.
-  const projection = useMemo(() => rosterProjection(roster), [roster]);
+  const projection = useMemo(
+    () => rosterProjection(roster, workspace.conversion.busyHandle),
+    [roster, workspace.conversion.busyHandle],
+  );
 
   // A preview response describes the row as it was when the read was produced,
   // but a collision context is a fact about the whole *current* roster: it appears
@@ -91,12 +96,18 @@ export function PreviewWorkspace() {
   // One expression for both acquisition actions, so they cannot come to mean
   // different things: they are mutually exclusive by construction, and each is
   // refused for exactly the reasons the other is.
+  //
+  // A conversion is one more reason for all of them. It holds the one backend
+  // lane for as long as a process takes and it is reading a row of this very
+  // roster, so Rust refuses every mutation while one is under way; these gates
+  // are what stop the interface asking.
   const canAcquire =
     !workspace.backendBusy &&
     !workspace.pickerBusy &&
     !workspace.folderBusy &&
     !workspace.dropBusy &&
-    !workspace.workspaceBusy;
+    !workspace.workspaceBusy &&
+    !workspace.conversion.busy;
   // One thing more for the folder action, and only for it. Native page-load
   // start has already superseded work owned by the previous document; the
   // mount-time roster answer is what lets this document begin from a list it
@@ -124,6 +135,17 @@ export function PreviewWorkspace() {
     !workspace.workspaceBusy &&
     !workspace.pickerBusy &&
     !workspace.folderReservationPending;
+  // Emptying the list would revoke the row a conversion is reading, and this
+  // workflow cannot cancel one, so Rust refuses it outright.
+  const canClear = canMutate && !workspace.conversion.busy;
+  // Removing is narrower than clearing, and deliberately not the same boolean.
+  // Rust refuses a removal only when the converting row is among the handles,
+  // so every other row stays the user's to prune -- which matters most during a
+  // conversion, because that is when the list is unusable for longest.
+  const canRemove =
+    canMutate &&
+    (workspace.conversion.busyHandle === null ||
+      !roster.selected.has(workspace.conversion.busyHandle));
   // Reading the list back is not an escape route. It is a pure, gate-linearized
   // snapshot, but during a scan it would add a loading state and a projection
   // whose usefulness depends on whether the scan committed before or after it.
@@ -133,7 +155,33 @@ export function PreviewWorkspace() {
   // One viewer read at a time. Rust supersedes an older open of one dataset
   // anyway; this is what stops a queue of them forming behind the single
   // backend gate in the first place.
-  const canPreview = backendUsable && !workspace.backendBusy && !workspace.previewBackendBusy;
+  const canPreview =
+    backendUsable &&
+    !workspace.backendBusy &&
+    !workspace.previewBackendBusy &&
+    !workspace.conversion.busy;
+  // Converting needs the same backend a preview does, and the same free lane.
+  const canConvert = canPreview && !workspace.workspaceBusy;
+
+  // The row the keyboard is on. Deliberately not `activeDataset`: the preview
+  // and the conversion panel may describe different rows, and this slice's whole
+  // point is that moving focus to a vendor row does not disturb an mzML preview
+  // already on screen.
+  const focusedDataset = useMemo(
+    () => projection.datasets.find((dataset) => dataset.handle === roster.focused) ?? null,
+    [projection, roster.focused],
+  );
+
+  // Asked for whenever the focused row changes, and cleared when it is not
+  // convertible. The summary is read from Rust rather than composed here so it
+  // describes the plan the run is actually fixed with.
+  const { describe: describeConversion } = workspace.conversion;
+  const focusedConvertible =
+    focusedDataset !== null && focusedDataset.sourceKind === "thermo_raw";
+  const focusedConvertibleHandle = focusedConvertible ? focusedDataset.handle : null;
+  useEffect(() => {
+    describeConversion(focusedConvertibleHandle);
+  }, [describeConversion, focusedConvertibleHandle]);
 
   const handleTableRendered = useCallback(
     (renderedRowCount: number, milliseconds: number) => {
@@ -284,7 +332,7 @@ export function PreviewWorkspace() {
         {workspace.dropRejectedToken > 0 ? (
           <div className="notice notice-warning">
             <strong>Drop not accepted</strong>
-            <span>{DROP_BUSY_STATUS}</span>
+            <span>{DROP_REJECTION_STATUS[workspace.dropRejectedReason]}</span>
           </div>
         ) : null}
 
@@ -458,13 +506,19 @@ export function PreviewWorkspace() {
       <p aria-live="polite" className="visually-hidden" data-live-region="drop">
         {announceDrop(workspace)}
       </p>
+      {/* Named like the four above it and mounted for the life of the
+          application for the same reason: what a reader must notice is a change
+          inside a region, not a region arriving with its text. */}
+      <p aria-live="polite" className="visually-hidden" data-live-region="conversion">
+        {announceConversion(workspace)}
+      </p>
 
       <main className="workspace-layout">
         <aside className="workspace-sidebar">
           <DatasetRoster
             canAddFiles={canAcquire}
             canAddFolder={canAddFolder}
-            canMutate={canMutate}
+            canMutate={canClear}
             canPreview={canPreview}
             canReloadRoster={canReloadRoster}
             dispatch={workspace.dispatchRoster}
@@ -475,6 +529,7 @@ export function PreviewWorkspace() {
             onActivate={workspace.activateDataset}
             onAddFiles={workspace.addFiles}
             onAddFolder={workspace.addFolder}
+            canRemove={canRemove}
             onClearList={workspace.clearList}
             onReloadRoster={workspace.reloadRoster}
             onRemoveSelected={workspace.removeSelected}
@@ -483,6 +538,11 @@ export function PreviewWorkspace() {
             restoreAddFolderFocusToken={restoreAddFolderFocusToken}
             rosterSettlementToken={workspace.rosterSettlementToken}
             state={roster}
+          />
+          <ConversionPanel
+            canConvert={canConvert}
+            conversion={workspace.conversion}
+            focused={focusedDataset}
           />
           {preview.status === "loaded" ? (
             <PreviewSummary
@@ -602,6 +662,43 @@ function announceNotice(notice: WorkspaceNotice): string {
   return `Workspace: ${notice.message}${notice.sequence % 2 === 1 ? "\u00a0" : ""}`;
 }
 
+/**
+ * What a reader is told about the one conversion.
+ *
+ * One sentence per state and nothing while idle, so an empty region stays empty
+ * rather than announcing that nothing is happening. Nothing here is a
+ * percentage: nothing measures one.
+ */
+function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): string {
+  const state = workspace.conversion.state;
+  switch (state.status) {
+    case "awaitingDestination":
+      return `Choose where to save the converted mzML for ${state.dataset.fileName}.`;
+    case "running":
+      return `Converting ${state.dataset.fileName}. This cannot be cancelled.`;
+    case "completed":
+      return state.report.outcome === "finalized"
+        ? `Converted ${state.report.outputFileName ?? "the acquisition"}. Output-only validation.`
+        : state.report.outcome === "skipped_existing_destination"
+          ? "A file of that name was already there and was left untouched."
+          : "The conversion did not finish, so no file was written.";
+    case "failed":
+      return state.error.summary;
+    case "idle":
+      return "";
+  }
+}
+
+/**
+ * What each refusal says. Exhaustive over the reasons, so one added to the
+ * boundary fails compilation here rather than being dropped in silence.
+ */
+const DROP_REJECTION_STATUS: Readonly<Record<WorkspaceDropRejectionReason, string>> = {
+  drop_busy: DROP_BUSY_STATUS,
+  conversion_busy:
+    "MSCanvas is converting an acquisition, so those files were not added. Try again once the conversion has finished.",
+};
+
 function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>): string {
   if (workspace.dropSubscriptionStatus === "unavailable") {
     return `Explorer drag-and-drop is unavailable. ${workspace.dropSubscriptionError?.summary ?? "Use the Add actions below."}`;
@@ -610,7 +707,9 @@ function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>): string
     return "Connecting Explorer drag-and-drop.";
   }
   if (workspace.dropRejectedToken > 0) {
-    return `${DROP_BUSY_STATUS}${workspace.dropRejectedToken % 2 === 1 ? "\u00a0" : ""}`;
+    return `${DROP_REJECTION_STATUS[workspace.dropRejectedReason]}${
+      workspace.dropRejectedToken % 2 === 1 ? "\u00a0" : ""
+    }`;
   }
   if (workspace.dropError !== null) {
     return `The dropped items could not be added. ${workspace.dropError.summary}`;

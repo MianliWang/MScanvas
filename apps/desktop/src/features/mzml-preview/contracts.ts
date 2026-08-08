@@ -35,11 +35,28 @@ export interface BackendAvailability {
   readonly failure: BackendFailure | null;
 }
 
+/**
+ * Which family Rust admitted a row as.
+ *
+ * Closed, and deliberately not general. There is no `vendorRaw`, no `raw` and
+ * no `unknown`: one vendor family has measured conversion evidence, and a
+ * member here is a claim the product understands the data behind it.
+ */
+export type DatasetSourceKind = "mzml" | "thermo_raw";
+
 export interface SelectedFile {
   /** Opaque, session-scoped. Never a path. */
   readonly handle: string;
   readonly fileName: string;
   readonly byteLength: number;
+  /**
+   * Required on every row. The one decision that depends on it — whether a row
+   * can be previewed at all — is not a decision to guess, so there is no
+   * optional or unknown member to fall back to.
+   *
+   * Not identity, not searched, and not a sort key.
+   */
+  readonly sourceKind: DatasetSourceKind;
   /**
    * Where this row sits below the folder it was found in, and only when two or
    * more live rows share its final filename.
@@ -166,6 +183,14 @@ export interface DropIngestionResult {
  * `operationId` is an opaque decimal string rather than a JavaScript number,
  * so a native counter never crosses the safe-integer boundary.
  */
+/**
+ * Why one native drop was refused before any of its paths were retained.
+ *
+ * Two reasons, because the user does something different about each: another
+ * drop finishes on its own, and a conversion is work they started.
+ */
+export type WorkspaceDropRejectionReason = "drop_busy" | "conversion_busy";
+
 export type WorkspaceDropState =
   | { readonly status: "idle" }
   | { readonly status: "hovering"; readonly itemCount: number }
@@ -184,7 +209,7 @@ export type WorkspaceDropState =
       readonly operationId: string;
       readonly error: PreviewError;
     }
-  | { readonly status: "rejected"; readonly reason: "drop_busy" };
+  | { readonly status: "rejected"; readonly reason: WorkspaceDropRejectionReason };
 
 /** One monotonically sequenced native drop update. */
 export interface WorkspaceDropUpdate {
@@ -324,6 +349,113 @@ export interface PreviewError {
   readonly summary: string;
   readonly detail: string | null;
   readonly retryable: boolean;
+}
+
+/** The only output format this workflow produces. */
+export type ConversionOutputFormat = "mzML";
+
+/**
+ * How a conversion output was judged.
+ *
+ * `output_only` means nothing was compared: the source has no mzML reading, so
+ * only the output's own postconditions were established.
+ */
+export type ValidationMode = "source_comparison" | "output_only";
+
+/**
+ * What happens when the planned output name is already taken.
+ *
+ * Two members, and overwrite is not one of them.
+ */
+export type ConversionConflictPolicy = "fail" | "skip";
+
+/** What the interface shows before a conversion is started. */
+export interface ConversionPlanSummary {
+  readonly dataset: SelectedFile;
+  readonly outputFormat: ConversionOutputFormat;
+  /** Taken from the policy the plan is actually fixed with. */
+  readonly compression: string;
+  readonly validationMode: ValidationMode;
+}
+
+/** What was measured of a finalized output. */
+export interface ConversionOutput {
+  readonly byteLength: number;
+  readonly sha256: string;
+  readonly spectrumCount: number;
+  readonly chromatogramCount: number;
+}
+
+/**
+ * How a finalized output was judged, including what the judgement could not
+ * reach.
+ *
+ * `inapplicable` is not a softer `unverified`: it names properties this source
+ * posture has no reading of at all.
+ */
+export interface ConversionValidation {
+  readonly mode: ValidationMode;
+  readonly fullyVerified: boolean;
+  readonly verified: readonly string[];
+  readonly unverified: readonly string[];
+  readonly inapplicable: readonly string[];
+}
+
+/** Bounded facts about the backend process. No raw output crosses. */
+export interface ConversionBackendFacts {
+  readonly exitCode: number | null;
+  readonly elapsedMilliseconds: number;
+}
+
+/** What one conversion did, in facts that name no location. */
+export interface ConversionReport {
+  readonly datasetHandle: string;
+  readonly sourceKind: DatasetSourceKind;
+  readonly outcome: string;
+  readonly detailedOutcome: string | null;
+  readonly outputFileName: string | null;
+  readonly output: ConversionOutput | null;
+  readonly validation: ConversionValidation | null;
+  readonly backend: ConversionBackendFacts | null;
+  readonly stagingResidue: string | null;
+  readonly installationGeneration: number;
+}
+
+/**
+ * The session's one conversion slot.
+ *
+ * One operation, never a list. `completed` carries the report of a run that
+ * reached an outcome — which may itself be a failed conversion; `failed` is an
+ * operation that never reached one.
+ */
+export type WorkspaceConversionState =
+  | { readonly status: "idle" }
+  | {
+      readonly status: "awaitingDestination";
+      readonly operationId: string;
+      readonly dataset: SelectedFile;
+    }
+  | {
+      readonly status: "running";
+      readonly operationId: string;
+      readonly dataset: SelectedFile;
+    }
+  | {
+      readonly status: "completed";
+      readonly operationId: string;
+      readonly report: ConversionReport;
+    }
+  | {
+      readonly status: "failed";
+      readonly operationId: string;
+      readonly datasetHandle: string;
+      readonly error: PreviewError;
+    };
+
+/** One bounded read of that slot, with the key that orders two reads. */
+export interface WorkspaceConversionUpdate {
+  readonly sequence: number;
+  readonly state: WorkspaceConversionState;
 }
 
 export function isPreviewError(value: unknown): value is PreviewError {

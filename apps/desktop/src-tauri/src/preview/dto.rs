@@ -5,7 +5,7 @@
 //! actually emit. Unknown facts stay explicitly unknown rather than being
 //! defaulted into something that looks measured.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// The largest spectrum-table payload one open operation may transfer.
 ///
@@ -128,6 +128,17 @@ pub struct SelectedFileDto {
     pub handle: String,
     pub file_name: String,
     pub byte_length: u64,
+    /// Which family Rust admitted this row as.
+    ///
+    /// Required on every row and closed to exactly two values. An optional or
+    /// unknown member would be a row the interface has to guess about, and the
+    /// one decision that depends on this -- whether a row can be previewed at
+    /// all -- is not a decision to guess.
+    ///
+    /// It is not identity: two rows of different families are still two rows,
+    /// and one file admitted twice keeps the family it was first admitted
+    /// under. It is not searched and not sorted by.
+    pub source_kind: DatasetSourceKindDto,
     /// Where this row sits below the folder it was found in, and only when two
     /// or more live rows share its final filename.
     ///
@@ -137,6 +148,19 @@ pub struct SelectedFileDto {
     /// which is the only reason ADR 0006 permits saying anything at all. It is
     /// display only -- not searched, not sorted by, and not part of identity.
     pub relative_context: Option<String>,
+}
+
+/// The complete family vocabulary a roster row can carry.
+///
+/// Closed, and deliberately not general. There is no `vendorRaw`, no `raw` and
+/// no `unknown`: ADR 0010 admitted exactly one vendor family on measured
+/// evidence, and a member that exists here is a claim the product understands
+/// the data behind it.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DatasetSourceKindDto {
+    Mzml,
+    ThermoRaw,
 }
 
 /// Every dataset the session holds, in the order they were added.
@@ -259,6 +283,225 @@ pub struct FolderIngestionResultDto {
     pub discovery: FolderDiscoverySummaryDto,
 }
 
+/// One Rust-issued claim on the right to choose a destination and convert.
+///
+/// Opaque, path-free and single-use. It grants no filesystem authority: what it
+/// names is one bound decision Rust already made -- which dataset, at which
+/// request epoch, under which conflict policy, for which document -- so the
+/// picker that follows cannot be about anything else.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceConversionReservationDto {
+    pub reservation_id: String,
+}
+
+/// What the interface must show before a conversion is started.
+///
+/// Every field is derived from what the run will actually do rather than
+/// restated by the interface. A summary the frontend composed from constants
+/// would be a second description of the plan, free to drift from the first.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionPlanSummaryDto {
+    /// The row this plan is about, described as the roster describes it.
+    pub dataset: SelectedFileDto,
+    pub output_format: ConversionOutputFormatDto,
+    /// The compression every binary array in the output must carry, taken from
+    /// the policy the plan is fixed with.
+    pub compression: String,
+    pub validation_mode: ValidationModeDto,
+}
+
+/// The only output format this workflow can produce.
+///
+/// A one-member union rather than a bare string, so adding mzXML later is a
+/// change to this vocabulary and to everything that reads it, rather than a new
+/// value appearing in a field nobody validates.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ConversionOutputFormatDto {
+    #[serde(rename = "mzML")]
+    MzMl,
+}
+
+/// How a conversion output was judged.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationModeDto {
+    /// The source was read under the same model as the output and the two were
+    /// compared.
+    SourceComparison,
+    /// Only the output's own postconditions were established. Nothing was
+    /// compared, and nothing is claimed about what the source contained.
+    OutputOnly,
+}
+
+/// What happens when the planned output name is already taken.
+///
+/// Two members, and overwrite is not one of them. ADR 0009 refuses to replace a
+/// file this boundary did not create, and a policy that could would make the
+/// no-clobber guarantee a preference.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversionConflictPolicyDto {
+    Fail,
+    Skip,
+}
+
+/// One bounded, path-free read of the session's single conversion slot.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceConversionUpdateDto {
+    /// A checked, session-scoped ordering key. It is not a workspace
+    /// generation, not a request epoch and carries no filesystem authority.
+    pub sequence: u64,
+    pub state: WorkspaceConversionStateDto,
+}
+
+/// The complete conversion-state vocabulary exposed to the webview.
+///
+/// One slot, not a queue: there is no member holding a list, and no member
+/// naming work that has not started. `terminal` is one report, replaced by the
+/// next conversion and never accumulated.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum WorkspaceConversionStateDto {
+    Idle,
+    /// A reservation exists and the native picker is open or about to be.
+    #[serde(rename_all = "camelCase")]
+    AwaitingDestination {
+        /// Decimal text keeps a Rust `u64` exact across JavaScript's number
+        /// boundary while revealing no internal generation or token.
+        operation_id: String,
+        dataset: SelectedFileDto,
+    },
+    /// A destination was accepted and the conversion is under way. There is
+    /// deliberately no completed fraction: nothing measures one.
+    #[serde(rename_all = "camelCase")]
+    Running {
+        operation_id: String,
+        dataset: SelectedFileDto,
+    },
+    #[serde(rename_all = "camelCase")]
+    Completed {
+        operation_id: String,
+        report: ConversionReportDto,
+    },
+    /// The operation did not reach a conversion outcome at all -- a refused
+    /// destination, a superseded row, an unusable backend. Distinct from a
+    /// conversion that ran and failed, which is a `completed` report.
+    #[serde(rename_all = "camelCase")]
+    Failed {
+        operation_id: String,
+        dataset_handle: String,
+        error: PreviewErrorDto,
+    },
+}
+
+/// What one conversion did, in facts that name no location.
+///
+/// The projection of the private report, and deliberately smaller than it. What
+/// is here is what this surface shows; everything else -- above all any path --
+/// stays in Rust.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionReportDto {
+    pub dataset_handle: String,
+    pub source_kind: DatasetSourceKindDto,
+    /// What the run did, by the conversion boundary's own identifier.
+    pub outcome: String,
+    /// The precise failure, when the outcome was a failure. Separate from
+    /// `outcome` because the interface groups by one and explains by the other.
+    pub detailed_outcome: Option<String>,
+    /// The name the finalized output took. A display name, not a location, and
+    /// absent unless a file was actually finalized.
+    pub output_file_name: Option<String>,
+    pub output: Option<ConversionOutputDto>,
+    pub validation: Option<ConversionValidationDto>,
+    pub backend: Option<ConversionBackendFactsDto>,
+    /// What the run could not reclaim of its own staging area, by stable
+    /// identifier. Reported beside the outcome rather than folded into it: a
+    /// conversion can succeed and still leave something behind, and the two are
+    /// different things to tell a user.
+    pub staging_residue: Option<String>,
+    pub installation_generation: u64,
+}
+
+/// What was measured of a finalized output.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionOutputDto {
+    pub byte_length: u64,
+    /// The digest of the file that was written. Already established as safe to
+    /// show: it is a property of the output's bytes and names nothing about
+    /// where it or its source lives.
+    pub sha256: String,
+    pub spectrum_count: u64,
+    pub chromatogram_count: u64,
+}
+
+/// How a finalized output was judged, including what the judgement could not
+/// reach.
+///
+/// `inapplicable` is not a softer `unverified`. A property that could not apply
+/// is one this source posture has no reading of at all, so reporting it as
+/// merely unverified would suggest a check that could have been made and was
+/// not.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionValidationDto {
+    pub mode: ValidationModeDto,
+    pub fully_verified: bool,
+    pub verified: Vec<String>,
+    pub unverified: Vec<String>,
+    pub inapplicable: Vec<String>,
+}
+
+/// Bounded facts about the backend process. Raw stdout and stderr are
+/// deliberately absent: they can name the acquisition and the destination.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionBackendFactsDto {
+    pub exit_code: Option<i32>,
+    pub elapsed_milliseconds: u64,
+}
+
+/// What a conversion reservation that names nothing answers with.
+pub fn invalid_conversion_reservation() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "invalid_conversion_reservation",
+        "That conversion request is no longer valid. Start it again.",
+        false,
+    )
+}
+
+/// What a row of a family this product cannot read answers with.
+pub fn dataset_not_previewable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "dataset_not_previewable",
+        "Convert to mzML before previewing this acquisition.",
+        false,
+    )
+}
+
+/// What a second conversion answers with while one is already under way.
+pub fn conversion_busy() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_busy",
+        "MSCanvas converts one acquisition at a time. Wait for the current conversion to finish.",
+        true,
+    )
+}
+
+/// What a row that cannot be converted answers with.
+pub fn dataset_not_convertible() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "dataset_not_convertible",
+        "That row is already mzML, so there is nothing to convert.",
+        false,
+    )
+}
+
 /// One Rust-issued claim on the current document's bounded drop subscriber.
 ///
 /// The identifier is opaque and path-free. It grants no filesystem authority
@@ -316,6 +559,10 @@ pub enum WorkspaceDropStateDto {
 pub enum DropRejectionReasonDto {
     #[serde(rename = "drop_busy")]
     DropBusy,
+    /// A conversion is under way. Dropping files would change the workspace the
+    /// conversion is reading from, so the drop is refused rather than queued.
+    #[serde(rename = "conversion_busy")]
+    ConversionBusy,
 }
 
 /// Which shared native-drop budget prevented the remaining roots from being

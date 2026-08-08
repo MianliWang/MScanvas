@@ -1265,16 +1265,18 @@ describe("the session workspace roster", () => {
   });
 
   it("identifies which same-named acquisition a direct add found again", async () => {
-    const first = {
+    const first: SelectedFile = {
       handle: "collision-0",
       fileName: "sample.mzML",
       byteLength: 4_096,
+      sourceKind: "mzml",
       relativeContext: null,
     };
-    const second = {
+    const second: SelectedFile = {
       handle: "collision-1",
       fileName: "sample.mzML",
       byteLength: 8_192,
+      sourceKind: "mzml",
       relativeContext: null,
     };
     const api = createFakePreviewApi({
@@ -1754,10 +1756,11 @@ describe("the session workspace roster", () => {
     renderApp(api);
     const regions = () => [...document.querySelectorAll("[aria-live='polite']")];
     await screen.findByRole("button", { name: "Add files…" });
-    // Five, all mounted for the life of the application: what the viewer is
+    // Six, all mounted for the life of the application: what the viewer is
     // doing, what the search found, what the last workspace action did,
-    // whether a folder scan is running, and what native drop is doing.
-    expect(regions()).toHaveLength(5);
+    // whether a folder scan is running, what native drop is doing, and what
+    // the one conversion is doing.
+    expect(regions()).toHaveLength(6);
 
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
@@ -1766,8 +1769,8 @@ describe("the session workspace roster", () => {
         "Workspace: Added 2 files.",
       );
     });
-    // The same four regions, with new text in one of them.
-    expect(regions()).toHaveLength(5);
+    // The same six regions, with new text in one of them.
+    expect(regions()).toHaveLength(6);
   });
 
   it("does not claim the session is empty before its list has been read", async () => {
@@ -2092,7 +2095,7 @@ describe("the session workspace roster", () => {
     renderApp(api);
     await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
     const regions = () => [...document.querySelectorAll("[aria-live='polite']")];
-    expect(regions()).toHaveLength(5);
+    expect(regions()).toHaveLength(6);
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC" },
@@ -2105,7 +2108,7 @@ describe("the session workspace roster", () => {
     // A search that found nothing is not an empty workspace, and the two must
     // not sound alike.
     expect(spoken).not.toContain("The workspace is empty.");
-    expect(regions()).toHaveLength(5);
+    expect(regions()).toHaveLength(6);
   });
 
   it("says the search was cleared rather than falling silent", async () => {
@@ -2143,10 +2146,11 @@ describe("the session workspace roster", () => {
   it("renders a roster at capacity through a search and a sort", { timeout: 60_000 }, async () => {
     // Not timed and not a benchmark: what it holds is that the size Rust
     // actually allows renders, matches and orders without falling over.
-    const many = Array.from({ length: 1_024 }, (_, index) => ({
+    const many = Array.from({ length: 1_024 }, (_, index): SelectedFile => ({
       handle: `file-${String(index)}`,
       fileName: `${index % 2 === 0 ? "QC" : "blank"}_run-${String(index)}.mzML`,
       byteLength: (index % 7) * 1_000,
+      sourceKind: "mzml",
       relativeContext: null,
     }));
     const api = createFakePreviewApi({
@@ -2279,6 +2283,7 @@ const NESTED_ONE: SelectedFile = {
   handle: "folder-0",
   fileName: "sample.mzML",
   byteLength: 4_000_000,
+  sourceKind: "mzml",
   relativeContext: null,
 };
 
@@ -2286,6 +2291,7 @@ const NESTED_TWO: SelectedFile = {
   handle: "folder-1",
   fileName: "sample.mzML",
   byteLength: 6_000_000,
+  sourceKind: "mzml",
   relativeContext: null,
 };
 
@@ -2293,6 +2299,7 @@ const NESTED_UNIQUE: SelectedFile = {
   handle: "folder-2",
   fileName: "unique.mzML",
   byteLength: 1_000_000,
+  sourceKind: "mzml",
   relativeContext: null,
 };
 

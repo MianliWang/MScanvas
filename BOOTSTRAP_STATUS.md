@@ -3073,3 +3073,80 @@ from it; every item on it carries a stated `expect(dead_code)` under
 
 Rendered QA was not required and not performed: the diff contains no frontend
 file, transfer object, command signature, capability or user-facing string.
+
+## M3.1 first visible Thermo RAW conversion, 2026-08-07
+
+The conversion boundary had everything except a way in. M3.0.4 joined it to the
+workspace and stopped there on purpose: private, no command behind it, every
+item carrying a stated `expect(dead_code)`. This slice is that surface and
+nothing beyond it.
+
+The exact claim is narrow and the narrowness is the point. `Add files…` admits
+regular `.mzML` and one evidenced Thermo Scientific RAW family, recognized by
+its 18-byte signature rather than its name; one focused Thermo row converts to
+mzML, one at a time, on one exact ProteoWizard build. Folder ingestion and
+Explorer drop are untouched and remain mzML-only, because both walk a tree the
+user did not enumerate and admitting a vendor family from a walk is a wider
+claim than admitting one they named. No second `Add RAW…` button was added: the
+user's question is "add this acquisition", not "which reader opens it". The
+command behind the action was renamed `choose_workspace_files`, because
+`choose_mzml_files` had become a name that said something false.
+
+Every roster row now carries a required, closed `sourceKind`, and Rust refuses
+`open_mzml_preview` for a vendor row rather than leaving it to a disabled
+button. An automatic first preview reads the first newly added *mzML* row, never
+simply the first row, so a mixed batch into an empty workspace still costs one
+process and a batch of acquisitions costs none.
+
+Conversion acts on the focused row, never on the selection, and its primary
+action lives in the conversion panel beside the summary it acts on rather than
+as a sixth roster button — partly discoverability, partly that the roster's
+280px floor is derived from five buttons wrapping to three lines and a sixth
+would move that arithmetic, the narrow-window budget and four pinned tests
+without making anything easier to find. Moving focus to a vendor row does not
+disturb an mzML preview already on screen.
+
+The destination is a third Rust-owned native folder picker, and remote roots are
+refused at admission rather than discovered by a cleanup that cannot finish:
+ADR 0009's finalization and cleanup guarantees are local Windows guarantees, and
+refusing early is the difference between "we will not write there" and "we wrote
+there and cannot tell you what state it is in".
+
+The two-phase reservation copies the folder-import shape for the reason that one
+already gives, and proves the calling document with the authority the drop
+subscription established. State is one slot — `idle`, `awaitingDestination`,
+`running`, one terminal report — read rather than pushed, which is what makes
+reload recovery fall out instead of being built. A second conversion is refused,
+not enqueued. Rust enforces every concurrency rule: adding, clearing, a new
+preview and a native drop are refused while one runs, the converting row cannot
+be removed while every other row still can, and searching, sorting and reading
+the list stay available. There is no Cancel button and the panel says why; there
+is no percentage because nothing measures one.
+
+Deterministic coverage: 356 Rust tests and 476 frontend tests, none needing an
+installation or a WebView. ADR 0011's open binding gate is closed from both
+ends — a run given `msaccess` capability evidence cannot express a conversion,
+and a source-contract test pins that the production provider binds `msconvert`
+for conversion and `msaccess` for preview with exactly two bindings.
+
+The real end-to-end conversion ran on the implementation head through the
+product path — `add_files`, then the reservation the destination picker claims —
+on the evidenced build (release `3.0.26013`, revision `47b13cf`, `msconvert.exe`
+SHA-256 `9BB6F5D5…D590BD`, verified first). `FT-HCD-MSX.raw` (78,309 bytes,
+SHA-256 `b3d97b38…dd7b`) was admitted as dataset `file-0` of family
+`thermo_raw` and finalized as `FT-HCD-MSX.mzML`, 28,655 bytes, SHA-256
+`6CE2ACE6…D8648C`, 1 spectrum and 1 chromatogram, exit 0 in 568 ms, exactly one
+file in the destination, no sidecars, no staging residue. Validation was
+output-only: 9 verified, 0 unverified, 11 inapplicable, and not fully verified.
+The serialized update names no path. The acquisition and the output were deleted
+afterwards; no vendor data is committed.
+
+Validation on the final head: `cargo fmt --all --check`,
+`cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --locked --workspace --all-targets`,
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
+`pnpm build`, `git diff --check`.
+
+No queue, cancellation, progress percentage, retry, persistence, mzXML,
+overwrite, second vendor family, directory-formatted acquisition support, output
+auto-import or output auto-preview. No dependency and no capability was added.

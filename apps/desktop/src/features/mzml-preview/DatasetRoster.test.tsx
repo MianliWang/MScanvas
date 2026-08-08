@@ -20,6 +20,7 @@ function dataset(index: number, relativeContext: string | null = null): Selected
     handle: `file-${String(index)}`,
     fileName: NAMES[index] ?? `file-${String(index)}.mzML`,
     byteLength: 4_096 * (index + 1),
+    sourceKind: "mzml",
     relativeContext,
   };
 }
@@ -85,6 +86,7 @@ function Harness({
       canAddFiles={canAddFiles}
       canAddFolder={canAddFolder}
       canMutate={canMutate}
+      canRemove={canMutate}
       canPreview={canPreview}
       canReloadRoster={canReloadRoster}
       dispatch={dispatch}
@@ -122,6 +124,7 @@ function Fixed({
   readonly state: RosterState;
   readonly canAddFiles?: boolean;
   readonly canMutate?: boolean;
+  readonly canRemove?: boolean;
   readonly folderBusy?: boolean;
   readonly dropBusy?: boolean;
   readonly onAddFiles?: () => void;
@@ -134,6 +137,7 @@ function Fixed({
       canAddFiles={canAddFiles}
       canAddFolder
       canMutate={canMutate}
+      canRemove={canMutate}
       canPreview
       canReloadRoster
       dispatch={() => undefined}
@@ -484,11 +488,11 @@ describe("looking at the roster through a search and a sort", () => {
       type: "filesAdded",
       result: {
         roster: {
-          datasets: [...kept.datasets, { handle: "file-9", fileName: "QC_pool_09.mzML", byteLength: 1, relativeContext: null }],
+          datasets: [...kept.datasets, { handle: "file-9", fileName: "QC_pool_09.mzML", byteLength: 1, sourceKind: "mzml", relativeContext: null }],
           capacity: 1_024,
         },
         outcomes: [
-          { outcome: "added", dataset: { handle: "file-9", fileName: "QC_pool_09.mzML", byteLength: 1, relativeContext: null } },
+          { outcome: "added", dataset: { handle: "file-9", fileName: "QC_pool_09.mzML", byteLength: 1, sourceKind: "mzml", relativeContext: null } },
         ],
       },
     });
@@ -662,6 +666,7 @@ describe("returning the keyboard after removal", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         rosterSettlementToken={1}
         state={after}
       />,
@@ -700,6 +705,7 @@ describe("returning the keyboard after removal", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         rosterSettlementToken={1}
         state={after}
       />,
@@ -762,6 +768,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
         <Fixed
           canAddFiles={false}
           canMutate={false}
+          canRemove={false}
           folderBusy
           onClearList={onClearList}
           state={initialRosterState}
@@ -824,6 +831,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         folderBusy
         state={initialRosterState}
       />,
@@ -854,6 +862,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         folderBusy
         state={initialRosterState}
       />,
@@ -885,6 +894,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         folderBusy
         state={initialRosterState}
       />,
@@ -945,6 +955,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
         <Fixed
           canAddFiles={false}
           canMutate={false}
+          canRemove={false}
           folderBusy
           state={initialRosterState}
         />,
@@ -981,6 +992,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
         <Fixed
           canAddFiles={false}
           canMutate={false}
+          canRemove={false}
           folderBusy
           state={initialRosterState}
         />,
@@ -1034,6 +1046,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         folderBusy
         state={initialRosterState}
       />,
@@ -1076,6 +1089,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         folderBusy
         state={initialRosterState}
       />,
@@ -1095,6 +1109,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         rosterSettlementToken={1}
         state={seeded(1)}
       />,
@@ -1117,6 +1132,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         folderBusy
         state={initialRosterState}
       />,
@@ -1180,6 +1196,7 @@ describe("the workspace roster as an accessible list", () => {
         canAddFiles
         canAddFolder
         canMutate
+        canRemove
         canPreview
         canReloadRoster
         dispatch={() => undefined}
@@ -1224,6 +1241,7 @@ describe("the workspace roster as an accessible list", () => {
         canAddFiles
         canAddFolder
         canMutate
+        canRemove
         canPreview
         canReloadRoster
         dispatch={() => undefined}
@@ -1311,6 +1329,7 @@ describe("the workspace roster as an accessible list", () => {
         canAddFiles
         canAddFolder
         canMutate
+        canRemove
         canPreview
         canReloadRoster
         dispatch={() => undefined}
@@ -1801,9 +1820,9 @@ describe("saying which of two identically named rows is which", () => {
       type: "rosterLoaded",
       roster: {
         datasets: [
-          { handle: "file-0", fileName: "sample.mzML", byteLength: 4_096, relativeContext: "batch-1" },
-          { handle: "file-1", fileName: "sample.mzML", byteLength: 8_192, relativeContext: "batch-2" },
-          { handle: "file-2", fileName: "unique.mzML", byteLength: 2_048, relativeContext: null },
+          { handle: "file-0", fileName: "sample.mzML", byteLength: 4_096, sourceKind: "mzml", relativeContext: "batch-1" },
+          { handle: "file-1", fileName: "sample.mzML", byteLength: 8_192, sourceKind: "mzml", relativeContext: "batch-2" },
+          { handle: "file-2", fileName: "unique.mzML", byteLength: 2_048, sourceKind: "mzml", relativeContext: null },
         ],
         capacity: 1_024,
       },
@@ -1819,7 +1838,9 @@ describe("saying which of two identically named rows is which", () => {
     expect(within(row).getAllByText("sample.mzML")).toHaveLength(1);
     // And a row whose name is already unique says nothing.
     const unique = screen.getByRole("option", { name: /unique\.mzML/ });
-    expect(unique.textContent).toBe("unique.mzML2.0 KiB");
+    // The family sits between the name and the size, separated in the text so
+    // the accessible name does not run them together.
+    expect(unique.textContent).toBe("unique.mzML, mzML, 2.0 KiB");
   });
 
   it("uses the bounded value exactly as Rust gave it, in the visible text and the title alike", () => {

@@ -260,7 +260,10 @@ export function rowPresentation(state: RosterState, handle: string): RowPresenta
  * Pure and cheap enough to call twice; storing it would mean a second copy of
  * an order that is already derivable, and a second thing to keep correct.
  */
-export function rosterProjection(state: RosterState): RosterProjection {
+export function rosterProjection(
+  state: RosterState,
+  converting: string | null = null,
+): RosterProjection {
   return projectRoster({
     datasets: state.datasets,
     query: state.query,
@@ -268,6 +271,7 @@ export function rosterProjection(state: RosterState): RosterProjection {
     selected: state.selected,
     active: state.active,
     rowState: state.rowState,
+    converting,
   });
 }
 

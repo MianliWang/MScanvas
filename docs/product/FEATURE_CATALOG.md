@@ -67,8 +67,19 @@ table remains the target, including the unsupported portions called out below:
 | CNV-008 | Conflict policy | P0 | Default is fail/skip; overwrite requires explicit confirmation. |
 | CNV-009 | Natural-language summary | P0 | Before running, state file count, format, processing and output root. |
 
-**None of CNV-001 to CNV-009 is reachable in the product.** A private Rust
-conversion boundary exists beneath them and is covered by tests: it plans mzML
+**One conversion is reachable: exactly one focused Thermo Scientific RAW row at
+a time, to mzML, on one evidenced ProteoWizard build.** `Add files…` admits that
+family alongside mzML, a focused vendor row offers a fixed plan and a Fail/Skip
+choice, and `Convert focused…` opens a Rust-owned local destination picker and
+converts. CNV-001 and CNV-008's fail/skip half are reachable that far and no
+further; CNV-003 exposes no location choice beyond the folder itself; CNV-007's
+zlib is shown but not selectable; CNV-002, CNV-004 to CNV-006 and CNV-009's
+batch summary remain unreachable. There is no queue, no cancellation, no
+progress, no retry and no overwrite. See
+[ADR 0012](../architecture/adr/0012-first-visible-thermo-conversion.md).
+
+Beneath it, the private Rust conversion boundary is unchanged and is covered by
+tests: it plans mzML
 only, derives the output name from the source, refuses or skips an existing
 destination with no overwrite to select, stages the backend's output in a
 directory MSCanvas owns and takes the final name only after the produced

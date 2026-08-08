@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { ChangeEvent, KeyboardEvent, MouseEvent } from "react";
 
+import type { DatasetSourceKind } from "./contracts";
 import { formatByteLength, formatCount } from "./format";
 import {
   rowPresentation,
@@ -64,6 +65,15 @@ export interface DatasetRosterProps {
    */
   readonly canMutate: boolean;
   /**
+   * Whether the current selection may be removed right now.
+   *
+   * Narrower than `canMutate` and deliberately its own answer. Rust refuses a
+   * removal only when the converting row is among the handles, so during a
+   * conversion every other row stays the user's to prune -- which is exactly
+   * when the list is unusable for longest and curating it matters most.
+   */
+  readonly canRemove: boolean;
+  /**
    * Whether the list may be read back right now.
    *
    * Its own answer rather than `canMutate`, because it is not an escape route.
@@ -94,6 +104,19 @@ export interface DatasetRosterProps {
 }
 
 /** What a row says about itself when it is not simply listed. */
+/**
+ * What each admitted family is called on screen.
+ *
+ * Exhaustive over the union, so a family added to the boundary fails
+ * compilation here rather than rendering as a blank cell. Words rather than a
+ * colour or a glyph: which family a row is decides whether it can be previewed
+ * at all, and that is not a fact to encode as a shade.
+ */
+const SOURCE_KIND_LABEL: Record<DatasetSourceKind, string> = {
+  mzml: "mzML",
+  thermo_raw: "Thermo RAW",
+};
+
 const ROW_STATE_LABEL: Record<RowPresentation, string> = {
   ready: "",
   opening: "Reading…",
@@ -102,6 +125,14 @@ const ROW_STATE_LABEL: Record<RowPresentation, string> = {
   missing: "Missing",
   failed: "Could not be read",
 };
+
+/**
+ * Why a vendor row cannot be previewed, and what to do instead.
+ *
+ * Rust refuses the read as well; this is the sentence, not the rule. Saying it
+ * where the disabled action is means the answer arrives with the question.
+ */
+const PREVIEW_NEEDS_CONVERSION = "Convert to mzML before previewing this acquisition.";
 
 const CLEAR_DURING_FOLDER_IMPORT_DESCRIPTION =
   "Clear list also prevents the pending folder import from adding files.";
@@ -131,6 +162,7 @@ export function DatasetRoster({
   dropBusy,
   canPreview,
   canMutate,
+  canRemove,
   canReloadRoster,
   rosterSettlementToken,
   focusAddFilesToken,
@@ -729,6 +761,12 @@ export function DatasetRoster({
   const rowCount = state.datasets.length;
   const visible = projection.datasets;
   const focusStop = state.focused ?? visible[0]?.handle ?? null;
+  // Read from the roster Rust gave us rather than from the visible projection:
+  // a focused row pinned outside a search is still the focused row, and the
+  // reason `Preview focused` is unavailable does not change with a query.
+  const focusedIsConvertible = state.datasets.some(
+    (dataset) => dataset.handle === state.focused && dataset.sourceKind === "thermo_raw",
+  );
   // Measured against what the search matched, never against what is on screen:
   // a query that matched three of four files narrowed the view whether or not
   // a fourth row is being kept visible for another reason. The same sentence
@@ -851,10 +889,13 @@ export function DatasetRoster({
           Add mzML folder…
         </button>
         <button
+          aria-describedby={
+            focusedIsConvertible ? "preview-needs-conversion-description" : undefined
+          }
           className="secondary-button"
-          disabled={!canPreview || state.focused === null}
+          disabled={!canPreview || state.focused === null || focusedIsConvertible}
           onClick={() => {
-            if (state.focused !== null) {
+            if (state.focused !== null && !focusedIsConvertible) {
               onActivate(state.focused);
             }
           }}
@@ -862,9 +903,18 @@ export function DatasetRoster({
         >
           Preview focused
         </button>
+        {/* Mounted only while the reason holds, and said in words the moment it
+            does. A vendor acquisition is not something this product reads, and
+            an action that was merely disabled would leave the user guessing
+            which of several conditions had turned it off. */}
+        {focusedIsConvertible ? (
+          <span className="visually-hidden" id="preview-needs-conversion-description">
+            {PREVIEW_NEEDS_CONVERSION}
+          </span>
+        ) : null}
         <button
           className="secondary-button"
-          disabled={!canMutate || state.selected.size === 0}
+          disabled={!canRemove || state.selected.size === 0}
           onClick={(event) => {
             const control = event.currentTarget;
             const ownsKeyboard = document.activeElement === control;
@@ -1101,6 +1151,12 @@ export function DatasetRoster({
                     </>
                   )}
                 </span>
+                {/* A separator in the text for the same reason as above: the
+                    family is part of the row's accessible name, and without it
+                    a reader hears "sample.raw1.2 MBThermo RAW". */}
+                <span className="visually-hidden">, </span>
+                <span className="dataset-row-kind">{SOURCE_KIND_LABEL[dataset.sourceKind]}</span>
+                <span className="visually-hidden">, </span>
                 <span className="dataset-row-size">{formatByteLength(dataset.byteLength)}</span>
                 {/* One track for both, so the name keeps a column of its own.
                     An `auto` grid track takes its max-content width before the

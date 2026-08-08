@@ -1,9 +1,10 @@
 //! The private path from an accepted workspace dataset to one converted mzML.
 //!
-//! Nothing here is reachable from the webview. There is no command, no transfer
-//! object and no capability behind it: the entry point is a Rust method on the
-//! service, and what it answers with is a Rust value that carries no path. The
-//! product's ingestion surfaces are unchanged and remain mzML-only.
+//! No path reaches the webview from here. ADR 0011 landed this as a private
+//! path with no surface; ADR 0012 gives it one, so the report below is now
+//! projected into a closed transfer object as well as read from Rust. What
+//! crosses is the projection, never the report: the report holds what the run
+//! established, and the projection holds what the interface may show.
 //!
 //! What this module is for is the join. `mscanvas-proteowizard` owns admission,
 //! planning, staging, execution and the integrity contract, and owns them for a
@@ -14,33 +15,21 @@
 //! touched -- which is why the order is written out here once, rather than being
 //! implied by where the code happens to sit.
 
-// Every item below is unreachable from a shipped build, because this path has
-// no product surface yet and deliberately gains none in this slice. It is not
-// test-only logic: it compiles into the release binary, it is the
-// implementation a surface would call, and its tests exercise it rather than a
-// stand-in. ADR 0011 records why it lands before the surface it serves.
-//
-// Stated once for the module rather than repeated on each item, and as an
-// `expect` so that it stops being accepted the moment nothing here is dead.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "ADR 0011: the private conversion path lands before the surface it serves"
-    )
-)]
-
 use std::path::Path;
 
 use mscanvas_proteowizard::{
-    BackendRunFacts, ConflictPolicy, ConversionPlan, ConversionPlanError, ConversionRunReport,
-    ConversionSource, ConversionSourceKind, InstalledHelpCapabilities, IntegrityProperty,
-    StagingResidue, ValidationMode, provider_build_is_evidenced, run_conversion,
+    BackendRunFacts, ConflictPolicy, ConversionPlan, ConversionPlanError, ConversionPolicy,
+    ConversionRunOutcome, ConversionRunReport, ConversionSource, ConversionSourceKind,
+    InstalledHelpCapabilities, IntegrityProperty, StagingResidue, ValidationMode,
+    provider_build_is_evidenced, run_conversion,
 };
 
 use super::backend::ConversionBackend;
-use super::dto::PreviewErrorDto;
-use super::selection::DatasetSourceKind;
+use super::dto::{
+    ConversionBackendFactsDto, ConversionConflictPolicyDto, ConversionOutputDto,
+    ConversionReportDto, ConversionValidationDto, PreviewErrorDto, ValidationModeDto,
+};
+use super::selection::{DatasetSourceKind, source_kind_dto};
 
 /// What one private conversion did.
 ///
@@ -71,6 +60,9 @@ pub(super) struct WorkspaceConversionReport {
     output: Option<OutputFacts>,
     /// How a finalized output was judged.
     validation: Option<ValidationFacts>,
+    /// The precise failure, reaching into the plan or integrity error where one
+    /// exists. Absent unless the run failed.
+    detailed_outcome: Option<&'static str>,
     /// Bounded facts about the backend process, when one ran.
     backend: Option<BackendRunFacts>,
     /// What the run could not reclaim of its own staging area.
@@ -116,51 +108,6 @@ pub(super) struct ValidationFacts {
 }
 
 impl WorkspaceConversionReport {
-    /// The handle of the dataset this report is about.
-    pub(super) fn dataset(&self) -> &str {
-        &self.dataset
-    }
-
-    /// The family the dataset was re-admitted as.
-    pub(super) const fn source_kind(&self) -> DatasetSourceKind {
-        self.source_kind
-    }
-
-    /// What the run did.
-    pub(super) const fn outcome(&self) -> &'static str {
-        self.outcome
-    }
-
-    /// The name a finalized output took, if one was finalized.
-    pub(super) fn output_file_name(&self) -> Option<&str> {
-        self.output_file_name.as_deref()
-    }
-
-    /// What was measured of a finalized output.
-    pub(super) const fn output(&self) -> Option<&OutputFacts> {
-        self.output.as_ref()
-    }
-
-    /// How a finalized output was judged.
-    pub(super) const fn validation(&self) -> Option<&ValidationFacts> {
-        self.validation.as_ref()
-    }
-
-    /// Bounded facts about the backend process, when one ran.
-    pub(super) const fn backend(&self) -> Option<BackendRunFacts> {
-        self.backend
-    }
-
-    /// What the run could not reclaim of its staging area.
-    pub(super) const fn residue(&self) -> Option<StagingResidue> {
-        self.residue
-    }
-
-    /// The installation sequence this run was stamped with.
-    pub(super) const fn installation_generation(&self) -> u64 {
-        self.installation_generation
-    }
-
     /// Builds a report from the crate's own report, adding only what the
     /// session knows and the crate cannot: which dataset this was, what family
     /// it was admitted as, and which installation ran it.
@@ -176,6 +123,15 @@ impl WorkspaceConversionReport {
             dataset,
             source_kind,
             outcome: run.outcome().stable_id(),
+            // The two are not one answer. `outcome` groups -- a caller tells
+            // finalized from skipped from failed by it -- and this one
+            // explains, which is what a reader needs when the group is
+            // "failed".
+            detailed_outcome: match run.outcome() {
+                ConversionRunOutcome::Failed(failure) => Some(failure.detailed_stable_id()),
+                ConversionRunOutcome::Finalized(_)
+                | ConversionRunOutcome::SkippedExistingDestination => None,
+            },
             // From the plan, which is where the name was decided, and only when
             // a run finalized something. Reporting the planned name for a run
             // that produced nothing would name a file that does not exist -- or
@@ -202,46 +158,6 @@ impl WorkspaceConversionReport {
     }
 }
 
-impl OutputFacts {
-    pub(super) const fn byte_length(&self) -> u64 {
-        self.byte_length
-    }
-
-    pub(super) fn sha256(&self) -> &str {
-        &self.sha256
-    }
-
-    pub(super) const fn spectra(&self) -> u64 {
-        self.spectra
-    }
-
-    pub(super) const fn chromatograms(&self) -> u64 {
-        self.chromatograms
-    }
-}
-
-impl ValidationFacts {
-    pub(super) const fn mode(&self) -> ValidationMode {
-        self.mode
-    }
-
-    pub(super) fn verified(&self) -> &[&'static str] {
-        &self.verified
-    }
-
-    pub(super) fn unverified(&self) -> &[&'static str] {
-        &self.unverified
-    }
-
-    pub(super) fn inapplicable(&self) -> &[&'static str] {
-        &self.inapplicable
-    }
-
-    pub(super) const fn is_fully_verified(&self) -> bool {
-        self.fully_verified
-    }
-}
-
 /// Property sets as their stable identifiers, in the crate's own order.
 fn property_ids<'a>(
     properties: impl IntoIterator<Item = &'a IntegrityProperty>,
@@ -250,6 +166,98 @@ fn property_ids<'a>(
         .into_iter()
         .map(|property| property.stable_id())
         .collect()
+}
+
+impl WorkspaceConversionReport {
+    /// The projection this surface may show.
+    ///
+    /// Narrower than the report on purpose. Everything here is either a display
+    /// name, a measurement or a stable identifier; nothing is a location, and
+    /// there is no field a path could reach even if one were added upstream.
+    pub(super) fn to_dto(&self) -> ConversionReportDto {
+        ConversionReportDto {
+            dataset_handle: self.dataset.clone(),
+            source_kind: source_kind_dto(self.source_kind),
+            outcome: self.outcome.to_owned(),
+            detailed_outcome: self.detailed_outcome.map(str::to_owned),
+            output_file_name: self.output_file_name.clone(),
+            output: self.output.as_ref().map(|output| ConversionOutputDto {
+                byte_length: output.byte_length,
+                sha256: output.sha256.clone(),
+                spectrum_count: output.spectra,
+                chromatogram_count: output.chromatograms,
+            }),
+            validation: self
+                .validation
+                .as_ref()
+                .map(|validation| ConversionValidationDto {
+                    mode: validation_mode_dto(validation.mode),
+                    fully_verified: validation.fully_verified,
+                    verified: owned(&validation.verified),
+                    unverified: owned(&validation.unverified),
+                    inapplicable: owned(&validation.inapplicable),
+                }),
+            backend: self.backend.map(|backend| ConversionBackendFactsDto {
+                exit_code: backend.exit_code(),
+                // Milliseconds, not the Duration itself: a struct with two
+                // fields would be a second time format on the wire for no
+                // reader that needs one.
+                elapsed_milliseconds: u64::try_from(backend.elapsed().as_millis())
+                    .unwrap_or(u64::MAX),
+            }),
+            staging_residue: self.residue.map(|residue| residue.stable_id().to_owned()),
+            installation_generation: self.installation_generation,
+        }
+    }
+}
+
+fn owned(properties: &[&'static str]) -> Vec<String> {
+    properties
+        .iter()
+        .map(|property| (*property).to_owned())
+        .collect()
+}
+
+/// The wire name for how an output was judged.
+pub(super) const fn validation_mode_dto(mode: ValidationMode) -> ValidationModeDto {
+    match mode {
+        ValidationMode::SourceComparison => ValidationModeDto::SourceComparison,
+        ValidationMode::OutputOnly => ValidationModeDto::OutputOnly,
+    }
+}
+
+/// The conversion boundary's name for a conflict policy the webview chose.
+///
+/// Total, and the only crossing point. There is no overwrite member on either
+/// side, so no policy the webview can name replaces a file this boundary did
+/// not create.
+pub(super) const fn conflict_policy(policy: ConversionConflictPolicyDto) -> ConflictPolicy {
+    match policy {
+        ConversionConflictPolicyDto::Fail => ConflictPolicy::Fail,
+        ConversionConflictPolicyDto::Skip => ConflictPolicy::Skip,
+    }
+}
+
+/// The compression every output of this workflow must carry.
+///
+/// Read from the policy a plan is actually fixed with rather than restated, so
+/// a summary shown before a conversion and the contract applied after it cannot
+/// describe different things.
+pub(super) fn fixed_compression() -> &'static str {
+    ConversionPolicy::default().compression().stable_id()
+}
+
+/// Which family this workflow can convert.
+///
+/// mzML is already the format the product reads, so converting one to another
+/// is work with no product purpose; the private path supports it because the
+/// crate does, and the visible workflow declines it because a user asking for
+/// it has misunderstood what it does.
+pub(super) const fn is_convertible(kind: DatasetSourceKind) -> bool {
+    match kind {
+        DatasetSourceKind::Mzml => false,
+        DatasetSourceKind::ThermoRaw => true,
+    }
 }
 
 /// The conversion boundary's name for a family the session accepted.

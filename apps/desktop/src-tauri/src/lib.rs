@@ -11,10 +11,12 @@ use tauri::webview::PageLoadEvent;
 use tauri::{Manager, State};
 
 use preview::dto::{
-    BackendAvailabilityDto, FolderImportReservationDto, FolderIngestionResultDto, PreviewDto,
-    PreviewErrorDto, SelectedSpectrumOutcomeDto, WorkspaceAddResultDto,
-    WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto, WorkspaceRemoveResultDto,
-    WorkspaceRosterDto, invalid_workspace_drop_subscription,
+    BackendAvailabilityDto, ConversionConflictPolicyDto, ConversionPlanSummaryDto,
+    FolderImportReservationDto, FolderIngestionResultDto, PreviewDto, PreviewErrorDto,
+    SelectedSpectrumOutcomeDto, WorkspaceAddResultDto, WorkspaceConversionReservationDto,
+    WorkspaceConversionUpdateDto, WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
+    WorkspaceRemoveResultDto, WorkspaceRosterDto, invalid_conversion_reservation,
+    invalid_workspace_drop_subscription,
 };
 use preview::{PreviewService, ProteoWizardProvider, normalize_window_drop_event};
 
@@ -51,6 +53,11 @@ async fn get_workspace_roster(
 
 /// Shows the native picker and adds every chosen file to the workspace.
 ///
+/// Named for the workspace rather than for one format. It admits mzML and the
+/// one evidenced Thermo RAW family, so `choose_mzml_files` had become a name
+/// that said something false about what it does. The visible action is still
+/// `Add files…`.
+///
 /// This runs asynchronously so the modal dialog can be dispatched onto the main
 /// thread without blocking the command dispatcher. Cancelling returns `None`,
 /// which is an ordinary outcome rather than an error: nothing was chosen, so
@@ -59,9 +66,11 @@ async fn get_workspace_roster(
 ///
 /// The webview names no path in either direction. It asks for a picker, Rust
 /// shows it, and what comes back is a roster and one outcome per chosen file.
-/// Nothing here reads an acquisition.
+/// Nothing here reads an acquisition and nothing here launches a process: which
+/// family each candidate is admitted under is decided by opening and inspecting
+/// it, and the picker's extension filter is only what the shell sorts by.
 #[tauri::command]
-async fn choose_mzml_files(
+async fn choose_workspace_files(
     app: tauri::AppHandle,
     service: State<'_, SharedService>,
 ) -> Result<Option<WorkspaceAddResultDto>, PreviewErrorDto> {
@@ -69,7 +78,7 @@ async fn choose_mzml_files(
     let service = Arc::clone(&service);
     let (sender, receiver) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
-        let _ = sender.send(preview::dialog::choose_mzml_files(owner));
+        let _ = sender.send(preview::dialog::choose_workspace_files(owner));
     })
     .map_err(|_| picker_unavailable())?;
 
@@ -78,7 +87,7 @@ async fn choose_mzml_files(
     // for.
     off_the_async_runtime(move || {
         let chosen = receiver.recv().map_err(|_| picker_unavailable())??;
-        Ok(chosen.map(|paths| service.add_files(&paths)))
+        chosen.map(|paths| service.add_files(&paths)).transpose()
     })
     .await?
 }
@@ -94,7 +103,9 @@ async fn choose_mzml_files(
 /// delayed request from that document can neither replace the live reservation
 /// nor supersede a claimed scan.
 #[tauri::command]
-fn begin_mzml_folder_import(service: State<'_, SharedService>) -> FolderImportReservationDto {
+fn begin_mzml_folder_import(
+    service: State<'_, SharedService>,
+) -> Result<FolderImportReservationDto, PreviewErrorDto> {
     service.begin_folder_import()
 }
 
@@ -254,6 +265,149 @@ async fn subscribe_workspace_drop_updates(
     }
 }
 
+/// Describes the conversion one focused row would get, without starting one.
+///
+/// Read-only and free: no picker, no reservation, no process. It exists so the
+/// summary the user reads before deciding is derived from what the run will
+/// actually do, rather than composed in the webview from constants that are
+/// free to drift from it.
+#[tauri::command]
+async fn describe_workspace_conversion(
+    handle: String,
+    service: State<'_, SharedService>,
+) -> Result<ConversionPlanSummaryDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.conversion_plan_summary(&handle)).await?
+}
+
+/// Reads the session's one conversion slot.
+///
+/// The authoritative answer about a conversion, and the only one that survives a
+/// reload. A document reads this on mount to recover work it did not start, and
+/// again while something is running. It launches nothing and changes nothing.
+#[tauri::command]
+async fn get_workspace_conversion_state(
+    service: State<'_, SharedService>,
+) -> Result<WorkspaceConversionUpdateDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.conversion_state()).await
+}
+
+/// Binds one conversion request and reserves the right to choose a folder.
+///
+/// Deliberately synchronous and deliberately separate from choosing, for the
+/// reason `begin_mzml_folder_import` already gives: a webview can reload between
+/// any two IPC fetches, so Rust retains the reservation and a document that
+/// never receives the identifier can never open a picker.
+///
+/// Proves the calling document the same way the drop subscription does. A
+/// reservation issued to a document that has since been replaced is refused,
+/// because the document that would receive the answer is gone.
+#[tauri::command]
+async fn begin_workspace_conversion(
+    handle: String,
+    conflict_policy: ConversionConflictPolicyDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
+    let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || {
+        service.begin_conversion(&handle, conflict_policy, document_epoch)
+    })
+    .await?
+}
+
+/// Shows the native destination picker for one exact reservation and converts.
+///
+/// The webview names no folder: it returns only the opaque reservation Rust
+/// issued. Rust consumes and validates that claim **before** dispatching the
+/// dialog, so a reload or a second request that overtook it fails without
+/// opening a picker.
+///
+/// Cancelling returns the idle state, which is an ordinary outcome: nothing was
+/// created and nothing ran. The answer is the conversion state either way, and
+/// it is the same value a later read returns — so a reply lost with a replaced
+/// document costs the replacement nothing but one read.
+#[tauri::command]
+async fn choose_workspace_conversion_destination(
+    reservation_id: String,
+    app: tauri::AppHandle,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<WorkspaceConversionUpdateDto, PreviewErrorDto> {
+    let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let owner = main_window_handle(&app);
+    let service = Arc::clone(&service);
+    let operation = service.claim_conversion(&reservation_id, document_epoch)?;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    if app
+        .run_on_main_thread(move || {
+            let _ = sender.send(preview::dialog::choose_conversion_destination(owner));
+        })
+        .is_err()
+    {
+        // The claim already took the slot. A dispatch that never happened
+        // leaves nothing to close it, so without this the session would hold an
+        // awaiting reservation whose picker does not exist -- and conversion,
+        // adding, clearing and previewing would stay refused until a reload.
+        service.cancel_conversion(operation);
+        return Err(folder_picker_unavailable());
+    }
+
+    // The wait spans the modal dialog and then the whole conversion, either of
+    // which can last as long as it lasts. Neither is something to hold an async
+    // worker for.
+    off_the_async_runtime(move || {
+        let chosen = match receiver.recv().map_err(|_| folder_picker_unavailable())? {
+            Ok(chosen) => chosen,
+            Err(error) => {
+                // The picker itself failed. That is a refusal of this
+                // operation, not a conversion that went wrong, and the slot has
+                // to leave `awaitingDestination` either way.
+                service.cancel_conversion(operation);
+                return Err(error);
+            }
+        };
+        let Some(destination) = chosen else {
+            return Ok(service.cancel_conversion(operation));
+        };
+        Ok(service.run_claimed_conversion(operation, &destination))
+    })
+    .await?
+}
+
+/// Proves which main document is calling, and answers with its epoch.
+///
+/// The same proof the drop subscription uses, reused rather than reimplemented:
+/// a per-document secret installed before any script runs, sent as a header, and
+/// verified by evaluating it in the calling webview. A conversion reservation is
+/// authority over a picker and a file this application creates, so it is bound
+/// to a document exactly as tightly.
+async fn verified_document_epoch(
+    ipc_request: &tauri::ipc::Request<'_>,
+    webview: &tauri::Webview<tauri::Wry>,
+    service: &SharedService,
+) -> Result<u64, PreviewErrorDto> {
+    if webview.label() != "main" {
+        return Err(invalid_conversion_reservation());
+    }
+    let authority = ipc_request
+        .headers()
+        .get(DROP_DOCUMENT_AUTHORITY_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| valid_drop_document_authority(value))
+        .ok_or_else(invalid_conversion_reservation)?
+        .to_owned();
+    let epoch = service.workspace_drop_document_epoch();
+    verify_drop_document_authority(webview, &authority)
+        .await
+        .map_err(|_| invalid_conversion_reservation())?;
+    Ok(epoch)
+}
+
 /// Removes the rows these handles name and answers with the roster that
 /// remains.
 ///
@@ -266,7 +420,7 @@ async fn remove_workspace_datasets(
     service: State<'_, SharedService>,
 ) -> Result<WorkspaceRemoveResultDto, PreviewErrorDto> {
     let service = Arc::clone(&service);
-    off_the_async_runtime(move || service.remove_datasets(&handles)).await
+    off_the_async_runtime(move || service.remove_datasets(&handles)).await?
 }
 
 /// Empties the workspace and answers with the empty roster.
@@ -279,7 +433,7 @@ async fn clear_workspace(
     service: State<'_, SharedService>,
 ) -> Result<WorkspaceRosterDto, PreviewErrorDto> {
     let service = Arc::clone(&service);
-    off_the_async_runtime(move || service.clear_workspace()).await
+    off_the_async_runtime(move || service.clear_workspace()).await?
 }
 
 fn picker_unavailable() -> PreviewErrorDto {
@@ -447,14 +601,18 @@ pub fn run() {
             choose_backend_installation,
             use_automatic_backend_discovery,
             get_workspace_roster,
-            choose_mzml_files,
+            choose_workspace_files,
             begin_mzml_folder_import,
             choose_mzml_folder,
             subscribe_workspace_drop_updates,
             remove_workspace_datasets,
             clear_workspace,
             open_mzml_preview,
-            load_selected_spectrum
+            load_selected_spectrum,
+            describe_workspace_conversion,
+            get_workspace_conversion_state,
+            begin_workspace_conversion,
+            choose_workspace_conversion_destination
         ])
         .run(tauri::generate_context!())
         .expect("failed to run the MSCanvas desktop application");

@@ -312,6 +312,86 @@ button:disabled {
   flex: 1 1 60%;
 }
 
+/* The focused row's conversion. Conditional, like the Run panel beside it: it
+   appears when there is a convertible row focused or an operation to report,
+   and takes no height at all otherwise.
+
+   `flex: 0 1 auto` rather than a share, because unlike the roster and the Run
+   panel this one is as tall as its own content and no taller. Giving it a share
+   of the column would take space from the list on every window that has it and
+   leave an empty box on every window that does not. */
+.conversion-panel {
+  display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  flex-direction: column;
+  /* Its own overflow, inside the `.panel` rule's `hidden`. A long failure
+     sentence or a long output name scrolls here rather than pushing the roster
+     out of the column. */
+  overflow: auto;
+  /* The header alone, so a panel squeezed to its floor still says which panel
+     it is rather than becoming an unlabelled sliver. */
+  min-height: 54px;
+}
+
+.conversion-plan,
+.conversion-running,
+.conversion-result {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 8px 12px;
+  gap: 8px;
+}
+
+/* Native radios in a native fieldset. The policy is a two-way choice with a
+   caption, which is what a fieldset and a legend are; a pair of styled buttons
+   would be the same choice with the grouping left implicit. */
+.conversion-conflict {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  gap: 4px;
+}
+
+.conversion-conflict > legend {
+  padding: 0 4px;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.conversion-conflict > label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Wraps rather than clipping, so the one primary action stays reachable at
+   every width this workspace supports. */
+.conversion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.conversion-result-headline {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The family, beside the size and read like it: a fixed cell that never takes
+   room from the name. */
+.dataset-row-kind {
+  min-width: 0;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .dataset-roster-actions {
   display: flex;
   flex-wrap: wrap;
@@ -345,7 +425,7 @@ button:disabled {
      gets any -- measured, a row carrying both `Could not be read` and
      `Selected — outside search` left the name exactly 0px. The file a row is
      about is the last thing on it that may disappear. */
-  grid-template-columns: 12px 12px minmax(72px, 1fr) auto minmax(0, auto);
+  grid-template-columns: 12px 12px minmax(72px, 1fr) auto auto minmax(0, auto);
   height: 28px;
   padding: 0 12px;
   font-size: 12px;

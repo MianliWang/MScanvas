@@ -48,10 +48,11 @@ export function isSortMode(value: string): value is SortMode {
  * the roster's marker was repaired for. `kept` is that state: still the row an
  * explicit re-read acts on, with nothing to show for it yet.
  */
-export type PinReason = "reading" | "showing" | "selected" | "kept";
+export type PinReason = "converting" | "reading" | "showing" | "selected" | "kept";
 
 /** What each reason says beside the row, in words rather than in colour. */
 export const PIN_REASON_LABEL: Record<PinReason, string> = {
+  converting: "Converting — outside search",
   reading: "Reading — outside search",
   showing: "Showing — outside search",
   selected: "Selected — outside search",
@@ -66,6 +67,18 @@ export interface RosterProjectionInput {
   readonly selected: ReadonlySet<string>;
   readonly active: string | null;
   readonly rowState: ReadonlyMap<string, RowPresentation>;
+  /**
+   * The row a conversion is working on, if any.
+   *
+   * Pinned above every other reason. A conversion cannot be cancelled and the
+   * row cannot be removed, so a search that hid it would hide the one row the
+   * user most needs to see -- and the state it is in is the reason they cannot
+   * act on it.
+   *
+   * Conversion is never a search term and never a sort key: this decides
+   * whether a row stays visible, not where it sits or whether it matched.
+   */
+  readonly converting: string | null;
 }
 
 export interface RosterProjection {
@@ -175,6 +188,11 @@ function pinReason(
   input: RosterProjectionInput,
   presentation: RowPresentation,
 ): PinReason | null {
+  // First, because it is the one state the user cannot act their way out of:
+  // the row cannot be removed and the conversion cannot be cancelled.
+  if (input.converting === handle) {
+    return "converting";
+  }
   if (presentation === "opening") {
     return "reading";
   }

@@ -12,6 +12,7 @@
 
 pub mod backend;
 mod conversion;
+mod destination;
 pub mod dialog;
 /// Bounded, private discovery of mzML candidates under a chosen folder.
 ///
@@ -22,6 +23,7 @@ mod discovery;
 mod drop_ingestion;
 pub mod dto;
 mod installation;
+mod operation;
 pub mod selection;
 pub mod service;
 

@@ -7,10 +7,13 @@
 use super::dto::PreviewErrorDto;
 
 #[cfg(windows)]
-pub use windows_dialog::{choose_installation_folder, choose_mzml_files, choose_mzml_folder};
+pub use windows_dialog::{
+    choose_conversion_destination, choose_installation_folder, choose_mzml_folder,
+    choose_workspace_files,
+};
 
 #[cfg(not(windows))]
-pub fn choose_mzml_files(
+pub fn choose_workspace_files(
     _owner: Option<isize>,
 ) -> Result<Option<Vec<std::path::PathBuf>>, PreviewErrorDto> {
     Err(PreviewErrorDto::new(
@@ -33,6 +36,17 @@ pub fn choose_installation_folder(
 
 #[cfg(not(windows))]
 pub fn choose_mzml_folder(
+    _owner: Option<isize>,
+) -> Result<Option<std::path::PathBuf>, PreviewErrorDto> {
+    Err(PreviewErrorDto::new(
+        "folder_picker_unavailable",
+        "The native folder picker is available on Windows in this version.",
+        false,
+    ))
+}
+
+#[cfg(not(windows))]
+pub fn choose_conversion_destination(
     _owner: Option<isize>,
 ) -> Result<Option<std::path::PathBuf>, PreviewErrorDto> {
     Err(PreviewErrorDto::new(
@@ -132,15 +146,23 @@ mod windows_dialog {
     ///
     /// Must be called from a thread that can run a modal message loop; the
     /// Tauri command dispatches it onto the main thread.
-    pub fn choose_mzml_files(
+    pub fn choose_workspace_files(
         owner: Option<isize>,
     ) -> Result<Option<Vec<PathBuf>>, PreviewErrorDto> {
-        // A double-NUL terminated pair list: display label, then pattern.
+        // A double-NUL terminated pair list: display label, then pattern. One
+        // combined entry rather than two, because the two families are one
+        // workspace and a user choosing an acquisition should not have to know
+        // which filter row it is under.
+        //
+        // Candidate filtering only. What a file is is decided by opening it:
+        // an mzML candidate goes to mzML admission and a `.raw` candidate goes
+        // to the signature rule, which refuses a name whose bytes are not an
+        // acquisition.
         let mut filter = Vec::new();
-        filter.extend_from_slice(&wide("mzML files (*.mzML)"));
-        filter.extend_from_slice(&wide("*.mzML"));
+        filter.extend_from_slice(&wide("Acquisitions (*.mzML;*.raw)"));
+        filter.extend_from_slice(&wide("*.mzML;*.raw"));
         filter.push(0);
-        let title = wide("Open mzML files");
+        let title = wide("Open acquisitions");
         let default_extension = wide("mzML");
 
         let mut buffer = vec![0_u16; SELECTION_BUFFER_LENGTH];
@@ -506,6 +528,28 @@ mod windows_dialog {
     /// Tauri command dispatches it onto the main thread.
     pub fn choose_mzml_folder(owner: Option<isize>) -> Result<Option<PathBuf>, PreviewErrorDto> {
         browse_for_folder(owner, "Choose a folder containing .mzML files")
+    }
+
+    /// Shows the native folder picker and returns where one converted output
+    /// may be written, or `None` when the user cancelled.
+    ///
+    /// A third operation rather than a third caption on one of the others, for
+    /// the reason the second one already gives: these name different things --
+    /// where the backend is installed, where the user keeps their data, and
+    /// where a file this application creates should go -- and one command that
+    /// meant any of them would be a boundary whose meaning depended on who
+    /// called it. This one is the only one that leads to writing anything.
+    ///
+    /// Whether the chosen folder can actually be written to safely is not
+    /// decided here. This returns a folder; admission decides whether it is one
+    /// this boundary's finalization and cleanup guarantees hold for.
+    ///
+    /// Must be called from a thread that can run a modal message loop; the
+    /// Tauri command dispatches it onto the main thread.
+    pub fn choose_conversion_destination(
+        owner: Option<isize>,
+    ) -> Result<Option<PathBuf>, PreviewErrorDto> {
+        browse_for_folder(owner, "Choose where to save the converted mzML")
     }
 
     /// The one native folder dialog, told what to ask for.

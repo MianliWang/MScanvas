@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import { usePreviewApi } from "./api";
+import type { ConversionOperation } from "./useConversionOperation";
+import { useConversionOperation } from "./useConversionOperation";
 import type {
   BackendAvailability,
   Preview,
   PreviewError,
   SelectedFile,
   SelectedSpectrum,
+  WorkspaceDropRejectionReason,
   WorkspaceDropUpdate,
 } from "./contracts";
 import { toPreviewError } from "./contracts";
@@ -80,6 +83,15 @@ export type DropPresentation =
 export type DropSubscriptionStatus = "connecting" | "available" | "unavailable";
 
 export interface PreviewWorkspace {
+  /**
+   * The session's one conversion, as this document sees it.
+   *
+   * Its own lane, with its own tokens and its own authoritative read. It is
+   * composed here rather than inlined so that everything about a conversion --
+   * the slot, the poll, the staleness rule -- lives in one module a reader can
+   * hold in their head.
+   */
+  readonly conversion: ConversionOperation;
   readonly backend: BackendState;
   readonly preview: PreviewState;
   readonly spectrum: SpectrumState;
@@ -135,6 +147,8 @@ export interface PreviewWorkspace {
    * again without replacing the current import state.
    */
   readonly dropRejectedToken: number;
+  /** Why the last drop was refused, for the sentence that says so. */
+  readonly dropRejectedReason: WorkspaceDropRejectionReason;
   /** Whether this document currently owns the native Explorer-drop Channel. */
   readonly dropSubscriptionStatus: DropSubscriptionStatus;
   /** A Channel registration failure, separate from any accepted Drop failure. */
@@ -406,6 +420,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     status: "idle",
   });
   const [dropRejectedToken, setDropRejectedToken] = useState(0);
+  /**
+   * Why the last drop was refused.
+   *
+   * Beside the token rather than folded into it, because the token's job is to
+   * re-announce an identical sentence and this decides which sentence it is.
+   */
+  const [dropRejectedReason, setDropRejectedReason] =
+    useState<WorkspaceDropRejectionReason>("drop_busy");
   const [dropError, setDropError] = useState<PreviewError | null>(null);
   const [dropSubscriptionStatus, setDropSubscriptionStatus] =
     useState<DropSubscriptionStatus>("connecting");
@@ -1043,12 +1065,16 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         }
 
         case "rejected":
-          // A second Drop is feedback about the attempted operation, not a
+          // A refusal is feedback about the attempted operation, not a
           // transition of the one already running. In particular, do not clear
           // its owner or its busy gate.
-          if (state.reason === "drop_busy") {
-            setDropRejectedToken((token) => token + 1);
-          }
+          //
+          // Both reasons are announced. They are refused for different lengths
+          // of time and the user does something different about each — another
+          // drop finishes on its own, a conversion is work they started — so a
+          // reason with no handling would be a drop that vanished in silence.
+          setDropRejectedReason(state.reason);
+          setDropRejectedToken((token) => token + 1);
           return;
       }
     },
@@ -1132,6 +1158,18 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       if (backendBusyRef.current || viewerRequests.current > 0) {
         return;
       }
+      // Here rather than on the button, because a button is one of three ways
+      // in: Enter and a double-click reach this too. Without it, activating a
+      // vendor row would clear the mzML preview on screen and replace it with
+      // the refusal Rust is about to send -- losing a working view to learn
+      // something the row already says.
+      if (
+        rosterRef.current.datasets.some(
+          (dataset) => dataset.handle === handle && dataset.sourceKind !== "mzml",
+        )
+      ) {
+        return;
+      }
       if (!backendUsableRef.current) {
         return;
       }
@@ -1183,6 +1221,16 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         const added = result.outcomes.flatMap((outcome) =>
           outcome.outcome === "added" ? [outcome.dataset.handle] : [],
         );
+        // Only an mzML row can be read, so only an mzML row is read. A mixed
+        // batch into an empty workspace still costs one process, and a batch of
+        // vendor acquisitions costs none: reading the first row whatever it was
+        // would send a `.raw` to a preview boundary that cannot open one, and
+        // open a first-run session with a failure nobody asked for.
+        const firstPreviewable = result.outcomes.flatMap((outcome) =>
+          outcome.outcome === "added" && outcome.dataset.sourceKind === "mzml"
+            ? [outcome.dataset.handle]
+            : [],
+        )[0];
         // Whether the session was empty is Rust's answer, not this side's
         // projection of it. A webview can reload while Rust still holds rows,
         // and a first read that is slow or failed leaves the roster on screen
@@ -1198,15 +1246,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         // This is what keeps one picker operation costing one process rather
         // than one per file, while a first-run session still ends up looking at
         // something.
-        const first = added[0];
         if (
           wasEmpty &&
-          first !== undefined &&
+          firstPreviewable !== undefined &&
           backendUsableRef.current &&
           !backendBusyRef.current &&
           viewerRequests.current === 0
         ) {
-          loadPreview(first, startedAt);
+          loadPreview(firstPreviewable, startedAt);
         }
       })
       .catch((cause: unknown) => {
@@ -1588,7 +1635,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       // being probed, this either reads the backend being replaced or queues
       // behind the change and then fails on it -- one process launch either
       // way, for a result that was never going to be shown.
-      if (backendBusyRef.current) {
+      if (backendBusyRef.current || conversionBusyRef.current) {
         return;
       }
       // A repeat of the row already being read is dropped. Every selection is
@@ -1701,6 +1748,24 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     }
   }, [selectSpectrum, selectedIndex]);
 
+  // A conversion's report carries the installation sequence it ran at. If it is
+  // newer than what this document has applied, the banner and everything read
+  // from the previous installation are stale -- so the backend is re-read
+  // through the one path that knows how to discard them.
+  const reconcileConversionGeneration = useCallback(
+    (generation: number) => {
+      if (generation > appliedGeneration.current) {
+        checkBackend();
+      }
+    },
+    [checkBackend],
+  );
+  const conversion = useConversionOperation(reconcileConversionGeneration);
+  // Read by the spectrum guard below. A conversion owns the one backend lane,
+  // and Rust refuses a spectrum while it does; this is what stops the interface
+  // asking and leaving a panel loading for the length of a conversion.
+  const conversionBusyRef = conversion.busyRef;
+
   const activeDataset = useMemo(
     () => roster.datasets.find((dataset) => dataset.handle === roster.active) ?? null,
     [roster.active, roster.datasets],
@@ -1720,6 +1785,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     dropBusy,
     dropPresentation,
     dropRejectedToken,
+    dropRejectedReason,
     dropSubscriptionStatus,
     dropSubscriptionError,
     retryDropSubscription,
@@ -1754,6 +1820,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     retrySpectrum,
     completeRenderMeasurements,
     recordMeasurement,
+    conversion,
   };
 }
 
