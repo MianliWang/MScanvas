@@ -4004,6 +4004,9 @@ fn a_termination_that_could_not_be_confirmed_is_a_distinct_failure() {
         panic!("an unconfirmed termination is not a cancellation: {attempt:?}");
     };
     assert_eq!(failure.cause(), BackendExecutionFailure::NotTerminated);
+    // The runner returned an error rather than a result, so there are no
+    // process facts to report and none are invented.
+    assert_eq!(failure.backend(), None);
     // The primary failure and the cleanup result are separate facts: cleanup
     // still ran, and it succeeded.
     assert_eq!(failure.residue(), None);
@@ -4040,6 +4043,13 @@ fn a_cancellation_claimed_before_the_owned_tree_is_empty_is_a_failure() {
         panic!("a surviving owned process is not a confirmed cancellation: {attempt:?}");
     };
     assert_eq!(failure.cause(), BackendExecutionFailure::NotTerminated);
+    // A tree that may still be running is the outcome a reader most needs
+    // described, so the process facts the boundary did establish are kept.
+    let backend = failure
+        .backend()
+        .expect("a process ran, so its facts are reported");
+    assert_eq!(backend.elapsed(), Duration::from_millis(11));
+    assert_eq!(backend.peak_job_memory_bytes(), Some(2_048));
     assert!(attempt.finalized().is_none());
 }
 

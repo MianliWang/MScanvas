@@ -1046,3 +1046,39 @@ fn remove_workspace_contents(root: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::encode_base64;
+
+    /// The generated workload is only a workload if the arrays in it decode to
+    /// what the declared lengths and precisions say they are. RFC 4648 vectors,
+    /// including every padding case, because a silently wrong encoder would
+    /// still produce a document `msconvert` accepts and this harness would
+    /// still call it evidence.
+    #[test]
+    fn the_generator_encodes_base64_exactly() {
+        for (input, expected) in [
+            ("", ""),
+            ("f", "Zg=="),
+            ("fo", "Zm8="),
+            ("foo", "Zm9v"),
+            ("foob", "Zm9vYg=="),
+            ("fooba", "Zm9vYmE="),
+            ("foobar", "Zm9vYmFy"),
+            ("Man", "TWFu"),
+            ("Ma", "TWE="),
+        ] {
+            let mut encoded = String::new();
+            encode_base64(input.as_bytes(), &mut encoded);
+            assert_eq!(encoded, expected, "encoding {input:?}");
+        }
+
+        // The payloads this harness writes are 64-bit floats, so the byte count
+        // is always a multiple of eight and never a multiple of three.
+        let mut encoded = String::new();
+        encode_base64(&1.0_f64.to_le_bytes(), &mut encoded);
+        assert_eq!(encoded.len(), 12);
+        assert!(encoded.ends_with('='));
+    }
+}

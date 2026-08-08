@@ -984,8 +984,10 @@ pub enum ConversionRunFailure {
     /// The backend exited without reporting success.
     #[error("the backend exited without reporting success")]
     BackendRejected { exit_code: Option<i32> },
-    /// The backend did not run to completion. This boundary requests no
-    /// cancellation, so only a substituted runner can report one.
+    /// The backend did not run to completion, and no cancellation explains it.
+    /// [`run_conversion`] requests none, so only a substituted runner can
+    /// report one to it; [`run_conversion_cancellable`] reaches this only when
+    /// a runner reports a non-ordinary termination that nobody asked for.
     #[error("the backend did not run to completion")]
     BackendDidNotComplete,
     /// The produced document failed the mzML conversion-integrity contract and
@@ -1384,10 +1386,17 @@ fn observe_staged_content(staging: &Path) -> Option<StagedContentObservation> {
     let mut directory_count = 0;
     let mut non_empty_file_observed = false;
     for entry in snapshot.entries() {
-        if entry.kind() == OutputEntryKind::Directory {
-            directory_count += 1;
-        } else if entry.byte_length() > 0 {
-            non_empty_file_observed = true;
+        // Only the two kinds this observation names are counted. A link or a
+        // reparse point is neither an ordinary staged file nor a directory, and
+        // reporting its length as a partial output would attribute bytes to a
+        // document that may not be one; it is still in `entry_count`, which is
+        // what says something unexpected was there.
+        match entry.kind() {
+            OutputEntryKind::Directory => directory_count += 1,
+            OutputEntryKind::RegularFile if entry.byte_length() > 0 => {
+                non_empty_file_observed = true;
+            }
+            _ => {}
         }
     }
     Some(StagedContentObservation {
@@ -1465,6 +1474,7 @@ impl CancellationReport {
 #[derive(Debug, PartialEq)]
 pub struct CancellationFailure {
     cause: BackendExecutionFailure,
+    backend: Option<BackendRunFacts>,
     staged: Option<StagedContentObservation>,
     residue: Option<StagingResidue>,
 }
@@ -1475,6 +1485,16 @@ impl CancellationFailure {
     #[must_use]
     pub const fn cause(&self) -> BackendExecutionFailure {
         self.cause
+    }
+
+    /// Bounded facts about the process, where the boundary got far enough to
+    /// have any. This is the case those facts matter most in: a tree that may
+    /// still be running is exactly what a reader needs elapsed time and peak
+    /// accounting for, and dropping them here would leave the least diagnosable
+    /// outcome the least described.
+    #[must_use]
+    pub const fn backend(&self) -> Option<BackendRunFacts> {
+        self.backend
     }
 
     #[must_use]
@@ -1871,7 +1891,7 @@ impl RunResult {
             },
             Self::CancellationFailed(failure) => ConversionRunReport {
                 outcome: ConversionRunOutcome::Failed(ConversionRunFailure::Backend(failure.cause)),
-                backend: None,
+                backend: failure.backend,
                 residue: failure.residue,
             },
         }
@@ -2039,13 +2059,16 @@ fn run_admitted(
             staged,
             residue,
         }),
-        StagedResult::CancellationFailed { cause, staged } => {
-            RunResult::CancellationFailed(CancellationFailure {
-                cause,
-                staged,
-                residue,
-            })
-        }
+        StagedResult::CancellationFailed {
+            cause,
+            backend,
+            staged,
+        } => RunResult::CancellationFailed(CancellationFailure {
+            cause,
+            backend,
+            staged,
+            residue,
+        }),
     }
 }
 
@@ -2194,6 +2217,7 @@ enum StagedResult {
     },
     CancellationFailed {
         cause: BackendExecutionFailure,
+        backend: Option<BackendRunFacts>,
         staged: Option<StagedContentObservation>,
     },
 }
@@ -2253,6 +2277,9 @@ fn run_staged(
             {
                 return StagedResult::CancellationFailed {
                     cause,
+                    // The runner returned an error rather than a result, so
+                    // there are no process facts to report.
+                    backend: None,
                     staged: observe_staged_content(staging),
                 };
             }
@@ -2281,6 +2308,7 @@ fn run_staged(
         {
             return StagedResult::CancellationFailed {
                 cause: BackendExecutionFailure::NotTerminated,
+                backend,
                 staged,
             };
         }
