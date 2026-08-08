@@ -298,6 +298,15 @@ are worth recording, because a survivor is a gap in the tests and not a curiosit
   refuses the same condition first, with `file_unreadable`. The identifier stays
   in the classifier because it is the same condition and because the preview path
   does reach it.
+- **The retry's second destination check.** Admitting a directory is filesystem
+  work, so proving the folder is still the same object cannot be done while
+  holding the slot lock. That leaves a window in which another document could run
+  a whole further queue and make *its* destination the terminal one, so the retry
+  re-reads the terminal destination under the slot lock and refuses unless it is
+  the one just proved. Reaching that window needs a second document to complete
+  an entire queue between one thread's two statements; the deterministic suite
+  cannot schedule it, and it is recorded here as defence in depth rather than
+  left looking like a live guard.
 
 ## Open gates
 

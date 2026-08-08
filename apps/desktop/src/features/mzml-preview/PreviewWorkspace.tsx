@@ -224,9 +224,17 @@ export function PreviewWorkspace() {
   );
 
   const { describe: describeConversion } = workspace.conversion;
-  const describeKey = queueHandlesToConvert.join(",");
+  // The joined key is the dependency; the array itself is the input. A fresh
+  // array is built on every render, so depending on it would re-describe the
+  // same queue on every keystroke in the search box -- and splitting the key
+  // back apart to rebuild the input would turn a handle that ever held the
+  // separator into a different queue. A unit separator is the one thing an
+  // opaque handle cannot contain.
+  const describeKey = queueHandlesToConvert.join("\u001f");
   useEffect(() => {
-    describeConversion(describeKey === "" ? [] : describeKey.split(","));
+    describeConversion(queueHandlesToConvert);
+    // `queueHandlesToConvert` is deliberately absent: `describeKey` is its
+    // content, and the content is what decides whether to ask again.
   }, [describeConversion, describeKey]);
 
   const handleTableRendered = useCallback(
@@ -710,13 +718,6 @@ function announceNotice(notice: WorkspaceNotice): string {
 }
 
 /**
- * What a reader is told about the one conversion.
- *
- * One sentence per state and nothing while idle, so an empty region stays empty
- * rather than announcing that nothing is happening. Nothing here is a
- * percentage: nothing measures one.
- */
-/**
  * What each refusal says. Exhaustive over the reasons, so one added to the
  * boundary fails compilation here rather than being dropped in silence.
  */
@@ -726,6 +727,13 @@ const DROP_REJECTION_STATUS: Readonly<Record<WorkspaceDropRejectionReason, strin
     "MSCanvas is converting an acquisition, so those files were not added. Try again once the conversion has finished.",
 };
 
+/**
+ * What a reader is told about the conversion queue.
+ *
+ * One sentence per state and nothing while idle, so an empty region stays empty
+ * rather than announcing that nothing is happening. Nothing here is a
+ * percentage: nothing measures one.
+ */
 function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): string {
   const state = workspace.conversion.state;
   if (state.status === "idle") {
@@ -736,12 +744,16 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
     return "Choose where to save the converted mzML.";
   }
   if (state.status === "running") {
-    // The item, not a fraction of one, and named — so a repeated poll that
-    // finds the same item says the same sentence and is not re-announced.
-    const current = queue.items[queue.currentIndex];
+    // The item that says it is running, which is the same row the roster pins.
+    // Deriving one of them from the position and the other from the state would
+    // let the sentence name one acquisition while the list marked another.
+    const position = queue.items.findIndex((item) => item.state === "running");
+    const current = position === -1 ? undefined : queue.items[position];
+    // Named rather than counted alone, so a repeated poll that finds the same
+    // item says the same sentence and is not announced twice.
     return current === undefined
       ? `Converting ${String(queue.itemCount)} acquisitions. This cannot be cancelled.`
-      : `Converting item ${String(queue.currentIndex + 1)} of ${String(queue.itemCount)}, ${current.fileName}. This cannot be cancelled.`;
+      : `Converting item ${String(position + 1)} of ${String(queue.itemCount)}, ${current.fileName}. This cannot be cancelled.`;
   }
   if (queue.error !== null) {
     return queue.error.summary;

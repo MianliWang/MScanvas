@@ -51,12 +51,12 @@ use super::dto::{
     PreviewDto, PreviewErrorDto, RetentionTimeDto, RetentionTimeRangeDto, RunSummaryDto,
     SelectedSpectrumDto, SelectedSpectrumOutcomeDto, SpectrumRowDto, SpectrumTableDto,
     ValidationModeDto, WorkspaceAddOutcomeDto, WorkspaceAddResultDto,
-    WorkspaceConversionReservationDto, WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
-    WorkspaceDropStateDto, WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
-    WorkspaceRemoveResultDto, WorkspaceRosterDto, bounded_text, conversion_busy,
-    dataset_not_convertible, dataset_not_previewable, invalid_conversion_reservation,
-    queue_destination_changed, queue_is_empty, queue_output_name_collision, queue_too_large,
-    redact_absolute_paths, require_finite, require_finite_option, workspace_full,
+    WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto, WorkspaceDropStateDto,
+    WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto, WorkspaceRemoveResultDto,
+    WorkspaceRosterDto, bounded_text, conversion_busy, dataset_not_convertible,
+    dataset_not_previewable, invalid_conversion_reservation, queue_destination_changed,
+    queue_is_empty, queue_output_name_collision, queue_too_large, redact_absolute_paths,
+    require_finite, require_finite_option, workspace_full,
 };
 use super::dto::{
     FolderDiscoverySummaryDto, FolderImportReservationDto, FolderIngestionResultDto,
@@ -1169,16 +1169,13 @@ impl PreviewService {
         // retry that trusted the name could write into whatever had since taken
         // it. Checked before any state moves, so a changed destination costs
         // nothing and leaves every existing result exactly as it is.
-        let stored = {
-            let slot = self.conversion_slot();
-            let update = slot.read();
-            let WorkspaceConversionStateDto::Terminal { .. } = update.state else {
-                return Err(invalid_conversion_reservation());
-            };
-            drop(slot);
-            self.terminal_destination()
-                .ok_or_else(invalid_conversion_reservation)?
-        };
+        //
+        // Answers `invalid_conversion_reservation` when the slot is not terminal
+        // or holds no destination -- a queue refused before its picker ever
+        // opened has nothing to rerun and no folder to rerun it in.
+        let stored = self
+            .terminal_destination()
+            .ok_or_else(invalid_conversion_reservation)?;
         let (root, identity) =
             admit_destination_root(stored.root()).map_err(|_| queue_destination_changed())?;
         if !stored.is_still(&AdmittedDestination::new(root, identity)) {
@@ -1187,6 +1184,15 @@ impl PreviewService {
 
         let gate = self.enter_workspace_mutation_after_drop();
         let mut slot = self.conversion_slot();
+        // The same folder, and the same queue holding it. Admitting a directory
+        // is filesystem work, so the check above cannot be done under this lock
+        // -- which leaves a window in which another document could have run a
+        // whole further queue and made *its* destination the terminal one. This
+        // is what refuses to retry a queue whose folder was never the one just
+        // proved.
+        if slot.terminal_destination().as_ref() != Some(&stored) {
+            return Err(queue_destination_changed());
+        }
         let Some(operation) = slot.begin_retry() else {
             return Err(invalid_conversion_reservation());
         };

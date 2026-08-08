@@ -698,6 +698,11 @@ impl ConversionSlot {
             .count();
         self.state = SlotState::Running { queue };
         self.advance();
+        // The same operation, deliberately. Only `finish` and `refuse` produce a
+        // terminal slot and both are called by the worker itself before it
+        // returns, so no live worker still holds this identifier -- and a retry
+        // is the same queue again rather than a new piece of work. What orders
+        // two reads is the sequence, which advanced just above.
         Some(self.operation)
     }
 
