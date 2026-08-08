@@ -10770,3 +10770,437 @@ fn a_new_queue_is_not_born_stopped() {
     );
     assert_eq!(launches.load(Ordering::SeqCst), 1);
 }
+
+/// Real Stop queue, on the evidenced installation and the lawful fixture.
+///
+/// Scenario A of the M3.4 evidence. Three copies with distinct filesystem
+/// identities, distinct names and distinct planned outputs, admitted through the
+/// production Add-files path and queued through the production service. The stop
+/// is issued through the same command boundary the interface uses, at the moment
+/// the first item has provably created its staged output -- so it lands while a
+/// real `msconvert` is running rather than at a guessed time.
+///
+/// ```text
+/// set MSCANVAS_THERMO_FIXTURE=<path to the acquisition>
+/// set MSCANVAS_CONVERSION_DESTINATION=<path to an empty folder>
+/// set MSCANVAS_QUEUE_STAGE=<path to an empty folder for the copies>
+/// cargo test -p mscanvas-desktop --lib -- --ignored --nocapture a_real_queue_stops
+/// ```
+#[test]
+#[ignore = "needs a local ProteoWizard installation and a real vendor acquisition"]
+fn a_real_queue_stops_the_running_item_and_starts_no_other() {
+    let (acquisition, destination, stage) = real_evidence_paths();
+    let copies = copy_acquisition(
+        &acquisition,
+        &stage,
+        &["alpha.raw", "bravo.raw", "charlie.raw"],
+    );
+
+    let service = Arc::new(PreviewService::new(Box::new(
+        super::backend::ProteoWizardProvider::new(),
+    )));
+    let handles = admit_all(&service, &copies);
+    let document = service.workspace_drop_document_epoch();
+    let reservation = service
+        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("one reservation for the whole queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+
+    let worker = {
+        let service = Arc::clone(&service);
+        let destination = destination.clone();
+        std::thread::spawn(move || service.run_claimed_conversion(operation, &destination))
+    };
+    // The private staging tree is watched only to decide *when* to press Stop.
+    // Nothing about the result depends on what it saw.
+    let observed = wait_for_staged_output(&destination, Duration::from_secs(60));
+    let requested_at = std::time::Instant::now();
+    let accepted = service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("the running queue of this document is stoppable");
+    assert!(matches!(
+        accepted.state,
+        WorkspaceConversionStateDto::Stopping { .. }
+    ));
+    let update = worker.join().expect("the queue worker finishes");
+    let elapsed = requested_at.elapsed();
+
+    println!("staged output observed: {observed}");
+    println!("request to terminal: {} ms", elapsed.as_millis());
+    println!("terminal reason: {:?}", terminal_reason(&update));
+    let queue = terminal_queue(&update);
+    println!("queue: {queue:?}");
+
+    assert!(observed, "the first item created its staged output");
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Stopped
+    );
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Cancelled,
+            ConversionQueueItemStateDto::NotRun,
+            ConversionQueueItemStateDto::NotRun,
+        ]
+    );
+    assert_eq!(queue.cancelled_count, 1);
+    assert_eq!(queue.not_run_count, 2);
+    assert_eq!(queue.finalized_count, 0);
+    assert_eq!(queue.failed_count, 0);
+    assert_eq!(queue.cancellation_failed_count, 0);
+    let facts = queue.items[0]
+        .cancellation
+        .as_ref()
+        .expect("a stop that reached a real attempt says what it established");
+    println!("cancellation: {facts:?}");
+    assert!(facts.process_launched);
+    assert!(facts.tree_termination_confirmed);
+    assert_eq!(facts.staging_residue, None, "no staging was left behind");
+    // Nothing was finalized and nothing was left in the folder the user chose,
+    // staging included.
+    let left: Vec<_> = fs::read_dir(&destination)
+        .expect("read the destination")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    println!("destination afterwards: {left:?}");
+    assert!(left.is_empty(), "{left:?}");
+    // The session still trusts the backend: the tree was confirmed gone.
+    assert!(!service.backend_is_quarantined());
+    // And a stopped queue is terminal rather than rerun in place.
+    assert!(
+        service
+            .retry_conversion_queue(service.workspace_drop_document_epoch())
+            .is_err()
+    );
+    // Nothing path-free about this crossed the wire.
+    assert_wire_names_no_location(&update, &destination, &stage);
+    cleanup_real_evidence(&copies, &destination);
+}
+
+/// Scenario B: a completed output survives a stop that follows it.
+///
+/// The stop is issued only once the first item has finalized, which is what
+/// makes it a between-items stop rather than a race. Nothing here sleeps: the
+/// queue's own authoritative state is polled until it says one item is done.
+#[test]
+#[ignore = "needs a local ProteoWizard installation and a real vendor acquisition"]
+fn a_real_stop_after_one_item_keeps_that_output_and_runs_no_other() {
+    let (acquisition, destination, stage) = real_evidence_paths();
+    let copies = copy_acquisition(
+        &acquisition,
+        &stage,
+        &["alpha.raw", "bravo.raw", "charlie.raw"],
+    );
+
+    let service = Arc::new(PreviewService::new(Box::new(
+        super::backend::ProteoWizardProvider::new(),
+    )));
+    let handles = admit_all(&service, &copies);
+    let document = service.workspace_drop_document_epoch();
+    let reservation = service
+        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("one reservation for the whole queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+
+    let worker = {
+        let service = Arc::clone(&service);
+        let destination = destination.clone();
+        std::thread::spawn(move || service.run_claimed_conversion(operation, &destination))
+    };
+    // Waits on the queue's own state, not on a clock.
+    let finished = wait_for_finalized_item(&service, Duration::from_secs(120));
+    service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("stoppable");
+    let update = worker.join().expect("the queue worker finishes");
+
+    println!("terminal reason: {:?}", terminal_reason(&update));
+    let queue = terminal_queue(&update);
+    println!("queue: {queue:?}");
+    assert!(finished, "the first item finalized before the stop");
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Stopped
+    );
+    assert_eq!(queue.finalized_count, 1);
+    assert_eq!(queue.items[0].state, ConversionQueueItemStateDto::Finalized);
+    // The finished output is still there, and is the only thing there.
+    let left: Vec<_> = fs::read_dir(&destination)
+        .expect("read the destination")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    println!("destination afterwards: {left:?}");
+    assert_eq!(left.len(), 1, "{left:?}");
+    assert_eq!(left[0].to_string_lossy(), "alpha.mzML");
+    // Whatever the last item was, nothing after it ran.
+    assert!(
+        queue
+            .items
+            .iter()
+            .rev()
+            .take(1)
+            .all(|item| item.state == ConversionQueueItemStateDto::NotRun)
+    );
+    assert_wire_names_no_location(&update, &destination, &stage);
+    cleanup_real_evidence(&copies, &destination);
+}
+
+/// The three paths every real-evidence run needs.
+fn real_evidence_paths() -> (PathBuf, PathBuf, PathBuf) {
+    let Ok(fixture) = std::env::var("MSCANVAS_THERMO_FIXTURE") else {
+        panic!("set MSCANVAS_THERMO_FIXTURE to the acquisition to copy");
+    };
+    let Ok(destination) = std::env::var("MSCANVAS_CONVERSION_DESTINATION") else {
+        panic!("set MSCANVAS_CONVERSION_DESTINATION to an empty folder");
+    };
+    let Ok(stage) = std::env::var("MSCANVAS_QUEUE_STAGE") else {
+        panic!("set MSCANVAS_QUEUE_STAGE to an empty folder for the copies");
+    };
+    (
+        PathBuf::from(fixture),
+        PathBuf::from(destination),
+        PathBuf::from(stage),
+    )
+}
+
+/// Copies with distinct names, distinct filesystem identities and therefore
+/// distinct planned outputs.
+fn copy_acquisition(acquisition: &Path, stage: &Path, names: &[&str]) -> Vec<PathBuf> {
+    names
+        .iter()
+        .map(|name| {
+            let target = stage.join(name);
+            fs::copy(acquisition, &target).expect("copy the acquisition");
+            target
+        })
+        .collect()
+}
+
+/// Every copy, through the production Add-files path.
+fn admit_all(service: &PreviewService, copies: &[PathBuf]) -> Vec<String> {
+    let batch = service.add_files(copies).expect("no conversion is running");
+    batch
+        .outcomes
+        .iter()
+        .map(|outcome| match outcome {
+            WorkspaceAddOutcomeDto::Added { dataset } => dataset.handle.clone(),
+            other => panic!("every copy is admitted; got {other:?}"),
+        })
+        .collect()
+}
+
+/// Waits until the private staging tree holds an entry the backend wrote.
+///
+/// Evidence about *when* to press Stop, and nothing more. It resolves the
+/// staging root by shape rather than by reconstructing a name, so it depends on
+/// nothing the conversion boundary keeps private.
+fn wait_for_staged_output(destination: &Path, bound: Duration) -> bool {
+    let deadline = std::time::Instant::now() + bound;
+    while std::time::Instant::now() < deadline {
+        if let Ok(entries) = fs::read_dir(destination) {
+            for entry in entries.flatten() {
+                if entry.file_type().is_ok_and(|kind| kind.is_dir())
+                    && fs::read_dir(entry.path().join("output"))
+                        .is_ok_and(|mut staged| staged.next().is_some())
+                {
+                    return true;
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    false
+}
+
+/// Waits until the queue's own state says one item has finalized.
+fn wait_for_finalized_item(service: &PreviewService, bound: Duration) -> bool {
+    let deadline = std::time::Instant::now() + bound;
+    while std::time::Instant::now() < deadline {
+        let update = service.conversion_state();
+        let queue = match &update.state {
+            WorkspaceConversionStateDto::Running { queue, .. }
+            | WorkspaceConversionStateDto::Stopping { queue, .. }
+            | WorkspaceConversionStateDto::Terminal { queue, .. } => queue,
+            _ => {
+                std::thread::sleep(Duration::from_millis(10));
+                continue;
+            }
+        };
+        if queue.finalized_count > 0 {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    false
+}
+
+/// Nothing the queue reports can locate anything.
+fn assert_wire_names_no_location(
+    update: &WorkspaceConversionUpdateDto,
+    destination: &Path,
+    stage: &Path,
+) {
+    let rendered = serde_json::to_string(update).expect("the update serializes");
+    for absent in [
+        destination.to_string_lossy().as_ref(),
+        stage.to_string_lossy().as_ref(),
+        "mscanvas-staging",
+    ] {
+        assert!(
+            !rendered.contains(absent),
+            "the wire must not carry {absent:?}"
+        );
+    }
+    let wire: serde_json::Value = serde_json::from_str(&rendered).expect("and parses back");
+    let mut strings = Vec::new();
+    collect_strings(&wire, &mut strings);
+    for value in &strings {
+        assert!(
+            !value.contains('\\') && !value.contains('/'),
+            "a queue names no path, and {value:?} carries a separator"
+        );
+    }
+}
+
+/// Removes every copy and everything the run produced.
+fn cleanup_real_evidence(copies: &[PathBuf], destination: &Path) {
+    for copy in copies {
+        let _ = fs::remove_file(copy);
+    }
+    if let Ok(entries) = fs::read_dir(destination) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let _ = if path.is_dir() {
+                fs::remove_dir_all(&path)
+            } else {
+                fs::remove_file(&path)
+            };
+        }
+    }
+}
+
+/// A stop that lands after an item was marked running and before its process
+/// exists launches nothing, and says so.
+///
+/// The window is real -- the second item of the real-backend evidence run fell
+/// into it -- and what it must never do is report a process that never ran. The
+/// pair of facts is what carries the meaning: nothing was launched, and nothing
+/// of this application''s survives.
+#[test]
+fn a_stop_between_starting_an_item_and_spawning_it_launches_nothing() {
+    let fixture = TestFile::new("queue-stop-prelaunch");
+    let destination = destination_root(&fixture, "out");
+    // Never parked: the runner answers the token on entry, exactly as the
+    // production runner refuses to launch after a request already made.
+    let (runner, _started, _release) = StopAwareRunner::parked(StopEnding::Confirmed);
+    let launches = runner.launches();
+    let service = Arc::new(PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    ))));
+    let handles: Vec<String> = ["one.raw", "two.raw"]
+        .iter()
+        .map(|name| add_one_acquisition(&service, &fixture.thermo_raw(name)))
+        .collect();
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("the queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    assert!(service.start_running_for_test(operation, &destination));
+    // Accepted before the worker begins, so the first item is started by the
+    // worker and then refused by the runner rather than never started at all.
+    service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("stoppable");
+    let update = service.drain_queue_for_test(operation);
+
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Stopped
+    );
+    let queue = terminal_queue(&update);
+    // Nothing began at all here: the worker asks before it starts an item.
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::NotRun,
+            ConversionQueueItemStateDto::NotRun,
+        ]
+    );
+    assert_eq!(launches.load(Ordering::SeqCst), 0);
+    assert!(queue.items.iter().all(|item| item.cancellation.is_none()));
+}
+
+/// The whole serialized stopped queue, member by member.
+///
+/// The same shape assertion the completed queue already carries, over the
+/// states only a stop can produce -- so a member added to a cancellation fact
+/// has to be answered for here rather than arriving on the wire unnoticed.
+#[test]
+fn the_serialized_stopped_queue_carries_no_location_and_names_no_output() {
+    let (fixture, destination, _service, update, _launches) = stop_mid_item(StopEnding::Confirmed);
+    let wire: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&update).expect("the update serializes"))
+            .expect("and parses back");
+
+    assert_eq!(wire["state"]["status"], "terminal");
+    assert_eq!(wire["state"]["reason"], "stopped");
+    assert_eq!(wire["backendQuarantined"], false);
+    let items = wire["state"]["queue"]["items"]
+        .as_array()
+        .expect("the queue carries items");
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item["state"].as_str().expect("a state"))
+            .collect::<Vec<_>>(),
+        vec!["cancelled", "notRun", "notRun"]
+    );
+    assert_eq!(
+        sorted_keys(&items[0]["cancellation"]),
+        vec![
+            "elapsedMilliseconds",
+            "partialOutputObserved",
+            "processLaunched",
+            "stagingResidue",
+            "termination",
+            "terminationRequested",
+            "treeTerminationConfirmed",
+        ]
+    );
+    // A cancelled item finalized nothing, so it carries no report to name an
+    // output from -- and a not-run item carries no cancellation facts at all.
+    assert!(items[0]["report"].is_null());
+    assert!(items[1]["cancellation"].is_null());
+
+    // No process identifier, no job handle, no path, at any depth.
+    let rendered = serde_json::to_string(&update).expect("the update serializes");
+    for absent in [
+        destination.to_string_lossy().as_ref(),
+        fixture.directory.to_string_lossy().as_ref(),
+        "mscanvas-staging",
+        "pid",
+        "handle\":",
+    ] {
+        assert!(
+            !rendered.contains(absent),
+            "the wire must not carry {absent:?}"
+        );
+    }
+    let mut strings = Vec::new();
+    collect_strings(&wire, &mut strings);
+    for value in &strings {
+        assert!(
+            !value.contains('\\') && !value.contains('/'),
+            "a stopped queue names no path, and {value:?} carries a separator"
+        );
+    }
+}

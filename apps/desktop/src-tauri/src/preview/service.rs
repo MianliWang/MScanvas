@@ -1502,7 +1502,15 @@ impl PreviewService {
                 generation,
                 cancellation,
             );
-            let elapsed = started_at.elapsed();
+            // What the user waited for, not how long the attempt ran. A stop
+            // made a minute into a conversion would otherwise report the minute
+            // as the cost of stopping it. Falls back to the attempt's own
+            // duration only where no stop was accepted, which is a case the
+            // classification below never turns into a cancellation.
+            let elapsed = self
+                .conversion_slot()
+                .stop_requested_ago(operation)
+                .unwrap_or_else(|| started_at.elapsed());
             drop(held);
             // Released for this exact attempt only, and before the queue moves,
             // so a stop arriving now finds no handle rather than a stale one.
@@ -1577,6 +1585,10 @@ impl PreviewService {
     fn classify_attempt(&self, attempt: QueueItemAttempt, elapsed: Duration) -> ItemOutcome {
         match attempt {
             QueueItemAttempt::Settled(outcome) => outcome,
+            // The boundary produces this only where no owned process survives:
+            // either the tree was observed empty, or none was ever created. The
+            // two are told apart by process_launched, and neither is a state
+            // in which anything of this application's may still be running.
             QueueItemAttempt::Cancelled(report) => ItemOutcome::Stopped {
                 state: ItemState::Cancelled,
                 facts: CancellationFacts {

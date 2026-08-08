@@ -435,7 +435,13 @@ export type ConversionQueueItemState =
 export interface ConversionCancellation {
   readonly processLaunched: boolean;
   readonly terminationRequested: boolean;
-  /** False is the whole reason `cancellationFailed` exists. */
+  /**
+   * Whether MSCanvas knows no converter process of this attempt survives.
+   *
+   * True when the owned tree was observed empty, and true when no process was
+   * created for there to be one. False is the whole reason
+   * `cancellationFailed` exists.
+   */
   readonly treeTerminationConfirmed: boolean;
   readonly elapsedMilliseconds: number;
   readonly termination: string | null;

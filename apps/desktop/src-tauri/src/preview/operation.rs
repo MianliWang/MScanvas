@@ -23,7 +23,7 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use mscanvas_proteowizard::{
     CancellationFailure, CancellationReport, CancellationRequest, StagingResidue, Termination,
@@ -193,8 +193,10 @@ pub(super) struct QueueItem {
 pub(super) struct CancellationFacts {
     pub(super) process_launched: bool,
     pub(super) tree_termination_confirmed: bool,
-    /// Measured by the queue around the attempt, so it is the interval the user
-    /// waited rather than the interval the process ran.
+    /// From the moment the stop was accepted to the moment the attempt settled,
+    /// which is the interval the user actually waited. Not the interval the
+    /// process ran: an attempt that had been converting for a minute before the
+    /// request would otherwise report a minute as the cost of stopping it.
     pub(super) elapsed: Duration,
     pub(super) termination: Option<Termination>,
     pub(super) partial_output_observed: bool,
@@ -564,6 +566,9 @@ pub(super) struct ConversionSlot {
     /// begins. Independent of which attempt is running, so a stop that lands
     /// between two items is still a stop.
     stop_requested: bool,
+    /// When the stop was accepted, so what is reported is what the user waited
+    /// rather than how long the attempt had already been running.
+    stop_requested_at: Option<Instant>,
     /// The one attempt a stop may reach, when one is in flight.
     current_attempt: Option<CurrentAttempt>,
 }
@@ -579,6 +584,7 @@ impl Default for ConversionSlot {
             operation: 0,
             state: SlotState::Idle,
             stop_requested: false,
+            stop_requested_at: None,
             current_attempt: None,
         }
     }
@@ -648,6 +654,7 @@ impl ConversionSlot {
         // place a fresh operation identifier is minted, so the flag and the
         // identifier cannot come apart.
         self.stop_requested = false;
+        self.stop_requested_at = None;
         self.current_attempt = None;
         self.advance();
         Ok(WorkspaceConversionReservationDto {
@@ -738,6 +745,14 @@ impl ConversionSlot {
         self.operation == operation && self.stop_requested
     }
 
+    /// How long ago the stop was accepted, for the attempt that is settling.
+    pub(super) fn stop_requested_ago(&self, operation: u64) -> Option<Duration> {
+        if self.operation != operation {
+            return None;
+        }
+        self.stop_requested_at.map(|at| at.elapsed())
+    }
+
     /// Accepts one stop for the running or stopping queue of this document.
     ///
     /// Everything it does is under the caller's lock and none of it terminates
@@ -766,6 +781,7 @@ impl ConversionSlot {
             return Ok(StopAccepted::AlreadyRequested);
         }
         self.stop_requested = true;
+        self.stop_requested_at = Some(Instant::now());
         let queue = queue.clone();
         self.state = SlotState::Stopping { queue };
         self.advance();

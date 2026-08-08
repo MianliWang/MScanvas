@@ -539,12 +539,17 @@ pub struct ConversionCancellationDto {
     /// Always true for an item a stop reached; carried rather than implied so a
     /// reader never has to infer it from the item state.
     pub termination_requested: bool,
-    /// Whether the owned process tree was confirmed empty. False is the whole
-    /// reason `cancellationFailed` exists.
+    /// Whether MSCanvas knows that no converter process of this attempt
+    /// survives.
+    ///
+    /// True when the owned process tree was terminated and observed empty, and
+    /// true when no process was created for there to be a tree. False is the
+    /// whole reason `cancellationFailed` exists, and it is the one condition
+    /// that quarantines the session.
     pub tree_termination_confirmed: bool,
-    /// How long the stop request took to produce a result, measured by the
-    /// queue around the attempt. Milliseconds, matching the one time format
-    /// already on this wire.
+    /// How long the accepted stop took to produce a result. Milliseconds,
+    /// matching the one time format already on this wire, and deliberately not
+    /// how long the attempt had been running before the request.
     pub elapsed_milliseconds: u64,
     /// How the process ended, by the process boundary's own identifier.
     pub termination: Option<String>,
