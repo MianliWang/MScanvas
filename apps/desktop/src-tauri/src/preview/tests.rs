@@ -8848,11 +8848,14 @@ fn a_queue_runs_its_items_in_order_one_at_a_time() {
         evidenced_capabilities(),
         runner,
     )));
-    // Named so the order the queue is given is not the alphabetical one.
-    let handles: Vec<String> = ["c.raw", "a.raw", "b.raw"]
+    // Added in one order and named in another, so the order that comes out can
+    // only have come from the caller's list: not from the registry's insertion
+    // order, and not from the alphabet.
+    let added: Vec<String> = ["a.raw", "b.raw", "c.raw"]
         .iter()
         .map(|name| add_one_acquisition(&service, &fixture.thermo_raw(name)))
         .collect();
+    let handles = vec![added[2].clone(), added[0].clone(), added[1].clone()];
 
     let update = queue_and_run(&service, &handles, &destination);
 
@@ -9193,4 +9196,325 @@ fn a_reload_recovers_the_queue_and_a_new_queue_replaces_it() {
         "there is one queue, not a history of them"
     );
     assert_eq!(queue.conflict_policy, ConversionConflictPolicyDto::Skip);
+}
+
+/// Held open at the first item, the queue is observably serial: one process has
+/// run, the later items have not started, and nothing else may take the lane.
+#[test]
+fn a_queue_parked_at_its_first_item_has_started_no_other() {
+    let fixture = TestFile::new("queue-serial");
+    let destination = destination_root(&fixture, "out");
+    let (runner, observe_start, release) =
+        FakeConversionRunner::new(BackendAct::Convert).blocking();
+    let launches = runner.launches();
+    let mut provider = ConvertingProvider::new(evidenced_capabilities(), runner);
+    provider.inner = FakeProvider::available(open_responses());
+    let service = Arc::new(PreviewService::new(Box::new(provider)));
+
+    let preview_source = service.add_dataset(&fixture.path).expect("an mzML row");
+    let handles: Vec<String> = ["first.raw", "second.raw", "third.raw"]
+        .iter()
+        .map(|name| add_one_acquisition(&service, &fixture.thermo_raw(name)))
+        .collect();
+
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("the queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let draining = std::thread::spawn({
+        let service = Arc::clone(&service);
+        let destination = destination.clone();
+        move || service.run_claimed_conversion(operation, &destination)
+    });
+    observe_start
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the first item reached its process and holds the gate");
+
+    // One process, not three. The lane is a lane.
+    assert_eq!(launches.load(Ordering::SeqCst), 1);
+    let WorkspaceConversionStateDto::Running { queue, .. } = service.conversion_state().state
+    else {
+        panic!("the queue is running while its first item is parked");
+    };
+    assert_eq!(
+        queue
+            .items
+            .iter()
+            .map(|item| item.state)
+            .collect::<Vec<_>>(),
+        vec![
+            ConversionQueueItemStateDto::Running,
+            ConversionQueueItemStateDto::Pending,
+            ConversionQueueItemStateDto::Pending,
+        ]
+    );
+
+    // Nothing may interleave between two items of a batch the user is watching:
+    // not a preview, not a second queue, and not the removal of a row this
+    // queue has not reached yet.
+    for refusal in [
+        service
+            .open_preview(&preview_source.handle)
+            .expect_err("a preview is refused"),
+        service
+            .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+            .expect_err("a second queue is refused"),
+        service
+            .remove_datasets(std::slice::from_ref(&handles[2]))
+            .expect_err("a row this queue has not reached is still its own"),
+    ] {
+        assert_eq!(refusal.kind, "conversion_busy");
+    }
+    // And the reads that do not touch the lane still answer.
+    assert_eq!(service.roster().datasets.len(), 4);
+
+    // A backend recheck is not refused by a busy queue -- it is not a workspace
+    // mutation -- so the only thing keeping its process off the lane is the gate
+    // this queue holds for its whole length rather than per item. A bounded
+    // observation rather than a proof: off the gate this provider answers
+    // immediately, so waiting and getting nothing is the evidence there is.
+    let (probed, probe) = mpsc::channel();
+    let probing = std::thread::spawn({
+        let service = Arc::clone(&service);
+        move || {
+            let verdict = service.inspect_backend();
+            probed.send(()).expect("announce the finished probe");
+            verdict
+        }
+    });
+    assert!(
+        probe.recv_timeout(Duration::from_millis(250)).is_err(),
+        "a backend probe waits for the queue's lane rather than running beside it"
+    );
+
+    // A reload finds the queue and reads it. It does not start a second worker
+    // beside the one already draining it -- the launch count below is what says
+    // so, because a second drain would convert every remaining item twice.
+    service.begin_webview_document();
+    assert!(matches!(
+        service.conversion_state().state,
+        WorkspaceConversionStateDto::Running { .. }
+    ));
+
+    release.send(()).expect("release the first item");
+    let update = draining.join().expect("the draining thread");
+    probing.join().expect("the probing thread");
+    probe
+        .recv_timeout(Duration::from_secs(10))
+        .expect("and it answers once the queue has given the lane back");
+
+    let queue = terminal_queue(&update);
+    assert_eq!(queue.finalized_count, 3);
+    assert_eq!(
+        launches.load(Ordering::SeqCst),
+        3,
+        "one process per item, in turn"
+    );
+    assert_eq!(
+        entry_names(&destination),
+        vec!["first.mzML", "second.mzML", "third.mzML"]
+    );
+    // The lane is free again the moment the queue is terminal.
+    service
+        .open_preview(&preview_source.handle)
+        .expect("a preview runs once the queue has finished");
+}
+
+/// The two halves of the retry rule, at the level they are written.
+///
+/// The residue half is unreachable through the product path -- nothing this
+/// repository classifies as retryable happens after a staging directory
+/// exists -- so it is exercised here rather than left looking load-bearing.
+#[test]
+fn residue_blocks_a_retry_that_would_otherwise_be_offered() {
+    use mscanvas_proteowizard::{ConversionRunFailure, ConversionRunOutcome, StagingResidue};
+
+    // The one run failure this repository has evidence for as transient.
+    let transient = ConversionRunOutcome::Failed(ConversionRunFailure::DestinationRootNotOpened {
+        kind: std::io::ErrorKind::PermissionDenied,
+    });
+    assert!(super::conversion::run_is_retryable(None, &transient));
+    assert!(
+        !super::conversion::run_is_retryable(
+            Some(StagingResidue::NotRemoved {
+                kind: std::io::ErrorKind::PermissionDenied,
+            }),
+            &transient,
+        ),
+        "the next attempt at this exact plan would find the staging name taken"
+    );
+
+    // And the same folder simply not being there is not transient: a retry
+    // against a folder that no longer exists has nothing to succeed at.
+    assert!(!super::conversion::run_is_retryable(
+        None,
+        &ConversionRunOutcome::Failed(ConversionRunFailure::DestinationRootNotOpened {
+            kind: std::io::ErrorKind::NotFound,
+        }),
+    ));
+    // A run that produced a file, and one that deliberately left one alone,
+    // are not failures and are never rerun.
+    assert!(!super::conversion::run_is_retryable(
+        None,
+        &ConversionRunOutcome::SkippedExistingDestination,
+    ));
+}
+
+/// Only the refusals that mean "could not read it now" are offered again.
+#[test]
+fn a_refusal_is_retryable_only_when_another_attempt_could_read_the_file() {
+    for kind in ["source_in_use", "file_unreadable"] {
+        assert!(
+            super::conversion::refusal_is_retryable(kind),
+            "{kind} is the object being busy, not the object being wrong"
+        );
+    }
+    for kind in [
+        "unrecognized_acquisition",
+        "not_a_regular_file",
+        "file_identity_changed",
+        "unknown_file_handle",
+        "dataset_not_convertible",
+        "conversion_superseded",
+        "destination_is_remote",
+        "",
+    ] {
+        assert!(
+            !super::conversion::refusal_is_retryable(kind),
+            "{kind} says what the row or the request is, and rerunning cannot change it"
+        );
+    }
+}
+
+/// The whole serialized queue, member by member.
+///
+/// Written as the exact key sets rather than as absences, so a member added
+/// upstream has to be answered for here instead of arriving unnoticed -- and so
+/// a list of past attempts, or the folder the queue writes into, cannot be
+/// added to the wire without this failing.
+#[test]
+fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
+    let fixture = TestFile::new("queue-wire");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("FT-HCD-MSX.raw"));
+
+    let update = queue_and_run(&service, &[handle], &destination);
+    let wire: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&update).expect("the update serializes"))
+            .expect("and parses back");
+
+    let queue = &wire["state"]["queue"];
+    assert_eq!(
+        sorted_keys(queue),
+        vec![
+            "conflictPolicy",
+            "currentIndex",
+            "error",
+            "failedCount",
+            "finalizedCount",
+            "itemCount",
+            "items",
+            "nonRetryableFailedCount",
+            "retryRound",
+            "retryableFailedCount",
+            "skippedCount",
+        ]
+    );
+    let item = &queue["items"][0];
+    assert_eq!(
+        sorted_keys(item),
+        vec![
+            "attempts",
+            "datasetHandle",
+            "error",
+            "fileName",
+            "outputFileName",
+            "report",
+            "retryable",
+            "sourceKind",
+            "state",
+        ],
+        "one latest attempt per item, never a history of them"
+    );
+    assert_eq!(
+        sorted_keys(&item["report"]),
+        vec![
+            "backend",
+            "datasetHandle",
+            "detailedOutcome",
+            "installationGeneration",
+            "outcome",
+            "output",
+            "outputFileName",
+            "sourceKind",
+            "stagingResidue",
+            "validation",
+        ]
+    );
+    assert_eq!(
+        sorted_keys(&item["report"]["backend"]),
+        vec!["elapsedMilliseconds", "exitCode"]
+    );
+
+    // And nothing anywhere in it can locate anything. Checked over the string
+    // values, because the serialization's own punctuation would answer for
+    // itself.
+    let mut strings = Vec::new();
+    collect_strings(&wire, &mut strings);
+    for value in &strings {
+        assert!(
+            !value.contains('\\') && !value.contains('/'),
+            "a queue names no path, and {value:?} carries a separator"
+        );
+    }
+    assert!(
+        strings.iter().any(|value| value == "FT-HCD-MSX.raw"),
+        "the display name is there; only the way to find it is not"
+    );
+    let rendered = serde_json::to_string(&update).expect("the update serializes");
+    for absent in [
+        destination.to_string_lossy().as_ref(),
+        fixture.directory.to_string_lossy().as_ref(),
+        "mscanvas-staging",
+    ] {
+        assert!(
+            !rendered.contains(absent),
+            "the wire must not carry {absent:?}"
+        );
+    }
+}
+
+/// One JSON object's member names, sorted.
+fn sorted_keys(value: &serde_json::Value) -> Vec<&str> {
+    let mut keys: Vec<&str> = value
+        .as_object()
+        .expect("a JSON object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    keys
+}
+
+/// Every string a JSON value carries, at any depth, member names included.
+fn collect_strings(value: &serde_json::Value, into: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(text) => into.push(text.clone()),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_strings(item, into);
+            }
+        }
+        serde_json::Value::Object(members) => {
+            for (key, member) in members {
+                into.push(key.clone());
+                collect_strings(member, into);
+            }
+        }
+        _ => {}
+    }
 }

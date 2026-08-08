@@ -158,12 +158,7 @@ impl WorkspaceConversionReport {
                 fully_verified: valid.is_fully_verified(),
             }),
             outcome_class: outcome_class(run.outcome()),
-            // Residue blocks a retry whatever else was wrong. A staging
-            // directory is named deterministically from the plan, so the next
-            // attempt at this exact plan would find it there and refuse with
-            // `staging_target_exists` -- and reclaiming it is not something
-            // this workflow offers.
-            retryable: run.residue().is_none() && outcome_is_retryable(run.outcome()),
+            retryable: run_is_retryable(run.residue(), run.outcome()),
             backend: run.backend(),
             residue: run.residue(),
             installation_generation,
@@ -311,6 +306,25 @@ fn outcome_is_retryable(outcome: &ConversionRunOutcome) -> bool {
             ) => false,
         },
     }
+}
+
+/// Whether another attempt at this exact plan could plausibly end differently.
+///
+/// Residue blocks a retry whatever else was wrong. A staging directory is named
+/// deterministically from the plan, so the next attempt at this exact plan
+/// would find it there and refuse with `staging_target_exists` -- and
+/// reclaiming someone else's directory is not something this workflow offers.
+///
+/// Written as its own function because the two halves answer different
+/// questions and only one of them is reachable today: nothing that this
+/// repository classifies as retryable happens after a staging directory exists.
+/// The guard is kept because a later classification would need it, and it is
+/// tested directly rather than left to look load-bearing.
+pub(super) fn run_is_retryable(
+    residue: Option<StagingResidue>,
+    outcome: &ConversionRunOutcome,
+) -> bool {
+    residue.is_none() && outcome_is_retryable(outcome)
 }
 
 /// Whether an attempt that never reached a conversion could plausibly go
