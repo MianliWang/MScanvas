@@ -1041,12 +1041,19 @@ impl PreviewService {
         // would call that pair distinct here and then discover the conflict
         // after the picker, as the second item failing or being skipped.
         //
-        // `to_lowercase` is Unicode simple case folding rather than the
-        // uppercase table a Windows volume actually uses. Where the two
-        // disagree, this one refuses a pair the volume might have kept apart --
-        // the safe direction for a rule whose whole purpose is to refuse, and
-        // the honest limit of comparing names without asking the volume.
-        let folded = |name: &str| name.to_lowercase();
+        // Upcased, because that is the direction Windows folds: a volume keeps
+        // an uppercase table and maps a name through it. Lowercasing is not the
+        // same relation and misses real collisions -- Greek final sigma is the
+        // plain example, since `to_lowercase` leaves `Σ` and `ς` as `σ` and
+        // `ς` while a volume upcases both to `Σ`.
+        //
+        // Rust's uppercasing is full Unicode rather than a volume's fixed
+        // table, so the two still disagree at the edges -- `ß` expands to `SS`
+        // here and does not there. Where they disagree this refuses a pair the
+        // volume might have kept apart, which is the safe direction for a rule
+        // whose whole purpose is to refuse, and the honest limit of comparing
+        // names without asking the volume itself.
+        let folded = |name: &str| name.to_uppercase();
         let mut collisions: Vec<String> = Vec::new();
         for (index, item) in items.iter().enumerate() {
             if items[..index].iter().any(|earlier| {

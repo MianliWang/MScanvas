@@ -9961,6 +9961,22 @@ fn output_names_that_differ_only_in_case_are_a_collision() {
         service.conversion_state().state,
         WorkspaceConversionStateDto::Idle
     ));
+
+    // And the case that decides which direction the fold goes. A volume upcases
+    // both Greek sigmas to the same letter; lowercasing leaves them apart, so a
+    // rule written that way would call this pair distinct and discover the
+    // conflict only after the picker.
+    let sigma = add_one_acquisition(&service, &fixture.thermo_raw("\u{3a3}.raw"));
+    let final_sigma = nested.join("\u{3c2}.raw");
+    fs::write(&final_sigma, thermo_raw_bytes()).expect("write the final-sigma twin");
+    let sigma_twin = add_one_acquisition(&service, &final_sigma);
+    assert_eq!(
+        service
+            .conversion_queue_plan(&[sigma, sigma_twin])
+            .expect_err("a Windows volume upcases both of these to one name")
+            .kind,
+        "queue_output_name_collision"
+    );
 }
 
 /// One queue is one installation, and a retry after the installation changed is

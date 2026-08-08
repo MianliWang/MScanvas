@@ -263,8 +263,9 @@ function QueueState({
   // A retry this document dispatched and has not been answered for. The slot
   // still reads `terminal` -- Rust answers once, when the whole rerun is over --
   // so without this the panel would go on showing the old result and go on
-  // offering the very control that is already running.
-  const retrying = conversion.busy && state.status === "terminal";
+  // offering the very control that is already running. Read from the operation
+  // rather than derived, so this and the live region cannot disagree.
+  const retrying = conversion.retrying && state.status === "terminal";
   return (
     <div className="conversion-running">
       {retrying ? (

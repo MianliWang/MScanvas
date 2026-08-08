@@ -63,6 +63,14 @@ export interface ConversionOperation {
   readonly retry: () => void;
   /** Whether the terminal queue has anything worth retrying. */
   readonly canRetry: boolean;
+  /**
+   * Whether this document has dispatched a retry and has not been answered.
+   *
+   * Rust still reads `terminal` throughout -- it answers once, when the whole
+   * serial rerun is over -- so every reader that has to know a rerun is under
+   * way reads this rather than deriving it, and they cannot come to disagree.
+   */
+  readonly retrying: boolean;
   /** Every row a live queue holds, so a roster can pin them. */
   readonly busyHandles: readonly string[];
   readonly dismissError: () => void;
@@ -278,8 +286,15 @@ export function useConversionOperation(
     if (state.status === "awaitingDestination" || state.status === "running") {
       return state.queue.items.map((item) => item.datasetHandle);
     }
+    // A dispatched retry holds the same rows, and Rust will refuse to let them
+    // go. Without this the window between the click and the first poll would
+    // offer `Remove selected` over the very failures being rerun, and the only
+    // outcome would be a workspace error nobody needed to see.
+    if (retrying && state.status === "terminal") {
+      return state.queue.items.map((item) => item.datasetHandle);
+    }
     return [];
-  }, [state]);
+  }, [state, retrying]);
 
   const canRetry =
     state.status === "terminal" && state.queue.retryableFailedCount > 0;
@@ -321,6 +336,7 @@ export function useConversionOperation(
     busyRef,
     canRetry,
     retry,
+    retrying,
     plan,
     error,
     conflictPolicy,

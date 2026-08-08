@@ -467,6 +467,12 @@ describe("queueing selected Thermo RAW conversions", () => {
     });
     expect(within(panel).queryByRole("button", { name: "Retry 1 failed" })).toBeNull();
     expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
+    // Including the row being rerun. Rust would refuse to let it go, so
+    // offering the action would only produce an error nobody needed to see.
+    fireEvent.click(rows()[0]);
+    expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
+    // And a screen reader is told now, rather than at the next poll.
+    expect(liveRegion()).toContain("Retrying 1 failed. This cannot be cancelled.");
 
     act(() => {
       releaseRetry?.();

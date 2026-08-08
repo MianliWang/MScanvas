@@ -741,6 +741,13 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
     return "";
   }
   const { queue } = state;
+  // Said as soon as the retry is dispatched. Rust answers once, when the whole
+  // rerun is over, so a region that waited for it would repeat the finished
+  // counts back at a screen-reader user who had just pressed Retry, and stay
+  // silent for as long as the rerun took.
+  if (workspace.conversion.retrying && state.status === "terminal") {
+    return `Retrying ${String(queue.retryableFailedCount)} failed. This cannot be cancelled.`;
+  }
   if (state.status === "awaitingDestination") {
     return "Choose where to save the converted mzML.";
   }

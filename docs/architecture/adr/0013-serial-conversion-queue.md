@@ -97,11 +97,17 @@ Names are compared the way the destination will resolve them, not the way Rust
 compares strings. The folder is a local Windows directory by admission, and an
 ordinary one answers `Sample.mzML` and `sample.mzML` with the same file — so a
 case-sensitive comparison would call that pair distinct and then discover the
-conflict after the picker, as the second item failing or being skipped. The fold
-used is Unicode simple lowercasing rather than the uppercase table a volume
-actually applies; where the two disagree this refuses a pair the volume might
-have kept apart, which is the safe direction for a rule whose whole purpose is to
-refuse.
+conflict after the picker, as the second item failing or being skipped.
+
+The fold is an **upcase**, because that is the direction a Windows volume folds:
+it keeps an uppercase table and maps names through it. Lowercasing is not the
+same relation and misses real collisions — Greek final sigma is the plain
+example, since lowercasing leaves `Σ` and `ς` apart while a volume upcases both
+to `Σ`. Rust's uppercasing is full Unicode rather than a volume's fixed table, so
+the two still disagree at the edges (`ß` expands to `SS` here and does not there);
+where they disagree this refuses a pair the volume might have kept apart, which
+is the safe direction for a rule whose whole purpose is to refuse, and the honest
+limit of comparing names without asking the volume itself.
 
 ### One destination and one policy for the whole queue
 
@@ -240,9 +246,16 @@ it would claim a check nobody ran.
 A retry is one command that does not answer until the whole rerun is over, and it
 has no reservation half to announce that it began. The interface therefore treats
 its own dispatched-and-unanswered retry as busy: it stops offering Retry, Add and
-Clear for the length of the rerun rather than for its first moment. That is not
-an invented conversion state — it reports that this document asked and is
-waiting, which is what `pickerBusy` and `folderBusy` already report elsewhere.
+Clear for the length of the rerun rather than for its first moment, keeps the
+queue's rows protected from removal through it, and says so in the live region as
+soon as the button is pressed rather than at the next poll. That is not an
+invented conversion state — it reports that this document asked and is waiting,
+which is what `pickerBusy` and `folderBusy` already report elsewhere.
+
+All three read one flag rather than deriving the window separately. Two readers
+that each worked out "a retry is running" from the slot came to disagree once
+already in this milestone, over which item was running; there is one source
+here for the same reason.
 
 Every member of a live queue stays visible outside a search, and the row being
 converted says so above the rest. `Retry N failed` states its scope in an
