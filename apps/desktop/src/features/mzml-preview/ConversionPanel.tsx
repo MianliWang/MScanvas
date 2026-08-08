@@ -339,13 +339,19 @@ function ConversionOutcome({ report }: { readonly report: ConversionReport }): R
  * inventing a diagnosis.
  */
 function failureSentence(report: ConversionReport): string {
+  // Grouped by `outcome` first, because that is what groups. An integrity
+  // rejection's `detailedOutcome` is the specific property that failed --
+  // `partial_output`, `missing_output` and the rest -- so matching on it here
+  // would leave every one of them falling through to the generic sentence and
+  // never say that a file was produced and then discarded.
+  if (report.outcome === "output_rejected") {
+    return "The converted file did not pass MSCanvas' integrity checks, so it was discarded.";
+  }
   switch (report.detailedOutcome) {
     case "destination_exists":
       return "A file of that name is already in that folder, so nothing was converted.";
     case "source_family_not_evidenced":
       return "MSCanvas has no conversion evidence for this acquisition format on the installed ProteoWizard build.";
-    case "output_rejected":
-      return "The converted file did not pass MSCanvas' integrity checks, so it was discarded.";
     default:
       return "The conversion did not finish, so no file was written.";
   }

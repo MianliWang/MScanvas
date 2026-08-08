@@ -21,17 +21,26 @@ use super::dto::PreviewErrorDto;
 /// Every refusal is decided before the conversion boundary is entered, so a
 /// rejected destination costs no plan, no staging directory and no process.
 pub(super) fn admit_destination_root(chosen: &Path) -> Result<PathBuf, PreviewErrorDto> {
-    // The name is resolved first and everything after is judged on the result,
-    // so a link in the middle of the path cannot make the checks describe one
-    // directory while the run uses another.
-    let canonical = std::fs::canonicalize(chosen).map_err(|_| destination_unusable())?;
-
-    let metadata = std::fs::symlink_metadata(&canonical).map_err(|_| destination_unusable())?;
-    if is_reparse_point(&metadata) {
+    // The chosen object itself, before its name is resolved. `canonicalize`
+    // follows links, so inspecting the result would inspect a link's *target*
+    // and accept the link -- which is exactly what this refuses. A junction to
+    // a perfectly ordinary local folder is still a destination whose contents
+    // are decided somewhere this boundary has not looked.
+    let chosen_metadata = std::fs::symlink_metadata(chosen).map_err(|_| destination_unusable())?;
+    if is_reparse_point(&chosen_metadata) {
         return Err(destination_is_a_link());
     }
-    if !metadata.is_dir() {
+    if !chosen_metadata.is_dir() {
         return Err(destination_not_a_folder());
+    }
+
+    // Resolved only after the object is accepted, so everything below judges
+    // the same directory the run will use rather than whatever a link in the
+    // middle of the path points at.
+    let canonical = std::fs::canonicalize(chosen).map_err(|_| destination_unusable())?;
+    let metadata = std::fs::symlink_metadata(&canonical).map_err(|_| destination_unusable())?;
+    if is_reparse_point(&metadata) || !metadata.is_dir() {
+        return Err(destination_is_a_link());
     }
     if !is_local_volume(&canonical)? {
         return Err(destination_is_remote());

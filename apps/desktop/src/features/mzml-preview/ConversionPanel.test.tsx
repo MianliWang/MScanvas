@@ -271,6 +271,42 @@ describe("converting one focused Thermo RAW acquisition", () => {
     expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
   });
 
+  it("says an output was produced and discarded, whatever failed about it", async () => {
+    // Rust groups every integrity rejection under `output_rejected` and names
+    // the specific property in `detailedOutcome`, so a sentence chosen by the
+    // detail alone would never reach any of them.
+    const api = createFakePreviewApi({
+      initialDatasets: [acquisition],
+      availability: availableBackend,
+      initialConversion: {
+        status: "completed",
+        operationId: "3",
+        report: {
+          datasetHandle: "file-9",
+          sourceKind: "thermo_raw",
+          outcome: "output_rejected",
+          detailedOutcome: "output_declared_counts",
+          outputFileName: null,
+          output: null,
+          validation: null,
+          backend: { exitCode: 0, elapsedMilliseconds: 120 },
+          stagingResidue: null,
+          installationGeneration: 0,
+        },
+      },
+    });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(
+        within(panel).getByText(
+          "The converted file did not pass MSCanvas' integrity checks, so it was discarded.",
+        ),
+      ).toBeVisible();
+    });
+  });
+
   it("keeps an mzML preview on screen when focus moves to a vendor row", async () => {
     const api = createFakePreviewApi({
       initialDatasets: [selectedFile, acquisition],

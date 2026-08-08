@@ -387,7 +387,7 @@ impl ConversionSlot {
         dataset_handle: String,
         error: PreviewErrorDto,
     ) {
-        if self.operation != operation {
+        if !self.still_live(operation) {
             return;
         }
         self.state = SlotState::Terminal(TerminalOutcome::Refused {
@@ -395,6 +395,22 @@ impl ConversionSlot {
             error,
         });
         self.advance();
+    }
+
+    /// Whether this operation is still the one the slot is working on.
+    ///
+    /// The number alone is not enough. `release_awaiting_destination` returns
+    /// the slot to idle without allocating a new operation, so a released
+    /// operation still matches by number -- and a refusal that checked only
+    /// that would install an abandoned document's failure into the replacement
+    /// document's empty slot. What has to be true is that the slot is still
+    /// *doing* this operation.
+    const fn still_live(&self, operation: u64) -> bool {
+        self.operation == operation
+            && matches!(
+                self.state,
+                SlotState::AwaitingDestination { .. } | SlotState::Running { .. }
+            )
     }
 
     /// The current state, as the webview reads it.

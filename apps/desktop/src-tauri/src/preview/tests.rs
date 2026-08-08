@@ -8399,6 +8399,75 @@ fn an_operation_released_mid_flight_converts_nothing_and_reports_nothing() {
     assert_eq!(entry_names(&destination), Vec::<String>::new());
 }
 
+/// A released operation cannot install its refusal into the slot that replaced
+/// it either.
+///
+/// The operation number alone does not distinguish them: releasing the slot
+/// returns it to idle without allocating a new number, so a refusal that
+/// checked only the number would put an abandoned document's failure on the
+/// replacement document's screen.
+#[test]
+fn a_released_operation_reports_no_refusal_into_the_slot_that_replaced_it() {
+    let fixture = TestFile::new("released-refusal");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("one reservation");
+    service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+
+    service.begin_webview_document();
+    // A destination this boundary refuses, from the operation that was released.
+    let update = service.run_claimed_conversion(&fixture.absent("no-such-folder"));
+
+    assert!(
+        matches!(update.state, WorkspaceConversionStateDto::Idle),
+        "a released operation reports nothing at all; got {:?}",
+        update.state
+    );
+}
+
+/// A link is refused as a destination even when it points somewhere ordinary.
+///
+/// Canonicalization follows links, so the object has to be inspected before its
+/// name is resolved: a junction to a perfectly usable local folder is still a
+/// destination whose contents are decided somewhere this boundary never looked.
+#[cfg(windows)]
+#[test]
+fn a_link_to_a_usable_folder_is_still_refused_as_a_destination() {
+    let fixture = TestFile::new("linked-destination");
+    let real = destination_root(&fixture, "real");
+    let link = fixture.directory.join("link");
+    if std::os::windows::fs::symlink_dir(&real, &link).is_err() {
+        // Creating a directory symbolic link needs a privilege this machine may
+        // not grant. Skipping is honest; asserting on a link that was never
+        // created would be a test that passes for the wrong reason.
+        return;
+    }
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("one reservation");
+    service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+
+    let update = service.run_claimed_conversion(&link);
+
+    let WorkspaceConversionStateDto::Failed { error, .. } = update.state else {
+        panic!("a link is refused; got {:?}", update.state);
+    };
+    assert_eq!(error.kind, "destination_is_a_link");
+    assert_eq!(entry_names(&real), Vec::<String>::new());
+}
+
 /// A running conversion is not released by a reload. Its process is under way,
 /// and its result is what the replacement document will read.
 #[test]
