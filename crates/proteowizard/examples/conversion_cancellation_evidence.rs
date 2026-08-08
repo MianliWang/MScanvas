@@ -960,6 +960,17 @@ fn wait_for_interval(
             && let Ok(snapshot) = snapshot_output_directory(&staging_output)
         {
             observation.entry_count = observation.entry_count.max(snapshot.len());
+            // Counted here as well as in the other watcher. Without it this
+            // scenario reports zero directories however many it saw, which is
+            // the opposite of useful for a record whose point is that the
+            // backend writes nothing besides its output.
+            observation.directory_count = observation.directory_count.max(
+                snapshot
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.kind() == OutputEntryKind::Directory)
+                    .count(),
+            );
             observation.partial_suffix_observed |= snapshot.contains_partial_output();
             if let Some(bytes) = snapshot
                 .entries()

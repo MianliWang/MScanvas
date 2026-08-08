@@ -2062,8 +2062,19 @@ mod tests {
         assert!(ready, "the flooding child never filled its pipes");
         assert_eq!(output.termination, Termination::Cancelled);
         assert_eq!(output.final_active_processes, Some(0));
-        assert!(output.stdout_total_bytes > FLOOD_BYTES as u64);
-        assert!(output.stderr_total_bytes > 0);
+        // Asserted per stream. A combined total would pass on a run that
+        // drained one pipe and abandoned the other, which is exactly the
+        // regression this is here to catch.
+        assert!(
+            output.stdout_total_bytes >= FLOOD_BYTES as u64,
+            "stdout: {}",
+            output.stdout_total_bytes
+        );
+        assert!(
+            output.stderr_total_bytes >= FLOOD_BYTES as u64,
+            "stderr: {}",
+            output.stderr_total_bytes
+        );
     }
 
     /// A job that refuses to terminate is a wait failure, never a cancellation.
@@ -2270,11 +2281,15 @@ mod tests {
             "controlled flooding child was not released after job assignment"
         );
 
+        // Both streams, and the same volume through each. A token byte on
+        // stderr would leave that pipe far short of its buffer, so a capture
+        // thread that stopped draining it would never block the child and this
+        // would quietly stop being a test about pipes at all.
         let payload = vec![b'o'; 8192];
         let mut written = 0;
         while written < FLOOD_BYTES {
             io::stdout().write_all(&payload).expect("flood stdout");
-            io::stderr().write_all(b"e").expect("flood stderr");
+            io::stderr().write_all(&payload).expect("flood stderr");
             written += payload.len();
         }
         io::stdout().flush().expect("flush flooded stdout");
