@@ -195,11 +195,11 @@ and the only one the harness will run against.
 - **Early cancellation.** Requested when the staged output file first appeared:
   the owned tree terminated with `STATUS_CANCELLED`, the Job reported zero
   surviving processes, the staging area was removed, the destination root stayed
-  empty and there was no residue. Request to return: 71 ms.
+  empty and there was no residue. Request to return: 69 ms.
 - **Mid-write cancellation.** Requested after the staged file was observed
-  growing, at 107,323 bytes of a 12,283,969-byte finished output. Same result:
+  growing, at 95,363 bytes of a 12,283,969-byte finished output. Same result:
   tree gone, partial document removed, destination empty, no residue. Request to
-  return: 72 ms.
+  return: 73 ms.
 - **Partial-output shape.** This build writes its output **directly under the
   planned name and grows it in place**. No `.part`, `.partial` or `.tmp`
   suffix appeared in any observation, so a partial output is indistinguishable
@@ -252,7 +252,7 @@ None of these is answered here, and none may be assumed.
   correct. Offering the same retry affordance as a failed item would say
   something untrue about why it stopped.
 - **What the user is told while termination is in flight.** Confirmation took
-  71–72 ms in every measurement here, on one machine with one backend. That is
+  37–75 ms in every measurement here, on one machine with one backend. That is
   not a budget and no threshold derives from it.
 - **A queue-wide request.** This primitive is per-attempt. A queue-level request
   is a different object with a different lifetime, and building it as "a set of

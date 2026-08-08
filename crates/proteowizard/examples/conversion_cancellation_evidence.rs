@@ -949,12 +949,15 @@ fn wait_for_interval(
     settled: &AtomicBool,
 ) -> StagingObservation {
     let mut observation = StagingObservation::default();
-    // A run that never reaches the process boundary never sends this. Falling
-    // back to now rather than waiting out the bound keeps the scenario a
-    // scenario; whatever it then observes is reported as what it is.
-    let started = launch
-        .recv_timeout(MILESTONE_TIMEOUT)
-        .unwrap_or_else(|_| Instant::now());
+    // A run that fails before it reaches the process boundary — a source that
+    // changed, a staging area that could not be made — never sends this. The
+    // wait therefore watches the same settled flag the polling loop below
+    // does; a blocking receive here would sit out the whole bound with the
+    // answer already known.
+    let Some(started) = wait_for_launch(launch, settled) else {
+        observation.settled_first = true;
+        return observation;
+    };
     while started.elapsed() < interval {
         if let Some(staging_output) = staging_output_directory(destination)
             && let Ok(snapshot) = snapshot_output_directory(&staging_output)
@@ -996,6 +999,28 @@ fn wait_for_interval(
     observation.reached = !observation.settled_first;
     observation.waited = started.elapsed();
     observation
+}
+
+/// Waits for the moment the run handed its command to the process boundary.
+///
+/// `None` when the attempt settled first, when the sender went away, or when
+/// the bound expired — three ways of saying there was no launch to time from.
+/// The receive is polled rather than blocked on precisely so the first of those
+/// is noticed: the sender outlives a failed attempt, so a blocking wait would
+/// sit out the whole bound with the answer already known.
+fn wait_for_launch(launch: &mpsc::Receiver<Instant>, settled: &AtomicBool) -> Option<Instant> {
+    let deadline = Instant::now() + MILESTONE_TIMEOUT;
+    loop {
+        match launch.recv_timeout(POLL_INTERVAL) {
+            Ok(launched) => return Some(launched),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return None,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if settled.load(Ordering::Acquire) || Instant::now() >= deadline {
+                    return None;
+                }
+            }
+        }
+    }
 }
 
 /// The directory the backend writes into, found by shape.
