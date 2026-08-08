@@ -343,10 +343,19 @@ async fn choose_workspace_conversion_destination(
     let service = Arc::clone(&service);
     let operation = service.claim_conversion(&reservation_id, document_epoch)?;
     let (sender, receiver) = std::sync::mpsc::channel();
-    app.run_on_main_thread(move || {
-        let _ = sender.send(preview::dialog::choose_conversion_destination(owner));
-    })
-    .map_err(|_| folder_picker_unavailable())?;
+    if app
+        .run_on_main_thread(move || {
+            let _ = sender.send(preview::dialog::choose_conversion_destination(owner));
+        })
+        .is_err()
+    {
+        // The claim already took the slot. A dispatch that never happened
+        // leaves nothing to close it, so without this the session would hold an
+        // awaiting reservation whose picker does not exist -- and conversion,
+        // adding, clearing and previewing would stay refused until a reload.
+        service.cancel_conversion(operation);
+        return Err(folder_picker_unavailable());
+    }
 
     // The wait spans the modal dialog and then the whole conversion, either of
     // which can last as long as it lasts. Neither is something to hold an async

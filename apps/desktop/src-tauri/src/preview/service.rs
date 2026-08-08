@@ -999,6 +999,11 @@ impl PreviewService {
             .ok_or_else(unknown_dataset)?;
         let dto = dataset_dto(&workspace, id).ok_or_else(unknown_dataset)?;
         drop(workspace);
+        // The same gate every workspace mutation takes, so a conversion and a
+        // batch cannot both be admitted by each reading the other's state
+        // before either committed. Held only for the transition below: this is
+        // not backend work and nothing here waits on a process.
+        let gate = self.enter_workspace_mutation();
         let mut slot = self.conversion_slot();
         // Under the slot lock, and immediately before the slot is taken. The
         // authority proof is awaited, so a reload can start any time after it
@@ -1021,6 +1026,8 @@ impl PreviewService {
             dto,
         ));
         self.publish_conversion_busy(&slot);
+        drop(slot);
+        drop(gate);
         reservation
     }
 

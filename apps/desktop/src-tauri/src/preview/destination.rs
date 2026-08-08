@@ -42,6 +42,22 @@ pub(super) fn admit_destination_root(chosen: &Path) -> Result<PathBuf, PreviewEr
     if is_reparse_point(&metadata) || !metadata.is_dir() {
         return Err(destination_is_a_link());
     }
+
+    // The name is resolved twice, and the two answers must agree. Between the
+    // inspection above and this resolution another process can rename the
+    // directory away and leave a junction behind, and canonicalization would
+    // then follow it to an ordinary folder that never passed admission --
+    // giving a verdict about one object and a path naming another.
+    //
+    // Re-resolving detects exactly that: a canonical path is already fully
+    // resolved, so canonicalizing it again answers with itself unless the name
+    // now means something else. This is the same technique the conversion
+    // boundary's own identity capture uses, and the plan formed from this root
+    // additionally binds it by filesystem identity and rechecks it before
+    // anything is created -- so a swap after this point is refused there.
+    if std::fs::canonicalize(&canonical).map_err(|_| destination_unusable())? != canonical {
+        return Err(destination_unusable());
+    }
     if !is_local_volume(&canonical)? {
         return Err(destination_is_remote());
     }
