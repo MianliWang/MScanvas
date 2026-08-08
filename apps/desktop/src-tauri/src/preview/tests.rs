@@ -9518,3 +9518,370 @@ fn collect_strings(value: &serde_json::Value, into: &mut Vec<String>) {
         _ => {}
     }
 }
+
+/// The real queue, on a real installation, against real copies of the ADR 0010
+/// acquisition.
+///
+/// Ignored by default, for the reason the single-conversion evidence test gives:
+/// a deterministic suite cannot tell you what a vendor library on this machine
+/// does with these bytes through the path a user actually takes.
+///
+/// It enters through `add_files` and converts through the reservation the
+/// destination picker claims, and it samples the running `msconvert.exe`
+/// processes while the queue drains -- so "one at a time" is measured here
+/// rather than merely designed.
+///
+/// ```text
+/// set MSCANVAS_THERMO_FIXTURE=<path to the acquisition>
+/// set MSCANVAS_CONVERSION_DESTINATION=<path to an empty folder>
+/// set MSCANVAS_QUEUE_STAGE=<path to an empty folder for the copies>
+/// cargo test -p mscanvas-desktop --lib -- --ignored --nocapture real_queue
+/// ```
+#[test]
+#[ignore = "needs a local ProteoWizard installation and a real vendor acquisition"]
+fn a_real_queue_converts_several_thermo_acquisitions_one_at_a_time() {
+    let Ok(fixture) = std::env::var("MSCANVAS_THERMO_FIXTURE") else {
+        panic!("set MSCANVAS_THERMO_FIXTURE to the acquisition to copy");
+    };
+    let Ok(destination) = std::env::var("MSCANVAS_CONVERSION_DESTINATION") else {
+        panic!("set MSCANVAS_CONVERSION_DESTINATION to an empty folder");
+    };
+    let Ok(stage) = std::env::var("MSCANVAS_QUEUE_STAGE") else {
+        panic!("set MSCANVAS_QUEUE_STAGE to an empty folder for the copies");
+    };
+    let acquisition = PathBuf::from(fixture);
+    let destination = PathBuf::from(destination);
+    let stage = PathBuf::from(stage);
+
+    // Three distinct objects, not three names for one. Each copy is its own
+    // file with its own filesystem identity, which is what makes the queue a
+    // queue of three acquisitions rather than one acquisition three times.
+    let names = ["alpha.raw", "bravo.raw", "charlie.raw"];
+    let copies: Vec<PathBuf> = names
+        .iter()
+        .map(|name| {
+            let target = stage.join(name);
+            fs::copy(&acquisition, &target).expect("copy the acquisition");
+            target
+        })
+        .collect();
+    for copy in &copies {
+        let identity = super::selection::file_identity(copy).expect("each copy has an identity");
+        println!("copy {} identity {identity:?}", copy.display());
+    }
+
+    let service = PreviewService::new(Box::new(super::backend::ProteoWizardProvider::new()));
+    let batch = service
+        .add_files(&copies)
+        .expect("no conversion is running");
+    let handles: Vec<String> = batch
+        .outcomes
+        .iter()
+        .map(|outcome| match outcome {
+            WorkspaceAddOutcomeDto::Added { dataset } => {
+                assert_eq!(dataset.source_kind, DatasetSourceKindDto::ThermoRaw);
+                println!("admitted {} as {}", dataset.file_name, dataset.handle);
+                dataset.handle.clone()
+            }
+            other => panic!("every copy is admitted; got {other:?}"),
+        })
+        .collect();
+    assert_eq!(handles.len(), 3);
+
+    // Queued in an order the workspace does not already hold, so the order the
+    // outputs arrive in can only have come from the list this test gave.
+    let queued = vec![handles[2].clone(), handles[0].clone(), handles[1].clone()];
+    let expected_order = vec!["charlie.mzML", "alpha.mzML", "bravo.mzML"];
+
+    let plan = service
+        .conversion_queue_plan(&queued)
+        .expect("three convertible rows are a plan");
+    println!("plan: {plan:?}");
+    assert_eq!(plan.capacity, super::dto::MAX_CONVERSION_QUEUE_ITEMS);
+    assert_eq!(
+        plan.items
+            .iter()
+            .map(|item| item.output_file_name.clone())
+            .collect::<Vec<_>>(),
+        expected_order
+    );
+
+    // Sampled while the queue runs. `msconvert.exe` is what a conversion
+    // launches, so counting the ones this machine is running is the direct
+    // measurement of "one at a time".
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let samples = Arc::new(AtomicUsize::new(0));
+    let watching = std::thread::spawn({
+        let stop = Arc::clone(&stop);
+        let peak = Arc::clone(&peak);
+        let samples = Arc::clone(&samples);
+        move || {
+            while !stop.load(Ordering::SeqCst) {
+                // Back to back. One `tasklist` costs a few hundred
+                // milliseconds by itself, so sleeping between samples would buy
+                // nothing and cost coverage.
+                let running = running_msconvert_count();
+                samples.fetch_add(1, Ordering::SeqCst);
+                peak.fetch_max(running, Ordering::SeqCst);
+            }
+        }
+    });
+
+    let document = service.workspace_drop_document_epoch();
+    let reservation = service
+        .begin_conversion_queue(&queued, ConversionConflictPolicyDto::Fail, document)
+        .expect("one reservation for the whole queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let started = std::time::Instant::now();
+    let update = service.run_claimed_conversion(operation, &destination);
+    let wall = started.elapsed();
+    stop.store(true, Ordering::SeqCst);
+    watching.join().expect("the watching thread");
+
+    println!(
+        "peak concurrent msconvert.exe: {} over {} samples",
+        peak.load(Ordering::SeqCst),
+        samples.load(Ordering::SeqCst)
+    );
+    assert!(
+        peak.load(Ordering::SeqCst) <= 1,
+        "the queue runs one process at a time"
+    );
+
+    let queue = terminal_queue(&update);
+    println!("queue: {queue:?}");
+    assert_eq!(queue.item_count, 3);
+    assert_eq!(queue.finalized_count, 3);
+    assert_eq!(queue.failed_count, 0);
+    assert_eq!(queue.skipped_count, 0);
+    assert_eq!(
+        queue
+            .items
+            .iter()
+            .map(|item| item.output_file_name.clone())
+            .collect::<Vec<_>>(),
+        expected_order,
+        "the outputs are named in the order the queue was given"
+    );
+    for item in &queue.items {
+        assert_eq!(item.attempts, 1);
+        let report = item.report.as_ref().expect("each item reports");
+        assert_eq!(report.outcome, "finalized");
+        assert_eq!(report.staging_residue, None);
+        let output = report.output.as_ref().expect("and produced a file");
+        let validation = report.validation.as_ref().expect("and was judged");
+        assert_eq!(validation.mode, ValidationModeDto::OutputOnly);
+        assert!(!validation.fully_verified);
+        println!(
+            "{} -> {} bytes {} sha256 {} spectra {} chromatograms {}, verified {:?}, unverified {:?}",
+            item.file_name,
+            item.output_file_name,
+            output.byte_length,
+            output.sha256,
+            output.spectrum_count,
+            output.chromatogram_count,
+            validation.verified,
+            validation.unverified
+        );
+    }
+
+    // The independent half of the same measurement, and the stronger half: the
+    // queue took at least as long as its processes did, added end to end. Three
+    // processes running beside each other could not.
+    let backend_total: u64 = queue
+        .items
+        .iter()
+        .map(|item| {
+            item.report
+                .as_ref()
+                .and_then(|report| report.backend.as_ref())
+                .map_or(0, |backend| backend.elapsed_milliseconds)
+        })
+        .sum();
+    println!(
+        "wall {} ms against {} ms of backend time",
+        wall.as_millis(),
+        backend_total
+    );
+    assert!(
+        u128::from(backend_total) <= wall.as_millis(),
+        "the queue's own wall time covers every process it ran, one after another"
+    );
+
+    // One file per finalized item, nothing else, and no staging left behind.
+    let mut produced = entry_names(&destination);
+    produced.sort();
+    let mut wanted: Vec<String> = expected_order
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect();
+    wanted.sort();
+    assert_eq!(produced, wanted, "one output per item and no sidecars");
+
+    // And nothing the webview would receive names a location.
+    let rendered = serde_json::to_string(&update).expect("the update serializes");
+    for fragment in [
+        destination.to_string_lossy().into_owned(),
+        stage.to_string_lossy().into_owned(),
+    ] {
+        assert!(
+            !rendered.contains(&fragment),
+            "the update names {fragment:?}"
+        );
+    }
+    println!("wire: {rendered}");
+}
+
+/// How many `msconvert.exe` processes this machine is running right now.
+#[cfg(windows)]
+fn running_msconvert_count() -> usize {
+    let Ok(output) = std::process::Command::new("tasklist")
+        .args(["/FI", "IMAGENAME eq msconvert.exe", "/NH", "/FO", "CSV"])
+        .output()
+    else {
+        return 0;
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| line.contains("msconvert.exe"))
+        .count()
+}
+
+#[cfg(not(windows))]
+const fn running_msconvert_count() -> usize {
+    0
+}
+
+/// Real failure isolation, on the same installation and the same fixture.
+///
+/// The claim this milestone makes is that one file's failure does not stop the
+/// files after it. A deterministic suite says so with a substituted backend;
+/// this says so with the real one, by putting a file where the middle item's
+/// output would go and watching the items either side of it convert anyway.
+///
+/// ```text
+/// set MSCANVAS_THERMO_FIXTURE=<path to the acquisition>
+/// set MSCANVAS_CONVERSION_DESTINATION=<path to an empty folder>
+/// set MSCANVAS_QUEUE_STAGE=<path to an empty folder for the copies>
+/// cargo test -p mscanvas-desktop --lib -- --ignored --nocapture real_queue_isolates
+/// ```
+#[test]
+#[ignore = "needs a local ProteoWizard installation and a real vendor acquisition"]
+fn a_real_queue_isolates_one_failure_and_converts_the_rest() {
+    let Ok(fixture) = std::env::var("MSCANVAS_THERMO_FIXTURE") else {
+        panic!("set MSCANVAS_THERMO_FIXTURE to the acquisition to copy");
+    };
+    let Ok(destination) = std::env::var("MSCANVAS_CONVERSION_DESTINATION") else {
+        panic!("set MSCANVAS_CONVERSION_DESTINATION to an empty folder");
+    };
+    let Ok(stage) = std::env::var("MSCANVAS_QUEUE_STAGE") else {
+        panic!("set MSCANVAS_QUEUE_STAGE to an empty folder for the copies");
+    };
+    let acquisition = PathBuf::from(fixture);
+    let destination = PathBuf::from(destination);
+    let stage = PathBuf::from(stage);
+
+    let copies: Vec<PathBuf> = ["one.raw", "two.raw", "three.raw"]
+        .iter()
+        .map(|name| {
+            let target = stage.join(name);
+            fs::copy(&acquisition, &target).expect("copy the acquisition");
+            target
+        })
+        .collect();
+
+    // The middle item's name, already taken by something this queue did not
+    // write and must not touch.
+    let occupied = destination.join("two.mzML");
+    let squatter = b"not an mzML document, and not this queue's to replace";
+    fs::write(&occupied, squatter).expect("occupy the middle output name");
+
+    let service = PreviewService::new(Box::new(super::backend::ProteoWizardProvider::new()));
+    let batch = service
+        .add_files(&copies)
+        .expect("no conversion is running");
+    let handles: Vec<String> = batch
+        .outcomes
+        .iter()
+        .map(|outcome| match outcome {
+            WorkspaceAddOutcomeDto::Added { dataset } => dataset.handle.clone(),
+            other => panic!("every copy is admitted; got {other:?}"),
+        })
+        .collect();
+
+    let document = service.workspace_drop_document_epoch();
+    let reservation = service
+        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("one reservation for the whole queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let update = service.run_claimed_conversion(operation, &destination);
+
+    let queue = terminal_queue(&update);
+    println!("queue: {queue:?}");
+    assert_eq!(queue.finalized_count, 2);
+    assert_eq!(queue.failed_count, 1);
+    assert_eq!(
+        queue
+            .items
+            .iter()
+            .map(|item| (item.output_file_name.clone(), item.state))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                String::from("one.mzML"),
+                ConversionQueueItemStateDto::Finalized
+            ),
+            (
+                String::from("two.mzML"),
+                ConversionQueueItemStateDto::Failed
+            ),
+            (
+                String::from("three.mzML"),
+                ConversionQueueItemStateDto::Finalized
+            ),
+        ],
+        "the item after the failure converted anyway"
+    );
+
+    let failed = queue.items[1]
+        .report
+        .as_ref()
+        .expect("the middle item reached a run and reported it");
+    println!("failed item: {failed:?}");
+    assert_eq!(
+        failed.detailed_outcome.as_deref(),
+        Some("destination_exists")
+    );
+    assert_eq!(
+        failed.output_file_name, None,
+        "a run that finalized nothing names no output file"
+    );
+    assert_eq!(failed.staging_residue, None);
+    assert!(
+        !queue.items[1].retryable,
+        "the same name would be taken on the next attempt too"
+    );
+
+    // What was already there is exactly what is still there, byte for byte.
+    assert_eq!(
+        fs::read(&occupied).expect("the occupying file is still readable"),
+        squatter,
+        "a conflict leaves the existing file alone"
+    );
+    let mut produced = entry_names(&destination);
+    produced.sort();
+    assert_eq!(
+        produced,
+        vec!["one.mzML", "three.mzML", "two.mzML"],
+        "two outputs, the occupying file, and no sidecars or staging"
+    );
+    println!(
+        "wire: {}",
+        serde_json::to_string(&update).expect("the update serializes")
+    );
+}
