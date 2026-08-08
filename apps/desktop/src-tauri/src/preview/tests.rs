@@ -8325,6 +8325,91 @@ fn the_terminal_report_outlives_its_document_and_is_replaced_not_accumulated() {
     assert_eq!(report.output_file_name, None);
 }
 
+/// A reservation whose document is gone does not hold the workspace hostage.
+///
+/// A webview can reload between Rust issuing a reservation and the document
+/// receiving it. The replacement never learns the identifier, so without this
+/// the slot would stay busy -- and adding, clearing and previewing refused --
+/// until the application restarted.
+#[test]
+fn a_reload_releases_a_reservation_no_document_can_claim() {
+    let fixture = TestFile::new("orphaned-reservation");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("one reservation");
+
+    // The document that asked is replaced before it could claim.
+    service.begin_webview_document();
+
+    assert!(matches!(
+        service.conversion_state().state,
+        WorkspaceConversionStateDto::Idle
+    ));
+    // The stale identifier claims nothing, and the workspace is usable again.
+    assert_eq!(
+        service
+            .claim_conversion(&reservation.reservation_id, current_document(&service))
+            .expect_err("a released reservation is not claimable")
+            .kind,
+        "invalid_conversion_reservation"
+    );
+    service
+        .clear_workspace()
+        .expect("the workspace is no longer held by a conversion nobody can finish");
+}
+
+/// A running conversion is not released by a reload. Its process is under way,
+/// and its result is what the replacement document will read.
+#[test]
+fn a_reload_does_not_release_a_conversion_that_is_already_running() {
+    let fixture = TestFile::new("reload-during-run");
+    let acquisition = fixture.thermo_raw("acquisition.raw");
+    let destination = destination_root(&fixture, "out");
+    let (runner, observe_start, release) =
+        FakeConversionRunner::new(BackendAct::Convert).blocking();
+    let service = Arc::new(PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    ))));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("one reservation");
+    service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+
+    let converting = std::thread::spawn({
+        let service = Arc::clone(&service);
+        let destination = destination.clone();
+        move || service.run_claimed_conversion(&destination)
+    });
+    observe_start
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the conversion is inside its process");
+
+    service.begin_webview_document();
+    assert!(
+        matches!(
+            service.conversion_state().state,
+            WorkspaceConversionStateDto::Running { .. }
+        ),
+        "a reload cannot stop a process that is already running"
+    );
+
+    release.send(()).expect("release the conversion");
+    let update = converting.join().expect("the conversion thread");
+    assert!(matches!(
+        update.state,
+        WorkspaceConversionStateDto::Completed { .. }
+    ));
+}
+
 /// The wrong tool's help cannot convert, whatever else is right.
 ///
 /// The deterministic half of ADR 0011's open binding gate: a provider that

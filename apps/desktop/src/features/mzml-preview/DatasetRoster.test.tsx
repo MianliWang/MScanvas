@@ -86,6 +86,7 @@ function Harness({
       canAddFiles={canAddFiles}
       canAddFolder={canAddFolder}
       canMutate={canMutate}
+      canRemove={canMutate}
       canPreview={canPreview}
       canReloadRoster={canReloadRoster}
       dispatch={dispatch}
@@ -123,6 +124,7 @@ function Fixed({
   readonly state: RosterState;
   readonly canAddFiles?: boolean;
   readonly canMutate?: boolean;
+  readonly canRemove?: boolean;
   readonly folderBusy?: boolean;
   readonly dropBusy?: boolean;
   readonly onAddFiles?: () => void;
@@ -135,6 +137,7 @@ function Fixed({
       canAddFiles={canAddFiles}
       canAddFolder
       canMutate={canMutate}
+      canRemove={canMutate}
       canPreview
       canReloadRoster
       dispatch={() => undefined}
@@ -663,6 +666,7 @@ describe("returning the keyboard after removal", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         rosterSettlementToken={1}
         state={after}
       />,
@@ -701,6 +705,7 @@ describe("returning the keyboard after removal", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         rosterSettlementToken={1}
         state={after}
       />,
@@ -763,6 +768,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
         <Fixed
           canAddFiles={false}
           canMutate={false}
+          canRemove={false}
           folderBusy
           onClearList={onClearList}
           state={initialRosterState}
@@ -825,6 +831,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         folderBusy
         state={initialRosterState}
       />,
@@ -855,6 +862,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         folderBusy
         state={initialRosterState}
       />,
@@ -886,6 +894,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         folderBusy
         state={initialRosterState}
       />,
@@ -946,6 +955,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
         <Fixed
           canAddFiles={false}
           canMutate={false}
+          canRemove={false}
           folderBusy
           state={initialRosterState}
         />,
@@ -982,6 +992,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
         <Fixed
           canAddFiles={false}
           canMutate={false}
+          canRemove={false}
           folderBusy
           state={initialRosterState}
         />,
@@ -1035,6 +1046,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         folderBusy
         state={initialRosterState}
       />,
@@ -1077,6 +1089,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         folderBusy
         state={initialRosterState}
       />,
@@ -1096,6 +1109,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         rosterSettlementToken={1}
         state={seeded(1)}
       />,
@@ -1118,6 +1132,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       <Fixed
         canAddFiles={false}
         canMutate={false}
+        canRemove={false}
         folderBusy
         state={initialRosterState}
       />,
@@ -1181,6 +1196,7 @@ describe("the workspace roster as an accessible list", () => {
         canAddFiles
         canAddFolder
         canMutate
+        canRemove
         canPreview
         canReloadRoster
         dispatch={() => undefined}
@@ -1225,6 +1241,7 @@ describe("the workspace roster as an accessible list", () => {
         canAddFiles
         canAddFolder
         canMutate
+        canRemove
         canPreview
         canReloadRoster
         dispatch={() => undefined}
@@ -1312,6 +1329,7 @@ describe("the workspace roster as an accessible list", () => {
         canAddFiles
         canAddFolder
         canMutate
+        canRemove
         canPreview
         canReloadRoster
         dispatch={() => undefined}

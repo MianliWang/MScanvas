@@ -65,6 +65,15 @@ export interface DatasetRosterProps {
    */
   readonly canMutate: boolean;
   /**
+   * Whether the current selection may be removed right now.
+   *
+   * Narrower than `canMutate` and deliberately its own answer. Rust refuses a
+   * removal only when the converting row is among the handles, so during a
+   * conversion every other row stays the user's to prune -- which is exactly
+   * when the list is unusable for longest and curating it matters most.
+   */
+  readonly canRemove: boolean;
+  /**
    * Whether the list may be read back right now.
    *
    * Its own answer rather than `canMutate`, because it is not an escape route.
@@ -153,6 +162,7 @@ export function DatasetRoster({
   dropBusy,
   canPreview,
   canMutate,
+  canRemove,
   canReloadRoster,
   rosterSettlementToken,
   focusAddFilesToken,
@@ -904,7 +914,7 @@ export function DatasetRoster({
         ) : null}
         <button
           className="secondary-button"
-          disabled={!canMutate || state.selected.size === 0}
+          disabled={!canRemove || state.selected.size === 0}
           onClick={(event) => {
             const control = event.currentTarget;
             const ownsKeyboard = document.activeElement === control;

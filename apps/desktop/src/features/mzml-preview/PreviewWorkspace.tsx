@@ -133,8 +133,18 @@ export function PreviewWorkspace() {
   const canMutate =
     !workspace.workspaceBusy &&
     !workspace.pickerBusy &&
-    !workspace.folderReservationPending &&
-    !workspace.conversion.busy;
+    !workspace.folderReservationPending;
+  // Emptying the list would revoke the row a conversion is reading, and this
+  // workflow cannot cancel one, so Rust refuses it outright.
+  const canClear = canMutate && !workspace.conversion.busy;
+  // Removing is narrower than clearing, and deliberately not the same boolean.
+  // Rust refuses a removal only when the converting row is among the handles,
+  // so every other row stays the user's to prune -- which matters most during a
+  // conversion, because that is when the list is unusable for longest.
+  const canRemove =
+    canMutate &&
+    (workspace.conversion.busyHandle === null ||
+      !roster.selected.has(workspace.conversion.busyHandle));
   // Reading the list back is not an escape route. It is a pure, gate-linearized
   // snapshot, but during a scan it would add a loading state and a projection
   // whose usefulness depends on whether the scan committed before or after it.
@@ -507,7 +517,7 @@ export function PreviewWorkspace() {
           <DatasetRoster
             canAddFiles={canAcquire}
             canAddFolder={canAddFolder}
-            canMutate={canMutate}
+            canMutate={canClear}
             canPreview={canPreview}
             canReloadRoster={canReloadRoster}
             dispatch={workspace.dispatchRoster}
@@ -518,6 +528,7 @@ export function PreviewWorkspace() {
             onActivate={workspace.activateDataset}
             onAddFiles={workspace.addFiles}
             onAddFolder={workspace.addFolder}
+            canRemove={canRemove}
             onClearList={workspace.clearList}
             onReloadRoster={workspace.reloadRoster}
             onRemoveSelected={workspace.removeSelected}

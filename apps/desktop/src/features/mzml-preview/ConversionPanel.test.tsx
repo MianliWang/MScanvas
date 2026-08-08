@@ -118,9 +118,13 @@ describe("converting one focused Thermo RAW acquisition", () => {
     });
     expect(api.conversionRequests).toEqual([{ handle: "file-9", conflictPolicy: "fail" }]);
     expect(within(panel).getByText("Spectra").nextElementSibling).toHaveTextContent("1");
-    expect(
-      within(panel).getByText(/Output-only validation\. This does not compare/),
-    ).toBeVisible();
+    // Twice, and correctly: the result says what was verified, and the plan for
+    // the next conversion below it says what would be.
+    for (const disclosure of within(panel).getAllByText(
+      /Output-only validation\. This does not compare/,
+    )) {
+      expect(disclosure).toBeVisible();
+    }
     // The output is not silently adopted into the workspace.
     expect(
       within(panel).getByText(/was not added to the workspace/),
@@ -205,6 +209,63 @@ describe("converting one focused Thermo RAW acquisition", () => {
     expect(within(panel).getByText(/did not inspect it/)).toBeVisible();
     // Nothing was rerun to find this out.
     expect(api.conversionRequests).toEqual([]);
+  });
+
+  it("offers the action again once a conversion has finished", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [acquisition],
+      availability: availableBackend,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /FT-HCD-MSX\.raw/ });
+    const panel = await screen.findByRole("region", { name: "Convert" });
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Convert focused…" }));
+    await waitFor(() => {
+      expect(within(panel).getByText(/acquisition\.mzML/)).toBeVisible();
+    });
+
+    // The report stays, and so does the way to run another. Rust's slot lets a
+    // new conversion replace the previous report; a panel that only rendered
+    // the report would make the second conversion of a session reachable by
+    // reloading the application and no other way.
+    const again = within(panel).getByRole("button", { name: "Convert focused…" });
+    expect(again).toBeEnabled();
+    fireEvent.click(again);
+    await waitFor(() => {
+      expect(api.conversionRequests).toHaveLength(2);
+    });
+  });
+
+  it("keeps unrelated rows removable while one row converts", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile, acquisition],
+      availability: availableBackend,
+      conversion: (request, publish) =>
+        new Promise(() => {
+          publish({
+            status: "running",
+            operationId: "1",
+            dataset: { ...acquisition, handle: request.handle },
+          });
+        }),
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /FT-HCD-MSX\.raw/ });
+    fireEvent.click(rows()[1]);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    fireEvent.click(within(panel).getByRole("button", { name: "Convert focused…" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    });
+
+    // Selecting the converting row makes removal unavailable, because Rust
+    // refuses exactly that. Selecting any other row does not.
+    expect(screen.getByRole("button", { name: "Remove selected" })).toBeDisabled();
+    fireEvent.click(rows()[0]);
+    expect(screen.getByRole("button", { name: "Remove selected" })).toBeEnabled();
+    // Clearing stays unavailable either way: it would revoke the converting row.
+    expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
   });
 
   it("keeps an mzML preview on screen when focus moves to a vendor row", async () => {

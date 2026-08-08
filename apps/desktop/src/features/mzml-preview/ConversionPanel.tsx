@@ -90,10 +90,24 @@ export function ConversionPanel({
 
       {conversion.busy ? (
         <RunningState state={state} />
-      ) : terminal ? (
-        <TerminalState state={state} />
       ) : (
-        <PlanState conversion={conversion} focused={focused} canConvert={canConvert} />
+        <>
+          {terminal ? <TerminalState state={state} /> : null}
+          {/* Shown beside the last result rather than instead of it. Rust's
+              slot lets a new conversion replace the previous report, so a panel
+              that only ever rendered the report would make the second
+              conversion of a session reachable by reloading the application and
+              no other way. The report is what just happened; the plan is what
+              would happen next, and both are true at once. */}
+          {plan.status === "none" ? null : (
+            <PlanState
+              canConvert={canConvert}
+              conversion={conversion}
+              focused={focused}
+              repeating={terminal}
+            />
+          )}
+        </>
       )}
     </section>
   );
@@ -104,12 +118,20 @@ function PlanState({
   conversion,
   focused,
   canConvert,
+  repeating,
 }: {
   readonly conversion: ConversionOperation;
   readonly focused: SelectedFile | null;
   readonly canConvert: boolean;
-}): ReactElement {
+  /** Whether a previous result is on screen above this plan. */
+  readonly repeating: boolean;
+}): ReactElement | null {
   const { plan } = conversion;
+  // With a result above it, silence is better than a second empty state: the
+  // report already says what the panel is about.
+  if (repeating && plan.status !== "loaded") {
+    return null;
+  }
   if (plan.status === "loading") {
     return <div className="empty-state">Reading the conversion plan…</div>;
   }

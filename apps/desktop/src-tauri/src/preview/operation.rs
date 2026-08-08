@@ -302,6 +302,29 @@ impl ConversionSlot {
         }
     }
 
+    /// Releases a reservation whose document is gone.
+    ///
+    /// A webview can reload between Rust issuing a reservation and the document
+    /// receiving it. The replacement never learns the identifier, so it can
+    /// neither claim it nor begin another conversion -- and the slot would stay
+    /// busy, with adding, clearing and previewing refused, until the
+    /// application restarted.
+    ///
+    /// Releases a claimed reservation as well as an unclaimed one. A claimed
+    /// one means a modal picker is open for a document that no longer exists;
+    /// when it closes, the command finds nothing claimed and converts nothing,
+    /// which is the same answer as a dismissed picker and the right one.
+    ///
+    /// A conversion already running is deliberately left alone. Its process is
+    /// under way, its result is what the replacement document will read, and
+    /// nothing here can stop it.
+    pub(super) fn release_awaiting_destination(&mut self) {
+        if matches!(self.state, SlotState::AwaitingDestination { .. }) {
+            self.state = SlotState::Idle;
+            self.advance();
+        }
+    }
+
     /// Marks the claimed operation as running.
     pub(super) fn start_running(&mut self) {
         if let SlotState::AwaitingDestination { bound, .. } = &self.state {

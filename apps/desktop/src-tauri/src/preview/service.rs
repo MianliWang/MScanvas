@@ -566,6 +566,13 @@ impl PreviewService {
         let (gate, _, _pending_busy) = self.begin_superseding_mutation();
         drop(gate);
         self.drop_updates.reset_document(delivery);
+        // A reservation belongs to the document that asked for it. The
+        // replacement never learns the identifier, so one left awaiting a
+        // destination would hold the slot -- and every workspace mutation
+        // behind it -- for the rest of the session.
+        let mut slot = self.conversion_slot();
+        slot.release_awaiting_destination();
+        self.publish_conversion_busy(&slot);
     }
 
     /// Returns the native document epoch captured before a Channel handshake.
