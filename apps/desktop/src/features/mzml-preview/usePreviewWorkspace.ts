@@ -1800,7 +1800,16 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     }),
     [rosterSettled],
   );
-  const conversion = useConversionOperation(reconcileConversionGeneration, adoptOutputs);
+  // Every workspace mutation the user has asked for and not been answered on.
+  // Adoption installs an authoritative roster, so it waits for these rather
+  // than racing them -- the same reason acquiring waits for the others.
+  const workspaceSettling =
+    pickerBusy || workspaceBusy || folderBusy || dropBusy || folderReservationPending;
+  const conversion = useConversionOperation(
+    reconcileConversionGeneration,
+    adoptOutputs,
+    workspaceSettling,
+  );
   // A stop that could not be confirmed makes this session's backend unusable
   // without changing the installation, so nothing about it advances the
   // installation sequence and the reconciler above would never fire. Left

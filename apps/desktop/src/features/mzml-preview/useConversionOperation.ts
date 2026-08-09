@@ -172,6 +172,8 @@ export interface AdoptedOutputsSink {
 export function useConversionOperation(
   onInstallationGeneration: (generation: number) => void,
   onOutputsAdopted: AdoptedOutputsSink,
+  /** Whether a workspace mutation of the user's has been asked for and not settled. */
+  workspaceSettling: boolean,
 ): ConversionOperation {
   const api = usePreviewApi();
   const [state, setState] = useState<WorkspaceConversionState>({ status: "idle" });
@@ -554,7 +556,15 @@ export function useConversionOperation(
   // results an adoption would be reading. Deliberately not gated on the backend
   // being usable: adoption launches nothing.
   const canAdopt =
-    state.status === "terminal" && eligibleOutputCount > 0 && !adopting && !retrying;
+    state.status === "terminal" &&
+    eligibleOutputCount > 0 &&
+    !adopting &&
+    !retrying &&
+    // And not while a workspace mutation of the user's is still settling. One
+    // that committed in Rust can still have a reply in flight, and an adoption
+    // installing its roster first would leave that reply installing a list the
+    // adopted rows are missing from.
+    !workspaceSettling;
 
   const adopt = useCallback(() => {
     // The ref, not the rendered flag. Two activations inside one render both
@@ -562,10 +572,15 @@ export function useConversionOperation(
     // count for a request Rust is about to refuse -- which would then make the
     // first one's reply look superseded and install nothing, losing rows that
     // were actually committed.
-    if (state.status !== "terminal" || adoptingRef.current) {
+    // `busyRef` as well as this operation's own flag. A retry activated in the
+    // same render has already claimed that one, and dispatching both against a
+    // single terminal queue means one is refused -- with the losing adoption
+    // having already moved the workspace decision count.
+    if (state.status !== "terminal" || adoptingRef.current || busyRef.current) {
       return;
     }
     adoptingRef.current = true;
+    busyRef.current = true;
     // Marked before the request leaves, like every other gate here: the actions
     // this closes must close on the press rather than on the reply.
     setAdopting(true);
@@ -579,6 +594,7 @@ export function useConversionOperation(
       .adoptConversionOutputs(operationId)
       .then((result) => {
         adoptingRef.current = false;
+        busyRef.current = false;
         if (mounted.current) {
           setAdopting(false);
           setAdoption(result);
@@ -589,6 +605,7 @@ export function useConversionOperation(
       })
       .catch((cause: unknown) => {
         adoptingRef.current = false;
+        busyRef.current = false;
         if (!mounted.current) {
           return;
         }
