@@ -1638,6 +1638,15 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       if (backendBusyRef.current || conversionBusyRef.current) {
         return;
       }
+      // And a backend this session has stopped trusting is not one to launch a
+      // read against. A preview loaded before a stop stays on screen -- nothing
+      // about it became untrue -- so its table is still there to click, and
+      // every click would replace the spectrum beside it with a refusal the
+      // user can do nothing about. Read from the same verdict the banner shows,
+      // so the row and the banner cannot come to disagree.
+      if (!backendUsableRef.current) {
+        return;
+      }
       // A repeat of the row already being read is dropped. Every selection is
       // one backend process, and a double click should not be two of them.
       // Judged against the current token, so a read abandoned by a new preview
