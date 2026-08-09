@@ -559,6 +559,16 @@ fn line_names_a_location(line: &str, placeholders: &[&str]) -> bool {
 /// not a path; a ratio written `1.0/2.0` is suppressed, which is the direction
 /// this errs in everywhere else.
 ///
+/// It is also where this stops, and the limit is stated rather than papered
+/// over. One separator between two bare words with no dot -- `source/private`
+/// concatenated straight onto a label -- is the same shape as `m/z`, character
+/// for character in the only features available here. Catching it means
+/// suppressing every excerpt containing `m/z`, which is nearly every line
+/// `msconvert` prints. So a single extensionless segment at the root of a
+/// volume, printed with no space or punctuation before it, is a residual this
+/// test does not remove; ADR 0017 records it, and the warning shipped with
+/// every export is what covers it.
+///
 /// It is deliberately not the shared shape test's business. That one decides
 /// what a *screen* hides, where losing a line of an acquisition's own metadata
 /// would be a poor trade. This decides what a *file the user may send onward*
@@ -1438,6 +1448,62 @@ mod tests {
         ] {
             let kept = excerpt(prose.as_bytes(), &redactor);
             assert_eq!(kept.text(), Some(prose), "{prose}");
+        }
+    }
+
+    /// The trade the shape test makes, pinned so it cannot be made silently.
+    ///
+    /// `m/z` is not optional vocabulary -- it is in nearly every line the
+    /// backend prints -- and one separator between two bare words is the same
+    /// shape whether the words are a unit or a folder and a name. Anything
+    /// strict enough to withhold the second withholds the first, which is the
+    /// whole excerpt for the whole queue.
+    ///
+    /// This test exists so that changing either side of that trade shows up as
+    /// a decision rather than as a passing suite.
+    #[test]
+    fn the_shape_test_keeps_the_vocabulary_it_cannot_tell_a_root_from() {
+        let redactor = Redactor::default().with_path(Path::new(r"C:\Temp"), "<local-path>");
+
+        // Kept, and they have to be.
+        for vocabulary in ["m/z", "counts/second", "scanWindow: 200-2000 m/z"] {
+            assert_eq!(
+                excerpt(vocabulary.as_bytes(), &redactor).text(),
+                Some(vocabulary),
+                "{vocabulary}"
+            );
+        }
+
+        // And the cost on the other side, which is real and is not a leak: two
+        // unit tokens on one line are two separators, and two separators is
+        // the rule that catches `source/home/alice`. The excerpt goes; the
+        // counts, the outcome and every structured fact stay.
+        assert_eq!(
+            excerpt(b"200-2000 m/z at counts/second", &redactor).text(),
+            None
+        );
+
+        // The residual that costs. One extensionless segment at the root of a
+        // volume, with nothing before the separator to mark it -- indexed here
+        // as a known limit rather than asserted as a good outcome.
+        assert_eq!(
+            excerpt(b"source/private", &redactor).text(),
+            Some("source/private")
+        );
+
+        // Everything one step further along is caught: a second segment, an
+        // extension, or any boundary at all before the separator.
+        for caught in [
+            "source/private/run",
+            "source/private.raw",
+            "source /private",
+            "source=/private",
+        ] {
+            assert_eq!(
+                excerpt(caught.as_bytes(), &redactor).text(),
+                None,
+                "{caught}"
+            );
         }
     }
 

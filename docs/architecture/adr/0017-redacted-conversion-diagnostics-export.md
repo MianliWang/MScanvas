@@ -115,6 +115,20 @@ placeholder is *not* a tail and still withholds the excerpt. Without this
 exemption almost every excerpt naming an output would be suppressed and the
 feature would do nothing; with it broader than a separator, a leak would pass.
 
+**Where the shape test stops.** One separator between two bare words with no
+dot — `source/private` concatenated straight onto a label, at the root of a
+volume — is the same shape as `m/z`, in every feature available at this level.
+`m/z` is in nearly every line `msconvert` prints, so anything strict enough to
+withhold the first withholds the second, and with it the excerpt for the whole
+queue. That residual is therefore not removed, and it is one of the things the
+review-before-sharing warning exists to cover. A test pins the trade from both
+ends so that changing either is a decision rather than a passing suite.
+
+The cost runs the other way too, and is also real: a line carrying two unit
+tokens is two separators, and two separators is what catches
+`source/home/alice`. Such a line loses its excerpt. Every structured fact,
+count and identifier stays.
+
 **Two separators in one line is a tree.** Every rule above begins at a
 boundary, because a boundary is what tells a root from `m/z`. Backend text does
 not always give one: a label concatenated with a path — `source/home/alice/run.raw`
