@@ -1523,7 +1523,7 @@ impl PreviewService {
         // Cleared however this returns, including through a panic in the
         // reading half. A flag left set would refuse every later adoption for
         // the rest of the session.
-        let _adopting = AdoptionInFlight(self);
+        let adopting = AdoptionInFlight(self);
 
         // No workspace lock, no slot lock and no gate. Each output is opened,
         // recognised and accepted here; nothing is committed.
@@ -1599,6 +1599,12 @@ impl PreviewService {
             outcomes: describe_adoptions(&workspace, outcomes),
         };
         drop(workspace);
+        // Cleared under the gate this commit still holds, not at the end of the
+        // function. Between the two a drop or a queued mutation could take the
+        // gate, see a flag for an adoption that has already finished, and be
+        // refused for nothing -- and a native drop refused that way costs the
+        // user the drop itself.
+        drop(adopting);
         drop(gate);
         Ok(result)
     }
