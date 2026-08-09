@@ -15,8 +15,8 @@ use preview::dto::{
     FolderImportReservationDto, FolderIngestionResultDto, PreviewDto, PreviewErrorDto,
     SelectedSpectrumOutcomeDto, WorkspaceAddResultDto, WorkspaceConversionReservationDto,
     WorkspaceConversionUpdateDto, WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
-    WorkspaceRemoveResultDto, WorkspaceRosterDto, invalid_conversion_reservation,
-    invalid_workspace_drop_subscription,
+    WorkspaceOutputAdoptionResultDto, WorkspaceRemoveResultDto, WorkspaceRosterDto,
+    invalid_conversion_reservation, invalid_workspace_drop_subscription,
 };
 use preview::{PreviewService, ProteoWizardProvider, normalize_window_drop_event};
 
@@ -329,6 +329,33 @@ async fn stop_workspace_conversion_queue(
     let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
     let service = Arc::clone(&service);
     off_the_async_runtime(move || service.stop_conversion_queue(&operation_id, document_epoch))
+        .await?
+}
+
+/// Adds a terminal queue's finalized mzML outputs to the workspace.
+///
+/// Explicit, and never a consequence of a conversion finishing. The caller says
+/// which queue and nothing else: which outputs, in which order, and whether each
+/// may be admitted are all the session's to decide, and the answer carries no
+/// path, no destination and no filesystem identity.
+///
+/// Proves the calling document exactly as a retry and a stop do. Adding rows
+/// changes the list the user is working on, so the authority for it is being the
+/// current document -- which a reloaded document is, and a replaced one is not.
+///
+/// Launches no process. A session that has stopped trusting the backend may
+/// still do this, because nothing here runs one; whether the rows it produces
+/// can be previewed is a separate question the quarantine already answers.
+#[tauri::command]
+async fn adopt_workspace_conversion_outputs(
+    operation_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<WorkspaceOutputAdoptionResultDto, PreviewErrorDto> {
+    let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.adopt_conversion_outputs(&operation_id, document_epoch))
         .await?
 }
 
@@ -666,7 +693,8 @@ pub fn run() {
             begin_workspace_conversion_queue,
             choose_workspace_conversion_destination,
             retry_workspace_conversion_queue,
-            stop_workspace_conversion_queue
+            stop_workspace_conversion_queue,
+            adopt_workspace_conversion_outputs
         ])
         .run(tauri::generate_context!())
         .expect("failed to run the MSCanvas desktop application");

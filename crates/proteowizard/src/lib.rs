@@ -60,7 +60,6 @@ pub use conversion_run::{
     StagingResidue, provider_build_is_evidenced, run_conversion, run_conversion_cancellable,
 };
 pub use diagnostics::{Redactor, ReportableProcessOutput};
-pub use finalized_output::{FinalizedOutput, OutputDrift};
 pub use discovery::{
     AvailabilityState, ConfiguredLocation, DiscoveredTool, DiscoveryEnvironment, DiscoveryFailure,
     DiscoveryRequest, DiscoveryResult, DiscoverySource, ToolProbe, discover,
@@ -68,6 +67,7 @@ pub use discovery::{
 pub use failure::{
     FailureCondition, FailureKind, NormalizedFailure, Retryability, classify_process_failure,
 };
+pub use finalized_output::{FinalizedOutput, OutputDrift};
 pub use fs_guard::{
     OutputDirectoryEntry, OutputDirectorySnapshot, OutputEntryKind, RegularFileError,
     is_reparse_point, snapshot_output_directory,

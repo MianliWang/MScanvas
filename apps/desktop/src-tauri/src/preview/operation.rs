@@ -1024,25 +1024,23 @@ impl ConversionSlot {
             } => {
                 item.state = state;
                 item.retryable = retryable;
-                item.report = Some(report);
+                item.report = Some(*report);
                 item.error = None;
                 // Built here and nowhere else, from a finalization that
                 // actually happened. Reconstructing one later from a name and a
                 // report would be exactly the path-trusting this exists to
                 // avoid. A destination is always present by the time an item
                 // runs; without one there is nothing to adopt from.
-                item.adoption = finalized.zip(destination).map(
-                    |(finalized, destination)| {
-                        Arc::new(FinalizedOutputAdoptionTicket::new(
-                            operation,
-                            item.dataset,
-                            item.dataset_dto.file_name.clone(),
-                            item.output_file_name.clone(),
-                            destination,
-                            finalized,
-                        ))
-                    },
-                );
+                item.adoption = finalized.zip(destination).map(|(finalized, destination)| {
+                    Arc::new(FinalizedOutputAdoptionTicket::new(
+                        operation,
+                        item.dataset,
+                        item.dataset_dto.file_name.clone(),
+                        item.output_file_name.clone(),
+                        destination,
+                        *finalized,
+                    ))
+                });
             }
             ItemOutcome::Refused { retryable, error } => {
                 item.state = ItemState::Failed;
@@ -1235,6 +1233,45 @@ impl ConversionSlot {
         }
     }
 
+    /// Every finalized output of a terminal queue this caller named, in queue
+    /// order, paired with the item each belongs to.
+    ///
+    /// `None` for anything that is not exactly that: a different operation, a
+    /// queue still under way, an idle slot. The caller is asking about a result
+    /// on screen, and only a terminal queue has one.
+    ///
+    /// Order is the queue's own and never the registry's. What the user is
+    /// looking at is the list the panel drew, and rows arriving in some other
+    /// order would be a different answer to the question they asked.
+    pub(super) fn terminal_adoption_tickets(
+        &self,
+        operation: u64,
+    ) -> Option<Vec<(usize, Arc<FinalizedOutputAdoptionTicket>)>> {
+        if self.operation != operation {
+            return None;
+        }
+        let SlotState::Terminal { queue, .. } = &self.state else {
+            return None;
+        };
+        Some(
+            queue
+                .items
+                .iter()
+                .enumerate()
+                .filter_map(|(index, item)| {
+                    // The state and the ticket agree by construction -- only a
+                    // finalization builds one -- and the state is asked anyway,
+                    // so a later member of `ItemState` cannot become adoptable
+                    // by inheriting a ticket it was never given.
+                    (item.state == ItemState::Finalized)
+                        .then(|| item.adoption.clone())
+                        .flatten()
+                        .map(|ticket| (index, ticket))
+                })
+                .collect(),
+        )
+    }
+
     /// The current state, as the webview reads it.
     pub(super) fn read(&self, backend_quarantined: bool) -> WorkspaceConversionUpdateDto {
         let operation_id = self.operation.to_string();
@@ -1295,12 +1332,12 @@ pub(super) enum ItemOutcome {
     Reported {
         state: ItemState,
         retryable: bool,
-        report: super::conversion::WorkspaceConversionReport,
+        report: Box<super::conversion::WorkspaceConversionReport>,
         /// The retained output, present exactly when the run finalized one.
         /// Everything a later adoption needs beyond this is already on the
         /// queue, so the ticket is assembled where the item settles rather than
         /// carried around half-built.
-        finalized: Option<FinalizedOutput>,
+        finalized: Option<Box<FinalizedOutput>>,
     },
     /// The attempt never reached a conversion at all.
     Refused {

@@ -17,9 +17,9 @@
 
 use std::path::Path;
 
+use mscanvas_proteowizard::FinalizedOutput;
 #[cfg(test)]
 use mscanvas_proteowizard::run_conversion;
-use mscanvas_proteowizard::FinalizedOutput;
 use mscanvas_proteowizard::{
     BackendExecutionFailure, BackendRunFacts, CancellationFailure, CancellationReport,
     ConflictPolicy, ConversionAttempt, ConversionCancellation, ConversionPlan, ConversionPlanError,
@@ -527,7 +527,7 @@ pub(super) enum ConvertedItem {
     /// A conversion reached an outcome. The retained output is `Some` exactly
     /// when that outcome finalized one, and it is what a later adoption
     /// recognises the file by.
-    Reported(WorkspaceConversionReport, Option<FinalizedOutput>),
+    Reported(WorkspaceConversionReport, Option<Box<FinalizedOutput>>),
     Cancelled(CancellationReport),
     CancellationFailed(CancellationFailure),
 }

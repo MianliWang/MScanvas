@@ -68,6 +68,10 @@ use super::dto::{
     FolderScanLimitDto, SelectedFileDto, import_superseded, invalid_folder_import_reservation,
 };
 use super::dto::{MAX_WORKSPACE_DATASETS, backend_quarantined, conversion_not_stoppable};
+use super::dto::{
+    WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto, adoption_in_progress,
+    adoption_superseded, outputs_not_adoptable,
+};
 use super::installation::InstallationIdentity;
 use super::operation::{
     AdmittedDestination, CancellationFacts, ConversionQueue, ConversionSlot, ItemOutcome,
@@ -466,6 +470,14 @@ pub struct PreviewService {
     /// backend entry point asks it, and one of them is asked from the native
     /// drop callback.
     backend_quarantined: AtomicBool,
+    /// Whether an adoption of converted outputs is between its two halves.
+    ///
+    /// Adoption hashes files, so it cannot hold the mutation gate across the
+    /// part that reads them. This is what every other workspace mutation asks
+    /// instead: lock-free, like the conversion mirror beside it, and for the
+    /// same reason -- the paths that consult it must not take a lock that the
+    /// adoption itself will want back.
+    adopting_outputs: AtomicBool,
     /// Which backend the last look actually resolved to.
     ///
     /// Not the folder that was requested. A request names a configuration; what
@@ -508,6 +520,7 @@ impl PreviewService {
             conversion: Mutex::new(ConversionSlot::default()),
             conversion_busy: AtomicBool::new(false),
             backend_quarantined: AtomicBool::new(false),
+            adopting_outputs: AtomicBool::new(false),
             installation_generation: AtomicU64::new(0),
             resolved: Mutex::new(ObservedBackend::default()),
         }
@@ -769,7 +782,7 @@ impl PreviewService {
                 // Read lock-free, before the paths are retained. The callback
                 // must never wait on a service mutex, and refusing here means
                 // no dropped path is held for a workspace that cannot take it.
-                if self.conversion_is_busy() {
+                if self.conversion_is_busy() || self.adoption_is_in_flight() {
                     // `paths` is borrowed from the platform event and is not
                     // retained: returning without building a `Start` is what
                     // makes this a drop whose paths never entered the session.
@@ -971,7 +984,7 @@ impl PreviewService {
         // of these rows and holding it open; changing the roster underneath it
         // is what the request epoch would otherwise have to refuse later, at a
         // point where a process is already running.
-        if self.conversion_is_busy() {
+        if self.conversion_is_busy() || self.adoption_is_in_flight() {
             return Err(conversion_busy());
         }
         // Held for the whole batch so two of these cannot interleave their
@@ -1379,6 +1392,12 @@ impl PreviewService {
         // a retry is the one action that would otherwise start a process
         // without the user choosing anything again.
         self.require_usable_backend()?;
+        // A retry and an adoption both act on the terminal queue, and only one
+        // of them may. Refused here rather than left to the generation guard,
+        // because a retry replaces the very results an adoption is reading.
+        if self.adoption_is_in_flight() {
+            return Err(conversion_busy());
+        }
         let stored = self
             .terminal_destination()
             .ok_or_else(invalid_conversion_reservation)?;
@@ -1412,6 +1431,139 @@ impl PreviewService {
         drop(slot);
         drop(gate);
         Ok(self.drain_queue(operation))
+    }
+
+    /// Adds a terminal queue's finalized outputs to the workspace.
+    ///
+    /// Explicit, and all of them at once. The queue on screen is what the user
+    /// is looking at when they press this, so the set is the queue's own
+    /// finalized items in the queue's own order -- not a roster selection, and
+    /// not a subset the interface chose.
+    ///
+    /// Split across the mutation gate in three parts, because the middle one
+    /// hashes files and holding the gate across it would stall every other
+    /// workspace action for as long as that took. Under the gate: prove the
+    /// document, prove the queue, reserve a generation, take the tickets.
+    /// Outside it: check and accept each output. Under the gate again: require
+    /// the generation to still be current, and only then commit. A mutation
+    /// that won in between means nothing is added at all -- not a partial
+    /// commit against a workspace this run never saw.
+    ///
+    /// Launches no process and touches no backend, which is why a session that
+    /// has stopped trusting the backend may still do this. What it produces are
+    /// mzML rows; whether they can be *previewed* is the quarantine's business
+    /// and is unchanged by adopting them.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a stale document, an operation that is not the current terminal
+    /// queue, an adoption already under way, and a workspace that moved while
+    /// this one was reading. Individual outputs that cannot be admitted are not
+    /// errors: they are outcomes, and they do not stop the others.
+    pub fn adopt_conversion_outputs(
+        &self,
+        operation_id: &str,
+        document_epoch: u64,
+    ) -> Result<WorkspaceOutputAdoptionResultDto, PreviewErrorDto> {
+        let operation: u64 = operation_id.parse().map_err(|_| outputs_not_adoptable())?;
+
+        let (reserved, tickets) = {
+            let gate = self.enter_workspace_mutation_after_drop();
+            if document_epoch != self.workspace_drop_document_epoch() {
+                return Err(outputs_not_adoptable());
+            }
+            let tickets = self
+                .conversion_slot()
+                .terminal_adoption_tickets(operation)
+                .ok_or_else(outputs_not_adoptable)?;
+            if tickets.is_empty() {
+                return Err(outputs_not_adoptable());
+            }
+            // Claimed before the gate is released, so two adoptions of one queue
+            // cannot both reach the reading half and commit the same rows twice.
+            if self.adopting_outputs.swap(true, Ordering::AcqRel) {
+                return Err(adoption_in_progress());
+            }
+            (self.reserve_adoption(gate), tickets)
+        };
+        // Cleared however this returns, including through a panic in the
+        // reading half. A flag left set would refuse every later adoption for
+        // the rest of the session.
+        let _adopting = AdoptionInFlight(self);
+
+        // No workspace lock, no slot lock and no gate. Each output is opened,
+        // recognised and accepted here; nothing is committed.
+        let inspected: Vec<_> = tickets
+            .into_iter()
+            .map(|(index, ticket)| {
+                let accepted = ticket.accept();
+                (index, ticket, accepted)
+            })
+            .collect();
+
+        let gate = self.enter_workspace_mutation();
+        // The reservation, and the queue. Both, because they answer different
+        // questions: the generation says no other workspace decision happened,
+        // and the operation says the queue these outputs belong to is still the
+        // one the slot holds.
+        if gate.generation != reserved {
+            return Err(adoption_superseded());
+        }
+        if self
+            .conversion_slot()
+            .terminal_adoption_tickets(operation)
+            .is_none()
+        {
+            return Err(adoption_superseded());
+        }
+
+        let mut workspace = self.workspace();
+        let outcomes: Vec<_> = inspected
+            .into_iter()
+            .map(|(index, ticket, accepted)| {
+                let output_file_name = ticket.output_file_name().to_owned();
+                let source_handle = ticket.source().handle();
+                match accepted {
+                    Ok(accepted) => PendingAdoption::Registered {
+                        item_index: index,
+                        source_handle,
+                        output_file_name,
+                        outcome: workspace.registry.add_converted(
+                            accepted,
+                            ticket.source(),
+                            ticket.source_display_name().to_owned(),
+                            ticket.operation(),
+                        ),
+                    },
+                    Err(refusal) => PendingAdoption::Refused {
+                        item_index: index,
+                        source_handle,
+                        output_file_name,
+                        reason: refusal.stable_id().to_owned(),
+                    },
+                }
+            })
+            .collect();
+        let result = WorkspaceOutputAdoptionResultDto {
+            roster: roster_of(&workspace),
+            outcomes: describe_adoptions(&workspace, outcomes),
+        };
+        drop(workspace);
+        drop(gate);
+        Ok(result)
+    }
+
+    /// Advances the workspace generation for one adoption and returns it.
+    ///
+    /// Separated so the gate guard is dropped at a statement boundary rather
+    /// than living to the end of the block that produced it.
+    fn reserve_adoption(&self, mut gate: std::sync::MutexGuard<'_, WorkspaceMutationState>) -> u64 {
+        gate.advance()
+    }
+
+    /// Whether an adoption is between its two halves.
+    pub(super) fn adoption_is_in_flight(&self) -> bool {
+        self.adopting_outputs.load(Ordering::Acquire)
     }
 
     /// Marks a claimed queue as running without draining it.
@@ -1788,7 +1940,7 @@ impl PreviewService {
                         &plan,
                         &report,
                     );
-                    ConvertedItem::Reported(described, report.into_finalized_output())
+                    ConvertedItem::Reported(described, report.into_finalized_output().map(Box::new))
                 }
                 ConversionAttempt::Cancelled(report) => ConvertedItem::Cancelled(report),
                 ConversionAttempt::CancellationFailed(failure) => {
@@ -1802,7 +1954,7 @@ impl PreviewService {
                 QueueItemAttempt::Settled(ItemOutcome::Reported {
                     state: item_state_of(report.outcome_class()),
                     retryable: report.is_retryable(),
-                    report,
+                    report: Box::new(report),
                     finalized,
                 })
             }
@@ -1839,7 +1991,7 @@ impl PreviewService {
     /// The next begin after any other workspace decision replaces the one stale
     /// slot, so abandoned replies cannot grow an unbounded registry.
     pub fn begin_folder_import(&self) -> Result<FolderImportReservationDto, PreviewErrorDto> {
-        if self.conversion_is_busy() {
+        if self.conversion_is_busy() || self.adoption_is_in_flight() {
             return Err(conversion_busy());
         }
         let mut gate = self.enter_workspace_mutation_after_drop();
@@ -1879,7 +2031,7 @@ impl PreviewService {
     ) -> Result<FolderImportToken, PreviewErrorDto> {
         // Asked again here, not only at begin: a conversion can start while the
         // reservation is in flight, and the claim is what dispatches a picker.
-        if self.conversion_is_busy() {
+        if self.conversion_is_busy() || self.adoption_is_in_flight() {
             return Err(conversion_busy());
         }
         let requested = FolderImportReservationId::parse(reservation_id)
@@ -2256,7 +2408,7 @@ impl PreviewService {
         // immediately afterwards. This is the linearization point where that is
         // decided: a drop may be accepted, but nothing commits into a workspace
         // a conversion is reading.
-        if self.conversion_is_busy() {
+        if self.conversion_is_busy() || self.adoption_is_in_flight() {
             drop(gate);
             self.drop_updates
                 .publish_transient(delivery, conversion_busy_state());
@@ -2497,7 +2649,7 @@ impl PreviewService {
         // conversion is reading, and clearing the list is not the way to stop
         // one -- so the question has to be asked where the answer cannot change
         // between asking it and acting on it.
-        if self.conversion_is_busy() {
+        if self.conversion_is_busy() || self.adoption_is_in_flight() {
             drop(batch);
             self.drop_updates.publish_terminal_with_busy(
                 delivery,
@@ -2926,7 +3078,7 @@ impl PreviewService {
         // Refused rather than queued. The backend gate would serialize it
         // anyway, but a preview that waited behind a whole conversion would sit
         // there for as long as one takes with nothing on screen saying why.
-        if self.conversion_is_busy() {
+        if self.conversion_is_busy() || self.adoption_is_in_flight() {
             return Err(conversion_busy());
         }
         let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
@@ -3142,7 +3294,7 @@ impl PreviewService {
         // gate would serialize it anyway, but a spectrum waiting behind a whole
         // conversion sits in a loading state for as long as one takes, and
         // every further selection adds another queued request nobody sees.
-        if self.conversion_is_busy() {
+        if self.conversion_is_busy() || self.adoption_is_in_flight() {
             return Err(conversion_busy());
         }
         let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
@@ -3820,4 +3972,99 @@ fn selected_spectrum_dto(
         value_units_known: false,
         truncated,
     })
+}
+
+/// Clears the adoption mirror however the adoption ends.
+///
+/// A flag left set would refuse every later adoption for the rest of the
+/// session, which is a worse failure than the one it would be recording.
+struct AdoptionInFlight<'service>(&'service PreviewService);
+
+impl Drop for AdoptionInFlight<'_> {
+    fn drop(&mut self) {
+        self.0.adopting_outputs.store(false, Ordering::Release);
+    }
+}
+
+/// One output's adoption, before the roster it produced exists.
+enum PendingAdoption {
+    Registered {
+        item_index: usize,
+        source_handle: String,
+        output_file_name: String,
+        outcome: AddDatasetOutcome,
+    },
+    Refused {
+        item_index: usize,
+        source_handle: String,
+        output_file_name: String,
+        reason: String,
+    },
+}
+
+/// Describes what each adoption did, against the roster it produced.
+///
+/// The contexts are recomputed over the whole live registry, exactly as every
+/// other workspace answer does: whether a name needs disambiguating is a fact
+/// about the roster now, not about the moment a row arrived.
+fn describe_adoptions(
+    workspace: &Workspace,
+    pending: Vec<PendingAdoption>,
+) -> Vec<WorkspaceOutputAdoptionOutcomeDto> {
+    let contexts = relative_contexts(&workspace.registry);
+    let describe = |id: DatasetId| {
+        workspace
+            .registry
+            .get(id)
+            .map(|dataset| selected_file_dto(id, dataset.file(), contexts.get(&id).cloned()))
+    };
+    pending
+        .into_iter()
+        .map(|item| match item {
+            PendingAdoption::Refused {
+                item_index,
+                source_handle,
+                output_file_name,
+                reason,
+            } => WorkspaceOutputAdoptionOutcomeDto::Refused {
+                item_index,
+                source_handle,
+                output_file_name,
+                reason,
+            },
+            PendingAdoption::Registered {
+                item_index,
+                source_handle,
+                output_file_name,
+                outcome,
+            } => match (outcome, outcome.registered_id().and_then(describe)) {
+                (AddDatasetOutcome::Added { .. }, Some(dataset)) => {
+                    WorkspaceOutputAdoptionOutcomeDto::Added {
+                        item_index,
+                        source_handle,
+                        output_file_name,
+                        dataset,
+                    }
+                }
+                (AddDatasetOutcome::Duplicate { .. }, Some(dataset)) => {
+                    WorkspaceOutputAdoptionOutcomeDto::AlreadyInWorkspace {
+                        item_index,
+                        source_handle,
+                        output_file_name,
+                        dataset,
+                    }
+                }
+                // Full, or a row that vanished between the insert and the
+                // description. Neither has a workspace row to name, and
+                // inventing a handle for one would be the one thing this
+                // boundary must never do.
+                _ => WorkspaceOutputAdoptionOutcomeDto::Refused {
+                    item_index,
+                    source_handle,
+                    output_file_name,
+                    reason: String::from("workspace_full"),
+                },
+            },
+        })
+        .collect()
 }

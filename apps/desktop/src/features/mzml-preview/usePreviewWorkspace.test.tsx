@@ -221,6 +221,8 @@ function harness(
       Promise.resolve({ sequence: 0, state: { status: "idle" }, backendQuarantined: false }),
     convertDatasets: () => Promise.reject(new Error("not used in this file")),
     retryConversions: () => Promise.reject(new Error("not used in this file")),
+    adoptConversionOutputs: () =>
+      Promise.reject(new Error("this test never adopts converted outputs")),
     stopConversion: () => Promise.reject(new Error("not used in this file")),
   };
   return {

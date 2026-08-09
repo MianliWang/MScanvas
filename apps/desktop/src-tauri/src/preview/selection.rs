@@ -773,15 +773,10 @@ pub struct AcceptedFile {
     /// Keeps the object alive, so `identity` above cannot come to name a
     /// different one while this file is registered.
     ///
-    /// Never read: what it does is exist for as long as this value does, and
-    /// go when it goes.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the lease is held for its lifetime, not read; only a test asks after it"
-        )
-    )]
+    /// Held for as long as this value exists, and gone when it goes. Read in
+    /// exactly one place -- adopting a conversion output, which must prove
+    /// something about *this* object rather than about a name that resolves to
+    /// it -- and by shared reference only.
     lease: FileIdentityLease,
 }
 

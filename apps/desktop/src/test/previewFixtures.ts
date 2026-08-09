@@ -27,6 +27,7 @@ import type {
   WorkspaceAddOutcome,
   WorkspaceConversionState,
   WorkspaceRemoveResult,
+  WorkspaceOutputAdoptionResult,
   WorkspaceRoster,
 } from "../features/mzml-preview/contracts";
 
@@ -474,6 +475,16 @@ export interface FakePreviewApiOptions {
     operationId: string,
     publish: (state: WorkspaceConversionState) => void,
   ) => Promise<WorkspaceConversionState>;
+  /**
+   * What adopting this queue's outputs settles to.
+   *
+   * Supplied when a test needs a particular mix of added, duplicate and refused
+   * outcomes; without it the fake models the ordinary case.
+   */
+  readonly adoption?: (
+    operationId: string,
+    roster: () => WorkspaceRoster,
+  ) => Promise<WorkspaceOutputAdoptionResult>;
   readonly retry?: (
     publish: (state: WorkspaceConversionState) => void,
   ) => Promise<WorkspaceConversionState>;
@@ -562,6 +573,8 @@ export interface FakePreviewApi extends PreviewApi {
   readonly quarantineBackend: () => void;
   /** Every operation identifier a stop was asked for, in order. */
   readonly stopRequests: readonly string[];
+  /** Every operation identifier an adoption was asked for, in order. */
+  readonly adoptionRequests: readonly string[];
   /** Every conversion this fake was asked to start, in order. */
   readonly conversionRequests: readonly ConversionRequest[];
 }
@@ -670,6 +683,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   let conversionSequence = options.initialConversion === undefined ? 0 : 1;
   const conversionRequests: ConversionRequest[] = [];
   const stopRequests: string[] = [];
+  const adoptionRequests: string[] = [];
   // The session's own verdict on the backend, which outlives any one queue and
   // is never cleared -- exactly as Rust holds it.
   let backendQuarantined = options.initialBackendQuarantined ?? false;
@@ -812,6 +826,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     publishConversion,
     quarantineBackend,
     stopRequests,
+    adoptionRequests,
     conversionRequests,
     inspectBackend: () =>
       // A quarantined session answers every backend question the same way and
@@ -984,6 +999,59 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       const settled = await settling;
       publishConversion(settled);
       return { sequence: conversionSequence, state: conversion, backendQuarantined };
+    },
+    // Modelled as Rust behaves: every finalized item of the terminal queue, in
+    // queue order, admitted unless the session already holds a row of that
+    // name. A test that wants a particular per-item outcome supplies one.
+    adoptConversionOutputs: async (operationId) => {
+      adoptionRequests.push(operationId);
+      if (options.adoption !== undefined) {
+        return await options.adoption(operationId, snapshot);
+      }
+      const finalized =
+        conversion.status === "terminal"
+          ? conversion.queue.items
+              .map((item, index) => ({ item, index }))
+              .filter(({ item }) => item.state === "finalized")
+          : [];
+      const outcomes = finalized.map(({ item, index }) => {
+        const outputFileName = item.outputFileName;
+        const existing = held.find((entry) => entry.file.fileName === outputFileName);
+        if (existing !== undefined) {
+          return {
+            kind: "alreadyInWorkspace" as const,
+            itemIndex: index,
+            sourceHandle: item.datasetHandle,
+            outputFileName,
+            dataset: existing.file,
+          };
+        }
+        if (held.length >= capacity) {
+          return {
+            kind: "refused" as const,
+            itemIndex: index,
+            sourceHandle: item.datasetHandle,
+            outputFileName,
+            reason: "workspace_full",
+          };
+        }
+        const file: SelectedFile = {
+          handle: `converted-${outputFileName}`,
+          fileName: outputFileName,
+          byteLength: item.report?.output?.byteLength ?? 1_024,
+          sourceKind: "mzml",
+          relativeContext: null,
+        };
+        held = [...held, hold(file, null)];
+        return {
+          kind: "added" as const,
+          itemIndex: index,
+          sourceHandle: item.datasetHandle,
+          outputFileName,
+          dataset: file,
+        };
+      });
+      return { roster: snapshot(), outcomes };
     },
     stopConversion: async (operationId) => {
       stopRequests.push(operationId);

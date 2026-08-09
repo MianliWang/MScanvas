@@ -200,7 +200,10 @@ impl FinalizedOutput {
     fn holds_validated_bytes(&self, current: &File) -> Result<(), OutputDrift> {
         use std::io::Seek;
 
-        let observed = current.metadata().map_err(|_| OutputDrift::Unreadable)?.len();
+        let observed = current
+            .metadata()
+            .map_err(|_| OutputDrift::Unreadable)?
+            .len();
         if observed != self.byte_length() {
             return Err(OutputDrift::ByteLengthChanged);
         }
@@ -305,4 +308,3 @@ impl PartialEq for FinalizedOutput {
         }
     }
 }
-

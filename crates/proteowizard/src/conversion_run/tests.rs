@@ -7,7 +7,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::*;
 use super::{OwnedStagingArea, StagingResidue};
 use crate::cancellation::CancellationRequest;
-use crate::finalized_output::OutputDrift;
 use crate::capability::{CapturedHelpStream, CompleteHelpCapture};
 use crate::command::{BackendTool, CommandSpec};
 use crate::conversion::{
@@ -15,6 +14,7 @@ use crate::conversion::{
     capture_conversion_source, verify_mzml_conversion_retaining_output,
     verify_vendor_conversion_retaining_output,
 };
+use crate::finalized_output::OutputDrift;
 
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 

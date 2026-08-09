@@ -44,23 +44,23 @@ use super::selection::{AcceptedFile, DatasetId, accept_mzml_file};
 pub(super) enum AdoptionRefusal {
     /// Nothing is at that name any more, or the folder it was written to is no
     /// longer the folder MSCanvas wrote to.
-    OutputMissing,
+    Missing,
     /// Something is there, and it is not the file this queue finalized — a
     /// different object, or the same one holding different bytes.
-    OutputChanged,
+    Changed,
     /// Something is there and could not be read well enough to decide.
-    OutputUnreadable,
+    Unreadable,
     /// Something is there and is not a file the workspace accepts as mzML.
-    OutputNotMzml,
+    NotMzml,
 }
 
 impl AdoptionRefusal {
     pub(super) const fn stable_id(self) -> &'static str {
         match self {
-            Self::OutputMissing => "output_missing",
-            Self::OutputChanged => "output_changed",
-            Self::OutputUnreadable => "output_unreadable",
-            Self::OutputNotMzml => "output_not_mzml",
+            Self::Missing => "output_missing",
+            Self::Changed => "output_changed",
+            Self::Unreadable => "output_unreadable",
+            Self::NotMzml => "output_not_mzml",
         }
     }
 
@@ -73,8 +73,8 @@ impl AdoptionRefusal {
         match drift {
             OutputDrift::DifferentObject
             | OutputDrift::ByteLengthChanged
-            | OutputDrift::ContentChanged => Self::OutputChanged,
-            OutputDrift::Unreadable => Self::OutputUnreadable,
+            | OutputDrift::ContentChanged => Self::Changed,
+            OutputDrift::Unreadable => Self::Unreadable,
         }
     }
 }
@@ -176,7 +176,7 @@ impl FinalizedOutputAdoptionTicket {
     /// to, so it has nothing to say about what is in there.
     fn current_destination_root(&self) -> Result<&Path, AdoptionRefusal> {
         let readmitted = admit_destination_root(self.destination.root())
-            .map_err(|_| AdoptionRefusal::OutputMissing)?;
+            .map_err(|_| AdoptionRefusal::Missing)?;
         let (root, identity, _held) = readmitted;
         if self
             .destination
@@ -184,7 +184,7 @@ impl FinalizedOutputAdoptionTicket {
         {
             return Ok(self.destination.root());
         }
-        Err(AdoptionRefusal::OutputMissing)
+        Err(AdoptionRefusal::Missing)
     }
 
     /// Whether the file the workspace just accepted is this finalized output.
@@ -204,7 +204,7 @@ impl FinalizedOutputAdoptionTicket {
     /// compared, through a reading of the accepted name.
     #[cfg(not(windows))]
     fn recognises(&self, accepted: &AcceptedFile) -> Result<(), AdoptionRefusal> {
-        let current = File::open(accepted.path()).map_err(|_| AdoptionRefusal::OutputUnreadable)?;
+        let current = File::open(accepted.path()).map_err(|_| AdoptionRefusal::Unreadable)?;
         self.finalized
             .still_matches(&current)
             .map_err(AdoptionRefusal::of_drift)
@@ -245,8 +245,8 @@ fn hold_against_writers(output: &Path) -> Result<File, AdoptionRefusal> {
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(output)
         .map_err(|error| match error.kind() {
-            std::io::ErrorKind::NotFound => AdoptionRefusal::OutputMissing,
-            _ => AdoptionRefusal::OutputUnreadable,
+            std::io::ErrorKind::NotFound => AdoptionRefusal::Missing,
+            _ => AdoptionRefusal::Unreadable,
         })
 }
 
@@ -256,9 +256,9 @@ fn hold_against_writers(output: &Path) -> Result<(), AdoptionRefusal> {
     match std::fs::symlink_metadata(output) {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Err(AdoptionRefusal::OutputMissing)
+            Err(AdoptionRefusal::Missing)
         }
-        Err(_) => Err(AdoptionRefusal::OutputUnreadable),
+        Err(_) => Err(AdoptionRefusal::Unreadable),
     }
 }
 
@@ -271,8 +271,8 @@ fn hold_against_writers(output: &Path) -> Result<(), AdoptionRefusal> {
 /// told about a file MSCanvas itself wrote.
 fn refusal_of(kind: &str) -> AdoptionRefusal {
     match kind {
-        "file_not_resolvable" => AdoptionRefusal::OutputMissing,
-        "file_unreadable" | "source_in_use" => AdoptionRefusal::OutputUnreadable,
-        _ => AdoptionRefusal::OutputNotMzml,
+        "file_not_resolvable" => AdoptionRefusal::Missing,
+        "file_unreadable" | "source_in_use" => AdoptionRefusal::Unreadable,
+        _ => AdoptionRefusal::NotMzml,
     }
 }
