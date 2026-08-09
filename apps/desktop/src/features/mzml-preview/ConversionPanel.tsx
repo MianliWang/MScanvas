@@ -164,7 +164,16 @@ export function ConversionPanel({
 
       {conversion.error === null ? null : (
         <div className="notice notice-danger" role="status">
-          <span>{conversion.error.summary}</span>
+          {/* Both halves. The summary says what happened; the detail is where a
+              refusal puts the part the user has to act on -- above all that a
+              failed export left a temporary file in their folder. Rendering
+              only the summary hid the one thing they could do about it. */}
+          <span>
+            {conversion.error.summary}
+            {conversion.error.detail === null ? null : (
+              <span className="notice-detail">{conversion.error.detail}</span>
+            )}
+          </span>
           <button className="link-button" onClick={conversion.dismissError} type="button">
             Dismiss
           </button>

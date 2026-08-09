@@ -549,12 +549,20 @@ fn line_names_a_location(line: &str, placeholders: &[&str]) -> bool {
 /// escapes the same way and is caught by the colon after it; POSIX and UNC
 /// forms have no colon to be caught by.
 ///
-/// So this asks the one thing that survives concatenation: two separators of
-/// any kind, in one line, is a tree. It is deliberately not the shared shape
-/// test's business -- that one decides what a *screen* hides, where losing a
-/// line of an acquisition's own metadata to `m/z ... counts/second` would be a
-/// poor trade. This decides what a *file the user may send onward* keeps, where
-/// it is the right one.
+/// So this asks the two things that survive concatenation. Two separators of
+/// any kind in one line is a tree. And one separator is enough when what
+/// follows it carries a dot, because that is a file name and `source/run.raw`
+/// at the root of a volume needs no second separator to be a location.
+///
+/// The dot is what keeps the tokens this must not take with it. `m/z` and
+/// `counts/second` are one separator between bare words, which is a unit and
+/// not a path; a ratio written `1.0/2.0` is suppressed, which is the direction
+/// this errs in everywhere else.
+///
+/// It is deliberately not the shared shape test's business. That one decides
+/// what a *screen* hides, where losing a line of an acquisition's own metadata
+/// would be a poor trade. This decides what a *file the user may send onward*
+/// keeps, where the same strictness is the right call.
 ///
 /// A remainder the redactor left behind does not count: it is one name, it is
 /// governed above, and counting it would suppress every excerpt naming an
@@ -568,11 +576,31 @@ fn carries_a_separator_run(line: &str, placeholders: &[&str]) -> bool {
         remaining = remaining.replace(&format!("{placeholder}\\"), "");
         remaining = remaining.replace(&format!("{placeholder}/"), "");
     }
-    remaining
+    let separators = remaining
         .chars()
         .filter(|character| is_separator(*character))
-        .count()
-        >= 2
+        .count();
+    separators >= 2 || names_a_file_after_a_separator(&remaining)
+}
+
+/// Whether any separator is followed by something shaped like a file name.
+///
+/// The segment ends at the next separator or at whitespace, because a name is
+/// what sits between those. A dot inside it is the whole test: it is what
+/// separates `run.raw` from `z` and from `second`.
+fn names_a_file_after_a_separator(line: &str) -> bool {
+    let mut rest = line;
+    while let Some(offset) = rest.find(is_separator) {
+        let after = &rest[offset + 1..];
+        let segment_end = after
+            .find(|character: char| is_separator(character) || character.is_whitespace())
+            .unwrap_or(after.len());
+        if after[..segment_end].contains('.') {
+            return true;
+        }
+        rest = after;
+    }
+    false
 }
 
 /// Whether anything following a placeholder is more than one path component.
@@ -1387,6 +1415,10 @@ mod tests {
         for concatenated in [
             "source/home/alice/private.raw",
             "source/home/alice",
+            // One separator, at the root of a volume, and still a location:
+            // what follows it is a file name.
+            "source/private.raw",
+            r"source\\private.raw",
             r"source\\server\share\private.raw",
         ] {
             let withheld = excerpt(concatenated.as_bytes(), &redactor);

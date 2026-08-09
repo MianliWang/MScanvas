@@ -487,6 +487,34 @@ describe("saving conversion diagnostics", () => {
     }
   });
 
+  it("says what a failed export left behind, not only that it failed", async () => {
+    // The detail is where a refusal puts the part the user has to act on. A
+    // surface that rendered only the summary would tell them the save failed
+    // and not that there is now a file in their folder MSCanvas cannot remove.
+    const leftBehind =
+      'MSCanvas also left a temporary file whose name begins with ".mscanvas-export-" in that folder and could not remove it.';
+    const api = apiWith(terminal([failed("file-1", "run-1.raw")]), {
+      diagnosticsExport: () =>
+        Promise.reject({
+          kind: "diagnostics_not_finalized",
+          summary:
+            "MSCanvas wrote the diagnostics and could not give the file the name you chose, so nothing was saved under it.",
+          detail: leftBehind,
+          retryable: true,
+        }),
+    });
+    const panel = await panelOf(api);
+
+    fireEvent.click(await within(panel).findByRole("button", { name: EXPORT_LABEL }));
+
+    await waitFor(() => {
+      expect(within(panel).getByText(/could not give the file the name you chose/)).toBeVisible();
+    });
+    expect(within(panel).getByText(leftBehind)).toBeVisible();
+    // Still no path, even in the part that names a file.
+    expect(panel.textContent ?? "").not.toMatch(/[A-Za-z]:[\/]/);
+  });
+
   it("keeps the action after a successful export so another copy can be saved", async () => {
     const api = apiWith(terminal([failed("file-1", "run-1.raw")]));
     const panel = await panelOf(api);
