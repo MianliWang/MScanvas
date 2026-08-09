@@ -518,7 +518,9 @@ export function useConversionOperation(
   }, [api, applyUpdate, readState, state]);
 
   const retry = useCallback(() => {
-    if (busyRef.current) {
+    // The adoption flag as well as its own. The two act on one terminal queue,
+    // and each has to see the other's claim or both dispatch against it.
+    if (busyRef.current || adoptingRef.current) {
       return;
     }
     busyRef.current = true;
@@ -579,8 +581,12 @@ export function useConversionOperation(
     if (state.status !== "terminal" || adoptingRef.current || busyRef.current) {
       return;
     }
+    // Its own flag, and deliberately not `busyRef`. Setting that one would make
+    // every read wait -- a spectrum selection, the preview action -- and an
+    // adoption launches nothing and touches no preview. Reading it is what
+    // gives the mutual exclusion with a retry; writing it would take something
+    // else away.
     adoptingRef.current = true;
-    busyRef.current = true;
     // Marked before the request leaves, like every other gate here: the actions
     // this closes must close on the press rather than on the reply.
     setAdopting(true);
@@ -594,7 +600,6 @@ export function useConversionOperation(
       .adoptConversionOutputs(operationId)
       .then((result) => {
         adoptingRef.current = false;
-        busyRef.current = false;
         if (mounted.current) {
           setAdopting(false);
           setAdoption(result);
@@ -605,7 +610,6 @@ export function useConversionOperation(
       })
       .catch((cause: unknown) => {
         adoptingRef.current = false;
-        busyRef.current = false;
         if (!mounted.current) {
           return;
         }
