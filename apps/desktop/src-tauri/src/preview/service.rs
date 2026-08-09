@@ -993,6 +993,14 @@ impl PreviewService {
         // workspace across it would stop every other command for the length of
         // a batch.
         let (_batch, _generation) = self.begin_waiting_mutation();
+        // Again, under the gate. An adoption can claim it in the interval since
+        // the check above, and it reserved a generation this batch would advance
+        // past -- superseding a request the user had already made, for rows they
+        // asked for, in favour of rows they are asking for now. Waiting is the
+        // cheaper of the two.
+        if self.adoption_is_in_flight() {
+            return Err(conversion_busy());
+        }
         let mut outcomes = Vec::with_capacity(paths.len());
         for path in paths {
             // Taken before acceptance, because acceptance is what may fail and
@@ -1424,6 +1432,12 @@ impl PreviewService {
         }
 
         let gate = self.enter_workspace_mutation_after_drop();
+        // Again, under the gate. Admitting the destination is filesystem work,
+        // so an adoption can claim the terminal queue while it runs -- and this
+        // replaces the very results that adoption is reading.
+        if self.adoption_is_in_flight() {
+            return Err(conversion_busy());
+        }
         let mut slot = self.conversion_slot();
         // Under the slot lock and immediately before the slot moves, exactly as
         // beginning a queue checks it. The current document, not the one that
