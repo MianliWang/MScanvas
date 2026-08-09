@@ -430,6 +430,18 @@ describe("stopping a running conversion queue", () => {
     // And the roster is still readable and searchable.
     expect(screen.getByRole("listbox", { name: "Workspace" })).toBeVisible();
     expect(screen.getByRole("searchbox", { name: /search/i })).toBeEnabled();
+
+    // The backend banner says the same thing, because a user who has scrolled
+    // past the queue still needs to know why nothing will start. It is never a
+    // stale "available" beside a session that refuses every backend action.
+    const banner = (await screen.findByText("ProteoWizard is not available"))
+      .parentElement as HTMLElement;
+    expect(banner.textContent ?? "").toContain(
+      "MSCanvas could not confirm that the converter process stopped.",
+    );
+    expect(banner.textContent ?? "").toContain(
+      "Restart MSCanvas before starting another preview or conversion.",
+    );
   });
 
   it("recovers a stopping queue a reload found, without asking Rust to stop again", async () => {

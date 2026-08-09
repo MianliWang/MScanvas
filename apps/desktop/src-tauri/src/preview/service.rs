@@ -48,9 +48,9 @@ use super::drop_ingestion::{
     expand_drop_paths,
 };
 use super::dto::{
-    BackendAvailabilityDto, ConversionConflictPolicyDto, ConversionOutputFormatDto,
-    ConversionQueuePlanDto, ConversionQueuePlanItemDto, DropIngestionResultDto,
-    MAX_CONVERSION_QUEUE_ITEMS, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES,
+    BackendAvailabilityDto, BackendFailureDto, ConversionConflictPolicyDto,
+    ConversionOutputFormatDto, ConversionQueuePlanDto, ConversionQueuePlanItemDto,
+    DropIngestionResultDto, MAX_CONVERSION_QUEUE_ITEMS, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES,
     MAX_METADATA_LINE_CHARS, MAX_MS_LEVELS, MAX_PRECURSORS, MAX_SPECTRUM_POINTS,
     MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto, MsLevelCountDto, PrecursorDto,
     PreviewDto, PreviewErrorDto, RetentionTimeDto, RetentionTimeRangeDto, RunSummaryDto,
@@ -487,6 +487,9 @@ struct ObservedBackend {
     /// What the last look resolved. `None` means nothing usable resolved, which
     /// is a state a later look can differ from like any other.
     identity: Option<InstallationIdentity>,
+    /// The verdict that look produced, kept so a quarantined session can answer
+    /// a recheck without launching the very tools it has stopped trusting.
+    last: Option<BackendAvailabilityDto>,
 }
 
 impl PreviewService {
@@ -524,12 +527,22 @@ impl PreviewService {
     /// "at most one at a time" has to mean all of them or it means nothing.
     pub fn inspect_backend(&self) -> BackendAvailabilityDto {
         // A probe launches the tools it is probing, so it is a backend
-        // operation like any other. A quarantined session answers with the
-        // reading it already had rather than starting two more processes.
-        if self.backend_is_quarantined() {
-            return self.stamped_availability();
+        // operation like any other. A quarantined session answers without
+        // starting two more processes beside one it may have lost track of.
+        if let Some(reading) = self.quarantined_availability() {
+            return reading;
         }
         let _running = self.enter_backend();
+        // Asked again on this side of the gate. A caller admitted before a stop
+        // began waits here for as long as the conversion takes, and the queue
+        // it was waiting behind may have ended by failing to confirm that its
+        // converter died. The check in front of the gate keeps an already
+        // quarantined session from queueing at all; this one keeps a caller
+        // that queued earlier from launching into a session that has since
+        // stopped trusting the backend.
+        if let Some(reading) = self.quarantined_availability() {
+            return reading;
+        }
         self.stamped_availability()
     }
 
@@ -543,11 +556,18 @@ impl PreviewService {
     /// here in which the two can disagree.
     pub fn use_installation(&self, home: Option<PathBuf>) -> BackendAvailabilityDto {
         // Changing installation re-probes, which launches processes. Refused
-        // by leaving the session on the reading it already has.
-        if self.backend_is_quarantined() {
-            return self.stamped_availability();
+        // without making the change either: pointing a quarantined session at
+        // another folder would leave it describing an installation nothing has
+        // examined.
+        if let Some(reading) = self.quarantined_availability() {
+            return reading;
         }
         let _running = self.enter_backend();
+        // The same window the recheck has, and closed the same way. This one
+        // matters more: past it the installation would actually change.
+        if let Some(reading) = self.quarantined_availability() {
+            return reading;
+        }
         // Told unconditionally. Whether this is a change is not decided by what
         // was asked for -- the same request can resolve to a different backend
         // and a different request to the same one -- so it is decided below, by
@@ -565,7 +585,58 @@ impl PreviewService {
         let (mut availability, identity) = self.provider.availability();
         self.note_resolved(identity);
         availability.installation_generation = self.installation_generation.load(Ordering::Relaxed);
+        self.resolved
+            .lock()
+            .expect("the installation lock is never poisoned by user code")
+            .last = Some(availability.clone());
         availability
+    }
+
+    /// The verdict a quarantined session answers every backend question with,
+    /// having launched nothing to produce it.
+    ///
+    /// Deliberately not the reading it had. A stale `available` would let the
+    /// banner say the backend is fine while every action that uses one is
+    /// refused, and the single thing the user needs to know -- that this
+    /// session cannot run a converter again until it is restarted -- would
+    /// appear nowhere. `unavailable` here is a statement about the session, and
+    /// the failure beside it says so in the words the banner already renders.
+    ///
+    /// `None` when the session is not quarantined, which is every ordinary
+    /// session.
+    fn quarantined_availability(&self) -> Option<BackendAvailabilityDto> {
+        if !self.backend_is_quarantined() {
+            return None;
+        }
+        let last = self
+            .resolved
+            .lock()
+            .expect("the installation lock is never poisoned by user code")
+            .last
+            .clone();
+        Some(BackendAvailabilityDto {
+            state: String::from("unavailable"),
+            installation_generation: self.installation_generation.load(Ordering::Relaxed),
+            // Kept from the last reading where there was one, so the banner
+            // still names the installation this session was using rather than
+            // claiming it went back to automatic discovery.
+            origin: last.map_or_else(|| String::from("automatic"), |reading| reading.origin),
+            // Nothing is claimed about a build. This verdict is not a reading of
+            // one, and carrying a release beside `unavailable` would invite it
+            // to be read as one.
+            release: None,
+            build_date: None,
+            same_installation: true,
+            failure: Some(BackendFailureDto {
+                kind: String::from("backend_quarantined"),
+                summary: String::from(
+                    "MSCanvas could not confirm that the converter process stopped.",
+                ),
+                corrective_action: String::from(
+                    "Restart MSCanvas before starting another preview or conversion.",
+                ),
+            }),
+        })
     }
 
     /// Advances the sequence when the backend that resolves is a different one.
@@ -1376,6 +1447,15 @@ impl PreviewService {
     /// transition, and released before the next item starts.
     fn drain_queue(&self, operation: u64) -> WorkspaceConversionUpdateDto {
         let running = self.enter_backend();
+        // Asked on this side of the gate as well as before it. A queue admitted
+        // while an earlier one was still running waits here for its whole
+        // length, and that earlier queue may have ended by losing track of its
+        // converter -- which is the one state in which nothing further may
+        // launch.
+        if self.backend_is_quarantined() {
+            drop(running);
+            return self.refuse_queue(operation, backend_quarantined());
+        }
         // Bound once, for the whole queue. Binding per item would let a batch
         // span two installations, and the evidence a conversion is gated on is
         // a statement about one exact build.
@@ -2870,6 +2950,12 @@ impl PreviewService {
         if !self.workspace().request_is_current(id, epoch) {
             return Err(superseded());
         }
+        // And for the same reason, whether the session still trusts the
+        // backend. A read admitted before a stop began waits here for the whole
+        // conversion, and that conversion may have ended by losing track of its
+        // converter. Asking only on the way in would let exactly the caller
+        // that waited longest be the one to start another process.
+        self.require_usable_backend()?;
         let file = revalidate(&remembered)?;
         let redactor = reporting_redactor(file.path());
         let operations = open_operations();
@@ -3054,6 +3140,10 @@ impl PreviewService {
         // begins. Checked after the wait, not before it: what matters is
         // whether the user has moved on by the time it would start.
         let running = self.enter_backend();
+        // And whether the session still trusts the backend, for the same
+        // reason: the queue this read waited behind may have ended by failing
+        // to confirm that its converter died.
+        self.require_usable_backend()?;
         // A selected spectrum is shown beside the metadata and the table from
         // the open action. If the file has changed since then, this spectrum
         // would belong to a different run than everything around it. Read in

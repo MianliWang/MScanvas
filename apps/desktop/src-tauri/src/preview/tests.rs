@@ -11387,6 +11387,165 @@ fn releasing_another_attempt_leaves_the_live_stop_handle_alone() {
     assert!(!cancellation.request_handle().is_requested());
 }
 
+/// A stop that lands in the interval between an item being marked running and
+/// its cancellation handle being bound still reaches that attempt.
+///
+/// The one window the worker cannot close by checking: `start_item` has already
+/// returned, so the stop is not refused, and no handle exists yet, so
+/// `request_stop` has nothing to ask. Left open, the queue would say it was
+/// stopping while a conversion of unknown length ran to its own end. Asked
+/// directly of the slot, because the interval is a lock ordering rather than
+/// something a worker thread can be scheduled into on demand.
+#[test]
+fn a_stop_arriving_before_the_handle_is_bound_still_reaches_that_attempt() {
+    let mut slot = ConversionSlot::default();
+    let queue = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        vec![test_queue_item()],
+    )
+    .expect("one item is a queue");
+    let _ = slot.begin(queue).expect("reservation");
+    let operation = slot
+        .claim(&reservation_handle(&slot), 0)
+        .expect("claim the reservation");
+    assert!(slot.start_running(operation, test_destination()));
+
+    // The item is running, and the worker has not bound its handle yet.
+    let attempt = slot.start_item(operation, 0).expect("the item starts");
+    match slot.request_stop(operation).expect("stoppable") {
+        StopAccepted::Requested(handle) => assert!(
+            handle.is_none(),
+            "there is no handle yet, which is the whole point of this window"
+        ),
+        StopAccepted::AlreadyRequested => panic!("the first request is not a repeat"),
+    }
+
+    // Binding carries the request the stop could not make.
+    let cancellation = ConversionCancellation::new();
+    slot.bind_attempt(operation, 0, attempt, cancellation.request_handle());
+    assert!(
+        cancellation.request_handle().is_requested(),
+        "the attempt about to run has already been asked to stop"
+    );
+}
+
+/// A session that lost track of a converter starts no probe, even for the
+/// cheapest backend question there is.
+///
+/// A recheck runs the installed tools' help, so it is a process like any other.
+/// Answered with the reading the session already had.
+#[test]
+fn a_quarantined_session_rechecks_without_launching_anything() {
+    let (_fixture, _destination, service, update, _launches) =
+        stop_mid_item(StopEnding::Unterminated);
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::StopFailed
+    );
+    assert!(update.backend_quarantined);
+
+    let before = service.inspect_backend();
+    let after = service.inspect_backend();
+    assert_eq!(
+        before, after,
+        "a quarantined session answers the same way twice"
+    );
+    // Not a stale "available". The banner renders this failure, so the one
+    // thing the user must know is where they will look for it.
+    assert_eq!(before.state, "unavailable");
+    let failure = before
+        .failure
+        .clone()
+        .expect("a quarantined session says why");
+    assert_eq!(failure.kind, "backend_quarantined");
+    assert_eq!(
+        failure.corrective_action,
+        "Restart MSCanvas before starting another preview or conversion."
+    );
+    assert_eq!(before.release, None, "no build is claimed by a refusal");
+    // And pointing it somewhere else is refused rather than probed, so the
+    // session never ends up describing an installation nothing has examined.
+    let elsewhere = service.use_installation(Some(PathBuf::from("elsewhere")));
+    assert_eq!(elsewhere, before);
+    assert_eq!(
+        elsewhere.installation_generation, before.installation_generation,
+        "a refused change is not a change"
+    );
+}
+
+/// A recheck already waiting on the backend gate does not probe once the queue
+/// it was waiting behind ends by losing its converter.
+///
+/// The window the pre-gate check cannot cover: the caller passed it while the
+/// session still trusted the backend, then waited for the length of a
+/// conversion. Whichever of the two checks catches it, nothing is launched --
+/// which is what this asserts, because the interval a thread is scheduled into
+/// is not something a test can pin.
+#[test]
+fn a_recheck_waiting_on_the_gate_launches_nothing_after_a_lost_converter() {
+    let fixture = TestFile::new("queue-stop-gate");
+    let destination = destination_root(&fixture, "out");
+    let (runner, started, release) = StopAwareRunner::parked(StopEnding::Unterminated);
+    let provider = ConvertingProvider::new(evidenced_capabilities(), runner);
+    let world = provider.inner.world.clone();
+    let service = Arc::new(PreviewService::new(Box::new(provider)));
+    let handles: Vec<String> = ["one.raw", "two.raw"]
+        .iter()
+        .map(|name| add_one_acquisition(&service, &fixture.thermo_raw(name)))
+        .collect();
+
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("the queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let worker = {
+        let service = Arc::clone(&service);
+        let destination = destination.clone();
+        std::thread::spawn(move || service.run_claimed_conversion(operation, &destination))
+    };
+    started
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the first item reaches its process");
+
+    // The worker holds the gate, so this recheck waits behind the whole
+    // conversion. It is issued before the stop, so it passes the check in front
+    // of the gate while the session still trusts the backend.
+    let probes_before = world.availability_count();
+    let recheck = {
+        let service = Arc::clone(&service);
+        std::thread::spawn(move || service.inspect_backend())
+    };
+
+    service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("the running queue of this document is stoppable");
+    release.send(()).expect("release the parked conversion");
+    let update = worker.join().expect("the queue worker finishes");
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::StopFailed
+    );
+
+    let answered = recheck.join().expect("the recheck finishes");
+    assert_eq!(
+        world.availability_count(),
+        probes_before,
+        "no probe was spent beside a converter the session may have lost"
+    );
+    assert_eq!(answered.state, "unavailable");
+    assert_eq!(
+        answered
+            .failure
+            .expect("a quarantined session says why")
+            .kind,
+        "backend_quarantined"
+    );
+}
+
 /// One queue item, for the slot tests that need a queue and not a filesystem.
 fn test_queue_item() -> QueueItem {
     QueueItem::new(

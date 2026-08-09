@@ -64,6 +64,26 @@ export const availableBackend: BackendAvailability = {
   failure: null,
 };
 
+/**
+ * What a session that lost track of a converter reports about the backend.
+ *
+ * Not the reading it had. `unavailable` here is a statement about the session,
+ * and the failure beside it is what the banner renders.
+ */
+export const quarantinedBackend: BackendAvailability = {
+  state: "unavailable",
+  origin: "automatic",
+  installationGeneration: 0,
+  release: null,
+  buildDate: null,
+  sameInstallation: true,
+  failure: {
+    kind: "backend_quarantined",
+    summary: "MSCanvas could not confirm that the converter process stopped.",
+    correctiveAction: "Restart MSCanvas before starting another preview or conversion.",
+  },
+};
+
 /** What a chosen folder holding a usable installation reports. */
 export const chosenBackend: BackendAvailability = {
   state: "available",
@@ -787,10 +807,16 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     stopRequests,
     conversionRequests,
     inspectBackend: () =>
-      (typeof options.availability === "function"
-        ? options.availability()
-        : Promise.resolve(options.availability ?? availableBackend)
-      ).then(deliver),
+      // A quarantined session answers every backend question the same way and
+      // launches nothing to do it, exactly as Rust does. Modelled here rather
+      // than canned in each test, so no test can quarantine the session and
+      // still be handed a verdict saying the backend is fine.
+      backendQuarantined
+        ? Promise.resolve(deliver(quarantinedBackend))
+        : (typeof options.availability === "function"
+            ? options.availability()
+            : Promise.resolve(options.availability ?? availableBackend)
+          ).then(deliver),
     // `?? chosenBackend` would be wrong here: `null` is a meaningful value --
     // a dismissed picker -- and nullish coalescing cannot tell it from an
     // option that was never supplied.

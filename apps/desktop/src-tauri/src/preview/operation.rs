@@ -810,6 +810,16 @@ impl ConversionSlot {
         if self.operation != operation {
             return;
         }
+        // A stop accepted between the transition that started this item and
+        // this binding found no handle to ask, because there was none yet to
+        // find. Asked here, in the same lock acquisition that stores it, so
+        // that request cannot fall between the two -- otherwise the queue would
+        // say it was stopping while a conversion of unknown length ran to its
+        // own end. Reachable only through that exact interval: a stop recorded
+        // any earlier makes `start_item` refuse, and this is never called.
+        if self.stop_requested {
+            request.request();
+        }
         self.current_attempt = Some(CurrentAttempt {
             operation,
             index,
