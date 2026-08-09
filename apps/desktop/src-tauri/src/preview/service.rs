@@ -1298,6 +1298,14 @@ impl PreviewService {
         // mutex, so a reservation taken beside one would let that drop commit
         // rows into the workspace a queue is about to read.
         let gate = self.enter_workspace_mutation_after_drop();
+        // Again, under the gate. The check before the plan keeps a queue from
+        // being described while an adoption runs; this one is what makes it
+        // true, because an adoption can claim the terminal queue in the
+        // interval between them and replacing it here would supersede a request
+        // the user had already made.
+        if self.adoption_is_in_flight() {
+            return Err(conversion_busy());
+        }
         let mut slot = self.conversion_slot();
         // Under the slot lock, and immediately before the slot is taken. The
         // authority proof is awaited, so a reload can start any time after it

@@ -183,17 +183,12 @@ export function ConversionPanel({
  * launches nothing. Retry and this are mutually exclusive because one of them
  * replaces the results the other is reading.
  */
-function AdoptOutputs({
-  conversion,
-}: {
-  readonly conversion: ConversionOperation;
-}): ReactElement {
+function AdoptOutputs({ conversion }: { readonly conversion: ConversionOperation }): ReactElement {
   const { adoption, eligibleOutputCount } = conversion;
   const added = adoption?.outcomes.filter((outcome) => outcome.kind === "added") ?? [];
   const duplicates =
     adoption?.outcomes.filter((outcome) => outcome.kind === "alreadyInWorkspace") ?? [];
-  const refused =
-    adoption?.outcomes.filter((outcome) => outcome.kind === "refused") ?? [];
+  const refused = adoption?.outcomes.filter((outcome) => outcome.kind === "refused") ?? [];
 
   if (eligibleOutputCount === 0) {
     // Nothing finalized, so there is nothing to offer and nothing to explain.
@@ -213,23 +208,20 @@ function AdoptOutputs({
     );
   }
 
-  if (adoption !== null && added.length === 0 && refused.length === 0) {
-    return (
-      <div className="conversion-adoption">
-        <p>All finalized outputs from this queue are already in the workspace.</p>
-      </div>
-    );
-  }
-
   return (
     <div className="conversion-adoption">
-      {adoption !== null ? (
+      {adoption !== null && added.length === 0 && refused.length === 0 ? (
+        <p>All finalized outputs from this queue are already in the workspace.</p>
+      ) : adoption !== null ? (
         <>
           <p className="conversion-adoption-summary">
             {`${String(added.length)} added, ${String(duplicates.length)} already in the workspace, ${String(refused.length)} not added.`}
           </p>
           {refused.slice(0, 3).map((outcome) => (
-            <p className="quiet-text" key={`${String(outcome.itemIndex)}-${outcome.outputFileName}`}>
+            <p
+              className="quiet-text"
+              key={`${String(outcome.itemIndex)}-${outcome.outputFileName}`}
+            >
               {`${outcome.outputFileName} was not added: ${
                 ADOPTION_REFUSAL_LABEL[outcome.kind === "refused" ? outcome.reason : ""] ??
                 "it could not be verified"
@@ -237,9 +229,7 @@ function AdoptOutputs({
             </p>
           ))}
           {refused.length > 3 ? (
-            <p className="quiet-text">
-              {`${String(refused.length - 3)} more were not added.`}
-            </p>
+            <p className="quiet-text">{`${String(refused.length - 3)} more were not added.`}</p>
           ) : null}
         </>
       ) : null}
@@ -248,33 +238,35 @@ function AdoptOutputs({
           rows are removed, and one the user removes afterwards is admissible
           again too -- the queue still holds what recognises them, so making
           them reachable only through `Add files…` would waste that. */}
-      {adoption === null || added.length > 0 || refused.length > 0 ? (
-        <>
-          <p>
-            {adoption !== null
-              ? "You can add them again. Anything already in the workspace is reported rather than added twice."
-              : eligibleOutputCount === 1
-                ? "1 converted mzML output is ready to add to this workspace."
-                : `${String(eligibleOutputCount)} converted mzML outputs are ready to add to this workspace.`}
-          </p>
-          <div className="conversion-actions">
-            <button
-              type="button"
-              className="primary-button"
-              aria-describedby="conversion-adopt-scope"
-              disabled={!conversion.canAdopt}
-              onClick={conversion.adopt}
-            >
-              {eligibleOutputCount === 1
-                ? "Add converted output to workspace"
-                : "Add converted outputs to workspace"}
-            </button>
-          </div>
-          <p className="quiet-text" id="conversion-adopt-scope" role="note">
-            {ADOPT_EXPLANATION}
-          </p>
-        </>
-      ) : null}
+      {/* Always, even after a result that added nothing. A duplicate today can
+          be a row the user removes tomorrow, and the queue still holds what
+          recognises the file -- so the action stays rather than sending them to
+          `Add files…` for something MSCanvas can still identify. */}
+      <>
+        <p>
+          {adoption !== null
+            ? "You can add them again. Anything already in the workspace is reported rather than added twice."
+            : eligibleOutputCount === 1
+              ? "1 converted mzML output is ready to add to this workspace."
+              : `${String(eligibleOutputCount)} converted mzML outputs are ready to add to this workspace.`}
+        </p>
+        <div className="conversion-actions">
+          <button
+            type="button"
+            className="primary-button"
+            aria-describedby="conversion-adopt-scope"
+            disabled={!conversion.canAdopt}
+            onClick={conversion.adopt}
+          >
+            {eligibleOutputCount === 1
+              ? "Add converted output to workspace"
+              : "Add converted outputs to workspace"}
+          </button>
+        </div>
+        <p className="quiet-text" id="conversion-adopt-scope" role="note">
+          {ADOPT_EXPLANATION}
+        </p>
+      </>
       {/* Said whether or not anything was added. A queue that is replaced drops
           the way MSCanvas recognises these files, and nothing about that
           removes them -- so the honest fallback is named rather than left to be
@@ -370,8 +362,8 @@ function PlanState({
       </dl>
 
       <p className="quiet-text" id="conversion-validation-disclosure" role="note">
-        {OUTPUT_ONLY_DISCLOSURE} They run one at a time, and Stop queue ends the whole queue
-        rather than one item.
+        {OUTPUT_ONLY_DISCLOSURE} They run one at a time, and Stop queue ends the whole queue rather
+        than one item.
       </p>
 
       <fieldset className="conversion-conflict">
@@ -453,8 +445,7 @@ function QueueState({
         </>
       ) : state.status === "awaitingDestination" ? (
         <p>Choose where to save the converted mzML.</p>
-      ) : state.status === "stopping" ||
-        (state.status === "running" && conversion.stopping) ? (
+      ) : state.status === "stopping" || (state.status === "running" && conversion.stopping) ? (
         <>
           <p>Stopping queue…</p>
           {/* Deliberately says nothing about how the current item will end.
@@ -590,12 +581,10 @@ function QueueState({
               the user stopped as work that broke. */}
           {state.reason === "completed" ? null : (
             <>
-              <p className="conversion-stopped-summary">
-                {stoppedSummary(queue)}
-              </p>
+              <p className="conversion-stopped-summary">{stoppedSummary(queue)}</p>
               <p className="quiet-text">
-                Completed outputs remain in the destination folder. Cancelled and not-run items
-                were not finalized by this queue.
+                Completed outputs remain in the destination folder. Cancelled and not-run items were
+                not finalized by this queue.
               </p>
             </>
           )}
@@ -607,8 +596,8 @@ function QueueState({
               results the adoption is reading, so the two are never both live.
               Removed rather than disabled: an action that is coming back is a
               different thing from one that is refused. */}
-          {state.reason !== "completed" || conversion.adopting ? null : queue.retryableFailedCount ===
-            0 ? (
+          {state.reason !== "completed" ||
+          conversion.adopting ? null : queue.retryableFailedCount === 0 ? (
             queue.nonRetryableFailedCount === 0 ? null : (
               <p className="quiet-text" role="note">
                 Those failures would not change on another attempt with the same acquisitions,

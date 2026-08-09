@@ -1780,8 +1780,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     // advancing here is what makes it recognise itself as superseded rather
     // than installing a list the adopted rows are missing from.
     workspaceMutations.current += 1;
+    // And settled, like every other authoritative reply. A roster read served
+    // before this can still be in flight, and installing its answer afterwards
+    // would take the adopted rows back off screen until something else asked.
+    rosterSettled();
     dispatchRoster({ type: "outputsAdopted", result });
-  }, []);
+  }, [rosterSettled]);
   const conversion = useConversionOperation(reconcileConversionGeneration, adoptOutputs);
   // A stop that could not be confirmed makes this session's backend unusable
   // without changing the installation, so nothing about it advances the

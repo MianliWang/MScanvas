@@ -248,6 +248,11 @@ describe("adding converted outputs to the workspace", () => {
       ),
     ).toBeVisible();
     expect(rows()).toHaveLength(2);
+    // Still offered. A duplicate today can be a row the user removes tomorrow,
+    // and the queue still holds what recognises the file.
+    expect(
+      within(panel).getByRole("button", { name: "Add converted output to workspace" }),
+    ).toBeEnabled();
   });
 
   it("counts added, duplicate and refused apart, and names the bounded few", async () => {
