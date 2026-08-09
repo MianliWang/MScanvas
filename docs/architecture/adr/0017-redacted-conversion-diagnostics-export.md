@@ -115,6 +115,21 @@ placeholder is *not* a tail and still withholds the excerpt. Without this
 exemption almost every excerpt naming an output would be suppressed and the
 feature would do nothing; with it broader than a separator, a leak would pass.
 
+**Two separators in one line is a tree.** Every rule above begins at a
+boundary, because a boundary is what tells a root from `m/z`. Backend text does
+not always give one: a label concatenated with a path — `source/home/alice/run.raw`
+— puts every separator after an alphanumeric where no boundary rule can see it.
+The drive-letter form escapes the same way and is caught by the separator after
+its colon; POSIX and UNC forms have no colon. So the excerpt also counts, and
+two separators of any kind in one line withholds it.
+
+This one is deliberately *not* the shared shape test's business. That test
+decides what a screen hides, where losing a line of an acquisition's own
+metadata to `m/z … counts/second` would be a poor trade. This decides what a
+file the user may send onward keeps, where it is the right one. A remainder the
+redactor left behind is set aside before counting, or every excerpt naming an
+output would go.
+
 **A remainder is one name, never a tree.** A single component after a
 placeholder is a filename, which the schema already exports as a display fact;
 two or more is directory structure that survived because a *less specific*

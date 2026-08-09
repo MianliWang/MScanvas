@@ -535,7 +535,44 @@ fn line_names_a_location(line: &str, placeholders: &[&str]) -> bool {
         }
         return true;
     }
-    remainder_carries_directories(line, placeholders)
+    remainder_carries_directories(line, placeholders) || carries_a_separator_run(line, placeholders)
+}
+
+/// Whether what is left of a line, once redacted remainders are set aside,
+/// still carries the separators of a directory tree.
+///
+/// The rules above all begin at a boundary, because a boundary is what tells a
+/// root from `m/z`. Backend text does not always give them one: a label
+/// concatenated with a path -- `source/home/alice/private.raw`, or
+/// `source\\\\server\\share\\private.raw` -- puts every separator after an
+/// alphanumeric, where no boundary rule can see it. The drive-letter form
+/// escapes the same way and is caught by the colon after it; POSIX and UNC
+/// forms have no colon to be caught by.
+///
+/// So this asks the one thing that survives concatenation: two separators of
+/// any kind, in one line, is a tree. It is deliberately not the shared shape
+/// test's business -- that one decides what a *screen* hides, where losing a
+/// line of an acquisition's own metadata to `m/z ... counts/second` would be a
+/// poor trade. This decides what a *file the user may send onward* keeps, where
+/// it is the right one.
+///
+/// A remainder the redactor left behind does not count: it is one name, it is
+/// governed above, and counting it would suppress every excerpt naming an
+/// output.
+fn carries_a_separator_run(line: &str, placeholders: &[&str]) -> bool {
+    let mut remaining = line.to_owned();
+    for placeholder in placeholders {
+        if placeholder.is_empty() {
+            continue;
+        }
+        remaining = remaining.replace(&format!("{placeholder}\\"), "");
+        remaining = remaining.replace(&format!("{placeholder}/"), "");
+    }
+    remaining
+        .chars()
+        .filter(|character| is_separator(*character))
+        .count()
+        >= 2
 }
 
 /// Whether anything following a placeholder is more than one path component.
@@ -1273,7 +1310,8 @@ mod tests {
         );
 
         // Two redacted paths on one line, each with its own single remainder,
-        // is two remainders rather than one with three components.
+        // is two remainders rather than one with three components -- and the
+        // separator count sets a remainder aside for the same reason.
         let both = excerpt(br"read C:\Temp\a.raw then wrote C:\Temp\b.mzML", &redactor);
         assert_eq!(
             both.text(),
@@ -1334,6 +1372,41 @@ mod tests {
             withheld.suppression(),
             Some(ExcerptSuppression::ResidualAbsolutePath)
         );
+    }
+
+    /// A POSIX or UNC path pressed against a label has no colon to save it.
+    ///
+    /// The drive-letter form escapes the boundary rules and is caught by the
+    /// separator after its colon. These two escape the same way and have no
+    /// colon, so what catches them is the count: two separators in one line is
+    /// a tree, whatever came before the first one.
+    #[test]
+    fn a_posix_or_unc_path_pressed_against_a_label_is_withheld() {
+        let redactor = Redactor::default().with_path(Path::new(r"C:\Temp"), "<local-path>");
+
+        for concatenated in [
+            "source/home/alice/private.raw",
+            "source/home/alice",
+            r"source\\server\share\private.raw",
+        ] {
+            let withheld = excerpt(concatenated.as_bytes(), &redactor);
+            assert_eq!(withheld.text(), None, "{concatenated}");
+            assert_eq!(
+                withheld.suppression(),
+                Some(ExcerptSuppression::ResidualAbsolutePath),
+                "{concatenated}"
+            );
+        }
+
+        // And the ordinary backend text this must not take with it.
+        for prose in [
+            "mz=101.007276 rt=1.0 intensity=1.25e+07",
+            "scanWindow: 200-2000 m/z",
+            "reading spectra at counts/second",
+        ] {
+            let kept = excerpt(prose.as_bytes(), &redactor);
+            assert_eq!(kept.text(), Some(prose), "{prose}");
+        }
     }
 
     /// The one false positive that would make the whole feature useless.
