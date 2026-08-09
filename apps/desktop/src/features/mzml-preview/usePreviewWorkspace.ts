@@ -1761,6 +1761,26 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     [checkBackend],
   );
   const conversion = useConversionOperation(reconcileConversionGeneration);
+  // A stop that could not be confirmed makes this session's backend unusable
+  // without changing the installation, so nothing about it advances the
+  // installation sequence and the reconciler above would never fire. Left
+  // alone, the banner would go on saying ProteoWizard is available while every
+  // action that uses one was refused, and the guards derived from that verdict
+  // would go on dispatching reads Rust is certain to refuse.
+  //
+  // Re-read through the ordinary path rather than projected locally: Rust
+  // answers a quarantined session without launching anything, and what it
+  // returns is the same verdict a reload would recover.
+  const projectedQuarantine = useRef(false);
+  useEffect(() => {
+    if (!conversion.backendQuarantined || projectedQuarantine.current) {
+      return;
+    }
+    // Once. The session never leaves this state, so a second read would ask a
+    // question whose answer cannot have changed.
+    projectedQuarantine.current = true;
+    checkBackend();
+  }, [checkBackend, conversion.backendQuarantined]);
   // Read by the spectrum guard below. A conversion owns the one backend lane,
   // and Rust refuses a spectrum while it does; this is what stops the interface
   // asking and leaving a panel loading for the length of a conversion.

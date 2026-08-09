@@ -318,6 +318,51 @@ describe("stopping a running conversion queue", () => {
     expect(panel.textContent ?? "").not.toContain("\\");
   });
 
+  it("stops claiming the backend is available the moment a stop is unconfirmed", async () => {
+    // Quarantine does not change the installation, so nothing about it advances
+    // the installation sequence that normally makes the banner re-read. Without
+    // a signal of its own the banner would go on saying ProteoWizard is
+    // available while every action that uses one was refused.
+    let quarantine: (() => void) | null = null;
+    const api = apiWith(runningQueue(), {
+      stop: (_operationId, publish) => {
+        quarantine?.();
+        const settled: WorkspaceConversionState = {
+          status: "terminal",
+          operationId: "1",
+          reason: "stopFailed",
+          queue: queueOf([
+            converted("file-1", "run-1.raw"),
+            queueItem("file-2", "run-2.raw", { state: "cancellationFailed", attempts: 1 }),
+            notRun("file-3", "run-3.raw"),
+          ]),
+        };
+        publish(settled);
+        return Promise.resolve(settled);
+      },
+    });
+    quarantine = api.quarantineBackend;
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    // It said the backend was fine right up until the stop.
+    expect(await screen.findByText(/ProteoWizard is available/)).toBeVisible();
+    fireEvent.click(await within(panel).findByRole("button", { name: "Stop queue" }));
+
+    const banner = (await screen.findByText("ProteoWizard is not available"))
+      .parentElement as HTMLElement;
+    expect(banner.textContent ?? "").toContain(
+      "MSCanvas could not confirm that the converter process stopped.",
+    );
+    expect(banner.textContent ?? "").toContain(
+      "Restart MSCanvas before starting another preview or conversion.",
+    );
+    // And the gates derived from that verdict close with it.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
+    });
+  });
+
   it("makes a dispatched retry stoppable without waiting for a poll", async () => {
     // Rust moves the slot to running inside the retry command and then does not
     // answer until the whole rerun is over. Without a read of its own, the panel
