@@ -1527,13 +1527,19 @@ impl PreviewService {
 
         // No workspace lock, no slot lock and no gate. Each output is opened,
         // recognised and accepted here; nothing is committed.
-        let inspected: Vec<_> = tickets
-            .into_iter()
-            .map(|(index, ticket)| {
-                let accepted = ticket.accept();
-                (index, ticket, accepted)
-            })
-            .collect();
+        let mut inspected = Vec::with_capacity(tickets.len());
+        for (index, ticket) in tickets {
+            // Between outputs, and briefly: a reload or a mutation that
+            // advanced the generation has already decided this run commits
+            // nothing, and hashing the rest would hold the adoption flag --
+            // and so the replacement document's own actions -- for no result.
+            // Nothing filesystem-shaped happens while this is held.
+            if self.enter_workspace_mutation().generation != reserved {
+                return Err(adoption_superseded());
+            }
+            let accepted = ticket.accept();
+            inspected.push((index, ticket, accepted));
+        }
 
         let gate = self.enter_workspace_mutation();
         // The reservation, and the queue. Both, because they answer different
