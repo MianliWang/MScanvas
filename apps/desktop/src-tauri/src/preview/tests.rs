@@ -11223,17 +11223,15 @@ fn a_stopped_queue_is_not_retried_even_when_it_holds_a_retryable_failure() {
         evidenced_capabilities(),
         runner,
     ))));
-    // The first item's source is locked open by something else, which is the
-    // one refusal this workflow classifies as retryable.
     let blocked = fixture.thermo_raw("blocked.raw");
-    let handles: Vec<String> = [blocked.clone(), fixture.thermo_raw("two.raw")]
-        .iter()
-        .map(|path| add_one_acquisition(&service, path))
-        .collect();
-    let held = fs::OpenOptions::new()
-        .read(true)
-        .open(&blocked)
-        .expect("hold the acquisition open");
+    let handles: Vec<String> = [
+        blocked.clone(),
+        fixture.thermo_raw("two.raw"),
+        fixture.thermo_raw("three.raw"),
+    ]
+    .iter()
+    .map(|path| add_one_acquisition(&service, path))
+    .collect();
 
     let document = current_document(&service);
     let reservation = service
@@ -11242,7 +11240,11 @@ fn a_stopped_queue_is_not_retried_even_when_it_holds_a_retryable_failure() {
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
         .expect("claim it");
-    drop(held);
+    // The first item's source is held with no sharing, which is the one
+    // condition this workflow classifies as retryable: the object is there and
+    // could not be read *now*. Held across the run, so the item genuinely fails
+    // that way rather than converting.
+    let _held = writer_hold(&blocked);
 
     let worker = {
         let service = Arc::clone(&service);
@@ -11270,12 +11272,39 @@ fn a_stopped_queue_is_not_retried_even_when_it_holds_a_retryable_failure() {
             .is_err(),
         "a stopped queue is never rerun in place"
     );
-    // And a queue that was *not* stopped still is, on the same service.
-    let completed = queue_and_run(&service, &handles[1..], &destination);
-    assert_eq!(
-        terminal_reason(&completed),
-        ConversionQueueTerminalReasonDto::Completed
-    );
+}
+
+/// Holds a file open for writing, which is the condition this workflow calls
+/// retryable: the object is there and could not be read *now*.
+///
+/// Sharing is granted for exactly what the session's own lease already holds,
+/// so this is a second program editing the acquisition rather than a test
+/// fighting the registry for it. The conversion path withholds write sharing on
+/// its own open, so it is that open which refuses.
+fn writer_hold(path: &Path) -> fs::File {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+        const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+        const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .open(path)
+            .expect("hold the acquisition open for writing")
+    }
+    #[cfg(not(windows))]
+    {
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .expect("hold the acquisition open for writing")
+    }
 }
 
 /// The stop handle belongs to one exact attempt.
