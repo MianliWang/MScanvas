@@ -425,16 +425,21 @@ are worth recording, because a survivor is a gap in the tests and not a curiosit
   above are answered: a control would not be merely cosmetic, and what a
   mid-write termination leaves behind is known.
 
-  What remains open is entirely product semantics, and this queue is unchanged
-  until an ADR settles it: whether Cancel stops one item and halts the queue,
-  stops one and continues, or empties the queue; whether a user-cancelled item
-  is offered the same retry affordance as a failed one, when it has no failure
-  to correct; what a queue-wide request is, given that the primitive is
-  per-attempt; and what a cancelled item leaves in the roster. The queue's
-  states, transfer objects and copy are untouched, and `ConversionRunOutcome` —
-  which this ADR's classifier matches exhaustively — was deliberately not
-  widened, so no cancelled outcome has been silently classified as retryable or
-  as anything else.
+  **Closed 2026-08-08 (M3.4).** [ADR 0015](0015-user-visible-queue-stop.md)
+  settles the product semantics this gate was waiting on and this queue now
+  has one visible action. It stops the whole queue rather than one item: the
+  running conversion is asked to end, no later item begins, everything already
+  finalized stays, remaining items become `notRun`, and the queue reaches one
+  terminal state carrying the reason it is over. A stopped queue is terminal
+  and is not retried in place; `Retry failed` is unchanged for a queue that ran
+  to its own end. A termination that could not be confirmed is reported as
+  such and quarantines the backend for the session rather than being called
+  stopped.
+
+  The item states and the terminal reason are additions to this ADR's own
+  vocabulary, so the classifier that matches them exhaustively had to answer for
+  each: `cancelled`, `notRun` and `cancellationFailed` are none of them
+  retryable, and none of them is an ordinary failure.
 - **No parallelism.** One lane, deliberately. Two `msconvert` processes on one
   machine is a measurement nobody here has taken.
 - **No persistence.** A queue survives a WebView reload because its state is in

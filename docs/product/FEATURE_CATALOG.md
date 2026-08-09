@@ -91,7 +91,8 @@ CNV-003 exposes no location choice beyond the folder itself. CNV-007's zlib is
 shown but not selectable. CNV-002 and CNV-004 to CNV-006 remain unreachable.
 
 The named limits: at most **16** items per queue, one vendor family, regular
-files only, one folder, no overwrite, no cancellation, no percentage, no
+files only, one folder, no overwrite, one queue-level stop and no per-item
+cancellation, no percentage, no
 parallelism, and no queue that survives closing the application. Retry is narrow
 by construction — only a destination folder that exists but would not open, and
 an acquisition that exists but could not be read, are classified retryable. See
@@ -117,7 +118,7 @@ recognized. See
 |---|---|---:|---|
 | RUN-001 | Per-file queue | P0 | Ready/queued/running/completed/failed/cancelled/unsupported are distinct. |
 | RUN-002 | Failure isolation | P0 | One failure does not stop independent queued items. |
-| RUN-003 | Cancellation | P0 | Cancels the process tree; partial output is never reported as valid. |
+| RUN-003 | Queue stop | P0 | Stops the whole queue: terminates the running process tree, begins no later item, retains completed outputs, and never reports a partial output as valid. An unconfirmed termination is reported as such and quarantines the backend. |
 | RUN-004 | Retry failed | P0 | Retries only selected/failed items without rebuilding the workspace. |
 | RUN-005 | Actionable error | P0 | User sees a plain-language cause/action before raw stderr. |
 | RUN-006 | Transactional output | P0 | Final filename appears only after successful process exit and basic checks. |

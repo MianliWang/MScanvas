@@ -3354,3 +3354,104 @@ No cancellation UI, Tauri command, transfer object, queue semantics, progress
 percentage, parallel conversion, second vendor family or dependency was added.
 The product semantics for cancelling one item, continuing, or cancelling a whole
 queue remain undecided.
+
+## User-visible queue stop, 2026-08-08
+
+The serial conversion queue can be stopped. ADR 0013 recorded "no cancellation"
+as its largest open gate — sixteen items is up to roughly an hour a user cannot
+interrupt — and refused a control until real termination and partial-output
+behaviour were measured. ADR 0014 measured both; this exposes the private
+primitive as one queue-level action.
+
+`Stop queue` requests cancellation of the attempt under way, begins no item after
+it, keeps every finalized output where it is, cleans the current staging area
+through the existing object-bound teardown, marks untouched items `not run`, and
+reaches one terminal state. It is deliberately not called *Cancel*: it ends the
+whole queue and undoes nothing already written, and the panel says both halves
+before it is pressed. There is no confirmation dialog, no pause, no resume, no
+per-item cancellation and still no percentage.
+
+The race rule is ADR 0014's, unchanged. Observation order inside the supervision
+loop decides the current item, so a conversion that completed before the request
+was accepted keeps its ordinary result rather than being relabelled. Nothing
+predicts which while a stop is in flight; the interface says only that no further
+item will start and that the current conversion may still finish on its own.
+
+Authority reuses the retry model exactly: the operation identifier the caller is
+looking at plus proof of being the current document. A reload may stop the queue
+it recovered; a replaced document may not stop its replacement's work. An idle
+slot, an open picker, a stale identifier and a finished queue all answer with one
+path-free refusal, and a repeated stop is idempotent. The queue slot holds a
+monotonic stop flag for the life of one operation and at most one request-only
+handle bound to an exact operation, item and attempt, released when that exact
+attempt settles. The state moves under the slot lock; the cancellation is asked
+outside it, so the interface keeps answering while a process ends.
+
+An unconfirmed termination is neither cancelled nor an ordinary failure. The
+process boundary's `CancellationFailed` proves nothing about survivors, so the
+queue ends as `stop_failed` and the session enters backend quarantine: preview,
+spectrum load, conversion, retry and installation change are all refused, the
+roster stays readable and searchable, and the interface says to restart MSCanvas.
+The flag is set once and never cleared — nothing in the session can establish
+that the lost process ended — and no process recheck is invented, because the
+boundary exposes no identifier that would make one meaningful. A stopped or
+stop-failed queue is terminal and is never retried in place, even when it holds a
+failure a retry would otherwise take.
+
+Real product-path evidence ran on the evidenced build (release `3.0.26013`,
+revision `47b13cf`, `msconvert.exe` SHA-256 `9BB6F5D5…D590BD`) with three copies
+of the lawful `FT-HCD-MSX.raw` fixture (78,309 bytes, SHA-256 `B3D97B38…DD7B`)
+admitted as `alpha.raw`, `bravo.raw` and `charlie.raw` through the production
+Add-files path and stopped through the production command boundary.
+
+- **Confirmed cancellation.** The stop was issued once the first item had
+  created its staged output. Request to terminal state: `60 ms`. The item became
+  `cancelled` with the tree confirmed gone and a partial output observed; the
+  other two became `not run`; zero outputs were finalized; no staging residue;
+  the destination folder was empty afterwards; the session still trusted the
+  backend; the stopped queue refused a retry.
+- **Completed output retained.** The stop was issued once the queue's own state
+  said one item had finalized. `alpha.mzML` (28,637 bytes, 1 spectrum, 1
+  chromatogram, output-only validation, nine verified properties) stayed in the
+  folder and was the only thing in it. The second item was `cancelled` having
+  launched no process — the stop landed between it being marked running and its
+  process existing — and the third was `not run`.
+- **Cancellation failure** is deterministic rather than real, through a
+  substituted process boundary that either refuses termination or reports
+  surviving owned processes. Both produce `stop_failed`, launch no later item,
+  quarantine the backend and refuse every subsequent backend operation while
+  leaving the roster usable.
+
+Automated UI evidence is jsdom with CSSOM, which is the strongest route this
+repository has: there is no browser harness, and none was added. No pixel or
+paint is claimed. What is asserted is production structure, exact user-visible
+copy, accessible descriptions, which controls are offered and disabled, live-region
+text, focus, and the CSSOM rules for the new item states — across the running,
+stopping, stopped and stop-failed states, a repeated request, reload into both
+stopping and stopped, queued/converting search pinning, and the three checked
+viewports.
+
+Validation on the final head: `cargo fmt --all --check`,
+`cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --locked --workspace --all-targets` (391 desktop tests, up from 381),
+`python -B scripts/check_repo.py`, `pnpm lint`, `pnpm typecheck`, `pnpm test`
+(505 frontend tests, up from 494), `pnpm build`, `git diff --check`.
+
+Ten mutations were applied one at a time and each was caught by the test written
+for it: the queue continuing after a stop; a prevented item marked failed rather
+than not run; a natural success relabelled cancelled; an unconfirmed termination
+reported as a cancellation; the quarantine omitted; a stopped queue offering
+Retry failed; the stop command accepting a document that is not the current one;
+an old attempt handle reachable by a later stop; a cancelled item left retryable;
+and a stop rolling back what had already finished. Two of the ten survived first
+application and are recorded with their repair: a stopped queue with no retryable
+failure never reached the retry gate, and a mismatched attempt release was
+unobservable with one worker settling one attempt before binding the next. Both
+now have a test that names the property directly. One intended mutation is
+structurally unreachable: `ItemOutcome::Stopped` carries no report, so a
+cancelled item cannot claim it produced a file.
+
+No dependency and no capability was added. `stop_workspace_conversion_queue` is
+the nineteenth registered command and takes only an operation identifier. No
+resume, no per-item cancellation, no persistence, no parallelism, no overwrite,
+no mzXML, no second vendor family and no output auto-import.

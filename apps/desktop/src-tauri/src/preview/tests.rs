@@ -10419,6 +10419,11 @@ fn a_confirmed_stop_cancels_the_running_item_and_runs_no_other() {
     // A not-run item launched nothing, so there is nothing to have established.
     assert!(queue.items[1].cancellation.is_none());
     assert_eq!(queue.items[1].attempts, 0);
+    // None of the three is offered again. A cancelled item has nothing to
+    // correct and a not-run item never ran, so etryable on either would be a
+    // claim the interface could act on.
+    assert!(queue.items.iter().all(|item| !item.retryable));
+    assert_eq!(queue.retryable_failed_count, 0);
     // And the session still trusts the backend.
     assert!(!service.backend_is_quarantined());
     assert!(!service.conversion_state().backend_quarantined);

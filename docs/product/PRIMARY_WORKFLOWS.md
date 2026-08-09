@@ -140,27 +140,38 @@ settings, its output-root choice and "Open file/folder" remain unreachable. See
 5. `Convert N selected…` opens a Rust-owned picker for one local folder, which
    every item of the queue writes into.
 6. Items convert one at a time, in the order shown, and the panel says which item
-   of how many is running. The queue cannot be cancelled, and says so. Adding,
-   clearing and previewing are unavailable until it ends; searching, sorting and
-   reading the list are not, and every queued row stays visible through a search.
+   of how many is running. `Stop queue` ends the whole queue: it asks the current
+   conversion to stop and begins none of the items after it, and the panel says
+   so before it is pressed. Adding, clearing and previewing are unavailable until
+   it ends; searching, sorting and reading the list are not, and every queued row
+   stays visible through a search.
 7. Each item reports its own outcome: the output's name, size and record counts;
    or that a name was already taken and left alone; or why nothing was written.
    The queue reports how many converted, were skipped, and failed.
 8. `Retry N failed` reruns only the failures another attempt could change, in
    their original places, into the same folder under the same policy. Converted
-   and skipped files are left exactly as they are.
+   and skipped files are left exactly as they are. A queue that was stopped is
+   over instead: it reports how many converted, were skipped, failed, were
+   cancelled and were never run, and converting those rows again is a new queue.
+9. A stop is not instantaneous and is not a promise about the item under way. A
+   conversion that finished before the request was accepted keeps its ordinary
+   result rather than being called cancelled. If MSCanvas cannot confirm that the
+   converter process ended, it says so and refuses further backend work until the
+   application is restarted.
 
 **Success:** a set of acquisitions becomes a set of mzML files the user can
 find, one file's failure costs only that file, and the interface never claims
 more about any of them than output-only validation established.
 
 **Not included:** more than 16 items in one queue, any other vendor family,
-cancellation, a progress percentage, parallel conversion, a queue that survives
-closing the application, overwrite, and adding the outputs to the workspace.
+cancelling one item while the rest carry on, resuming a stopped queue, retrying
+one, a progress percentage, parallel conversion, a queue that survives closing
+the application, overwrite, and adding the outputs to the workspace.
 Retry is offered only where Rust classifies the failure as retryable, which today
 means a destination folder that exists but would not open and an acquisition that
 exists but could not be read. See
-[ADR 0013](../architecture/adr/0013-serial-conversion-queue.md).
+[ADR 0013](../architecture/adr/0013-serial-conversion-queue.md) and
+[ADR 0015](../architecture/adr/0015-user-visible-queue-stop.md).
 
 ## WF-005 — Clear the workspace
 

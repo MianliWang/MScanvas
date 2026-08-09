@@ -291,6 +291,13 @@ ADR left open is closed by measurement, not by relaxation: what is now known
 about real termination, partial output and cleanup is in the
 [M3.3 evidence record](../../spikes/M3_CANCELLATION_EVIDENCE.md).
 
+**Amended 2026-08-08 (M3.4): the cancellable entry point is now reachable.**
+[ADR 0015](0015-user-visible-queue-stop.md) makes it the queue's own
+`Stop queue`. Nothing about this boundary changes: `run_conversion` is still
+the uncancellable one, the cancellable one still reports `Cancelled` only on a
+confirmed empty owned job, and the queue above it is what decides that a stop
+means the whole batch rather than one item.
+
 ### Privacy
 
 Every result and failure type is path-free and carries a stable identifier.
@@ -467,8 +474,9 @@ dependency was added to imitate it.
   — is removed by identity-bound cleanup with no residue and never reaches the
   destination root. Still gated: any mid-write observation of the *vendor*
   route, since the one lawful fixture is terminated before its reader writes
-  anything; and every product question about what a queue should offer, which
-  ADR 0014 lists rather than answers.
+  anything. The product questions ADR 0014 listed are answered by
+  [ADR 0015](0015-user-visible-queue-stop.md), which makes the queue's one
+  visible action a whole-queue stop.
 - **Backend overwrite semantics.** Never measured: the M0 existing-output case
   was refused by MSCanvas before launch, so what `msconvert` itself does to an
   existing file is unknown. This boundary does not depend on it, and must not

@@ -88,8 +88,9 @@ Not implemented yet: vendor RAW preview; TIC, BPC and chromatogram views;
 directory-formatted acquisition recognition; filtering the workspace by
 anything other than filename, and grouping it; a workspace that outlives the
 session, which includes remembering a search or a sort; conversion progress as a
-percentage; conversion cancellation; a conversion queue that survives closing the
-application; and figure export. mzXML output stays disabled and fail-closed until
+percentage; cancelling one item of a queue while the rest carry on; resuming a
+stopped queue; a conversion queue that survives closing the application; and
+figure export. mzXML output stays disabled and fail-closed until
 representative multi-source integrity checks pass.
 
 A conversion queue is reachable, and its limits are the claim. `Add files…`
@@ -106,9 +107,18 @@ attempt might change — a destination folder that is there but will not open, o
 an acquisition that is there but could not be read — and leaves everything else
 exactly as it is.
 
+`Stop queue` ends the whole queue: it asks the running conversion to stop and
+begins none of the ones after it. Outputs already completed stay in the folder,
+and no partial file is ever finalized. It is not instantaneous and it is not a
+promise about the item under way — a conversion that finished before the request
+arrived keeps its result rather than being called cancelled. A stopped queue is
+over; converting those rows again is a new queue. If MSCanvas cannot confirm that
+the converter process ended, it says so and refuses further backend work until
+you restart it, rather than starting a second converter beside one it has lost
+track of.
+
 It runs on one exact ProteoWizard build the repository has a recorded conversion
-for, one file at a time, and it cannot be cancelled; there is no percentage
-either, because nothing measures one. Validation is output-only: the converted
+for, one file at a time; there is no percentage, because nothing measures one. Validation is output-only: the converted
 document's own postconditions are established, and nothing is compared against a
 vendor-source spectrum model, because MSCanvas cannot read one. Folder ingestion
 and Explorer drop stay mzML-only. Converted files are not added to the workspace
