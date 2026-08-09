@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { createContext, useContext } from "react";
 
 import type {
+  WorkspaceOutputAdoptionResult,
   BackendAvailability,
   ConversionConflictPolicy,
   ConversionQueuePlan,
@@ -156,6 +157,19 @@ export interface PreviewApi {
    * Repeating it for a queue already stopping is not an error.
    */
   stopConversion(operationId: string): Promise<WorkspaceConversionUpdate>;
+  /**
+   * Adds a terminal queue's finalized mzML outputs to the workspace.
+   *
+   * Takes the operation identifier the caller is looking at and nothing else.
+   * Which outputs, in which order, and whether each may be admitted are all
+   * Rust's to decide -- it is the side that made the files and kept hold of
+   * them.
+   *
+   * Resolves to the authoritative roster plus one outcome per finalized output,
+   * in queue order. An output that cannot be admitted is an outcome rather than
+   * an error, and does not stop the others.
+   */
+  adoptConversionOutputs(operationId: string): Promise<WorkspaceOutputAdoptionResult>;
 }
 
 export const tauriPreviewApi: PreviewApi = {
@@ -209,6 +223,12 @@ export const tauriPreviewApi: PreviewApi = {
   stopConversion: (operationId) =>
     invoke<WorkspaceConversionUpdate>(
       "stop_workspace_conversion_queue",
+      { operationId },
+      { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } },
+    ),
+  adoptConversionOutputs: (operationId) =>
+    invoke<WorkspaceOutputAdoptionResult>(
+      "adopt_workspace_conversion_outputs",
       { operationId },
       { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } },
     ),

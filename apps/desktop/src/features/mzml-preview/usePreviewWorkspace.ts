@@ -11,6 +11,7 @@ import type {
   SelectedSpectrum,
   WorkspaceDropRejectionReason,
   WorkspaceDropUpdate,
+  WorkspaceOutputAdoptionResult,
 } from "./contracts";
 import { toPreviewError } from "./contracts";
 import { describeDropResult } from "./dropNotice";
@@ -1769,7 +1770,46 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     },
     [checkBackend],
   );
-  const conversion = useConversionOperation(reconcileConversionGeneration);
+  // Adopted rows are ordinary workspace rows, so the roster answers for them
+  // like any other mutation: adopted whole, with the query, the sort and the
+  // preview on screen left exactly as the user had them.
+  const adoptOutputs = useMemo(
+    () => ({
+      // Counted as a workspace decision at the moment it is asked for, like a
+      // removal or a clear. An import or a drop with a reply already in flight
+      // carries a roster from before these rows existed, and this is what makes
+      // it recognise itself as superseded.
+      begin: () => {
+        workspaceMutations.current += 1;
+        return workspaceMutations.current;
+      },
+      apply: (result: WorkspaceOutputAdoptionResult, startedAt: number) => {
+        // A decision taken after this one was asked for is the newer answer
+        // about what the session holds, and installing this roster over it
+        // would put back rows the user has since acted on. Rust committed
+        // either way; the next read is what reconciles them.
+        if (workspaceMutations.current !== startedAt) {
+          return;
+        }
+        // Settled, like every other authoritative reply. A roster read served
+        // before this can still be in flight, and installing its answer
+        // afterwards would take the adopted rows back off screen.
+        rosterSettled();
+        dispatchRoster({ type: "outputsAdopted", result });
+      },
+    }),
+    [rosterSettled],
+  );
+  // Every workspace mutation the user has asked for and not been answered on.
+  // Adoption installs an authoritative roster, so it waits for these rather
+  // than racing them -- the same reason acquiring waits for the others.
+  const workspaceSettling =
+    pickerBusy || workspaceBusy || folderBusy || dropBusy || folderReservationPending;
+  const conversion = useConversionOperation(
+    reconcileConversionGeneration,
+    adoptOutputs,
+    workspaceSettling,
+  );
   // A stop that could not be confirmed makes this session's backend unusable
   // without changing the installation, so nothing about it advances the
   // installation sequence and the reconciler above would never fire. Left

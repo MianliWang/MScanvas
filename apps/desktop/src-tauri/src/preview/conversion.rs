@@ -17,6 +17,7 @@
 
 use std::path::Path;
 
+use mscanvas_proteowizard::FinalizedOutput;
 #[cfg(test)]
 use mscanvas_proteowizard::run_conversion;
 use mscanvas_proteowizard::{
@@ -523,7 +524,10 @@ pub(super) fn run_planned_conversion_cancellable(
 /// carries no report by construction: a stopped attempt finalized nothing, so
 /// there is nothing for a report to be about.
 pub(super) enum ConvertedItem {
-    Reported(WorkspaceConversionReport),
+    /// A conversion reached an outcome. The retained output is `Some` exactly
+    /// when that outcome finalized one, and it is what a later adoption
+    /// recognises the file by.
+    Reported(WorkspaceConversionReport, Option<Box<FinalizedOutput>>),
     Cancelled(CancellationReport),
     CancellationFailed(CancellationFailure),
 }

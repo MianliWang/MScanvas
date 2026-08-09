@@ -123,6 +123,7 @@ recognized. See
 | RUN-005 | Actionable error | P0 | User sees a plain-language cause/action before raw stderr. |
 | RUN-006 | Transactional output | P0 | Final filename appears only after successful process exit and basic checks. |
 | RUN-007 | Persistent run history | P2 | Runs and artifacts survive restart with interrupted states represented honestly. |
+| RUN-008 | Adopt converted outputs | P0 | Explicit, per terminal queue: adds every finalized mzML output at once, in queue order. Admits one only when the final name still resolves to the exact finalized object and that object still holds the validated byte length and digest. Partial success; duplicates and refusals isolated; no auto-import, no auto-preview, no persistence. |
 
 ## Figure and data export
 

@@ -739,7 +739,8 @@ fn report_boundary(
     );
 
     match report.outcome() {
-        ConversionRunOutcome::Finalized(valid) => {
+        ConversionRunOutcome::Finalized(finalized) => {
+            let valid = finalized.valid();
             println!("boundary.outcome=finalized");
             println!(
                 "boundary.validation_mode={}",

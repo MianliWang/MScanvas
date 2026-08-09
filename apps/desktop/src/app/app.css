@@ -1085,3 +1085,22 @@ button:disabled {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Adding a queue's outputs to the workspace: an offer beside a result, not a
+   second result. Separated from the queue's own report by a rule rather than by
+   a heading, because it is about what happens next rather than about what
+   happened. */
+.conversion-adoption {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-border);
+}
+
+/* The line that says how many rows arrived, weighted like the stopped summary
+   it sits below for the same reason: it is the count a user checks. */
+.conversion-adoption-summary {
+  font-weight: 600;
+  margin: 0;
+}

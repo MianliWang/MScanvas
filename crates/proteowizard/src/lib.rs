@@ -26,6 +26,7 @@ mod conversion_run;
 mod diagnostics;
 mod discovery;
 mod failure;
+mod finalized_output;
 mod fs_guard;
 mod mzml;
 mod preview;
@@ -66,6 +67,7 @@ pub use discovery::{
 pub use failure::{
     FailureCondition, FailureKind, NormalizedFailure, Retryability, classify_process_failure,
 };
+pub use finalized_output::{FinalizedOutput, OutputDrift};
 pub use fs_guard::{
     OutputDirectoryEntry, OutputDirectorySnapshot, OutputEntryKind, RegularFileError,
     is_reparse_point, snapshot_output_directory,

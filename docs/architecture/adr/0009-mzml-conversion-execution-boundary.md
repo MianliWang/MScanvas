@@ -532,3 +532,26 @@ webview later should be path-free by construction, not by remembering to redact.
    0007 defers, once real cancellation evidence exists.
 4. A vendor source posture, gated on an authorized fixture and on the
    directory-acquisition evidence list in ADR 0007.
+
+## Amendment 2026-08-09 (M3.5): finalization retains the object it renamed
+
+Finalization used to end by releasing the object it had just given the final
+name. [ADR 0016](0016-explicit-converted-output-adoption.md) needs to recognise
+that object later, and a name cannot do it: between the rename and any later
+moment the final name can be given to a different object, and the object it
+named can be deleted and its file id reissued.
+
+`ConversionRunOutcome::Finalized` therefore carries the object rather than only
+what was read out of it. The renamed object is reopened *from its own handle* —
+so it is the same object by construction, not by a second lookup — with fully
+permissive sharing, and the renaming handle is released immediately. That handle
+withholds write sharing, and keeping it would have forbidden the user from
+writing to their own finished file; three of this boundary's existing tests
+caught exactly that and pass unchanged against the reopen.
+
+Nothing else about this boundary moves. Staging cleanup is unaffected, because
+the retained object is no longer inside the staging area. The retention makes no
+claim that the file will still be there, and it takes nothing away from the
+person who owns it: writing, renaming and deleting all remain theirs. That is
+why the byte comparison at adoption time is load-bearing rather than a
+formality.

@@ -603,3 +603,55 @@ export function toPreviewError(value: unknown): PreviewError {
     retryable: true,
   };
 }
+
+/**
+ * What one finalized output did when the user asked to adopt it.
+ *
+ * Closed and path-free. Every member names its queue item by facts this
+ * document already has -- the item''s position and the row it was converted
+ * from -- plus the output name the queue displayed throughout. Only the two
+ * outcomes that have a workspace row carry one.
+ */
+export type WorkspaceOutputAdoptionOutcome =
+  | {
+      readonly kind: "added";
+      readonly itemIndex: number;
+      readonly sourceHandle: string;
+      readonly outputFileName: string;
+      readonly dataset: SelectedFile;
+    }
+  | {
+      readonly kind: "alreadyInWorkspace";
+      readonly itemIndex: number;
+      readonly sourceHandle: string;
+      readonly outputFileName: string;
+      readonly dataset: SelectedFile;
+    }
+  | {
+      readonly kind: "refused";
+      readonly itemIndex: number;
+      readonly sourceHandle: string;
+      readonly outputFileName: string;
+      /**
+       * One of `output_missing`, `output_changed`, `output_unreadable`,
+       * `output_not_mzml` or `workspace_full`. Stable, and never an OS error.
+       */
+      readonly reason: string;
+    };
+
+/** What adopting a terminal queue's finalized outputs did. */
+export interface WorkspaceOutputAdoptionResult {
+  /**
+   * Which queue this describes, and which settling of it.
+   *
+   * Both, because neither alone identifies the result. A retry settles the same
+   * operation a second time and can finish between two reads, so holding this
+   * beside a queue means checking the round as well as the identifier.
+   */
+  readonly operationId: string;
+  readonly retryRound: number;
+  /** Authoritative and whole, like every other workspace answer. */
+  readonly roster: WorkspaceRoster;
+  /** In queue order, one per finalized output the queue held. */
+  readonly outcomes: readonly WorkspaceOutputAdoptionOutcome[];
+}

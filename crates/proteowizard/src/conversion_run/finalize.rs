@@ -23,7 +23,8 @@ use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::conversion::{ValidConversion, ValidatedConversionOutput};
+use crate::conversion::ValidatedConversionOutput;
+use crate::finalized_output::FinalizedOutput;
 
 /// The destination root, held open as the object it was admitted as.
 ///
@@ -118,21 +119,35 @@ impl std::fmt::Debug for DestinationDirectory {
 /// Gives the validated object the planned final name inside `destination`.
 ///
 /// Consuming the validated output is the double-finalization guard: an object
-/// that has been finalized no longer exists to finalize again. The handle is
-/// released on every path, including failure, so staging cleanup is never
-/// blocked by this run's own reading.
+/// that has been finalized no longer exists to finalize again.
+///
+/// The object is retained -- as a permissive reopen of itself, not as this
+/// handle -- and is retained *before* the rename, so a failure to retain leaves
+/// nothing published. It is the one thing that can later answer whether the
+/// final name still means this object, and it costs nothing that matters: the
+/// retention shares everything, so the user may still write, rename or remove
+/// their own output, and it is released with the report that carries it.
 #[cfg(windows)]
 pub(super) fn finalize_validated(
     validated: ValidatedConversionOutput,
     destination: &DestinationDirectory,
     final_name: &OsStr,
-) -> io::Result<ValidConversion> {
+) -> io::Result<FinalizedOutput> {
     let (file, valid) = validated.into_parts();
+    // Before the rename, deliberately. Retaining can fail -- it opens a handle
+    // and asks the object what it is -- and a failure after the rename would
+    // report that nothing was finalized while the output sat at its final name,
+    // occupying it for every later run. Renaming does not change which object
+    // this is, so nothing about the retention goes stale below.
+    let retained = FinalizedOutput::retain(&file, valid)?;
     let renamed = single_component(final_name)
         .map(|name| destination.path().join(name))
         .and_then(|target| rename_object_to(&file, &target));
+    // The renaming handle goes as soon as it has done its work. It is the one
+    // that withholds write sharing, and every moment it is held past its purpose
+    // is a moment the user cannot write their own file.
     drop(file);
-    renamed.map(|()| valid)
+    renamed.map(|()| retained)
 }
 
 /// Gives the validated object the planned final name inside `destination`.
@@ -148,14 +163,16 @@ pub(super) fn finalize_validated(
     destination: &DestinationDirectory,
     staged: &Path,
     final_name: &OsStr,
-) -> io::Result<ValidConversion> {
+) -> io::Result<FinalizedOutput> {
     let (file, valid) = validated.into_parts();
     // Released before the link so cleanup is never blocked by this reading.
+    // Nothing is retained: the link is made from the staged *name*, so there is
+    // no renamed object to hold and this platform does not claim one.
     drop(file);
     let target = destination.path().join(single_component(final_name)?);
     std::fs::hard_link(staged, target)?;
     let _ = std::fs::remove_file(staged);
-    Ok(valid)
+    Ok(FinalizedOutput::unbound(valid))
 }
 
 /// Refuses anything that is not one plain name.

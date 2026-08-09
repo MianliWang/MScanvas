@@ -115,13 +115,6 @@ pub(super) struct FileIdentityLease {
     /// Never read outside a test, and that is the whole point: holding it open
     /// is what this field does, and reading it would mean something was using
     /// the lease as a source to read from rather than as a lifetime.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the handle is held open, not read; only a test asks whether it is still there"
-        )
-    )]
     handle: Arc<LeasedObject>,
 }
 
@@ -163,6 +156,20 @@ impl FileIdentityLease {
         Self {
             handle: Arc::new(()),
         }
+    }
+
+    /// The object this lease holds, for the one caller that must read *the
+    /// admitted object* rather than a name that currently resolves to it.
+    ///
+    /// Adopting a conversion output has to prove that what enters the workspace
+    /// is the exact file that was finalized. Proving it against anything other
+    /// than the object the registry is about to hold would leave a gap between
+    /// the proof and the thing proved, however small. This is that object, by
+    /// shared reference only: there is no raw handle here and no way to take
+    /// ownership of one.
+    #[cfg(windows)]
+    pub(super) fn object(&self) -> &std::fs::File {
+        &self.handle
     }
 
     /// A view of whether this lease's handle is still open anywhere.
@@ -766,15 +773,10 @@ pub struct AcceptedFile {
     /// Keeps the object alive, so `identity` above cannot come to name a
     /// different one while this file is registered.
     ///
-    /// Never read: what it does is exist for as long as this value does, and
-    /// go when it goes.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the lease is held for its lifetime, not read; only a test asks after it"
-        )
-    )]
+    /// Held for as long as this value exists, and gone when it goes. Read in
+    /// exactly one place -- adopting a conversion output, which must prove
+    /// something about *this* object rather than about a name that resolves to
+    /// it -- and by shared reference only.
     lease: FileIdentityLease,
 }
 
@@ -814,6 +816,20 @@ impl AcceptedFile {
     #[must_use]
     pub(super) const fn source_kind(&self) -> DatasetSourceKind {
         self.kind
+    }
+
+    /// The object this file was accepted as, for the one caller that must read
+    /// *the admitted object* rather than a name that currently resolves to it.
+    ///
+    /// Adopting a conversion output has to prove that what enters the workspace
+    /// is the exact file a queue finalized. Proving it against anything other
+    /// than the object the registry is about to hold would leave a gap between
+    /// the proof and the thing proved, however small. See
+    /// [`FileIdentityLease::object`].
+    #[cfg(windows)]
+    #[must_use]
+    pub(super) fn accepted_object(&self) -> &std::fs::File {
+        self.lease.object()
     }
 
     /// The same file, remembering an identity that is not this object's.
@@ -902,6 +918,23 @@ pub(super) enum DatasetOrigin {
     /// would make a display context that ends in the name it is disambiguating.
     /// Empty means the file sat at the top of the chosen folder.
     Folder { relative_parents: Vec<OsString> },
+    /// Produced by a conversion this session ran, and adopted on purpose.
+    ///
+    /// Session-only and deliberately thin. It is not identity, not a path, not
+    /// searched, not sorted by, and not consulted when deciding duplicates: it
+    /// exists so that a converted file is not described as `Added directly`,
+    /// which would be the one thing about it that is false. Nothing here
+    /// survives the process, and nothing re-establishes it after a restart.
+    ConvertedOutput {
+        /// The row it was converted from, so the description can name it
+        /// without naming a place.
+        source: DatasetId,
+        /// That row's display name at the time, bounded like every other.
+        source_display_name: String,
+        /// The queue that produced it. Not shown; it is what lets a later
+        /// adoption of the same queue recognise what it already added.
+        queue_operation: u64,
+    },
 }
 
 impl fmt::Debug for DatasetOrigin {
@@ -914,6 +947,9 @@ impl fmt::Debug for DatasetOrigin {
             Self::Folder { relative_parents } => {
                 write!(formatter, "<folder depth {}>", relative_parents.len())
             }
+            // Opaque about the source name for the same reason: it is a
+            // filename the user chose, and a log is not where it belongs.
+            Self::ConvertedOutput { .. } => formatter.write_str("<converted-output>"),
         }
     }
 }
@@ -1069,6 +1105,28 @@ impl DatasetRegistry {
     /// add.
     pub(super) fn add_direct(&mut self, file: AcceptedFile) -> AddDatasetOutcome {
         self.add(file, DatasetOrigin::Direct)
+    }
+
+    /// Adds an output this session converted and the user asked to adopt.
+    ///
+    /// The same insertion as every other: same duplicate rule, same capacity
+    /// rule, same lease. Only the origin differs, and only so the row can say
+    /// where it came from rather than claiming it was added directly.
+    pub(super) fn add_converted(
+        &mut self,
+        file: AcceptedFile,
+        source: DatasetId,
+        source_display_name: String,
+        queue_operation: u64,
+    ) -> AddDatasetOutcome {
+        self.add(
+            file,
+            DatasetOrigin::ConvertedOutput {
+                source,
+                source_display_name,
+                queue_operation,
+            },
+        )
     }
 
     /// Adds a file found under a folder the user chose, remembering where.
@@ -1342,6 +1400,14 @@ fn describe_origin(origin: &DatasetOrigin) -> String {
             .map(|component| component.to_string_lossy().into_owned())
             .collect::<Vec<_>>()
             .join("\\"),
+        // Names the acquisition rather than the folder. Where a converted
+        // output sits is the destination the user chose, and this boundary
+        // does not describe destinations; what tells two identically named
+        // outputs apart is which acquisition each came from.
+        DatasetOrigin::ConvertedOutput {
+            source_display_name,
+            ..
+        } => format!("Converted from {source_display_name}"),
     }
 }
 

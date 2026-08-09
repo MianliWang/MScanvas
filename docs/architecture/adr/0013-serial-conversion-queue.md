@@ -452,3 +452,21 @@ are worth recording, because a survivor is a gap in the tests and not a curiosit
 - **The bound is a judgement, not a measurement.** Sixteen comes from an
   estimate of per-acquisition conversion time, not from timing sixteen real
   acquisitions on this build.
+
+## Amendment 2026-08-09 (M3.5): outputs can now be adopted, on purpose
+
+This ADR recorded that converted files are not added to the workspace and that
+`Add files…` is how a user reaches them.
+[ADR 0016](0016-explicit-converted-output-adoption.md) adds the explicit action
+that was left open: a terminal queue offers its finalized outputs, and the user
+adds them.
+
+The gate this closes is the round trip, not the principle. Adoption is still
+never automatic, still previews nothing, and still adds nothing that cannot be
+shown to be the exact object this queue finalized. `Add files…` remains the
+fallback the moment the queue is replaced or the application restarts, and the
+panel says so before it is needed.
+
+Each finalized item now retains one private, bounded ticket for as long as its
+queue does — sixteen at most, one per item, dropped with the queue. Dropping one
+closes a handle and does nothing else to the file.

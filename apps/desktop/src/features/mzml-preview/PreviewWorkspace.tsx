@@ -162,8 +162,15 @@ export function PreviewWorkspace() {
   // Rust refuses a removal only when the converting row is among the handles,
   // so every other row stays the user's to prune -- which matters most during a
   // conversion, because that is when the list is unusable for longest.
+  // An adoption is the one workspace state a terminal queue puts the session in
+  // that holds no rows: `queueHandles` is empty, so the check beside this one
+  // cannot see it. Rust refuses a removal outright while one runs, and pressing
+  // it anyway would move the workspace decision count on the way to that
+  // refusal -- superseding the adoption the user is waiting on.
   const canRemove =
-    canMutate && !queueHandles.some((handle) => roster.selected.has(handle));
+    canMutate &&
+    !workspace.conversion.adopting &&
+    !queueHandles.some((handle) => roster.selected.has(handle));
   // Reading the list back is not an escape route. It is a pure, gate-linearized
   // snapshot, but during a scan it would add a loading state and a projection
   // whose usefulness depends on whether the scan committed before or after it.
@@ -178,14 +185,21 @@ export function PreviewWorkspace() {
   // lost track of a converter process of its own and will not start another
   // until it is restarted. Rust enforces it; this is what stops the interface
   // offering a control that can only answer with a refusal.
+  //
+  // An adoption is the one thing in `busy` that is not a reason to wait here:
+  // it launches no process, holds no backend gate and leaves an open preview
+  // exactly as it is, and Rust admits a read throughout. Converting is
+  // different, and waits for it below.
   const canPreview =
     backendUsable &&
     !workspace.backendBusy &&
     !workspace.previewBackendBusy &&
-    !workspace.conversion.busy &&
+    (!workspace.conversion.busy || workspace.conversion.adopting) &&
     !workspace.conversion.backendQuarantined;
-  // Converting needs the same backend a preview does, and the same free lane.
-  const canConvert = canPreview && !workspace.workspaceBusy;
+  // Converting needs the same backend a preview does, and the same free lane --
+  // plus the terminal queue an adoption is reading, which it would replace.
+  const canConvert =
+    canPreview && !workspace.workspaceBusy && !workspace.conversion.adopting;
 
   // The row the keyboard is on. Deliberately not `activeDataset`: the preview
   // and the conversion panel may describe different rows, and this slice's whole

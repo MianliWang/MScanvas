@@ -121,8 +121,11 @@ It runs on one exact ProteoWizard build the repository has a recorded conversion
 for, one file at a time; there is no percentage, because nothing measures one. Validation is output-only: the converted
 document's own postconditions are established, and nothing is compared against a
 vendor-source spectrum model, because MSCanvas cannot read one. Folder ingestion
-and Explorer drop stay mzML-only. Converted files are not added to the workspace
-for you.
+and Explorer drop stay mzML-only. Converted files are never added to the
+workspace for you -- when a queue is over you can add its finalized outputs
+yourself, and MSCanvas admits one only when the final name still refers to the
+exact object it finalized and that object still holds the bytes it validated.
+Nothing is previewed automatically.
 
 ## Product scope
 

@@ -7,6 +7,7 @@ import type {
   PreviewError,
   WorkspaceConversionState,
   WorkspaceConversionUpdate,
+  WorkspaceOutputAdoptionResult,
 } from "./contracts";
 import { toPreviewError } from "./contracts";
 
@@ -36,6 +37,26 @@ const POLL_INTERVAL_MS = 2_000;
  * seen.
  */
 const RETRY_TRANSITION_POLL_MS = 100;
+
+/**
+ * Whether an adoption result still describes the queue an update reports.
+ *
+ * A result is about one settling of one queue, so it survives only while that
+ * queue is still terminal, still the same operation, and still on the same
+ * retry round. The round is what separates a queue that has not changed from
+ * one a retry has settled again, which the status alone cannot: a retry that
+ * finishes between two polls moves the queue from terminal to terminal.
+ */
+function describes(
+  adoption: WorkspaceOutputAdoptionResult,
+  update: WorkspaceConversionUpdate,
+): boolean {
+  return (
+    update.state.status === "terminal" &&
+    update.state.operationId === adoption.operationId &&
+    update.state.queue.retryRound === adoption.retryRound
+  );
+}
 
 /** The plan summary for one row, and how the reading of it went. */
 export type ConversionPlanState =
@@ -107,6 +128,22 @@ export interface ConversionOperation {
    * reason, so a reload recovers it with everything else.
    */
   readonly backendQuarantined: boolean;
+  /** Adds this terminal queue's finalized outputs to the workspace. */
+  readonly adopt: () => void;
+  /** Whether there are finalized outputs of this terminal queue to add. */
+  readonly canAdopt: boolean;
+  /** Whether an adoption this document asked for has not been answered. */
+  readonly adopting: boolean;
+  /** How many of this queue's items finalized an output. */
+  readonly eligibleOutputCount: number;
+  /**
+   * What the last adoption of this queue did, until the queue is replaced.
+   *
+   * Kept so the panel can report counts beside the result it belongs to. It is
+   * not the roster -- that is the workspace's, and was adopted whole when this
+   * arrived.
+   */
+  readonly adoption: WorkspaceOutputAdoptionResult | null;
 }
 
 /**
@@ -118,8 +155,25 @@ export interface ConversionOperation {
  * destination and no reservation — those live in Rust for the whole of an
  * operation, which is what lets a reload recover one it did not start.
  */
+/**
+ * How an adopted roster reaches the workspace.
+ *
+ * Two calls rather than one, because ordering a roster against the workspace's
+ * other decisions is a question about when the request *started*, not about
+ * when its reply arrived. `begin` is asked at dispatch and answers with where
+ * the workspace's decisions stood; `apply` is given that back and decides
+ * whether this answer is still the newest.
+ */
+export interface AdoptedOutputsSink {
+  begin: () => number;
+  apply: (result: WorkspaceOutputAdoptionResult, startedAt: number) => void;
+}
+
 export function useConversionOperation(
   onInstallationGeneration: (generation: number) => void,
+  onOutputsAdopted: AdoptedOutputsSink,
+  /** Whether a workspace mutation of the user's has been asked for and not settled. */
+  workspaceSettling: boolean,
 ): ConversionOperation {
   const api = usePreviewApi();
   const [state, setState] = useState<WorkspaceConversionState>({ status: "idle" });
@@ -159,6 +213,15 @@ export function useConversionOperation(
   const [stopRequested, setStopRequested] = useState(false);
   // The session's own verdict on the backend, which outlives any one queue.
   const [backendQuarantined, setBackendQuarantined] = useState(false);
+  // Whether this document is inside an adoption it dispatched. Rendered,
+  // because every workspace action has to stop being offered for the whole of
+  // that window rather than only once Rust answers.
+  const [adopting, setAdopting] = useState(false);
+  // Paired with the state above and read by the handler, like every other gate
+  // here: a click handler that read the rendered value could start a second
+  // adoption inside the render that has not committed the first one yet.
+  const adoptingRef = useRef(false);
+  const [adoption, setAdoption] = useState<WorkspaceOutputAdoptionResult | null>(null);
 
   useEffect(() => {
     mounted.current = true;
@@ -171,6 +234,12 @@ export function useConversionOperation(
     if (!mounted.current || update.sequence <= installedSequence.current) {
       return;
     }
+    // A result belongs to one settling of one queue. Anything that produces a
+    // different one takes it with it: a queue that is no longer terminal, a
+    // different operation, or the same operation settled again by a retry --
+    // which can finish fast enough that no running state is ever polled, so
+    // "not terminal any more" is not a test that catches it.
+    setAdoption((previous) => (previous === null || describes(previous, update) ? previous : null));
     installedSequence.current = update.sequence;
     busyRef.current =
       update.state.status === "awaitingDestination" ||
@@ -280,6 +349,7 @@ export function useConversionOperation(
   // takes over from there.
   const busy =
     retrying ||
+    adopting ||
     state.status === "awaitingDestination" ||
     state.status === "running" ||
     state.status === "stopping";
@@ -345,7 +415,10 @@ export function useConversionOperation(
 
   const convert = useCallback(
     (handles: readonly string[]) => {
-      if (busyRef.current) {
+      // The adoption claim as well. A new queue replaces the terminal one an
+      // adoption is reading, so the two are exclusive for the same reason a
+      // retry and an adoption are.
+      if (busyRef.current || adoptingRef.current) {
         return;
       }
       // Claimed before the request leaves, so a second activation inside the
@@ -403,10 +476,14 @@ export function useConversionOperation(
   // user made about the whole batch, and a queue whose stop could not be
   // confirmed must launch nothing at all -- Rust refuses both, and this is what
   // stops the interface offering them.
+  // Not while an adoption is under way. A retry replaces the very results an
+  // adoption is reading, so the two are offered apart even though both act on
+  // the same terminal queue.
   const canRetry =
     state.status === "terminal" &&
     state.reason === "completed" &&
     state.queue.retryableFailedCount > 0 &&
+    !adopting &&
     !backendQuarantined;
 
   // A running queue, and one this document has not already asked to stop.
@@ -444,7 +521,9 @@ export function useConversionOperation(
   }, [api, applyUpdate, readState, state]);
 
   const retry = useCallback(() => {
-    if (busyRef.current) {
+    // The adoption flag as well as its own. The two act on one terminal queue,
+    // and each has to see the other's claim or both dispatch against it.
+    if (busyRef.current || adoptingRef.current) {
       return;
     }
     busyRef.current = true;
@@ -469,6 +548,79 @@ export function useConversionOperation(
       });
   }, [api, applyUpdate, readState]);
 
+  // How many of this terminal queue's items produced an output that could be
+  // added. Derived from the authoritative state rather than tracked, so it
+  // cannot come to disagree with the list the panel is drawing.
+  const eligibleOutputCount =
+    state.status === "terminal"
+      ? state.queue.items.filter((item) => item.state === "finalized").length
+      : 0;
+
+  // Only a terminal queue, and only one that finalized something. A running or
+  // stopping queue's outputs are not all in yet, and a retry replaces the very
+  // results an adoption would be reading. Deliberately not gated on the backend
+  // being usable: adoption launches nothing.
+  const canAdopt =
+    state.status === "terminal" &&
+    eligibleOutputCount > 0 &&
+    !adopting &&
+    !retrying &&
+    // And not while a workspace mutation of the user's is still settling. One
+    // that committed in Rust can still have a reply in flight, and an adoption
+    // installing its roster first would leave that reply installing a list the
+    // adopted rows are missing from.
+    !workspaceSettling;
+
+  const adopt = useCallback(() => {
+    // The ref, not the rendered flag. Two activations inside one render both
+    // see `adopting` false, and the second would advance the workspace decision
+    // count for a request Rust is about to refuse -- which would then make the
+    // first one's reply look superseded and install nothing, losing rows that
+    // were actually committed.
+    // `busyRef` as well as this operation's own flag. A retry activated in the
+    // same render has already claimed that one, and dispatching both against a
+    // single terminal queue means one is refused -- with the losing adoption
+    // having already moved the workspace decision count.
+    if (state.status !== "terminal" || adoptingRef.current || busyRef.current) {
+      return;
+    }
+    // Its own flag, and deliberately not `busyRef`. Setting that one would make
+    // every read wait -- a spectrum selection, the preview action -- and an
+    // adoption launches nothing and touches no preview. Reading it is what
+    // gives the mutual exclusion with a retry; writing it would take something
+    // else away.
+    adoptingRef.current = true;
+    // Marked before the request leaves, like every other gate here: the actions
+    // this closes must close on the press rather than on the reply.
+    setAdopting(true);
+    setError(null);
+    const { operationId } = state;
+    // Taken at dispatch. A drop or an import accepted after Rust commits this
+    // and before the reply is applied would otherwise install its newer roster
+    // first and have this one installed over it.
+    const startedAt = onOutputsAdopted.begin();
+    api
+      .adoptConversionOutputs(operationId)
+      .then((result) => {
+        adoptingRef.current = false;
+        if (mounted.current) {
+          setAdopting(false);
+          setAdoption(result);
+        }
+        // Handed on even when this document is gone. The rows were committed by
+        // Rust either way, and the replacement reads the roster on mount.
+        onOutputsAdopted.apply(result, startedAt);
+      })
+      .catch((cause: unknown) => {
+        adoptingRef.current = false;
+        if (!mounted.current) {
+          return;
+        }
+        setAdopting(false);
+        setError(toPreviewError(cause));
+      });
+  }, [api, onOutputsAdopted, state]);
+
   const dismissError = useCallback(() => {
     setError(null);
   }, []);
@@ -492,5 +644,10 @@ export function useConversionOperation(
     canStop,
     stopping,
     backendQuarantined,
+    adopt,
+    canAdopt,
+    adopting,
+    eligibleOutputCount,
+    adoption,
   };
 }

@@ -55,6 +55,36 @@ const STOP_EXPLANATION =
 const STOP_IN_FLIGHT_EXPLANATION =
   "No further items will start. The current conversion may still finish on its own.";
 
+/**
+ * What adding the outputs does, said before it is pressed.
+ *
+ * The first half is the promise this workflow is unusual for making: the file
+ * that enters the workspace is checked to still be the exact one this queue
+ * wrote, not merely a file of that name. The second is what it deliberately
+ * does not do -- reading a converted file is a separate thing to ask for, and a
+ * workflow that opened one would decide what the user is looking at.
+ */
+const ADOPT_EXPLANATION =
+  "MSCanvas verifies that each output is still the exact finalized file before adding it. Outputs are not previewed automatically.";
+
+/**
+ * What is true while an adoption is in flight.
+ *
+ * Not called converting: nothing is being converted, and a second word for the
+ * same workflow would be the panel describing two things at once. No
+ * percentage, because nothing measures a fraction of a file being checked.
+ */
+const ADOPT_IN_FLIGHT = "Adding converted outputs…";
+
+/** Why one output was not added, in the user's terms rather than the boundary's. */
+const ADOPTION_REFUSAL_LABEL: Record<string, string> = {
+  output_missing: "no longer in the destination folder",
+  output_changed: "changed since it was converted",
+  output_unreadable: "could not be read",
+  output_not_mzml: "is no longer a readable mzML file",
+  workspace_full: "the workspace is full",
+};
+
 export interface ConversionPanelProps {
   readonly conversion: ConversionOperation;
   /**
@@ -144,6 +174,115 @@ export function ConversionPanel({
   );
 }
 
+/**
+ * Adding this queue's finalized outputs to the workspace, and what that did.
+ *
+ * Offered only for a terminal queue that finalized something, and offered
+ * whatever else is true of that queue: a stop that kept one output, or a stop
+ * that could not be confirmed, both leave real files behind, and adding them
+ * launches nothing. Retry and this are mutually exclusive because one of them
+ * replaces the results the other is reading.
+ */
+function AdoptOutputs({ conversion }: { readonly conversion: ConversionOperation }): ReactElement {
+  const { adoption, eligibleOutputCount } = conversion;
+  const added = adoption?.outcomes.filter((outcome) => outcome.kind === "added") ?? [];
+  const duplicates =
+    adoption?.outcomes.filter((outcome) => outcome.kind === "alreadyInWorkspace") ?? [];
+  const refused = adoption?.outcomes.filter((outcome) => outcome.kind === "refused") ?? [];
+
+  if (eligibleOutputCount === 0) {
+    // Nothing finalized, so there is nothing to offer and nothing to explain.
+    // The queue's own result already says what happened to each item.
+    return (
+      <p className="quiet-text">
+        Nothing was converted, so there is nothing to add to the workspace.
+      </p>
+    );
+  }
+
+  return (
+    <div className="conversion-adoption">
+      {/* Said beside the action rather than instead of it. Replacing the
+          control a keyboard user just activated would drop focus to the
+          document and announce nothing; leaving it mounted and disabled keeps
+          the focus where they put it, and a live region is what tells them the
+          work finished. */}
+      {/* The one place the result is said, so a screen-reader user hears it
+          without moving and a sighted one reads it in the same words. Emptied
+          only while there is nothing to say. */}
+      <p aria-live="polite" className="conversion-adoption-summary">
+        {conversion.adopting
+          ? ADOPT_IN_FLIGHT
+          : adoption === null
+            ? ""
+            : `${String(added.length)} added, ${String(duplicates.length)} already in the workspace, ${String(refused.length)} not added.`}
+      </p>
+      {adoption !== null && added.length === 0 && refused.length === 0 ? (
+        <p>All finalized outputs from this queue are already in the workspace.</p>
+      ) : adoption !== null ? (
+        <>
+          {refused.slice(0, 3).map((outcome) => (
+            <p
+              className="quiet-text"
+              key={`${String(outcome.itemIndex)}-${outcome.outputFileName}`}
+            >
+              {`${outcome.outputFileName} was not added: ${
+                ADOPTION_REFUSAL_LABEL[outcome.kind === "refused" ? outcome.reason : ""] ??
+                "it could not be verified"
+              }.`}
+            </p>
+          ))}
+          {refused.length > 3 ? (
+            <p className="quiet-text">{`${String(refused.length - 3)} more were not added.`}</p>
+          ) : null}
+        </>
+      ) : null}
+      {/* Offered again after a partial result, not replaced by it. An output
+          refused because the workspace was full becomes admissible the moment
+          rows are removed, and one the user removes afterwards is admissible
+          again too -- the queue still holds what recognises them, so making
+          them reachable only through `Add files…` would waste that. */}
+      {/* Always, even after a result that added nothing. A duplicate today can
+          be a row the user removes tomorrow, and the queue still holds what
+          recognises the file -- so the action stays rather than sending them to
+          `Add files…` for something MSCanvas can still identify. */}
+      <>
+        <p>
+          {adoption !== null
+            ? "You can add them again. Anything already in the workspace is reported rather than added twice."
+            : eligibleOutputCount === 1
+              ? "1 converted mzML output is ready to add to this workspace."
+              : `${String(eligibleOutputCount)} converted mzML outputs are ready to add to this workspace.`}
+        </p>
+        <div className="conversion-actions">
+          <button
+            type="button"
+            className="primary-button"
+            aria-describedby="conversion-adopt-scope"
+            disabled={!conversion.canAdopt}
+            onClick={conversion.adopt}
+          >
+            {eligibleOutputCount === 1
+              ? "Add converted output to workspace"
+              : "Add converted outputs to workspace"}
+          </button>
+        </div>
+        <p className="quiet-text" id="conversion-adopt-scope" role="note">
+          {ADOPT_EXPLANATION}
+        </p>
+      </>
+      {/* Said whether or not anything was added. A queue that is replaced drops
+          the way MSCanvas recognises these files, and nothing about that
+          removes them -- so the honest fallback is named rather than left to be
+          discovered. */}
+      <p className="quiet-text">
+        Finalized files remain on disk. If this queue is replaced, they can still be added later
+        with Add files….
+      </p>
+    </div>
+  );
+}
+
 /** What a queue would do, and the one control that starts it. */
 function PlanState({
   conversion,
@@ -227,8 +366,8 @@ function PlanState({
       </dl>
 
       <p className="quiet-text" id="conversion-validation-disclosure" role="note">
-        {OUTPUT_ONLY_DISCLOSURE} They run one at a time, and Stop queue ends the whole queue
-        rather than one item.
+        {OUTPUT_ONLY_DISCLOSURE} They run one at a time, and Stop queue ends the whole queue rather
+        than one item.
       </p>
 
       <fieldset className="conversion-conflict">
@@ -310,8 +449,7 @@ function QueueState({
         </>
       ) : state.status === "awaitingDestination" ? (
         <p>Choose where to save the converted mzML.</p>
-      ) : state.status === "stopping" ||
-        (state.status === "running" && conversion.stopping) ? (
+      ) : state.status === "stopping" || (state.status === "running" && conversion.stopping) ? (
         <>
           <p>Stopping queue…</p>
           {/* Deliberately says nothing about how the current item will end.
@@ -447,23 +585,23 @@ function QueueState({
               the user stopped as work that broke. */}
           {state.reason === "completed" ? null : (
             <>
-              <p className="conversion-stopped-summary">
-                {stoppedSummary(queue)}
-              </p>
+              <p className="conversion-stopped-summary">{stoppedSummary(queue)}</p>
               <p className="quiet-text">
-                Completed outputs remain in the destination folder. Cancelled and not-run items
-                were not finalized by this queue.
+                Completed outputs remain in the destination folder. Cancelled and not-run items were
+                not finalized by this queue.
               </p>
             </>
           )}
-          <p className="quiet-text">
-            Converted files were not added to the workspace. Add them with Add files… when you
-            want to look at them.
-          </p>
+          <AdoptOutputs conversion={conversion} />
           {/* A stopped queue is terminal and is not rerun in place. Converting
               those rows again is a new queue, made from the roster, which is
               the ordinary path the selection workflow already offers. */}
-          {state.reason !== "completed" ? null : queue.retryableFailedCount === 0 ? (
+          {/* Not while an adoption is under way. A retry replaces the very
+              results the adoption is reading, so the two are never both live.
+              Removed rather than disabled: an action that is coming back is a
+              different thing from one that is refused. */}
+          {state.reason !== "completed" ||
+          conversion.adopting ? null : queue.retryableFailedCount === 0 ? (
             queue.nonRetryableFailedCount === 0 ? null : (
               <p className="quiet-text" role="note">
                 Those failures would not change on another attempt with the same acquisitions,

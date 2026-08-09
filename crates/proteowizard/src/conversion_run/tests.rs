@@ -14,6 +14,7 @@ use crate::conversion::{
     capture_conversion_source, verify_mzml_conversion_retaining_output,
     verify_vendor_conversion_retaining_output,
 };
+use crate::finalized_output::OutputDrift;
 
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -2993,9 +2994,10 @@ fn a_vendor_conversion_is_validated_on_its_output_alone() {
     let runner = FakeRunner::new(&convert_faithfully);
     let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
 
-    let ConversionRunOutcome::Finalized(valid) = report.outcome() else {
+    let ConversionRunOutcome::Finalized(finalized) = report.outcome() else {
         panic!("a faithful vendor conversion was not finalized: {report:?}");
     };
+    let valid = finalized.valid();
     assert_eq!(valid.validation_mode(), ValidationMode::OutputOnly);
     assert!(!valid.validation_mode().compares_against_source());
 
@@ -3057,9 +3059,10 @@ fn an_mzml_conversion_still_compares_against_its_source() {
     let runner = FakeRunner::new(&convert_faithfully);
     let report = run_conversion(&plan, &capabilities(), &runner);
 
-    let ConversionRunOutcome::Finalized(valid) = report.outcome() else {
+    let ConversionRunOutcome::Finalized(finalized) = report.outcome() else {
         panic!("a faithful mzML conversion was not finalized: {report:?}");
     };
+    let valid = finalized.valid();
     assert_eq!(valid.validation_mode(), ValidationMode::SourceComparison);
     assert!(valid.validation_mode().compares_against_source());
     assert!(
@@ -3750,9 +3753,10 @@ fn the_vendor_raw_evidence_run_is_reproducible() {
     let plan = ConversionPlan::to_mzml(source, &root, ConflictPolicy::Fail).expect("plan");
 
     let report = run_conversion(&plan, &capabilities, &crate::process::SystemProcessRunner);
-    let ConversionRunOutcome::Finalized(valid) = report.outcome() else {
+    let ConversionRunOutcome::Finalized(finalized) = report.outcome() else {
         panic!("the evidence conversion did not finalize: {report:?}");
     };
+    let valid = finalized.valid();
     assert_eq!(valid.validation_mode(), ValidationMode::OutputOnly);
     assert!(!valid.is_fully_verified());
     assert!(report.residue().is_none());
@@ -4362,5 +4366,179 @@ impl CancellationFailureFixture {
                 cancellation,
             ),
         }
+    }
+}
+
+/// A retention of a real file, built the way finalization builds one.
+///
+/// Writes a genuine output document so the inspection that produces the
+/// validated facts is the production one, not a stand-in for it.
+#[cfg(windows)]
+fn retained_output(directory: &Path, name: &str) -> (PathBuf, FinalizedOutput) {
+    let path = directory.join(name);
+    fs::write(&path, output_document()).expect("write an output to retain");
+    let (file, valid) = crate::conversion::ValidatedConversionOutput::retainable_for_test(&path)
+        .expect("inspect the output written for this test");
+    let retained = FinalizedOutput::retain(&file, valid).expect("retain the finalized output");
+    (path, retained)
+}
+
+/// The object opened at a name, as an adoption would open it.
+#[cfg(windows)]
+fn current_object(path: &Path) -> fs::File {
+    fs::File::open(path).expect("open the current object at that name")
+}
+
+/// The whole point of retaining anything: the same object, unchanged, is
+/// recognised -- and recognised again, because a check that consumed its answer
+/// would be a one-shot the adoption path could not repeat.
+#[cfg(windows)]
+#[test]
+fn a_finalized_output_still_matches_itself() {
+    let directory = TestDirectory::new();
+    let (path, retained) = retained_output(directory.path(), "alpha.mzML");
+
+    assert_eq!(retained.still_matches(&current_object(&path)), Ok(()));
+    assert_eq!(retained.still_matches(&current_object(&path)), Ok(()));
+}
+
+/// A different object at the same name is refused even when its bytes are
+/// identical, because a name is not an identity.
+#[cfg(windows)]
+#[test]
+fn another_object_at_the_final_name_is_not_the_finalized_one() {
+    let directory = TestDirectory::new();
+    let (path, retained) = retained_output(directory.path(), "alpha.mzML");
+
+    // Moved aside rather than removed, so the refusal cannot be an accident of
+    // the original having ceased to exist.
+    let aside = directory.path().join("moved-aside.mzML");
+    fs::rename(&path, &aside).expect("move the finalized output aside");
+    fs::write(&path, output_document()).expect("write a byte-identical impostor");
+
+    assert_eq!(
+        retained.still_matches(&current_object(&path)),
+        Err(OutputDrift::DifferentObject),
+        "identical content is not identity"
+    );
+    // The impostor is left exactly as it was found.
+    assert_eq!(
+        fs::read_to_string(&path).expect("read the impostor"),
+        output_document()
+    );
+}
+
+/// The same object holding different bytes is refused.
+///
+/// Reachable only because the retention deliberately permits writers, so this
+/// proves the posture as much as the comparison: a retention that forbade them
+/// would fail at the open instead, and this case would be unreachable.
+#[cfg(windows)]
+#[test]
+fn the_same_object_with_rewritten_bytes_is_refused() {
+    use std::io::Write as _;
+
+    let directory = TestDirectory::new();
+    let (path, retained) = retained_output(directory.path(), "alpha.mzML");
+
+    let mut writing = fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .expect("the retention permits the user to write their own file");
+    let rewritten = output_document().replace("scan=1", "scan=9");
+    assert_eq!(
+        rewritten.len(),
+        output_document().len(),
+        "this case is about content, so the length must not be what differs"
+    );
+    writing
+        .write_all(rewritten.as_bytes())
+        .expect("rewrite in place");
+    drop(writing);
+
+    assert_eq!(
+        retained.still_matches(&current_object(&path)),
+        Err(OutputDrift::ContentChanged),
+        "the same object is not the same bytes"
+    );
+}
+
+/// A rewrite that also changes the length is separated from one that does not,
+/// because the cheap half of the comparison runs first.
+#[cfg(windows)]
+#[test]
+fn the_same_object_at_a_different_length_is_refused() {
+    let directory = TestDirectory::new();
+    let (path, retained) = retained_output(directory.path(), "alpha.mzML");
+
+    fs::write(&path, b"<mzML/>").expect("truncate in place");
+
+    assert_eq!(
+        retained.still_matches(&current_object(&path)),
+        Err(OutputDrift::ByteLengthChanged)
+    );
+}
+
+/// The retention keeps the object alive, so nothing else can be issued its
+/// identity while MSCanvas is still talking about it.
+#[cfg(windows)]
+#[test]
+fn a_retained_output_outlives_its_own_name() {
+    let directory = TestDirectory::new();
+    let (path, retained) = retained_output(directory.path(), "alpha.mzML");
+    let identity = retained.retained_identity().expect("the object answers");
+
+    // Deleting is the user's to do, and the retention permits it.
+    fs::remove_file(&path).expect("the retention permits deletion");
+    assert!(!path.exists());
+    assert_eq!(
+        retained
+            .retained_identity()
+            .expect("the object outlives its directory entry"),
+        identity
+    );
+
+    // So a new file at that name is necessarily a different object.
+    fs::write(&path, output_document()).expect("write a new file at that name");
+    assert_ne!(
+        super::object_identity(&current_object(&path)).expect("identify the new file"),
+        identity
+    );
+    assert_eq!(
+        retained.still_matches(&current_object(&path)),
+        Err(OutputDrift::DifferentObject)
+    );
+}
+
+/// Dropping a retention closes a handle and does nothing else. The output is
+/// the user's file, in the folder they chose.
+#[cfg(windows)]
+#[test]
+fn dropping_a_retention_leaves_the_output_where_it_is() {
+    let directory = TestDirectory::new();
+    let (path, retained) = retained_output(directory.path(), "alpha.mzML");
+    drop(retained);
+
+    assert_eq!(
+        fs::read_to_string(&path).expect("the output survives the retention"),
+        output_document()
+    );
+}
+
+/// Neither the handle nor the place on disk may be rendered.
+#[cfg(windows)]
+#[test]
+fn a_retention_renders_nothing_about_the_object() {
+    let directory = TestDirectory::new();
+    let (_path, retained) = retained_output(directory.path(), "alpha.mzML");
+
+    let rendered = format!("{retained:?}");
+    assert!(rendered.contains("<opaque-finalized-output>"));
+    assert!(!rendered.contains("alpha"));
+    for separator in ['\\', '/'] {
+        assert!(
+            !rendered.contains(separator),
+            "a rendered retention carries no path: {rendered}"
+        );
     }
 }

@@ -306,6 +306,38 @@ impl ValidatedConversionOutput {
         &self.valid
     }
 
+    /// A retainable pair for a file a test wrote itself.
+    ///
+    /// Opens the object renameably — the same posture finalization hands on —
+    /// and judges it output-only, which is the honest verdict for a file with
+    /// no source to compare against. It exists so a test of *retention* does
+    /// not have to run a conversion to obtain something to retain.
+    #[cfg(all(test, windows))]
+    pub(crate) fn retainable_for_test(
+        path: &std::path::Path,
+    ) -> Result<(File, ValidConversion), ConversionOutputRejection> {
+        let directory = path.parent().expect("an output has a parent directory");
+        let name = path.file_name().expect("an output has a name");
+        let (file, output) = open_and_inspect_output(
+            directory,
+            name,
+            OpenFormat::MzMl,
+            MzmlScanLimits::default(),
+            OutputRetention::Retain,
+        )?;
+        Ok((
+            file,
+            ValidConversion {
+                output,
+                mode: ValidationMode::OutputOnly,
+                verified: BTreeSet::new(),
+                unverified: BTreeSet::new(),
+                inapplicable: BTreeSet::new(),
+                advisory: BTreeSet::new(),
+            },
+        ))
+    }
+
     /// Consumes the validated reading, yielding the handle that read it.
     ///
     /// Consuming is the point: an object can be finalized once, and the handle

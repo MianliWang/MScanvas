@@ -159,19 +159,36 @@ settings, its output-root choice and "Open file/folder" remain unreachable. See
    converter process ended, it says so and refuses further backend work until the
    application is restarted.
 
+10. `Add converted outputs to workspace` adds every finalized output of that
+    queue, in queue order, and only when it is pressed. Nothing is adopted
+    because a conversion finished and nothing is previewed as a result. Before
+    admitting one, MSCanvas re-establishes that the final name still refers to
+    the exact object it finalized and that the object still holds the byte
+    length and digest it validated; an output that is missing, replaced,
+    modified or no longer readable is reported as such and does not stop the
+    others, and one already in the workspace returns the row that is already
+    there. A stopped or stop-failed queue keeps whatever it finalized and can
+    still be adopted, and so can a session that has stopped trusting the
+    backend, because adding a file launches no process. Replace the queue or
+    restart, and the outputs are ordinary mzML files `Add files…` still reaches.
+
 **Success:** a set of acquisitions becomes a set of mzML files the user can
-find, one file's failure costs only that file, and the interface never claims
-more about any of them than output-only validation established.
+find, add to the session on purpose, and read -- one file's failure costs only
+that file, and the interface never claims more about any of them than
+output-only validation established.
 
 **Not included:** more than 16 items in one queue, any other vendor family,
 cancelling one item while the rest carry on, resuming a stopped queue, retrying
 one, a progress percentage, parallel conversion, a queue that survives closing
-the application, overwrite, and adding the outputs to the workspace.
+the application, overwrite, adopting a subset of a queue's outputs, adopting
+them automatically, previewing them automatically, and any record of where an
+adopted file came from that survives the session.
 Retry is offered only where Rust classifies the failure as retryable, which today
 means a destination folder that exists but would not open and an acquisition that
 exists but could not be read. See
 [ADR 0013](../architecture/adr/0013-serial-conversion-queue.md) and
-[ADR 0015](../architecture/adr/0015-user-visible-queue-stop.md).
+[ADR 0015](../architecture/adr/0015-user-visible-queue-stop.md) and
+[ADR 0016](../architecture/adr/0016-explicit-converted-output-adoption.md).
 
 ## WF-005 — Clear the workspace
 

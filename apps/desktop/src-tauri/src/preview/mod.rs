@@ -10,6 +10,7 @@
 //! output or an absolute filesystem path -- choosing a file or an installation
 //! is a request to show a picker, not a path the webview names.
 
+mod adoption;
 pub mod backend;
 mod conversion;
 mod destination;

@@ -53,6 +53,7 @@ use crate::conversion::{
     conversion_output_file_name, verify_mzml_conversion_retaining_output,
     verify_vendor_conversion_retaining_output,
 };
+use crate::finalized_output::FinalizedOutput;
 use crate::fs_guard::{self, OutputEntryKind, RegularFileError, snapshot_output_directory};
 use crate::mzml::{MzmlFacts, MzmlScanError, MzmlScanLimits};
 use crate::process::{LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner, Termination};
@@ -1072,7 +1073,11 @@ impl ConversionRunFailure {
 #[derive(Debug, PartialEq)]
 pub enum ConversionRunOutcome {
     /// The output passed the integrity contract and now holds its planned name.
-    Finalized(Box<ValidConversion>),
+    ///
+    /// Carries the object itself, not only what was read out of it: the final
+    /// name is an ordinary name once this returns, and only the retained object
+    /// can later say whether it still means the file this describes.
+    Finalized(Box<FinalizedOutput>),
     /// The planned destination name was already taken and the plan asked for it
     /// to be skipped. This says the name is occupied, not that a valid
     /// conversion holds it: what is there is deliberately not inspected, because
@@ -1338,10 +1343,25 @@ impl ConversionRunReport {
         self.residue
     }
 
+    /// Takes the retained output out of the report, where there was one.
+    ///
+    /// Consuming, because a retention has one owner: the caller that means to
+    /// recognise this output later takes it, and the report it leaves behind
+    /// keeps describing what was measured without claiming to hold anything.
+    #[must_use]
+    pub fn into_finalized_output(self) -> Option<FinalizedOutput> {
+        match self.outcome {
+            ConversionRunOutcome::Finalized(output) => Some(*output),
+            ConversionRunOutcome::SkippedExistingDestination | ConversionRunOutcome::Failed(_) => {
+                None
+            }
+        }
+    }
+
     #[must_use]
     pub const fn finalized(&self) -> Option<&ValidConversion> {
         match &self.outcome {
-            ConversionRunOutcome::Finalized(valid) => Some(valid),
+            ConversionRunOutcome::Finalized(output) => Some(output.valid()),
             ConversionRunOutcome::SkippedExistingDestination | ConversionRunOutcome::Failed(_) => {
                 None
             }
@@ -2419,6 +2439,17 @@ fn run_staged(
 
 mod cleanup;
 mod finalize;
+
+/// The volume serial and file identity of an object, read through a handle the
+/// caller already holds.
+///
+/// Teardown has always needed this to tell one child from another, and
+/// retaining a finalized output needs the same answer about the same kind of
+/// thing -- so it is one function rather than two spellings of one Win32 call.
+#[cfg(windows)]
+pub(crate) fn object_identity(object: &File) -> io::Result<(u64, [u8; 16])> {
+    cleanup::full_identity(object)
+}
 
 #[cfg(test)]
 mod tests;

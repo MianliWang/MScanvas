@@ -215,6 +215,104 @@ pub struct WorkspaceAddResultDto {
     pub outcomes: Vec<WorkspaceAddOutcomeDto>,
 }
 
+/// What one finalized output did when the user asked to adopt it.
+///
+/// Closed and path-free. Every member names a queue item by facts the webview
+/// already has -- its position and the row it was converted from -- plus the
+/// output name the queue displayed throughout. None of them carries where the
+/// file is, and only `added` and `alreadyInWorkspace` carry a workspace row,
+/// because they are the only two outcomes that have one.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum WorkspaceOutputAdoptionOutcomeDto {
+    /// A new row. The queue's own result is unchanged by this.
+    #[serde(rename_all = "camelCase")]
+    Added {
+        item_index: usize,
+        source_handle: String,
+        output_file_name: String,
+        dataset: SelectedFileDto,
+    },
+    /// The session already holds this exact object, by whatever route it
+    /// arrived. The existing row is returned as it stands.
+    #[serde(rename_all = "camelCase")]
+    AlreadyInWorkspace {
+        item_index: usize,
+        source_handle: String,
+        output_file_name: String,
+        dataset: SelectedFileDto,
+    },
+    /// Nothing was added, and this says only which of the honest reasons it was.
+    #[serde(rename_all = "camelCase")]
+    Refused {
+        item_index: usize,
+        source_handle: String,
+        output_file_name: String,
+        /// One of `output_missing`, `output_changed`, `output_unreadable`,
+        /// `output_not_mzml` or `workspace_full`. Stable, and never an OS error.
+        reason: String,
+    },
+}
+
+/// What adopting a terminal queue's finalized outputs did.
+///
+/// The roster is authoritative and complete, like every other workspace answer:
+/// a caller adopts it whole rather than splicing added rows into a list it
+/// already had.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceOutputAdoptionResultDto {
+    /// Which queue this describes, and which settling of it.
+    ///
+    /// Both, because neither alone identifies the result. A retry settles the
+    /// same operation a second time, and it can finish between two reads -- so a
+    /// caller holding this beside a queue needs to know it is the same round,
+    /// not merely the same queue in the same state.
+    pub operation_id: String,
+    pub retry_round: u64,
+    pub roster: WorkspaceRosterDto,
+    pub outcomes: Vec<WorkspaceOutputAdoptionOutcomeDto>,
+}
+
+/// There is no terminal queue of this caller's whose outputs could be adopted.
+///
+/// One refusal for a stale document, an unknown or superseded operation, a
+/// queue still running, and no queue at all. Telling them apart would describe
+/// session state to a caller that by construction is not the one holding it.
+#[must_use]
+pub fn outputs_not_adoptable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "outputs_not_adoptable",
+        "There are no converted outputs of yours to add.",
+        false,
+    )
+}
+
+/// Another adoption of the same queue is already under way.
+#[must_use]
+pub fn adoption_in_progress() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "adoption_in_progress",
+        "MSCanvas is already adding this queue's converted outputs.",
+        false,
+    )
+}
+
+/// The workspace changed while the outputs were being checked, so nothing was
+/// added.
+///
+/// Retryable by construction: the outputs are still on disk and the queue is
+/// still terminal, so asking again is the whole of the recovery.
+#[must_use]
+pub fn adoption_superseded() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "adoption_superseded",
+        "The workspace changed while MSCanvas was checking the converted outputs. Nothing was \
+         added. Try again.",
+        true,
+    )
+}
+
 /// What removing rows did, including the handles that named nothing.
 ///
 /// A handle the session no longer holds is an ordinary reconciliation outcome
@@ -745,7 +843,7 @@ pub fn queue_installation_changed() -> PreviewErrorDto {
 pub fn conversion_busy() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "conversion_busy",
-        "MSCanvas converts one acquisition at a time. Wait for the current conversion to finish.",
+        "MSCanvas is working on the conversion workflow. Wait for it to finish.",
         true,
     )
 }
