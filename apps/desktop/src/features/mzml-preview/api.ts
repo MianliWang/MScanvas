@@ -23,6 +23,10 @@ interface ConversionReservation {
   readonly reservationId: string;
 }
 
+interface DiagnosticsReservation {
+  readonly reservationId: string;
+}
+
 const DOCUMENT_AUTHORITY_HEADER = "mscanvas-document-authority";
 const DOCUMENT_AUTHORITY_PROPERTY = "__MSCANVAS_DOCUMENT_AUTHORITY__";
 
@@ -170,6 +174,28 @@ export interface PreviewApi {
    * an error, and does not stop the others.
    */
   adoptConversionOutputs(operationId: string): Promise<WorkspaceOutputAdoptionResult>;
+  /**
+   * Saves one local, redacted JSON diagnostics file for the terminal queue.
+   *
+   * Takes the operation identifier the caller is looking at and nothing else.
+   * Where the file goes is chosen in a Rust-owned native save dialog and never
+   * named by this side; what goes into it is decided by Rust, which is the side
+   * that knows the paths it has to remove.
+   *
+   * `onReserved` is called only after Rust has returned the reservation and the
+   * exact claim request has been dispatched, which is the boundary a caller must
+   * wait for before it can treat the export as owned.
+   *
+   * Resolves to the conversion state, whose `diagnostics.lastExport` carries the
+   * file name, length and digest — so a reply lost with a replaced document
+   * costs the replacement one read and nothing else. A dismissed dialog resolves
+   * to a state with nothing new on it, which is an ordinary outcome: nothing was
+   * created and nothing was written.
+   */
+  exportConversionDiagnostics(
+    operationId: string,
+    onReserved: () => void,
+  ): Promise<WorkspaceConversionUpdate>;
 }
 
 export const tauriPreviewApi: PreviewApi = {
@@ -232,6 +258,24 @@ export const tauriPreviewApi: PreviewApi = {
       { operationId },
       { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } },
     ),
+  exportConversionDiagnostics: (operationId, onReserved) => {
+    const invokeOptions = {
+      headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() },
+    };
+    return invoke<DiagnosticsReservation>(
+      "begin_workspace_conversion_diagnostics_export",
+      { operationId },
+      invokeOptions,
+    ).then((reservation) => {
+      const saved = invoke<WorkspaceConversionUpdate>(
+        "save_workspace_conversion_diagnostics",
+        { reservationId: reservation.reservationId },
+        invokeOptions,
+      );
+      onReserved();
+      return saved;
+    });
+  },
 };
 
 const PreviewApiContext = createContext<PreviewApi>(tauriPreviewApi);

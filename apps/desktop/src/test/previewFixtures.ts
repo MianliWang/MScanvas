@@ -14,6 +14,8 @@ import type { WorkspaceDropTransport } from "../features/mzml-preview/dropTransp
 import type {
   BackendAvailability,
   ConversionConflictPolicy,
+  ConversionDiagnosticsExport,
+  ConversionDiagnosticsState,
   ConversionQueuePlan,
   ConversionQueueItem,
   FolderDiscoverySummary,
@@ -26,6 +28,7 @@ import type {
   SpectrumRow,
   WorkspaceAddOutcome,
   WorkspaceConversionState,
+  WorkspaceConversionUpdate,
   WorkspaceRemoveResult,
   WorkspaceOutputAdoptionResult,
   WorkspaceRoster,
@@ -485,6 +488,16 @@ export interface FakePreviewApiOptions {
     operationId: string,
     roster: () => WorkspaceRoster,
   ) => Promise<WorkspaceOutputAdoptionResult>;
+  /**
+   * What one diagnostics export does.
+   *
+   * `null` stands for a dismissed save dialog, which is an ordinary outcome:
+   * nothing was created and the last export -- if there was one -- is untouched.
+   * Rejecting models a refusal Rust answered with.
+   */
+  readonly diagnosticsExport?: (
+    operationId: string,
+  ) => Promise<ConversionDiagnosticsExport | null>;
   readonly retry?: (
     publish: (state: WorkspaceConversionState) => void,
   ) => Promise<WorkspaceConversionState>;
@@ -573,6 +586,8 @@ export interface FakePreviewApi extends PreviewApi {
   readonly quarantineBackend: () => void;
   /** Every operation identifier a stop was asked for, in order. */
   readonly stopRequests: readonly string[];
+  /** Every operation identifier a diagnostics export was asked for, in order. */
+  readonly diagnosticsExportRequests: readonly string[];
   /** Every operation identifier an adoption was asked for, in order. */
   readonly adoptionRequests: readonly string[];
   /** Every conversion this fake was asked to start, in order. */
@@ -684,6 +699,56 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   const conversionRequests: ConversionRequest[] = [];
   const stopRequests: string[] = [];
   const adoptionRequests: string[] = [];
+  const diagnosticsExportRequests: string[] = [];
+  // The diagnostics export slot, modelled the way Rust holds it: eligibility is
+  // derived from the terminal queue rather than tracked, an export is a claim
+  // that closes every other action on that queue, and the last result survives
+  // until a new queue replaces it.
+  let diagnosticsExporting = false;
+  let lastDiagnosticsExport: ConversionDiagnosticsExport | null = null;
+  /**
+   * Which items of a terminal queue an export would describe.
+   *
+   * The same rule Rust applies: an ordinary failure, an unconfirmed stop, and
+   * any terminal item that left staging residue behind. A finalized or skipped
+   * item with nothing left over has nothing to diagnose.
+   */
+  const diagnosticItemCount = (): number =>
+    conversion.status === "terminal"
+      ? conversion.queue.items.filter(
+          (item) =>
+            item.state === "failed" ||
+            item.state === "cancellationFailed" ||
+            (item.report?.stagingResidue ?? null) !== null ||
+            (item.cancellation?.stagingResidue ?? null) !== null,
+        ).length
+      : 0;
+  const diagnosticsState = (): ConversionDiagnosticsState => {
+    const eligibleItemCount = diagnosticItemCount();
+    // A stop-failed queue is exportable for what the queue itself records, even
+    // where no item carries a diagnostic of its own.
+    const stopFailed = conversion.status === "terminal" && conversion.reason === "stopFailed";
+    return {
+      eligibleItemCount,
+      available: conversion.status === "terminal" && (eligibleItemCount > 0 || stopFailed),
+      exporting: diagnosticsExporting,
+      lastExport: lastDiagnosticsExport,
+    };
+  };
+  const conversionUpdate = (): WorkspaceConversionUpdate => ({
+    sequence: conversionSequence,
+    state: conversion,
+    diagnostics: diagnosticsState(),
+    backendQuarantined,
+  });
+  const defaultDiagnosticsExport = (operationId: string): ConversionDiagnosticsExport => ({
+    operationId,
+    retryRound: conversion.status === "terminal" ? conversion.queue.retryRound : 0,
+    fileName: "mscanvas-conversion-diagnostics.json",
+    byteLength: 4_096,
+    sha256: "2C26B46B68FFC68FF99B453C1D30413413422D706483BFA0F98A5E886266E7AE",
+    diagnosticItemCount: diagnosticItemCount(),
+  });
   // The session's own verdict on the backend, which outlives any one queue and
   // is never cleared -- exactly as Rust holds it.
   let backendQuarantined = options.initialBackendQuarantined ?? false;
@@ -826,6 +891,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     publishConversion,
     quarantineBackend,
     stopRequests,
+    diagnosticsExportRequests,
     adoptionRequests,
     conversionRequests,
     inspectBackend: () =>
@@ -976,16 +1042,19 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       if (options.stateReadLatency !== undefined) {
         await options.stateReadLatency();
       }
-      return { sequence: conversionSequence, state: conversion, backendQuarantined };
+      return conversionUpdate();
     },
     retryConversions: async () => {
       const settled = options.retry === undefined ? conversion : await options.retry(publishConversion);
       publishConversion(settled);
-      return { sequence: conversionSequence, state: conversion, backendQuarantined };
+      return conversionUpdate();
     },
     convertDatasets: async (handles, conflictPolicy, onReserved) => {
       const request = { handles, conflictPolicy };
       conversionRequests.push(request);
+      // A new queue replaces the previous one, and this session's memory of
+      // having exported its diagnostics goes with it. The file does not.
+      lastDiagnosticsExport = null;
       // Started before the reservation edge is announced, so a conversion that
       // publishes `running` has published it by the time the caller reads the
       // slot. Rust marks running inside the destination command for the same
@@ -998,7 +1067,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       onReserved();
       const settled = await settling;
       publishConversion(settled);
-      return { sequence: conversionSequence, state: conversion, backendQuarantined };
+      return conversionUpdate();
     },
     // Modelled as Rust behaves: every finalized item of the terminal queue, in
     // queue order, admitted unless the session already holds a row of that
@@ -1066,7 +1135,34 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       const settled =
         options.stop === undefined ? conversion : await options.stop(operationId, publishConversion);
       publishConversion(settled);
-      return { sequence: conversionSequence, state: conversion, backendQuarantined };
+      return conversionUpdate();
+    },
+    // Modelled as Rust behaves: the claim closes every other action on the
+    // terminal queue for the whole of the export, and the result -- a name, a
+    // length and a digest -- survives on the slot afterwards so a document that
+    // reloaded mid-write still learns what happened.
+    exportConversionDiagnostics: async (operationId, onReserved) => {
+      diagnosticsExportRequests.push(operationId);
+      diagnosticsExporting = true;
+      conversionSequence += 1;
+      onReserved();
+      let written: ConversionDiagnosticsExport | null;
+      try {
+        written =
+          options.diagnosticsExport === undefined
+            ? defaultDiagnosticsExport(operationId)
+            : await options.diagnosticsExport(operationId);
+      } finally {
+        // Cleared however this ends, exactly as Rust clears its own claim: a
+        // flag left set by a refusal would close every action on the terminal
+        // queue for the rest of the session.
+        diagnosticsExporting = false;
+        conversionSequence += 1;
+      }
+      if (written !== null) {
+        lastDiagnosticsExport = written;
+      }
+      return conversionUpdate();
     },
   };
 

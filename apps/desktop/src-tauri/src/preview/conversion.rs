@@ -21,11 +21,11 @@ use mscanvas_proteowizard::FinalizedOutput;
 #[cfg(test)]
 use mscanvas_proteowizard::run_conversion;
 use mscanvas_proteowizard::{
-    BackendExecutionFailure, BackendRunFacts, CancellationFailure, CancellationReport,
-    ConflictPolicy, ConversionAttempt, ConversionCancellation, ConversionPlan, ConversionPlanError,
-    ConversionPolicy, ConversionRunFailure, ConversionRunOutcome, ConversionRunReport,
-    ConversionSource, ConversionSourceKind, InstalledHelpCapabilities, IntegrityProperty,
-    OpenFormat, StagingResidue, ValidationMode, conversion_output_file_name,
+    BackendDiagnosticText, BackendExecutionFailure, BackendRunFacts, CancellationFailure,
+    CancellationReport, ConflictPolicy, ConversionAttempt, ConversionCancellation, ConversionPlan,
+    ConversionPlanError, ConversionPolicy, ConversionRunFailure, ConversionRunOutcome,
+    ConversionRunReport, ConversionSource, ConversionSourceKind, InstalledHelpCapabilities,
+    IntegrityProperty, OpenFormat, StagingResidue, ValidationMode, conversion_output_file_name,
     provider_build_is_evidenced, run_conversion_cancellable,
 };
 
@@ -110,11 +110,11 @@ pub(super) struct OutputFacts {
 /// that could have been made and was not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ValidationFacts {
-    mode: ValidationMode,
-    verified: Vec<&'static str>,
-    unverified: Vec<&'static str>,
-    inapplicable: Vec<&'static str>,
-    fully_verified: bool,
+    pub(super) mode: ValidationMode,
+    pub(super) verified: Vec<&'static str>,
+    pub(super) unverified: Vec<&'static str>,
+    pub(super) inapplicable: Vec<&'static str>,
+    pub(super) fully_verified: bool,
 }
 
 impl WorkspaceConversionReport {
@@ -177,6 +177,32 @@ impl WorkspaceConversionReport {
     /// Whether another attempt could plausibly end differently.
     pub(super) const fn is_retryable(&self) -> bool {
         self.retryable
+    }
+
+    /// What this report contributes to a failure diagnostic.
+    ///
+    /// Read individually rather than projected into a second structure. These
+    /// are the same safe values `to_dto` forwards -- stable identifiers, closed
+    /// enumerations and measurements -- so a diagnostic built from them can
+    /// carry no more than the panel already shows.
+    pub(super) const fn outcome_id(&self) -> &'static str {
+        self.outcome
+    }
+
+    pub(super) const fn detailed_outcome_id(&self) -> Option<&'static str> {
+        self.detailed_outcome
+    }
+
+    pub(super) const fn backend_facts(&self) -> Option<BackendRunFacts> {
+        self.backend
+    }
+
+    pub(super) const fn residue(&self) -> Option<StagingResidue> {
+        self.residue
+    }
+
+    pub(super) const fn validation_facts(&self) -> Option<&ValidationFacts> {
+        self.validation.as_ref()
     }
 }
 
@@ -526,8 +552,13 @@ pub(super) fn run_planned_conversion_cancellable(
 pub(super) enum ConvertedItem {
     /// A conversion reached an outcome. The retained output is `Some` exactly
     /// when that outcome finalized one, and it is what a later adoption
-    /// recognises the file by.
-    Reported(WorkspaceConversionReport, Option<Box<FinalizedOutput>>),
+    /// recognises the file by. The redacted backend text is `Some` exactly
+    /// where the run kept any, which is where it failed.
+    Reported(
+        WorkspaceConversionReport,
+        Option<Box<FinalizedOutput>>,
+        Option<Box<BackendDiagnosticText>>,
+    ),
     Cancelled(CancellationReport),
     CancellationFailed(CancellationFailure),
 }

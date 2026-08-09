@@ -10,6 +10,8 @@ use std::time::SystemTime;
 
 use mscanvas_proteowizard::{DiscoveredTool, DiscoveryFailure, DiscoveryResult, Sha256Digest};
 
+use super::diagnostics::DiagnosticsProviderFacts;
+use super::dto::{MAX_BACKEND_LABEL_CHARS, bounded_text, redact_absolute_paths};
 use super::selection::{FileIdentity, file_identity};
 
 /// One resolved tool, identified well enough to notice it being replaced.
@@ -148,6 +150,15 @@ pub(crate) struct InstallationIdentity {
     /// between two copies of the same files.
     release: Option<String>,
     build_date: Option<String>,
+    /// The ProteoWizard source revision `msconvert` reported about itself, where
+    /// it did.
+    ///
+    /// It is here so a diagnostics export can say which build produced a
+    /// failure without re-probing anything. It joins the two facts beside it in
+    /// the comparison, which is the same class of claim: what the binaries say
+    /// about themselves corroborates the filesystem facts and never replaces
+    /// them.
+    source_revision: Option<String>,
 }
 
 impl InstallationIdentity {
@@ -161,7 +172,26 @@ impl InstallationIdentity {
             msaccess: ToolIdentity::resolved(&discovery.msaccess)?,
             release: discovery.release.clone(),
             build_date: discovery.build_date.clone(),
+            source_revision: discovery
+                .msconvert
+                .probe
+                .as_ref()
+                .and_then(|probe| probe.source_revision.clone()),
         })
+    }
+
+    /// What a diagnostics export may say about the build a queue ran on.
+    ///
+    /// A release, a build date, a revision and a content digest. Never the
+    /// folder any of them was read from: which build it was is a fact about
+    /// software, and where it is installed is a fact about the user's computer.
+    pub(super) fn diagnostic_facts(&self) -> DiagnosticsProviderFacts {
+        DiagnosticsProviderFacts {
+            release: self.release.as_deref().map(safe_label),
+            build_date: self.build_date.as_deref().map(safe_label),
+            source_revision: self.source_revision.as_deref().map(safe_label),
+            executable_sha256: self.msconvert.content.map(|digest| digest.to_string()),
+        }
     }
 }
 
@@ -191,6 +221,7 @@ impl InstallationIdentity {
             msaccess: ToolIdentity::of(msaccess, None),
             release: Some(release.to_owned()),
             build_date: None,
+            source_revision: None,
         }
     }
 }
@@ -215,6 +246,17 @@ impl fmt::Debug for InstallationIdentity {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("<opaque-installation>")
     }
+}
+
+/// One provider label, bounded and shape-checked before it is written out.
+///
+/// A release, a build date and a revision are read out of the installed tool's
+/// own help text, which makes them backend text like any other -- and a build
+/// that printed a path in its version line would otherwise put one into a file
+/// that promises none. The same treatment the backend label on screen already
+/// gets, applied where the same strings go to disk.
+fn safe_label(value: &str) -> String {
+    bounded_text(&redact_absolute_paths(value), MAX_BACKEND_LABEL_CHARS)
 }
 
 /// Why a folder the user chose cannot be used, in terms this application can

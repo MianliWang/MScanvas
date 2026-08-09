@@ -76,6 +76,26 @@ const ADOPT_EXPLANATION =
  */
 const ADOPT_IN_FLIGHT = "Adding converted outputs…";
 
+/**
+ * The one sentence this action must never be offered without.
+ *
+ * Three claims in order, and the order is the argument. Local, so nobody looks
+ * for an upload. Redacted, so the effort is stated. And then the limit — backend
+ * text is written by an instrument's software about a real acquisition, and no
+ * amount of path removal makes that anonymous. It ends by asking for the one
+ * thing that actually protects the user, which is reading the file.
+ */
+const DIAGNOSTICS_EXPLANATION =
+  "Saves a local redacted JSON file. Known filesystem paths and internal identifiers are removed, but backend text may still contain acquisition metadata. Review the file before sharing.";
+
+/**
+ * What is true while an export is being written.
+ *
+ * No percentage. The file is bounded at a couple of megabytes and is written in
+ * one go, so a fraction would be a number invented to fill a progress bar.
+ */
+const DIAGNOSTICS_IN_FLIGHT = "Saving diagnostics…";
+
 /** Why one output was not added, in the user's terms rather than the boundary's. */
 const ADOPTION_REFUSAL_LABEL: Record<string, string> = {
   output_missing: "no longer in the destination folder",
@@ -144,7 +164,16 @@ export function ConversionPanel({
 
       {conversion.error === null ? null : (
         <div className="notice notice-danger" role="status">
-          <span>{conversion.error.summary}</span>
+          {/* Both halves. The summary says what happened; the detail is where a
+              refusal puts the part the user has to act on -- above all that a
+              failed export left a temporary file in their folder. Rendering
+              only the summary hid the one thing they could do about it. */}
+          <span>
+            {conversion.error.summary}
+            {conversion.error.detail === null ? null : (
+              <span className="notice-detail">{conversion.error.detail}</span>
+            )}
+          </span>
           <button className="link-button" onClick={conversion.dismissError} type="button">
             Dismiss
           </button>
@@ -278,6 +307,93 @@ function AdoptOutputs({ conversion }: { readonly conversion: ConversionOperation
       <p className="quiet-text">
         Finalized files remain on disk. If this queue is replaced, they can still be added later
         with Add files….
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Saving one local, redacted diagnostics file for a terminal queue.
+ *
+ * Offered only where there is something to diagnose, which is Rust's answer and
+ * not a count compared here: an ordinary failure, a stop that could not be
+ * confirmed, an item that left staging behind, or a queue whose own stop failed.
+ * A queue that simply worked exposes nothing, because there is nothing to say.
+ *
+ * Deliberately available while the backend is quarantined — that session is the
+ * one that most needs this, and an export launches no process. Deliberately not
+ * available beside an adoption: both read the same terminal queue and Rust runs
+ * one at a time.
+ *
+ * The action stays after a successful export rather than being replaced by its
+ * result. Saving a second copy, or saving to somewhere else, is an ordinary
+ * thing to want.
+ */
+function ExportDiagnostics({
+  conversion,
+}: {
+  readonly conversion: ConversionOperation;
+}): ReactElement | null {
+  const { diagnosticItemCount, diagnosticsExport } = conversion;
+
+  // Nothing to diagnose. No control, no explanation and no empty state: the
+  // queue's own result already says what happened to each item, and an action
+  // that is never usable is a control that only ever teaches its own absence.
+  //
+  // Asked of whether the offer exists, not of whether it can be taken right
+  // now. A control that vanished while an adoption ran and came back afterwards
+  // would read as flicker and would take the focus of whoever was standing on
+  // it; being unavailable for a moment is what `disabled` is for.
+  if (!conversion.diagnosticsAvailable && !conversion.exportingDiagnostics) {
+    return null;
+  }
+
+  return (
+    <div className="conversion-diagnostics">
+      {/* The one place the result is said, so a screen-reader user hears it
+          without moving and a sighted one reads it in the same words. Emptied
+          only while there is nothing to say. */}
+      <p aria-live="polite" className="conversion-diagnostics-summary">
+        {conversion.exportingDiagnostics
+          ? DIAGNOSTICS_IN_FLIGHT
+          : diagnosticsExport === null
+            ? ""
+            : `Saved ${diagnosticsExport.fileName}, ${String(diagnosticsExport.byteLength)} bytes, describing ${
+                diagnosticsExport.diagnosticItemCount === 1
+                  ? "1 item"
+                  : `${String(diagnosticsExport.diagnosticItemCount)} items`
+              }.`}
+      </p>
+      {diagnosticsExport === null ? null : (
+        /* The digest, so somebody about to send this on can confirm the bytes
+           they are sending are the bytes MSCanvas measured. Not a location:
+           the user chose the folder and this side was never told. */
+        <p className="quiet-text conversion-diagnostics-digest">
+          {`SHA-256 ${diagnosticsExport.sha256}`}
+        </p>
+      )}
+      <p>
+        {diagnosticItemCount === 1
+          ? "1 item of this queue has diagnostics worth saving."
+          : `${String(diagnosticItemCount)} items of this queue have diagnostics worth saving.`}
+      </p>
+      <div className="conversion-actions">
+        {/* Left mounted and disabled rather than replaced while it runs.
+            Removing the control a keyboard user just activated would drop focus
+            to the document and announce nothing; the live region above is what
+            tells them the work finished. */}
+        <button
+          aria-describedby="conversion-diagnostics-scope"
+          className="secondary-button"
+          disabled={!conversion.canExportDiagnostics}
+          onClick={conversion.exportDiagnostics}
+          type="button"
+        >
+          Export failure diagnostics…
+        </button>
+      </div>
+      <p className="quiet-text" id="conversion-diagnostics-scope" role="note">
+        {DIAGNOSTICS_EXPLANATION}
       </p>
     </div>
   );
@@ -593,6 +709,7 @@ function QueueState({
             </>
           )}
           <AdoptOutputs conversion={conversion} />
+          <ExportDiagnostics conversion={conversion} />
           {/* A stopped queue is terminal and is not rerun in place. Converting
               those rows again is a new queue, made from the roster, which is
               the ordinary path the selection workflow already offers. */}
@@ -601,7 +718,8 @@ function QueueState({
               Removed rather than disabled: an action that is coming back is a
               different thing from one that is refused. */}
           {state.reason !== "completed" ||
-          conversion.adopting ? null : queue.retryableFailedCount === 0 ? (
+          conversion.adopting ||
+          conversion.exportingDiagnostics ? null : queue.retryableFailedCount === 0 ? (
             queue.nonRetryableFailedCount === 0 ? null : (
               <p className="quiet-text" role="note">
                 Those failures would not change on another attempt with the same acquisitions,

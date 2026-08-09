@@ -6,6 +6,52 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
+- **`Export failure diagnostics…`**, for a conversion queue that has reached a
+  terminal state and has something worth diagnosing. It saves one local JSON
+  file, where you choose, describing the latest attempt of every diagnosable
+  item: an ordinary failure, a stop that could not be confirmed, or an item that
+  converted and left its staging area behind. A queue whose own stop failed is
+  described too, for what the queue itself records. A queue that simply worked
+  offers nothing at all.
+
+  Each item carries structured facts — the display name, the planned output name,
+  the attempt number, the boundary's own stable outcome and detail identifiers,
+  validation properties, bounded process facts, cleanup residue — and, where a
+  backend ran and failed, a bounded excerpt of what it printed on each stream.
+
+  The excerpts are redacted where MSCanvas can be exact: the acquisition, the
+  destination folder, the staging area, the converter executable and its
+  installation, the temporary folder and the user profile, in every spelling
+  Windows offers — case, separators, dot segments, extended-length and UNC
+  prefixes, and short and long names. What survives that is then judged by shape,
+  and an excerpt that still looks like it names an absolute local path is left
+  out of the file entirely with a stable reason in its place.
+
+  **This does not make the file anonymous.** Converter output is written by an
+  instrument's software about a real acquisition and may still contain
+  acquisition metadata. MSCanvas says so beside the action and again inside the
+  file, and asks you to review it before sharing.
+
+  Nothing is uploaded, mailed, posted or copied to the clipboard, no support site
+  is opened, and the saved file is not opened for you. An existing file of the
+  chosen name is never replaced — MSCanvas writes a private temporary file,
+  forces it to disk, and gives it the name you chose only if nothing already has
+  it. A refusal that leaves a temporary behind says so rather than hiding it.
+
+  Bounded throughout: at most 32 KiB per stream after redaction, at most one
+  diagnostic per queue item, and at most 2 MiB in the whole file. A document over
+  that is refused and writes nothing rather than being cut in half.
+
+  Session-only, like every other thing a queue holds. Only the latest attempt of
+  each item is described, a retry that works takes the failure it replaced with
+  it, and replacing the queue drops MSCanvas' memory of having exported — never
+  the file, which is yours. There is no diagnostics history and no run log.
+
+  It is refused while an adoption is under way and refuses one in return, because
+  both read the same terminal result. It launches no process, so a session that
+  has stopped trusting the backend can still use it — which is the session that
+  most needs it.
+
 - **`Add converted outputs to workspace`**, for a conversion queue that has
   reached a terminal state. It adds every finalized mzML output of that queue,
   in queue order, and only when the user asks: nothing is adopted because a

@@ -1104,3 +1104,39 @@ button:disabled {
   font-weight: 600;
   margin: 0;
 }
+
+/* The actionable half of a refusal, under the sentence that names it. A block
+   rather than a run of text, because it is a second statement and reading it as
+   the tail of the first is how it gets skipped. */
+.notice-detail {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.8125rem;
+}
+
+/* Saving a queue's diagnostics: the same shape as adoption and separated the
+   same way, because it is the same kind of thing -- an offer about what happens
+   next, beside a result rather than part of it. Two offers of one shape read as
+   one row of choices; two shapes would read as two unrelated features. */
+.conversion-diagnostics {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.conversion-diagnostics-summary {
+  font-weight: 600;
+  margin: 0;
+}
+
+/* A digest is sixty-four characters that must not be re-flowed into something a
+   reader would compare wrongly. Monospaced so it can be read a group at a time,
+   and allowed to break anywhere so a narrow window scrolls the page rather than
+   this line. */
+.conversion-diagnostics-digest {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+  margin: 0;
+}

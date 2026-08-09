@@ -299,6 +299,24 @@ Nothing on the wire carries a source path, a destination root, a staging path, a
 absolute output path, a raw handle, a filesystem identity, an internal epoch, a
 backend token, process output, or a raw OS error.
 
+### Amended 2026-08-09 (M3.6): an item also retains what it can say about failing
+
+Each item now carries at most one private diagnostic for its **latest** settling,
+where that settling is worth diagnosing: an ordinary failure, an unconfirmed
+stop, or any terminal item that left staging residue behind. It holds safe
+structured facts and, where a backend ran and failed, bounded redacted excerpts
+of its streams.
+
+It follows the retry rule the rest of the item does. A rerun that settles
+replaces the diagnostic whole, including with nothing — so a retry that works
+takes the failure's diagnostic with it, and a queue whose failures were all fixed
+has nothing to export. A stopped retry restores the results it had not reached,
+and those items keep the diagnostics they earned.
+
+Still no history, and still nothing persisted: one diagnostic per item, dropped
+when the queue is replaced. [ADR 0017](0017-redacted-conversion-diagnostics-export.md)
+records what may be said and what may not.
+
 ## Consequences
 
 The registered command surface grows from 17 to 18: `begin_workspace_conversion`

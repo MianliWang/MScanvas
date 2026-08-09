@@ -498,7 +498,13 @@ describe("stopping a running conversion queue", () => {
     expect(within(panel).queryByRole("button", { name: /^retry/i })).toBeNull();
     expect(within(panel).queryByRole("button", { name: /resume/i })).toBeNull();
     // The ordinary way to convert again is the one that was always there.
-    expect(within(panel).getByRole("button", { name: /^Convert/ })).toBeVisible();
+    //
+    // Awaited, unlike the two queries above it. Those assert an absence, which
+    // is true from the first render; this one asserts a presence that arrives
+    // with the plan for the focused row, which is a read. Asserting it
+    // synchronously passed whenever that read happened to have resolved and
+    // failed under load, which is a flake rather than a claim.
+    expect(await within(panel).findByRole("button", { name: /^Convert/ })).toBeVisible();
   });
 
   it("keeps Retry failed for a queue that ran to its own end", async () => {

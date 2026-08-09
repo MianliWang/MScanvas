@@ -8,9 +8,21 @@ use super::dto::PreviewErrorDto;
 
 #[cfg(windows)]
 pub use windows_dialog::{
-    choose_conversion_destination, choose_installation_folder, choose_mzml_folder,
-    choose_workspace_files,
+    choose_conversion_destination, choose_diagnostics_destination, choose_installation_folder,
+    choose_mzml_folder, choose_workspace_files,
 };
+
+#[cfg(not(windows))]
+pub fn choose_diagnostics_destination(
+    _owner: Option<isize>,
+    _default_file_name: &str,
+) -> Result<Option<std::path::PathBuf>, PreviewErrorDto> {
+    Err(PreviewErrorDto::new(
+        "file_picker_unavailable",
+        "The native save dialog is available on Windows in this version.",
+        false,
+    ))
+}
 
 #[cfg(not(windows))]
 pub fn choose_workspace_files(
@@ -132,6 +144,8 @@ mod windows_dialog {
     unsafe extern "system" {
         #[link_name = "GetOpenFileNameW"]
         fn get_open_file_name_w(arguments: *mut OpenFileNameW) -> i32;
+        #[link_name = "GetSaveFileNameW"]
+        fn get_save_file_name_w(arguments: *mut OpenFileNameW) -> i32;
         #[link_name = "CommDlgExtendedError"]
         fn comm_dlg_extended_error() -> u32;
     }
@@ -229,6 +243,131 @@ mod windows_dialog {
         // An answer that names nothing is the same fact as a cancelled dialog:
         // the workspace is left exactly as the user left it.
         Ok((!chosen.is_empty()).then_some(chosen))
+    }
+
+    /// Shows the native save dialog and returns where diagnostics should be
+    /// written, or `None` when the user cancelled.
+    ///
+    /// A save dialog rather than a folder picker, because what is being decided
+    /// is a file and its name. The default name is MSCanvas' own and the user
+    /// may change it, which is what makes exporting twice into one folder an
+    /// ordinary thing to do rather than something the no-clobber rule punishes.
+    ///
+    /// It is the same `comdlg32` entry point family the acquisition picker
+    /// already uses and the same `OPENFILENAMEW`: one struct, one set of flags
+    /// and one way of telling cancellation from failure, rather than a second
+    /// dialog implementation whose guarantees would have to be established
+    /// separately.
+    ///
+    /// Nothing is created here. This returns a name; admission decides whether
+    /// its folder is one this boundary will write into, and the write itself
+    /// refuses to replace anything.
+    ///
+    /// Must be called from a thread that can run a modal message loop; the
+    /// Tauri command dispatches it onto the main thread.
+    pub fn choose_diagnostics_destination(
+        owner: Option<isize>,
+        default_file_name: &str,
+    ) -> Result<Option<PathBuf>, PreviewErrorDto> {
+        let mut filter = Vec::new();
+        filter.extend_from_slice(&wide("Diagnostics (*.json)"));
+        filter.extend_from_slice(&wide("*.json"));
+        filter.push(0);
+        let title = wide("Save conversion diagnostics");
+        let default_extension = wide("json");
+
+        // The proposed name goes into the same buffer the answer comes back in,
+        // which is how this entry point is documented to receive one.
+        let mut buffer = vec![0_u16; SELECTION_BUFFER_LENGTH];
+        for (slot, unit) in buffer
+            .iter_mut()
+            .zip(default_file_name.encode_utf16().chain(std::iter::once(0)))
+        {
+            *slot = unit;
+        }
+
+        let mut arguments = OpenFileNameW {
+            struct_size: u32::try_from(std::mem::size_of::<OpenFileNameW>())
+                .expect("OPENFILENAMEW size fits in DWORD"),
+            owner: owner.map_or(std::ptr::null_mut(), |handle| handle as *mut c_void),
+            instance: std::ptr::null_mut(),
+            filter: filter.as_ptr(),
+            custom_filter: std::ptr::null_mut(),
+            max_custom_filter: 0,
+            filter_index: 1,
+            file: buffer.as_mut_ptr(),
+            max_file: u32::try_from(buffer.len()).expect("path buffer fits in DWORD"),
+            file_title: std::ptr::null_mut(),
+            max_file_title: 0,
+            initial_directory: std::ptr::null(),
+            title: title.as_ptr(),
+            // The same guarantees the acquisition picker asks for, minus the
+            // ones about opening an existing file: the folder must exist, the
+            // dialog must not change the working directory, must not resolve
+            // shortcuts behind the user's back and must not write to the
+            // recent-documents list. `OFN_FILEMUSTEXIST` is deliberately absent
+            // -- the whole point is a file that does not exist yet.
+            // Deliberately without `OFN_OVERWRITEPROMPT`. That prompt asks
+            // whether to replace an existing file, and this boundary will not
+            // replace one -- so answering yes would lead to a refusal, and the
+            // shell would have offered something MSCanvas does not do. The
+            // product rule is no implicit output overwrite; a dialog that
+            // implies otherwise is that rule being weakened in the one place a
+            // user is looking.
+            flags: OFN_PATHMUSTEXIST
+                | OFN_NOCHANGEDIR
+                | OFN_EXPLORER
+                | OFN_NODEREFERENCELINKS
+                | OFN_DONTADDTORECENT,
+            file_offset: 0,
+            file_extension: 0,
+            default_extension: default_extension.as_ptr(),
+            custom_data: 0,
+            hook: std::ptr::null_mut(),
+            template_name: std::ptr::null(),
+            reserved_pointer: std::ptr::null_mut(),
+            reserved_value: 0,
+            flags_ex: 0,
+        };
+
+        // SAFETY: every pointer field references a live buffer that outlives
+        // the call, and `struct_size`/`max_file` describe those buffers exactly.
+        let chosen = unsafe { get_save_file_name_w(&raw mut arguments) };
+        if chosen == 0 {
+            // SAFETY: the documented way to distinguish cancellation from
+            // failure immediately after the call returns zero.
+            let error = unsafe { comm_dlg_extended_error() };
+            if error == 0 {
+                return Ok(None);
+            }
+            return Err(PreviewErrorDto::new(
+                "file_picker_failed",
+                "The save dialog could not be opened.",
+                true,
+            ));
+        }
+
+        let chosen = read_single_path(&buffer)?;
+        Ok(Some(chosen))
+    }
+
+    /// Reads one NUL-terminated absolute path out of a dialog answer.
+    ///
+    /// A save dialog answers with exactly one name and no multi-selection form,
+    /// so this refuses anything that is not one absolute path rather than
+    /// reaching for the directory-then-names reading beside it.
+    fn read_single_path(buffer: &[u16]) -> Result<PathBuf, PreviewErrorDto> {
+        let Some(end) = buffer.iter().position(|unit| *unit == 0) else {
+            return Err(malformed_selection());
+        };
+        if end == 0 {
+            return Err(malformed_selection());
+        }
+        let chosen = PathBuf::from(std::ffi::OsString::from_wide(&buffer[..end]));
+        if !chosen.is_absolute() || chosen.file_name().is_none() {
+            return Err(malformed_selection());
+        }
+        Ok(chosen)
     }
 
     /// Reads the dialog's answer into the paths it names.

@@ -611,7 +611,7 @@ pub(super) fn full_identity(object: &File) -> io::Result<(u64, [u8; 16])> {
 /// refusal. The fallback exists because filesystems that do not implement the
 /// newer class are real.
 #[cfg(windows)]
-fn set_delete_disposition(object: &File) -> io::Result<()> {
+pub(super) fn set_delete_disposition(object: &File) -> io::Result<()> {
     use std::ffi::c_void;
     use std::mem::size_of;
     use std::os::windows::io::AsRawHandle;

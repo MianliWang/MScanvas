@@ -265,6 +265,51 @@ fn a_plan_derives_a_deterministic_mzml_name_and_fixes_every_other_decision() {
     );
 }
 
+/// A run keeps a redacted account of its streams exactly when it failed.
+///
+/// The asymmetry is the whole retention rule. A conversion that worked has
+/// nothing to diagnose, and keeping what a working backend printed would retain
+/// text about the user's acquisition for no purpose at all -- so the successful
+/// half of this test is the load-bearing one.
+#[test]
+fn only_a_failed_run_keeps_an_account_of_what_the_backend_said() {
+    let directory = TestDirectory::new();
+    let source = write_source(directory.path(), "sample.mzML");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act);
+    let mut report = run_conversion(&plan, &capabilities(), &runner);
+    assert!(report.finalized().is_some(), "{:?}", report.outcome());
+    assert!(
+        report.take_backend_text().is_none(),
+        "a conversion that worked retains nothing of what the backend printed"
+    );
+
+    // The same plan against a backend that rejects the input. Now there is
+    // something to account for, and it is kept.
+    let other = directory.path().join("failing");
+    fs::create_dir(&other).expect("create the second destination root");
+    let plan = plan_into(open_source(&source), &other, ConflictPolicy::Fail);
+    let act = |_spec: &CommandSpec| -> Result<i32, ProcessError> { Ok(1) };
+    let runner = FakeRunner::new(&act);
+    let mut report = run_conversion(&plan, &capabilities(), &runner);
+    assert!(report.finalized().is_none(), "{:?}", report.outcome());
+    let text = report
+        .take_backend_text()
+        .expect("a failed run keeps a redacted account of its streams");
+    // Bounded and truthful even where the backend said nothing at all.
+    assert_eq!(text.stdout().total_bytes(), 0);
+    assert!(!text.stdout().capture_truncated());
+    assert!(!text.stdout().excerpt_truncated());
+    // Taken once. The caller that retains a diagnostic is the only one, and a
+    // second copy on a report the queue keeps would be backend text in a value
+    // whose contract is that it holds none.
+    assert!(report.take_backend_text().is_none());
+}
+
 #[test]
 fn a_conversion_runs_in_a_private_staging_directory_and_finalizes_into_the_root() {
     let directory = TestDirectory::new();
