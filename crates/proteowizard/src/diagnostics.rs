@@ -1305,6 +1305,37 @@ mod tests {
         }
     }
 
+    /// A path pressed straight up against a label is still a path.
+    ///
+    /// Backend text concatenates without a space more often than it should,
+    /// and the exact redactor cannot match `sourceC:\\Users\\...` because its own
+    /// left-boundary rule refuses a token that begins mid-word. What catches it
+    /// is the separator after the colon rather than the drive letter: a colon is
+    /// a value boundary in this text, so the root is recognised from its right
+    /// side when it cannot be recognised from its left.
+    #[test]
+    fn a_drive_root_pressed_against_a_label_is_still_recognised() {
+        for concatenated in [
+            r"sourceC:\Users\alice\private.raw",
+            "sourceC:/Users/alice/private.raw",
+            r"input=fileD:\private\run.raw",
+        ] {
+            assert!(
+                absolute_path_start(concatenated).is_some(),
+                "{concatenated}"
+            );
+        }
+
+        // And end to end: nothing registered matches it, so the excerpt goes.
+        let redactor = Redactor::default().with_path(Path::new(r"C:\Temp"), "<local-path>");
+        let withheld = excerpt(br"sourceC:\Users\alice\private.raw", &redactor);
+        assert_eq!(withheld.text(), None);
+        assert_eq!(
+            withheld.suppression(),
+            Some(ExcerptSuppression::ResidualAbsolutePath)
+        );
+    }
+
     /// The one false positive that would make the whole feature useless.
     ///
     /// Replacing a directory root leaves its remainder behind, and a remainder
