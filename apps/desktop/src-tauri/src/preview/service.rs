@@ -1052,8 +1052,17 @@ impl PreviewService {
     /// running; the reply to the command that started it is not a reliable
     /// place to learn how it went, because that document may be gone.
     pub fn conversion_state(&self) -> WorkspaceConversionUpdateDto {
+        // The slot first, and the flag under it. A worker sets the quarantine
+        // before it moves the slot to its terminal state, so a reader holding
+        // the slot lock and asking afterwards sees every quarantine that any
+        // state it can observe was set before. Asking first inverts that: this
+        // read could carry the `stopFailed` sequence with `false` beside it,
+        // and because a document installs by sequence and stops polling at a
+        // terminal state, the true answer arriving later would be discarded and
+        // the session would go on saying the backend was fine.
+        let slot = self.conversion_slot();
         let quarantined = self.backend_is_quarantined();
-        self.conversion_slot().read(quarantined)
+        slot.read(quarantined)
     }
 
     /// Whether this session has stopped trusting the backend.

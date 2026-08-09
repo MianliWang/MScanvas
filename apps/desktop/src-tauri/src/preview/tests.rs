@@ -7,7 +7,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
@@ -11472,6 +11472,95 @@ fn a_quarantined_session_rechecks_without_launching_anything() {
         elsewhere.installation_generation, before.installation_generation,
         "a refused change is not a change"
     );
+}
+
+/// No read ever reports a queue whose stop could not be confirmed beside a
+/// session that still trusts the backend.
+///
+/// The two facts live behind different locks, and the worker sets the
+/// quarantine before it moves the slot. A read that asked for the flag first
+/// could carry the `stopFailed` sequence with `false` beside it -- and because a
+/// document installs by sequence and stops polling at a terminal state, the true
+/// answer arriving afterwards would be discarded and the session would go on
+/// saying the backend was fine.
+///
+/// An interleaving probe rather than a proof: it reads continuously across the
+/// whole stop and asserts the invariant on every observation, which is what the
+/// ordering guarantees and what asking in the wrong order would eventually
+/// violate.
+#[test]
+fn no_read_reports_an_unconfirmed_stop_beside_a_trusted_backend() {
+    let fixture = TestFile::new("queue-stop-snapshot");
+    let destination = destination_root(&fixture, "out");
+    let (runner, started, release) = StopAwareRunner::parked(StopEnding::Unterminated);
+    let service = Arc::new(PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    ))));
+    let handles: Vec<String> = ["one.raw", "two.raw"]
+        .iter()
+        .map(|name| add_one_acquisition(&service, &fixture.thermo_raw(name)))
+        .collect();
+
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("the queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let worker = {
+        let service = Arc::clone(&service);
+        let destination = destination.clone();
+        std::thread::spawn(move || service.run_claimed_conversion(operation, &destination))
+    };
+    started
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the first item reaches its process");
+
+    // Reads across the whole settling, exactly as a polling document does.
+    let stop_reading = Arc::new(AtomicBool::new(false));
+    let reader = {
+        let service = Arc::clone(&service);
+        let stop_reading = Arc::clone(&stop_reading);
+        std::thread::spawn(move || {
+            let mut observations = 0_usize;
+            while !stop_reading.load(Ordering::Relaxed) {
+                let update = service.conversion_state();
+                if matches!(
+                    update.state,
+                    WorkspaceConversionStateDto::Terminal {
+                        reason: ConversionQueueTerminalReasonDto::StopFailed,
+                        ..
+                    }
+                ) {
+                    assert!(
+                        update.backend_quarantined,
+                        "a stop that could not be confirmed is never reported beside a trusted backend"
+                    );
+                }
+                observations += 1;
+            }
+            observations
+        })
+    };
+
+    service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("the running queue of this document is stoppable");
+    release.send(()).expect("release the parked conversion");
+    let update = worker.join().expect("the queue worker finishes");
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::StopFailed
+    );
+    stop_reading.store(true, Ordering::Relaxed);
+    let observations = reader.join().expect("the reader finishes");
+    assert!(observations > 0, "the reader ran alongside the stop");
+
+    // And the settled answer carries both, which is what a reload recovers.
+    let settled = service.conversion_state();
+    assert!(settled.backend_quarantined);
 }
 
 /// A recheck already waiting on the backend gate does not probe once the queue
