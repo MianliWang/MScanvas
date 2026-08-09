@@ -2421,6 +2421,16 @@ impl PreviewService {
             drop(delivery);
             return None;
         }
+        // Under the gate and before the generation moves, like every other
+        // mutation. A drop claim is installed lock-free, so it can be taken in
+        // the interval before an adoption sets its flag -- and advancing here
+        // would supersede that adoption whether or not this drop went on to
+        // commit anything.
+        if self.adoption_is_in_flight() {
+            drop(gate);
+            drop(delivery);
+            return None;
+        }
 
         let generation = gate.advance();
         let workspace_was_empty = self.workspace().registry.len() == 0;
