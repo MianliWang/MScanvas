@@ -949,8 +949,15 @@ impl PreviewService {
 
     /// The session's conversion slot, locked.
     ///
-    /// A leaf lock. Nothing else is ever taken while it is held, so a caller
-    /// that needs a described row reads it first and takes this afterwards.
+    /// Very nearly a leaf lock: a caller that needs a described row reads it
+    /// first and takes this afterwards.
+    ///
+    /// The one exception is the document-epoch read that a retry and a stop both
+    /// make, which has to happen under the same lock the state moves under or it
+    /// describes a document that may have been replaced by the time it does. It
+    /// is safe because the reverse order does not exist: every path that asks
+    /// whether a conversion is busy reads the lock-free mirror beside this slot
+    /// rather than taking it, which is the reason that mirror exists.
     fn conversion_slot(&self) -> std::sync::MutexGuard<'_, ConversionSlot> {
         self.conversion
             .lock()
@@ -1524,6 +1531,15 @@ impl PreviewService {
                     ..
                 }
             );
+            // Before the queue state moves, not after. Quarantine is a fact
+            // about a process this session may have lost, and it must not
+            // depend on the slot still being this worker's -- the one path
+            // where settling fails is exactly a slot that moved on, and
+            // skipping the quarantine there would leave a possibly-surviving
+            // converter with nothing refusing the next one.
+            if unconfirmed {
+                self.quarantine_backend();
+            }
             let settled = self
                 .conversion_slot()
                 .settle_item(operation, index, outcome);
@@ -1531,11 +1547,9 @@ impl PreviewService {
                 drop(running);
                 return self.conversion_state();
             }
-            // The one state in which this session stops being willing to launch
-            // anything. Entered before the gate is released, so no operation
-            // queued behind this one can slip through between the two.
+            // Entered before the gate is released, so no operation queued
+            // behind this one can slip through between the two.
             if unconfirmed {
-                self.quarantine_backend();
                 drop(running);
                 return self.finish_queue(operation, TerminalReason::StopFailed);
             }

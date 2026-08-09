@@ -303,7 +303,8 @@ function QueueState({
         </>
       ) : state.status === "awaitingDestination" ? (
         <p>Choose where to save the converted mzML.</p>
-      ) : state.status === "stopping" || conversion.stopping ? (
+      ) : state.status === "stopping" ||
+        (state.status === "running" && conversion.stopping) ? (
         <>
           <p>Stopping queue…</p>
           {/* Deliberately says nothing about how the current item will end.

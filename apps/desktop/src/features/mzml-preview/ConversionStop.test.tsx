@@ -8,6 +8,7 @@ import {
   availableBackend,
   createFakePreviewApi,
   createFakeWorkspaceDropTransport,
+  previewError,
   queueItem,
   queueOf,
 } from "../../test/previewFixtures";
@@ -267,6 +268,44 @@ describe("stopping a running conversion queue", () => {
         "Completed outputs remain in the destination folder. Cancelled and not-run items were not finalized by this queue.",
       ),
     ).toBeVisible();
+  });
+
+  it("announces both the stop and the refusal that ended the queue", async () => {
+    // A queue-level refusal and a stop are not alternatives: the destination
+    // can become unwritable in the same moment the user presses Stop. The panel
+    // shows both, so a region that announced only one would be describing a
+    // different queue to the reader who cannot see it.
+    renderApp(
+      apiWith({
+        status: "terminal",
+        operationId: "1",
+        reason: "stopped",
+        queue: {
+          ...queueOf([
+            converted("file-1", "run-1.raw"),
+            cancelled("file-2", "run-2.raw"),
+            notRun("file-3", "run-3.raw"),
+          ]),
+          error: previewError({
+            kind: "destination_unwritable",
+            summary: "MSCanvas cannot write to that folder.",
+            retryable: false,
+          }),
+        },
+      }),
+    );
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(within(panel).getByText("Queue stopped")).toBeVisible();
+    });
+    expect(within(panel).getByText("MSCanvas cannot write to that folder.")).toBeVisible();
+    await waitFor(() => {
+      expect(liveRegion()).toContain(
+        "Queue stopped. 1 converted, 0 skipped, 0 failed, 1 cancelled, 1 not run.",
+      );
+    });
+    expect(liveRegion()).toContain("MSCanvas cannot write to that folder.");
   });
 
   it("offers no retry for a stopped queue, however many failures it holds", async () => {

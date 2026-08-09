@@ -784,12 +784,19 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
       : `Converting item ${String(position + 1)} of ${String(queue.itemCount)}, ${current.fileName}.`;
   }
   if (state.status === "terminal" && state.reason === "stopFailed") {
-    return workspace.conversion.backendQuarantined
-      ? "Queue stopped. MSCanvas could not confirm that the backend process stopped. Restart MSCanvas before starting another preview or conversion."
-      : "Queue stopped. MSCanvas could not confirm that the backend process stopped.";
+    return `Queue stopped. MSCanvas could not confirm that the backend process stopped.${
+      workspace.conversion.backendQuarantined
+        ? " Restart MSCanvas before starting another preview or conversion."
+        : ""
+    }${queue.error === null ? "" : ` ${queue.error.summary}`}`;
   }
   if (state.status === "terminal" && state.reason === "stopped") {
-    return `Queue stopped. ${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed, ${String(queue.cancelledCount)} cancelled, ${String(queue.notRunCount)} not run.`;
+    // The refusal that ended it, where there was one, said alongside rather
+    // than instead of the counts. The visible panel shows both, and a region
+    // that dropped one of them would describe a different queue.
+    return `Queue stopped. ${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed, ${String(queue.cancelledCount)} cancelled, ${String(queue.notRunCount)} not run.${
+      queue.error === null ? "" : ` ${queue.error.summary}`
+    }`;
   }
   if (queue.error !== null) {
     return queue.error.summary;
