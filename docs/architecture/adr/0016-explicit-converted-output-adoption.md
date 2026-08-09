@@ -162,6 +162,19 @@ adoption, because adoption launches no process; adoption does not clear
 quarantine either. An adopted row may enter a quarantined session's workspace,
 and previewing it stays refused under the existing policy.
 
+### Amended 2026-08-09 (M3.6): adoption is not the only action on a terminal queue
+
+A diagnostics export is the second, and the two are mutually exclusive while
+either is under way. Both only read the terminal queue, and Rust still runs one
+at a time: an adoption commits under the workspace mutation gate and an export
+can be sitting in a modal save dialog, so overlapping them would hold that gate
+for as long as a user takes to choose a folder.
+
+Either may be done first and neither consumes the other. Adoption does not remove
+an item's diagnostic eligibility, and an export changes no adoption ticket, no
+item outcome and no workspace row. [ADR 0017](0017-redacted-conversion-diagnostics-export.md)
+records the export.
+
 ### No persistence
 
 Tickets are session-scoped and do not survive a restart. After one, the outputs

@@ -89,8 +89,10 @@ directory-formatted acquisition recognition; filtering the workspace by
 anything other than filename, and grouping it; a workspace that outlives the
 session, which includes remembering a search or a sort; conversion progress as a
 percentage; cancelling one item of a queue while the rest carry on; resuming a
-stopped queue; a conversion queue that survives closing the application; and
-figure export. mzXML output stays disabled and fail-closed until
+stopped queue; a conversion queue that survives closing the application;
+diagnostics for anything but the latest attempt of each item, a diagnostics
+history, complete raw converter logs, and sending a diagnostics file anywhere;
+and figure export. mzXML output stays disabled and fail-closed until
 representative multi-source integrity checks pass.
 
 A conversion queue is reachable, and its limits are the claim. `Add files…`
@@ -126,6 +128,17 @@ workspace for you -- when a queue is over you can add its finalized outputs
 yourself, and MSCanvas admits one only when the final name still refers to the
 exact object it finalized and that object still holds the bytes it validated.
 Nothing is previewed automatically.
+
+When a queue is over and something in it went wrong, you can save one local JSON
+file describing it: which items failed, what the boundary called each failure,
+and a bounded excerpt of what the converter printed. Known filesystem paths and
+internal identifiers are removed, and an excerpt that still looks like it names
+one is left out of the file rather than saved. That is not the same as anonymous
+— converter output is written by an instrument's software about a real
+acquisition, so it may still carry acquisition metadata, and MSCanvas says so
+beside the action and again inside the file. Nothing is uploaded, nothing is sent
+anywhere, and a file of that name that already exists is never replaced. The file
+is yours to read before you decide who sees it.
 
 ## Product scope
 

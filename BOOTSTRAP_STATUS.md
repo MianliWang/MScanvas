@@ -3522,3 +3522,79 @@ raw handle or adoption token crosses the boundary. No auto-import, no
 auto-preview, no persistent provenance, no filesystem watching, no queue resume,
 no per-item cancellation, no parallelism, no overwrite, no mzXML and no second
 vendor family.
+
+## Redacted conversion diagnostics export, 2026-08-09
+
+A failed conversion said a stable identifier and a sentence. What would have been
+diagnosable is what `msconvert` printed, and that is exactly what named the
+acquisition, the folder, the staging area and the installation — so ADR 0009 had
+always dropped it when the run returned.
+
+**Where redaction happens.** Inside `run_staged`, while the plan, the staging
+area and the executable are still in scope. The captured bytes go out of scope
+with the run that made them, so nothing downstream holds raw process output and
+nothing downstream could redact it if it did: by then the paths are gone. The
+queue retains one bounded, redacted excerpt per stream and only for an attempt
+that failed.
+
+**Two mechanisms, composed.** `Redactor` removes every spelling of the paths this
+run knows — case, separators, dot segments, extended-length and UNC prefixes,
+Windows short and long names — and now counts what it replaced.
+`absolute_path_start`, the general shape test that had been the preview DTO's
+private path scrubber, moves into the crate so there is one owner of that rule;
+the DTO delegates to it unchanged. After exact-token redaction the shape test
+runs on exactly the string that would be written, and an excerpt that still looks
+like it names an absolute local path is withheld entirely with
+`residual_absolute_path` in its place.
+
+One false positive is forgiven and only one: a separator directly after a
+placeholder is the remainder of a path whose root was already replaced, so
+`<destination>\run.mzML` is kept. A drive letter or a `file:` URL after a
+placeholder is not a tail and still withholds the excerpt. Without the exemption
+almost every useful excerpt would be suppressed; broader than a separator, a leak
+would pass.
+
+**Bounds.** 32 KiB per stream after decoding and redaction, at most one
+diagnostic per queue item — the queue's own sixteen — and 2 MiB for the whole
+document, measured in memory including its trailing newline before anything is
+created. Over the bound is `diagnostics_too_large` and writes nothing: half a
+JSON document is a file no reader can open. The process boundary's 8 MiB capture
+limit is unchanged and was not raised to enlarge the export.
+
+**Schema.** One versioned document, `mscanvas.conversion-diagnostics` version 1,
+serialized by hand because no production dependency renders JSON and adding one
+for two hundred bytes of structure would be the wrong trade. Field order is fixed
+by the code that writes it, so two exports of an unchanged queue are byte
+identical. Streams are declared `prefix`, `withheld` or `none`, and each carries
+total bytes, captured bytes, both truncation flags separately, whether decoding
+was lossy, and the replacement count. The redaction section reports counts and
+never the values.
+
+**Writing.** The crate gains the writer it never had: a private sibling created
+exclusively, filled, flushed, synced, then renamed **by handle** with
+`ReplaceIfExists` false, and removed through that same handle on any failure. So
+the object published is the object written, an occupied name is a refusal that
+replaced nothing, and a cleanup failure is reported beside the primary one rather
+than folded into it. The folder goes through the destination admission that
+already refuses UNC, remote volumes, reparse points and non-directories.
+
+**Authority.** Two commands in the two-phase shape the destination picker
+established: a reservation issued synchronously and bound to the document, the
+terminal queue and which settling of it, consumed before `GetSaveFileNameW` is
+dispatched. A replaced document's unclaimed reservation is released; an export
+already writing completes and stores its result for the replacement to read.
+
+**Relationships.** An export and an adoption both own the terminal queue and Rust
+runs one at a time. While an export is in flight, retry, adoption, a new queue and
+every workspace mutation are refused; roster reads, search, sort, selection and an
+open preview are not. It takes no backend gate and launches no process, so
+quarantine does not block it and it does not clear one.
+
+**What crosses IPC.** Whether an export is available, how many items it would
+describe, whether one is running, and — after one — a basename, a byte length, a
+SHA-256 and an item count. No document, no excerpt, no path, no directory.
+
+No dependency and no capability was added. The two new commands are the
+twenty-first and twenty-second. No upload, no telemetry, no clipboard, no support
+workflow, no diagnostics history, no logging framework, and no claim that an
+exported file is anonymous or safe to share unreviewed.

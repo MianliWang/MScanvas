@@ -250,6 +250,16 @@ those sentences are more useful before the press than in a modal after it.
 would let MSCanvas launch a second converter beside one it has lost track of,
 over the same folder, and report both as ordinary work.
 
+**Amended 2026-08-09 (M3.6): quarantine does not block a diagnostics export.**
+
+An export launches no process and takes no backend gate, so a quarantined
+session may still save one — and that session is the one that most needs it,
+because a stop that could not be confirmed is exactly what a person would want a
+diagnostic for. Exporting does not clear the quarantine, for the reason nothing
+else does: no observation this session can make establishes that the process it
+lost track of has ended. A stop-failed queue is exportable for what the queue
+itself records even where no item carries a diagnostic of its own.
+
 **Clearing quarantine on the next successful operation.** Rejected. The next
 operation succeeding says nothing about the process that was never confirmed
 gone, and the clearing would be exactly the false reassurance the state exists

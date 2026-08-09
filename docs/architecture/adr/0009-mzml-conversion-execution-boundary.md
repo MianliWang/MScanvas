@@ -311,6 +311,21 @@ and peak owned-job memory — raw stdout and stderr are absent, because they can
 name the acquisition. The plan and the source render themselves without their
 paths or their file names.
 
+**Amended 2026-08-09 (M3.6): one derived thing does outlive the streams.**
+
+The paragraph above is still true of every type this boundary published when it
+was written, and the streams are still dropped when the run returns. What has
+changed is that a run which *fails* now builds one bounded, redacted excerpt of
+each stream before dropping them, and returns it beside the facts.
+
+It is built here rather than anywhere else for the reason the paragraph gives:
+this is the last place the run knows the acquisition, the destination, the
+staging area and the executable, so it is the only place those spellings can be
+removed. The excerpt is bounded at 32 KiB after redaction, is withheld entirely
+if it still looks like it names an absolute local path, and is opaque in
+`Debug`. A run that finalized keeps nothing. [ADR 0017](0017-redacted-conversion-diagnostics-export.md)
+records the whole of it.
+
 **Amended 2026-08-07 (M3.0.2): cleanup deletes objects, not names.**
 
 Proving that a path named an MSCanvas staging area and then deleting through

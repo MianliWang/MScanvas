@@ -172,6 +172,20 @@ settings, its output-root choice and "Open file/folder" remain unreachable. See
     backend, because adding a file launches no process. Replace the queue or
     restart, and the outputs are ordinary mzML files `Add files…` still reaches.
 
+11. `Export failure diagnostics…` appears for a terminal queue that has
+    something to diagnose: an item that failed, one whose stop could not be
+    confirmed, one that converted and left staging behind, or a queue whose own
+    stop failed. It saves one local JSON file where the user chooses, holding
+    structured facts about the latest attempt of each of those items and
+    bounded excerpts of what the backend printed. Known filesystem paths and
+    internal identifiers are removed, and an excerpt that still looks like it
+    names one is withheld rather than saved — but backend text may still contain
+    acquisition metadata, and the panel says so before the action is pressed.
+    MSCanvas reports only the file name, its size, its SHA-256 and how many
+    items it describes; nothing is uploaded, nothing is opened, and an existing
+    file of that name is never replaced. A queue that simply worked offers
+    nothing here at all.
+
 **Success:** a set of acquisitions becomes a set of mzML files the user can
 find, add to the session on purpose, and read -- one file's failure costs only
 that file, and the interface never claims more about any of them than
@@ -181,14 +195,18 @@ output-only validation established.
 cancelling one item while the rest carry on, resuming a stopped queue, retrying
 one, a progress percentage, parallel conversion, a queue that survives closing
 the application, overwrite, adopting a subset of a queue's outputs, adopting
-them automatically, previewing them automatically, and any record of where an
-adopted file came from that survives the session.
+them automatically, previewing them automatically, any record of where an
+adopted file came from that survives the session, diagnostics for an attempt
+earlier than the latest one, complete raw backend logs, a diagnostics history,
+uploading a diagnostics file anywhere, and any claim that an exported file is
+anonymous or safe to share unreviewed.
 Retry is offered only where Rust classifies the failure as retryable, which today
 means a destination folder that exists but would not open and an acquisition that
 exists but could not be read. See
 [ADR 0013](../architecture/adr/0013-serial-conversion-queue.md) and
 [ADR 0015](../architecture/adr/0015-user-visible-queue-stop.md) and
-[ADR 0016](../architecture/adr/0016-explicit-converted-output-adoption.md).
+[ADR 0016](../architecture/adr/0016-explicit-converted-output-adoption.md) and
+[ADR 0017](../architecture/adr/0017-redacted-conversion-diagnostics-export.md).
 
 ## WF-005 — Clear the workspace
 

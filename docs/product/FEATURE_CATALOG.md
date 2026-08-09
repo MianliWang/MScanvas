@@ -90,10 +90,24 @@ and the planned output names, but not as processing options it does not have.
 CNV-003 exposes no location choice beyond the folder itself. CNV-007's zlib is
 shown but not selectable. CNV-002 and CNV-004 to CNV-006 remain unreachable.
 
+A terminal queue that has something to diagnose also offers **Export failure
+diagnostics…**: one local JSON file, saved where the user chooses, holding
+structured facts about each diagnosable attempt and bounded, redacted excerpts of
+what the backend printed. Known filesystem paths and internal identifiers are
+removed and an excerpt that still looks like it names one is withheld — but
+backend text may still contain acquisition metadata, which the panel says beside
+the action and the file repeats inside itself. Nothing is uploaded and nothing is
+kept: the file is the user's, and replacing the queue drops this session's memory
+of having written one. See
+[ADR 0017](../architecture/adr/0017-redacted-conversion-diagnostics-export.md).
+
 The named limits: at most **16** items per queue, one vendor family, regular
 files only, one folder, no overwrite, one queue-level stop and no per-item
 cancellation, no percentage, no
-parallelism, and no queue that survives closing the application. Retry is narrow
+parallelism, and no queue that survives closing the application. A diagnostics
+export describes only the latest attempt of each item, holds at most 32 KiB per
+stream and 2 MiB in total, never replaces an existing file, and does not survive
+a restart. Retry is narrow
 by construction — only a destination folder that exists but would not open, and
 an acquisition that exists but could not be read, are classified retryable. See
 [ADR 0013](../architecture/adr/0013-serial-conversion-queue.md) and
@@ -120,9 +134,10 @@ recognized. See
 | RUN-002 | Failure isolation | P0 | One failure does not stop independent queued items. |
 | RUN-003 | Queue stop | P0 | Stops the whole queue: terminates the running process tree, begins no later item, retains completed outputs, and never reports a partial output as valid. An unconfirmed termination is reported as such and quarantines the backend. |
 | RUN-004 | Retry failed | P0 | Retries only selected/failed items without rebuilding the workspace. |
-| RUN-005 | Actionable error | P0 | User sees a plain-language cause/action before raw stderr. |
+| RUN-005 | Actionable error | P0 | User sees a plain-language cause/action before raw stderr. Raw stderr is never shown; a terminal queue's diagnosable attempts can instead be saved to one local redacted JSON file the user chooses. |
 | RUN-006 | Transactional output | P0 | Final filename appears only after successful process exit and basic checks. |
 | RUN-007 | Persistent run history | P2 | Runs and artifacts survive restart with interrupted states represented honestly. |
+| RUN-009 | Export failure diagnostics | P0 | Explicit, per terminal queue: saves one local redacted JSON file describing the latest attempt of every diagnostic-worthy item — an ordinary failure, an unconfirmed stop, or a terminal item that left staging behind. Structured facts plus bounded, redacted backend excerpts; an excerpt that still looks like it names a path is withheld. No upload, no telemetry, no history, no overwrite. Backend text may still contain acquisition metadata and the interface says so. |
 | RUN-008 | Adopt converted outputs | P0 | Explicit, per terminal queue: adds every finalized mzML output at once, in queue order. Admits one only when the final name still resolves to the exact finalized object and that object still holds the validated byte length and digest. Partial success; duplicates and refusals isolated; no auto-import, no auto-preview, no persistence. |
 
 ## Figure and data export

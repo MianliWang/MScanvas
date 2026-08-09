@@ -186,6 +186,17 @@ text.
 A process identifier cannot leak here even by mistake: `ProcessOutput` has never
 carried one, so there is nothing to copy.
 
+**Amended 2026-08-09 (M3.6).** `CancellationFailure` now also carries one bounded,
+redacted excerpt of each stream, taken out of it exactly once by the caller that
+retains a diagnostic. `CancellationReport` does not: a confirmed cancellation is
+what the user asked for and there is no failure for backend text to be an account
+of. The asymmetry is deliberate and is the same one the two types exist to
+express — an unconfirmed stop is the least diagnosable thing this boundary
+reports, and what the backend was saying before it stopped answering is often the
+only evidence there is. The excerpts are path-free by the rules
+[ADR 0017](0017-redacted-conversion-diagnostics-export.md) sets, and the raw
+streams are still dropped with the run.
+
 ## What the evidence established
 
 On release `3.0.26013`, revision `47b13cf`, `msconvert.exe` SHA-256
