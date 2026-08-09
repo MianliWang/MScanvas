@@ -1507,6 +1507,14 @@ impl PreviewService {
         let Some(operation) = slot.begin_retry() else {
             return Err(invalid_conversion_reservation());
         };
+        // The previous settling's export described attempts this rerun is about
+        // to replace. Dropped here rather than filtered on read, because a
+        // result that is no longer true of anything should not survive to be
+        // filtered. The file it named is untouched.
+        let mut export = self.diagnostics_export_slot();
+        export.forget();
+        self.publish_diagnostics_exporting(&export);
+        drop(export);
         self.publish_conversion_busy(&slot);
         drop(slot);
         drop(gate);
@@ -1736,18 +1744,24 @@ impl PreviewService {
         let operation: u64 = operation_id
             .parse()
             .map_err(|_| diagnostics_unavailable())?;
+        // The same gate a retry and an adoption take, and taken for the reason
+        // they take it. Those two check that no export is in flight and then
+        // wait for the conversion lock; an export that claimed the slot inside
+        // that window would leave a retry starting anyway -- against the very
+        // results a save dialog is about to describe. Serialising all three
+        // under one gate is what makes the check they already make sound.
+        let gate = self.enter_workspace_mutation_after_drop();
         if document_epoch != self.workspace_drop_document_epoch() {
             return Err(diagnostics_unavailable());
         }
-        // An adoption of the same terminal queue is the one other action that
-        // owns this result. Both only read it, but an adoption commits under the
-        // workspace gate and an export must not be able to start inside that.
+        // An adoption owns the same terminal queue. It holds this gate only for
+        // its first half, so the flag is asked as well as the gate held.
         if self.adoption_is_in_flight() {
             return Err(diagnostics_export_in_progress());
         }
         // Conversion first, export second, which is the order every path that
         // takes both uses.
-        let conversion = self.conversion_slot();
+        let mut conversion = self.conversion_slot();
         let Some((_, _, retry_round, _)) = conversion.terminal_diagnostics(operation) else {
             return Err(diagnostics_unavailable());
         };
@@ -1758,7 +1772,11 @@ impl PreviewService {
         let reservation = slot.begin(document_epoch, operation, retry_round);
         self.publish_diagnostics_exporting(&slot);
         drop(slot);
+        // A reader can now see that an export is under way, which is a
+        // transition like any other and needs the ordering key to move.
+        conversion.note_diagnostics_change();
         drop(conversion);
+        drop(gate);
         Ok(ConversionDiagnosticsReservationDto {
             reservation_id: reservation.0,
         })
@@ -1788,16 +1806,38 @@ impl PreviewService {
     /// An ordinary outcome. Nothing was created, nothing was written, and the
     /// last recorded export -- if there was one -- is left exactly as it was.
     pub fn cancel_conversion_diagnostics_export(&self) -> WorkspaceConversionUpdateDto {
-        let mut slot = self.diagnostics_export_slot();
         // The narrow release, not the unconditional one. Every caller reaches
         // here before a write begins -- a dialog that could not be dispatched,
         // one that failed, one the user closed -- and a cancel that could
         // release a slot somebody is writing to would let a second export start
         // beside the first.
-        slot.release_awaiting_destination();
+        self.change_diagnostics(DiagnosticsExportSlot::release_awaiting_destination);
+        self.conversion_state()
+    }
+
+    /// Changes the export slot and records that a reader can see it.
+    ///
+    /// One function rather than the same four lines at every transition,
+    /// because the part that is easy to forget is the last one: the diagnostics
+    /// state rides on the conversion read, so it shares that read's ordering
+    /// key, and a document installs by that key. A transition that did not
+    /// advance it would be a transition no document ever applies.
+    ///
+    /// Takes the conversion lock first, which is the order every path that
+    /// holds both uses.
+    /// The change answers whether a reader can see it, and the key moves only
+    /// then. A page load releases a reservation that usually is not there, and
+    /// advancing for that would make every reload look like a transition to
+    /// every document reading the slot.
+    fn change_diagnostics(&self, change: impl FnOnce(&mut DiagnosticsExportSlot) -> bool) {
+        let mut conversion = self.conversion_slot();
+        let mut slot = self.diagnostics_export_slot();
+        let observable = change(&mut slot);
         self.publish_diagnostics_exporting(&slot);
         drop(slot);
-        self.conversion_state()
+        if observable {
+            conversion.note_diagnostics_change();
+        }
     }
 
     /// Writes one terminal queue's diagnostics to the file the user chose.
@@ -1883,20 +1923,24 @@ impl PreviewService {
         // Recorded under the export slot's own lock, before the guard above
         // releases it, so a document reading between the two cannot see an idle
         // slot with no result on it.
-        let mut slot = self.diagnostics_export_slot();
-        slot.finish(Some(result.clone()));
-        self.publish_diagnostics_exporting(&slot);
-        drop(slot);
+        self.change_diagnostics(|slot| slot.finish(Some(result.clone())));
+
         // Already idle, so this only clears the mirror it already agrees with.
         drop(exporting);
         Ok(result)
     }
 
-    /// Releases an unclaimed diagnostics reservation whose document is gone.
+    /// Releases a reservation whose document is gone, claimed or not.
+    ///
+    /// Claimed included, exactly as a conversion destination reservation is
+    /// released. A save dialog belonging to a replaced document may still be on
+    /// screen, and what this decides is that whatever it answers with is
+    /// dropped: nothing is written, no partial file exists, and the replacement
+    /// document is offered the export again. Leaving a claimed reservation
+    /// alive instead would keep the slot busy on the strength of a dialog no
+    /// document is waiting for.
     fn release_diagnostics_reservation(&self) {
-        let mut slot = self.diagnostics_export_slot();
-        slot.release_awaiting_destination();
-        self.publish_diagnostics_exporting(&slot);
+        self.change_diagnostics(DiagnosticsExportSlot::release_awaiting_destination);
     }
 
     /// Advances the workspace generation for one adoption and returns it.
@@ -4483,9 +4527,11 @@ struct DiagnosticsExportInFlight<'service>(&'service PreviewService);
 
 impl Drop for DiagnosticsExportInFlight<'_> {
     fn drop(&mut self) {
-        let mut slot = self.0.diagnostics_export_slot();
-        slot.release();
-        self.0.publish_diagnostics_exporting(&slot);
+        // Through the same helper every other transition uses, so a failed
+        // export is seen to have ended. Releasing without moving the ordering
+        // key would leave every document that installs by it still showing an
+        // export under way, with every action it closes still closed.
+        self.0.change_diagnostics(DiagnosticsExportSlot::release);
     }
 }
 

@@ -13369,3 +13369,177 @@ fn a_reload_releases_an_unclaimed_export_and_keeps_the_offer() {
     );
     fs::remove_file(&saved).expect("remove the exported diagnostics");
 }
+
+/// A diagnostics transition is an observable transition.
+///
+/// The diagnostics state rides on the conversion read, and a document
+/// installs a read only when its ordering key has moved. A transition that
+/// left the key alone would be one no document ever applies: the export
+/// would appear to run for ever, and every action it closes would stay
+/// closed until a reload.
+#[test]
+fn every_diagnostics_transition_moves_the_ordering_key() {
+    let fixture = TestFile::new("diagnostics-sequence");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    fs::write(destination.join("one.mzML"), b"taken").expect("occupy the planned name");
+    let update = queue_and_run(&service, &[handle], &destination);
+    let operation = terminal_operation(&update);
+    let document = current_document(&service);
+
+    let settled = service.conversion_state().sequence;
+
+    let reservation = service
+        .begin_conversion_diagnostics_export(&operation, document)
+        .expect("the terminal queue is exportable");
+    let reserved = service.conversion_state();
+    assert!(
+        reserved.sequence > settled,
+        "asking for an export is something a reader can see"
+    );
+    assert!(reserved.diagnostics.exporting);
+
+    let (claimed, round) = service
+        .claim_conversion_diagnostics_export(&reservation.reservation_id, document)
+        .expect("claim the reservation");
+    let saved = destination.join("diagnostics.json");
+    service
+        .write_conversion_diagnostics(claimed, round, &saved)
+        .expect("the export is written");
+
+    let written = service.conversion_state();
+    assert!(
+        written.sequence > reserved.sequence,
+        "and so is finishing one"
+    );
+    assert!(!written.diagnostics.exporting);
+    assert!(written.diagnostics.last_export.is_some());
+
+    // A cancelled dialog moves it too, because it is what returns the offer.
+    service
+        .begin_conversion_diagnostics_export(&operation, document)
+        .expect("a second export may be asked for");
+    let asked = service.conversion_state().sequence;
+    let cancelled = service.cancel_conversion_diagnostics_export();
+    assert!(cancelled.sequence > asked, "so is closing the dialog");
+    assert!(!cancelled.diagnostics.exporting);
+
+    fs::remove_file(&saved).expect("remove the exported diagnostics");
+}
+
+/// A result belongs to one settling of one queue.
+///
+/// A retry produces different attempts under the same operation, so an
+/// export taken before it describes something that is no longer the latest
+/// answer about anything. Showing its name, size and digest beside the new
+/// round would attach a file to results it was not made from.
+#[test]
+fn a_retry_drops_the_export_that_described_the_settling_before_it() {
+    let fixture = TestFile::new("diagnostics-retry-result");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let done = add_one_acquisition(&service, &fixture.thermo_raw("done.raw"));
+    let held = fixture.thermo_raw("held.raw");
+    let blocked = add_one_acquisition(&service, &held);
+
+    let writer = hold_for_writing(&held);
+    let update = queue_and_run(&service, &[done, blocked], &destination);
+    let operation = terminal_operation(&update);
+    let saved = destination.join("diagnostics.json");
+    export_diagnostics(&service, &operation, &saved).expect("the export is written");
+    assert!(service.conversion_state().diagnostics.last_export.is_some());
+
+    drop(writer);
+    service
+        .retry_conversion_queue(current_document(&service))
+        .expect("a retryable failure can be retried");
+
+    let after = service.conversion_state();
+    assert_eq!(
+        after.diagnostics.last_export, None,
+        "the file described attempts this rerun replaced"
+    );
+    // And the file itself is untouched. Dropping the memory of an export is
+    // not undoing one.
+    assert!(saved.exists(), "the exported file is the user's");
+    fs::remove_file(&saved).expect("remove the exported diagnostics");
+}
+
+/// A reload drops a save dialog's answer rather than letting it write.
+///
+/// The same rule a conversion destination reservation follows, and the same
+/// reason: the document that would receive the answer is gone. What this
+/// pins is the consequence -- the choice is dropped, nothing is written, and
+/// the replacement document is offered the export again rather than
+/// inheriting a half-finished one.
+#[test]
+fn a_reload_drops_the_answer_of_a_dialog_it_replaced() {
+    let fixture = TestFile::new("diagnostics-reload-claimed");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    fs::write(destination.join("one.mzML"), b"taken").expect("occupy the planned name");
+    let update = queue_and_run(&service, &[handle], &destination);
+    let operation = terminal_operation(&update);
+    let document = current_document(&service);
+
+    // Reserved and claimed: the dialog is open.
+    let reservation = service
+        .begin_conversion_diagnostics_export(&operation, document)
+        .expect("the terminal queue is exportable");
+    let (claimed, round) = service
+        .claim_conversion_diagnostics_export(&reservation.reservation_id, document)
+        .expect("claim the reservation");
+
+    service.begin_webview_document();
+
+    // The user chooses a file in a dialog nobody is waiting for.
+    let saved = destination.join("diagnostics.json");
+    let refusal = service
+        .write_conversion_diagnostics(claimed, round, &saved)
+        .expect_err("a released reservation writes nothing");
+    assert_eq!(refusal.kind, "invalid_diagnostics_reservation");
+    assert!(!saved.exists(), "and no file exists under the chosen name");
+    assert_eq!(
+        entry_names(&destination),
+        vec!["one.mzML"],
+        "nor any temporary object beside it"
+    );
+
+    // The replacement document is offered the same export, and can take it.
+    let recovered = service.conversion_state();
+    assert!(recovered.diagnostics.available);
+    assert!(!recovered.diagnostics.exporting);
+    assert_eq!(recovered.diagnostics.last_export, None);
+    export_diagnostics(&service, &operation, &saved).expect("the replacement exports");
+    fs::remove_file(&saved).expect("remove the exported diagnostics");
+}
+
+/// Provider metadata is backend text, and is treated as backend text.
+///
+/// A release line is read out of the installed tool's own help output, so a
+/// build that printed a path in it would put one into a file that promises
+/// none. Asserted on the projection rather than through a run, because no
+/// fake backend in this repository can be made to report a path as its
+/// version and the rule should not depend on one that could.
+#[test]
+fn a_provider_label_that_names_a_path_is_scrubbed_before_it_is_written() {
+    let identity = InstallationIdentity::for_test(
+        Path::new(r"C:\Program Files\ProteoWizard\msconvert.exe"),
+        Path::new(r"C:\Program Files\ProteoWizard\msaccess.exe"),
+        r"3.0.0 built from C:\Users\alice\private-build",
+    );
+
+    let facts = identity.diagnostic_facts();
+
+    let release = facts.release.as_deref().expect("a release label");
+    assert!(
+        mscanvas_proteowizard::absolute_path_start(release).is_none(),
+        "{release}"
+    );
+    assert!(!release.contains("alice"), "{release}");
+    assert!(release.starts_with("3.0.0 built from "), "{release}");
+    // The path is gone and the version it was printed beside is not.
+    assert!(release.contains("<path>"), "{release}");
+}

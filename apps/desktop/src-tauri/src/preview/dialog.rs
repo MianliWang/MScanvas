@@ -140,22 +140,6 @@ mod windows_dialog {
         flags_ex: u32,
     }
 
-    /// Warns about a name that is already taken, before the dialog closes.
-    ///
-    /// It is kept for the case it actually helps: a user who picks an existing
-    /// name by accident is told inside the dialog and can choose another
-    /// without starting over.
-    ///
-    /// It is not the guarantee, and it slightly overpromises — the shell offers
-    /// to replace the file and MSCanvas will not, so a user who insists is
-    /// refused afterwards by a message that says exactly that. The alternative
-    /// is worse: without the prompt the name is accepted silently, the dialog
-    /// closes, and the refusal arrives with no way to correct it in place.
-    ///
-    /// The no-clobber write behind it is the guarantee, and it holds for a file
-    /// that appeared after the prompt as well as one that was there before.
-    const OFN_OVERWRITEPROMPT: u32 = 0x0000_0002;
-
     #[link(name = "comdlg32")]
     unsafe extern "system" {
         #[link_name = "GetOpenFileNameW"]
@@ -323,8 +307,14 @@ mod windows_dialog {
             // shortcuts behind the user's back and must not write to the
             // recent-documents list. `OFN_FILEMUSTEXIST` is deliberately absent
             // -- the whole point is a file that does not exist yet.
+            // Deliberately without `OFN_OVERWRITEPROMPT`. That prompt asks
+            // whether to replace an existing file, and this boundary will not
+            // replace one -- so answering yes would lead to a refusal, and the
+            // shell would have offered something MSCanvas does not do. The
+            // product rule is no implicit output overwrite; a dialog that
+            // implies otherwise is that rule being weakened in the one place a
+            // user is looking.
             flags: OFN_PATHMUSTEXIST
-                | OFN_OVERWRITEPROMPT
                 | OFN_NOCHANGEDIR
                 | OFN_EXPLORER
                 | OFN_NODEREFERENCELINKS

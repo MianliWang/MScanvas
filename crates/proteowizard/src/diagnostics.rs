@@ -1281,6 +1281,30 @@ mod tests {
         );
     }
 
+    /// A placeholder in the backend's own output buys no exemption.
+    ///
+    /// Nothing here can tell a marker redaction emitted from one an
+    /// acquisition's metadata happened to contain, so the exemption must not
+    /// rest on trusting it. It does not: what follows still has to be one
+    /// component, and a path has more.
+    #[test]
+    fn a_placeholder_the_backend_printed_does_not_excuse_a_path_after_it() {
+        let redactor = Redactor::default().with_path(Path::new(r"C:\Temp"), "<local-path>");
+
+        for printed in [
+            "spectrum title <local-path>/home/alice/private.raw",
+            r"spectrum title <local-path>\Users\alice\private.raw",
+        ] {
+            let excerpt = excerpt(printed.as_bytes(), &redactor);
+            assert_eq!(excerpt.text(), None, "{printed}");
+            assert_eq!(
+                excerpt.suppression(),
+                Some(ExcerptSuppression::ResidualAbsolutePath),
+                "{printed}"
+            );
+        }
+    }
+
     /// The one false positive that would make the whole feature useless.
     ///
     /// Replacing a directory root leaves its remainder behind, and a remainder

@@ -1498,6 +1498,16 @@ impl ConversionSlot {
         }
     }
 
+    /// Records that something a reader can see about diagnostics has changed.
+    ///
+    /// The diagnostics state rides on this update, so it shares this update's
+    /// ordering key. Without this a document would reject every read carrying a
+    /// diagnostics change -- it installs by sequence, and the sequence would not
+    /// have moved -- and an export would appear to run for ever.
+    pub(super) fn note_diagnostics_change(&mut self) {
+        self.advance();
+    }
+
     fn advance(&mut self) {
         self.sequence = self
             .sequence

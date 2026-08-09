@@ -209,6 +209,12 @@ The provider section says which build produced the failure and never where it is
 installed. The source revision is carried on the installation identity rather
 than re-probed; the executable path and installation folder are never exported.
 
+A release, a build date and a revision are read out of the installed tool's own
+help text, which makes them backend text like any other. They go through the
+same bounding and shape scrubbing the backend label on screen already gets, so a
+build that printed a path in its version line cannot put one into a file that
+promises none.
+
 The redaction section says how many replacements were made and how many excerpts
 were withheld. It does **not** list what was replaced: a manifest of removed
 values is the removed values.
@@ -235,6 +241,13 @@ flags, one way of telling cancellation from failure — titled **Save conversion
 diagnostics**, defaulting to `mscanvas-conversion-diagnostics.json`, filtered to
 `*.json`. No save path crosses the webview boundary in either direction.
 
+Deliberately *without* the shell's overwrite prompt. That prompt asks whether to
+replace an existing file, and this boundary will not replace one — so answering
+yes would lead to a refusal, and the shell would have offered something MSCanvas
+does not do. The product rule is no implicit output overwrite, and a dialog that
+implies otherwise is that rule being weakened in the one place a user is looking.
+An occupied name is answered by a refusal that says so and names the recovery.
+
 It follows the existing two-phase pattern exactly: a reservation is issued
 synchronously and bound to the document, the terminal queue and which settling of
 it, and is consumed before the dialog is dispatched. A document that never
@@ -257,6 +270,25 @@ folded into it.
 A success answers with a basename, a byte length, a SHA-256 and an item count.
 The digest is what makes the answer checkable by someone about to send the file
 on. The containing directory is never returned.
+
+### Everything a reader can see shares one ordering key
+
+The diagnostics state rides on the conversion read, so it shares that read's
+sequence — and a document installs a read only when the sequence has moved. Every
+transition that changes what a reader can see therefore advances it: asking for
+an export, finishing one, and releasing one however it ended.
+
+A transition that did not would be a transition no document ever applies. The
+export would appear to run for ever, and retry, adoption and every workspace
+mutation would stay closed until a reload. It advances only on a real change,
+because a page load releases a reservation that usually is not there and every
+reload would otherwise look like a transition.
+
+Reserving also takes the workspace mutation gate a retry and an adoption take.
+Those two check that no export is in flight and *then* wait for the conversion
+lock; an export that claimed the slot inside that window would leave a retry
+starting anyway, against the very results a save dialog was about to describe.
+One gate over all three is what makes the check they already make sound.
 
 ### Nothing of the document crosses IPC
 
@@ -304,9 +336,14 @@ a failed write both leave the queue exactly as they found it.
 Diagnostic tickets are Rust session state and survive a webview reload with the
 terminal queue, so the action is offered again to the replacement document.
 
-An unclaimed reservation is released on document replacement, for the reason a
-conversion reservation is: the replacement never learns the identifier, so the
-slot would otherwise stay busy for the rest of the session.
+A reservation is released on document replacement whether or not its dialog has
+been claimed, exactly as a conversion destination reservation is. The
+replacement never learns the identifier, so a reservation left alive would keep
+the slot busy for the rest of the session on the strength of a dialog no
+document is waiting for. The consequence is stated rather than hidden: a save
+dialog belonging to a replaced document may still be on screen, and whatever it
+answers with is dropped — nothing is written, no partial file exists, and the
+replacement is offered the export again.
 
 An export that is **already writing** completes. Its result is stored on the slot
 and read by the replacement document on mount, which is the smaller of the two

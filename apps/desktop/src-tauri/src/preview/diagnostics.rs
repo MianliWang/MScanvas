@@ -484,11 +484,16 @@ impl DiagnosticsExportSlot {
     }
 
     /// Records what one export wrote and returns the slot to idle.
-    pub(super) fn finish(&mut self, result: Option<ConversionDiagnosticsExportDto>) {
+    ///
+    /// Answers whether a reader can see the difference, like every other
+    /// transition here. Finishing always can: either the slot stopped being
+    /// busy, or a result appeared, or both.
+    pub(super) fn finish(&mut self, result: Option<ConversionDiagnosticsExportDto>) -> bool {
         if let Some(result) = result {
             self.last = Some(result);
         }
         self.state = ExportState::Idle;
+        true
     }
 
     /// Returns the slot to idle however an export ended.
@@ -505,8 +510,10 @@ impl DiagnosticsExportSlot {
     ///
     /// The last recorded export is left alone either way: a cancelled export did
     /// not undo an earlier one.
-    pub(super) fn release(&mut self) {
+    pub(super) fn release(&mut self) -> bool {
+        let changed = self.is_busy();
         self.state = ExportState::Idle;
+        changed
     }
 
     /// Releases an unclaimed reservation whose document is gone.
@@ -520,19 +527,23 @@ impl DiagnosticsExportSlot {
     /// are going to a file the user chose, it cannot be un-asked, and the
     /// replacement document reads the result it stores rather than a state that
     /// pretends it never happened.
-    pub(super) fn release_awaiting_destination(&mut self) {
+    pub(super) fn release_awaiting_destination(&mut self) -> bool {
         if matches!(self.state, ExportState::AwaitingDestination { .. }) {
             self.state = ExportState::Idle;
+            return true;
         }
+        false
     }
 
     /// Drops everything belonging to a queue that is being replaced.
     ///
     /// The previously exported *file* is untouched and stays exactly where the
     /// user saved it. What is dropped is this session's memory of it.
-    pub(super) fn forget(&mut self) {
+    pub(super) fn forget(&mut self) -> bool {
+        let changed = self.is_busy() || self.last.is_some();
         self.state = ExportState::Idle;
         self.last = None;
+        changed
     }
 }
 

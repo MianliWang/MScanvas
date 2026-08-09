@@ -11,6 +11,7 @@ use std::time::SystemTime;
 use mscanvas_proteowizard::{DiscoveredTool, DiscoveryFailure, DiscoveryResult, Sha256Digest};
 
 use super::diagnostics::DiagnosticsProviderFacts;
+use super::dto::{MAX_BACKEND_LABEL_CHARS, bounded_text, redact_absolute_paths};
 use super::selection::{FileIdentity, file_identity};
 
 /// One resolved tool, identified well enough to notice it being replaced.
@@ -186,9 +187,9 @@ impl InstallationIdentity {
     /// software, and where it is installed is a fact about the user's computer.
     pub(super) fn diagnostic_facts(&self) -> DiagnosticsProviderFacts {
         DiagnosticsProviderFacts {
-            release: self.release.clone(),
-            build_date: self.build_date.clone(),
-            source_revision: self.source_revision.clone(),
+            release: self.release.as_deref().map(safe_label),
+            build_date: self.build_date.as_deref().map(safe_label),
+            source_revision: self.source_revision.as_deref().map(safe_label),
             executable_sha256: self.msconvert.content.map(|digest| digest.to_string()),
         }
     }
@@ -245,6 +246,17 @@ impl fmt::Debug for InstallationIdentity {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("<opaque-installation>")
     }
+}
+
+/// One provider label, bounded and shape-checked before it is written out.
+///
+/// A release, a build date and a revision are read out of the installed tool's
+/// own help text, which makes them backend text like any other -- and a build
+/// that printed a path in its version line would otherwise put one into a file
+/// that promises none. The same treatment the backend label on screen already
+/// gets, applied where the same strings go to disk.
+fn safe_label(value: &str) -> String {
+    bounded_text(&redact_absolute_paths(value), MAX_BACKEND_LABEL_CHARS)
 }
 
 /// Why a folder the user chose cannot be used, in terms this application can
