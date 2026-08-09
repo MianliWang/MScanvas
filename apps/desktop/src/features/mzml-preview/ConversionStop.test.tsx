@@ -318,6 +318,59 @@ describe("stopping a running conversion queue", () => {
     expect(panel.textContent ?? "").not.toContain("\\");
   });
 
+  it("makes a dispatched retry stoppable without waiting for a poll", async () => {
+    // Rust moves the slot to running inside the retry command and then does not
+    // answer until the whole rerun is over. Without a read of its own, the panel
+    // would hold the old terminal state until the next poll -- and a rerun of
+    // several acquisitions is exactly the wait a user wants to interrupt at the
+    // start of.
+    const completed: WorkspaceConversionState = {
+      status: "terminal",
+      operationId: "1",
+      reason: "completed",
+      queue: queueOf([
+        converted("file-1", "run-1.raw"),
+        queueItem("file-2", "run-2.raw", {
+          state: "failed",
+          attempts: 1,
+          retryable: true,
+          error: {
+            kind: "file_unreadable",
+            summary: "MSCanvas could not read that file.",
+            detail: null,
+            retryable: true,
+          },
+        }),
+        queueItem("file-3", "run-3.raw", { state: "finalized", attempts: 1 }),
+      ]),
+    };
+    const api = createFakePreviewApi({
+      initialDatasets: DATASETS,
+      availability: availableBackend,
+      initialConversion: completed,
+      // Modelled as Rust behaves: the slot moves to running inside the command,
+      // and the command does not answer until the whole rerun is over. This one
+      // never answers, so everything below happens inside the window under test.
+      retry: (publish) => {
+        publish(runningQueue());
+        return new Promise<WorkspaceConversionState>(() => {
+          // Deliberately never settled.
+        });
+      },
+    });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    fireEvent.click(await within(panel).findByRole("button", { name: "Retry 1 failed" }));
+
+    // The window itself never claims the queue cannot be stopped.
+    expect(panel.textContent ?? "").not.toContain("cannot cancel");
+    // And it resolves into a stoppable queue without a poll interval passing.
+    const stop = await within(panel).findByRole("button", { name: "Stop queue" });
+    expect(stop).toBeEnabled();
+    expect(stop).toHaveAccessibleDescription(STOP_EXPLANATION);
+  });
+
   it("announces both the stop and the refusal that ended the queue", async () => {
     // A queue-level refusal and a stop are not alternatives: the destination
     // can become unwritable in the same moment the user presses Stop. The panel

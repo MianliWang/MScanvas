@@ -262,6 +262,13 @@ export function useConversionOperation(
     if (!busy) {
       return undefined;
     }
+    // Leading, not only on the interval. A retry moves the slot to running
+    // inside a command that does not answer until the whole rerun is over, so
+    // the first thing this document can learn about that queue is a read of its
+    // own -- and waiting a poll interval for it is a window in which a rerun of
+    // several acquisitions offers no way to stop it. The interval still covers
+    // the case where this read lands before Rust made the transition.
+    readState();
     const timer = setInterval(readState, POLL_INTERVAL_MS);
     return () => {
       clearInterval(timer);
@@ -329,7 +336,8 @@ export function useConversionOperation(
 
   // Every row a live queue holds, not only the one running: a queued row
   // cannot be removed and cannot be searched away either, because the user has
-  // already committed it to work they cannot stop.
+  // already committed it to a queue that is holding it. Stopping that queue is
+  // how they get it back, and it is offered beside the queue.
   const busyHandles = useMemo(() => {
     if (
       state.status === "awaitingDestination" ||

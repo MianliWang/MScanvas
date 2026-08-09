@@ -2477,9 +2477,9 @@ impl PreviewService {
         let delivery = self.drop_updates.begin_delivery();
         let (batch, _generation, pending_busy) = self.begin_superseding_mutation();
         // Under the gate. Emptying the workspace would revoke the very row a
-        // conversion is reading, and this workflow cannot cancel one -- so the
-        // question has to be asked where the answer cannot change between
-        // asking it and acting on it.
+        // conversion is reading, and clearing the list is not the way to stop
+        // one -- so the question has to be asked where the answer cannot change
+        // between asking it and acting on it.
         if self.conversion_is_busy() {
             drop(batch);
             self.drop_updates.publish_terminal_with_busy(

@@ -269,9 +269,12 @@ function PlanState({
 /**
  * A queue under way, or the one that just finished.
  *
- * Item-count progress and nothing else. Nothing measures a fraction of a
- * `msconvert` run, and this workflow genuinely cannot stop one — so it says so
- * instead of offering a control that would only stop watching.
+ * Item-count progress and nothing else: nothing measures a fraction of a
+ * `msconvert` run, so a percentage here would be invented.
+ *
+ * A running queue can be stopped, and the control that does it is a queue-level
+ * one. It really stops the work rather than stopping the watching, which is why
+ * the copy beside it says what survives the stop before it is pressed.
  */
 function QueueState({
   conversion,
@@ -297,8 +300,12 @@ function QueueState({
       {retrying ? (
         <>
           <p>Retrying the failures…</p>
+          {/* True for as long as this branch is on screen, which is until the
+              state read dispatched beside the retry reports the rerun running.
+              The sentence it replaced said this workflow could not cancel a
+              running queue, which stopped being true in this release. */}
           <p className="quiet-text" role="note">
-            This conversion workflow cannot cancel a running queue.
+            Stop queue becomes available once the rerun is under way.
           </p>
         </>
       ) : state.status === "awaitingDestination" ? (

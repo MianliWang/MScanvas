@@ -154,8 +154,9 @@ export function PreviewWorkspace() {
     !workspace.workspaceBusy &&
     !workspace.pickerBusy &&
     !workspace.folderReservationPending;
-  // Emptying the list would revoke the row a conversion is reading, and this
-  // workflow cannot cancel one, so Rust refuses it outright.
+  // Emptying the list would revoke the row a conversion is reading. Stopping
+  // the queue is the way out of that, and it is the user's to take -- clearing
+  // the list is not a way to take it, so Rust refuses it outright.
   const canClear = canMutate && !workspace.conversion.busy;
   // Removing is narrower than clearing, and deliberately not the same boolean.
   // Rust refuses a removal only when the converting row is among the handles,
