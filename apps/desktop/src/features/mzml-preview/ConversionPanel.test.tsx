@@ -696,7 +696,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     );
   });
 
-  it("does not add converted outputs to the workspace", async () => {
+  it("offers converted outputs to the workspace rather than adding them", async () => {
     const api = createFakePreviewApi({
       initialDatasets: [first],
       availability: availableBackend,
@@ -707,11 +707,23 @@ describe("queueing selected Thermo RAW conversions", () => {
 
     fireEvent.click(within(panel).getByRole("button", { name: "Convert focused…" }));
     await waitFor(() => {
-      expect(within(panel).getByText(/1 converted/)).toBeVisible();
+      expect(within(panel).getByText("1 converted, 0 skipped, 0 failed of 1.")).toBeVisible();
     });
 
-    expect(within(panel).getByText(/were not added to the workspace/)).toBeVisible();
+    // Finishing a conversion adds nothing. The roster is still the one row the
+    // user curated, and the output is an offer rather than an arrival.
     expect(rows()).toHaveLength(1);
+    expect(
+      within(panel).getByText("1 converted mzML output is ready to add to this workspace."),
+    ).toBeVisible();
+    const adopt = within(panel).getByRole("button", {
+      name: "Add converted output to workspace",
+    });
+    expect(adopt).toBeEnabled();
+    expect(adopt).toHaveAccessibleDescription(
+      "MSCanvas verifies that each output is still the exact finalized file before adding it. Outputs are not previewed automatically.",
+    );
+    expect(api.adoptionRequests).toEqual([]);
   });
 
   it("refuses to preview a vendor row and says what to do instead", async () => {

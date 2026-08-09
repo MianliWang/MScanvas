@@ -7,6 +7,7 @@ import type {
   PreviewError,
   WorkspaceConversionState,
   WorkspaceConversionUpdate,
+  WorkspaceOutputAdoptionResult,
 } from "./contracts";
 import { toPreviewError } from "./contracts";
 
@@ -107,6 +108,22 @@ export interface ConversionOperation {
    * reason, so a reload recovers it with everything else.
    */
   readonly backendQuarantined: boolean;
+  /** Adds this terminal queue's finalized outputs to the workspace. */
+  readonly adopt: () => void;
+  /** Whether there are finalized outputs of this terminal queue to add. */
+  readonly canAdopt: boolean;
+  /** Whether an adoption this document asked for has not been answered. */
+  readonly adopting: boolean;
+  /** How many of this queue's items finalized an output. */
+  readonly eligibleOutputCount: number;
+  /**
+   * What the last adoption of this queue did, until the queue is replaced.
+   *
+   * Kept so the panel can report counts beside the result it belongs to. It is
+   * not the roster -- that is the workspace's, and was adopted whole when this
+   * arrived.
+   */
+  readonly adoption: WorkspaceOutputAdoptionResult | null;
 }
 
 /**
@@ -120,6 +137,7 @@ export interface ConversionOperation {
  */
 export function useConversionOperation(
   onInstallationGeneration: (generation: number) => void,
+  onOutputsAdopted: (result: WorkspaceOutputAdoptionResult) => void,
 ): ConversionOperation {
   const api = usePreviewApi();
   const [state, setState] = useState<WorkspaceConversionState>({ status: "idle" });
@@ -159,6 +177,11 @@ export function useConversionOperation(
   const [stopRequested, setStopRequested] = useState(false);
   // The session's own verdict on the backend, which outlives any one queue.
   const [backendQuarantined, setBackendQuarantined] = useState(false);
+  // Whether this document is inside an adoption it dispatched. Rendered,
+  // because every workspace action has to stop being offered for the whole of
+  // that window rather than only once Rust answers.
+  const [adopting, setAdopting] = useState(false);
+  const [adoption, setAdoption] = useState<WorkspaceOutputAdoptionResult | null>(null);
 
   useEffect(() => {
     mounted.current = true;
@@ -171,6 +194,12 @@ export function useConversionOperation(
     if (!mounted.current || update.sequence <= installedSequence.current) {
       return;
     }
+    // A queue that is no longer the one an adoption reported on takes its
+    // result with it. A count beside the wrong queue would describe work the
+    // user is no longer looking at.
+    setAdoption((previous) =>
+      previous !== null && update.state.status !== "terminal" ? null : previous,
+    );
     installedSequence.current = update.sequence;
     busyRef.current =
       update.state.status === "awaitingDestination" ||
@@ -280,6 +309,7 @@ export function useConversionOperation(
   // takes over from there.
   const busy =
     retrying ||
+    adopting ||
     state.status === "awaitingDestination" ||
     state.status === "running" ||
     state.status === "stopping";
@@ -403,10 +433,14 @@ export function useConversionOperation(
   // user made about the whole batch, and a queue whose stop could not be
   // confirmed must launch nothing at all -- Rust refuses both, and this is what
   // stops the interface offering them.
+  // Not while an adoption is under way. A retry replaces the very results an
+  // adoption is reading, so the two are offered apart even though both act on
+  // the same terminal queue.
   const canRetry =
     state.status === "terminal" &&
     state.reason === "completed" &&
     state.queue.retryableFailedCount > 0 &&
+    !adopting &&
     !backendQuarantined;
 
   // A running queue, and one this document has not already asked to stop.
@@ -469,6 +503,50 @@ export function useConversionOperation(
       });
   }, [api, applyUpdate, readState]);
 
+  // How many of this terminal queue's items produced an output that could be
+  // added. Derived from the authoritative state rather than tracked, so it
+  // cannot come to disagree with the list the panel is drawing.
+  const eligibleOutputCount =
+    state.status === "terminal"
+      ? state.queue.items.filter((item) => item.state === "finalized").length
+      : 0;
+
+  // Only a terminal queue, and only one that finalized something. A running or
+  // stopping queue's outputs are not all in yet, and a retry replaces the very
+  // results an adoption would be reading. Deliberately not gated on the backend
+  // being usable: adoption launches nothing.
+  const canAdopt =
+    state.status === "terminal" && eligibleOutputCount > 0 && !adopting && !retrying;
+
+  const adopt = useCallback(() => {
+    if (state.status !== "terminal" || adopting) {
+      return;
+    }
+    // Marked before the request leaves, like every other gate here: the actions
+    // this closes must close on the press rather than on the reply.
+    setAdopting(true);
+    setError(null);
+    const { operationId } = state;
+    api
+      .adoptConversionOutputs(operationId)
+      .then((result) => {
+        if (mounted.current) {
+          setAdopting(false);
+          setAdoption(result);
+        }
+        // Handed on even when this document is gone. The rows were committed by
+        // Rust either way, and the replacement reads the roster on mount.
+        onOutputsAdopted(result);
+      })
+      .catch((cause: unknown) => {
+        if (!mounted.current) {
+          return;
+        }
+        setAdopting(false);
+        setError(toPreviewError(cause));
+      });
+  }, [adopting, api, onOutputsAdopted, state]);
+
   const dismissError = useCallback(() => {
     setError(null);
   }, []);
@@ -492,5 +570,10 @@ export function useConversionOperation(
     canStop,
     stopping,
     backendQuarantined,
+    adopt,
+    canAdopt,
+    adopting,
+    eligibleOutputCount,
+    adoption,
   };
 }

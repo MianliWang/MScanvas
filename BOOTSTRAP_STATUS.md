@@ -3455,3 +3455,70 @@ No dependency and no capability was added. `stop_workspace_conversion_queue` is
 the nineteenth registered command and takes only an operation identifier. No
 resume, no per-item cancellation, no persistence, no parallelism, no overwrite,
 no mzXML, no second vendor family and no output auto-import.
+
+## Explicit converted-output adoption, 2026-08-09
+
+A terminal conversion queue now offers its finalized mzML outputs, and the user
+adds them. Nothing is adopted because a conversion finished, and nothing is
+previewed as a result.
+
+**Why the action is more than a shortcut for `Add files…`.** MSCanvas made these
+files, measured them, and can keep hold of the objects. Between finalization and
+the moment the user asks, the final name is an ordinary name in a writable
+folder: it can be given to a different object, and the object it named can be
+deleted and its file id reissued. So the question adoption answers is not "is
+there an mzML file called this?" but "is the file about to enter the workspace
+the exact object this queue finalized, still holding the bytes that were
+validated?".
+
+Both halves are required and neither implies the other. Identity alone admits a
+file rewritten in place; a digest alone admits any copy. The object those
+questions are asked of is the object the registry is about to hold — the accepted
+file's own lease — so there is no gap between the proof and the thing proved, and
+a writer-excluding hold spans the reading so the answer cannot go stale while it
+is being given.
+
+**What finalization now keeps.** It used to release the object it had just
+renamed. It now reopens that object *from its own handle* — `ReOpenFile` names an
+object rather than a path, so it is the same object by construction — with the
+same fully permissive sharing the workspace's own leases use, and releases the
+renaming handle immediately. That handle withholds write sharing, and keeping it
+would have quietly forbidden the user from writing to their own finished file;
+three existing finalization tests caught exactly that and pass unchanged against
+the reopen. The retention buys one thing and no more: the object cannot cease to
+exist while it is held, so its identity cannot be reissued.
+
+**Partial success, in queue order.** One output that is missing, replaced,
+modified, unreadable or no longer valid does not stop the others. Outcomes are
+closed and path-free: `added`, `alreadyInWorkspace`, or `refused` carrying
+`output_missing`, `output_changed`, `output_unreadable`, `output_not_mzml` or
+`workspace_full`. Registry semantics are the existing ones — duplicate before
+capacity, the existing row returned with its original origin, and no identifier
+consumed by a duplicate, a refusal or a full workspace.
+
+**Linearization.** Adoption hashes files, so it reserves a workspace generation
+under the mutation gate, releases it, checks and accepts outside every lock, then
+requires that generation and the queue to still be current before committing. A
+mutation that wins in between adds nothing at all and answers
+`adoption_superseded`, which is retryable because the outputs are still there. A
+reload participates in the same order, so an abandoned document cannot add rows
+its replacement never learns about.
+
+**Stopped, stop-failed and quarantined.** A stopped or stop-failed queue keeps
+whatever it finalized and remains adoptable; only `finalized` items are eligible.
+Quarantine does not block adoption, because adoption launches no process, and
+adoption does not clear quarantine — an adopted row may enter the workspace and
+still not be previewable.
+
+**No persistence.** Tickets are session-scoped and bounded by the queue's sixteen
+items. Replacing the queue drops them, which closes handles and does nothing to
+the files; after a restart the outputs are ordinary mzML files and `Add files…`
+reaches them. The panel says so before it is needed.
+
+No dependency and no capability was added.
+`adopt_workspace_conversion_outputs` is the twentieth registered command and
+takes only an operation identifier. No path, destination, filesystem identity,
+raw handle or adoption token crosses the boundary. No auto-import, no
+auto-preview, no persistent provenance, no filesystem watching, no queue resume,
+no per-item cancellation, no parallelism, no overwrite, no mzXML and no second
+vendor family.

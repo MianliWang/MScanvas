@@ -746,3 +746,23 @@ that reads an acquisition is asking for one to be read.
   *Unsupported formats* requires.
 - **M1.5** — Explorer drag-and-drop, whose security boundary differs from the
   folder picker's and is therefore separate.
+
+## Amendment 2026-08-09 (M3.5): a third origin, and one more admission route
+
+[ADR 0016](0016-explicit-converted-output-adoption.md) adds a way for a file to
+enter this registry that is not a picker, a folder or a drop: the user adopting
+the finalized outputs of a conversion queue.
+
+It changes nothing about what a row *is*. Adopted rows are `Mzml` like any other
+mzML row, take the same identity lease, are deduplicated by the same identity
+before the same capacity check, and consume an identifier only when they are
+actually added. What is new is a third `DatasetOrigin` — session-only, carrying
+the source row, its display name and the queue operation — so that a converted
+file is not described as `Added directly`. Like the folder origin it is not
+identity, not searched, not sorted by, and reaches the wire only through the
+collision-only relative context, as `Converted from <source basename>`.
+
+One accessor was added for it: the accepted file's own leased object, by shared
+reference, so adoption can prove its invariant against *the object the registry
+is about to hold* rather than against a name that currently resolves to it. No
+raw handle is exposed and no ownership is transferred.

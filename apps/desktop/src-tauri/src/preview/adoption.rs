@@ -255,9 +255,7 @@ fn hold_against_writers(output: &Path) -> Result<File, AdoptionRefusal> {
 fn hold_against_writers(output: &Path) -> Result<(), AdoptionRefusal> {
     match std::fs::symlink_metadata(output) {
         Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Err(AdoptionRefusal::Missing)
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(AdoptionRefusal::Missing),
         Err(_) => Err(AdoptionRefusal::Unreadable),
     }
 }

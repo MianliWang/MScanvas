@@ -6,6 +6,22 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
+- **`Add converted outputs to workspace`**, for a conversion queue that has
+  reached a terminal state. It adds every finalized mzML output of that queue,
+  in queue order, and only when the user asks: nothing is adopted because a
+  conversion finished, and nothing is previewed as a result. MSCanvas admits an
+  output only when the final name still refers to the exact object that queue
+  finalized *and* that object still holds the byte length and digest the
+  validation measured -- neither answer alone is enough, and the object those
+  questions are asked of is the one the workspace is about to hold. An output
+  that is missing, replaced, modified or no longer readable is reported as such
+  and does not stop the others; one already in the workspace returns the row
+  that is already there. Stopped and stop-failed queues keep whatever they
+  finalized and can still be adopted, and so can a session that has stopped
+  trusting the backend, because adding a file launches no process. Nothing is
+  persisted: replace the queue or restart, and the outputs are ordinary mzML
+  files that `Add files…` still reaches.
+
 - **`Stop queue`**, for a conversion queue that is running. It asks the current
   conversion to stop, begins none of the items after it, and reaches one terminal
   state. Outputs already completed stay in the destination folder and no partial

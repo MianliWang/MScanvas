@@ -32,7 +32,8 @@ use super::drop_ingestion::{
 use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, DropIngestionResultDto, DropScanLimitDto,
     MAX_WORKSPACE_DATASETS, PreviewErrorDto, SelectedFileDto, SelectedSpectrumOutcomeDto,
-    WorkspaceAddOutcomeDto, WorkspaceDropUpdateDto,
+    WorkspaceAddOutcomeDto, WorkspaceDropUpdateDto, WorkspaceOutputAdoptionOutcomeDto,
+    WorkspaceOutputAdoptionResultDto,
 };
 use super::dto::{
     ConversionConflictPolicyDto, ConversionOutputFormatDto, ConversionQueueDto,
@@ -3568,6 +3569,7 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "choose_workspace_conversion_destination",
             "retry_workspace_conversion_queue",
             "stop_workspace_conversion_queue",
+            "adopt_workspace_conversion_outputs",
         ]
     );
     // The picker command is named for the workspace it fills rather than for
@@ -10433,7 +10435,7 @@ fn a_confirmed_stop_cancels_the_running_item_and_runs_no_other() {
     assert!(queue.items[1].cancellation.is_none());
     assert_eq!(queue.items[1].attempts, 0);
     // None of the three is offered again. A cancelled item has nothing to
-    // correct and a not-run item never ran, so etryable on either would be a
+    // correct and a not-run item never ran, so retryable on either would be a
     // claim the interface could act on.
     assert!(queue.items.iter().all(|item| !item.retryable));
     assert_eq!(queue.retryable_failed_count, 0);
@@ -11905,4 +11907,308 @@ fn reservation_handle(slot: &ConversionSlot) -> String {
         }
         other => panic!("the slot is awaiting a destination; got {other:?}"),
     }
+}
+
+/// A completed queue of `names`, run against a real destination, with the
+/// service that ran it.
+///
+/// Everything goes through the production path -- picker admission, queue
+/// admission, the destination command -- so what is adopted afterwards is what
+/// a user would be adopting.
+fn converted_queue(fixture: &TestFile, names: &[&str]) -> (Arc<PreviewService>, PathBuf, u64, u64) {
+    let destination = destination_root(fixture, "out");
+    let service = Arc::new(PreviewService::new(
+        Box::new(ConvertingProvider::faithful()),
+    ));
+    let handles: Vec<String> = names
+        .iter()
+        .map(|name| add_one_acquisition(&service, &fixture.thermo_raw(name)))
+        .collect();
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("the queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim the reservation");
+    let update = service.run_claimed_conversion(operation, &destination);
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Completed
+    );
+    (service, destination, operation, document)
+}
+
+fn adoption_kinds(result: &WorkspaceOutputAdoptionResultDto) -> Vec<&'static str> {
+    result
+        .outcomes
+        .iter()
+        .map(|outcome| match outcome {
+            WorkspaceOutputAdoptionOutcomeDto::Added { .. } => "added",
+            WorkspaceOutputAdoptionOutcomeDto::AlreadyInWorkspace { .. } => "already",
+            WorkspaceOutputAdoptionOutcomeDto::Refused { .. } => "refused",
+        })
+        .collect()
+}
+
+/// The ordinary case: every finalized output enters the workspace as mzML, in
+/// queue order.
+#[test]
+fn adopting_a_completed_queue_adds_its_outputs_in_queue_order() {
+    let fixture = TestFile::new("adopt-completed");
+    let (service, _destination, operation, document) =
+        converted_queue(&fixture, &["one.raw", "two.raw"]);
+
+    let before = service.roster().datasets.len();
+    let result = service
+        .adopt_conversion_outputs(&operation.to_string(), document)
+        .expect("a terminal queue with finalized outputs is adoptable");
+
+    assert_eq!(adoption_kinds(&result), vec!["added", "added"]);
+    assert_eq!(result.roster.datasets.len(), before + 2);
+    // The order is the queue's, not the registry's.
+    let adopted: Vec<&str> = result
+        .outcomes
+        .iter()
+        .filter_map(|outcome| match outcome {
+            WorkspaceOutputAdoptionOutcomeDto::Added { dataset, .. } => {
+                Some(dataset.file_name.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(adopted, vec!["one.mzML", "two.mzML"]);
+    // Every adopted row is mzML, whatever it was converted from.
+    for outcome in &result.outcomes {
+        let WorkspaceOutputAdoptionOutcomeDto::Added { dataset, .. } = outcome else {
+            panic!("every output was added");
+        };
+        assert_eq!(dataset.source_kind, DatasetSourceKindDto::Mzml);
+    }
+}
+
+/// An output the session already holds is reported as such, and consumes
+/// nothing: no identifier, no row, and no change to the row it already had.
+#[test]
+fn adopting_an_output_the_workspace_already_holds_changes_nothing() {
+    let fixture = TestFile::new("adopt-duplicate");
+    let (service, destination, operation, document) = converted_queue(&fixture, &["one.raw"]);
+
+    // Added by the ordinary route first, exactly as a user might.
+    let existing = add_one_acquisition(&service, &destination.join("one.mzML"));
+    let before = service.roster();
+
+    let result = service
+        .adopt_conversion_outputs(&operation.to_string(), document)
+        .expect("the queue is still adoptable");
+
+    assert_eq!(adoption_kinds(&result), vec!["already"]);
+    let WorkspaceOutputAdoptionOutcomeDto::AlreadyInWorkspace { dataset, .. } = &result.outcomes[0]
+    else {
+        panic!("the output is already held");
+    };
+    // The existing row, returned as it stands -- not a second row, and not a
+    // new identifier for the same object.
+    assert_eq!(dataset.handle, existing);
+    assert_eq!(result.roster.datasets.len(), before.datasets.len());
+    assert_eq!(
+        result
+            .roster
+            .datasets
+            .iter()
+            .map(|row| &row.handle)
+            .collect::<Vec<_>>(),
+        before
+            .datasets
+            .iter()
+            .map(|row| &row.handle)
+            .collect::<Vec<_>>()
+    );
+}
+
+/// A different object at the final name is refused, however valid it looks.
+#[test]
+fn adopting_refuses_an_output_that_was_replaced() {
+    let fixture = TestFile::new("adopt-replaced");
+    let (service, destination, operation, document) = converted_queue(&fixture, &["one.raw"]);
+    let output = destination.join("one.mzML");
+    let original = fs::read(&output).expect("read the finalized output");
+
+    // Moved aside and replaced by a byte-identical document, so only identity
+    // can tell them apart.
+    let aside = destination.join("moved-aside.mzML");
+    fs::rename(&output, &aside).expect("move the output aside");
+    fs::write(&output, &original).expect("write an impostor");
+
+    let before = service.roster().datasets.len();
+    let result = service
+        .adopt_conversion_outputs(&operation.to_string(), document)
+        .expect("the queue is still adoptable");
+
+    assert_eq!(adoption_kinds(&result), vec!["refused"]);
+    let WorkspaceOutputAdoptionOutcomeDto::Refused { reason, .. } = &result.outcomes[0] else {
+        panic!("the output was replaced");
+    };
+    assert_eq!(reason, "output_changed");
+    assert_eq!(service.roster().datasets.len(), before);
+    // The impostor is left exactly as it was found.
+    assert_eq!(fs::read(&output).expect("read the impostor"), original);
+}
+
+/// The same object with different bytes is refused. Reachable because the
+/// retention permits writers, which is the posture this asserts alongside.
+#[test]
+fn adopting_refuses_an_output_that_was_rewritten_in_place() {
+    let fixture = TestFile::new("adopt-rewritten");
+    let (service, destination, operation, document) = converted_queue(&fixture, &["one.raw"]);
+    let output = destination.join("one.mzML");
+
+    let rewritten = fs::read_to_string(&output)
+        .expect("read the finalized output")
+        .replacen("scan=1", "scan=9", 1);
+    fs::write(&output, &rewritten).expect("the retention permits the user to write their own file");
+
+    let result = service
+        .adopt_conversion_outputs(&operation.to_string(), document)
+        .expect("the queue is still adoptable");
+
+    assert_eq!(adoption_kinds(&result), vec!["refused"]);
+    let WorkspaceOutputAdoptionOutcomeDto::Refused { reason, .. } = &result.outcomes[0] else {
+        panic!("the output was rewritten");
+    };
+    assert_eq!(reason, "output_changed");
+}
+
+/// An output that is gone is refused, and does not stop the others.
+#[test]
+fn one_missing_output_does_not_stop_the_rest_being_adopted() {
+    let fixture = TestFile::new("adopt-partial");
+    let (service, destination, operation, document) =
+        converted_queue(&fixture, &["one.raw", "two.raw"]);
+    fs::remove_file(destination.join("one.mzML")).expect("the user removes their own output");
+
+    let result = service
+        .adopt_conversion_outputs(&operation.to_string(), document)
+        .expect("the queue is still adoptable");
+
+    assert_eq!(adoption_kinds(&result), vec!["refused", "added"]);
+    let WorkspaceOutputAdoptionOutcomeDto::Refused { reason, .. } = &result.outcomes[0] else {
+        panic!("the first output is gone");
+    };
+    assert_eq!(reason, "output_missing");
+}
+
+/// Only finalized items are adoptable. A queue that stopped before anything
+/// finished has nothing to offer, and says so rather than answering with an
+/// empty result.
+#[test]
+fn a_stopped_queue_that_finalized_nothing_is_not_adoptable() {
+    let fixture = TestFile::new("adopt-stopped");
+    let (_fixture, _destination, service, update, _launches) = stop_mid_item(StopEnding::Confirmed);
+    drop(fixture);
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Stopped
+    );
+    let WorkspaceConversionStateDto::Terminal { operation_id, .. } = &update.state else {
+        panic!("the queue is terminal");
+    };
+    let document = current_document(&service);
+
+    assert_eq!(
+        service
+            .adopt_conversion_outputs(operation_id, document)
+            .expect_err("a stopped queue that finalized nothing is not adoptable")
+            .kind,
+        "outputs_not_adoptable"
+    );
+}
+
+/// Adoption names a queue, and only the current terminal one.
+#[test]
+fn adoption_refuses_a_stale_document_and_an_unknown_queue() {
+    let fixture = TestFile::new("adopt-authority");
+    let (service, _destination, operation, document) = converted_queue(&fixture, &["one.raw"]);
+
+    assert_eq!(
+        service
+            .adopt_conversion_outputs(&(operation + 1).to_string(), document)
+            .expect_err("a queue this session never ran is not adoptable")
+            .kind,
+        "outputs_not_adoptable"
+    );
+    assert_eq!(
+        service
+            .adopt_conversion_outputs("not-a-number", document)
+            .expect_err("an identifier that was never issued is not adoptable")
+            .kind,
+        "outputs_not_adoptable"
+    );
+    // A document that has been replaced may not adopt its replacement's work.
+    service.begin_webview_document();
+    assert_eq!(
+        service
+            .adopt_conversion_outputs(&operation.to_string(), document)
+            .expect_err("a replaced document is not the current one")
+            .kind,
+        "outputs_not_adoptable"
+    );
+}
+
+/// Adopting does not touch the queue. Every item keeps the outcome it earned,
+/// and the queue stays as retryable as it was.
+#[test]
+fn adopting_leaves_the_queue_result_exactly_as_it_was() {
+    let fixture = TestFile::new("adopt-queue-untouched");
+    let (service, _destination, operation, document) =
+        converted_queue(&fixture, &["one.raw", "two.raw"]);
+    let before = service.conversion_state();
+
+    let _ = service
+        .adopt_conversion_outputs(&operation.to_string(), document)
+        .expect("the queue is adoptable");
+
+    let after = service.conversion_state();
+    let WorkspaceConversionStateDto::Terminal { queue: before, .. } = &before.state else {
+        panic!("the queue is terminal");
+    };
+    let WorkspaceConversionStateDto::Terminal { queue: after, .. } = &after.state else {
+        panic!("the queue is still terminal");
+    };
+    assert_eq!(item_states(before), item_states(after));
+    assert_eq!(before.finalized_count, after.finalized_count);
+    assert_eq!(before.retryable_failed_count, after.retryable_failed_count);
+}
+
+/// Replacing the queue drops what recognises its outputs, and leaves the files
+/// exactly where they are.
+#[test]
+fn a_replaced_queue_releases_its_tickets_without_touching_the_files() {
+    let fixture = TestFile::new("adopt-replaced-queue");
+    let (service, destination, operation, document) = converted_queue(&fixture, &["one.raw"]);
+    let output = destination.join("one.mzML");
+    let before = fs::read(&output).expect("read the finalized output");
+
+    // A second queue replaces the terminal one, tickets and all.
+    let next = add_one_acquisition(&service, &fixture.thermo_raw("three.raw"));
+    let _ = service
+        .begin_conversion_queue(
+            std::slice::from_ref(&next),
+            ConversionConflictPolicyDto::Fail,
+            document,
+        )
+        .expect("a terminal queue is replaced rather than refused");
+
+    assert_eq!(
+        service
+            .adopt_conversion_outputs(&operation.to_string(), document)
+            .expect_err("the queue that made those outputs is gone")
+            .kind,
+        "outputs_not_adoptable"
+    );
+    // Dropping a ticket closes a handle and nothing else.
+    assert_eq!(
+        fs::read(&output).expect("the output survives its queue"),
+        before
+    );
 }

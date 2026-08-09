@@ -33,6 +33,7 @@ import type {
   FolderIngestionResult,
   SelectedFile,
   WorkspaceAddResult,
+  WorkspaceOutputAdoptionResult,
   WorkspaceRemoveResult,
   WorkspaceRoster,
 } from "./contracts";
@@ -211,6 +212,10 @@ export interface SelectionModifiers {
 export type RosterAction =
   | { readonly type: "rosterLoaded"; readonly roster: WorkspaceRoster }
   | { readonly type: "filesAdded"; readonly result: WorkspaceAddResult }
+  | {
+      readonly type: "outputsAdopted";
+      readonly result: WorkspaceOutputAdoptionResult;
+    }
   | { readonly type: "folderImported"; readonly result: FolderIngestionResult }
   | { readonly type: "dropImported"; readonly result: DropIngestionResult }
   | { readonly type: "datasetsRemoved"; readonly result: WorkspaceRemoveResult }
@@ -565,6 +570,47 @@ function transition(state: RosterState, action: RosterAction): RosterState {
         anchor: survivingHandle(state.anchor, live),
         selected: keptIn(state.selected, live),
         active: survivingHandle(state.active, live),
+      };
+    }
+    case "outputsAdopted": {
+      const { roster, outcomes } = action.result;
+      const live = handlesOf(roster.datasets);
+      const added = outcomes.flatMap((outcome) =>
+        outcome.kind === "added" ? [outcome.dataset.handle] : [],
+      );
+      const base = {
+        datasets: roster.datasets,
+        capacity: roster.capacity,
+        query: state.query,
+        sort: state.sort,
+        rowState: prunedRowState(state.rowState, live),
+        // Adopting outputs is not a reason to stop reading the file already on
+        // screen. Nothing about that row changed, and discarding a preview the
+        // user is looking at would be the action doing something it was not
+        // asked to.
+        active: survivingHandle(state.active, live),
+      };
+      if (added.length === 0) {
+        // A result that added nothing -- every output already held, or none
+        // admissible -- moves nothing. There is no new row to point at, and
+        // pointing at an existing one would claim something arrived.
+        return {
+          ...base,
+          focused: survivingHandle(state.focused, live),
+          anchor: survivingHandle(state.anchor, live),
+          selected: keptIn(state.selected, live),
+        };
+      }
+      const first = added[0] as string;
+      return {
+        ...base,
+        focused: first,
+        anchor: first,
+        // Union rather than replacement, unlike an add. The user did not go
+        // looking for these files; they asked for the results of work they had
+        // already set up, and a selection they built before that is still the
+        // selection they built.
+        selected: new Set([...keptIn(state.selected, live), ...added]),
       };
     }
 

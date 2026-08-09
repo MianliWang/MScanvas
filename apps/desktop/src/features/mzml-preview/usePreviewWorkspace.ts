@@ -11,6 +11,7 @@ import type {
   SelectedSpectrum,
   WorkspaceDropRejectionReason,
   WorkspaceDropUpdate,
+  WorkspaceOutputAdoptionResult,
 } from "./contracts";
 import { toPreviewError } from "./contracts";
 import { describeDropResult } from "./dropNotice";
@@ -1769,7 +1770,13 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     },
     [checkBackend],
   );
-  const conversion = useConversionOperation(reconcileConversionGeneration);
+  // Adopted rows are ordinary workspace rows, so the roster answers for them
+  // like any other mutation: adopted whole, with the query, the sort and the
+  // preview on screen left exactly as the user had them.
+  const adoptOutputs = useCallback((result: WorkspaceOutputAdoptionResult) => {
+    dispatchRoster({ type: "outputsAdopted", result });
+  }, []);
+  const conversion = useConversionOperation(reconcileConversionGeneration, adoptOutputs);
   // A stop that could not be confirmed makes this session's backend unusable
   // without changing the installation, so nothing about it advances the
   // installation sequence and the reconciler above would never fire. Left
