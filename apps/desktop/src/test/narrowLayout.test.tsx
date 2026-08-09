@@ -588,6 +588,36 @@ describe("narrow desktop layout markup", () => {
       "0px",
     );
   });
+
+  it("gives the diagnostics offer the same shape the adoption offer has", () => {
+    // Two offers about one terminal queue, sitting under one result. One shape
+    // reads as a row of choices; two would read as two unrelated features that
+    // happen to be adjacent, which at 586 CSS pixels is the difference between
+    // a column and a pile.
+    const app = mountStyles(appStyles);
+    const adoption = requireStyleRule(app, ".conversion-adoption").style;
+    const diagnostics = requireStyleRule(app, ".conversion-diagnostics").style;
+
+    for (const property of ["display", "flex-direction", "gap", "padding-top", "border-top"]) {
+      expect(diagnostics.getPropertyValue(property)).toBe(adoption.getPropertyValue(property));
+    }
+    expect(diagnostics.getPropertyValue("display")).toBe("flex");
+    expect(diagnostics.getPropertyValue("flex-direction")).toBe("column");
+  });
+
+  it("lets a digest break rather than widen the column it sits in", () => {
+    // Sixty-four characters with no space in them. Without a break rule this is
+    // the widest unbreakable run in the panel, and it would push the sidebar --
+    // and the document -- past the window at the narrowest checked size, which
+    // is issue #24's defect arriving through a new string.
+    const app = mountStyles(appStyles);
+    const digest = requireStyleRule(app, ".conversion-diagnostics-digest").style;
+
+    expect(digest.getPropertyValue("overflow-wrap")).toBe("anywhere");
+    // Monospaced, so a reader can compare it a group at a time rather than
+    // character by character against a proportional font.
+    expect(digest.getPropertyValue("font-family")).toBe("var(--font-mono)");
+  });
 });
 
 /**
@@ -663,6 +693,9 @@ describe("the conversion queue at each checked window size", () => {
       );
       // The one thing this workflow must never grow without evidence.
       expect(document.body.textContent).not.toMatch(/\d+\s?%/);
+      // And a running queue is not a terminal one, so the diagnostics offer is
+      // absent at every width rather than merely disabled at some of them.
+      expect(screen.queryByRole("button", { name: "Export failure diagnostics…" })).toBeNull();
       expect(
         screen.getByText(
           "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.",

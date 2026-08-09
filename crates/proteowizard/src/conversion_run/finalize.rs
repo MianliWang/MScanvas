@@ -179,7 +179,7 @@ pub(super) fn finalize_validated(
 ///
 /// The planned output name is already validated, so this is a second lock on
 /// the one input that could steer a finalization out of the admitted root.
-fn single_component(final_name: &OsStr) -> io::Result<&OsStr> {
+pub(super) fn single_component(final_name: &OsStr) -> io::Result<&OsStr> {
     let mut components = Path::new(final_name).components();
     let single = matches!(
         components.next(),
@@ -202,7 +202,7 @@ fn single_component(final_name: &OsStr) -> io::Result<&OsStr> {
 /// false, so an occupied target fails with `ERROR_ALREADY_EXISTS` rather than
 /// overwriting.
 #[cfg(windows)]
-fn rename_object_to(file: &File, target: &Path) -> io::Result<()> {
+pub(super) fn rename_object_to(file: &File, target: &Path) -> io::Result<()> {
     use std::ffi::c_void;
     use std::mem::{align_of, offset_of, size_of};
     use std::os::windows::ffi::OsStrExt;

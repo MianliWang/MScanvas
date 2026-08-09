@@ -11,12 +11,14 @@ use tauri::webview::PageLoadEvent;
 use tauri::{Manager, State};
 
 use preview::dto::{
-    BackendAvailabilityDto, ConversionConflictPolicyDto, ConversionQueuePlanDto,
-    FolderImportReservationDto, FolderIngestionResultDto, PreviewDto, PreviewErrorDto,
-    SelectedSpectrumOutcomeDto, WorkspaceAddResultDto, WorkspaceConversionReservationDto,
-    WorkspaceConversionUpdateDto, WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
+    BackendAvailabilityDto, ConversionConflictPolicyDto, ConversionDiagnosticsReservationDto,
+    ConversionQueuePlanDto, FolderImportReservationDto, FolderIngestionResultDto, PreviewDto,
+    PreviewErrorDto, SelectedSpectrumOutcomeDto, WorkspaceAddResultDto,
+    WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto,
+    WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
     WorkspaceOutputAdoptionResultDto, WorkspaceRemoveResultDto, WorkspaceRosterDto,
-    invalid_conversion_reservation, invalid_workspace_drop_subscription,
+    diagnostics_picker_unavailable, invalid_conversion_reservation,
+    invalid_workspace_drop_subscription,
 };
 use preview::{PreviewService, ProteoWizardProvider, normalize_window_drop_event};
 
@@ -359,6 +361,100 @@ async fn adopt_workspace_conversion_outputs(
         .await?
 }
 
+/// Binds one diagnostics export and reserves the right to choose a file.
+///
+/// Deliberately synchronous and deliberately separate from saving, for the
+/// reason a conversion destination already gives: a webview can reload between
+/// any two IPC fetches, so Rust retains the reservation and a document that
+/// never receives the identifier can never open a dialog.
+///
+/// Proves the calling document the same way a retry and an adoption do. What is
+/// bound cannot change afterwards — the document, the terminal queue and which
+/// settling of it — so a retry started while the dialog is open cannot make the
+/// export describe a queue the user was not looking at.
+///
+/// Launches no process. A session that has stopped trusting the backend may
+/// still do this, and that is the case this export exists for.
+#[tauri::command]
+async fn begin_workspace_conversion_diagnostics_export(
+    operation_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<ConversionDiagnosticsReservationDto, PreviewErrorDto> {
+    let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || {
+        service.begin_conversion_diagnostics_export(&operation_id, document_epoch)
+    })
+    .await?
+}
+
+/// Shows the native save dialog for one exact reservation and writes the file.
+///
+/// The webview names no path: it returns only the opaque reservation Rust
+/// issued, and receives back the authoritative conversion state. Rust consumes
+/// and validates that claim **before** dispatching the dialog, so a reload or a
+/// second request that overtook it fails without opening one.
+///
+/// Cancelling is an ordinary outcome: nothing was created and nothing was
+/// written, and the answer is the same state a later read returns.
+#[tauri::command]
+async fn save_workspace_conversion_diagnostics(
+    reservation_id: String,
+    app: tauri::AppHandle,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<WorkspaceConversionUpdateDto, PreviewErrorDto> {
+    let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let owner = main_window_handle(&app);
+    let service = Arc::clone(&service);
+    let (operation, retry_round) =
+        service.claim_conversion_diagnostics_export(&reservation_id, document_epoch)?;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    if app
+        .run_on_main_thread(move || {
+            let _ = sender.send(preview::dialog::choose_diagnostics_destination(
+                owner,
+                preview::service::DIAGNOSTICS_EXPORT_FILE_NAME,
+            ));
+        })
+        .is_err()
+    {
+        // The claim already took the slot. A dispatch that never happened
+        // leaves nothing to close it, so without this the session would hold a
+        // reservation whose dialog does not exist -- and every action on the
+        // terminal queue would stay refused until a reload.
+        service.cancel_conversion_diagnostics_export();
+        return Err(diagnostics_picker_unavailable());
+    }
+
+    // The wait spans the modal dialog and then the write, neither of which is
+    // something to hold an async worker for.
+    off_the_async_runtime(move || {
+        let chosen = match receiver
+            .recv()
+            .map_err(|_| diagnostics_picker_unavailable())?
+        {
+            Ok(chosen) => chosen,
+            Err(error) => {
+                // The dialog itself failed. That is a refusal of this export,
+                // not a write that went wrong, and the slot has to be released
+                // either way.
+                service.cancel_conversion_diagnostics_export();
+                return Err(error);
+            }
+        };
+        let Some(destination) = chosen else {
+            return Ok(service.cancel_conversion_diagnostics_export());
+        };
+        service.write_conversion_diagnostics(operation, retry_round, &destination)?;
+        Ok(service.conversion_state())
+    })
+    .await?
+}
+
 /// Reads the session's one conversion slot.
 ///
 /// The authoritative answer about a conversion, and the only one that survives a
@@ -694,7 +790,9 @@ pub fn run() {
             choose_workspace_conversion_destination,
             retry_workspace_conversion_queue,
             stop_workspace_conversion_queue,
-            adopt_workspace_conversion_outputs
+            adopt_workspace_conversion_outputs,
+            begin_workspace_conversion_diagnostics_export,
+            save_workspace_conversion_diagnostics
         ])
         .run(tauri::generate_context!())
         .expect("failed to run the MSCanvas desktop application");

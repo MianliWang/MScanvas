@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePreviewApi } from "./api";
 import type {
   ConversionConflictPolicy,
+  ConversionDiagnosticsExport,
+  ConversionDiagnosticsState,
   ConversionQueuePlan,
   PreviewError,
   WorkspaceConversionState,
@@ -144,6 +146,28 @@ export interface ConversionOperation {
    * arrived.
    */
   readonly adoption: WorkspaceOutputAdoptionResult | null;
+  /** Saves one local, redacted JSON diagnostics file for this terminal queue. */
+  readonly exportDiagnostics: () => void;
+  /** Whether this terminal queue has anything worth diagnosing. */
+  readonly canExportDiagnostics: boolean;
+  /**
+   * Whether an export is between being asked for and being finished.
+   *
+   * True from the moment this document dispatches, and again for as long as
+   * Rust reports one under way -- which is what lets a reloaded document see
+   * that an export it did not start is still writing.
+   */
+  readonly exportingDiagnostics: boolean;
+  /** How many of this queue's items an export would describe. */
+  readonly diagnosticItemCount: number;
+  /**
+   * What the last diagnostics export of this queue wrote, until the queue is
+   * replaced.
+   *
+   * Read from the authoritative slot rather than from the reply, so a document
+   * that reloaded while one was writing still learns it happened.
+   */
+  readonly diagnosticsExport: ConversionDiagnosticsExport | null;
 }
 
 /**
@@ -222,6 +246,22 @@ export function useConversionOperation(
   // adoption inside the render that has not committed the first one yet.
   const adoptingRef = useRef(false);
   const [adoption, setAdoption] = useState<WorkspaceOutputAdoptionResult | null>(null);
+  // What Rust says about diagnostics for the queue it is reporting. Held whole
+  // rather than spread across three pieces of state, because the three arrive
+  // together and disagreeing about them is the only way they can be wrong.
+  const [diagnostics, setDiagnostics] = useState<ConversionDiagnosticsState>({
+    eligibleItemCount: 0,
+    available: false,
+    exporting: false,
+    lastExport: null,
+  });
+  // Whether this document is inside an export it dispatched. Rendered as well
+  // as Rust's own flag, because the actions this closes have to close on the
+  // press rather than on the first poll that sees it.
+  const [exportRequested, setExportRequested] = useState(false);
+  // Paired with the state above and read by the handler, like every other gate
+  // here: two activations inside one render both see the rendered value false.
+  const exportRequestedRef = useRef(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -246,6 +286,14 @@ export function useConversionOperation(
       update.state.status === "running" ||
       update.state.status === "stopping";
     setState(update.state);
+    setDiagnostics(update.diagnostics);
+    // Cleared from the authoritative state rather than from the reply, because
+    // a reload has no reply to read. Rust is the one that knows an export has
+    // finished, whichever document asked for it.
+    if (!update.diagnostics.exporting) {
+      exportRequestedRef.current = false;
+      setExportRequested(false);
+    }
     // Never cleared here. Rust sets it once and cannot unset it, so a document
     // that lowered it on a later read would be claiming something the session
     // does not know.
@@ -350,6 +398,8 @@ export function useConversionOperation(
   const busy =
     retrying ||
     adopting ||
+    exportRequested ||
+    diagnostics.exporting ||
     state.status === "awaitingDestination" ||
     state.status === "running" ||
     state.status === "stopping";
@@ -415,10 +465,10 @@ export function useConversionOperation(
 
   const convert = useCallback(
     (handles: readonly string[]) => {
-      // The adoption claim as well. A new queue replaces the terminal one an
-      // adoption is reading, so the two are exclusive for the same reason a
-      // retry and an adoption are.
-      if (busyRef.current || adoptingRef.current) {
+      // The adoption and export claims as well. A new queue replaces the
+      // terminal one both of them are reading, so all three are exclusive for
+      // the same reason a retry and an adoption are.
+      if (busyRef.current || adoptingRef.current || exportRequestedRef.current) {
         return;
       }
       // Claimed before the request leaves, so a second activation inside the
@@ -472,6 +522,27 @@ export function useConversionOperation(
     return [];
   }, [state, retrying]);
 
+  // This document's own claim and Rust's answer, together. They cover
+  // different windows: the claim covers the press until the first read that
+  // sees it, and Rust's flag covers the rest — including for a document that
+  // reloaded into an export it never started.
+  const exportingDiagnostics = exportRequested || diagnostics.exporting;
+
+  // Only a terminal queue with something to describe. Deliberately not gated on
+  // the backend being usable: an export launches no process, and a session that
+  // has stopped trusting the backend is exactly the one that needs this.
+  //
+  // Availability is Rust's answer rather than a count compared here. A
+  // stop-failed queue is exportable for what the queue itself records even
+  // where no item carries a diagnostic of its own, and a second rule on this
+  // side could only come to disagree with the one that decides.
+  const canExportDiagnostics =
+    state.status === "terminal" &&
+    diagnostics.available &&
+    !exportingDiagnostics &&
+    !adopting &&
+    !retrying;
+
   // Only a queue that ran to its own end. A stopped queue is a decision the
   // user made about the whole batch, and a queue whose stop could not be
   // confirmed must launch nothing at all -- Rust refuses both, and this is what
@@ -484,6 +555,7 @@ export function useConversionOperation(
     state.reason === "completed" &&
     state.queue.retryableFailedCount > 0 &&
     !adopting &&
+    !exportingDiagnostics &&
     !backendQuarantined;
 
   // A running queue, and one this document has not already asked to stop.
@@ -521,9 +593,10 @@ export function useConversionOperation(
   }, [api, applyUpdate, readState, state]);
 
   const retry = useCallback(() => {
-    // The adoption flag as well as its own. The two act on one terminal queue,
-    // and each has to see the other's claim or both dispatch against it.
-    if (busyRef.current || adoptingRef.current) {
+    // The adoption and export flags as well as its own. All three act on one
+    // terminal queue, and each has to see the others' claims or two dispatch
+    // against it.
+    if (busyRef.current || adoptingRef.current || exportRequestedRef.current) {
       return;
     }
     busyRef.current = true;
@@ -565,6 +638,11 @@ export function useConversionOperation(
     eligibleOutputCount > 0 &&
     !adopting &&
     !retrying &&
+    // An export is reading the same terminal queue. Neither changes it, but
+    // Rust refuses to run them together -- an adoption commits under the
+    // workspace gate and an export can be sitting in a modal dialog -- so the
+    // interface stops offering rather than offering something that is refused.
+    !exportingDiagnostics &&
     // And not while a workspace mutation of the user's is still settling. One
     // that committed in Rust can still have a reply in flight, and an adoption
     // installing its roster first would leave that reply installing a list the
@@ -581,7 +659,12 @@ export function useConversionOperation(
     // same render has already claimed that one, and dispatching both against a
     // single terminal queue means one is refused -- with the losing adoption
     // having already moved the workspace decision count.
-    if (state.status !== "terminal" || adoptingRef.current || busyRef.current) {
+    if (
+      state.status !== "terminal" ||
+      adoptingRef.current ||
+      busyRef.current ||
+      exportRequestedRef.current
+    ) {
       return;
     }
     // Its own flag, and deliberately not `busyRef`. Setting that one would make
@@ -625,6 +708,50 @@ export function useConversionOperation(
     setError(null);
   }, []);
 
+  const exportDiagnostics = useCallback(() => {
+    // The ref rather than the rendered flag, and every other claim on the
+    // terminal queue beside it. Two activations inside one render both see
+    // `exportingDiagnostics` false, and the second would open a save dialog for
+    // an export Rust is about to refuse.
+    if (
+      state.status !== "terminal" ||
+      exportRequestedRef.current ||
+      adoptingRef.current ||
+      busyRef.current
+    ) {
+      return;
+    }
+    // Its own flag, and deliberately not `busyRef`. Setting that one would make
+    // a preview read and a spectrum selection wait, and an export launches
+    // nothing and touches neither. Reading it is what gives the mutual
+    // exclusion; writing it would take something else away.
+    exportRequestedRef.current = true;
+    setExportRequested(true);
+    setError(null);
+    const { operationId } = state;
+    api
+      .exportConversionDiagnostics(operationId, () => {
+        // The reservation exists and the claim has been dispatched. From here
+        // the export is Rust's, and a read will find it even if this document
+        // goes away.
+        readState();
+      })
+      .then((update) => {
+        applyUpdate(update);
+      })
+      .catch((cause: unknown) => {
+        exportRequestedRef.current = false;
+        if (!mounted.current) {
+          return;
+        }
+        setExportRequested(false);
+        setError(toPreviewError(cause));
+        // The request failed somewhere on the way, so what the slot holds is
+        // still authoritative and this document has to go and look.
+        readState();
+      });
+  }, [api, applyUpdate, readState, state]);
+
   return {
     state,
     busy,
@@ -649,5 +776,10 @@ export function useConversionOperation(
     adopting,
     eligibleOutputCount,
     adoption,
+    exportDiagnostics,
+    canExportDiagnostics,
+    exportingDiagnostics,
+    diagnosticItemCount: diagnostics.eligibleItemCount,
+    diagnosticsExport: diagnostics.lastExport,
   };
 }

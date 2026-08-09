@@ -552,9 +552,59 @@ export type ConversionQueueTerminalReason =
   | "stopFailed";
 
 /** One bounded read of that slot, with the key that orders two reads. */
+/**
+ * What one diagnostics export wrote.
+ *
+ * A name, a length and a digest. Deliberately not a location: the user chose
+ * the folder and knows where it is, and this side is never told. The digest is
+ * what makes the answer checkable by someone about to send the file on.
+ */
+export interface ConversionDiagnosticsExport {
+  /** Which queue this describes, and which settling of it. */
+  readonly operationId: string;
+  readonly retryRound: number;
+  readonly fileName: string;
+  readonly byteLength: number;
+  readonly sha256: string;
+  readonly diagnosticItemCount: number;
+}
+
+/**
+ * What this document may know about saving diagnostics for the queue it reads.
+ *
+ * Rides on the conversion read for the reason the quarantine flag does: a
+ * document already asks for that on mount and while work is under way, so a
+ * reload recovers this with the queue rather than needing a second question.
+ *
+ * Nothing here is the diagnostics themselves. No excerpt, no document and no
+ * path crosses this boundary — only whether one can be saved, how much it would
+ * describe, whether one is being saved now, and what the last one wrote.
+ */
+export interface ConversionDiagnosticsState {
+  /** How many items of the current queue an export would describe. */
+  readonly eligibleItemCount: number;
+  /**
+   * Whether the queue is terminal and there is something to export.
+   *
+   * Carried rather than derived from the count: a stop-failed queue is
+   * exportable for what the queue itself records even where no item carries a
+   * diagnostic of its own.
+   */
+  readonly available: boolean;
+  /** Whether an export is between being asked for and being finished. */
+  readonly exporting: boolean;
+  /**
+   * The last export of the current queue. Dropped when the queue is replaced;
+   * the file it names is not.
+   */
+  readonly lastExport: ConversionDiagnosticsExport | null;
+}
+
 export interface WorkspaceConversionUpdate {
   readonly sequence: number;
   readonly state: WorkspaceConversionState;
+  /** What this document may know about saving diagnostics for that queue. */
+  readonly diagnostics: ConversionDiagnosticsState;
   /**
    * Whether this session has stopped trusting the backend.
    *

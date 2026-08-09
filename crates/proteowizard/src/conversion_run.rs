@@ -53,6 +53,7 @@ use crate::conversion::{
     conversion_output_file_name, verify_mzml_conversion_retaining_output,
     verify_vendor_conversion_retaining_output,
 };
+use crate::diagnostics::{BackendTextExcerpt, Redactor};
 use crate::finalized_output::FinalizedOutput;
 use crate::fs_guard::{self, OutputEntryKind, RegularFileError, snapshot_output_directory};
 use crate::mzml::{MzmlFacts, MzmlScanError, MzmlScanLimits};
@@ -1318,12 +1319,42 @@ fn write_owner_magic(marker: &mut File) -> io::Result<()> {
     marker.write_all(STAGING_OWNER_MAGIC)
 }
 
+/// Both backend streams of one attempt, as much of them as may be repeated.
+///
+/// Built inside the run, while the plan, the staging area and the executable
+/// are all still in scope, and it is the only thing that outlives them. The
+/// captured bytes go out of scope with the run that made them: there is no way
+/// to obtain them from here, and no later caller has the paths it would need to
+/// redact them safely even if there were.
+///
+/// Present only where a run failed or a cancellation could not be confirmed.
+/// A conversion that worked has nothing here — repeating a successful backend's
+/// output would retain text about the user's acquisition for no diagnosis.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackendDiagnosticText {
+    stdout: BackendTextExcerpt,
+    stderr: BackendTextExcerpt,
+}
+
+impl BackendDiagnosticText {
+    #[must_use]
+    pub const fn stdout(&self) -> &BackendTextExcerpt {
+        &self.stdout
+    }
+
+    #[must_use]
+    pub const fn stderr(&self) -> &BackendTextExcerpt {
+        &self.stderr
+    }
+}
+
 /// The typed result of one planned conversion.
 #[derive(Debug, PartialEq)]
 pub struct ConversionRunReport {
     outcome: ConversionRunOutcome,
     backend: Option<BackendRunFacts>,
     residue: Option<StagingResidue>,
+    diagnostics: Option<BackendDiagnosticText>,
 }
 
 impl ConversionRunReport {
@@ -1368,11 +1399,23 @@ impl ConversionRunReport {
         }
     }
 
+    /// Takes the redacted backend text out of the report.
+    ///
+    /// Taken rather than borrowed, because it has exactly one destination: the
+    /// caller that retains a diagnostic for this attempt. Leaving a second copy
+    /// on a report the queue keeps and projects would put backend text into a
+    /// value whose whole contract is that it holds none.
+    #[must_use]
+    pub fn take_backend_text(&mut self) -> Option<BackendDiagnosticText> {
+        self.diagnostics.take()
+    }
+
     const fn settled(outcome: ConversionRunOutcome) -> Self {
         Self {
             outcome,
             backend: None,
             residue: None,
+            diagnostics: None,
         }
     }
 }
@@ -1512,6 +1555,7 @@ pub struct CancellationFailure {
     backend: Option<BackendRunFacts>,
     staged: Option<StagedContentObservation>,
     residue: Option<StagingResidue>,
+    diagnostics: Option<BackendDiagnosticText>,
 }
 
 impl CancellationFailure {
@@ -1541,6 +1585,17 @@ impl CancellationFailure {
     #[must_use]
     pub const fn residue(&self) -> Option<StagingResidue> {
         self.residue
+    }
+
+    /// Takes the redacted backend text out of the failure.
+    ///
+    /// This is the outcome that most needs it. A tree that may still be running
+    /// is the least diagnosable thing this boundary reports, and what the
+    /// backend said before it stopped answering is often the only evidence
+    /// there is.
+    #[must_use]
+    pub fn take_backend_text(&mut self) -> Option<BackendDiagnosticText> {
+        self.diagnostics.take()
     }
 }
 
@@ -1923,11 +1978,13 @@ impl RunResult {
                 outcome: ConversionRunOutcome::Failed(ConversionRunFailure::BackendDidNotComplete),
                 backend: report.backend,
                 residue: report.residue,
+                diagnostics: None,
             },
             Self::CancellationFailed(failure) => ConversionRunReport {
                 outcome: ConversionRunOutcome::Failed(ConversionRunFailure::Backend(failure.cause)),
                 backend: failure.backend,
                 residue: failure.residue,
+                diagnostics: failure.diagnostics,
             },
         }
     }
@@ -2078,10 +2135,15 @@ fn run_admitted(
     // behind is removed by the same object-bound teardown.
     let residue = staging.discard();
     match staged {
-        StagedResult::Settled(outcome, backend) => RunResult::Settled(ConversionRunReport {
+        StagedResult::Settled {
+            outcome,
+            backend,
+            diagnostics,
+        } => RunResult::Settled(ConversionRunReport {
             outcome,
             backend,
             residue,
+            diagnostics,
         }),
         StagedResult::Cancelled {
             backend,
@@ -2098,11 +2160,13 @@ fn run_admitted(
             cause,
             backend,
             staged,
+            diagnostics,
         } => RunResult::CancellationFailed(CancellationFailure {
             cause,
             backend,
             staged,
             residue,
+            diagnostics,
         }),
     }
 }
@@ -2244,7 +2308,14 @@ fn open_pinned_source(path: &Path) -> io::Result<File> {
 
 /// What the staged half of a run reached.
 enum StagedResult {
-    Settled(ConversionRunOutcome, Option<BackendRunFacts>),
+    Settled {
+        outcome: ConversionRunOutcome,
+        backend: Option<BackendRunFacts>,
+        /// Present only where this attempt is one a diagnostic is worth
+        /// retaining for. Built here rather than by the caller, because here is
+        /// the last place the run knows every path it must remove.
+        diagnostics: Option<BackendDiagnosticText>,
+    },
     Cancelled {
         backend: Option<BackendRunFacts>,
         surviving_processes: Option<u32>,
@@ -2254,13 +2325,77 @@ enum StagedResult {
         cause: BackendExecutionFailure,
         backend: Option<BackendRunFacts>,
         staged: Option<StagedContentObservation>,
+        diagnostics: Option<BackendDiagnosticText>,
     },
 }
 
 impl StagedResult {
+    /// A failure that reached no process, so there is no backend text to keep.
     fn failed(failure: ConversionRunFailure) -> Self {
-        Self::Settled(ConversionRunOutcome::Failed(failure), None)
+        Self::Settled {
+            outcome: ConversionRunOutcome::Failed(failure),
+            backend: None,
+            diagnostics: None,
+        }
     }
+}
+
+/// Every path this attempt knows, registered against the placeholder that
+/// replaces it.
+///
+/// Built only when an excerpt is about to be made. Registering a path
+/// canonicalizes it and asks Windows for its short and long spellings, which is
+/// filesystem work worth doing for a failure and not worth doing for every
+/// successful conversion in a queue.
+///
+/// Where two of them nest — a staging area lives inside the destination root —
+/// the longer spelling is registered too and the redactor replaces longest
+/// first, so the more specific placeholder is the one that appears.
+fn attempt_redactor(plan: &ConversionPlan, staging_output: &Path, executable: &Path) -> Redactor {
+    // Begins with the user profile, which is the one location every backend can
+    // name without this run ever having handed it over.
+    let mut redactor = Redactor::new();
+    redactor.add_path(plan.source.canonical_path(), "<source>");
+    redactor.add_path(plan.destination_root(), "<destination>");
+    if let Some(staging_root) = staging_output.parent() {
+        redactor.add_path(staging_root, "<staging>");
+    }
+    redactor.add_path(staging_output, "<staging>");
+    redactor.add_path(executable, "<backend>");
+    // The executable's folder and the installation above it. `msconvert.exe`
+    // sits directly in a ProteoWizard installation, and backend text names both.
+    if let Some(directory) = executable.parent() {
+        redactor.add_path(directory, "<backend>");
+        if let Some(home) = directory.parent() {
+            redactor.add_path(home, "<backend>");
+        }
+    }
+    redactor.add_path(&std::env::temp_dir(), "<local-path>");
+    redactor
+}
+
+/// Both streams of one attempt, decoded, redacted and bounded.
+fn diagnostic_text(
+    output: &ProcessOutput,
+    plan: &ConversionPlan,
+    staging_output: &Path,
+    executable: &Path,
+) -> Option<BackendDiagnosticText> {
+    let redactor = attempt_redactor(plan, staging_output, executable);
+    Some(BackendDiagnosticText {
+        stdout: BackendTextExcerpt::of_stream(
+            &output.stdout,
+            output.stdout_total_bytes,
+            output.stdout_truncated,
+            &redactor,
+        ),
+        stderr: BackendTextExcerpt::of_stream(
+            &output.stderr,
+            output.stderr_total_bytes,
+            output.stderr_truncated,
+            &redactor,
+        ),
+    })
 }
 
 fn run_staged(
@@ -2313,15 +2448,20 @@ fn run_staged(
                 return StagedResult::CancellationFailed {
                     cause,
                     // The runner returned an error rather than a result, so
-                    // there are no process facts to report.
+                    // there are no process facts and no captured streams to
+                    // report.
                     backend: None,
                     staged: observe_staged_content(staging),
+                    diagnostics: None,
                 };
             }
             return StagedResult::failed(ConversionRunFailure::Backend(cause));
         }
     };
     let backend = Some(BackendRunFacts::from(&output));
+    // Named once, so every diagnostic-worthy return below registers the same
+    // executable that actually ran rather than the one discovery resolved.
+    let executable = command.executable.clone();
 
     if output.termination != Termination::Exited {
         // A request must actually have been made on the object this attempt
@@ -2329,10 +2469,11 @@ fn run_staged(
         // for is reporting a run that did not complete, which is the meaning
         // this boundary has always given it.
         if !requested {
-            return StagedResult::Settled(
-                ConversionRunOutcome::Failed(ConversionRunFailure::BackendDidNotComplete),
+            return StagedResult::Settled {
+                outcome: ConversionRunOutcome::Failed(ConversionRunFailure::BackendDidNotComplete),
                 backend,
-            );
+                diagnostics: diagnostic_text(&output, plan, staging, &executable),
+            };
         }
         let staged = observe_staged_content(staging);
         return match output.termination {
@@ -2361,16 +2502,18 @@ fn run_staged(
                 cause: BackendExecutionFailure::NotTerminated,
                 backend,
                 staged,
+                diagnostics: diagnostic_text(&output, plan, staging, &executable),
             },
         };
     }
     if !output.success() {
-        return StagedResult::Settled(
-            ConversionRunOutcome::Failed(ConversionRunFailure::BackendRejected {
+        return StagedResult::Settled {
+            outcome: ConversionRunOutcome::Failed(ConversionRunFailure::BackendRejected {
                 exit_code: output.exit_code,
             }),
             backend,
-        );
+            diagnostics: diagnostic_text(&output, plan, staging, &executable),
+        };
     }
 
     // Exit status is not evidence of a usable document. The judgement below is
@@ -2400,10 +2543,15 @@ fn run_staged(
     let validated = match verified {
         VerifiedConversion::Valid(validated) => validated,
         VerifiedConversion::Rejected(rejected) => {
-            return StagedResult::Settled(
-                ConversionRunOutcome::Failed(ConversionRunFailure::OutputRejected(rejected)),
+            return StagedResult::Settled {
+                outcome: ConversionRunOutcome::Failed(ConversionRunFailure::OutputRejected(
+                    rejected,
+                )),
                 backend,
-            );
+                // The process exited cleanly and the document it produced did
+                // not pass. What it said on the way is the only account of why.
+                diagnostics: diagnostic_text(&output, plan, staging, &executable),
+            };
         }
     };
 
@@ -2424,19 +2572,26 @@ fn run_staged(
     let finalized =
         finalize::finalize_validated(*validated, destination_directory, plan.output_file_name());
     match finalized {
-        Ok(valid) => {
-            StagedResult::Settled(ConversionRunOutcome::Finalized(Box::new(valid)), backend)
-        }
-        Err(error) => StagedResult::Settled(
-            ConversionRunOutcome::Failed(match error.kind() {
+        // Nothing is retained. The conversion worked, and repeating what a
+        // working backend printed would keep text about the user's acquisition
+        // for a diagnosis nobody needs.
+        Ok(valid) => StagedResult::Settled {
+            outcome: ConversionRunOutcome::Finalized(Box::new(valid)),
+            backend,
+            diagnostics: None,
+        },
+        Err(error) => StagedResult::Settled {
+            outcome: ConversionRunOutcome::Failed(match error.kind() {
                 io::ErrorKind::AlreadyExists => ConversionRunFailure::DestinationAppearedDuringRun,
                 kind => ConversionRunFailure::NotFinalized { kind },
             }),
             backend,
-        ),
+            diagnostics: diagnostic_text(&output, plan, staging, &executable),
+        },
     }
 }
 
+pub(crate) mod artifact;
 mod cleanup;
 mod finalize;
 

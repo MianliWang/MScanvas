@@ -27,16 +27,20 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use mscanvas_proteowizard::{
-    CancellationFailure, CancellationReport, CancellationRequest, FinalizedOutput, StagingResidue,
-    Termination,
+    BackendDiagnosticText, CancellationFailure, CancellationReport, CancellationRequest,
+    FinalizedOutput, StagingResidue, Termination,
 };
 
 use super::adoption::FinalizedOutputAdoptionTicket;
 use super::destination::DestinationIdentity;
+use super::diagnostics::{
+    ConversionFailureDiagnosticTicket, DiagnosticItemIdentity, DiagnosticsProviderFacts,
+    DiagnosticsQueueFacts,
+};
 use super::dto::{
-    ConversionCancellationDto, ConversionConflictPolicyDto, ConversionQueueDto,
-    ConversionQueueItemDto, ConversionQueueItemStateDto, ConversionQueueTerminalReasonDto,
-    MAX_CONVERSION_QUEUE_ITEMS, PreviewErrorDto, SelectedFileDto,
+    ConversionCancellationDto, ConversionConflictPolicyDto, ConversionDiagnosticsStateDto,
+    ConversionQueueDto, ConversionQueueItemDto, ConversionQueueItemStateDto,
+    ConversionQueueTerminalReasonDto, MAX_CONVERSION_QUEUE_ITEMS, PreviewErrorDto, SelectedFileDto,
     WorkspaceConversionReservationDto, WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
     conversion_busy, conversion_not_stoppable, invalid_conversion_reservation,
     queue_duplicate_dataset, queue_installation_changed, queue_is_empty, queue_too_large,
@@ -196,6 +200,13 @@ pub(super) struct QueueItem {
     /// for an item that finalized, dropped with the queue that made it, and
     /// never rebuilt from a name.
     adoption: Option<Arc<FinalizedOutputAdoptionTicket>>,
+    /// What an export may say about this item's latest attempt.
+    ///
+    /// Shared for the reason the adoption ticket is: the queue is cloned on
+    /// every read and the redacted text is the largest thing on it. Present only
+    /// where the latest attempt is worth diagnosing, replaced whole when a later
+    /// attempt settles, and dropped with the queue.
+    diagnostic: Option<Arc<ConversionFailureDiagnosticTicket>>,
 }
 
 /// What a stop established about one attempt, path-free.
@@ -254,6 +265,7 @@ impl QueueItem {
             retryable: false,
             cancellation: None,
             adoption: None,
+            diagnostic: None,
         }
     }
 
@@ -279,6 +291,22 @@ impl QueueItem {
 
     pub(super) fn file_name(&self) -> &str {
         &self.dataset_dto.file_name
+    }
+
+    /// Which item a diagnostic built here is about.
+    ///
+    /// Read from the item rather than assembled by the caller, so a ticket can
+    /// never be given a display name or an attempt number belonging to another
+    /// row.
+    fn diagnostic_identity(&self, operation: u64, item_index: usize) -> DiagnosticItemIdentity {
+        DiagnosticItemIdentity {
+            operation,
+            item_index,
+            source_file_name: self.dataset_dto.file_name.clone(),
+            output_file_name: self.output_file_name.clone(),
+            source_kind: self.kind,
+            attempt: self.attempts,
+        }
     }
 
     fn to_dto(&self) -> ConversionQueueItemDto {
@@ -454,6 +482,46 @@ impl ConversionQueue {
             .count();
     }
 
+    /// Every diagnostic-worthy item of this queue, in queue order.
+    ///
+    /// A ticket answers only for the state it was built for. A retry moves a
+    /// failure back to pending while its ticket survives -- deliberately, so a
+    /// stopped retry keeps the diagnostics of failures it never reran -- and an
+    /// item in some other state now must not be described by what it used to be.
+    fn diagnostic_tickets(&self, operation: u64) -> Vec<Arc<ConversionFailureDiagnosticTicket>> {
+        self.items
+            .iter()
+            .filter_map(|item| {
+                let ticket = item.diagnostic.as_ref()?;
+                // The queue, and the state. The operation is asked even though a
+                // ticket only ever reaches the queue that built it, for the
+                // reason the adoption tickets ask their state: a binding that is
+                // never checked is a binding that can quietly stop holding.
+                (ticket.operation() == operation && ticket.describes() == item.state)
+                    .then(|| Arc::clone(ticket))
+            })
+            .collect()
+    }
+
+    /// What the export says about the queue itself.
+    fn diagnostic_facts(&self, operation: u64, reason: TerminalReason) -> DiagnosticsQueueFacts {
+        DiagnosticsQueueFacts {
+            operation,
+            terminal_reason: reason.stable_id(),
+            conflict_policy: self.conflict,
+            retry_round: self.retry_round,
+            item_count: self.items.len(),
+            finalized_count: self.count(ItemState::Finalized),
+            skipped_count: self.count(ItemState::Skipped),
+            failed_count: self.count(ItemState::Failed),
+            cancelled_count: self.count(ItemState::Cancelled),
+            not_run_count: self.count(ItemState::NotRun),
+            cancellation_failed_count: self.count(ItemState::CancellationFailed),
+            installation_generation: self.installation_generation,
+            queue_error: self.error.as_ref().map(|error| error.kind.clone()),
+        }
+    }
+
     fn to_dto(&self) -> ConversionQueueDto {
         let failed = self.count(ItemState::Failed);
         let retryable = self
@@ -525,6 +593,20 @@ impl TerminalReason {
             Self::Completed => ConversionQueueTerminalReasonDto::Completed,
             Self::Stopped => ConversionQueueTerminalReasonDto::Stopped,
             Self::StopFailed => ConversionQueueTerminalReasonDto::StopFailed,
+        }
+    }
+
+    /// The identifier an export writes for this reason.
+    ///
+    /// Snake case, like every other stable identifier in that document, and
+    /// deliberately not the wire spelling: the file is a separate contract from
+    /// the transfer object and neither should be read as evidence about the
+    /// other.
+    const fn stable_id(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Stopped => "stopped",
+            Self::StopFailed => "stop_failed",
         }
     }
 
@@ -1021,9 +1103,22 @@ impl ConversionSlot {
                 retryable,
                 report,
                 finalized,
+                diagnostics,
             } => {
                 item.state = state;
                 item.retryable = retryable;
+                // Replaced whole, including with `None`. A rerun that succeeded
+                // removes the failure this item used to carry, which is the
+                // whole meaning of "the latest attempt": an export after a
+                // successful retry must not describe the attempt before it.
+                item.diagnostic = ConversionFailureDiagnosticTicket::of_report(
+                    item.diagnostic_identity(operation, index),
+                    state,
+                    retryable,
+                    &report,
+                    diagnostics,
+                )
+                .map(Arc::new);
                 item.report = Some(*report);
                 item.error = None;
                 // Built here and nowhere else, from a finalization that
@@ -1045,15 +1140,31 @@ impl ConversionSlot {
             ItemOutcome::Refused { retryable, error } => {
                 item.state = ItemState::Failed;
                 item.retryable = retryable;
+                item.diagnostic = Some(Arc::new(ConversionFailureDiagnosticTicket::of_refusal(
+                    item.diagnostic_identity(operation, index),
+                    retryable,
+                    &error,
+                )));
                 item.report = None;
                 item.error = Some(error);
             }
-            ItemOutcome::Stopped { state, facts } => {
+            ItemOutcome::Stopped {
+                state,
+                facts,
+                diagnostics,
+            } => {
                 item.state = state;
                 // Never retryable, whichever of the two states this is. A
                 // cancelled item has nothing to correct, and one whose stop
                 // could not be confirmed must not launch anything at all.
                 item.retryable = false;
+                item.diagnostic = ConversionFailureDiagnosticTicket::of_stop(
+                    item.diagnostic_identity(operation, index),
+                    state,
+                    facts,
+                    diagnostics,
+                )
+                .map(Arc::new);
                 item.report = None;
                 item.error = None;
                 item.cancellation = Some(facts);
@@ -1291,8 +1402,66 @@ impl ConversionSlot {
         )
     }
 
+    /// Everything one diagnostics export of this exact queue would describe.
+    ///
+    /// `None` for anything that is not exactly that: a different operation, a
+    /// queue still under way, an idle slot. The caller is asking about a result
+    /// on screen, and only a terminal queue has one.
+    ///
+    /// A queue whose stop could not be confirmed answers even when no item
+    /// carries a ticket. What that queue records about *itself* -- that MSCanvas
+    /// cannot say whether a converter process survived -- is the diagnosis, and
+    /// it belongs to the queue rather than to any one item.
+    pub(super) fn terminal_diagnostics(
+        &self,
+        operation: u64,
+    ) -> Option<(
+        DiagnosticsQueueFacts,
+        DiagnosticsProviderFacts,
+        u64,
+        Vec<Arc<ConversionFailureDiagnosticTicket>>,
+    )> {
+        if self.operation != operation {
+            return None;
+        }
+        let SlotState::Terminal { reason, queue } = &self.state else {
+            return None;
+        };
+        let tickets = queue.diagnostic_tickets(operation);
+        if tickets.is_empty() && *reason != TerminalReason::StopFailed {
+            return None;
+        }
+        Some((
+            queue.diagnostic_facts(operation, *reason),
+            queue
+                .installation
+                .as_ref()
+                .map(InstallationIdentity::diagnostic_facts)
+                .unwrap_or_default(),
+            queue.retry_round,
+            tickets,
+        ))
+    }
+
+    /// How many items an export of the current queue would describe.
+    ///
+    /// Zero unless the slot holds a terminal queue, which is what makes the
+    /// action's availability a projection of this rule rather than a second one
+    /// the interface keeps in step.
+    fn terminal_diagnostic_summary(&self) -> (usize, bool) {
+        let SlotState::Terminal { reason, queue } = &self.state else {
+            return (0, false);
+        };
+        let count = queue.diagnostic_tickets(self.operation).len();
+        (count, count > 0 || *reason == TerminalReason::StopFailed)
+    }
+
     /// The current state, as the webview reads it.
-    pub(super) fn read(&self, backend_quarantined: bool) -> WorkspaceConversionUpdateDto {
+    pub(super) fn read(
+        &self,
+        backend_quarantined: bool,
+        diagnostics: ConversionDiagnosticsStateDto,
+    ) -> WorkspaceConversionUpdateDto {
         let operation_id = self.operation.to_string();
         let state = match &self.state {
             SlotState::Idle => WorkspaceConversionStateDto::Idle,
@@ -1316,9 +1485,15 @@ impl ConversionSlot {
                 queue: queue.to_dto(),
             },
         };
+        let (eligible_item_count, available) = self.terminal_diagnostic_summary();
         WorkspaceConversionUpdateDto {
             sequence: self.sequence,
             state,
+            diagnostics: ConversionDiagnosticsStateDto {
+                eligible_item_count,
+                available,
+                ..diagnostics
+            },
             backend_quarantined,
         }
     }
@@ -1357,6 +1532,13 @@ pub(super) enum ItemOutcome {
         /// queue, so the ticket is assembled where the item settles rather than
         /// carried around half-built.
         finalized: Option<Box<FinalizedOutput>>,
+        /// The redacted backend text, taken out of the run's own report.
+        ///
+        /// Present exactly where the run kept any, which is where it failed.
+        /// It arrives already redacted and already bounded: this side has no
+        /// way to obtain the raw streams and no paths with which to redact
+        /// them.
+        diagnostics: Option<Box<BackendDiagnosticText>>,
     },
     /// The attempt never reached a conversion at all.
     Refused {
@@ -1371,5 +1553,8 @@ pub(super) enum ItemOutcome {
     Stopped {
         state: ItemState,
         facts: CancellationFacts,
+        /// Present only where the stop could not be confirmed, which is the
+        /// outcome that most needs an account of what the backend was saying.
+        diagnostics: Option<Box<BackendDiagnosticText>>,
     },
 }

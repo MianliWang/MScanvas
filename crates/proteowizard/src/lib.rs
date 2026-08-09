@@ -52,14 +52,21 @@ pub use conversion::{
     ValidConversion, ValidationMode, capture_conversion_source, conversion_output_file_name,
     inspect_conversion_output, verify_mzml_conversion,
 };
-pub use conversion_run::{
-    BackendExecutionFailure, BackendRunFacts, BackendStream, CancellationFailure,
-    CancellationReport, ConflictPolicy, ConversionAttempt, ConversionPlan, ConversionPlanError,
-    ConversionRunFailure, ConversionRunOutcome, ConversionRunReport, ConversionSource,
-    ConversionSourceKind, ConversionSourceRejection, StagedContentObservation, StagingReclaimError,
-    StagingResidue, provider_build_is_evidenced, run_conversion, run_conversion_cancellable,
+pub use conversion_run::artifact::{
+    LocalFileWriteError, LocalFileWriteFailure, write_new_local_file,
 };
-pub use diagnostics::{Redactor, ReportableProcessOutput};
+pub use conversion_run::{
+    BackendDiagnosticText, BackendExecutionFailure, BackendRunFacts, BackendStream,
+    CancellationFailure, CancellationReport, ConflictPolicy, ConversionAttempt, ConversionPlan,
+    ConversionPlanError, ConversionRunFailure, ConversionRunOutcome, ConversionRunReport,
+    ConversionSource, ConversionSourceKind, ConversionSourceRejection, StagedContentObservation,
+    StagingReclaimError, StagingResidue, provider_build_is_evidenced, run_conversion,
+    run_conversion_cancellable,
+};
+pub use diagnostics::{
+    BackendTextExcerpt, ExcerptSuppression, MAX_DIAGNOSTIC_STREAM_EXCERPT_BYTES, Redactor,
+    ReportableProcessOutput, absolute_path_start,
+};
 pub use discovery::{
     AvailabilityState, ConfiguredLocation, DiscoveredTool, DiscoveryEnvironment, DiscoveryFailure,
     DiscoveryRequest, DiscoveryResult, DiscoverySource, ToolProbe, discover,

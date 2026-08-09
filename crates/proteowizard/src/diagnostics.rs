@@ -1,7 +1,34 @@
+//! Turning what a run knows into what a run may say.
+//!
+//! Two things live here, and they answer the same question from opposite ends.
+//! The [`Redactor`] knows *particular* paths — the acquisition, the folder, the
+//! staging area, the executable — and removes every spelling of them it can
+//! obtain. [`absolute_path_start`] knows none of them and recognises the
+//! *shape* of an absolute path anywhere it appears.
+//!
+//! Neither is sufficient alone. Backend text records paths nobody handed this
+//! process, so the token list will always be incomplete; and a shape test that
+//! decided what to keep would be deciding it about text no one has read. So the
+//! two compose: exact tokens are replaced, and what remains is judged by shape.
+//! [`BackendTextExcerpt`] is that composition made fail-closed — an excerpt that
+//! still looks like it names somewhere on this computer is withheld rather than
+//! reported, because a suppressed excerpt costs a diagnosis and a leaked one
+//! costs the user something they cannot take back.
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::{ProcessOutput, Termination};
+
+/// The most encoded UTF-8 bytes one redacted stream excerpt may carry.
+///
+/// Applied after decoding and redaction, to the text as it will be written,
+/// rather than to the captured bytes: what a bound on a diagnostics file has to
+/// promise is about the file, and redaction changes the length of everything it
+/// touches. It is far below the process boundary's own 8 MiB capture limit, and
+/// deliberately so — that limit exists so a run holds a whole conversation in
+/// memory, and this one exists so a person can read the result.
+pub const MAX_DIAGNOSTIC_STREAM_EXCERPT_BYTES: usize = 32 * 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ReplacementKind {
@@ -89,16 +116,56 @@ impl Redactor {
 
     #[must_use]
     pub fn redact(&self, text: &str) -> String {
+        self.redact_counted(text).0
+    }
+
+    /// Redacts, and says how many replacements it made.
+    ///
+    /// The count is reported to the user in a diagnostics export, where it is
+    /// the only honest thing that can be said about how much was removed: the
+    /// values themselves must not be listed, and an export that said nothing
+    /// would leave a reader unable to tell thorough redaction from none at all.
+    ///
+    /// It counts replacements, not distinct paths. One path written three times
+    /// counts three, which is what "how much of this text was rewritten" means.
+    #[must_use]
+    pub fn redact_counted(&self, text: &str) -> (String, usize) {
         self.replacements
             .iter()
-            .fold(text.to_owned(), |redacted, entry| match entry.kind {
-                ReplacementKind::Literal => {
-                    replace_case_insensitive(&redacted, &entry.value, &entry.replacement)
-                }
-                ReplacementKind::Path => {
-                    replace_path_alias(&redacted, &entry.value, &entry.replacement)
-                }
-            })
+            .fold(
+                (text.to_owned(), 0),
+                |(redacted, count), entry| match entry.kind {
+                    ReplacementKind::Literal => {
+                        let (redacted, made) =
+                            replace_case_insensitive(&redacted, &entry.value, &entry.replacement);
+                        (redacted, count + made)
+                    }
+                    ReplacementKind::Path => {
+                        let (redacted, made) =
+                            replace_path_alias(&redacted, &entry.value, &entry.replacement);
+                        (redacted, count + made)
+                    }
+                },
+            )
+    }
+
+    /// Every placeholder this redactor can emit, deduplicated and ordered.
+    ///
+    /// Needed by the shape test that runs afterwards. A path whose root was
+    /// replaced leaves its remainder behind — `<destination>\run.mzML` — and
+    /// that remainder begins with a separator, which is exactly what an absolute
+    /// UNC or POSIX root looks like. Knowing the placeholders is what lets the
+    /// shape test tell "this is the tail of something already removed" from
+    /// "this is somewhere nobody has removed".
+    fn placeholders(&self) -> Vec<&str> {
+        let mut placeholders: Vec<&str> = self
+            .replacements
+            .iter()
+            .map(|entry| entry.replacement.as_str())
+            .collect();
+        placeholders.sort_unstable();
+        placeholders.dedup();
+        placeholders
     }
 }
 
@@ -134,6 +201,332 @@ impl ReportableProcessOutput {
             stderr: redactor.redact(&String::from_utf8_lossy(&output.stderr)),
         }
     }
+}
+
+/// Finds the first byte offset at which an absolute path begins, or `None`.
+///
+/// A shape test, not a lookup: it knows no path and asks only whether one
+/// starts here. Markers are recognized anywhere in the line rather than only at
+/// a token start, because backend and mzML text routinely write them as
+/// `key=<path>` or inside quotes.
+///
+/// Takes one line. Where a path *ends* cannot be decided — `D:\Program
+/// Files\run.raw` contains a space — so every caller acts on the whole
+/// remainder of the line rather than on a span this could measure.
+///
+/// Deliberately conservative in one direction. Answering "yes" about ordinary
+/// prose costs a caller some text; answering "no" about a real path costs the
+/// user a location they did not choose to reveal.
+#[must_use]
+pub fn absolute_path_start(line: &str) -> Option<usize> {
+    let bytes = line.as_bytes();
+    for (index, _) in line.char_indices() {
+        let preceding = if index == 0 {
+            None
+        } else {
+            bytes.get(index - 1)
+        };
+        let after_boundary = preceding.is_none_or(|byte| !byte.is_ascii_alphanumeric());
+
+        // Compared as bytes, never sliced as text: `index + 5` is not
+        // necessarily a character boundary, and backend text may legitimately
+        // hold non-ASCII. Slicing there would panic on valid input.
+        if after_boundary
+            && bytes
+                .get(index..index + 5)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"file:"))
+        {
+            return Some(index);
+        }
+
+        // A UNC root, an extended-length or device prefix — both of which begin
+        // `\\` — or a POSIX-absolute root, which carries a single leading
+        // slash: text written on Linux or macOS records `/home/...` and is just
+        // as revealing when read on Windows. The preceding-boundary test keeps
+        // `m/z`, `counts/second` and a bare `a / b` readable, and the next
+        // character must be able to start a path segment.
+        if matches!(bytes.get(index), Some(b'\\' | b'/'))
+            && preceding.is_none_or(|byte| {
+                // Backend text brackets and separates values in several ways,
+                // including `key:value`, so a colon counts as a boundary too.
+                // Only the `://` of a URI authority is exempt, below.
+                byte.is_ascii_whitespace() || is_strong_boundary(*byte)
+            })
+            && !starts_uri_authority(bytes, index)
+            // What may follow depends on what came before. After a strong
+            // boundary the value starts here whatever its first character is,
+            // so a directory whose name begins with a space is still a path.
+            // After whitespace, another space means this is prose — the
+            // `a / b` this test exists to leave alone — and not a root.
+            //
+            // A whitelist of filename characters would be the wrong shape
+            // either way: `$HOME`, `@archive` and non-ASCII names are all
+            // ordinary segments, and a list of what is allowed will always be
+            // missing something.
+            && bytes.get(index + 1).is_some_and(|byte| {
+                !byte.is_ascii_whitespace()
+                    || preceding.is_some_and(|preceding| is_strong_boundary(*preceding))
+            })
+        {
+            return Some(index);
+        }
+
+        if after_boundary
+            && bytes.get(index).is_some_and(u8::is_ascii_alphabetic)
+            && bytes.get(index + 1) == Some(&b':')
+            && matches!(bytes.get(index + 2), Some(b'\\' | b'/'))
+        {
+            return Some(index);
+        }
+    }
+    None
+}
+
+/// Punctuation that separates a key from its value in backend text.
+///
+/// Distinct from whitespace: after one of these the value begins immediately,
+/// whatever its first character is.
+const fn is_strong_boundary(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'=' | b'"' | b'\'' | b'(' | b'[' | b'{' | b'<' | b',' | b';' | b'|' | b':'
+    )
+}
+
+/// Whether the slash at `index` opens the `//` of a URI authority.
+///
+/// Only that exact shape is exempt, rather than every slash after a colon: a
+/// field written as `source:/home/alice/run.raw` is a path, while
+/// `http://psi.hupo.org/ms/mzml` is a vocabulary reference worth keeping.
+fn starts_uri_authority(bytes: &[u8], index: usize) -> bool {
+    if bytes.get(index) != Some(&b'/') || bytes.get(index + 1) != Some(&b'/') || index == 0 {
+        return false;
+    }
+    if bytes.get(index - 1) != Some(&b':') {
+        return false;
+    }
+    let mut scheme_start = index - 1;
+    while scheme_start > 0
+        && bytes
+            .get(scheme_start - 1)
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
+    {
+        scheme_start -= 1;
+    }
+    // A scheme is at least one character and starts with a letter.
+    scheme_start < index - 1 && bytes.get(scheme_start).is_some_and(u8::is_ascii_alphabetic)
+}
+
+/// Why an excerpt was withheld instead of exported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExcerptSuppression {
+    /// Every known spelling was replaced and the text still looks like it names
+    /// an absolute local path.
+    ResidualAbsolutePath,
+}
+
+impl ExcerptSuppression {
+    #[must_use]
+    pub const fn stable_id(self) -> &'static str {
+        match self {
+            Self::ResidualAbsolutePath => "residual_absolute_path",
+        }
+    }
+}
+
+/// One backend stream, decoded, sanitized, redacted, bounded — or withheld.
+///
+/// Built where a run still knows its own paths, and it is the only form of
+/// backend text that outlives the run. The raw bytes are dropped when the run
+/// that captured them returns, so nothing downstream can retain, forward or
+/// re-redact them: there is no accessor for them here because there is nothing
+/// left to accessorise.
+///
+/// Every count beside the text describes the *original* stream rather than what
+/// survived. A reader has to be able to tell "the backend said little" from
+/// "the backend said a great deal and this is the first part of it", and from
+/// "the backend said something this refused to repeat".
+#[derive(Clone, PartialEq, Eq)]
+pub struct BackendTextExcerpt {
+    /// `None` when the shape test refused it. Absent rather than emptied, so a
+    /// suppressed excerpt cannot be mistaken for a silent stream.
+    text: Option<String>,
+    suppression: Option<ExcerptSuppression>,
+    lossy: bool,
+    total_bytes: u64,
+    captured_bytes: u64,
+    capture_truncated: bool,
+    excerpt_truncated: bool,
+    redactions: usize,
+}
+
+impl BackendTextExcerpt {
+    /// Builds one excerpt from one captured stream.
+    ///
+    /// The order is the argument. Control characters are removed first, because
+    /// a stream is bytes and nothing downstream should have to defend against
+    /// what a backend can put in them. Exact spellings are replaced next, while
+    /// the text is still whole — truncating first would cut a path in half and
+    /// leave a fragment no token matches. The bound is applied after redaction,
+    /// because redaction changes lengths and the promise is about the exported
+    /// text. And the shape test runs last, on exactly the string that would be
+    /// written, so nothing is judged that is not what a reader would see.
+    #[must_use]
+    pub fn of_stream(
+        captured: &[u8],
+        total_bytes: u64,
+        capture_truncated: bool,
+        redactor: &Redactor,
+    ) -> Self {
+        let decoded = String::from_utf8_lossy(captured);
+        let lossy = matches!(decoded, std::borrow::Cow::Owned(_));
+        let sanitized = sanitize_control_characters(&decoded);
+        let (redacted, redactions) = redactor.redact_counted(&sanitized);
+        let (bounded, excerpt_truncated) =
+            truncate_to_bytes(redacted, MAX_DIAGNOSTIC_STREAM_EXCERPT_BYTES);
+        let suppression = residual_absolute_path(&bounded, &redactor.placeholders())
+            .then_some(ExcerptSuppression::ResidualAbsolutePath);
+        Self {
+            text: suppression.is_none().then_some(bounded),
+            suppression,
+            lossy,
+            total_bytes,
+            captured_bytes: captured.len() as u64,
+            capture_truncated,
+            excerpt_truncated,
+            redactions,
+        }
+    }
+
+    /// The exported text, or `None` when it was withheld.
+    #[must_use]
+    pub fn text(&self) -> Option<&str> {
+        self.text.as_deref()
+    }
+
+    #[must_use]
+    pub const fn suppression(&self) -> Option<ExcerptSuppression> {
+        self.suppression
+    }
+
+    /// Whether decoding replaced bytes that are not valid UTF-8.
+    #[must_use]
+    pub const fn lossy(&self) -> bool {
+        self.lossy
+    }
+
+    /// How many bytes the stream produced in total, whether captured or not.
+    #[must_use]
+    pub const fn total_bytes(&self) -> u64 {
+        self.total_bytes
+    }
+
+    /// How many bytes the process boundary held.
+    #[must_use]
+    pub const fn captured_bytes(&self) -> u64 {
+        self.captured_bytes
+    }
+
+    /// Whether the process boundary's own capture limit cut the stream.
+    #[must_use]
+    pub const fn capture_truncated(&self) -> bool {
+        self.capture_truncated
+    }
+
+    /// Whether this excerpt's own bound cut what capture had kept.
+    ///
+    /// Distinct from `capture_truncated`, and reported separately: they are two
+    /// different limits and a reader deciding whether to raise the capture
+    /// limit or the excerpt bound needs to know which one was reached.
+    #[must_use]
+    pub const fn excerpt_truncated(&self) -> bool {
+        self.excerpt_truncated
+    }
+
+    #[must_use]
+    pub const fn redactions(&self) -> usize {
+        self.redactions
+    }
+}
+
+/// Deliberately opaque. Whatever survived redaction is still backend text, and
+/// a `{:?}` of a value holding it would put it into a panic message or a log.
+impl std::fmt::Debug for BackendTextExcerpt {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BackendTextExcerpt")
+            .field("text", &"<opaque-backend-excerpt>")
+            .field("suppressed", &self.suppression.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Replaces every control character a reader has no use for.
+///
+/// `\n`, `\r` and `\t` are the structure of a console stream and are kept.
+/// Everything else in the C0 range, and DEL, becomes the replacement character:
+/// a NUL would truncate the text for anything that reads it as a C string, and
+/// an escape sequence would let backend text move a terminal cursor or repaint
+/// a line in whatever eventually displays this.
+fn sanitize_control_characters(text: &str) -> String {
+    text.chars()
+        .map(|character| match character {
+            '\n' | '\r' | '\t' => character,
+            _ if character.is_control() => char::REPLACEMENT_CHARACTER,
+            _ => character,
+        })
+        .collect()
+}
+
+/// Keeps the leading `limit` bytes, cut at a character boundary.
+///
+/// A prefix, because a prefix is what the process boundary captured: it holds
+/// the first bytes of a stream and drops the rest, so there is no suffix here
+/// to keep and claiming one would describe output nobody has.
+fn truncate_to_bytes(text: String, limit: usize) -> (String, bool) {
+    if text.len() <= limit {
+        return (text, false);
+    }
+    let end = floor_char_boundary(&text, limit);
+    let mut text = text;
+    text.truncate(end);
+    (text, true)
+}
+
+/// Whether anything in this text still looks like an absolute local path.
+///
+/// Runs on the redacted text, so the only hits it should see are shapes no
+/// registered token matched. One of them is not a leak: replacing the root of
+/// `D:\outputs\run.mzML` leaves `<destination>\run.mzML`, whose separator is
+/// indistinguishable by shape from a UNC or POSIX root. A separator directly
+/// after a placeholder is therefore read as the remainder of something already
+/// removed and scanning continues past it.
+///
+/// Only a separator is forgiven that way. A drive letter or a `file:` URL after
+/// a placeholder is not the tail of anything — `<source>D:\private\run.raw`
+/// names a location nothing has replaced — so those still answer yes.
+fn residual_absolute_path(text: &str, placeholders: &[&str]) -> bool {
+    for line in text.split_inclusive('\n') {
+        let mut from = 0;
+        while let Some(relative) = absolute_path_start(&line[from..]) {
+            let start = from + relative;
+            let is_separator = line[start..].starts_with(is_separator);
+            if is_separator && ends_with_placeholder(&line[..start], placeholders) {
+                // One byte, because a separator is ASCII and the scan has to
+                // resume inside the remainder rather than skip over it.
+                from = start + 1;
+                continue;
+            }
+            return true;
+        }
+    }
+    false
+}
+
+fn ends_with_placeholder(prefix: &str, placeholders: &[&str]) -> bool {
+    placeholders
+        .iter()
+        .any(|placeholder| !placeholder.is_empty() && prefix.ends_with(placeholder))
 }
 
 fn collect_path_aliases(path: &Path) -> Vec<String> {
@@ -295,18 +688,20 @@ fn is_drive_absolute(value: &str) -> bool {
     bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'\\'
 }
 
-fn replace_path_alias(input: &str, alias: &str, replacement: &str) -> String {
+fn replace_path_alias(input: &str, alias: &str, replacement: &str) -> (String, usize) {
     let mut result = String::with_capacity(input.len());
     let mut cursor = 0;
+    let mut replaced = 0;
 
     while let Some((start, end)) = find_path_alias(input, alias, cursor) {
         result.push_str(&input[cursor..start]);
         result.push_str(replacement);
         cursor = end;
+        replaced += 1;
     }
 
     result.push_str(&input[cursor..]);
-    result
+    (result, replaced)
 }
 
 fn find_path_alias(input: &str, alias: &str, from: usize) -> Option<(usize, usize)> {
@@ -476,21 +871,23 @@ fn is_separator_byte(byte: u8) -> bool {
     matches!(byte, b'\\' | b'/')
 }
 
-fn replace_case_insensitive(input: &str, needle: &str, replacement: &str) -> String {
+fn replace_case_insensitive(input: &str, needle: &str, replacement: &str) -> (String, usize) {
     if needle.is_empty() {
-        return input.to_owned();
+        return (input.to_owned(), 0);
     }
 
     let mut result = String::with_capacity(input.len());
     let mut cursor = 0;
+    let mut replaced = 0;
     while let Some(start) = find_ascii_case_insensitive(input, needle, cursor) {
         let end = start + needle.len();
         result.push_str(&input[cursor..start]);
         result.push_str(replacement);
         cursor = end;
+        replaced += 1;
     }
     result.push_str(&input[cursor..]);
-    result
+    (result, replaced)
 }
 
 fn find_ascii_case_insensitive(input: &str, needle: &str, from: usize) -> Option<usize> {
@@ -729,6 +1126,231 @@ mod tests {
         let redactor = Redactor::default().with_path(Path::new(r"C:\Data\样本 01.raw"), "<input>");
 
         assert_eq!(redactor.redact(r"c:\data\样本 01.raw"), "<input>");
+    }
+
+    /// One captured stream, as the process boundary hands it over.
+    fn excerpt(captured: &[u8], redactor: &Redactor) -> BackendTextExcerpt {
+        BackendTextExcerpt::of_stream(captured, captured.len() as u64, false, redactor)
+    }
+
+    /// The count is what an export reports in place of the values it removed,
+    /// so it counts replacements rather than distinct paths: one path written
+    /// three times was rewritten three times.
+    #[test]
+    fn redaction_counts_every_replacement_it_makes() {
+        let redactor = Redactor::default()
+            .with_path(Path::new(r"C:\Data\run.raw"), "<source>")
+            .with_path(Path::new(r"D:\Outputs"), "<destination>");
+
+        let (redacted, count) = redactor.redact_counted(
+            r"read C:\Data\run.raw, read c:/data/run.raw again, wrote D:\Outputs\run.mzML",
+        );
+
+        assert_eq!(
+            redacted,
+            r"read <source>, read <source> again, wrote <destination>\run.mzML"
+        );
+        assert_eq!(count, 3);
+        assert_eq!(redactor.redact_counted("nothing here").1, 0);
+    }
+
+    /// Every absolute shape this crate claims to recognise, and the ordinary
+    /// text it must leave alone. This is the test that decides what gets
+    /// withheld, so it enumerates rather than samples.
+    #[test]
+    fn the_shape_test_recognises_every_absolute_form_and_no_prose() {
+        for named in [
+            r"D:\private\run.raw",
+            r"wrote D:\private\run.raw",
+            r"\\server\share\run.raw",
+            r"\\?\C:\private\run.raw",
+            r"\\?\UNC\server\share\run.raw",
+            r"\\.\C:\private\run.raw",
+            "file:///D:/private/run.raw",
+            "FILE:///D:/private/run.raw",
+            "/home/alice/run.raw",
+            r#"source="D:\private\run.raw""#,
+            "source='/home/alice/run.raw'",
+            "source=D:/private/run.raw",
+        ] {
+            assert!(absolute_path_start(named).is_some(), "{named}");
+        }
+
+        for prose in [
+            "mz=101.007276 rt=1.0 intensity=1.25e+07",
+            "scanWindow: 200-2000 m/z at counts/second",
+            "cv: http://psi.hupo.org/ms/mzml",
+            "ratio: 3 / 4",
+            "ratio: 3:1",
+            "exit code 1",
+            "sample: 標準サンプル",
+        ] {
+            assert!(absolute_path_start(prose).is_none(), "{prose}");
+        }
+    }
+
+    /// The one false positive that would make the whole feature useless.
+    ///
+    /// Replacing a directory root leaves its remainder behind, and a remainder
+    /// begins with a separator — which by shape alone is a UNC or POSIX root. A
+    /// separator directly after a placeholder is the tail of something already
+    /// removed; anything else after one is not.
+    #[test]
+    fn a_remainder_after_a_placeholder_is_not_a_new_absolute_path() {
+        let redactor = Redactor::default().with_path(Path::new(r"D:\Outputs"), "<destination>");
+
+        let kept = excerpt(br"wrote D:\Outputs\run.mzML then finished", &redactor);
+        assert_eq!(
+            kept.text(),
+            Some(r"wrote <destination>\run.mzML then finished")
+        );
+        assert_eq!(kept.suppression(), None);
+
+        // A drive letter after a placeholder is not a tail. It names somewhere
+        // nothing replaced, so the excerpt is withheld.
+        let withheld = excerpt(
+            br"wrote D:\Outputs then read E:\Elsewhere\run.raw",
+            &redactor,
+        );
+        assert_eq!(withheld.text(), None);
+        assert_eq!(
+            withheld.suppression(),
+            Some(ExcerptSuppression::ResidualAbsolutePath)
+        );
+    }
+
+    /// Fail-closed: a path nothing registered survives redaction, so the whole
+    /// excerpt is withheld rather than exported with it in.
+    #[test]
+    fn an_unregistered_absolute_path_withholds_the_whole_excerpt() {
+        let redactor = Redactor::default().with_path(Path::new(r"C:\Data\run.raw"), "<source>");
+
+        let suppressed = excerpt(
+            b"line one is harmless\nread C:\\Data\\run.raw\nspilled D:\\Private\\other.raw\n",
+            &redactor,
+        );
+
+        assert_eq!(suppressed.text(), None);
+        assert_eq!(
+            suppressed.suppression(),
+            Some(ExcerptSuppression::ResidualAbsolutePath)
+        );
+        // Every count still describes the stream, because withholding the text
+        // must not also withhold the fact that there was some.
+        assert!(suppressed.total_bytes() > 0);
+        assert_eq!(suppressed.redactions(), 1);
+    }
+
+    /// Bytes are bytes. Invalid UTF-8 is reported rather than hidden, and the
+    /// control characters a console stream carries are removed rather than
+    /// passed to whatever eventually displays them.
+    #[test]
+    fn invalid_utf8_is_reported_and_control_characters_are_removed() {
+        let redactor = Redactor::default();
+        let captured = b"ok \xff\xfe bad\x00nul\x1b[31mescape\x07bell\ttab\r\nline";
+
+        let excerpt = excerpt(captured, &redactor);
+        let text = excerpt.text().expect("nothing here looks like a path");
+
+        assert!(excerpt.lossy());
+        assert!(!text.contains('\u{0}'));
+        assert!(!text.contains('\u{1b}'));
+        assert!(!text.contains('\u{7}'));
+        // The three that are the structure of a stream survive.
+        assert!(text.contains('\t'));
+        assert!(text.contains("\r\n"));
+        assert_eq!(excerpt.captured_bytes(), captured.len() as u64);
+    }
+
+    /// Two limits, two answers. A reader deciding whether the capture limit or
+    /// the excerpt bound was reached cannot be told with one flag.
+    #[test]
+    fn capture_truncation_and_excerpt_truncation_are_reported_apart() {
+        let redactor = Redactor::default();
+        let long = vec![b'x'; MAX_DIAGNOSTIC_STREAM_EXCERPT_BYTES + 4_096];
+
+        // The process boundary kept everything it saw; this bound is what cut
+        // the excerpt.
+        let ours = BackendTextExcerpt::of_stream(&long, long.len() as u64, false, &redactor);
+        assert!(ours.excerpt_truncated());
+        assert!(!ours.capture_truncated());
+        assert_eq!(
+            ours.text().map(str::len),
+            Some(MAX_DIAGNOSTIC_STREAM_EXCERPT_BYTES)
+        );
+        // The total is the stream's, not the excerpt's, which is what says the
+        // prefix is a prefix.
+        assert_eq!(ours.total_bytes(), long.len() as u64);
+
+        // And the other way: the boundary cut the stream and what it kept fits
+        // here whole.
+        let theirs = BackendTextExcerpt::of_stream(b"short", 9_000_000, true, &redactor);
+        assert!(theirs.capture_truncated());
+        assert!(!theirs.excerpt_truncated());
+        assert_eq!(theirs.total_bytes(), 9_000_000);
+        assert_eq!(theirs.captured_bytes(), 5);
+    }
+
+    /// The bound is applied at a character boundary, so a multi-byte character
+    /// cut in half never reaches a UTF-8 string.
+    #[test]
+    fn the_excerpt_bound_never_splits_a_character() {
+        let redactor = Redactor::default();
+        let mut captured = "样"
+            .repeat(MAX_DIAGNOSTIC_STREAM_EXCERPT_BYTES)
+            .into_bytes();
+        captured.truncate(MAX_DIAGNOSTIC_STREAM_EXCERPT_BYTES + 2);
+
+        let excerpt = excerpt(&captured, &redactor);
+        let text = excerpt.text().expect("nothing here looks like a path");
+
+        assert!(excerpt.excerpt_truncated());
+        assert!(text.len() <= MAX_DIAGNOSTIC_STREAM_EXCERPT_BYTES);
+        assert!(text.chars().all(|character| character == '样'));
+    }
+
+    /// A `{:?}` of anything holding an excerpt must not print the excerpt.
+    #[test]
+    fn an_excerpt_renders_opaquely() {
+        let redactor = Redactor::default();
+        let rendered = format!("{:?}", excerpt(b"secret backend chatter", &redactor));
+
+        assert!(rendered.contains("<opaque-backend-excerpt>"), "{rendered}");
+        assert!(!rendered.contains("secret"), "{rendered}");
+        assert!(!rendered.contains("chatter"), "{rendered}");
+    }
+
+    /// A path inside quotes is one the boundaries recognise on both sides.
+    #[test]
+    fn quoted_and_bracketed_paths_are_redacted() {
+        let redactor = Redactor::default().with_path(Path::new(r"C:\Data\run.raw"), "<source>");
+
+        for (text, expected) in [
+            (r#"input="C:\Data\run.raw""#, r#"input="<source>""#),
+            (r"input='C:\Data\run.raw'", "input='<source>'"),
+            (r"input=(C:\Data\run.raw)", "input=(<source>)"),
+            (r"input=[C:\Data\run.raw]", "input=[<source>]"),
+        ] {
+            assert_eq!(redactor.redact(text), expected, "{text}");
+        }
+    }
+
+    /// The user profile is the one location a backend can name without this
+    /// process ever having handed it over, so a fresh redactor knows it.
+    #[test]
+    fn a_fresh_redactor_knows_the_user_profile() {
+        let Some(profile) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
+        else {
+            return;
+        };
+        let profile = Path::new(&profile);
+        if !is_absolute_path(profile) {
+            return;
+        }
+
+        let redacted = Redactor::new().redact(&format!("home is {}", profile.display()));
+
+        assert!(redacted.contains("<user-profile>"), "{redacted}");
     }
 
     #[cfg(windows)]

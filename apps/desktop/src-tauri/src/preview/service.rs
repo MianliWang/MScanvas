@@ -12,9 +12,10 @@ use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use mscanvas_proteowizard::{
-    ConversionSourceKind, MetadataEntry, MetadataResult, MetadataSectionKind, MsLevelBucket,
-    PreviewNoResult, PreviewOutcome, PreviewValue, Redactor, RunSummaryResult,
-    SelectedSpectrumResult, SpectrumIdentity, SpectrumTableResult,
+    ConversionSourceKind, LocalFileWriteError, LocalFileWriteFailure, MetadataEntry,
+    MetadataResult, MetadataSectionKind, MsLevelBucket, PreviewNoResult, PreviewOutcome,
+    PreviewValue, Redactor, RunSummaryResult, SelectedSpectrumResult, Sha256Digest,
+    SpectrumIdentity, SpectrumTableResult, write_new_local_file,
 };
 
 // Both are used only by the one-item conversion the private orchestration
@@ -38,6 +39,11 @@ use super::conversion::{
     run_planned_conversion_cancellable,
 };
 use super::destination::admit_destination_root;
+use super::diagnostics::payload;
+use super::diagnostics::{
+    DIAGNOSTICS_FILE_NAME, DiagnosticsExportRequest, DiagnosticsExportSlot,
+    MAX_DIAGNOSTIC_EXPORT_BYTES,
+};
 use super::discovery::{
     DiscoveryBudget, DiscoveryError, DiscoveryErrorKind, DiscoveryLimit, DiscoveryResult,
     discover_mzml_candidates,
@@ -64,6 +70,13 @@ use super::dto::{
     require_finite, require_finite_option, workspace_full,
 };
 use super::dto::{
+    ConversionDiagnosticsExportDto, ConversionDiagnosticsReservationDto,
+    ConversionDiagnosticsStateDto, MAX_CANDIDATE_NAME_CHARS, diagnostics_destination_exists,
+    diagnostics_destination_unusable, diagnostics_export_in_progress,
+    diagnostics_export_superseded, diagnostics_not_finalized, diagnostics_not_written,
+    diagnostics_too_large, diagnostics_unavailable, invalid_diagnostics_reservation,
+};
+use super::dto::{
     FolderDiscoverySummaryDto, FolderImportReservationDto, FolderIngestionResultDto,
     FolderScanLimitDto, SelectedFileDto, import_superseded, invalid_folder_import_reservation,
 };
@@ -83,6 +96,13 @@ use super::selection::{
     lock_against_replacement, open_conversion_source, relative_contexts, revalidate,
     selected_file_dto, unknown_dataset,
 };
+
+/// The name the native save dialog offers for a diagnostics export.
+///
+/// Re-exposed here because the command that shows the dialog lives outside this
+/// module and the diagnostics module is private to the preview boundary. It is
+/// one value, so there is one name to change.
+pub const DIAGNOSTICS_EXPORT_FILE_NAME: &str = DIAGNOSTICS_FILE_NAME;
 
 const DROP_CLAIM_OPERATION_SHIFT: u32 = 32;
 const DROP_CLAIM_STARTED: u64 = 1 << 31;
@@ -478,6 +498,20 @@ pub struct PreviewService {
     /// same reason -- the paths that consult it must not take a lock that the
     /// adoption itself will want back.
     adopting_outputs: AtomicBool,
+    /// The session's one diagnostics export.
+    ///
+    /// A leaf beside the conversion slot rather than a field inside it. What it
+    /// holds is a reservation and a result, neither of which is queue state, and
+    /// keeping them apart is what lets a queue read answer while an export is
+    /// choosing a destination. Where both locks are taken, the conversion slot
+    /// is taken first and this one second, always.
+    diagnostics_export: Mutex<DiagnosticsExportSlot>,
+    /// Whether the slot above is busy, readable without taking its lock.
+    ///
+    /// Written only while that lock is held, so it cannot come to disagree with
+    /// what it mirrors. It exists for the same callers the conversion mirror
+    /// exists for, the native drop callback among them.
+    diagnostics_exporting: AtomicBool,
     /// Which backend the last look actually resolved to.
     ///
     /// Not the folder that was requested. A request names a configuration; what
@@ -521,6 +555,8 @@ impl PreviewService {
             conversion_busy: AtomicBool::new(false),
             backend_quarantined: AtomicBool::new(false),
             adopting_outputs: AtomicBool::new(false),
+            diagnostics_export: Mutex::new(DiagnosticsExportSlot::default()),
+            diagnostics_exporting: AtomicBool::new(false),
             installation_generation: AtomicU64::new(0),
             resolved: Mutex::new(ObservedBackend::default()),
         }
@@ -701,6 +737,13 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.release_awaiting_destination();
         self.publish_conversion_busy(&slot);
+        drop(slot);
+        // The same rule for the same reason, one slot over. An export already
+        // writing is deliberately left alone: its bytes are going to a file the
+        // user chose, nothing here can un-ask that, and the replacement document
+        // learns what it wrote from the result the slot stores rather than from
+        // a state that pretends it never happened.
+        self.release_diagnostics_reservation();
     }
 
     /// Returns the native document epoch captured before a Channel handshake.
@@ -782,7 +825,7 @@ impl PreviewService {
                 // Read lock-free, before the paths are retained. The callback
                 // must never wait on a service mutex, and refusing here means
                 // no dropped path is held for a workspace that cannot take it.
-                if self.conversion_is_busy() || self.adoption_is_in_flight() {
+                if self.conversion_is_busy() || self.terminal_queue_action_in_flight() {
                     // `paths` is borrowed from the platform event and is not
                     // retained: returning without building a `Start` is what
                     // makes this a drop whose paths never entered the session.
@@ -984,7 +1027,7 @@ impl PreviewService {
         // of these rows and holding it open; changing the roster underneath it
         // is what the request epoch would otherwise have to refuse later, at a
         // point where a process is already running.
-        if self.conversion_is_busy() || self.adoption_is_in_flight() {
+        if self.conversion_is_busy() || self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
         // Held for the whole batch so two of these cannot interleave their
@@ -1080,7 +1123,8 @@ impl PreviewService {
         // the session would go on saying the backend was fine.
         let slot = self.conversion_slot();
         let quarantined = self.backend_is_quarantined();
-        slot.read(quarantined)
+        let diagnostics = self.diagnostics_read();
+        slot.read(quarantined, diagnostics)
     }
 
     /// Whether this session has stopped trusting the backend.
@@ -1132,7 +1176,7 @@ impl PreviewService {
         }
         let accepted = slot.request_stop(operation)?;
         self.publish_conversion_busy(&slot);
-        let update = slot.read(self.backend_is_quarantined());
+        let update = slot.read(self.backend_is_quarantined(), self.diagnostics_read());
         drop(slot);
 
         if let StopAccepted::Requested(Some(request)) = accepted {
@@ -1292,7 +1336,7 @@ impl PreviewService {
         // landing before that state commits would otherwise replace the very
         // terminal slot the adoption is reading -- turning a request the user
         // made into `adoption_superseded` and taking the offer with it.
-        if self.adoption_is_in_flight() {
+        if self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
         let items = self.plan_queue_items(handles)?;
@@ -1308,7 +1352,7 @@ impl PreviewService {
         // true, because an adoption can claim the terminal queue in the
         // interval between them and replacing it here would supersede a request
         // the user had already made.
-        if self.adoption_is_in_flight() {
+        if self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
         let mut slot = self.conversion_slot();
@@ -1323,6 +1367,15 @@ impl PreviewService {
         let queue = ConversionQueue::new(document_epoch, conflict, items)?;
         let reservation = slot.begin(queue);
         self.publish_conversion_busy(&slot);
+        // The previous queue's diagnostics go with the previous queue. Under
+        // both locks, in the order every path that takes both uses, so a read
+        // between them cannot pair a new queue with the old queue's export
+        // result. The exported *file* is untouched: what is dropped here is this
+        // session's memory of having written one.
+        let mut export = self.diagnostics_export_slot();
+        export.forget();
+        self.publish_diagnostics_exporting(&export);
+        drop(export);
         drop(slot);
         drop(gate);
         reservation
@@ -1350,7 +1403,7 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.cancel(operation);
         self.publish_conversion_busy(&slot);
-        slot.read(self.backend_is_quarantined())
+        slot.read(self.backend_is_quarantined(), self.diagnostics_read())
     }
 
     /// Runs one claimed queue into one chosen folder.
@@ -1416,7 +1469,7 @@ impl PreviewService {
         // A retry and an adoption both act on the terminal queue, and only one
         // of them may. Refused here rather than left to the generation guard,
         // because a retry replaces the very results an adoption is reading.
-        if self.adoption_is_in_flight() {
+        if self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
         let stored = self
@@ -1432,7 +1485,7 @@ impl PreviewService {
         // Again, under the gate. Admitting the destination is filesystem work,
         // so an adoption can claim the terminal queue while it runs -- and this
         // replaces the very results that adoption is reading.
-        if self.adoption_is_in_flight() {
+        if self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
         let mut slot = self.conversion_slot();
@@ -1498,6 +1551,13 @@ impl PreviewService {
             let gate = self.enter_workspace_mutation_after_drop();
             if document_epoch != self.workspace_drop_document_epoch() {
                 return Err(outputs_not_adoptable());
+            }
+            // A diagnostics export of the same terminal queue is the one other
+            // action that owns this result. Refused here rather than left to the
+            // generation guard, because an adoption that started inside one
+            // would hold the workspace gate while a modal save dialog was open.
+            if self.diagnostics_export_is_in_flight() {
+                return Err(adoption_in_progress());
             }
             let tickets = self
                 .conversion_slot()
@@ -1615,6 +1675,225 @@ impl PreviewService {
         Ok(result)
     }
 
+    /// The session's one diagnostics export slot, locked.
+    ///
+    /// Always taken after the conversion slot where both are needed, and never
+    /// held across the native dialog or the write.
+    fn diagnostics_export_slot(&self) -> std::sync::MutexGuard<'_, DiagnosticsExportSlot> {
+        self.diagnostics_export
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Republishes the lock-free export mirror from the slot that owns it.
+    fn publish_diagnostics_exporting(&self, slot: &DiagnosticsExportSlot) {
+        self.diagnostics_exporting
+            .store(slot.is_busy(), Ordering::Release);
+    }
+
+    /// What a document may know about diagnostics, apart from the queue's own
+    /// counts.
+    ///
+    /// The counts are filled in by the slot that knows them. This carries the
+    /// two facts that belong to the export rather than to the queue: whether one
+    /// is running, and what the last one wrote.
+    fn diagnostics_read(&self) -> ConversionDiagnosticsStateDto {
+        let slot = self.diagnostics_export_slot();
+        ConversionDiagnosticsStateDto {
+            eligible_item_count: 0,
+            available: false,
+            exporting: slot.is_busy(),
+            last_export: slot.last().cloned(),
+        }
+    }
+
+    /// Binds one diagnostics export and reserves the right to choose a file.
+    ///
+    /// The synchronous half of the two-command boundary, the same shape a
+    /// conversion destination uses and for the same reason: a webview can reload
+    /// between any two IPC fetches, so the reservation is retained in Rust and a
+    /// document that never receives the identifier can never open a dialog.
+    ///
+    /// What is bound here cannot change afterwards -- the document, the terminal
+    /// queue and which settling of it -- so the dialog that follows is a dialog
+    /// *for this result*, and a retry started while it is open cannot make the
+    /// export describe a queue the user was not looking at.
+    ///
+    /// Launches no process and takes no backend gate. A session that has stopped
+    /// trusting the backend may still do this, and that is the case the export
+    /// exists for.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a stale document, an operation that is not the current terminal
+    /// queue, a queue with nothing worth describing, and an export already under
+    /// way.
+    pub fn begin_conversion_diagnostics_export(
+        &self,
+        operation_id: &str,
+        document_epoch: u64,
+    ) -> Result<ConversionDiagnosticsReservationDto, PreviewErrorDto> {
+        let operation: u64 = operation_id
+            .parse()
+            .map_err(|_| diagnostics_unavailable())?;
+        if document_epoch != self.workspace_drop_document_epoch() {
+            return Err(diagnostics_unavailable());
+        }
+        // An adoption of the same terminal queue is the one other action that
+        // owns this result. Both only read it, but an adoption commits under the
+        // workspace gate and an export must not be able to start inside that.
+        if self.adoption_is_in_flight() {
+            return Err(diagnostics_export_in_progress());
+        }
+        // Conversion first, export second, which is the order every path that
+        // takes both uses.
+        let conversion = self.conversion_slot();
+        let Some((_, _, retry_round, _)) = conversion.terminal_diagnostics(operation) else {
+            return Err(diagnostics_unavailable());
+        };
+        let mut slot = self.diagnostics_export_slot();
+        if slot.is_busy() {
+            return Err(diagnostics_export_in_progress());
+        }
+        let reservation = slot.begin(document_epoch, operation, retry_round);
+        self.publish_diagnostics_exporting(&slot);
+        drop(slot);
+        drop(conversion);
+        Ok(ConversionDiagnosticsReservationDto {
+            reservation_id: reservation.0,
+        })
+    }
+
+    /// Consumes one exact reservation before its dialog is dispatched.
+    ///
+    /// Answers with the queue and the settling the claim bound. The caller
+    /// carries both through the dialog and back: without them, a dialog
+    /// abandoned by a reloaded document would return a filename that the command
+    /// applied to whatever the slot currently holds.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an unknown, already-claimed or replaced reservation.
+    pub fn claim_conversion_diagnostics_export(
+        &self,
+        reservation_id: &str,
+        document_epoch: u64,
+    ) -> Result<(u64, u64), PreviewErrorDto> {
+        self.diagnostics_export_slot()
+            .claim(reservation_id, document_epoch)
+    }
+
+    /// Returns the slot to idle after a cancelled dialog or an undispatched one.
+    ///
+    /// An ordinary outcome. Nothing was created, nothing was written, and the
+    /// last recorded export -- if there was one -- is left exactly as it was.
+    pub fn cancel_conversion_diagnostics_export(&self) -> WorkspaceConversionUpdateDto {
+        let mut slot = self.diagnostics_export_slot();
+        slot.release();
+        self.publish_diagnostics_exporting(&slot);
+        drop(slot);
+        self.conversion_state()
+    }
+
+    /// Writes one terminal queue's diagnostics to the file the user chose.
+    ///
+    /// Everything that can refuse does so before anything is created: the queue
+    /// must still be the one this dialog was opened for, the document must
+    /// serialize, the folder must be one this boundary writes into, and the
+    /// whole document must fit the export bound. The write itself creates a
+    /// private sibling, fills it, forces it to disk and renames it -- so a name
+    /// that is already taken is a refusal that replaced nothing, and a failure
+    /// anywhere leaves no file under the chosen name.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a superseded queue, a folder this boundary will not write into, a
+    /// name that is taken, a document over the size bound, and every way the
+    /// write itself can fail. A failure that also left a temporary object behind
+    /// says so in its detail rather than hiding it behind the primary reason.
+    pub fn write_conversion_diagnostics(
+        &self,
+        operation: u64,
+        retry_round: u64,
+        destination: &Path,
+    ) -> Result<ConversionDiagnosticsExportDto, PreviewErrorDto> {
+        let mut slot = self.diagnostics_export_slot();
+        if !slot.start_writing(operation, retry_round) {
+            return Err(invalid_diagnostics_reservation());
+        }
+        self.publish_diagnostics_exporting(&slot);
+        drop(slot);
+        // Cleared however this returns, including through a panic in the
+        // rendering half.
+        let exporting = DiagnosticsExportInFlight(self);
+
+        // Read again rather than carried from the reservation. The dialog is
+        // modal and lasts as long as the user takes; only the slot can say
+        // whether the queue it bound is still the queue it named.
+        let (queue, provider, current_round, tickets) = self
+            .conversion_slot()
+            .terminal_diagnostics(operation)
+            .ok_or_else(diagnostics_export_superseded)?;
+        if current_round != retry_round {
+            return Err(diagnostics_export_superseded());
+        }
+
+        let rendered = payload::render(&DiagnosticsExportRequest {
+            queue,
+            provider,
+            tickets,
+        });
+        // Before anything is opened or created. A document over the bound is a
+        // refusal and never a truncation: half a JSON document is not a smaller
+        // diagnostics file, it is one no reader can open.
+        if rendered.bytes.len() > MAX_DIAGNOSTIC_EXPORT_BYTES {
+            return Err(diagnostics_too_large());
+        }
+
+        let (parent, file_name) = match (destination.parent(), destination.file_name()) {
+            (Some(parent), Some(file_name)) => (parent, file_name),
+            _ => return Err(diagnostics_destination_unusable()),
+        };
+        // The same admission a conversion destination goes through, and for the
+        // same reasons: the no-clobber rename and the object-bound cleanup this
+        // write depends on are local Windows guarantees, and a redirector or a
+        // link is somewhere neither of them holds. The hold is kept for the
+        // whole write, so the folder cannot be renamed away underneath it.
+        let (root, _identity, _held) =
+            admit_destination_root(parent).map_err(|_| diagnostics_destination_unusable())?;
+
+        let digest =
+            Sha256Digest::calculate(&rendered.bytes).map_err(|_| diagnostics_not_written(false))?;
+        write_new_local_file(&root, file_name, &rendered.bytes)
+            .map_err(diagnostics_write_failure)?;
+
+        let result = ConversionDiagnosticsExportDto {
+            operation_id: operation.to_string(),
+            retry_round,
+            file_name: bounded_text(&file_name.to_string_lossy(), MAX_CANDIDATE_NAME_CHARS),
+            byte_length: rendered.bytes.len() as u64,
+            sha256: digest.to_string(),
+            diagnostic_item_count: rendered.item_count,
+        };
+        // Recorded under the export slot's own lock, before the guard above
+        // releases it, so a document reading between the two cannot see an idle
+        // slot with no result on it.
+        let mut slot = self.diagnostics_export_slot();
+        slot.finish(Some(result.clone()));
+        self.publish_diagnostics_exporting(&slot);
+        drop(slot);
+        // Already idle, so this only clears the mirror it already agrees with.
+        drop(exporting);
+        Ok(result)
+    }
+
+    /// Releases an unclaimed diagnostics reservation whose document is gone.
+    fn release_diagnostics_reservation(&self) {
+        let mut slot = self.diagnostics_export_slot();
+        slot.release_awaiting_destination();
+        self.publish_diagnostics_exporting(&slot);
+    }
+
     /// Advances the workspace generation for one adoption and returns it.
     ///
     /// Separated so the gate guard is dropped at a statement boundary rather
@@ -1626,6 +1905,26 @@ impl PreviewService {
     /// Whether an adoption is between its two halves.
     pub(super) fn adoption_is_in_flight(&self) -> bool {
         self.adopting_outputs.load(Ordering::Acquire)
+    }
+
+    /// Whether a diagnostics export is between being asked for and finishing.
+    ///
+    /// Lock-free like the two mirrors beside it, and for the same reason: the
+    /// paths that consult it include the native drop callback, which must be
+    /// able to refuse without waiting on any service mutex.
+    pub(super) fn diagnostics_export_is_in_flight(&self) -> bool {
+        self.diagnostics_exporting.load(Ordering::Acquire)
+    }
+
+    /// Whether some action that owns the terminal queue is between its halves.
+    ///
+    /// Adoption and a diagnostics export are different things -- one mutates
+    /// the workspace and the other only reads -- and they are refused by the
+    /// same set of callers for one reason: both are about the results a
+    /// terminal queue is holding, and a retry, a new queue or a mutation that
+    /// landed in the middle would replace the very thing being read.
+    fn terminal_queue_action_in_flight(&self) -> bool {
+        self.adoption_is_in_flight() || self.diagnostics_export_is_in_flight()
     }
 
     /// Marks a claimed queue as running without draining it.
@@ -1884,7 +2183,7 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.finish(operation, None, reason);
         self.publish_conversion_busy(&slot);
-        let update = slot.read(self.backend_is_quarantined());
+        let update = slot.read(self.backend_is_quarantined(), self.diagnostics_read());
         drop(slot);
         update
     }
@@ -1910,6 +2209,10 @@ impl PreviewService {
             // in which anything of this application's may still be running.
             QueueItemAttempt::Cancelled(report) => ItemOutcome::Stopped {
                 state: ItemState::Cancelled,
+                // Nothing to diagnose. The user asked for it to stop and the
+                // owned tree is confirmed gone, so there is no failure here for
+                // backend text to be an account of.
+                diagnostics: None,
                 facts: CancellationFacts {
                     process_launched: report.backend_was_run(),
                     tree_termination_confirmed: true,
@@ -1921,8 +2224,13 @@ impl PreviewService {
                     staging_residue: report.residue(),
                 },
             },
-            QueueItemAttempt::CancellationFailed(failure) => ItemOutcome::Stopped {
+            QueueItemAttempt::CancellationFailed(mut failure) => ItemOutcome::Stopped {
                 state: ItemState::CancellationFailed,
+                // Taken here, at the one place this failure is turned into what
+                // the queue records. It is already redacted and already bounded;
+                // this side has no access to the raw streams and no paths with
+                // which to redact them.
+                diagnostics: failure.take_backend_text().map(Box::new),
                 facts: CancellationFacts {
                     process_launched: failure.backend().is_some(),
                     tree_termination_confirmed: false,
@@ -1990,7 +2298,7 @@ impl PreviewService {
             let attempt = run_planned_conversion_cancellable(&plan, backend, cancellation);
             drop(guard);
             Ok(match attempt {
-                ConversionAttempt::Completed(report) => {
+                ConversionAttempt::Completed(mut report) => {
                     // Described first, then taken apart. The description is
                     // what the queue shows; the retained object is what a later
                     // adoption recognises the file by, and only a finalization
@@ -2002,7 +2310,14 @@ impl PreviewService {
                         &plan,
                         &report,
                     );
-                    ConvertedItem::Reported(described, report.into_finalized_output().map(Box::new))
+                    // Taken rather than copied, so the report the queue keeps
+                    // and projects holds no backend text at all.
+                    let text = report.take_backend_text().map(Box::new);
+                    ConvertedItem::Reported(
+                        described,
+                        report.into_finalized_output().map(Box::new),
+                        text,
+                    )
                 }
                 ConversionAttempt::Cancelled(report) => ConvertedItem::Cancelled(report),
                 ConversionAttempt::CancellationFailed(failure) => {
@@ -2012,12 +2327,13 @@ impl PreviewService {
         })();
 
         match outcome {
-            Ok(ConvertedItem::Reported(report, finalized)) => {
+            Ok(ConvertedItem::Reported(report, finalized, diagnostics)) => {
                 QueueItemAttempt::Settled(ItemOutcome::Reported {
                     state: item_state_of(report.outcome_class()),
                     retryable: report.is_retryable(),
                     report: Box::new(report),
                     finalized,
+                    diagnostics,
                 })
             }
             Ok(ConvertedItem::Cancelled(report)) => QueueItemAttempt::Cancelled(report),
@@ -2035,7 +2351,7 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.refuse(operation, error);
         self.publish_conversion_busy(&slot);
-        slot.read(self.backend_is_quarantined())
+        slot.read(self.backend_is_quarantined(), self.diagnostics_read())
     }
 
     /// Reserves the right to claim the workspace's next state without opening
@@ -2053,7 +2369,7 @@ impl PreviewService {
     /// The next begin after any other workspace decision replaces the one stale
     /// slot, so abandoned replies cannot grow an unbounded registry.
     pub fn begin_folder_import(&self) -> Result<FolderImportReservationDto, PreviewErrorDto> {
-        if self.conversion_is_busy() || self.adoption_is_in_flight() {
+        if self.conversion_is_busy() || self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
         let mut gate = self.enter_workspace_mutation_after_drop();
@@ -2093,7 +2409,7 @@ impl PreviewService {
     ) -> Result<FolderImportToken, PreviewErrorDto> {
         // Asked again here, not only at begin: a conversion can start while the
         // reservation is in flight, and the claim is what dispatches a picker.
-        if self.conversion_is_busy() || self.adoption_is_in_flight() {
+        if self.conversion_is_busy() || self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
         let requested = FolderImportReservationId::parse(reservation_id)
@@ -2116,7 +2432,7 @@ impl PreviewService {
         // Again, under the gate and before the generation moves. An adoption can
         // claim the gate in the interval since the check above, and advancing
         // here would supersede it while still opening a picker.
-        if self.adoption_is_in_flight() {
+        if self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
         let generation = gate.advance();
@@ -2450,7 +2766,7 @@ impl PreviewService {
         // read and mutation for the rest of the session, which is far worse than
         // the supersession it was avoiding. Released exactly as a failed worker
         // releases it, waiters included.
-        if self.adoption_is_in_flight() {
+        if self.terminal_queue_action_in_flight() {
             drop(gate);
             // Answered, not merely declined. Nothing else will publish for this
             // drop -- the claim was this worker's -- so returning silently would
@@ -2499,7 +2815,7 @@ impl PreviewService {
         // immediately afterwards. This is the linearization point where that is
         // decided: a drop may be accepted, but nothing commits into a workspace
         // a conversion is reading.
-        if self.conversion_is_busy() || self.adoption_is_in_flight() {
+        if self.conversion_is_busy() || self.terminal_queue_action_in_flight() {
             drop(gate);
             self.drop_updates
                 .publish_transient(delivery, conversion_busy_state());
@@ -2742,7 +3058,7 @@ impl PreviewService {
         // conversion is reading, and clearing the list is not the way to stop
         // one -- so the question has to be asked where the answer cannot change
         // between asking it and acting on it.
-        if self.conversion_is_busy() || self.adoption_is_in_flight() {
+        if self.conversion_is_busy() || self.terminal_queue_action_in_flight() {
             drop(batch);
             self.drop_updates.publish_terminal_with_busy(
                 delivery,
@@ -2827,7 +3143,7 @@ impl PreviewService {
         &self,
     ) -> Result<(std::sync::MutexGuard<'_, WorkspaceMutationState>, u64), PreviewErrorDto> {
         let mut gate = self.enter_workspace_mutation_after_drop();
-        if self.adoption_is_in_flight() {
+        if self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
         let generation = gate.advance();
@@ -2847,7 +3163,7 @@ impl PreviewService {
     ) -> Result<(std::sync::MutexGuard<'_, WorkspaceMutationState>, u64, bool), PreviewErrorDto>
     {
         let mut gate = self.enter_workspace_mutation();
-        if self.adoption_is_in_flight() {
+        if self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
         let generation = gate.advance();
@@ -4127,6 +4443,45 @@ fn selected_spectrum_dto(
         value_units_known: false,
         truncated,
     })
+}
+
+/// Every way the safe writer can fail, said in this boundary's vocabulary.
+///
+/// Total over the writer's own enumeration, with no wildcard arm: a failure
+/// added there has to be answered here rather than falling into a default that
+/// happens to compile. The residue travels with each of them rather than being
+/// folded away — "this could not be saved" and "this could not be saved and
+/// there is now a file in your folder MSCanvas cannot remove" are different
+/// things to be told, and the second is the one the user has to act on.
+fn diagnostics_write_failure(failure: LocalFileWriteFailure) -> PreviewErrorDto {
+    let residue = failure.temporary_left_behind();
+    match failure.error() {
+        // The dialog answered with something that is not one plain name inside
+        // one usable folder. Nothing was created either way.
+        LocalFileWriteError::UnsafeName | LocalFileWriteError::ParentNotUsable { .. } => {
+            diagnostics_destination_unusable()
+        }
+        LocalFileWriteError::TargetExists => diagnostics_destination_exists(residue),
+        LocalFileWriteError::TemporaryNotCreated { .. }
+        | LocalFileWriteError::NotWritten { .. }
+        | LocalFileWriteError::NotFlushed { .. } => diagnostics_not_written(residue),
+        LocalFileWriteError::NotFinalized { .. } => diagnostics_not_finalized(residue),
+    }
+}
+
+/// Clears the export mirror however the export ends, and returns the slot to
+/// idle.
+///
+/// A flag left set would refuse every action on the terminal queue for the rest
+/// of the session, which is a worse failure than the one it would be recording.
+struct DiagnosticsExportInFlight<'service>(&'service PreviewService);
+
+impl Drop for DiagnosticsExportInFlight<'_> {
+    fn drop(&mut self) {
+        let mut slot = self.0.diagnostics_export_slot();
+        slot.release();
+        self.0.publish_diagnostics_exporting(&slot);
+    }
 }
 
 /// Clears the adoption mirror however the adoption ends.

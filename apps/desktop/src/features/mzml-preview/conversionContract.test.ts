@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type {
   ConversionCancellation,
   ConversionConflictPolicy,
+  ConversionDiagnosticsExport,
+  ConversionDiagnosticsState,
   ConversionQueue,
   ConversionQueueItem,
   ConversionQueueItemState,
@@ -45,6 +47,30 @@ type ExpectedWorkspaceConversionState =
       readonly queue: ConversionQueue;
     };
 
+/**
+ * What a document may know about diagnostics, restated independently.
+ *
+ * Four facts and no fifth. A document, a diagnostics excerpt and an exported
+ * path are all things Rust holds and this side never receives, so this
+ * declaration failing to compile is what would say one had arrived.
+ */
+type ExpectedConversionDiagnosticsState = {
+  readonly eligibleItemCount: number;
+  readonly available: boolean;
+  readonly exporting: boolean;
+  readonly lastExport: ConversionDiagnosticsExport | null;
+};
+
+/** What one export wrote: a name, a size, a digest and a count. */
+type ExpectedConversionDiagnosticsExport = {
+  readonly operationId: string;
+  readonly retryRound: number;
+  readonly fileName: string;
+  readonly byteLength: number;
+  readonly sha256: string;
+  readonly diagnosticItemCount: number;
+};
+
 type Equal<Left, Right> =
   (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
     ? (<Value>() => Value extends Right ? 1 : 2) extends <Value>() => Value extends Left ? 1 : 2
@@ -56,6 +82,14 @@ type Equal<Left, Right> =
 const wireStateIsBidirectionallyExact: Equal<
   WorkspaceConversionState,
   ExpectedWorkspaceConversionState
+> = true;
+const diagnosticsStateIsExact: Equal<
+  ConversionDiagnosticsState,
+  ExpectedConversionDiagnosticsState
+> = true;
+const diagnosticsExportIsExact: Equal<
+  ConversionDiagnosticsExport,
+  ExpectedConversionDiagnosticsExport
 > = true;
 
 const familyIsExact: Equal<DatasetSourceKind, "mzml" | "thermo_raw"> = true;
@@ -223,6 +257,8 @@ function stringsWithin(value: unknown): readonly string[] {
 describe("the conversion wire contract", () => {
   it("keeps every closed union exactly as Rust spells it", () => {
     expect(wireStateIsBidirectionallyExact).toBe(true);
+    expect(diagnosticsStateIsExact).toBe(true);
+    expect(diagnosticsExportIsExact).toBe(true);
     expect(familyIsExact).toBe(true);
     expect(validationIsExact).toBe(true);
     expect(conflictIsExact).toBe(true);
@@ -231,21 +267,38 @@ describe("the conversion wire contract", () => {
   });
 
   it("round-trips the whole state vocabulary through JSON unchanged", () => {
+    // Nothing diagnostic here, which is the ordinary shape: the state is
+    // carried on every read rather than only on the reads that have something
+    // to report, so a reader never has to tell "absent" from "nothing to say".
+    const NO_DIAGNOSTICS = {
+      eligibleItemCount: 0,
+      available: false,
+      exporting: false,
+      lastExport: null,
+    } as const;
     const updates = [
-      { sequence: 0, state: { status: "idle" }, backendQuarantined: false },
+      {
+        sequence: 0,
+        state: { status: "idle" },
+        diagnostics: NO_DIAGNOSTICS,
+        backendQuarantined: false,
+      },
       {
         sequence: 1,
         state: { status: "awaitingDestination", operationId: "1", queue: QUEUE },
+        diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
       },
       {
         sequence: 2,
         state: { status: "running", operationId: "1", queue: QUEUE },
+        diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
       },
       {
         sequence: 3,
         state: { status: "stopping", operationId: "1", queue: QUEUE },
+        diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
       },
       {
@@ -256,6 +309,7 @@ describe("the conversion wire contract", () => {
           reason: "stopped",
           queue: STOPPED_QUEUE,
         },
+        diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
       },
       {
@@ -266,17 +320,24 @@ describe("the conversion wire contract", () => {
           reason: "stopFailed",
           queue: STOPPED_QUEUE,
         },
+        diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: true,
       },
       {
         sequence: 6,
         state: { status: "terminal", operationId: "1", reason: "completed", queue: QUEUE },
+        diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
       },
     ] as const satisfies readonly WorkspaceConversionUpdate[];
 
     expect(JSON.parse(JSON.stringify(updates))).toEqual(updates);
-    expect(Object.keys(updates[0])).toEqual(["sequence", "state", "backendQuarantined"]);
+    expect(Object.keys(updates[0])).toEqual([
+      "sequence",
+      "state",
+      "diagnostics",
+      "backendQuarantined",
+    ]);
     expect(updates.map((update) => update.state.status)).toEqual([
       "idle",
       "awaitingDestination",
@@ -291,20 +352,29 @@ describe("the conversion wire contract", () => {
   it("carries one queue and never a history of them", () => {
     // Every non-idle state names `queue`, singular, and the terminal one is no
     // exception: a finished queue is replaced by the next, not appended to.
+    const NO_DIAGNOSTICS = {
+      eligibleItemCount: 0,
+      available: false,
+      exporting: false,
+      lastExport: null,
+    } as const;
     for (const update of [
       {
         sequence: 1,
         state: { status: "awaitingDestination", operationId: "1", queue: QUEUE },
+        diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
       },
       {
         sequence: 2,
         state: { status: "running", operationId: "1", queue: QUEUE },
+        diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
       },
       {
         sequence: 3,
         state: { status: "stopping", operationId: "1", queue: QUEUE },
+        diagnostics: NO_DIAGNOSTICS,
         backendQuarantined: false,
       },
     ] as const satisfies readonly WorkspaceConversionUpdate[]) {

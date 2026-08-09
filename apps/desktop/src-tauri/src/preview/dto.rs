@@ -313,6 +313,218 @@ pub fn adoption_superseded() -> PreviewErrorDto {
     )
 }
 
+/// One Rust-issued claim on the right to choose where diagnostics are saved.
+///
+/// Opaque, path-free and single-use, exactly like the conversion reservation it
+/// is modelled on. It grants no filesystem authority: what it names is one bound
+/// decision Rust already made -- which terminal queue, which settling of it, for
+/// which document -- so the save dialog that follows cannot be about anything
+/// else.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionDiagnosticsReservationDto {
+    pub reservation_id: String,
+}
+
+/// What one diagnostics export wrote.
+///
+/// A name, a length and a digest. Deliberately not a location: the user chose
+/// the folder and knows where it is, and putting it here would hand the webview
+/// the one thing this whole boundary exists to keep from it.
+///
+/// The digest is what makes the answer checkable. Someone about to send this
+/// file somewhere can confirm that the bytes they are sending are the bytes
+/// MSCanvas measured, which is the only claim it can make about a file it no
+/// longer holds.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionDiagnosticsExportDto {
+    /// Which queue this describes, and which settling of it.
+    ///
+    /// Both, for the reason an adoption result carries both: a retry settles
+    /// the same operation a second time, so a caller holding this beside a
+    /// queue needs to know it is the same round.
+    pub operation_id: String,
+    pub retry_round: u64,
+    pub file_name: String,
+    pub byte_length: u64,
+    pub sha256: String,
+    pub diagnostic_item_count: usize,
+}
+
+/// What a document may know about diagnostics for the queue it is reading.
+///
+/// Rides on the conversion read for the reason the quarantine flag does: a
+/// document already asks for that on mount and while work is under way, so a
+/// reload recovers this with the queue rather than needing a second question.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionDiagnosticsStateDto {
+    /// How many items of the current queue an export would describe.
+    ///
+    /// Zero unless the queue is terminal, which is what makes the action's
+    /// availability a projection of Rust's own rule rather than a second one
+    /// the interface maintains.
+    pub eligible_item_count: usize,
+    /// True when the queue is terminal and there is something to export.
+    ///
+    /// Carried rather than derived from the count, because a stop-failed queue
+    /// is exportable for what the queue itself records even where no item
+    /// carries a diagnostic of its own.
+    pub available: bool,
+    /// Whether an export is between being asked for and being finished.
+    pub exporting: bool,
+    /// The last export of the current queue. Dropped when the queue is
+    /// replaced; the file it names is not.
+    pub last_export: Option<ConversionDiagnosticsExportDto>,
+}
+
+/// There is no terminal queue of this caller's whose diagnostics could be
+/// exported.
+///
+/// One refusal for a stale document, an unknown or superseded operation, a
+/// queue still under way, a queue with nothing worth describing, and no queue at
+/// all -- the same collapse `outputs_not_adoptable` makes, for the same reason:
+/// telling them apart would describe session state to a caller that by
+/// construction is not the one holding it.
+#[must_use]
+pub fn diagnostics_unavailable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "diagnostics_unavailable",
+        "There are no conversion diagnostics of yours to save.",
+        false,
+    )
+}
+
+/// The reservation does not name a diagnostics export this document may make.
+#[must_use]
+pub fn invalid_diagnostics_reservation() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "invalid_diagnostics_reservation",
+        "That diagnostics export is no longer valid. Ask for it again.",
+        false,
+    )
+}
+
+/// Another diagnostics export is already under way.
+#[must_use]
+pub fn diagnostics_export_in_progress() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "diagnostics_export_in_progress",
+        "MSCanvas is already saving diagnostics for this queue.",
+        false,
+    )
+}
+
+/// The queue changed between choosing a destination and writing, so nothing was
+/// written.
+///
+/// Retryable by construction where the queue survived: asking again is the whole
+/// of the recovery.
+#[must_use]
+pub fn diagnostics_export_superseded() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "diagnostics_export_superseded",
+        "The conversion queue changed while MSCanvas was saving diagnostics. Nothing was written. \
+         Try again.",
+        true,
+    )
+}
+
+/// The chosen folder is not one this boundary will create a file in.
+#[must_use]
+pub fn diagnostics_destination_unusable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "diagnostics_destination_unusable",
+        "MSCanvas saves diagnostics to a folder on this computer's own drives. Choose a local \
+         folder that is not a link.",
+        true,
+    )
+}
+
+/// What a failed export left behind, said once so every failure says it the
+/// same way.
+///
+/// Attached as the detail rather than folded into the reason, so a write that
+/// failed and a write that failed *and* left something in the user's folder are
+/// distinguishable to a reader and to a test. Hiding the second inside the first
+/// would drop the only part of the failure the user has to act on.
+const DIAGNOSTICS_TEMPORARY_LEFT_BEHIND: &str = "MSCanvas also left a temporary file whose name begins with \".mscanvas-export-\" in that \
+     folder and could not remove it.";
+
+fn with_residue(error: PreviewErrorDto, temporary_left_behind: bool) -> PreviewErrorDto {
+    if temporary_left_behind {
+        return error.with_detail(DIAGNOSTICS_TEMPORARY_LEFT_BEHIND);
+    }
+    error
+}
+
+/// A file of that name is already there, and MSCanvas replaced nothing.
+#[must_use]
+pub fn diagnostics_destination_exists(temporary_left_behind: bool) -> PreviewErrorDto {
+    with_residue(
+        PreviewErrorDto::new(
+            "diagnostics_destination_exists",
+            "A file of that name is already in that folder. MSCanvas did not replace it. Save the \
+             diagnostics under another name.",
+            true,
+        ),
+        temporary_left_behind,
+    )
+}
+
+/// The bytes could not be written, or could not be forced to the disk.
+#[must_use]
+pub fn diagnostics_not_written(temporary_left_behind: bool) -> PreviewErrorDto {
+    with_residue(
+        PreviewErrorDto::new(
+            "diagnostics_not_written",
+            "MSCanvas could not write the diagnostics file. Nothing was saved under the name you \
+             chose.",
+            true,
+        ),
+        temporary_left_behind,
+    )
+}
+
+/// The bytes were written and the file could not be given its final name.
+#[must_use]
+pub fn diagnostics_not_finalized(temporary_left_behind: bool) -> PreviewErrorDto {
+    with_residue(
+        PreviewErrorDto::new(
+            "diagnostics_not_finalized",
+            "MSCanvas wrote the diagnostics and could not give the file the name you chose, so \
+             nothing was saved under it.",
+            true,
+        ),
+        temporary_left_behind,
+    )
+}
+
+/// The document is larger than one diagnostics file may be.
+///
+/// Fails closed and writes nothing. A structurally incomplete JSON document is
+/// not a smaller diagnostics file; it is a file no reader can open, offered in
+/// exchange for hiding the fact that the bound was reached.
+#[must_use]
+pub fn diagnostics_too_large() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "diagnostics_too_large",
+        "These diagnostics are larger than one MSCanvas file may be, so nothing was saved.",
+        false,
+    )
+}
+
+/// The native save dialog could not be shown.
+#[must_use]
+pub fn diagnostics_picker_unavailable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "diagnostics_picker_unavailable",
+        "The save dialog could not be opened, so nothing was saved.",
+        true,
+    )
+}
+
 /// What removing rows did, including the handles that named nothing.
 ///
 /// A handle the session no longer holds is an ordinary reconciliation outcome
@@ -450,6 +662,8 @@ pub struct WorkspaceConversionUpdateDto {
     /// generation, not a request epoch and carries no filesystem authority.
     pub sequence: u64,
     pub state: WorkspaceConversionStateDto,
+    /// What this document may know about saving diagnostics for that queue.
+    pub diagnostics: ConversionDiagnosticsStateDto,
     /// Whether this session has stopped trusting the backend.
     ///
     /// Set when a stop request could not be confirmed, which is the one state
@@ -1242,121 +1456,23 @@ pub fn bounded_text(value: &str, maximum_chars: usize) -> String {
 /// contains a space, and stopping at the first one would leave `Files\run.raw`
 /// on screen. Losing the tail of a line is the acceptable cost; leaking a
 /// filesystem path the user did not choose to reveal is not.
+///
+/// Which shapes count is the conversion boundary's rule rather than a second
+/// copy of it. A diagnostics export applies the same test to decide whether to
+/// withhold an excerpt, and two rules that could drift would mean a shape this
+/// screen hides and that file reports.
 #[must_use]
 pub fn redact_absolute_paths(value: &str) -> String {
     value.split_inclusive('\n').map(redact_line).collect()
 }
 
-/// Punctuation that separates a key from its value in backend text.
-///
-/// Distinct from whitespace: after one of these the value begins immediately,
-/// whatever its first character is.
-const fn is_strong_boundary(byte: u8) -> bool {
-    matches!(
-        byte,
-        b'=' | b'"' | b'\'' | b'(' | b'[' | b'{' | b'<' | b',' | b';' | b'|' | b':'
-    )
-}
-
-/// Whether the slash at `index` opens the `//` of a URI authority.
-///
-/// Only that exact shape is exempt, rather than every slash after a colon: an
-/// mzML field written as `source:/home/alice/run.raw` is a path, while
-/// `http://psi.hupo.org/ms/mzml` is a vocabulary reference worth keeping.
-fn starts_uri_authority(bytes: &[u8], index: usize) -> bool {
-    if bytes.get(index) != Some(&b'/') || bytes.get(index + 1) != Some(&b'/') || index == 0 {
-        return false;
-    }
-    if bytes.get(index - 1) != Some(&b':') {
-        return false;
-    }
-    let mut scheme_start = index - 1;
-    while scheme_start > 0
-        && bytes
-            .get(scheme_start - 1)
-            .is_some_and(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
-    {
-        scheme_start -= 1;
-    }
-    // A scheme is at least one character and starts with a letter.
-    scheme_start < index - 1 && bytes.get(scheme_start).is_some_and(u8::is_ascii_alphabetic)
-}
-
 fn redact_line(line: &str) -> String {
     let body = line.strip_suffix('\n').unwrap_or(line);
     let terminator = if body.len() == line.len() { "" } else { "\n" };
-    match find_path_start(body) {
+    match mscanvas_proteowizard::absolute_path_start(body) {
         Some(start) => format!("{}<path>{terminator}", &body[..start]),
         None => line.to_owned(),
     }
-}
-
-/// Finds the first byte offset at which an absolute path begins.
-///
-/// Markers are recognized anywhere in the line, not only at a token start,
-/// because mzML metadata routinely writes them as `key=<path>` or inside
-/// quotes.
-fn find_path_start(line: &str) -> Option<usize> {
-    let bytes = line.as_bytes();
-    for (index, _) in line.char_indices() {
-        let preceding = if index == 0 {
-            None
-        } else {
-            bytes.get(index - 1)
-        };
-        let after_boundary = preceding.is_none_or(|byte| !byte.is_ascii_alphanumeric());
-
-        // Compared as bytes, never sliced as text: `index + 5` is not
-        // necessarily a character boundary, and an mzML field may legitimately
-        // hold non-ASCII. Slicing there would panic on a valid document.
-        if after_boundary
-            && bytes
-                .get(index..index + 5)
-                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"file:"))
-        {
-            return Some(index);
-        }
-
-        // A UNC root, or a POSIX-absolute root, which carries a single leading
-        // slash: an mzML written on Linux or macOS records `/home/...` and is
-        // just as revealing when previewed on Windows. The preceding-boundary
-        // test keeps `m/z`, `counts/second` and a bare `a / b` readable, and
-        // the next character must be able to start a path segment.
-        if matches!(bytes.get(index), Some(b'\\' | b'/'))
-            && preceding.is_none_or(|byte| {
-                // Backend text brackets and separates values in several ways,
-                // including `key:value`, so a colon counts as a boundary too.
-                // Only the `://` of a URI authority is exempt, below.
-                byte.is_ascii_whitespace() || is_strong_boundary(*byte)
-            })
-            && !starts_uri_authority(bytes, index)
-            // What may follow depends on what came before. After a strong
-            // boundary the value starts here whatever its first character is,
-            // so a directory whose name begins with a space is still a path.
-            // After whitespace, another space means this is prose — the
-            // `a / b` this test exists to leave alone — and not a root.
-            //
-            // A whitelist of filename characters would be the wrong shape
-            // either way: `$HOME`, `@archive` and non-ASCII names are all
-            // ordinary segments, and a list of what is allowed will always be
-            // missing something.
-            && bytes.get(index + 1).is_some_and(|byte| {
-                !byte.is_ascii_whitespace()
-                    || preceding.is_some_and(|preceding| is_strong_boundary(*preceding))
-            })
-        {
-            return Some(index);
-        }
-
-        if after_boundary
-            && bytes.get(index).is_some_and(u8::is_ascii_alphabetic)
-            && bytes.get(index + 1) == Some(&b':')
-            && matches!(bytes.get(index + 2), Some(b'\\' | b'/'))
-        {
-            return Some(index);
-        }
-    }
-    None
 }
 
 /// Rejects any value that cannot round-trip through JSON.

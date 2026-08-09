@@ -14,6 +14,13 @@ mod adoption;
 pub mod backend;
 mod conversion;
 mod destination;
+/// Redacted, bounded diagnostics for the attempts a terminal queue could not
+/// complete, and the one explicit local export that writes them out.
+///
+/// Private to this module. The webview learns that an export is available, how
+/// many items it would describe, and what one wrote; it never receives the
+/// document, an excerpt, or the folder it was saved in. See ADR 0017.
+mod diagnostics;
 pub mod dialog;
 /// Bounded, private discovery of mzML candidates under a chosen folder.
 ///

@@ -218,12 +218,24 @@ function harness(
     // idle and nothing here starts one.
     describeConversion: () => Promise.reject(new Error("not used in this file")),
     getConversionState: () =>
-      Promise.resolve({ sequence: 0, state: { status: "idle" }, backendQuarantined: false }),
+      Promise.resolve({
+        sequence: 0,
+        state: { status: "idle" },
+        diagnostics: {
+          eligibleItemCount: 0,
+          available: false,
+          exporting: false,
+          lastExport: null,
+        },
+        backendQuarantined: false,
+      }),
     convertDatasets: () => Promise.reject(new Error("not used in this file")),
     retryConversions: () => Promise.reject(new Error("not used in this file")),
     adoptConversionOutputs: () =>
       Promise.reject(new Error("this test never adopts converted outputs")),
     stopConversion: () => Promise.reject(new Error("not used in this file")),
+    exportConversionDiagnostics: () =>
+      Promise.reject(new Error("this test never exports conversion diagnostics")),
   };
   return {
     service,

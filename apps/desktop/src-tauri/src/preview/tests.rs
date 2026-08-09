@@ -31,19 +31,20 @@ use super::drop_ingestion::{
 };
 use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, DropIngestionResultDto, DropScanLimitDto,
-    MAX_WORKSPACE_DATASETS, PreviewErrorDto, SelectedFileDto, SelectedSpectrumOutcomeDto,
-    WorkspaceAddOutcomeDto, WorkspaceDropUpdateDto, WorkspaceOutputAdoptionOutcomeDto,
-    WorkspaceOutputAdoptionResultDto,
+    MAX_CONVERSION_QUEUE_ITEMS, MAX_WORKSPACE_DATASETS, PreviewErrorDto, SelectedFileDto,
+    SelectedSpectrumOutcomeDto, WorkspaceAddOutcomeDto, WorkspaceDropUpdateDto,
+    WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto,
 };
 use super::dto::{
-    ConversionConflictPolicyDto, ConversionOutputFormatDto, ConversionQueueDto,
-    ConversionQueueItemStateDto, ConversionQueueTerminalReasonDto, DatasetSourceKindDto,
-    ValidationModeDto, WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
+    ConversionConflictPolicyDto, ConversionDiagnosticsExportDto, ConversionDiagnosticsStateDto,
+    ConversionOutputFormatDto, ConversionQueueDto, ConversionQueueItemStateDto,
+    ConversionQueueTerminalReasonDto, DatasetSourceKindDto, ValidationModeDto,
+    WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
 };
 use super::installation::InstallationIdentity;
 use super::operation::{
-    AdmittedDestination, ConversionQueue, ConversionSlot, ItemOutcome, QueueItem, StopAccepted,
-    TerminalReason,
+    AdmittedDestination, CancellationFacts, ConversionQueue, ConversionSlot, ItemOutcome,
+    ItemState, QueueItem, StopAccepted, TerminalReason,
 };
 /// The share-mode probe that answers whether a file is still held open. It
 /// lives beside the flags the lease is opened with, because that is what makes
@@ -3570,6 +3571,12 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "retry_workspace_conversion_queue",
             "stop_workspace_conversion_queue",
             "adopt_workspace_conversion_outputs",
+            // Two, and the same two-phase shape the destination picker uses:
+            // the reservation is issued synchronously and the dialog is a
+            // separate command, so a document that never received the
+            // identifier can never open one.
+            "begin_workspace_conversion_diagnostics_export",
+            "save_workspace_conversion_diagnostics",
         ]
     );
     // The picker command is named for the workspace it fills rather than for
@@ -11543,7 +11550,7 @@ fn a_stopped_retry_keeps_the_failures_it_had_not_reached() {
     ));
     slot.finish(operation, None, TerminalReason::Stopped);
 
-    let update = slot.read(false);
+    let update = slot.read(false, ConversionDiagnosticsStateDto::default());
     let WorkspaceConversionStateDto::Terminal { queue, .. } = &update.state else {
         panic!("the queue reaches a terminal state");
     };
@@ -11689,7 +11696,7 @@ fn a_stop_accepted_while_a_queue_settles_is_not_overwritten_by_completion() {
     ));
     slot.finish(operation, None, TerminalReason::Completed);
 
-    let update = slot.read(false);
+    let update = slot.read(false, ConversionDiagnosticsStateDto::default());
     assert_eq!(
         terminal_reason(&update),
         ConversionQueueTerminalReasonDto::Stopped,
@@ -11906,7 +11913,7 @@ fn test_destination() -> AdmittedDestination {
 
 /// The reservation the slot currently holds, as the webview would return it.
 fn reservation_handle(slot: &ConversionSlot) -> String {
-    let update = slot.read(false);
+    let update = slot.read(false, ConversionDiagnosticsStateDto::default());
     match update.state {
         WorkspaceConversionStateDto::AwaitingDestination { operation_id, .. } => {
             format!("conversion-reservation-{operation_id}")
@@ -12217,4 +12224,1074 @@ fn a_replaced_queue_releases_its_tickets_without_touching_the_files() {
         fs::read(&output).expect("the output survives its queue"),
         before
     );
+}
+
+// --- Redacted conversion diagnostics ------------------------------------------
+
+/// Exports a terminal queue's diagnostics to one chosen file, the way the
+/// command does: reserve, claim, then write.
+///
+/// The native save dialog is the only part left out, exactly as the destination
+/// picker is left out of `queue_and_run` above. Everything a refusal could come
+/// from — the document proof, the queue proof, admission of the folder, the
+/// size bound and the no-clobber write — is production code.
+fn export_diagnostics(
+    service: &PreviewService,
+    operation: &str,
+    destination: &Path,
+) -> Result<ConversionDiagnosticsExportDto, PreviewErrorDto> {
+    let document = current_document(service);
+    let reservation = service.begin_conversion_diagnostics_export(operation, document)?;
+    let (claimed, round) =
+        service.claim_conversion_diagnostics_export(&reservation.reservation_id, document)?;
+    service.write_conversion_diagnostics(claimed, round, destination)
+}
+
+/// The operation identifier of a terminal queue.
+fn terminal_operation(update: &WorkspaceConversionUpdateDto) -> String {
+    let WorkspaceConversionStateDto::Terminal { operation_id, .. } = &update.state else {
+        panic!("the queue reaches a terminal state; got {:?}", update.state);
+    };
+    operation_id.clone()
+}
+
+/// The exported document, parsed.
+fn read_export(path: &Path) -> serde_json::Value {
+    let bytes = fs::read(path).expect("the diagnostics file is readable");
+    assert_eq!(
+        bytes.last().copied(),
+        Some(b'\n'),
+        "the document ends with a newline"
+    );
+    serde_json::from_slice(&bytes).expect("the diagnostics file is valid JSON")
+}
+
+/// Every string anywhere in the document, so a leak can be searched for without
+/// knowing which field it would have reached.
+fn all_strings(value: &serde_json::Value, into: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(text) => into.push(text.clone()),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                all_strings(item, into);
+            }
+        }
+        serde_json::Value::Object(members) => {
+            for (key, member) in members {
+                into.push(key.clone());
+                all_strings(member, into);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Refuses the whole document if any fragment of a location reached it.
+///
+/// Asked of the raw bytes as well as the parsed strings, because an escape
+/// sequence is still a leak: `\\u0044:` is a drive letter to anything that
+/// reads the file.
+fn assert_no_location(path: &Path, fragments: &[&str]) {
+    let raw = fs::read_to_string(path).expect("the diagnostics file is UTF-8");
+    let document = read_export(path);
+    let mut strings = Vec::new();
+    all_strings(&document, &mut strings);
+    for fragment in fragments {
+        assert!(
+            !raw.to_lowercase().contains(&fragment.to_lowercase()),
+            "the export names {fragment}"
+        );
+    }
+    for text in &strings {
+        assert!(
+            mscanvas_proteowizard::absolute_path_start(text).is_none()
+                || text.starts_with('<')
+                || text.contains("mscanvas-export-"),
+            "an exported string looks like a path: {text}"
+        );
+    }
+}
+
+/// A backend that fails and says a great deal about where everything is.
+///
+/// Every spelling this boundary claims to remove, plus bytes that are not
+/// UTF-8, control characters, and more text than one excerpt may carry. It is
+/// given the real planned command, so the staging directory and the executable
+/// it names are the ones the boundary actually chose.
+struct NoisyFailingRunner {
+    source: PathBuf,
+    destination: PathBuf,
+}
+
+impl ProcessRunner for NoisyFailingRunner {
+    fn run(&self, spec: &CommandSpec) -> Result<ProcessOutput, ProcessError> {
+        let staged = spec
+            .output_destination()
+            .expect("a conversion plan carries an output destination")
+            .to_path_buf();
+        let staging = staged
+            .parent()
+            .expect("the staged output has a directory")
+            .to_path_buf();
+        let source = self.source.display().to_string();
+        let mut stderr = Vec::new();
+        for line in [
+            format!("error: could not read {source}"),
+            format!("error: could not read {}", source.replace('\\', "/")),
+            format!("error: could not read {}", source.to_uppercase()),
+            format!(r"error: extended \\?\{source}"),
+            format!("error: destination {}", self.destination.display()),
+            format!("error: staging {}", staging.display()),
+            format!("error: staged output {}", staged.display()),
+            format!("error: backend {}", spec.executable().display()),
+            format!(
+                "error: profile {}",
+                std::env::var("USERPROFILE").unwrap_or_else(|_| String::from("C:\\Users\\nobody"))
+            ),
+            String::from(r"error: share \\reporting-server\lab-share\archive\run.raw"),
+            String::from("mz=101.007276 rt=1.0 intensity=1.25e+07"),
+        ] {
+            stderr.extend_from_slice(line.as_bytes());
+            stderr.extend_from_slice(b"\r\n");
+        }
+        // Not UTF-8, and not printable either.
+        stderr.extend_from_slice(b"trailer \xff\xfe\x00\x1b[2Jcleared\r\n");
+
+        // More than one excerpt may carry, so the bound is exercised by a real
+        // run rather than by a unit test alone.
+        let mut stdout = Vec::new();
+        while stdout.len() < 48 * 1024 {
+            stdout.extend_from_slice(b"progress: reading spectra\r\n");
+        }
+        let stdout_total = stdout.len() as u64;
+        let stderr_total = stderr.len() as u64;
+        Ok(ProcessOutput {
+            stdout,
+            stderr,
+            stdout_total_bytes: stdout_total,
+            stderr_total_bytes: stderr_total,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            exit_code: Some(3),
+            elapsed: Duration::from_millis(11),
+            termination: Termination::Exited,
+            max_active_processes: Some(1),
+            final_active_processes: Some(0),
+            peak_job_memory_bytes: Some(4_096),
+        })
+    }
+}
+
+/// Scenario A: a real queue, one structured failure, and an export that
+/// describes exactly that item.
+#[test]
+fn a_real_queue_exports_only_the_attempt_that_failed() {
+    let fixture = TestFile::new("diagnostics-real");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let good = add_one_acquisition(&service, &fixture.thermo_raw("good.raw"));
+    let clash = add_one_acquisition(&service, &fixture.thermo_raw("clash.raw"));
+    // The second item's planned name is already taken, which under `Fail` is a
+    // structured, non-retryable failure that leaves the existing file alone.
+    let occupied = destination.join("clash.mzML");
+    fs::write(&occupied, b"somebody else's file").expect("occupy the planned name");
+
+    let update = queue_and_run(&service, &[good, clash], &destination);
+    let queue = terminal_queue(&update);
+    assert_eq!(queue.finalized_count, 1);
+    assert_eq!(queue.failed_count, 1);
+    assert_eq!(
+        update.diagnostics.eligible_item_count, 1,
+        "the finalized item has nothing to diagnose"
+    );
+    assert!(update.diagnostics.available);
+    assert!(!update.diagnostics.exporting);
+    assert_eq!(update.diagnostics.last_export, None);
+
+    let operation = terminal_operation(&update);
+    let saved = destination.join("diagnostics.json");
+    let result = export_diagnostics(&service, &operation, &saved).expect("the export is written");
+
+    assert_eq!(result.file_name, "diagnostics.json");
+    assert_eq!(result.diagnostic_item_count, 1);
+    assert_eq!(result.operation_id, operation);
+    assert_eq!(result.byte_length, fs::metadata(&saved).unwrap().len());
+
+    let document = read_export(&saved);
+    assert_eq!(document["schema"], "mscanvas.conversion-diagnostics");
+    assert_eq!(document["version"], 1);
+    let items = document["items"].as_array().expect("an items array");
+    assert_eq!(items.len(), 1, "one item, and it is the one that failed");
+    assert_eq!(items[0]["queueIndex"], 1);
+    assert_eq!(items[0]["sourceFileName"], "clash.raw");
+    assert_eq!(items[0]["outputFileName"], "clash.mzML");
+    assert_eq!(items[0]["state"], "failed");
+    assert_eq!(items[0]["detail"], "destination_exists");
+    assert_eq!(items[0]["retryable"], false);
+    // The conflict was decided before a process ran, so there is none to
+    // describe and no stream to repeat.
+    assert_eq!(items[0]["stdout"]["retained"], "none");
+    assert_eq!(items[0]["stderr"]["retained"], "none");
+    assert_eq!(document["queue"]["diagnosticItemCount"], 1);
+    assert_eq!(document["queue"]["finalizedCount"], 1);
+    assert_eq!(document["queue"]["terminalReason"], "completed");
+    assert!(
+        document["redaction"]["warning"]
+            .as_str()
+            .expect("a warning")
+            .contains("Review the file before sharing")
+    );
+
+    assert_no_location(
+        &saved,
+        &[
+            fixture.directory.to_string_lossy().as_ref(),
+            "diagnostics-real",
+            "mscanvas-staging",
+        ],
+    );
+
+    // Nothing about the queue changed, the outputs are where they were, and
+    // adoption is still on offer.
+    let after = service.conversion_state();
+    let queue = terminal_queue(&after);
+    assert_eq!(queue.finalized_count, 1);
+    assert_eq!(queue.failed_count, 1);
+    assert_eq!(item_states(queue), item_states(terminal_queue(&update)));
+    assert_eq!(
+        fs::read(&occupied).expect("the occupying file survives"),
+        b"somebody else's file"
+    );
+    let adopted = service
+        .adopt_conversion_outputs(&operation, current_document(&service))
+        .expect("adoption is unaffected by an export");
+    assert_eq!(adopted.outcomes.len(), 1);
+
+    fs::remove_file(&saved).expect("remove the exported diagnostics");
+}
+
+/// Scenario B: a backend that names everything, and an export that names
+/// nothing.
+#[test]
+fn every_spelling_a_backend_prints_is_removed_or_withheld() {
+    let fixture = TestFile::new("diagnostics-redaction");
+    let destination = destination_root(&fixture, "out");
+    let source = fixture.thermo_raw("secret-acquisition.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        NoisyFailingRunner {
+            source: source.clone(),
+            destination: destination.clone(),
+        },
+    )));
+    let handle = add_one_acquisition(&service, &source);
+
+    let update = queue_and_run(&service, &[handle], &destination);
+    let queue = terminal_queue(&update);
+    assert_eq!(queue.failed_count, 1);
+    assert_eq!(update.diagnostics.eligible_item_count, 1);
+
+    let operation = terminal_operation(&update);
+    let saved = destination.join("diagnostics.json");
+    export_diagnostics(&service, &operation, &saved).expect("the export is written");
+
+    let document = read_export(&saved);
+    let item = &document["items"].as_array().expect("items")[0];
+    let stderr = &item["stderr"];
+    let stdout = &item["stdout"];
+
+    // The truthful facts about the streams, whichever way they went.
+    assert_eq!(stderr["lossy"], true, "invalid UTF-8 is reported as lossy");
+    assert!(stderr["totalBytes"].as_u64().expect("a total") > 0);
+    assert_eq!(stderr["captureTruncated"], false);
+    assert_eq!(
+        stdout["excerptTruncated"], true,
+        "more was printed than one excerpt may carry"
+    );
+    assert_eq!(stdout["retained"], "prefix");
+
+    match stderr["retained"].as_str() {
+        // Every registered spelling was replaced and nothing path-shaped
+        // survived, so the text is exported with placeholders in it.
+        Some("prefix") => {
+            let text = stderr["text"].as_str().expect("exported text");
+            assert!(text.contains("<source>"), "{text}");
+            assert!(
+                text.contains("<destination>") || text.contains("<staging>"),
+                "{text}"
+            );
+            assert!(text.contains("<backend>"), "{text}");
+            assert!(
+                text.contains("mz=101.007276"),
+                "ordinary backend text survives redaction: {text}"
+            );
+            assert!(!text.contains('\u{0}'), "NUL is removed");
+            assert!(!text.contains('\u{1b}'), "escape sequences are removed");
+        }
+        // The unregistered share this backend also printed is a location
+        // nothing replaced, so the whole excerpt is withheld rather than
+        // exported with it in.
+        Some("withheld") => {
+            assert_eq!(stderr["text"], serde_json::Value::Null);
+            assert_eq!(stderr["suppressed"], "residual_absolute_path");
+        }
+        other => panic!("an excerpt is either a prefix or withheld; got {other:?}"),
+    }
+    assert!(
+        stderr["redactionCount"].as_u64().expect("a count") > 0,
+        "the export says how much was rewritten without saying what"
+    );
+
+    assert_no_location(
+        &saved,
+        &[
+            "diagnostics-redaction",
+            "reporting-server",
+            "lab-share",
+            "msconvert",
+            "mscanvas-staging",
+        ],
+    );
+    // The acquisition's own name is a bounded display fact and is allowed --
+    // twice, as the source name and the name its output would have taken. It
+    // must not appear anywhere else, and above all not inside an excerpt, where
+    // it could only have arrived as part of a path.
+    let raw = fs::read_to_string(&saved).expect("the diagnostics file is UTF-8");
+    assert_eq!(
+        raw.matches("secret-acquisition").count(),
+        2,
+        "the display name appears only where the schema puts it"
+    );
+    assert_eq!(item["sourceFileName"], "secret-acquisition.raw");
+    assert_eq!(item["outputFileName"], "secret-acquisition.mzML");
+
+    // And nothing of the stream reaches the transfer object either.
+    let wire = serde_json::to_string(&service.conversion_state()).expect("the state serializes");
+    assert!(!wire.contains("could not read"), "{wire}");
+    assert!(!wire.contains("progress: reading spectra"), "{wire}");
+
+    fs::remove_file(&saved).expect("remove the exported diagnostics");
+}
+
+/// Scenario C: the chosen name is taken, and the file that is there is exactly
+/// the file that stays there.
+#[test]
+fn an_occupied_diagnostics_name_is_refused_and_leaves_no_residue() {
+    let fixture = TestFile::new("diagnostics-clobber");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    let occupied = destination.join("one.mzML");
+    fs::write(&occupied, b"taken").expect("occupy the planned output name");
+    let update = queue_and_run(&service, &[handle], &destination);
+    let operation = terminal_operation(&update);
+
+    let saved = destination.join("diagnostics.json");
+    let before = b"an earlier export nobody meant to lose".to_vec();
+    fs::write(&saved, &before).expect("pre-create the diagnostics name");
+
+    let refusal =
+        export_diagnostics(&service, &operation, &saved).expect_err("an occupied name is refused");
+
+    assert_eq!(refusal.kind, "diagnostics_destination_exists");
+    assert_eq!(
+        refusal.detail, None,
+        "nothing was left behind, so nothing is reported as left behind"
+    );
+    assert_eq!(
+        fs::read(&saved).expect("the existing file is readable"),
+        before,
+        "the file that was there is byte for byte the file that is there"
+    );
+    let mut produced = entry_names(&destination);
+    produced.sort();
+    assert_eq!(
+        produced,
+        vec!["diagnostics.json", "one.mzML"],
+        "no temporary object survives a refused export"
+    );
+
+    // And the export is still on offer, because nothing about the queue changed.
+    let after = service.conversion_state();
+    assert!(after.diagnostics.available);
+    assert!(!after.diagnostics.exporting);
+    assert_eq!(after.diagnostics.last_export, None);
+}
+
+/// Scenario D: a queue whose stop could not be confirmed exports, and does so
+/// while the session has stopped trusting the backend.
+#[test]
+fn a_stop_failed_queue_exports_while_the_backend_is_quarantined() {
+    let (fixture, destination, service, update, launches) = stop_mid_item(StopEnding::Survivors);
+    let queue = terminal_queue(&update);
+    assert_eq!(queue.cancellation_failed_count, 1);
+    assert!(update.backend_quarantined, "the session is quarantined");
+    assert!(
+        update.diagnostics.available,
+        "a stop that could not be confirmed is the case this exists for"
+    );
+
+    let operation = terminal_operation(&update);
+    let saved = destination.join("diagnostics.json");
+    let before = launches.load(Ordering::SeqCst);
+    let result = export_diagnostics(&service, &operation, &saved).expect("the export is written");
+
+    assert_eq!(
+        launches.load(Ordering::SeqCst),
+        before,
+        "an export launches no process"
+    );
+    assert!(
+        service.conversion_state().backend_quarantined,
+        "and does not clear the quarantine"
+    );
+    assert!(result.diagnostic_item_count >= 1);
+
+    let document = read_export(&saved);
+    assert_eq!(document["queue"]["terminalReason"], "stop_failed");
+    let items = document["items"].as_array().expect("items");
+    let unconfirmed = items
+        .iter()
+        .find(|item| item["state"] == "cancellation_failed")
+        .expect("the item whose stop could not be confirmed");
+    assert_eq!(
+        unconfirmed["cancellation"]["treeTerminationConfirmed"],
+        false
+    );
+    assert_eq!(unconfirmed["cancellation"]["terminationRequested"], true);
+
+    assert_no_location(&saved, &[fixture.directory.to_string_lossy().as_ref()]);
+    fs::remove_file(&saved).expect("remove the exported diagnostics");
+}
+
+/// A queue that simply worked has nothing to diagnose and offers nothing.
+#[test]
+fn a_clean_queue_exposes_no_export_at_all() {
+    let fixture = TestFile::new("diagnostics-clean");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("clean.raw"));
+
+    let update = queue_and_run(&service, &[handle], &destination);
+    assert_eq!(terminal_queue(&update).finalized_count, 1);
+    assert_eq!(update.diagnostics.eligible_item_count, 0);
+    assert!(!update.diagnostics.available);
+
+    let refusal = export_diagnostics(
+        &service,
+        &terminal_operation(&update),
+        &destination.join("diagnostics.json"),
+    )
+    .expect_err("there is nothing to export");
+    assert_eq!(refusal.kind, "diagnostics_unavailable");
+    assert_eq!(entry_names(&destination), vec!["clean.mzML"]);
+}
+
+/// Only the latest attempt. A rerun that worked takes the failure's diagnostic
+/// with it, and an export afterwards describes the queue as it now is.
+#[test]
+fn a_successful_retry_removes_the_diagnostic_it_replaced() {
+    let fixture = TestFile::new("diagnostics-retry");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let done = add_one_acquisition(&service, &fixture.thermo_raw("done.raw"));
+    let held = fixture.thermo_raw("held.raw");
+    let blocked = add_one_acquisition(&service, &held);
+
+    let writer = hold_for_writing(&held);
+    let update = queue_and_run(&service, &[done, blocked], &destination);
+    assert_eq!(terminal_queue(&update).retryable_failed_count, 1);
+    assert_eq!(update.diagnostics.eligible_item_count, 1);
+    assert!(update.diagnostics.available);
+
+    drop(writer);
+    let retried = service
+        .retry_conversion_queue(current_document(&service))
+        .expect("a retryable failure can be retried");
+
+    assert_eq!(terminal_queue(&retried).failed_count, 0);
+    assert_eq!(
+        retried.diagnostics.eligible_item_count, 0,
+        "the attempt that failed is not the latest attempt any more"
+    );
+    assert!(!retried.diagnostics.available);
+    let refusal = export_diagnostics(
+        &service,
+        &terminal_operation(&retried),
+        &destination.join("diagnostics.json"),
+    )
+    .expect_err("a queue whose failures were all fixed has nothing to export");
+    assert_eq!(refusal.kind, "diagnostics_unavailable");
+}
+
+/// Every way of asking for an export that is not about the current terminal
+/// queue of the current document, answered the same way and answered without
+/// creating anything.
+#[test]
+fn an_export_answers_only_for_the_current_document_and_queue() {
+    let fixture = TestFile::new("diagnostics-authority");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    fs::write(destination.join("one.mzML"), b"taken").expect("occupy the planned name");
+    let update = queue_and_run(&service, &[handle], &destination);
+    let operation = terminal_operation(&update);
+    let document = current_document(&service);
+
+    // A document that has been replaced.
+    assert_eq!(
+        service
+            .begin_conversion_diagnostics_export(&operation, document.wrapping_add(1))
+            .expect_err("a replaced document may not export")
+            .kind,
+        "diagnostics_unavailable"
+    );
+    // An operation that is not the one the slot holds, and one that is not a
+    // number at all.
+    for named in [
+        format!("{}", operation.parse::<u64>().unwrap() + 1),
+        String::from("not-a-queue"),
+    ] {
+        assert_eq!(
+            service
+                .begin_conversion_diagnostics_export(&named, document)
+                .expect_err("only the current terminal queue is exportable")
+                .kind,
+            "diagnostics_unavailable"
+        );
+    }
+    // A reservation nobody issued, and one issued to a document that is gone.
+    assert_eq!(
+        service
+            .claim_conversion_diagnostics_export("diagnostics-reservation-99", document)
+            .expect_err("an unknown reservation is refused")
+            .kind,
+        "invalid_diagnostics_reservation"
+    );
+    let reservation = service
+        .begin_conversion_diagnostics_export(&operation, document)
+        .expect("the current queue is exportable");
+    assert_eq!(
+        service
+            .claim_conversion_diagnostics_export(
+                &reservation.reservation_id,
+                document.wrapping_add(1)
+            )
+            .expect_err("a reservation belongs to the document that asked")
+            .kind,
+        "invalid_diagnostics_reservation"
+    );
+    // A second export while that one is still awaiting a destination.
+    assert_eq!(
+        service
+            .begin_conversion_diagnostics_export(&operation, document)
+            .expect_err("one export at a time")
+            .kind,
+        "diagnostics_export_in_progress"
+    );
+    // And a write for a claim that was never made.
+    assert_eq!(
+        service
+            .write_conversion_diagnostics(
+                operation.parse().expect("an operation identifier"),
+                0,
+                &destination.join("diagnostics.json")
+            )
+            .expect_err("an unclaimed reservation writes nothing")
+            .kind,
+        "invalid_diagnostics_reservation"
+    );
+
+    // Cancelling the dialog is an ordinary no-op that returns the offer.
+    let after = service.cancel_conversion_diagnostics_export();
+    assert!(!after.diagnostics.exporting);
+    assert!(after.diagnostics.available);
+    assert_eq!(after.diagnostics.last_export, None);
+    assert_eq!(
+        entry_names(&destination),
+        vec!["one.mzML"],
+        "nothing was created by any of that"
+    );
+}
+
+/// A folder this boundary's guarantees do not hold in is refused before
+/// anything is created, and the refusal names nothing.
+#[test]
+fn an_unusable_diagnostics_folder_is_refused_without_naming_it() {
+    let fixture = TestFile::new("diagnostics-folder");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    fs::write(destination.join("one.mzML"), b"taken").expect("occupy the planned name");
+    let update = queue_and_run(&service, &[handle], &destination);
+    let operation = terminal_operation(&update);
+
+    for chosen in [
+        // A network name, whichever way it is spelled. Neither the no-clobber
+        // rename nor the identity-bound cleanup this write depends on is a
+        // guarantee across a redirector.
+        PathBuf::from(r"\\reporting-server\lab-share\diagnostics.json"),
+        PathBuf::from(r"\\?\UNC\reporting-server\lab-share\diagnostics.json"),
+        // A folder with nothing behind it.
+        fixture.directory.join("absent").join("diagnostics.json"),
+        // A file where a folder should be.
+        destination.join("one.mzML").join("diagnostics.json"),
+    ] {
+        let refusal = export_diagnostics(&service, &operation, &chosen)
+            .expect_err("only a local folder is written into");
+        assert_eq!(
+            refusal.kind, "diagnostics_destination_unusable",
+            "{chosen:?}"
+        );
+        let rendered = serde_json::to_string(&refusal).expect("the refusal serializes");
+        assert!(!rendered.contains("reporting-server"), "{rendered}");
+        assert!(!rendered.contains("lab-share"), "{rendered}");
+    }
+    assert_eq!(entry_names(&destination), vec!["one.mzML"]);
+}
+
+/// Two exports of one queue, and a second copy is an ordinary thing to want.
+#[test]
+fn an_export_may_be_repeated_under_another_name() {
+    let fixture = TestFile::new("diagnostics-repeat");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    fs::write(destination.join("one.mzML"), b"taken").expect("occupy the planned name");
+    let update = queue_and_run(&service, &[handle], &destination);
+    let operation = terminal_operation(&update);
+
+    let first = export_diagnostics(&service, &operation, &destination.join("first.json"))
+        .expect("the first export is written");
+    let second = export_diagnostics(&service, &operation, &destination.join("second.json"))
+        .expect("and so is the second");
+
+    assert_eq!(first.sha256, second.sha256, "field order is deterministic");
+    assert_eq!(first.byte_length, second.byte_length);
+    assert_eq!(
+        fs::read(destination.join("first.json")).expect("readable"),
+        fs::read(destination.join("second.json")).expect("readable"),
+        "two exports of one unchanged queue are byte for byte the same document"
+    );
+    // The slot remembers the last one, and only the last one.
+    let after = service.conversion_state();
+    assert_eq!(
+        after
+            .diagnostics
+            .last_export
+            .as_ref()
+            .map(|export| export.file_name.clone()),
+        Some(String::from("second.json"))
+    );
+    assert!(
+        after.diagnostics.available,
+        "the action stays on offer after a successful export"
+    );
+
+    // A new queue drops this session's memory of having exported, and does not
+    // touch either file.
+    let other = add_one_acquisition(&service, &fixture.thermo_raw("other.raw"));
+    let _ = queue_and_run(&service, &[other], &destination);
+    let replaced = service.conversion_state();
+    assert_eq!(replaced.diagnostics.last_export, None);
+    assert!(destination.join("first.json").exists());
+    assert!(destination.join("second.json").exists());
+}
+
+/// The digest is of the bytes that were written, so somebody about to send the
+/// file on can check that the two agree.
+#[test]
+fn the_reported_digest_and_length_describe_the_file_that_was_written() {
+    let fixture = TestFile::new("diagnostics-digest");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    fs::write(destination.join("one.mzML"), b"taken").expect("occupy the planned name");
+    let update = queue_and_run(&service, &[handle], &destination);
+    let saved = destination.join("diagnostics.json");
+
+    let result = export_diagnostics(&service, &terminal_operation(&update), &saved)
+        .expect("the export is written");
+
+    let bytes = fs::read(&saved).expect("the file is readable");
+    assert_eq!(result.byte_length, bytes.len() as u64);
+    assert_eq!(
+        result.sha256,
+        Sha256Digest::calculate(&bytes)
+            .expect("the digest is calculable")
+            .to_string()
+    );
+    // And the result says nothing about where it went.
+    let rendered = serde_json::to_string(&result).expect("the result serializes");
+    assert!(!rendered.contains("diagnostics-digest"), "{rendered}");
+    assert!(!rendered.contains(":\\\\"), "{rendered}");
+    // Exactly these members and no others. A location could only reach the
+    // webview through a member nobody meant to add, so the set is asserted
+    // rather than the absence of any one name.
+    let mut members = serde_json::from_str::<serde_json::Value>(&rendered)
+        .expect("an object")
+        .as_object()
+        .expect("an object")
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    members.sort();
+    assert_eq!(
+        members,
+        vec![
+            "byteLength",
+            "diagnosticItemCount",
+            "fileName",
+            "operationId",
+            "retryRound",
+            "sha256"
+        ]
+    );
+}
+
+/// A ticket exists for exactly the attempts worth diagnosing, is replaced whole
+/// when a later attempt settles, and is dropped with the queue that made it.
+#[test]
+fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
+    let mut slot = ConversionSlot::default();
+    let queue = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        vec![test_queue_item(), test_queue_item_named(1, "two.raw")],
+    )
+    .expect("two items are a queue");
+    let _ = slot.begin(queue).expect("reservation");
+    let operation = slot
+        .claim(&reservation_handle(&slot), 0)
+        .expect("claim the reservation");
+    assert!(slot.start_running(operation, test_destination()));
+
+    // One ordinary refusal, and one stop whose tree was confirmed gone with
+    // nothing left behind.
+    let first = slot.start_item(operation, 0).expect("the item starts");
+    assert!(slot.settle_item(
+        operation,
+        0,
+        ItemOutcome::Refused {
+            retryable: true,
+            error: PreviewErrorDto::new("file_unreadable", "unreadable", true),
+        },
+    ));
+    slot.release_attempt(operation, 0, first);
+    let second = slot.start_item(operation, 1).expect("the item starts");
+    assert!(slot.settle_item(
+        operation,
+        1,
+        ItemOutcome::Stopped {
+            state: ItemState::Cancelled,
+            facts: CancellationFacts {
+                process_launched: true,
+                tree_termination_confirmed: true,
+                elapsed: Duration::from_millis(5),
+                termination: None,
+                partial_output_observed: false,
+                staging_residue: None,
+            },
+            diagnostics: None,
+        },
+    ));
+    slot.release_attempt(operation, 1, second);
+    slot.finish(operation, None, TerminalReason::Completed);
+
+    let (facts, _provider, round, tickets) = slot
+        .terminal_diagnostics(operation)
+        .expect("a terminal queue with a failure");
+    assert_eq!(
+        tickets.len(),
+        1,
+        "a confirmed cancellation is not a failure"
+    );
+    assert_eq!(round, 0);
+    assert_eq!(facts.failed_count, 1);
+    assert_eq!(facts.cancelled_count, 1);
+    // A ticket never renders what it holds.
+    let rendered = format!("{:?}", tickets[0]);
+    assert!(
+        rendered.contains("<opaque-diagnostic-ticket>"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("one.raw"), "{rendered}");
+    assert_eq!(
+        slot.read(false, ConversionDiagnosticsStateDto::default())
+            .diagnostics
+            .eligible_item_count,
+        1
+    );
+
+    // A retry moves the failure back to pending. While it is pending the ticket
+    // is not the current answer about that item, and the slot is not terminal
+    // either -- so nothing is exportable.
+    let operation = slot
+        .begin_retry()
+        .expect("a completed queue with a failure");
+    assert!(slot.terminal_diagnostics(operation).is_none());
+
+    // The rerun settles as an unconfirmed stop, which replaces the ticket whole.
+    let attempt = slot.start_item(operation, 0).expect("the item starts");
+    assert!(slot.settle_item(
+        operation,
+        0,
+        ItemOutcome::Stopped {
+            state: ItemState::CancellationFailed,
+            facts: CancellationFacts {
+                process_launched: true,
+                tree_termination_confirmed: false,
+                elapsed: Duration::from_millis(7),
+                termination: None,
+                partial_output_observed: true,
+                staging_residue: None,
+            },
+            diagnostics: None,
+        },
+    ));
+    slot.release_attempt(operation, 0, attempt);
+    slot.finish(operation, None, TerminalReason::StopFailed);
+
+    let (facts, _provider, round, tickets) = slot
+        .terminal_diagnostics(operation)
+        .expect("a stop-failed queue is exportable");
+    assert_eq!(facts.terminal_reason, "stop_failed");
+    assert_eq!(round, 1, "the settling is named as well as the queue");
+    assert_eq!(tickets.len(), 1);
+    assert_eq!(tickets[0].describes(), ItemState::CancellationFailed);
+
+    // And a new queue drops every one of them.
+    let replacement = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        vec![test_queue_item()],
+    )
+    .expect("one item is a queue");
+    let _ = slot.begin(replacement).expect("reservation");
+    assert!(slot.terminal_diagnostics(operation).is_none());
+    assert_eq!(
+        slot.read(false, ConversionDiagnosticsStateDto::default())
+            .diagnostics
+            .eligible_item_count,
+        0
+    );
+}
+
+/// A backend that fails after printing a great deal of text that needs
+/// escaping, so a full queue of them exceeds the export bound.
+///
+/// Quotation marks rather than backslashes: both double in length when escaped,
+/// and only one of them looks like the start of a path.
+struct VerboseFailingRunner;
+
+impl ProcessRunner for VerboseFailingRunner {
+    fn run(&self, _spec: &CommandSpec) -> Result<ProcessOutput, ProcessError> {
+        let noise = vec![b'"'; mscanvas_proteowizard::MAX_DIAGNOSTIC_STREAM_EXCERPT_BYTES];
+        let total = noise.len() as u64;
+        Ok(ProcessOutput {
+            stdout: noise.clone(),
+            stderr: noise,
+            stdout_total_bytes: total,
+            stderr_total_bytes: total,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            exit_code: Some(2),
+            elapsed: Duration::from_millis(1),
+            termination: Termination::Exited,
+            max_active_processes: Some(1),
+            final_active_processes: Some(0),
+            peak_job_memory_bytes: Some(1_024),
+        })
+    }
+}
+
+/// A document larger than one diagnostics file may be is refused, and refused
+/// before anything is created.
+///
+/// Fails closed rather than truncating. Half a JSON document is not a smaller
+/// diagnostics file; it is one no reader can open, offered in exchange for
+/// hiding the fact that the bound was reached.
+#[test]
+fn a_diagnostics_document_over_the_bound_is_refused_and_writes_nothing() {
+    let fixture = TestFile::new("diagnostics-bound");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        VerboseFailingRunner,
+    )));
+    let handles: Vec<String> = (0..MAX_CONVERSION_QUEUE_ITEMS)
+        .map(|index| {
+            add_one_acquisition(&service, &fixture.thermo_raw(&format!("item-{index}.raw")))
+        })
+        .collect();
+
+    let update = queue_and_run(&service, &handles, &destination);
+    let queue = terminal_queue(&update);
+    assert_eq!(queue.failed_count, MAX_CONVERSION_QUEUE_ITEMS);
+    assert_eq!(
+        update.diagnostics.eligible_item_count, MAX_CONVERSION_QUEUE_ITEMS,
+        "the queue's own capacity is what bounds the item count"
+    );
+
+    let saved = destination.join("diagnostics.json");
+    let refusal = export_diagnostics(&service, &terminal_operation(&update), &saved)
+        .expect_err("a document over the bound is refused");
+
+    assert_eq!(refusal.kind, "diagnostics_too_large");
+    assert!(!refusal.retryable, "the same queue would be as large again");
+    assert!(
+        !saved.exists(),
+        "nothing partial is written under the chosen name"
+    );
+    assert_eq!(
+        entry_names(&destination),
+        Vec::<String>::new(),
+        "and no temporary object is left behind either"
+    );
+
+    // The queue is untouched and the offer stands, so a user who narrows the
+    // problem by rerunning fewer items can still export.
+    let after = service.conversion_state();
+    assert!(after.diagnostics.available);
+    assert!(!after.diagnostics.exporting);
+}
+
+/// While an export is choosing a destination, everything that would replace the
+/// result it is about is refused, and everything that only reads it is not.
+#[test]
+fn an_export_in_flight_closes_the_actions_that_would_replace_its_queue() {
+    let fixture = TestFile::new("diagnostics-exclusion");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let done = add_one_acquisition(&service, &fixture.thermo_raw("done.raw"));
+    let held = fixture.thermo_raw("held.raw");
+    let blocked = add_one_acquisition(&service, &held);
+    let spare = add_one_acquisition(&service, &fixture.thermo_raw("spare.raw"));
+
+    let writer = hold_for_writing(&held);
+    let update = queue_and_run(&service, &[done, blocked], &destination);
+    drop(writer);
+    let operation = terminal_operation(&update);
+    let document = current_document(&service);
+    assert_eq!(terminal_queue(&update).retryable_failed_count, 1);
+
+    // The reservation is issued and the dialog is notionally open. Rust holds
+    // the claim for the whole of that window, which is what these refusals are.
+    let reservation = service
+        .begin_conversion_diagnostics_export(&operation, document)
+        .expect("the terminal queue is exportable");
+    assert!(service.conversion_state().diagnostics.exporting);
+
+    assert_eq!(
+        service
+            .retry_conversion_queue(document)
+            .expect_err("a retry would replace the results being described")
+            .kind,
+        "conversion_busy"
+    );
+    assert_eq!(
+        service
+            .adopt_conversion_outputs(&operation, document)
+            .expect_err("an adoption owns the same terminal queue")
+            .kind,
+        "adoption_in_progress"
+    );
+    assert_eq!(
+        service
+            .begin_conversion_queue(
+                std::slice::from_ref(&spare),
+                ConversionConflictPolicyDto::Fail,
+                document
+            )
+            .expect_err("a new queue would replace the one being described")
+            .kind,
+        "conversion_busy"
+    );
+    assert_eq!(
+        service
+            .add_files(&[fixture.thermo_raw("late.raw")])
+            .expect_err("a workspace mutation waits")
+            .kind,
+        "conversion_busy"
+    );
+    assert_eq!(
+        service
+            .remove_datasets(std::slice::from_ref(&spare))
+            .expect_err("removing waits too")
+            .kind,
+        "conversion_busy"
+    );
+    assert_eq!(
+        service.clear_workspace().expect_err("and clearing").kind,
+        "conversion_busy"
+    );
+
+    // Reads are untouched. Nothing here launches anything or changes anything.
+    assert_eq!(service.roster().datasets.len(), 3);
+    assert!(service.conversion_state().diagnostics.exporting);
+
+    // Claim, write, and everything comes back.
+    let (claimed, round) = service
+        .claim_conversion_diagnostics_export(&reservation.reservation_id, document)
+        .expect("claim the reservation");
+    let saved = destination.join("diagnostics.json");
+    service
+        .write_conversion_diagnostics(claimed, round, &saved)
+        .expect("the export is written");
+
+    let after = service.conversion_state();
+    assert!(!after.diagnostics.exporting);
+    assert!(after.diagnostics.last_export.is_some());
+    service
+        .retry_conversion_queue(document)
+        .expect("the retry is available again once the export is over");
+    fs::remove_file(&saved).expect("remove the exported diagnostics");
+}
+
+/// A reservation belongs to the document that asked for it, so a reload
+/// releases one nobody can claim and leaves the offer standing.
+#[test]
+fn a_reload_releases_an_unclaimed_export_and_keeps_the_offer() {
+    let fixture = TestFile::new("diagnostics-reload");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    fs::write(destination.join("one.mzML"), b"taken").expect("occupy the planned name");
+    let update = queue_and_run(&service, &[handle], &destination);
+    let operation = terminal_operation(&update);
+
+    let reservation = service
+        .begin_conversion_diagnostics_export(&operation, current_document(&service))
+        .expect("the terminal queue is exportable");
+    assert!(service.conversion_state().diagnostics.exporting);
+
+    // The document is replaced. The replacement never learns the identifier, so
+    // without releasing it the slot would stay busy for the rest of the session.
+    service.begin_webview_document();
+
+    let recovered = service.conversion_state();
+    assert!(!recovered.diagnostics.exporting);
+    assert!(
+        recovered.diagnostics.available,
+        "the replacement document is offered the same export"
+    );
+    assert_eq!(
+        service
+            .claim_conversion_diagnostics_export(
+                &reservation.reservation_id,
+                current_document(&service)
+            )
+            .expect_err("a released reservation cannot be claimed by anyone")
+            .kind,
+        "invalid_diagnostics_reservation"
+    );
+
+    // And the replacement can export for itself.
+    let saved = destination.join("diagnostics.json");
+    export_diagnostics(&service, &operation, &saved).expect("the replacement document exports");
+    assert!(
+        service.conversion_state().diagnostics.last_export.is_some(),
+        "the result is recoverable by a read rather than only by a reply"
+    );
+    fs::remove_file(&saved).expect("remove the exported diagnostics");
 }
