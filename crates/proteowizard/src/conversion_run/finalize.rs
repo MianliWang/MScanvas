@@ -121,13 +121,12 @@ impl std::fmt::Debug for DestinationDirectory {
 /// Consuming the validated output is the double-finalization guard: an object
 /// that has been finalized no longer exists to finalize again.
 ///
-/// On success the handle is *kept*, inside the returned [`FinalizedOutput`].
-/// It is the one thing that can later answer whether the final name still means
-/// this object, and it costs nothing that matters: the object is no longer in
-/// the staging area, so holding it cannot block staging cleanup, and it was
-/// opened sharing deletes, so the user may still rename or remove their own
-/// output. On failure it is released as before, because there is then nothing
-/// to recognise and the object may still be inside staging.
+/// The object is retained -- as a permissive reopen of itself, not as this
+/// handle -- and is retained *before* the rename, so a failure to retain leaves
+/// nothing published. It is the one thing that can later answer whether the
+/// final name still means this object, and it costs nothing that matters: the
+/// retention shares everything, so the user may still write, rename or remove
+/// their own output, and it is released with the report that carries it.
 #[cfg(windows)]
 pub(super) fn finalize_validated(
     validated: ValidatedConversionOutput,
@@ -135,18 +134,20 @@ pub(super) fn finalize_validated(
     final_name: &OsStr,
 ) -> io::Result<FinalizedOutput> {
     let (file, valid) = validated.into_parts();
-    match single_component(final_name)
+    // Before the rename, deliberately. Retaining can fail -- it opens a handle
+    // and asks the object what it is -- and a failure after the rename would
+    // report that nothing was finalized while the output sat at its final name,
+    // occupying it for every later run. Renaming does not change which object
+    // this is, so nothing about the retention goes stale below.
+    let retained = FinalizedOutput::retain(&file, valid)?;
+    let renamed = single_component(final_name)
         .map(|name| destination.path().join(name))
-        .and_then(|target| rename_object_to(&file, &target))
-    {
-        // Identified after the rename, not before it: the point of the identity
-        // is to name the object that actually received the final name.
-        Ok(()) => FinalizedOutput::retain(file, valid),
-        Err(error) => {
-            drop(file);
-            Err(error)
-        }
-    }
+        .and_then(|target| rename_object_to(&file, &target));
+    // The renaming handle goes as soon as it has done its work. It is the one
+    // that withholds write sharing, and every moment it is held past its purpose
+    // is a moment the user cannot write their own file.
+    drop(file);
+    renamed.map(|()| retained)
 }
 
 /// Gives the validated object the planned final name inside `destination`.

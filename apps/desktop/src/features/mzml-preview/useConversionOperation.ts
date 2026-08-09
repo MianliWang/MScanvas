@@ -38,6 +38,26 @@ const POLL_INTERVAL_MS = 2_000;
  */
 const RETRY_TRANSITION_POLL_MS = 100;
 
+/**
+ * Whether an adoption result still describes the queue an update reports.
+ *
+ * A result is about one settling of one queue, so it survives only while that
+ * queue is still terminal, still the same operation, and still on the same
+ * retry round. The round is what separates a queue that has not changed from
+ * one a retry has settled again, which the status alone cannot: a retry that
+ * finishes between two polls moves the queue from terminal to terminal.
+ */
+function describes(
+  adoption: WorkspaceOutputAdoptionResult,
+  update: WorkspaceConversionUpdate,
+): boolean {
+  return (
+    update.state.status === "terminal" &&
+    update.state.operationId === adoption.operationId &&
+    update.state.queue.retryRound === adoption.retryRound
+  );
+}
+
 /** The plan summary for one row, and how the reading of it went. */
 export type ConversionPlanState =
   | { readonly status: "none" }
@@ -194,12 +214,12 @@ export function useConversionOperation(
     if (!mounted.current || update.sequence <= installedSequence.current) {
       return;
     }
-    // A queue that is no longer the one an adoption reported on takes its
-    // result with it. A count beside the wrong queue would describe work the
-    // user is no longer looking at.
-    setAdoption((previous) =>
-      previous !== null && update.state.status !== "terminal" ? null : previous,
-    );
+    // A result belongs to one settling of one queue. Anything that produces a
+    // different one takes it with it: a queue that is no longer terminal, a
+    // different operation, or the same operation settled again by a retry --
+    // which can finish fast enough that no running state is ever polled, so
+    // "not terminal any more" is not a test that catches it.
+    setAdoption((previous) => (previous === null || describes(previous, update) ? previous : null));
     installedSequence.current = update.sequence;
     busyRef.current =
       update.state.status === "awaitingDestination" ||

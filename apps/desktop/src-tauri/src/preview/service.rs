@@ -1467,7 +1467,7 @@ impl PreviewService {
     ) -> Result<WorkspaceOutputAdoptionResultDto, PreviewErrorDto> {
         let operation: u64 = operation_id.parse().map_err(|_| outputs_not_adoptable())?;
 
-        let (reserved, tickets) = {
+        let (reserved, tickets, reserved_round) = {
             let gate = self.enter_workspace_mutation_after_drop();
             if document_epoch != self.workspace_drop_document_epoch() {
                 return Err(outputs_not_adoptable());
@@ -1479,12 +1479,19 @@ impl PreviewService {
             if tickets.is_empty() {
                 return Err(outputs_not_adoptable());
             }
+            // Read before anything is claimed, so that every way of refusing
+            // this request leaves the session exactly as it found it.
+            let round = self
+                .conversion_slot()
+                .terminal_retry_round(operation)
+                .ok_or_else(outputs_not_adoptable)?;
             // Claimed before the gate is released, so two adoptions of one queue
             // cannot both reach the reading half and commit the same rows twice.
+            // From here on every path must clear it, which the guard below does.
             if self.adopting_outputs.swap(true, Ordering::AcqRel) {
                 return Err(adoption_in_progress());
             }
-            (self.reserve_adoption(gate), tickets)
+            (self.reserve_adoption(gate), tickets, round)
         };
         // Cleared however this returns, including through a panic in the
         // reading half. A flag left set would refuse every later adoption for
@@ -1509,11 +1516,14 @@ impl PreviewService {
         if gate.generation != reserved {
             return Err(adoption_superseded());
         }
-        if self
-            .conversion_slot()
-            .terminal_adoption_tickets(operation)
-            .is_none()
-        {
+        // The settling, not merely the queue. A retry between the two halves
+        // would leave the same operation terminal again with different results,
+        // and committing against that would attach these outcomes to a queue
+        // that no longer produced them.
+        let Some(retry_round) = self.conversion_slot().terminal_retry_round(operation) else {
+            return Err(adoption_superseded());
+        };
+        if retry_round != reserved_round {
             return Err(adoption_superseded());
         }
 
@@ -1545,6 +1555,8 @@ impl PreviewService {
             })
             .collect();
         let result = WorkspaceOutputAdoptionResultDto {
+            operation_id: operation.to_string(),
+            retry_round,
             roster: roster_of(&workspace),
             outcomes: describe_adoptions(&workspace, outcomes),
         };

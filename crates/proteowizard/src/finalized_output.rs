@@ -93,22 +93,25 @@ pub struct FinalizedOutput {
 }
 
 impl FinalizedOutput {
-    /// Retains a freshly renamed output.
+    /// Retains the object a handle names.
     ///
-    /// Takes the renaming handle by value and does not keep it: what is kept is
-    /// a permissive reopen of the same object, so nothing the user might want to
-    /// do with their own file is forbidden by MSCanvas still thinking about it.
+    /// Borrows rather than consumes: the caller keeps the handle it was using --
+    /// finalization still has a rename to perform with it -- and what is kept
+    /// here is a permissive reopen of the same object, so nothing the user might
+    /// want to do with their own file is forbidden by MSCanvas still thinking
+    /// about it.
+    ///
+    /// Called *before* the object is published under its final name, so that a
+    /// failure to retain it is a failure that leaves nothing behind. The
+    /// identity read here survives the rename that follows: renaming an object
+    /// changes which directory entry names it, not which object it is.
     ///
     /// Fails when the object cannot be reopened or cannot say what it is, which
     /// are the two states in which retaining it would be retaining something
     /// unidentifiable.
     #[cfg(windows)]
-    pub(crate) fn retain(object: File, valid: ValidConversion) -> std::io::Result<Self> {
-        let held = reopen_permissively(&object)?;
-        // The renaming handle goes now rather than at the end of the scope. It
-        // is the one that withholds write sharing, and every moment it is held
-        // past its purpose is a moment the user cannot write their own file.
-        drop(object);
+    pub(crate) fn retain(object: &File, valid: ValidConversion) -> std::io::Result<Self> {
+        let held = reopen_permissively(object)?;
         let identity = crate::conversion_run::object_identity(&held)?;
         Ok(Self {
             _object: held,

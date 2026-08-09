@@ -1051,7 +1051,12 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
           dataset: file,
         };
       });
-      return { roster: snapshot(), outcomes };
+      return {
+        operationId,
+        retryRound: conversion.status === "terminal" ? conversion.queue.retryRound : 0,
+        roster: snapshot(),
+        outcomes,
+      };
     },
     stopConversion: async (operationId) => {
       stopRequests.push(operationId);

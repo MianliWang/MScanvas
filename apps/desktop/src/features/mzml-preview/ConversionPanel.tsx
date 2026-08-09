@@ -223,31 +223,7 @@ function AdoptOutputs({
 
   return (
     <div className="conversion-adoption">
-      {adoption === null ? (
-        <>
-          <p>
-            {eligibleOutputCount === 1
-              ? "1 converted mzML output is ready to add to this workspace."
-              : `${String(eligibleOutputCount)} converted mzML outputs are ready to add to this workspace.`}
-          </p>
-          <div className="conversion-actions">
-            <button
-              type="button"
-              className="primary-button"
-              aria-describedby="conversion-adopt-scope"
-              disabled={!conversion.canAdopt}
-              onClick={conversion.adopt}
-            >
-              {eligibleOutputCount === 1
-                ? "Add converted output to workspace"
-                : "Add converted outputs to workspace"}
-            </button>
-          </div>
-          <p className="quiet-text" id="conversion-adopt-scope" role="note">
-            {ADOPT_EXPLANATION}
-          </p>
-        </>
-      ) : (
+      {adoption !== null ? (
         <>
           <p className="conversion-adoption-summary">
             {`${String(added.length)} added, ${String(duplicates.length)} already in the workspace, ${String(refused.length)} not added.`}
@@ -266,7 +242,39 @@ function AdoptOutputs({
             </p>
           ) : null}
         </>
-      )}
+      ) : null}
+      {/* Offered again after a partial result, not replaced by it. An output
+          refused because the workspace was full becomes admissible the moment
+          rows are removed, and one the user removes afterwards is admissible
+          again too -- the queue still holds what recognises them, so making
+          them reachable only through `Add files…` would waste that. */}
+      {adoption === null || added.length > 0 || refused.length > 0 ? (
+        <>
+          <p>
+            {adoption !== null
+              ? "You can add them again. Anything already in the workspace is reported rather than added twice."
+              : eligibleOutputCount === 1
+                ? "1 converted mzML output is ready to add to this workspace."
+                : `${String(eligibleOutputCount)} converted mzML outputs are ready to add to this workspace.`}
+          </p>
+          <div className="conversion-actions">
+            <button
+              type="button"
+              className="primary-button"
+              aria-describedby="conversion-adopt-scope"
+              disabled={!conversion.canAdopt}
+              onClick={conversion.adopt}
+            >
+              {eligibleOutputCount === 1
+                ? "Add converted output to workspace"
+                : "Add converted outputs to workspace"}
+            </button>
+          </div>
+          <p className="quiet-text" id="conversion-adopt-scope" role="note">
+            {ADOPT_EXPLANATION}
+          </p>
+        </>
+      ) : null}
       {/* Said whether or not anything was added. A queue that is replaced drops
           the way MSCanvas recognises these files, and nothing about that
           removes them -- so the honest fallback is named rather than left to be

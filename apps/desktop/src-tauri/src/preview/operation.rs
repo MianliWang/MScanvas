@@ -1243,6 +1243,25 @@ impl ConversionSlot {
     /// Order is the queue's own and never the registry's. What the user is
     /// looking at is the list the panel drew, and rows arriving in some other
     /// order would be a different answer to the question they asked.
+    /// Which settling of a terminal queue this caller named, if it is the one
+    /// the slot holds.
+    ///
+    /// A retry settles the same operation again, so an answer that carried only
+    /// the identifier could not tell a result about the first settling from one
+    /// about the second.
+    pub(super) fn terminal_retry_round(&self, operation: u64) -> Option<u64> {
+        if self.operation != operation {
+            return None;
+        }
+        match &self.state {
+            SlotState::Terminal { queue, .. } => Some(queue.retry_round),
+            SlotState::Idle
+            | SlotState::AwaitingDestination { .. }
+            | SlotState::Running { .. }
+            | SlotState::Stopping { .. } => None,
+        }
+    }
+
     pub(super) fn terminal_adoption_tickets(
         &self,
         operation: u64,

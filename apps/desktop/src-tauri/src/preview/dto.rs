@@ -262,6 +262,14 @@ pub enum WorkspaceOutputAdoptionOutcomeDto {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceOutputAdoptionResultDto {
+    /// Which queue this describes, and which settling of it.
+    ///
+    /// Both, because neither alone identifies the result. A retry settles the
+    /// same operation a second time, and it can finish between two reads -- so a
+    /// caller holding this beside a queue needs to know it is the same round,
+    /// not merely the same queue in the same state.
+    pub operation_id: String,
+    pub retry_round: u64,
     pub roster: WorkspaceRosterDto,
     pub outcomes: Vec<WorkspaceOutputAdoptionOutcomeDto>,
 }

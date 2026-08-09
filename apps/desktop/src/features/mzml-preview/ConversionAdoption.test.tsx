@@ -221,6 +221,8 @@ describe("adding converted outputs to the workspace", () => {
 
   it("reports duplicates without adding anything or moving focus", async () => {
     const already: WorkspaceOutputAdoptionResult = {
+      operationId: "1",
+      retryRound: 0,
       roster: { datasets: DATASETS, capacity: 1_024 },
       outcomes: [
         {
@@ -250,6 +252,8 @@ describe("adding converted outputs to the workspace", () => {
 
   it("counts added, duplicate and refused apart, and names the bounded few", async () => {
     const mixed: WorkspaceOutputAdoptionResult = {
+      operationId: "1",
+      retryRound: 0,
       roster: { datasets: DATASETS, capacity: 1_024 },
       outcomes: [
         {
@@ -445,6 +449,55 @@ describe("adding converted outputs to the workspace", () => {
     expect(
       within(panel).getByRole("button", { name: "Add converted output to workspace" }),
     ).toBeEnabled();
+  });
+
+  it("offers the action again after a partial result", async () => {
+    // An output refused because the workspace was full becomes admissible the
+    // moment rows are removed, and one the user removes afterwards is
+    // admissible again too. The queue still holds what recognises them, so a
+    // summary that replaced the action would waste exactly that.
+    const partial: WorkspaceOutputAdoptionResult = {
+      operationId: "1",
+      retryRound: 0,
+      roster: { datasets: DATASETS, capacity: 1_024 },
+      outcomes: [
+        {
+          kind: "refused",
+          itemIndex: 0,
+          sourceHandle: "file-1",
+          outputFileName: "run-1.mzML",
+          reason: "workspace_full",
+        },
+      ],
+    };
+    const api = apiWith(completedQueue(1), { adoption: () => Promise.resolve(partial) });
+    renderApp(api);
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    fireEvent.click(
+      await within(panel).findByRole("button", { name: "Add converted output to workspace" }),
+    );
+
+    expect(
+      await within(panel).findByText("0 added, 0 already in the workspace, 1 not added."),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText("run-1.mzML was not added: the workspace is full."),
+    ).toBeVisible();
+    // Reported and still offered, with copy that says what a second press does.
+    const again = within(panel).getByRole("button", {
+      name: "Add converted output to workspace",
+    });
+    expect(again).toBeEnabled();
+    expect(
+      within(panel).getByText(
+        "You can add them again. Anything already in the workspace is reported rather than added twice.",
+      ),
+    ).toBeVisible();
+    fireEvent.click(again);
+    await waitFor(() => {
+      expect(api.adoptionRequests).toEqual(["1", "1"]);
+    });
   });
 
   it("recovers an adoptable terminal queue after a reload", async () => {

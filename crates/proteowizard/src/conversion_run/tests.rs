@@ -4379,7 +4379,7 @@ fn retained_output(directory: &Path, name: &str) -> (PathBuf, FinalizedOutput) {
     fs::write(&path, output_document()).expect("write an output to retain");
     let (file, valid) = crate::conversion::ValidatedConversionOutput::retainable_for_test(&path)
         .expect("inspect the output written for this test");
-    let retained = FinalizedOutput::retain(file, valid).expect("retain the finalized output");
+    let retained = FinalizedOutput::retain(&file, valid).expect("retain the finalized output");
     (path, retained)
 }
 

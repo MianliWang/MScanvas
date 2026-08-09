@@ -641,6 +641,15 @@ export type WorkspaceOutputAdoptionOutcome =
 
 /** What adopting a terminal queue's finalized outputs did. */
 export interface WorkspaceOutputAdoptionResult {
+  /**
+   * Which queue this describes, and which settling of it.
+   *
+   * Both, because neither alone identifies the result. A retry settles the same
+   * operation a second time and can finish between two reads, so holding this
+   * beside a queue means checking the round as well as the identifier.
+   */
+  readonly operationId: string;
+  readonly retryRound: number;
   /** Authoritative and whole, like every other workspace answer. */
   readonly roster: WorkspaceRoster;
   /** In queue order, one per finalized output the queue held. */
