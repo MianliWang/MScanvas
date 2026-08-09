@@ -12397,7 +12397,13 @@ impl ProcessRunner for NoisyFailingRunner {
             .map(|spelling| format!("error: could not read {spelling}"))
             .collect();
         lines.extend([
-            format!("error: destination {}", self.destination.display()),
+            format!(
+                "error: destination {}",
+                Self::spellings(&self.destination)
+                    .first()
+                    .cloned()
+                    .unwrap_or_default()
+            ),
             format!("error: staging {}", staging.display()),
             format!("error: staged output {}", staged.display()),
             format!("error: backend {}", spec.executable().display()),
@@ -12487,8 +12493,13 @@ fn every_spelling_of_a_known_path_is_replaced_and_the_rest_survives() {
     );
     assert_eq!(stdout["retained"], "prefix");
 
-    // Every path this run knows was replaced, so the text survives.
-    assert_eq!(stderr["retained"], "prefix");
+    // Every path this run knows was replaced, so the text survives. Printed on
+    // failure, because "withheld" alone does not say which spelling escaped and
+    // this is the assertion a machine with different path semantics trips.
+    assert_eq!(
+        stderr["retained"], "prefix",
+        "stderr was withheld: {stderr}"
+    );
     assert_eq!(stderr["suppressed"], serde_json::Value::Null);
     let text = stderr["text"].as_str().expect("exported text");
     for placeholder in ["<source>", "<destination>", "<staging>", "<backend>"] {
