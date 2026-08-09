@@ -155,9 +155,23 @@ export interface ConversionOperation {
  * destination and no reservation — those live in Rust for the whole of an
  * operation, which is what lets a reload recover one it did not start.
  */
+/**
+ * How an adopted roster reaches the workspace.
+ *
+ * Two calls rather than one, because ordering a roster against the workspace's
+ * other decisions is a question about when the request *started*, not about
+ * when its reply arrived. `begin` is asked at dispatch and answers with where
+ * the workspace's decisions stood; `apply` is given that back and decides
+ * whether this answer is still the newest.
+ */
+export interface AdoptedOutputsSink {
+  begin: () => number;
+  apply: (result: WorkspaceOutputAdoptionResult, startedAt: number) => void;
+}
+
 export function useConversionOperation(
   onInstallationGeneration: (generation: number) => void,
-  onOutputsAdopted: (result: WorkspaceOutputAdoptionResult) => void,
+  onOutputsAdopted: AdoptedOutputsSink,
 ): ConversionOperation {
   const api = usePreviewApi();
   const [state, setState] = useState<WorkspaceConversionState>({ status: "idle" });
@@ -547,6 +561,10 @@ export function useConversionOperation(
     setAdopting(true);
     setError(null);
     const { operationId } = state;
+    // Taken at dispatch. A drop or an import accepted after Rust commits this
+    // and before the reply is applied would otherwise install its newer roster
+    // first and have this one installed over it.
+    const startedAt = onOutputsAdopted.begin();
     api
       .adoptConversionOutputs(operationId)
       .then((result) => {
@@ -556,7 +574,7 @@ export function useConversionOperation(
         }
         // Handed on even when this document is gone. The rows were committed by
         // Rust either way, and the replacement reads the roster on mount.
-        onOutputsAdopted(result);
+        onOutputsAdopted.apply(result, startedAt);
       })
       .catch((cause: unknown) => {
         if (!mounted.current) {
