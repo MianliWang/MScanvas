@@ -189,6 +189,19 @@ approximation — a wire change, and one that belongs with the same treatment fo
 the folder and drop replies rather than for adoption alone. It is recorded here
 rather than half-done.
 
+### What a supersession does not interrupt
+
+Supersession is observed between outputs, not inside one. A reload or a mutation
+that lands while a large output is being hashed is noticed when that file
+finishes, so the replacement document can wait one file's hash before its own
+actions are accepted.
+
+Accepted rather than fixed. Interrupting mid-file means threading a cancellation
+signal through the digest and the identity comparison — a change to the boundary
+that owns those, for latency in one bounded window rather than correctness
+anywhere. Nothing incorrect is committed in the meantime: the run has already
+decided it commits nothing, and it answers superseded at the next output.
+
 ## Consequences
 
 - `ConversionRunOutcome::Finalized` now carries the object rather than only what
