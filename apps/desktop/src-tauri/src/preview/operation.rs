@@ -407,10 +407,25 @@ impl ConversionQueue {
     /// Deliberately not `Failed`. Nothing was launched, nothing was created and
     /// nothing went wrong; calling it a failure would report work the user
     /// stopped as work that broke, and would make it look retryable.
+    ///
+    /// "Never began" is decided by what the item carries, not by its pending
+    /// state alone. A retry moves every retryable failure back to pending, so a
+    /// stop landing in the middle of one finds items that are pending *now* and
+    /// did run in the pass before -- and calling those not run would delete a
+    /// failure the user has already seen, hide the reason for it, take it out of
+    /// the failure count, and contradict the attempt count sitting beside it.
+    /// Those keep the result they earned.
     fn strand_pending(&mut self) -> usize {
         let mut stranded = 0;
         for item in &mut self.items {
-            if item.state.is_pending() {
+            if !item.state.is_pending() {
+                continue;
+            }
+            if item.error.is_some() {
+                item.state = ItemState::Failed;
+            } else if let Some(report) = item.report.as_ref() {
+                item.state = item_state_of(report.outcome_class());
+            } else {
                 item.state = ItemState::NotRun;
                 stranded += 1;
             }
@@ -1086,26 +1101,28 @@ impl ConversionSlot {
             SlotState::Idle | SlotState::Terminal { .. } => return,
         };
         let mut queue = queue;
-        for item in &mut queue.items {
-            if !item.state.is_pending() {
-                continue;
-            }
-            // What it carries says what it was. An item that never ran carries
-            // neither and stays pending, which is the truth about it.
-            if item.error.is_some() {
-                item.state = ItemState::Failed;
-            } else if let Some(report) = item.report.as_ref() {
-                item.state = item_state_of(report.outcome_class());
-            }
-        }
         // A refusal that lands on a stopped queue is still a stop. What refused
         // it is recorded, and everything the stop prevented is marked as never
         // run rather than left pending -- a pending item in a terminal queue is
-        // counted nowhere.
+        // counted nowhere. `strand_pending` restores what a retry moved back to
+        // pending as part of that, which is why it is not repeated here.
         let reason = if self.stop_requested {
             queue.strand_pending();
             TerminalReason::Stopped
         } else {
+            // Not a stop, so nothing is stranded. What a retry moved back to
+            // pending still keeps the result it earned: an item this pass never
+            // reached did run in the one before, and what it carries says so.
+            for item in &mut queue.items {
+                if !item.state.is_pending() {
+                    continue;
+                }
+                if item.error.is_some() {
+                    item.state = ItemState::Failed;
+                } else if let Some(report) = item.report.as_ref() {
+                    item.state = item_state_of(report.outcome_class());
+                }
+            }
             TerminalReason::Completed
         };
         queue.recount();

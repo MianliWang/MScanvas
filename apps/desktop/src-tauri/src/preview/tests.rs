@@ -41,7 +41,8 @@ use super::dto::{
 };
 use super::installation::InstallationIdentity;
 use super::operation::{
-    AdmittedDestination, ConversionQueue, ConversionSlot, QueueItem, StopAccepted, TerminalReason,
+    AdmittedDestination, ConversionQueue, ConversionSlot, ItemOutcome, QueueItem, StopAccepted,
+    TerminalReason,
 };
 /// The share-mode probe that answers whether a file is still held open. It
 /// lives beside the flags the lease is opened with, because that is what makes
@@ -11486,6 +11487,84 @@ fn a_quarantined_session_rechecks_without_launching_anything() {
     );
 }
 
+/// A retry stopped partway through does not report the failures it had not got
+/// to yet as never run.
+///
+/// A retry moves every retryable failure back to pending, so a stop landing in
+/// the middle of one finds items that are pending now and did run in the pass
+/// before. Calling those not run would delete a failure the user has already
+/// seen, hide the reason for it, take it out of the failure count, and
+/// contradict the attempt count sitting beside it.
+#[test]
+fn a_stopped_retry_keeps_the_failures_it_had_not_reached() {
+    let mut slot = ConversionSlot::default();
+    let queue = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        vec![test_queue_item(), test_queue_item_named(1, "two.raw")],
+    )
+    .expect("two items are a queue");
+    let _ = slot.begin(queue).expect("reservation");
+    let operation = slot
+        .claim(&reservation_handle(&slot), 0)
+        .expect("claim the reservation");
+    assert!(slot.start_running(operation, test_destination()));
+
+    // Both fail retryably, and the queue ends on its own.
+    for index in 0..2 {
+        let attempt = slot.start_item(operation, index).expect("the item starts");
+        slot.bind_attempt(
+            operation,
+            index,
+            attempt,
+            ConversionCancellation::new().request_handle(),
+        );
+        assert!(slot.settle_item(
+            operation,
+            index,
+            ItemOutcome::Refused {
+                retryable: true,
+                error: PreviewErrorDto::new("file_unreadable", "unreadable", true),
+            },
+        ));
+        slot.release_attempt(operation, index, attempt);
+    }
+    slot.finish(operation, None, TerminalReason::Completed);
+
+    // The user retries and stops it before either item is reached, which is
+    // where both are pending again and one of them is a failure the earlier
+    // pass already produced.
+    let operation = slot.begin_retry().expect("a completed queue with failures");
+    assert!(matches!(
+        slot.request_stop(operation).expect("stoppable"),
+        StopAccepted::Requested(_)
+    ));
+    slot.finish(operation, None, TerminalReason::Stopped);
+
+    let update = slot.read(false);
+    let WorkspaceConversionStateDto::Terminal { queue, .. } = &update.state else {
+        panic!("the queue reaches a terminal state");
+    };
+    // Both ran, failed, and were never reached by the retry. They are still
+    // those failures, not things that never happened.
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Failed,
+            ConversionQueueItemStateDto::Failed
+        ]
+    );
+    assert_eq!(queue.not_run_count, 0);
+    assert_eq!(queue.failed_count, 2);
+    for item in &queue.items {
+        assert!(item.attempts > 0, "an attempt count that agrees");
+        assert!(
+            item.error.is_some(),
+            "the reason the user already saw is still there"
+        );
+    }
+}
+
 /// A queue stopped while it waited on the backend gate resolves no backend.
 ///
 /// Resolving one runs the installed tools' help, which is two processes spent
@@ -11781,18 +11860,24 @@ fn a_recheck_waiting_on_the_gate_launches_nothing_after_a_lost_converter() {
 
 /// One queue item, for the slot tests that need a queue and not a filesystem.
 fn test_queue_item() -> QueueItem {
+    test_queue_item_named(0, "one.raw")
+}
+
+/// One queue item with a distinct identity, for the slot tests that need two.
+fn test_queue_item_named(index: usize, file_name: &str) -> QueueItem {
+    let handle = format!("file-{index}");
     QueueItem::new(
-        DatasetId::parse("file-0").expect("a dataset handle"),
+        DatasetId::parse(&handle).expect("a dataset handle"),
         0,
         DatasetSourceKind::ThermoRaw,
         SelectedFileDto {
-            handle: String::from("file-0"),
-            file_name: String::from("one.raw"),
+            handle: handle.clone(),
+            file_name: String::from(file_name),
             byte_length: 78_309,
             source_kind: DatasetSourceKindDto::ThermoRaw,
             relative_context: None,
         },
-        String::from("one.mzML"),
+        file_name.replace(".raw", ".mzML"),
     )
 }
 
