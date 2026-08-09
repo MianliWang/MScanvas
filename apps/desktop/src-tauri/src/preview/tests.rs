@@ -11747,8 +11747,12 @@ fn no_read_reports_an_unconfirmed_stop_beside_a_trusted_backend() {
         let service = Arc::clone(&service);
         let stop_reading = Arc::clone(&stop_reading);
         std::thread::spawn(move || {
-            let mut observations = 0_usize;
-            while !stop_reading.load(Ordering::Relaxed) {
+            // Reads first and checks the flag afterwards, so this observes at
+            // least once however the two threads are scheduled -- and the last
+            // read always lands after the queue settled, which is the
+            // observation the invariant is about.
+            let mut settled_observations = 0_usize;
+            loop {
                 let update = service.conversion_state();
                 if matches!(
                     update.state,
@@ -11761,10 +11765,13 @@ fn no_read_reports_an_unconfirmed_stop_beside_a_trusted_backend() {
                         update.backend_quarantined,
                         "a stop that could not be confirmed is never reported beside a trusted backend"
                     );
+                    settled_observations += 1;
                 }
-                observations += 1;
+                if stop_reading.load(Ordering::Relaxed) {
+                    break;
+                }
             }
-            observations
+            settled_observations
         })
     };
 
@@ -11778,8 +11785,11 @@ fn no_read_reports_an_unconfirmed_stop_beside_a_trusted_backend() {
         ConversionQueueTerminalReasonDto::StopFailed
     );
     stop_reading.store(true, Ordering::Relaxed);
-    let observations = reader.join().expect("the reader finishes");
-    assert!(observations > 0, "the reader ran alongside the stop");
+    let settled_observations = reader.join().expect("the reader finishes");
+    assert!(
+        settled_observations > 0,
+        "the reader saw the settled queue, which is what the invariant is about"
+    );
 
     // And the settled answer carries both, which is what a reload recovers.
     let settled = service.conversion_state();

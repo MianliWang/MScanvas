@@ -179,6 +179,23 @@ attempt has not settled, so the row may still be being read.
 Disabled controls in the interface are a projection of those rules, never the
 rules.
 
+### What a stop does not interrupt
+
+A stop is asked for at four points: after the backend gate, before the backend
+is resolved, before every item, and after every item settles. Between those
+points it is observed rather than acted on, and the largest such interval is
+backend resolution, which runs each installed tool's help with its own timeout.
+A stop landing inside that is honoured the moment it returns, so nothing further
+is launched and no item begins — but the interface can say it is stopping for as
+long as the probing takes.
+
+That is accepted rather than fixed here. Making it interruptible means threading
+a cancellation request through discovery so a probe can be terminated mid-flight,
+which is a change to the process boundary rather than to this queue, and it buys
+latency in one window rather than correctness anywhere. The bound is a
+resolution's own timeouts; nothing is created, nothing is converted, and the
+queue that follows is `stopped` with every item `notRun`.
+
 ### Reload
 
 A reload does not cancel anything. The replacement document reads the slot and
