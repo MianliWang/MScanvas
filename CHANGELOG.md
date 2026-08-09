@@ -6,6 +6,42 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
+- **`Stop queue`**, for a conversion queue that is running. It asks the current
+  conversion to stop, begins none of the items after it, and reaches one terminal
+  state. Outputs already completed stay in the destination folder and no partial
+  output is ever finalized; the partial document a terminated backend leaves is
+  removed by the same object-bound cleanup a failed run uses.
+
+  It is one queue-level action, not a per-item cancel, and it is deliberately not
+  called *Cancel*: it ends the whole queue and undoes nothing already written. The
+  panel says both halves before it is pressed. There is no confirmation dialog, no
+  pause, no resume and still no percentage.
+
+  Which items end how is decided by what the process boundary observed first. A
+  conversion that completed before the request was accepted keeps its ordinary
+  result rather than being relabelled `cancelled`; one still running when
+  termination is confirmed becomes `cancelled` and produces no file. Items the
+  queue never began are `not run` — neither failures nor attempts — and every
+  count is reported separately.
+
+  A stopped queue is terminal and is not rerun in place, so `Retry failed` is not
+  offered for it; `Retry failed` is unchanged for a queue that ran to its own end.
+  Converting those rows again is a new queue from the roster.
+
+  If MSCanvas cannot confirm that the converter process tree ended, the queue ends
+  as *stop could not be confirmed* rather than *stopped*, and the session refuses
+  every further preview, spectrum load, conversion, retry and installation change
+  until MSCanvas is restarted. The roster stays readable, searchable and sortable.
+  Nothing invents a check the process boundary cannot support.
+
+  A reload recovers a running, stopping or stopped queue, its per-item results and
+  the quarantine, and may stop what it recovered; it never re-issues a stop or
+  restarts an item. `stop_workspace_conversion_queue` is new and takes only the
+  operation identifier plus proof of the calling document. The conversion state
+  gains `stopping` and a terminal reason; queue items gain `cancelled`,
+  `notRun` and `cancellationFailed`. Nothing on the wire names a location, a
+  process or a handle.
+
 - A serial conversion queue for selected Thermo Scientific RAW workspace rows.
   Select up to **16** of them and MSCanvas shows the ordered list it would run,
   the mzML name each item would write, and how many selected rows are excluded

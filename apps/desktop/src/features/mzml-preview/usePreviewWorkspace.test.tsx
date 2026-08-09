@@ -217,9 +217,11 @@ function harness(
     // This file is about installation ordering, so the conversion slot answers
     // idle and nothing here starts one.
     describeConversion: () => Promise.reject(new Error("not used in this file")),
-    getConversionState: () => Promise.resolve({ sequence: 0, state: { status: "idle" } }),
+    getConversionState: () =>
+      Promise.resolve({ sequence: 0, state: { status: "idle" }, backendQuarantined: false }),
     convertDatasets: () => Promise.reject(new Error("not used in this file")),
     retryConversions: () => Promise.reject(new Error("not used in this file")),
+    stopConversion: () => Promise.reject(new Error("not used in this file")),
   };
   return {
     service,

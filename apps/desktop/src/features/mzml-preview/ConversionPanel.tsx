@@ -35,6 +35,26 @@ const OUTPUT_ONLY_DISCLOSURE =
 /** What each staging residue means for the folder the user chose. */
 const RESIDUE_EXPLANATION = "MSCanvas could not remove its own temporary folder afterwards.";
 
+/**
+ * What Stop queue does, said before it is pressed.
+ *
+ * Both halves matter. The first is what the user is asking for; the second is
+ * what they are not losing, and without it "stop" reads as "undo" over files
+ * that are already written and already theirs.
+ */
+const STOP_EXPLANATION =
+  "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.";
+
+/**
+ * What is true while a stop is in flight.
+ *
+ * Deliberately silent about the current item. Whether it is cancelled or
+ * finishes on its own is decided by which the process boundary observes first,
+ * and a prediction here is a claim the next read could contradict.
+ */
+const STOP_IN_FLIGHT_EXPLANATION =
+  "No further items will start. The current conversion may still finish on its own.";
+
 export interface ConversionPanelProps {
   readonly conversion: ConversionOperation;
   /**
@@ -207,7 +227,8 @@ function PlanState({
       </dl>
 
       <p className="quiet-text" id="conversion-validation-disclosure" role="note">
-        {OUTPUT_ONLY_DISCLOSURE} They run one at a time and cannot be cancelled.
+        {OUTPUT_ONLY_DISCLOSURE} They run one at a time, and Stop queue ends the whole queue
+        rather than one item.
       </p>
 
       <fieldset className="conversion-conflict">
@@ -248,9 +269,12 @@ function PlanState({
 /**
  * A queue under way, or the one that just finished.
  *
- * Item-count progress and nothing else. Nothing measures a fraction of a
- * `msconvert` run, and this workflow genuinely cannot stop one — so it says so
- * instead of offering a control that would only stop watching.
+ * Item-count progress and nothing else: nothing measures a fraction of a
+ * `msconvert` run, so a percentage here would be invented.
+ *
+ * A running queue can be stopped, and the control that does it is a queue-level
+ * one. It really stops the work rather than stopping the watching, which is why
+ * the copy beside it says what survives the stop before it is pressed.
  */
 function QueueState({
   conversion,
@@ -276,26 +300,70 @@ function QueueState({
       {retrying ? (
         <>
           <p>Retrying the failures…</p>
+          {/* True for as long as this branch is on screen, which is until the
+              state read dispatched beside the retry reports the rerun running.
+              The sentence it replaced said this workflow could not cancel a
+              running queue, which stopped being true in this release. */}
           <p className="quiet-text" role="note">
-            This conversion workflow cannot cancel a running queue.
+            Stop queue becomes available once the rerun is under way.
           </p>
         </>
       ) : state.status === "awaitingDestination" ? (
         <p>Choose where to save the converted mzML.</p>
+      ) : state.status === "stopping" ||
+        (state.status === "running" && conversion.stopping) ? (
+        <>
+          <p>Stopping queue…</p>
+          {/* Deliberately says nothing about how the current item will end.
+              Whether it is cancelled or finishes on its own is decided by
+              which the process boundary observes first, and predicting it here
+              would put a claim on screen that the next read could contradict. */}
+          <p className="quiet-text" role="note">
+            {STOP_IN_FLIGHT_EXPLANATION}
+          </p>
+        </>
       ) : state.status === "running" ? (
         <>
           <p>
             {`Converting item ${String(runningPosition(queue))} of ${String(queue.itemCount)}…`}
           </p>
-          <p className="quiet-text" role="note">
-            This conversion workflow cannot cancel a running queue.
+          <div className="conversion-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              aria-describedby="conversion-stop-scope"
+              disabled={!conversion.canStop}
+              onClick={conversion.stop}
+            >
+              Stop queue
+            </button>
+          </div>
+          <p className="quiet-text" id="conversion-stop-scope" role="note">
+            {STOP_EXPLANATION}
           </p>
         </>
+      ) : state.reason === "stopFailed" ? (
+        // Deliberately not "Queue stopped". That state means a converter may
+        // still be running, and a heading someone skims is exactly where the
+        // claim must not be made and then walked back by the warning below it.
+        <p>Stop could not be confirmed</p>
+      ) : state.reason === "stopped" ? (
+        <p>Queue stopped</p>
       ) : (
         <p>
           {`${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed of ${String(queue.itemCount)}.`}
         </p>
       )}
+
+      {state.status === "terminal" && state.reason === "stopFailed" ? (
+        <p className="notice notice-danger" role="alert">
+          <span aria-hidden="true">⚠ </span>
+          MSCanvas could not confirm that the backend process stopped.
+          {conversion.backendQuarantined
+            ? " Restart MSCanvas before starting another preview or conversion."
+            : ""}
+        </p>
+      ) : null}
 
       {queue.error === null ? null : (
         <p className="notice notice-danger" role="status">
@@ -348,8 +416,11 @@ function QueueState({
               </>
             )}
             {/* Cleanup failing is the user's problem, not only MSCanvas', because
-                what is left behind is in the folder they chose. */}
-            {item.report?.stagingResidue == null ? null : (
+                what is left behind is in the folder they chose. Read from both
+                places it can be recorded: a cancelled item has no report by
+                construction, so a residue it left would otherwise be knowable
+                to MSCanvas and invisible to the person whose folder it is in. */}
+            {(item.report?.stagingResidue ?? item.cancellation?.stagingResidue) == null ? null : (
               <>
                 <span className="visually-hidden">, </span>
                 <span className="conversion-queue-residue">{RESIDUE_EXPLANATION}</span>
@@ -370,11 +441,29 @@ function QueueState({
               {OUTPUT_ONLY_DISCLOSURE}
             </p>
           ) : null}
+          {/* The counts a stopped queue is judged by, said in full and kept
+              apart. A cancelled item is not a failure and a not-run item is
+              not an attempt, so folding either into `failed` would report work
+              the user stopped as work that broke. */}
+          {state.reason === "completed" ? null : (
+            <>
+              <p className="conversion-stopped-summary">
+                {stoppedSummary(queue)}
+              </p>
+              <p className="quiet-text">
+                Completed outputs remain in the destination folder. Cancelled and not-run items
+                were not finalized by this queue.
+              </p>
+            </>
+          )}
           <p className="quiet-text">
             Converted files were not added to the workspace. Add them with Add files… when you
             want to look at them.
           </p>
-          {queue.retryableFailedCount === 0 ? (
+          {/* A stopped queue is terminal and is not rerun in place. Converting
+              those rows again is a new queue, made from the roster, which is
+              the ordinary path the selection workflow already offers. */}
+          {state.reason !== "completed" ? null : queue.retryableFailedCount === 0 ? (
             queue.nonRetryableFailedCount === 0 ? null : (
               <p className="quiet-text" role="note">
                 Those failures would not change on another attempt with the same acquisitions,
@@ -420,6 +509,28 @@ function QueueState({
  * Falls back to the position, because a queue between items has no running item
  * and still has a number to show.
  */
+/**
+ * What a stopped queue actually did, counted apart.
+ *
+ * Every count is named, including the zeroes. A summary that dropped the empty
+ * ones would read differently for two queues that ended the same way, and the
+ * one number a user most needs to trust here is how many files are in the
+ * folder.
+ */
+function stoppedSummary(queue: ConversionQueue): string {
+  const parts = [
+    `${String(queue.finalizedCount)} converted`,
+    `${String(queue.skippedCount)} skipped`,
+    `${String(queue.failedCount)} failed`,
+    `${String(queue.cancelledCount)} cancelled`,
+    `${String(queue.notRunCount)} not run`,
+  ];
+  if (queue.cancellationFailedCount > 0) {
+    parts.push(`${String(queue.cancellationFailedCount)} stop could not be confirmed`);
+  }
+  return `${parts.join(", ")} of ${String(queue.itemCount)}.`;
+}
+
 function runningPosition(queue: ConversionQueue): number {
   const running = queue.items.findIndex((item) => item.state === "running");
   if (running !== -1) {
@@ -434,6 +545,9 @@ function runningPosition(queue: ConversionQueue): number {
 
 /** What each item state says, in words rather than in colour. */
 const ITEM_STATE_LABEL: Record<ConversionQueueItem["state"], string> = {
+  cancelled: "Cancelled",
+  cancellationFailed: "Stop could not be confirmed",
+  notRun: "Not run",
   pending: "Waiting",
   running: "Converting",
   finalized: "Converted",

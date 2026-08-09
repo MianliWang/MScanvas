@@ -17,12 +17,15 @@
 
 use std::path::Path;
 
+#[cfg(test)]
+use mscanvas_proteowizard::run_conversion;
 use mscanvas_proteowizard::{
-    BackendExecutionFailure, BackendRunFacts, ConflictPolicy, ConversionPlan, ConversionPlanError,
+    BackendExecutionFailure, BackendRunFacts, CancellationFailure, CancellationReport,
+    ConflictPolicy, ConversionAttempt, ConversionCancellation, ConversionPlan, ConversionPlanError,
     ConversionPolicy, ConversionRunFailure, ConversionRunOutcome, ConversionRunReport,
     ConversionSource, ConversionSourceKind, InstalledHelpCapabilities, IntegrityProperty,
     OpenFormat, StagingResidue, ValidationMode, conversion_output_file_name,
-    provider_build_is_evidenced, run_conversion,
+    provider_build_is_evidenced, run_conversion_cancellable,
 };
 
 use super::backend::ConversionBackend;
@@ -489,11 +492,40 @@ pub(super) const fn conversion_source_kind(kind: DatasetSourceKind) -> Conversio
 /// Takes the binding whole rather than its parts, so the capabilities a run is
 /// gated and planned on and the process it launches cannot come from two
 /// different resolutions of the installation.
+/// Kept for the one-item path the private orchestration tests drive. Every
+/// production conversion now goes through the cancellable entry point, because
+/// every production conversion belongs to a queue the user may stop.
+#[cfg(test)]
 pub(super) fn run_planned_conversion(
     plan: &ConversionPlan,
     backend: &ConversionBackend<'_>,
 ) -> ConversionRunReport {
     run_conversion(plan, &backend.capabilities, backend.runner)
+}
+
+/// Runs a planned conversion the queue may ask to stop.
+///
+/// The cancellation object is consumed here, which is what binds it to this one
+/// attempt: there is no way to hand the same object to a second run, and the
+/// caller keeps only the request-only handle it took beforehand.
+pub(super) fn run_planned_conversion_cancellable(
+    plan: &ConversionPlan,
+    backend: &ConversionBackend<'_>,
+    cancellation: ConversionCancellation,
+) -> ConversionAttempt {
+    run_conversion_cancellable(plan, &backend.capabilities, backend.runner, cancellation)
+}
+
+/// What one queue item's attempt produced, before the queue classifies it.
+///
+/// Three answers rather than two, because a stopped attempt is neither a
+/// conversion that reached an outcome nor a refusal that never reached one. It
+/// carries no report by construction: a stopped attempt finalized nothing, so
+/// there is nothing for a report to be about.
+pub(super) enum ConvertedItem {
+    Reported(WorkspaceConversionReport),
+    Cancelled(CancellationReport),
+    CancellationFailed(CancellationFailure),
 }
 
 /// Refuses a family this installation has no recorded evidence for.

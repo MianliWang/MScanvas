@@ -6,9 +6,14 @@
 //! while one is under way is refused, not appended to.
 //!
 //! It is not a job system and is shaped so it cannot become one. There is no
-//! persistence, no scheduler, no priority and no cancellation. What it holds is
-//! one ordered list of datasets, the destination they all go to, and the latest
-//! result of each — replaced whole by the next queue.
+//! persistence, no scheduler and no priority. What it holds is one ordered list
+//! of datasets, the destination they all go to, and the latest result of each —
+//! replaced whole by the next queue.
+//!
+//! One queue-level stop was added on top of that, and deliberately nothing
+//! narrower: it asks the running attempt to end and refuses to begin any item
+//! after it. There is no per-item cancellation, no pause and no resume, because
+//! each of those is a different promise about work already done.
 //!
 //! It exists because a conversion outlives the request that started it. The
 //! webview can reload at any point, and Tauri dispatches Windows invokes as
@@ -18,14 +23,20 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use mscanvas_proteowizard::{
+    CancellationFailure, CancellationReport, CancellationRequest, StagingResidue, Termination,
+};
 
 use super::destination::DestinationIdentity;
 use super::dto::{
-    ConversionConflictPolicyDto, ConversionQueueDto, ConversionQueueItemDto,
-    ConversionQueueItemStateDto, MAX_CONVERSION_QUEUE_ITEMS, PreviewErrorDto, SelectedFileDto,
+    ConversionCancellationDto, ConversionConflictPolicyDto, ConversionQueueDto,
+    ConversionQueueItemDto, ConversionQueueItemStateDto, ConversionQueueTerminalReasonDto,
+    MAX_CONVERSION_QUEUE_ITEMS, PreviewErrorDto, SelectedFileDto,
     WorkspaceConversionReservationDto, WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
-    conversion_busy, invalid_conversion_reservation, queue_duplicate_dataset,
-    queue_installation_changed, queue_is_empty, queue_too_large,
+    conversion_busy, conversion_not_stoppable, invalid_conversion_reservation,
+    queue_duplicate_dataset, queue_installation_changed, queue_is_empty, queue_too_large,
 };
 use super::installation::InstallationIdentity;
 use super::selection::{DatasetId, DatasetSourceKind};
@@ -113,6 +124,12 @@ pub(super) enum ItemState {
     Finalized,
     Skipped,
     Failed,
+    /// Stopped while running, with the owned process tree confirmed gone.
+    Cancelled,
+    /// A stopped queue never began it. Not a failure and not an attempt.
+    NotRun,
+    /// Stopped while running, and the termination could not be confirmed.
+    CancellationFailed,
 }
 
 impl ItemState {
@@ -123,7 +140,19 @@ impl ItemState {
             Self::Finalized => ConversionQueueItemStateDto::Finalized,
             Self::Skipped => ConversionQueueItemStateDto::Skipped,
             Self::Failed => ConversionQueueItemStateDto::Failed,
+            Self::Cancelled => ConversionQueueItemStateDto::Cancelled,
+            Self::NotRun => ConversionQueueItemStateDto::NotRun,
+            Self::CancellationFailed => ConversionQueueItemStateDto::CancellationFailed,
         }
+    }
+
+    /// Whether this item is still waiting for its turn.
+    ///
+    /// The queue's own position counts everything that is not this, so a state
+    /// added later that forgot to answer here would silently be counted as
+    /// finished.
+    const fn is_pending(self) -> bool {
+        matches!(self, Self::Pending)
     }
 }
 
@@ -155,6 +184,43 @@ pub(super) struct QueueItem {
     /// An attempt that never reached a conversion at all.
     error: Option<PreviewErrorDto>,
     retryable: bool,
+    /// What a stop established about this item's attempt, when one reached it.
+    cancellation: Option<CancellationFacts>,
+}
+
+/// What a stop established about one attempt, path-free.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct CancellationFacts {
+    pub(super) process_launched: bool,
+    pub(super) tree_termination_confirmed: bool,
+    /// From the moment the stop was accepted to the moment the attempt settled,
+    /// which is the interval the user actually waited. Not the interval the
+    /// process ran: an attempt that had been converting for a minute before the
+    /// request would otherwise report a minute as the cost of stopping it.
+    pub(super) elapsed: Duration,
+    pub(super) termination: Option<Termination>,
+    pub(super) partial_output_observed: bool,
+    pub(super) staging_residue: Option<StagingResidue>,
+}
+
+impl CancellationFacts {
+    fn to_dto(self) -> ConversionCancellationDto {
+        ConversionCancellationDto {
+            process_launched: self.process_launched,
+            // Always true here: this type exists only for an attempt a stop
+            // reached. Carried rather than implied so a reader never infers it.
+            termination_requested: true,
+            tree_termination_confirmed: self.tree_termination_confirmed,
+            elapsed_milliseconds: u64::try_from(self.elapsed.as_millis()).unwrap_or(u64::MAX),
+            termination: self
+                .termination
+                .map(|termination| termination.stable_id().to_owned()),
+            partial_output_observed: self.partial_output_observed,
+            staging_residue: self
+                .staging_residue
+                .map(|residue| residue.stable_id().to_owned()),
+        }
+    }
 }
 
 impl QueueItem {
@@ -176,6 +242,7 @@ impl QueueItem {
             report: None,
             error: None,
             retryable: false,
+            cancellation: None,
         }
     }
 
@@ -217,6 +284,7 @@ impl QueueItem {
                 .as_ref()
                 .map(super::conversion::WorkspaceConversionReport::to_dto),
             error: self.error.clone(),
+            cancellation: self.cancellation.map(CancellationFacts::to_dto),
         }
     }
 }
@@ -319,6 +387,11 @@ impl ConversionQueue {
     }
 
     /// Whether any failed item could plausibly succeed on another attempt.
+    ///
+    /// Only an ordinary failure counts. A cancelled item has nothing to
+    /// correct, a not-run item never ran, and an unconfirmed cancellation is a
+    /// state in which running anything at all is refused -- so none of the
+    /// three is a failure a second attempt could change.
     pub(super) fn has_retryable_failure(&self) -> bool {
         self.items
             .iter()
@@ -327,6 +400,47 @@ impl ConversionQueue {
 
     fn count(&self, state: ItemState) -> usize {
         self.items.iter().filter(|item| item.state == state).count()
+    }
+
+    /// Marks everything that never began as not run, and reports how many.
+    ///
+    /// Deliberately not `Failed`. Nothing was launched, nothing was created and
+    /// nothing went wrong; calling it a failure would report work the user
+    /// stopped as work that broke, and would make it look retryable.
+    ///
+    /// "Never began" is decided by what the item carries, not by its pending
+    /// state alone. A retry moves every retryable failure back to pending, so a
+    /// stop landing in the middle of one finds items that are pending *now* and
+    /// did run in the pass before -- and calling those not run would delete a
+    /// failure the user has already seen, hide the reason for it, take it out of
+    /// the failure count, and contradict the attempt count sitting beside it.
+    /// Those keep the result they earned.
+    fn strand_pending(&mut self) -> usize {
+        let mut stranded = 0;
+        for item in &mut self.items {
+            if !item.state.is_pending() {
+                continue;
+            }
+            if item.error.is_some() {
+                item.state = ItemState::Failed;
+            } else if let Some(report) = item.report.as_ref() {
+                item.state = item_state_of(report.outcome_class());
+            } else {
+                item.state = ItemState::NotRun;
+                stranded += 1;
+            }
+        }
+        self.recount();
+        stranded
+    }
+
+    /// The queue's own position: how many items are no longer waiting.
+    fn recount(&mut self) {
+        self.current = self
+            .items
+            .iter()
+            .filter(|item| !item.state.is_pending())
+            .count();
     }
 
     fn to_dto(&self) -> ConversionQueueDto {
@@ -347,6 +461,9 @@ impl ConversionQueue {
             failed_count: failed,
             retryable_failed_count: retryable,
             non_retryable_failed_count: failed - retryable,
+            cancelled_count: self.count(ItemState::Cancelled),
+            not_run_count: self.count(ItemState::NotRun),
+            cancellation_failed_count: self.count(ItemState::CancellationFailed),
             error: self.error.clone(),
             installation_generation: self.installation_generation,
         }
@@ -368,11 +485,84 @@ enum SlotState {
     Running {
         queue: ConversionQueue,
     },
+    /// A stop was accepted and the worker has not settled the queue yet.
+    ///
+    /// Its own state rather than a flag beside `Running`, so nothing can read
+    /// "running" and conclude that another item may start.
+    Stopping {
+        queue: ConversionQueue,
+    },
     /// One queue, replaced by the next. Not a history: a list here would be an
     /// unbounded one, and nothing in this workflow reads a second entry.
     Terminal {
+        reason: TerminalReason,
         queue: ConversionQueue,
     },
+}
+
+/// Why a terminal queue is over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TerminalReason {
+    Completed,
+    Stopped,
+    StopFailed,
+}
+
+impl TerminalReason {
+    const fn to_dto(self) -> ConversionQueueTerminalReasonDto {
+        match self {
+            Self::Completed => ConversionQueueTerminalReasonDto::Completed,
+            Self::Stopped => ConversionQueueTerminalReasonDto::Stopped,
+            Self::StopFailed => ConversionQueueTerminalReasonDto::StopFailed,
+        }
+    }
+
+    /// Whether this queue may be retried in place.
+    ///
+    /// Only a queue that ran to its own end. A stopped queue is a decision the
+    /// user made about the whole batch, and rerunning part of it in place would
+    /// answer a question they did not ask; a queue whose stop could not be
+    /// confirmed must not launch anything at all.
+    const fn is_retryable(self) -> bool {
+        matches!(self, Self::Completed)
+    }
+}
+
+/// The exact attempt a stop request may reach.
+///
+/// Bound to the operation, the item index *and* the attempt number, so a handle
+/// left over from an earlier item or an earlier retry round cannot be mistaken
+/// for the live one. The queue clears it when that exact attempt settles.
+struct CurrentAttempt {
+    operation: u64,
+    index: usize,
+    attempt: u64,
+    request: CancellationRequest,
+}
+
+impl CurrentAttempt {
+    const fn is(&self, operation: u64, index: usize, attempt: u64) -> bool {
+        self.operation == operation && self.index == index && self.attempt == attempt
+    }
+}
+
+impl fmt::Debug for CurrentAttempt {
+    /// Opaque. A cancellation request is not evidence about a run, and the
+    /// crate it comes from renders it that way for the same reason.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<current-attempt>")
+    }
+}
+
+/// What a stop request produced, for the caller that made it.
+#[derive(Debug)]
+pub(super) enum StopAccepted {
+    /// The queue moved to stopping and this handle should be asked to cancel,
+    /// outside the state lock.
+    Requested(Option<CancellationRequest>),
+    /// A stop was already requested for this queue. Idempotent, and answered
+    /// with the authoritative state rather than a refusal.
+    AlreadyRequested,
 }
 
 /// The session's single conversion slot, holding at most one queue.
@@ -387,6 +577,15 @@ pub(super) struct ConversionSlot {
     next_reservation: u64,
     operation: u64,
     state: SlotState,
+    /// Monotonic for the life of one operation, and reset only when a new one
+    /// begins. Independent of which attempt is running, so a stop that lands
+    /// between two items is still a stop.
+    stop_requested: bool,
+    /// When the stop was accepted, so what is reported is what the user waited
+    /// rather than how long the attempt had already been running.
+    stop_requested_at: Option<Instant>,
+    /// The one attempt a stop may reach, when one is in flight.
+    current_attempt: Option<CurrentAttempt>,
 }
 
 impl Default for ConversionSlot {
@@ -399,6 +598,9 @@ impl Default for ConversionSlot {
             next_reservation: 1,
             operation: 0,
             state: SlotState::Idle,
+            stop_requested: false,
+            stop_requested_at: None,
+            current_attempt: None,
         }
     }
 }
@@ -411,7 +613,9 @@ impl ConversionSlot {
     pub(super) const fn is_busy(&self) -> bool {
         matches!(
             self.state,
-            SlotState::AwaitingDestination { .. } | SlotState::Running { .. }
+            SlotState::AwaitingDestination { .. }
+                | SlotState::Running { .. }
+                | SlotState::Stopping { .. }
         )
     }
 
@@ -420,11 +624,15 @@ impl ConversionSlot {
     /// Used to refuse removing any row a live queue names while leaving every
     /// other row removable. A terminal queue protects nothing: the work is over,
     /// and its report is about rows the user may now curate.
+    ///
+    /// A stopping queue protects its rows exactly as a running one does. The
+    /// request has been made and the attempt has not settled, so the row may
+    /// still be being read.
     pub(super) fn busy_holds(&self, dataset: DatasetId) -> bool {
         match &self.state {
-            SlotState::AwaitingDestination { queue, .. } | SlotState::Running { queue } => {
-                queue.holds(dataset)
-            }
+            SlotState::AwaitingDestination { queue, .. }
+            | SlotState::Running { queue }
+            | SlotState::Stopping { queue } => queue.holds(dataset),
             SlotState::Idle | SlotState::Terminal { .. } => false,
         }
     }
@@ -456,6 +664,13 @@ impl ConversionSlot {
             claimed: false,
             queue,
         };
+        // A new operation, so nothing an earlier one was asked to do applies.
+        // Reset here rather than when the previous queue ended: this is the one
+        // place a fresh operation identifier is minted, so the flag and the
+        // identifier cannot come apart.
+        self.stop_requested = false;
+        self.stop_requested_at = None;
+        self.current_attempt = None;
         self.advance();
         Ok(WorkspaceConversionReservationDto {
             reservation_id: reservation.handle(),
@@ -513,15 +728,132 @@ impl ConversionSlot {
             SlotState::AwaitingDestination { .. }
             | SlotState::Idle
             | SlotState::Running { .. }
+            | SlotState::Stopping { .. }
             | SlotState::Terminal { .. } => None,
         }
     }
 
-    /// The queue currently running, for the worker that owns it.
+    /// The queue this worker owns, running or stopping.
+    ///
+    /// A stopping queue is still the worker's: the attempt it holds has to be
+    /// settled and the queue has to be terminalized, and only the worker can do
+    /// either. What stopping changes is that no further item may begin, which
+    /// is asked separately.
     pub(super) fn running(&self, operation: u64) -> Option<ConversionQueue> {
         match &self.state {
-            SlotState::Running { queue } if self.operation == operation => Some(queue.clone()),
+            SlotState::Running { queue } | SlotState::Stopping { queue }
+                if self.operation == operation =>
+            {
+                Some(queue.clone())
+            }
             _ => None,
+        }
+    }
+
+    /// Whether a stop has been requested for this exact operation.
+    ///
+    /// Asked by the worker after the backend gate, before every item and after
+    /// every settle. It is one boolean rather than a state comparison so that a
+    /// request accepted while the worker was inside a process is not missed by
+    /// a worker that only ever looked at the state it left behind.
+    pub(super) fn stop_requested(&self, operation: u64) -> bool {
+        self.operation == operation && self.stop_requested
+    }
+
+    /// How long ago the stop was accepted, for the attempt that is settling.
+    pub(super) fn stop_requested_ago(&self, operation: u64) -> Option<Duration> {
+        if self.operation != operation {
+            return None;
+        }
+        self.stop_requested_at.map(|at| at.elapsed())
+    }
+
+    /// Accepts one stop for the running or stopping queue of this document.
+    ///
+    /// Everything it does is under the caller's lock and none of it terminates
+    /// anything: it records the request, moves the state, and hands back the
+    /// one handle the caller should ask outside the lock. Asking a job to end
+    /// while holding the lock every reader needs would make the interface stop
+    /// answering for as long as termination took.
+    /// The document is proved by the caller, exactly as a retry proves it: the
+    /// authority that matters is being the *current* document, not the one that
+    /// built the queue, because a reload is entitled to stop what it recovered.
+    pub(super) fn request_stop(&mut self, operation: u64) -> Result<StopAccepted, PreviewErrorDto> {
+        if self.operation != operation {
+            return Err(conversion_not_stoppable());
+        }
+        let queue = match &self.state {
+            SlotState::Running { queue } | SlotState::Stopping { queue } => queue,
+            // An idle slot, a picker still open and a queue already over are
+            // all the same answer: there is no running conversion of this
+            // caller's to stop. A picker is closed by cancelling it, which is
+            // a different action with a different meaning.
+            SlotState::Idle
+            | SlotState::AwaitingDestination { .. }
+            | SlotState::Terminal { .. } => return Err(conversion_not_stoppable()),
+        };
+        if self.stop_requested {
+            return Ok(StopAccepted::AlreadyRequested);
+        }
+        self.stop_requested = true;
+        self.stop_requested_at = Some(Instant::now());
+        let queue = queue.clone();
+        self.state = SlotState::Stopping { queue };
+        self.advance();
+        // Cloned rather than taken. The worker clears it when that exact
+        // attempt settles, and taking it here would leave a repeated stop with
+        // nothing to ask while the same attempt was still running.
+        Ok(StopAccepted::Requested(
+            self.current_attempt
+                .as_ref()
+                .map(|attempt| attempt.request.clone()),
+        ))
+    }
+
+    /// Binds the one attempt a stop may reach.
+    ///
+    /// Replaces whatever was there: only one attempt of one queue runs at a
+    /// time, and an entry that outlived its attempt is exactly what must not be
+    /// reachable.
+    pub(super) fn bind_attempt(
+        &mut self,
+        operation: u64,
+        index: usize,
+        attempt: u64,
+        request: CancellationRequest,
+    ) {
+        if self.operation != operation {
+            return;
+        }
+        // A stop accepted between the transition that started this item and
+        // this binding found no handle to ask, because there was none yet to
+        // find. Asked here, in the same lock acquisition that stores it, so
+        // that request cannot fall between the two -- otherwise the queue would
+        // say it was stopping while a conversion of unknown length ran to its
+        // own end. Reachable only through that exact interval: a stop recorded
+        // any earlier makes `start_item` refuse, and this is never called.
+        if self.stop_requested {
+            request.request();
+        }
+        self.current_attempt = Some(CurrentAttempt {
+            operation,
+            index,
+            attempt,
+            request,
+        });
+    }
+
+    /// Releases the handle of one exact attempt.
+    ///
+    /// Named by operation, item and attempt number so a late release cannot
+    /// clear a newer attempt's handle and leave a stop with nothing to ask.
+    pub(super) fn release_attempt(&mut self, operation: u64, index: usize, attempt: u64) {
+        if self
+            .current_attempt
+            .as_ref()
+            .is_some_and(|current| current.is(operation, index, attempt))
+        {
+            self.current_attempt = None;
         }
     }
 
@@ -625,25 +957,32 @@ impl ConversionSlot {
         }
     }
 
-    /// Marks one item of the running queue as under way.
-    pub(super) fn start_item(&mut self, operation: u64, index: usize) -> bool {
-        let Some(queue) = self.running_mut(operation) else {
-            return false;
-        };
-        let Some(item) = queue.items.get_mut(index) else {
-            return false;
-        };
+    /// Marks one item of the running queue as under way, and says which attempt
+    /// it is.
+    ///
+    /// Refuses once a stop has been requested, whatever the worker believed
+    /// when it decided to start. The worker checks first, but the request can
+    /// land in the interval between that check and this call, and an item that
+    /// began after the user asked for the queue to stop is the one thing this
+    /// action promises will not happen.
+    pub(super) fn start_item(&mut self, operation: u64, index: usize) -> Option<u64> {
+        if self.stop_requested {
+            return None;
+        }
+        let queue = self.running_mut(operation)?;
+        let item = queue.items.get_mut(index)?;
         if item.state != ItemState::Pending {
-            return false;
+            return None;
         }
         item.state = ItemState::Running;
         item.attempts = item
             .attempts
             .checked_add(1)
             .expect("an item is attempted fewer than u64::MAX times");
+        let attempt = item.attempts;
         queue.current = index;
         self.advance();
-        true
+        Some(attempt)
     }
 
     /// Records what one item's attempt did, and moves on.
@@ -679,28 +1018,64 @@ impl ConversionSlot {
                 item.report = None;
                 item.error = Some(error);
             }
+            ItemOutcome::Stopped { state, facts } => {
+                item.state = state;
+                // Never retryable, whichever of the two states this is. A
+                // cancelled item has nothing to correct, and one whose stop
+                // could not be confirmed must not launch anything at all.
+                item.retryable = false;
+                item.report = None;
+                item.error = None;
+                item.cancellation = Some(facts);
+            }
         }
         // Counted rather than incremented: the queue's own position is "how
         // many are done", and after the last item that is the item count.
-        queue.current = queue
-            .items
-            .iter()
-            .filter(|item| item.state != ItemState::Pending)
-            .count();
+        queue.recount();
         self.advance();
         true
     }
 
     /// Ends the running queue, with an optional queue-level refusal.
-    pub(super) fn finish(&mut self, operation: u64, error: Option<PreviewErrorDto>) {
+    ///
+    /// The reason is the caller's, not inferred from the items: a queue of
+    /// nothing but failures completed, and a queue stopped after one success
+    /// did not, and no count of item states tells those apart.
+    pub(super) fn finish(
+        &mut self,
+        operation: u64,
+        error: Option<PreviewErrorDto>,
+        reason: TerminalReason,
+    ) {
+        // Read before the queue is borrowed, and decisive. A worker observes
+        // this flag and then has to take this lock to commit; a stop landing in
+        // between was answered to its caller as accepted, so an ordinary
+        // completion arriving afterwards must not overwrite it. Only a
+        // completion is upgraded: `Stopped` and `StopFailed` are what the
+        // attempt itself produced, and no flag read here can contradict them.
+        let stop_requested = self.stop_requested;
         let Some(queue) = self.running_mut(operation) else {
             return;
+        };
+        let reason = if reason == TerminalReason::Completed && stop_requested {
+            TerminalReason::Stopped
+        } else {
+            reason
         };
         if error.is_some() {
             queue.error = error;
         }
+        // Everything the stop prevented, said as what it is. A completed queue
+        // has nothing pending to strand, so this is a no-op for it.
+        if reason != TerminalReason::Completed {
+            queue.strand_pending();
+        }
         let queue = queue.clone();
-        self.state = SlotState::Terminal { queue };
+        self.state = SlotState::Terminal { reason, queue };
+        // The attempt is over with the queue. Cleared unconditionally here
+        // rather than by index, because nothing this operation holds can run
+        // again.
+        self.current_attempt = None;
         self.advance();
     }
 
@@ -720,31 +1095,40 @@ impl ConversionSlot {
             return;
         }
         let queue = match &self.state {
-            SlotState::AwaitingDestination { queue, .. } | SlotState::Running { queue } => {
-                queue.clone()
-            }
+            SlotState::AwaitingDestination { queue, .. }
+            | SlotState::Running { queue }
+            | SlotState::Stopping { queue } => queue.clone(),
             SlotState::Idle | SlotState::Terminal { .. } => return,
         };
         let mut queue = queue;
-        for item in &mut queue.items {
-            if item.state != ItemState::Pending {
-                continue;
+        // A refusal that lands on a stopped queue is still a stop. What refused
+        // it is recorded, and everything the stop prevented is marked as never
+        // run rather than left pending -- a pending item in a terminal queue is
+        // counted nowhere. `strand_pending` restores what a retry moved back to
+        // pending as part of that, which is why it is not repeated here.
+        let reason = if self.stop_requested {
+            queue.strand_pending();
+            TerminalReason::Stopped
+        } else {
+            // Not a stop, so nothing is stranded. What a retry moved back to
+            // pending still keeps the result it earned: an item this pass never
+            // reached did run in the one before, and what it carries says so.
+            for item in &mut queue.items {
+                if !item.state.is_pending() {
+                    continue;
+                }
+                if item.error.is_some() {
+                    item.state = ItemState::Failed;
+                } else if let Some(report) = item.report.as_ref() {
+                    item.state = item_state_of(report.outcome_class());
+                }
             }
-            // What it carries says what it was. An item that never ran carries
-            // neither and stays pending, which is the truth about it.
-            if item.error.is_some() {
-                item.state = ItemState::Failed;
-            } else if let Some(report) = item.report.as_ref() {
-                item.state = item_state_of(report.outcome_class());
-            }
-        }
-        queue.current = queue
-            .items
-            .iter()
-            .filter(|item| item.state != ItemState::Pending)
-            .count();
+            TerminalReason::Completed
+        };
+        queue.recount();
         queue.error = Some(error);
-        self.state = SlotState::Terminal { queue };
+        self.state = SlotState::Terminal { reason, queue };
+        self.current_attempt = None;
         self.advance();
     }
 
@@ -754,9 +1138,17 @@ impl ConversionSlot {
     /// are, and the order never changes: a retry is the same queue again, not a
     /// new one made of what is left.
     pub(super) fn begin_retry(&mut self) -> Option<u64> {
-        let SlotState::Terminal { queue } = &self.state else {
+        let SlotState::Terminal { reason, queue } = &self.state else {
             return None;
         };
+        // A stopped queue is not retried in place. The user asked for the whole
+        // batch to stop, and rerunning part of it under the same operation
+        // would answer a question they did not ask; a queue whose stop could
+        // not be confirmed must launch nothing at all. Converting those rows
+        // again is a new queue, made from the roster.
+        if !reason.is_retryable() {
+            return None;
+        }
         if !queue.has_retryable_failure() {
             return None;
         }
@@ -791,7 +1183,9 @@ impl ConversionSlot {
             return None;
         }
         match &mut self.state {
-            SlotState::Running { queue } => Some(queue),
+            // Stopping included: the attempt in flight still has to be settled
+            // and the queue still has to be terminalized, and both write here.
+            SlotState::Running { queue } | SlotState::Stopping { queue } => Some(queue),
             SlotState::Idle
             | SlotState::AwaitingDestination { .. }
             | SlotState::Terminal { .. } => None,
@@ -801,15 +1195,16 @@ impl ConversionSlot {
     /// The folder a terminal queue was run against, for a retry.
     pub(super) fn terminal_destination(&self) -> Option<AdmittedDestination> {
         match &self.state {
-            SlotState::Terminal { queue } => queue.destination.clone(),
-            SlotState::Idle | SlotState::AwaitingDestination { .. } | SlotState::Running { .. } => {
-                None
-            }
+            SlotState::Terminal { queue, .. } => queue.destination.clone(),
+            SlotState::Idle
+            | SlotState::AwaitingDestination { .. }
+            | SlotState::Running { .. }
+            | SlotState::Stopping { .. } => None,
         }
     }
 
     /// The current state, as the webview reads it.
-    pub(super) fn read(&self) -> WorkspaceConversionUpdateDto {
+    pub(super) fn read(&self, backend_quarantined: bool) -> WorkspaceConversionUpdateDto {
         let operation_id = self.operation.to_string();
         let state = match &self.state {
             SlotState::Idle => WorkspaceConversionStateDto::Idle,
@@ -823,14 +1218,20 @@ impl ConversionSlot {
                 operation_id,
                 queue: queue.to_dto(),
             },
-            SlotState::Terminal { queue } => WorkspaceConversionStateDto::Terminal {
+            SlotState::Stopping { queue } => WorkspaceConversionStateDto::Stopping {
                 operation_id,
+                queue: queue.to_dto(),
+            },
+            SlotState::Terminal { reason, queue } => WorkspaceConversionStateDto::Terminal {
+                operation_id,
+                reason: reason.to_dto(),
                 queue: queue.to_dto(),
             },
         };
         WorkspaceConversionUpdateDto {
             sequence: self.sequence,
             state,
+            backend_quarantined,
         }
     }
 
@@ -840,6 +1241,19 @@ impl ConversionSlot {
             .checked_add(1)
             .expect("a session makes fewer than u64::MAX conversion transitions");
     }
+}
+
+/// What one item's attempt reached, before the queue decides what to record.
+///
+/// Three answers rather than two. A stopped attempt is neither a conversion that
+/// reached an outcome nor a refusal that never reached one, and the queue needs
+/// the boundary's own two cancellation results to tell a confirmed stop from an
+/// unconfirmed one.
+#[derive(Debug)]
+pub(super) enum QueueItemAttempt {
+    Settled(ItemOutcome),
+    Cancelled(CancellationReport),
+    CancellationFailed(CancellationFailure),
 }
 
 /// What one item's attempt produced.
@@ -855,5 +1269,14 @@ pub(super) enum ItemOutcome {
     Refused {
         retryable: bool,
         error: PreviewErrorDto,
+    },
+    /// A stop reached the attempt while it was running.
+    ///
+    /// Carries no conversion report by construction: a stopped attempt produced
+    /// no output, so there is nothing for a report to describe, and an item in
+    /// this state can never name an output file.
+    Stopped {
+        state: ItemState,
+        facts: CancellationFacts,
     },
 }

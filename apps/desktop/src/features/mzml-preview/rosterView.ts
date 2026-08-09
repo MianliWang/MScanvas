@@ -71,10 +71,11 @@ export interface RosterProjectionInput {
   /**
    * The row a conversion is working on, if any.
    *
-   * Pinned above every other reason. A conversion cannot be cancelled and the
-   * row cannot be removed, so a search that hid it would hide the one row the
-   * user most needs to see -- and the state it is in is the reason they cannot
-   * act on it.
+   * Pinned above every other reason. The row cannot be removed while it is
+   * being read, so a search that hid it would hide the one row the user most
+   * needs to see -- and the state it is in is the reason they cannot act on it
+   * here. The one action they do have is stopping the queue, which is offered
+   * where the queue is, not on the row.
    *
    * Conversion is never a search term and never a sort key: this decides
    * whether a row stays visible, not where it sits or whether it matched.
@@ -84,8 +85,8 @@ export interface RosterProjectionInput {
    * Every other row a live queue holds.
    *
    * Pinned for the same reason the converting one is: the user has committed
-   * them to work they cannot stop and cannot remove them, so a search that hid
-   * them would hide rows they can do nothing about.
+   * them to a queue and cannot remove them while it holds them, so a search
+   * that hid them would hide rows they cannot act on from here.
    */
   readonly queued: ReadonlySet<string>;
 }
@@ -197,8 +198,9 @@ function pinReason(
   input: RosterProjectionInput,
   presentation: RowPresentation,
 ): PinReason | null {
-  // First, because it is the one state the user cannot act their way out of:
-  // the row cannot be removed and the conversion cannot be cancelled.
+  // First, because it is the one state the user cannot act on the row out of:
+  // it cannot be removed while the conversion is reading it. Stopping the queue
+  // is the way out, and it lives beside the queue rather than on the row.
   if (input.converting === handle) {
     return "converting";
   }

@@ -304,6 +304,34 @@ async fn retry_workspace_conversion_queue(
     off_the_async_runtime(move || service.retry_conversion_queue(document_epoch)).await?
 }
 
+/// Stops the running conversion queue of the calling document.
+///
+/// Takes the operation identifier the caller is looking at and nothing else. No
+/// path, no item, no process identifier and no cancellation object crosses:
+/// what a caller may say is *which queue*, and the session decides everything
+/// about how it ends.
+///
+/// Proves the calling document exactly as a retry does, and for the same
+/// reason. Stopping ends work this application started and decides what happens
+/// to files it was writing, so the authority for it is being the current
+/// document — which a reloaded document is, and a replaced one is not.
+///
+/// Idempotent by construction. A second request for a queue already stopping is
+/// answered with the authoritative state rather than a refusal, because the
+/// user asking twice is asking for the thing that is already happening.
+#[tauri::command]
+async fn stop_workspace_conversion_queue(
+    operation_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<WorkspaceConversionUpdateDto, PreviewErrorDto> {
+    let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.stop_conversion_queue(&operation_id, document_epoch))
+        .await?
+}
+
 /// Reads the session's one conversion slot.
 ///
 /// The authoritative answer about a conversion, and the only one that survives a
@@ -637,7 +665,8 @@ pub fn run() {
             get_workspace_conversion_state,
             begin_workspace_conversion_queue,
             choose_workspace_conversion_destination,
-            retry_workspace_conversion_queue
+            retry_workspace_conversion_queue,
+            stop_workspace_conversion_queue
         ])
         .run(tauri::generate_context!())
         .expect("failed to run the MSCanvas desktop application");

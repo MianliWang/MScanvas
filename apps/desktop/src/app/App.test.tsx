@@ -28,6 +28,7 @@ import {
   buildSpectrum,
   createFakePreviewApi,
   createFakeWorkspaceDropTransport,
+  quarantinedBackend,
   deferred,
   previewError,
   secondFile,
@@ -249,6 +250,39 @@ describe("mzML preview workspace", () => {
 
     // The banner stops claiming a backend that no longer answers.
     expect(await screen.findByText("ProteoWizard is not available")).toBeVisible();
+  });
+
+  it("does not start a row read once the session has stopped trusting the backend", async () => {
+    // A preview loaded before the stop stays on screen -- nothing about it
+    // became untrue -- and quarantine does not change the installation, so the
+    // table is not discarded and is still there to click. Every click would
+    // reach Rust, come back refused, and replace the spectrum beside the table
+    // with an error the user can do nothing about.
+    let trusted = true;
+    const api = createFakePreviewApi({
+      availability: () => Promise.resolve(trusted ? availableBackend : quarantinedBackend),
+    });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Spectra" });
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+    await screen.findByRole("grid", { name: "Spectra" });
+    const readsBefore = api.requestedSpectra.length;
+    expect(readsBefore).toBeGreaterThan(0);
+
+    // The verdict a quarantined session answers with, arriving through the
+    // ordinary recheck -- which is the path a stop that could not be confirmed
+    // takes.
+    trusted = false;
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    expect(await screen.findByText("ProteoWizard is not available")).toBeVisible();
+    expect(
+      screen.getByText("MSCanvas could not confirm that the converter process stopped."),
+    ).toBeVisible();
+
+    // The table is still on screen, and clicking it launches nothing.
+    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=2");
+    expect(api.requestedSpectra.length).toBe(readsBefore);
   });
 
   it("does not start a row read while a backend request is outstanding", async () => {

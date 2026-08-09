@@ -64,6 +64,26 @@ export const availableBackend: BackendAvailability = {
   failure: null,
 };
 
+/**
+ * What a session that lost track of a converter reports about the backend.
+ *
+ * Not the reading it had. `unavailable` here is a statement about the session,
+ * and the failure beside it is what the banner renders.
+ */
+export const quarantinedBackend: BackendAvailability = {
+  state: "unavailable",
+  origin: "automatic",
+  installationGeneration: 0,
+  release: null,
+  buildDate: null,
+  sameInstallation: true,
+  failure: {
+    kind: "backend_quarantined",
+    summary: "MSCanvas could not confirm that the converter process stopped.",
+    correctiveAction: "Restart MSCanvas before starting another preview or conversion.",
+  },
+};
+
 /** What a chosen folder holding a usable installation reports. */
 export const chosenBackend: BackendAvailability = {
   state: "available",
@@ -441,9 +461,29 @@ export interface FakePreviewApiOptions {
     publish: (state: WorkspaceConversionState) => void,
   ) => Promise<WorkspaceConversionState>;
   /** What `Retry failed` does. */
+  /** Whether the session begins already quarantined, as a reload can find it. */
+  readonly initialBackendQuarantined?: boolean;
+  /**
+   * What a stop settles the queue to.
+   *
+   * Receives the operation identifier the caller named and the publisher, so a
+   * test can model a stop that lands mid-item, between items, or one that
+   * cannot be confirmed.
+   */
+  readonly stop?: (
+    operationId: string,
+    publish: (state: WorkspaceConversionState) => void,
+  ) => Promise<WorkspaceConversionState>;
   readonly retry?: (
     publish: (state: WorkspaceConversionState) => void,
   ) => Promise<WorkspaceConversionState>;
+  /**
+   * How long a slot read takes to come back.
+   *
+   * A real IPC reply is not instant, and a poll that runs faster than one is a
+   * state the interface has to survive rather than a state it can assume away.
+   */
+  readonly stateReadLatency?: () => Promise<void>;
   /** Replaces the roster read entirely, for the cases where it fails. */
   readonly roster?: () => Promise<WorkspaceRoster>;
   /**
@@ -518,6 +558,10 @@ export interface FakePreviewApi extends PreviewApi {
    * exercising the same staleness rule the real transport imposes.
    */
   readonly publishConversion: (state: WorkspaceConversionState) => void;
+  /** Puts the session into backend quarantine, as an unconfirmed stop does. */
+  readonly quarantineBackend: () => void;
+  /** Every operation identifier a stop was asked for, in order. */
+  readonly stopRequests: readonly string[];
   /** Every conversion this fake was asked to start, in order. */
   readonly conversionRequests: readonly ConversionRequest[];
 }
@@ -544,6 +588,7 @@ export function queueItem(
     retryable: false,
     report: null,
     error: null,
+    cancellation: null,
     ...overrides,
   };
 }
@@ -572,6 +617,9 @@ export function queueOf(items: readonly ConversionQueueItem[]) {
     failedCount: failed,
     retryableFailedCount: retryable,
     nonRetryableFailedCount: failed - retryable,
+    cancelledCount: count("cancelled"),
+    notRunCount: count("notRun"),
+    cancellationFailedCount: count("cancellationFailed"),
     error: null,
     installationGeneration: 0,
   };
@@ -621,12 +669,20 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   let conversion: WorkspaceConversionState = options.initialConversion ?? { status: "idle" };
   let conversionSequence = options.initialConversion === undefined ? 0 : 1;
   const conversionRequests: ConversionRequest[] = [];
+  const stopRequests: string[] = [];
+  // The session's own verdict on the backend, which outlives any one queue and
+  // is never cleared -- exactly as Rust holds it.
+  let backendQuarantined = options.initialBackendQuarantined ?? false;
   const publishConversion = (state: WorkspaceConversionState): void => {
     conversion = state;
     conversionSequence += 1;
   };
+  const quarantineBackend = (): void => {
+    backendQuarantined = true;
+  };
   const defaultConversion = (request: ConversionRequest): WorkspaceConversionState => ({
     status: "terminal",
+    reason: "completed",
     operationId: String(conversionSequence + 1),
     queue: queueOf(
       request.handles.map((handle, index) =>
@@ -754,12 +810,20 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     datasets,
     deliveredVerdicts,
     publishConversion,
+    quarantineBackend,
+    stopRequests,
     conversionRequests,
     inspectBackend: () =>
-      (typeof options.availability === "function"
-        ? options.availability()
-        : Promise.resolve(options.availability ?? availableBackend)
-      ).then(deliver),
+      // A quarantined session answers every backend question the same way and
+      // launches nothing to do it, exactly as Rust does. Modelled here rather
+      // than canned in each test, so no test can quarantine the session and
+      // still be handed a verdict saying the backend is fine.
+      backendQuarantined
+        ? Promise.resolve(deliver(quarantinedBackend))
+        : (typeof options.availability === "function"
+            ? options.availability()
+            : Promise.resolve(options.availability ?? availableBackend)
+          ).then(deliver),
     // `?? chosenBackend` would be wrong here: `null` is a meaningful value --
     // a dismissed picker -- and nullish coalescing cannot tell it from an
     // option that was never supplied.
@@ -890,11 +954,19 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         capacity: 16,
       });
     },
-    getConversionState: () => Promise.resolve({ sequence: conversionSequence, state: conversion }),
+    // Answered after whatever round trip the test models, and reading the slot
+    // only once that has elapsed -- so a slow read carries the state as it was
+    // when it *arrived*, exactly as a slow IPC reply does.
+    getConversionState: async () => {
+      if (options.stateReadLatency !== undefined) {
+        await options.stateReadLatency();
+      }
+      return { sequence: conversionSequence, state: conversion, backendQuarantined };
+    },
     retryConversions: async () => {
       const settled = options.retry === undefined ? conversion : await options.retry(publishConversion);
       publishConversion(settled);
-      return { sequence: conversionSequence, state: conversion };
+      return { sequence: conversionSequence, state: conversion, backendQuarantined };
     },
     convertDatasets: async (handles, conflictPolicy, onReserved) => {
       const request = { handles, conflictPolicy };
@@ -911,7 +983,17 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       onReserved();
       const settled = await settling;
       publishConversion(settled);
-      return { sequence: conversionSequence, state: conversion };
+      return { sequence: conversionSequence, state: conversion, backendQuarantined };
+    },
+    stopConversion: async (operationId) => {
+      stopRequests.push(operationId);
+      // Modelled as Rust behaves: the request is recorded and the
+      // authoritative state is answered with. A test that wants the queue to
+      // settle differently publishes that itself.
+      const settled =
+        options.stop === undefined ? conversion : await options.stop(operationId, publishConversion);
+      publishConversion(settled);
+      return { sequence: conversionSequence, state: conversion, backendQuarantined };
     },
   };
 

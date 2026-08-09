@@ -418,7 +418,36 @@ export type ConversionQueueItemState =
   | "running"
   | "finalized"
   | "skipped"
-  | "failed";
+  | "failed"
+  /** Stopped while running, with the owned process tree confirmed gone. */
+  | "cancelled"
+  /** A stopped queue never began it. Not a failure and not an attempt. */
+  | "notRun"
+  /** Stopped while running, and the termination could not be confirmed. */
+  | "cancellationFailed";
+
+/**
+ * What a stop established about one attempt.
+ *
+ * Path-free like everything else on this wire: no process identifier, no job
+ * handle, no staging location and no backend text.
+ */
+export interface ConversionCancellation {
+  readonly processLaunched: boolean;
+  readonly terminationRequested: boolean;
+  /**
+   * Whether MSCanvas knows no converter process of this attempt survives.
+   *
+   * True when the owned tree was observed empty, and true when no process was
+   * created for there to be one. False is the whole reason
+   * `cancellationFailed` exists.
+   */
+  readonly treeTerminationConfirmed: boolean;
+  readonly elapsedMilliseconds: number;
+  readonly termination: string | null;
+  readonly partialOutputObserved: boolean;
+  readonly stagingResidue: string | null;
+}
 
 /** One item of a queue. */
 export interface ConversionQueueItem {
@@ -434,6 +463,13 @@ export interface ConversionQueueItem {
   readonly report: ConversionReport | null;
   /** Why an attempt never reached a conversion at all. */
   readonly error: PreviewError | null;
+  /**
+   * What a stop established about this item's attempt.
+   *
+   * Present only for an item a stop actually reached. A `notRun` item has
+   * none, because nothing ran for it to establish anything about.
+   */
+  readonly cancellation: ConversionCancellation | null;
 }
 
 /** One queue, in facts that name no location. */
@@ -449,6 +485,12 @@ export interface ConversionQueue {
   readonly failedCount: number;
   readonly retryableFailedCount: number;
   readonly nonRetryableFailedCount: number;
+  /** Items whose running conversion was stopped, tree confirmed gone. */
+  readonly cancelledCount: number;
+  /** Items a stopped queue never began. Not failures. */
+  readonly notRunCount: number;
+  /** Items whose stop could not be confirmed. */
+  readonly cancellationFailedCount: number;
   /** A refusal that stopped the whole queue rather than one item. */
   readonly error: PreviewError | null;
   /**
@@ -481,16 +523,46 @@ export type WorkspaceConversionState =
       readonly operationId: string;
       readonly queue: ConversionQueue;
     }
+  /**
+   * A stop was accepted and the queue has not settled yet.
+   *
+   * Its own status rather than a flag on `running`, because what a reader may
+   * do differs: no further item will start, and the one that is running may
+   * still finish naturally. Nothing here predicts which.
+   */
+  | {
+      readonly status: "stopping";
+      readonly operationId: string;
+      readonly queue: ConversionQueue;
+    }
   | {
       readonly status: "terminal";
       readonly operationId: string;
+      /** Why this queue is over. A stopped queue is not retried in place. */
+      readonly reason: ConversionQueueTerminalReason;
       readonly queue: ConversionQueue;
     };
+
+/** Why a terminal queue is over. */
+export type ConversionQueueTerminalReason =
+  | "completed"
+  /** Stopped, and no converter process of this application's survives. */
+  | "stopped"
+  /** Stopped, and MSCanvas could not confirm the process ended. */
+  | "stopFailed";
 
 /** One bounded read of that slot, with the key that orders two reads. */
 export interface WorkspaceConversionUpdate {
   readonly sequence: number;
   readonly state: WorkspaceConversionState;
+  /**
+   * Whether this session has stopped trusting the backend.
+   *
+   * Set by a stop whose termination could not be confirmed, and never cleared:
+   * nothing in the session can establish that the process it lost track of has
+   * ended.
+   */
+  readonly backendQuarantined: boolean;
 }
 
 /** One row of a queue plan. */

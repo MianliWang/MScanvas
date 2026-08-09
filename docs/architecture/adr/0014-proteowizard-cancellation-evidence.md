@@ -243,7 +243,16 @@ and the only one the harness will run against.
 
 ## Open questions for a product cancellation
 
-None of these is answered here, and none may be assumed.
+**Answered 2026-08-08 by [ADR 0015](0015-user-visible-queue-stop.md)**, which
+takes the first of the three below — one queue-level stop — and leaves the other
+two unbuilt. It also settles the rest: a stopped queue is terminal and is not
+retried in place; the interface says only that no further item will start while
+a stop is in flight; the request is per-attempt with a monotonic queue-level
+flag above it; and a stopped item leaves the roster exactly as it was. The
+measured confirmation times below remain single observations and are still not a
+budget.
+
+The questions as this ADR left them:
 
 - **Cancel one item and stop the queue, cancel one and continue, or cancel the
   whole queue.** Three different promises. ADR 0013 chose a queue with no
@@ -256,7 +265,9 @@ None of these is answered here, and none may be assumed.
   not a budget and no threshold derives from it.
 - **A queue-wide request.** This primitive is per-attempt. A queue-level request
   is a different object with a different lifetime, and building it as "a set of
-  these" is a decision, not a detail.
+  these" is a decision, not a detail. ADR 0015 makes it a monotonic flag on the
+  queue slot with at most one attempt-scoped handle beneath it, rather than a
+  set.
 - **What a cancelled item leaves in the roster.** Nothing here creates, removes
   or annotates a workspace row.
 

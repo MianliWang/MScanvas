@@ -1638,6 +1638,15 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       if (backendBusyRef.current || conversionBusyRef.current) {
         return;
       }
+      // And a backend this session has stopped trusting is not one to launch a
+      // read against. A preview loaded before a stop stays on screen -- nothing
+      // about it became untrue -- so its table is still there to click, and
+      // every click would replace the spectrum beside it with a refusal the
+      // user can do nothing about. Read from the same verdict the banner shows,
+      // so the row and the banner cannot come to disagree.
+      if (!backendUsableRef.current) {
+        return;
+      }
       // A repeat of the row already being read is dropped. Every selection is
       // one backend process, and a double click should not be two of them.
       // Judged against the current token, so a read abandoned by a new preview
@@ -1761,6 +1770,26 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     [checkBackend],
   );
   const conversion = useConversionOperation(reconcileConversionGeneration);
+  // A stop that could not be confirmed makes this session's backend unusable
+  // without changing the installation, so nothing about it advances the
+  // installation sequence and the reconciler above would never fire. Left
+  // alone, the banner would go on saying ProteoWizard is available while every
+  // action that uses one was refused, and the guards derived from that verdict
+  // would go on dispatching reads Rust is certain to refuse.
+  //
+  // Re-read through the ordinary path rather than projected locally: Rust
+  // answers a quarantined session without launching anything, and what it
+  // returns is the same verdict a reload would recover.
+  const projectedQuarantine = useRef(false);
+  useEffect(() => {
+    if (!conversion.backendQuarantined || projectedQuarantine.current) {
+      return;
+    }
+    // Once. The session never leaves this state, so a second read would ask a
+    // question whose answer cannot have changed.
+    projectedQuarantine.current = true;
+    checkBackend();
+  }, [checkBackend, conversion.backendQuarantined]);
   // Read by the spectrum guard below. A conversion owns the one backend lane,
   // and Rust refuses a spectrum while it does; this is what stops the interface
   // asking and leaving a panel loading for the length of a conversion.

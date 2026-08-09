@@ -431,6 +431,29 @@ button:disabled {
   color: var(--color-success);
 }
 
+/* A stop is not a failure, and neither of these is coloured like one. The word
+   is what carries the meaning -- `Cancelled`, `Not run`, `Stop could not be
+   confirmed` -- and the colour only keeps them from reading as successes. */
+.conversion-queue-list > li[data-item-state="cancelled"] > .conversion-queue-status,
+.conversion-queue-list > li[data-item-state="notRun"] > .conversion-queue-status {
+  color: var(--color-text-secondary);
+}
+
+/* The one stopped state that is a warning: MSCanvas does not know whether a
+   process of its own is still running. Weighted as well as coloured, so it
+   reads on a monochrome display and to anyone who cannot separate the two. */
+.conversion-queue-list > li[data-item-state="cancellationFailed"] > .conversion-queue-status {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+/* What a stopped queue actually did, counted apart. Given its own weight
+   because it is the line that says how many files are in the folder. */
+.conversion-stopped-summary {
+  font-weight: 600;
+  margin: 0;
+}
+
 /* Native radios in a native fieldset. The policy is a two-way choice with a
    caption, which is what a fieldset and a legend are; a pair of styled buttons
    would be the same choice with the grouping left implicit. */
