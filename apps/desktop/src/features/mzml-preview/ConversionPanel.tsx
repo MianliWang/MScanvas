@@ -207,16 +207,20 @@ function AdoptOutputs({ conversion }: { readonly conversion: ConversionOperation
           document and announce nothing; leaving it mounted and disabled keeps
           the focus where they put it, and a live region is what tells them the
           work finished. */}
-      <p aria-live="polite" className="quiet-text">
-        {conversion.adopting ? ADOPT_IN_FLIGHT : ""}
+      {/* The one place the result is said, so a screen-reader user hears it
+          without moving and a sighted one reads it in the same words. Emptied
+          only while there is nothing to say. */}
+      <p aria-live="polite" className="conversion-adoption-summary">
+        {conversion.adopting
+          ? ADOPT_IN_FLIGHT
+          : adoption === null
+            ? ""
+            : `${String(added.length)} added, ${String(duplicates.length)} already in the workspace, ${String(refused.length)} not added.`}
       </p>
       {adoption !== null && added.length === 0 && refused.length === 0 ? (
         <p>All finalized outputs from this queue are already in the workspace.</p>
       ) : adoption !== null ? (
         <>
-          <p className="conversion-adoption-summary">
-            {`${String(added.length)} added, ${String(duplicates.length)} already in the workspace, ${String(refused.length)} not added.`}
-          </p>
           {refused.slice(0, 3).map((outcome) => (
             <p
               className="quiet-text"
