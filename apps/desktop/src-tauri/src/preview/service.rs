@@ -1282,6 +1282,14 @@ impl PreviewService {
         // Before the plan, so a quarantined session refuses a queue without
         // first describing one it will never run.
         self.require_usable_backend()?;
+        // And before anything else, an adoption of the queue this would
+        // replace. The interface disables this while one runs, but a press
+        // landing before that state commits would otherwise replace the very
+        // terminal slot the adoption is reading -- turning a request the user
+        // made into `adoption_superseded` and taking the offer with it.
+        if self.adoption_is_in_flight() {
+            return Err(conversion_busy());
+        }
         let items = self.plan_queue_items(handles)?;
         // The same gate every workspace mutation takes, so a queue and a batch
         // cannot both be admitted by each reading the other's state before
@@ -1535,7 +1543,7 @@ impl PreviewService {
                 let source_handle = ticket.source().handle();
                 match accepted {
                     Ok(admitted) => {
-                        let (accepted, no_writers) = admitted.into_parts();
+                        let (accepted, holds) = admitted.into_parts();
                         let outcome = workspace.registry.add_converted(
                             accepted,
                             ticket.source(),
@@ -1543,11 +1551,12 @@ impl PreviewService {
                             ticket.operation(),
                         );
                         // Released here and not a statement earlier. What was
-                        // proved about this file is that its bytes are the
-                        // validated ones; that stays true only while nobody may
-                        // write it, so the hold ends when the row exists rather
-                        // than when the check did.
-                        drop(no_writers);
+                        // proved about this file is that it is the finalized
+                        // object and holds the validated bytes; that stays true
+                        // only while nobody may write it, rename it or take the
+                        // directory it is in. The holds end when the row exists
+                        // rather than when the check did.
+                        drop(holds);
                         PendingAdoption::Registered {
                             item_index: index,
                             source_handle,

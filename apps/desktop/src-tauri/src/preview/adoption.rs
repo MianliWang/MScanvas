@@ -178,7 +178,7 @@ impl FinalizedOutputAdoptionTicket {
         // match the ones just proved.
         Ok(AdmittedOutput {
             accepted,
-            _root: root,
+            root,
             no_writers,
         })
     }
@@ -236,20 +236,35 @@ pub(super) struct AdmittedOutput {
     accepted: AcceptedFile,
     /// The directory, still the admitted one. Held so the file cannot be moved
     /// out from under the row about to name it.
-    _root: DestinationHold,
-    /// Held until the registry has the row. Named rather than underscored
-    /// because the commit drops it deliberately, at a point that matters.
+    root: DestinationHold,
+    /// Held until the registry has the row.
     no_writers: WriterExclusion,
 }
 
+/// Everything an admitted output is holding, until its row exists.
+///
+/// A separate value so the commit has something to drop by name. The registry
+/// takes the accepted file by value, and without this the holds would end at
+/// whatever scope produced them rather than at the moment the row is real.
+pub(super) struct AdmittedOutputHolds {
+    _root: DestinationHold,
+    _no_writers: WriterExclusion,
+}
+
 impl AdmittedOutput {
-    /// Takes the file to register, and the hold to release once it is.
+    /// Takes the file to register, and the holds to release once it is.
     ///
     /// Two values rather than one, so the caller cannot accidentally release
-    /// the hold before the row exists: dropping the second is a statement, and
-    /// it has to be written where it happens.
-    pub(super) fn into_parts(self) -> (AcceptedFile, WriterExclusion) {
-        (self.accepted, self.no_writers)
+    /// them before the row exists: dropping the second is a statement, and it
+    /// has to be written where it happens.
+    pub(super) fn into_parts(self) -> (AcceptedFile, AdmittedOutputHolds) {
+        (
+            self.accepted,
+            AdmittedOutputHolds {
+                _root: self.root,
+                _no_writers: self.no_writers,
+            },
+        )
     }
 }
 
@@ -283,15 +298,19 @@ fn hold_against_writers(output: &Path) -> Result<WriterExclusion, AdoptionRefusa
 
     const FILE_READ_DATA: u32 = 0x0000_0001;
     const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
-    /// Reads and deletes, but never writes. The user may still remove or rename
-    /// their own file; nobody may change it underneath this reading.
-    const FILE_SHARE_READ_DELETE: u32 = 0x0000_0005;
+    /// Reads only. Not deletes, and this is the one place that matters: the
+    /// window this hold spans ends when the row exists, and a rename or a delete
+    /// inside it would leave the registry holding a path that no longer reaches
+    /// the object it just proved. Outside this window the output is entirely the
+    /// user's to move or remove; ADR 0016 keeps the retention permissive for
+    /// exactly that reason.
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
     const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 
     std::fs::OpenOptions::new()
         .read(true)
         .access_mode(FILE_READ_DATA | FILE_READ_ATTRIBUTES)
-        .share_mode(FILE_SHARE_READ_DELETE)
+        .share_mode(FILE_SHARE_READ)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(output)
         .map_err(|error| match error.kind() {
