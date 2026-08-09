@@ -505,22 +505,79 @@ fn truncate_to_bytes(text: String, limit: usize) -> (String, bool) {
 /// Only a separator is forgiven that way. A drive letter or a `file:` URL after
 /// a placeholder is not the tail of anything — `<source>D:\private\run.raw`
 /// names a location nothing has replaced — so those still answer yes.
+///
+/// And a remainder is one name, never a tree. What may follow a placeholder is
+/// a single component, which is the class the schema already exports as a
+/// display fact; two or more is directory structure that survived because a
+/// *less* specific token matched the root, and it is refused.
+///
+/// That case is real rather than theoretical. Where a path is spelled with some
+/// components short and others long — which Windows does, and which a machine
+/// whose profile has an 8.3 name does routinely — the acquisition's own
+/// registration can miss while the temporary root's still matches, leaving the
+/// folders between them in the text. Nothing here can obtain that hybrid
+/// spelling in advance, so the shape rule is what catches it.
 fn residual_absolute_path(text: &str, placeholders: &[&str]) -> bool {
-    for line in text.split_inclusive('\n') {
-        let mut from = 0;
-        while let Some(relative) = absolute_path_start(&line[from..]) {
-            let start = from + relative;
-            let is_separator = line[start..].starts_with(is_separator);
-            if is_separator && ends_with_placeholder(&line[..start], placeholders) {
-                // One byte, because a separator is ASCII and the scan has to
-                // resume inside the remainder rather than skip over it.
-                from = start + 1;
-                continue;
-            }
+    text.split_inclusive('\n')
+        .any(|line| line_names_a_location(line, placeholders))
+}
+
+fn line_names_a_location(line: &str, placeholders: &[&str]) -> bool {
+    let mut from = 0;
+    while let Some(relative) = absolute_path_start(&line[from..]) {
+        let start = from + relative;
+        let separator = line[start..].starts_with(is_separator);
+        if separator && ends_with_placeholder(&line[..start], placeholders) {
+            // One byte, because a separator is ASCII and the scan has to
+            // resume inside the remainder rather than skip over it.
+            from = start + 1;
+            continue;
+        }
+        return true;
+    }
+    remainder_carries_directories(line, placeholders)
+}
+
+/// Whether anything following a placeholder is more than one path component.
+///
+/// Measured between one placeholder and the next rather than to the end of the
+/// line, so a line naming two redacted paths — each with its own single
+/// remainder — is not read as one remainder with several components.
+fn remainder_carries_directories(line: &str, placeholders: &[&str]) -> bool {
+    let mut cursor = 0;
+    while let Some((start, end)) = next_placeholder(line, cursor, placeholders) {
+        let following =
+            next_placeholder(line, end, placeholders).map_or(line.len(), |(next, _)| next);
+        let remainder = &line[end..following];
+        if remainder.starts_with(is_separator)
+            && remainder
+                .chars()
+                .filter(|character| is_separator(*character))
+                .count()
+                > 1
+        {
             return true;
         }
+        // Past this placeholder, never past the segment: the next one is where
+        // the scan resumes, and it was found from `end` above.
+        cursor = end.max(start + 1);
     }
     false
+}
+
+/// The first placeholder at or after `from`, as the half-open range it spans.
+fn next_placeholder(line: &str, from: usize, placeholders: &[&str]) -> Option<(usize, usize)> {
+    placeholders
+        .iter()
+        .filter(|placeholder| !placeholder.is_empty())
+        .filter_map(|placeholder| {
+            line.get(from..)
+                .and_then(|rest| rest.find(*placeholder))
+                .map(|offset| (from + offset, from + offset + placeholder.len()))
+        })
+        // The earliest one, and the longest where two begin together, so a
+        // placeholder that is a prefix of another cannot end the scan early.
+        .min_by_key(|(start, end)| (*start, std::cmp::Reverse(*end)))
 }
 
 fn ends_with_placeholder(prefix: &str, placeholders: &[&str]) -> bool {
@@ -1187,6 +1244,41 @@ mod tests {
         ] {
             assert!(absolute_path_start(prose).is_none(), "{prose}");
         }
+    }
+
+    /// A remainder is one name, never a tree.
+    ///
+    /// The case that matters is not hypothetical: where a path is spelled with
+    /// some components short and others long, the acquisition's own token can
+    /// miss while a less specific one — the temporary root — still matches,
+    /// which leaves the folders between them sitting in the text after a
+    /// placeholder. No token this boundary can obtain in advance covers that
+    /// hybrid, so the shape rule is the only thing that catches it.
+    #[test]
+    fn a_remainder_of_more_than_one_component_is_not_forgiven() {
+        let redactor = Redactor::default().with_path(Path::new(r"C:\Temp"), "<local-path>");
+
+        // One component after the placeholder: a name, and one the schema
+        // already exports as a display fact.
+        let kept = excerpt(br"read C:\Temp\run.raw", &redactor);
+        assert_eq!(kept.text(), Some(r"read <local-path>\run.raw"));
+
+        // Two: the folder between them is directory structure that survived
+        // because a less specific token matched the root.
+        let withheld = excerpt(br"read C:\Temp\private-study\run.raw", &redactor);
+        assert_eq!(withheld.text(), None);
+        assert_eq!(
+            withheld.suppression(),
+            Some(ExcerptSuppression::ResidualAbsolutePath)
+        );
+
+        // Two redacted paths on one line, each with its own single remainder,
+        // is two remainders rather than one with three components.
+        let both = excerpt(br"read C:\Temp\a.raw then wrote C:\Temp\b.mzML", &redactor);
+        assert_eq!(
+            both.text(),
+            Some(r"read <local-path>\a.raw then wrote <local-path>\b.mzML")
+        );
     }
 
     /// The one false positive that would make the whole feature useless.

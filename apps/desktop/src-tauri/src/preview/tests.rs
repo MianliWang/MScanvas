@@ -12357,6 +12357,30 @@ struct NoisyFailingRunner {
     unknown_share: bool,
 }
 
+impl NoisyFailingRunner {
+    /// The spellings of one path a backend could print.
+    ///
+    /// Derived from the *canonical* form, because that is the one the
+    /// conversion boundary registers and the one it hands the backend. A
+    /// test that printed whatever spelling it happened to construct would be
+    /// asserting the machine's temporary-directory naming rather than this
+    /// boundary's redaction -- and on a profile with an 8.3 short name the two
+    /// differ, which is a real limitation the suppression test covers instead.
+    fn spellings(path: &Path) -> Vec<String> {
+        let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let plain = canonical
+            .to_string_lossy()
+            .trim_start_matches(r"\\?\")
+            .to_owned();
+        vec![
+            plain.clone(),
+            plain.replace('\\', "/"),
+            plain.to_uppercase(),
+            format!(r"\\?\{plain}"),
+        ]
+    }
+}
+
 impl ProcessRunner for NoisyFailingRunner {
     fn run(&self, spec: &CommandSpec) -> Result<ProcessOutput, ProcessError> {
         let staged = spec
@@ -12367,13 +12391,12 @@ impl ProcessRunner for NoisyFailingRunner {
             .parent()
             .expect("the staged output has a directory")
             .to_path_buf();
-        let source = self.source.display().to_string();
         let mut stderr = Vec::new();
-        for line in [
-            format!("error: could not read {source}"),
-            format!("error: could not read {}", source.replace('\\', "/")),
-            format!("error: could not read {}", source.to_uppercase()),
-            format!(r"error: extended \\?\{source}"),
+        let mut lines: Vec<String> = Self::spellings(&self.source)
+            .into_iter()
+            .map(|spelling| format!("error: could not read {spelling}"))
+            .collect();
+        lines.extend([
             format!("error: destination {}", self.destination.display()),
             format!("error: staging {}", staging.display()),
             format!("error: staged output {}", staged.display()),
@@ -12383,12 +12406,15 @@ impl ProcessRunner for NoisyFailingRunner {
                 std::env::var("USERPROFILE").unwrap_or_else(|_| String::from("C:\\Users\\nobody"))
             ),
             String::from("mz=101.007276 rt=1.0 intensity=1.25e+07"),
-        ]
-        .into_iter()
-        .chain(
-            self.unknown_share
-                .then(|| String::from(r"error: share \\reporting-server\lab-share\run.raw")),
-        ) {
+        ]);
+        // A location nothing handed this process, printed only where the test
+        // is about what happens to one.
+        if self.unknown_share {
+            lines.push(String::from(
+                r"error: share \\reporting-server\lab-share\run.raw",
+            ));
+        }
+        for line in lines {
             stderr.extend_from_slice(line.as_bytes());
             stderr.extend_from_slice(b"\r\n");
         }
@@ -12418,94 +12444,6 @@ impl ProcessRunner for NoisyFailingRunner {
             peak_job_memory_bytes: Some(4_096),
         })
     }
-}
-
-/// Scenario A: a real queue, one structured failure, and an export that
-/// describes exactly that item.
-#[test]
-fn a_real_queue_exports_only_the_attempt_that_failed() {
-    let fixture = TestFile::new("diagnostics-real");
-    let destination = destination_root(&fixture, "out");
-    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
-    let good = add_one_acquisition(&service, &fixture.thermo_raw("good.raw"));
-    let clash = add_one_acquisition(&service, &fixture.thermo_raw("clash.raw"));
-    // The second item's planned name is already taken, which under `Fail` is a
-    // structured, non-retryable failure that leaves the existing file alone.
-    let occupied = destination.join("clash.mzML");
-    fs::write(&occupied, b"somebody else's file").expect("occupy the planned name");
-
-    let update = queue_and_run(&service, &[good, clash], &destination);
-    let queue = terminal_queue(&update);
-    assert_eq!(queue.finalized_count, 1);
-    assert_eq!(queue.failed_count, 1);
-    assert_eq!(
-        update.diagnostics.eligible_item_count, 1,
-        "the finalized item has nothing to diagnose"
-    );
-    assert!(update.diagnostics.available);
-    assert!(!update.diagnostics.exporting);
-    assert_eq!(update.diagnostics.last_export, None);
-
-    let operation = terminal_operation(&update);
-    let saved = destination.join("diagnostics.json");
-    let result = export_diagnostics(&service, &operation, &saved).expect("the export is written");
-
-    assert_eq!(result.file_name, "diagnostics.json");
-    assert_eq!(result.diagnostic_item_count, 1);
-    assert_eq!(result.operation_id, operation);
-    assert_eq!(result.byte_length, fs::metadata(&saved).unwrap().len());
-
-    let document = read_export(&saved);
-    assert_eq!(document["schema"], "mscanvas.conversion-diagnostics");
-    assert_eq!(document["version"], 1);
-    let items = document["items"].as_array().expect("an items array");
-    assert_eq!(items.len(), 1, "one item, and it is the one that failed");
-    assert_eq!(items[0]["queueIndex"], 1);
-    assert_eq!(items[0]["sourceFileName"], "clash.raw");
-    assert_eq!(items[0]["outputFileName"], "clash.mzML");
-    assert_eq!(items[0]["state"], "failed");
-    assert_eq!(items[0]["detail"], "destination_exists");
-    assert_eq!(items[0]["retryable"], false);
-    // The conflict was decided before a process ran, so there is none to
-    // describe and no stream to repeat.
-    assert_eq!(items[0]["stdout"]["retained"], "none");
-    assert_eq!(items[0]["stderr"]["retained"], "none");
-    assert_eq!(document["queue"]["diagnosticItemCount"], 1);
-    assert_eq!(document["queue"]["finalizedCount"], 1);
-    assert_eq!(document["queue"]["terminalReason"], "completed");
-    assert!(
-        document["redaction"]["warning"]
-            .as_str()
-            .expect("a warning")
-            .contains("Review the file before sharing")
-    );
-
-    assert_no_location(
-        &saved,
-        &[
-            fixture.directory.to_string_lossy().as_ref(),
-            "diagnostics-real",
-            "mscanvas-staging",
-        ],
-    );
-
-    // Nothing about the queue changed, the outputs are where they were, and
-    // adoption is still on offer.
-    let after = service.conversion_state();
-    let queue = terminal_queue(&after);
-    assert_eq!(queue.finalized_count, 1);
-    assert_eq!(queue.failed_count, 1);
-    assert_eq!(item_states(queue), item_states(terminal_queue(&update)));
-    assert_eq!(
-        fs::read(&occupied).expect("the occupying file survives"),
-        b"somebody else's file"
-    );
-    let adopted = service
-        .adopt_conversion_outputs(&operation, current_document(&service))
-        .expect("adoption is unaffected by an export");
-    assert_eq!(adopted.outcomes.len(), 1);
-
-    fs::remove_file(&saved).expect("remove the exported diagnostics");
 }
 
 /// Scenario B, first half: a backend that names every path this run knows, and

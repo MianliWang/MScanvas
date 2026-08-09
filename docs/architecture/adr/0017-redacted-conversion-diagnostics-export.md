@@ -115,6 +115,23 @@ placeholder is *not* a tail and still withholds the excerpt. Without this
 exemption almost every excerpt naming an output would be suppressed and the
 feature would do nothing; with it broader than a separator, a leak would pass.
 
+**A remainder is one name, never a tree.** A single component after a
+placeholder is a filename, which the schema already exports as a display fact;
+two or more is directory structure that survived because a *less specific*
+token matched the root while the more specific one missed. That is measured
+between one placeholder and the next rather than to the end of the line, so a
+line naming two redacted paths is two remainders rather than one long one.
+
+This half of the rule was added because CI caught it, not because it was
+foreseen. Windows spells a path with some components short and others long,
+and a machine whose profile carries an 8.3 name does so routinely; on such a
+runner the acquisition's own registration missed while the temporary root's
+still matched, leaving the folders between them sitting after a placeholder.
+No token this boundary can obtain in advance covers that hybrid — which is the
+entire reason the shape test exists, and the entire reason it has to be the
+stricter of the two. The cost is that such a machine loses the excerpt; that
+is the trade this ADR takes everywhere else and it is not weakened here.
+
 ### Text is bytes
 
 A stream is not guaranteed UTF-8 and is not guaranteed printable. Decoding is
@@ -322,6 +339,14 @@ nothing to describe.
 the decision this ADR exists to make. By export time the plan, the staging area
 and the executable are gone, so the redaction would be shape-based only — and a
 shape test alone cannot remove a path it does not recognise.
+
+**Registering more spellings instead of tightening the shape rule.** Rejected
+as a *replacement* for it. More tokens is always worth having and this boundary
+registers every one it can obtain, but the set can never be complete: a backend
+prints paths nobody handed this process, and Windows offers spellings — hybrid
+short and long components among them — that no lookup enumerates. A rule that
+depended on the token list being complete would fail open on exactly the
+machines least like the one it was written on.
 
 **Replacing residual absolute paths instead of withholding the excerpt.** Rejected
 for this file. The preview DTO replaces to end of line because it is showing a
