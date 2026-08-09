@@ -12242,9 +12242,8 @@ fn export_diagnostics(
 ) -> Result<ConversionDiagnosticsExportDto, PreviewErrorDto> {
     let document = current_document(service);
     let reservation = service.begin_conversion_diagnostics_export(operation, document)?;
-    let (claimed, round) =
-        service.claim_conversion_diagnostics_export(&reservation.reservation_id, document)?;
-    service.write_conversion_diagnostics(claimed, round, destination)
+    service.claim_conversion_diagnostics_export(&reservation.reservation_id, document)?;
+    service.write_conversion_diagnostics(&reservation.reservation_id, destination)
 }
 
 /// The operation identifier of a terminal queue.
@@ -12867,8 +12866,7 @@ fn an_export_answers_only_for_the_current_document_and_queue() {
     assert_eq!(
         service
             .write_conversion_diagnostics(
-                operation.parse().expect("an operation identifier"),
-                0,
+                "diagnostics-reservation-99",
                 &destination.join("diagnostics.json")
             )
             .expect_err("an unclaimed reservation writes nothing")
@@ -13307,12 +13305,12 @@ fn an_export_in_flight_closes_the_actions_that_would_replace_its_queue() {
     assert!(service.conversion_state().diagnostics.exporting);
 
     // Claim, write, and everything comes back.
-    let (claimed, round) = service
+    service
         .claim_conversion_diagnostics_export(&reservation.reservation_id, document)
         .expect("claim the reservation");
     let saved = destination.join("diagnostics.json");
     service
-        .write_conversion_diagnostics(claimed, round, &saved)
+        .write_conversion_diagnostics(&reservation.reservation_id, &saved)
         .expect("the export is written");
 
     let after = service.conversion_state();
@@ -13402,12 +13400,12 @@ fn every_diagnostics_transition_moves_the_ordering_key() {
     );
     assert!(reserved.diagnostics.exporting);
 
-    let (claimed, round) = service
+    service
         .claim_conversion_diagnostics_export(&reservation.reservation_id, document)
         .expect("claim the reservation");
     let saved = destination.join("diagnostics.json");
     service
-        .write_conversion_diagnostics(claimed, round, &saved)
+        .write_conversion_diagnostics(&reservation.reservation_id, &saved)
         .expect("the export is written");
 
     let written = service.conversion_state();
@@ -13490,7 +13488,7 @@ fn a_reload_drops_the_answer_of_a_dialog_it_replaced() {
     let reservation = service
         .begin_conversion_diagnostics_export(&operation, document)
         .expect("the terminal queue is exportable");
-    let (claimed, round) = service
+    service
         .claim_conversion_diagnostics_export(&reservation.reservation_id, document)
         .expect("claim the reservation");
 
@@ -13499,7 +13497,7 @@ fn a_reload_drops_the_answer_of_a_dialog_it_replaced() {
     // The user chooses a file in a dialog nobody is waiting for.
     let saved = destination.join("diagnostics.json");
     let refusal = service
-        .write_conversion_diagnostics(claimed, round, &saved)
+        .write_conversion_diagnostics(&reservation.reservation_id, &saved)
         .expect_err("a released reservation writes nothing");
     assert_eq!(refusal.kind, "invalid_diagnostics_reservation");
     assert!(!saved.exists(), "and no file exists under the chosen name");
@@ -13547,11 +13545,24 @@ fn a_cancel_from_a_replaced_document_cannot_close_the_next_export() {
     let second = service
         .begin_conversion_diagnostics_export(&operation, current_document(&service))
         .expect("the replacement may export");
-    let (claimed, round) = service
+    service
         .claim_conversion_diagnostics_export(&second.reservation_id, current_document(&service))
         .expect("claim the replacement's reservation");
 
-    // Only now does the abandoned window close and say so.
+    // The abandoned window answers first, with a file of its own. It must not
+    // consume the replacement's reservation, and above all must not write to
+    // somewhere that user never chose.
+    let elsewhere = destination.join("abandoned.json");
+    assert_eq!(
+        service
+            .write_conversion_diagnostics(&first.reservation_id, &elsewhere)
+            .expect_err("a released reservation writes nothing")
+            .kind,
+        "invalid_diagnostics_reservation"
+    );
+    assert!(!elsewhere.exists());
+
+    // And then it closes and says so.
     service.cancel_conversion_diagnostics_export(&first.reservation_id);
 
     assert!(
@@ -13560,7 +13571,7 @@ fn a_cancel_from_a_replaced_document_cannot_close_the_next_export() {
     );
     let saved = destination.join("diagnostics.json");
     service
-        .write_conversion_diagnostics(claimed, round, &saved)
+        .write_conversion_diagnostics(&second.reservation_id, &saved)
         .expect("and the file it chose is still written");
     fs::remove_file(&saved).expect("remove the exported diagnostics");
 }

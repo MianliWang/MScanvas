@@ -434,7 +434,7 @@ impl DiagnosticsExportSlot {
         &mut self,
         reservation_id: &str,
         document_epoch: u64,
-    ) -> Result<(u64, u64), PreviewErrorDto> {
+    ) -> Result<(), PreviewErrorDto> {
         let requested = DiagnosticsReservationId::parse(reservation_id)
             .ok_or_else(invalid_diagnostics_reservation)?;
         let ExportState::AwaitingDestination {
@@ -457,30 +457,40 @@ impl DiagnosticsExportSlot {
             operation,
             retry_round,
         };
-        Ok((operation, retry_round))
+        Ok(())
     }
 
-    /// Moves one claimed reservation into writing, or refuses.
+    /// Moves one exact claimed reservation into writing, and says which queue
+    /// and settling it turned out to be about.
     ///
-    /// Named by operation and settling rather than taken from the slot, because
-    /// the interval between the claim and the chosen destination is a modal
-    /// dialog: it lasts as long as the user takes, and anything could have
-    /// replaced the slot inside it.
-    pub(super) fn start_writing(&mut self, operation: u64, retry_round: u64) -> bool {
+    /// Named by the reservation for the reason a cancellation is: the interval
+    /// between the claim and the chosen destination is a modal dialog lasting
+    /// as long as the user takes, a reload inside it can leave that window on
+    /// screen while a replacement opens its own, and two dialogs for one
+    /// terminal queue carry the same operation and the same settling. Only the
+    /// identifier tells them apart, so an abandoned window cannot consume a
+    /// replacement's reservation and write to somewhere that user never chose.
+    ///
+    /// The queue and the settling are *answered with* rather than asked for, so
+    /// there is one place they come from and no caller can pair a reservation
+    /// with a round it does not belong to.
+    pub(super) fn start_writing(&mut self, reservation_id: &str) -> Option<(u64, u64)> {
+        let requested = DiagnosticsReservationId::parse(reservation_id)?;
         let ExportState::AwaitingDestination {
+            reservation,
             claimed: true,
-            operation: claimed_operation,
-            retry_round: claimed_round,
+            operation,
+            retry_round,
             ..
         } = self.state
         else {
-            return false;
+            return None;
         };
-        if claimed_operation != operation || claimed_round != retry_round {
-            return false;
+        if reservation != requested {
+            return None;
         }
         self.state = ExportState::Writing;
-        true
+        Some((operation, retry_round))
     }
 
     /// Records what one export wrote and returns the slot to idle.

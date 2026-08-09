@@ -410,8 +410,7 @@ async fn save_workspace_conversion_diagnostics(
     let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
     let owner = main_window_handle(&app);
     let service = Arc::clone(&service);
-    let (operation, retry_round) =
-        service.claim_conversion_diagnostics_export(&reservation_id, document_epoch)?;
+    service.claim_conversion_diagnostics_export(&reservation_id, document_epoch)?;
     let (sender, receiver) = std::sync::mpsc::channel();
     if app
         .run_on_main_thread(move || {
@@ -434,7 +433,7 @@ async fn save_workspace_conversion_diagnostics(
     // closing. Two dialogs for one terminal queue carry the same operation and
     // the same settling, so the identifier is the only thing that tells an
     // abandoned window from a live one.
-    let cancelled_reservation = reservation_id;
+    let claimed_reservation = reservation_id;
     // The wait spans the modal dialog and then the write, neither of which is
     // something to hold an async worker for.
     off_the_async_runtime(move || {
@@ -447,14 +446,14 @@ async fn save_workspace_conversion_diagnostics(
                 // The dialog itself failed. That is a refusal of this export,
                 // not a write that went wrong, and the slot has to be released
                 // either way.
-                service.cancel_conversion_diagnostics_export(&cancelled_reservation);
+                service.cancel_conversion_diagnostics_export(&claimed_reservation);
                 return Err(error);
             }
         };
         let Some(destination) = chosen else {
-            return Ok(service.cancel_conversion_diagnostics_export(&cancelled_reservation));
+            return Ok(service.cancel_conversion_diagnostics_export(&claimed_reservation));
         };
-        service.write_conversion_diagnostics(operation, retry_round, &destination)?;
+        service.write_conversion_diagnostics(&claimed_reservation, &destination)?;
         Ok(service.conversion_state())
     })
     .await?

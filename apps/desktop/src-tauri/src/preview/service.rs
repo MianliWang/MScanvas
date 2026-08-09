@@ -1784,10 +1784,10 @@ impl PreviewService {
 
     /// Consumes one exact reservation before its dialog is dispatched.
     ///
-    /// Answers with the queue and the settling the claim bound. The caller
-    /// carries both through the dialog and back: without them, a dialog
-    /// abandoned by a reloaded document would return a filename that the command
-    /// applied to whatever the slot currently holds.
+    /// Answers with nothing. What the claim bound is read back out of the slot
+    /// when the write begins, named by the same reservation, so there is one
+    /// place the queue and the settling come from and no caller can pair a
+    /// reservation with a round it does not belong to.
     ///
     /// # Errors
     ///
@@ -1796,7 +1796,7 @@ impl PreviewService {
         &self,
         reservation_id: &str,
         document_epoch: u64,
-    ) -> Result<(u64, u64), PreviewErrorDto> {
+    ) -> Result<(), PreviewErrorDto> {
         self.diagnostics_export_slot()
             .claim(reservation_id, document_epoch)
     }
@@ -1864,14 +1864,13 @@ impl PreviewService {
     /// says so in its detail rather than hiding it behind the primary reason.
     pub fn write_conversion_diagnostics(
         &self,
-        operation: u64,
-        retry_round: u64,
+        reservation_id: &str,
         destination: &Path,
     ) -> Result<ConversionDiagnosticsExportDto, PreviewErrorDto> {
         let mut slot = self.diagnostics_export_slot();
-        if !slot.start_writing(operation, retry_round) {
+        let Some((operation, retry_round)) = slot.start_writing(reservation_id) else {
             return Err(invalid_diagnostics_reservation());
-        }
+        };
         self.publish_diagnostics_exporting(&slot);
         drop(slot);
         // Cleared however this returns, including through a panic in the

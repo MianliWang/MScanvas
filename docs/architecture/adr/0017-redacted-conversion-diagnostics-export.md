@@ -365,12 +365,18 @@ a failed write both leave the queue exactly as they found it.
 Diagnostic tickets are Rust session state and survive a webview reload with the
 terminal queue, so the action is offered again to the replacement document.
 
-A cancelled dialog names the reservation it is closing, and nothing weaker. Two
-dialogs for one terminal queue carry the same operation and the same settling,
-so neither of those tells an abandoned window from a live one — only the
-identifier does, because exactly one was ever issued for each. Without that, a
-reload could leave the old window on screen, the replacement could open its own,
-and the old one closing would take the replacement's reservation with it.
+Both halves of what a dialog answers with — a chosen file and a cancellation —
+name the reservation, and nothing weaker. Two dialogs for one terminal queue
+carry the same operation and the same settling, so neither of those tells an
+abandoned window from a live one; only the identifier does, because exactly one
+was ever issued for each. Without it a reload could leave the old window on
+screen, the replacement could open its own, and the old one answering first
+would consume the replacement's reservation — cancelling it, or worse, writing
+the file to somewhere that user never chose.
+
+Which queue and which settling a write is about are *answered with* by the slot
+rather than carried by the caller, so there is one place they come from and no
+caller can pair a reservation with a round it does not belong to.
 
 A reservation is released on document replacement whether or not its dialog has
 been claimed, exactly as a conversion destination reservation is. The
