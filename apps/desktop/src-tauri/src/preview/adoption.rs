@@ -30,7 +30,7 @@ use std::path::Path;
 
 use mscanvas_proteowizard::{FinalizedOutput, OutputDrift};
 
-use super::destination::admit_destination_root;
+use super::destination::{DestinationHold, admit_destination_root};
 use super::operation::AdmittedDestination;
 use super::selection::{AcceptedFile, DatasetId, accept_mzml_file};
 
@@ -156,33 +156,39 @@ impl FinalizedOutputAdoptionTicket {
     /// created, nothing is written, and the file is left exactly as it was found
     /// on every path.
     pub(super) fn accept(&self) -> Result<AcceptedFile, AdoptionRefusal> {
-        let root = self.current_destination_root()?;
-        let output = root.join(&self.output_file_name);
-        // Held for the whole of the inspection below and dropped after it. The
-        // retention this ticket carries deliberately permits writers, so this is
-        // what makes "the bytes are still these" true at the moment it is said
-        // rather than a moment before.
+        // Held, not merely checked, and held for the whole of the inspection.
+        // Proving the root and then reaching a name inside it are two steps, and
+        // a directory that could be renamed away between them would leave the
+        // proof describing one directory and the name resolving inside another.
+        // Admission withholds delete sharing on the directory, which is what
+        // stops that for as long as this lives.
+        let _root = self.held_destination_root()?;
+        let output = self.destination.root().join(&self.output_file_name);
+        // Held for the same reason one level down. The retention this ticket
+        // carries deliberately permits writers, so this is what makes "the bytes
+        // are still these" true at the moment it is said rather than a moment
+        // before.
         let _no_writers = hold_against_writers(&output)?;
         let accepted = accept_mzml_file(&output).map_err(|error| refusal_of(&error.kind))?;
         self.recognises(&accepted)?;
         Ok(accepted)
     }
 
-    /// The admitted destination root, proved to still be the same directory.
+    /// The admitted destination root, proved to still be the same directory and
+    /// held open as it.
     ///
     /// A root that no longer answers as the object it was admitted as is treated
     /// as the output being out of reach rather than as the output being wrong:
     /// MSCanvas does not look inside a folder it cannot show is the one it wrote
     /// to, so it has nothing to say about what is in there.
-    fn current_destination_root(&self) -> Result<&Path, AdoptionRefusal> {
-        let readmitted = admit_destination_root(self.destination.root())
+    fn held_destination_root(&self) -> Result<DestinationHold, AdoptionRefusal> {
+        let (root, identity, held) = admit_destination_root(self.destination.root())
             .map_err(|_| AdoptionRefusal::Missing)?;
-        let (root, identity, _held) = readmitted;
         if self
             .destination
             .is_still(&AdmittedDestination::new(root, identity))
         {
-            return Ok(self.destination.root());
+            return Ok(held);
         }
         Err(AdoptionRefusal::Missing)
     }
