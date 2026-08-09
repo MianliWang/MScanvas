@@ -992,15 +992,12 @@ impl PreviewService {
         // opens and inspects a file, which is filesystem work, and holding the
         // workspace across it would stop every other command for the length of
         // a batch.
-        let (_batch, _generation) = self.begin_waiting_mutation();
-        // Again, under the gate. An adoption can claim it in the interval since
-        // the check above, and it reserved a generation this batch would advance
-        // past -- superseding a request the user had already made, for rows they
-        // asked for, in favour of rows they are asking for now. Waiting is the
-        // cheaper of the two.
-        if self.adoption_is_in_flight() {
-            return Err(conversion_busy());
-        }
+        // Refused under the gate rather than beside it. An adoption can claim
+        // the gate in the interval since the check above, and advancing the
+        // generation is what supersedes one -- so the refusal has to be decided
+        // before that happens, or both actions fail where one was only asked to
+        // wait.
+        let (_batch, _generation) = self.begin_waiting_mutation_unless_adopting()?;
         let mut outcomes = Vec::with_capacity(paths.len());
         for path in paths {
             // Taken before acceptance, because acceptance is what may fail and
@@ -2634,7 +2631,8 @@ impl PreviewService {
         // user said "this is the workspace now", and a folder scan that
         // committed across that would repopulate a list they had just pruned.
         let delivery = self.drop_updates.begin_delivery();
-        let (batch, _generation, pending_busy) = self.begin_superseding_mutation();
+        let (batch, _generation, pending_busy) =
+            self.begin_superseding_mutation_unless_adopting()?;
         // Asked again, now that the gate a queue is admitted under is held. The
         // check above is the cheap one and answers before anything is
         // superseded; this is the one that is ordered against
@@ -2697,7 +2695,8 @@ impl PreviewService {
     /// added next.
     pub fn clear_workspace(&self) -> Result<WorkspaceRosterDto, PreviewErrorDto> {
         let delivery = self.drop_updates.begin_delivery();
-        let (batch, _generation, pending_busy) = self.begin_superseding_mutation();
+        let (batch, _generation, pending_busy) =
+            self.begin_superseding_mutation_unless_adopting()?;
         // Under the gate. Emptying the workspace would revoke the very row a
         // conversion is reading, and clearing the list is not the way to stop
         // one -- so the question has to be asked where the answer cannot change
@@ -2762,10 +2761,63 @@ impl PreviewService {
     /// zero rows is still the user saying "this is the workspace now", and a
     /// scan that committed across it would add rows to a list that had already
     /// been answered for.
+    /// The unguarded form, kept for the test shorthand that reserves a folder
+    /// import without a picker. Production takes the guarded one below, because
+    /// production is where an adoption can be running.
+    #[cfg(test)]
     fn begin_waiting_mutation(&self) -> (std::sync::MutexGuard<'_, WorkspaceMutationState>, u64) {
         let mut gate = self.enter_workspace_mutation_after_drop();
         let generation = gate.advance();
         (gate, generation)
+    }
+
+    /// The same, refusing while an adoption is between its halves.
+    ///
+    /// Asked under the gate and *before* the generation moves, which is the
+    /// only order that works. Advancing it is what supersedes an adoption, so a
+    /// refusal decided afterwards would fail the mutation and take the adoption
+    /// down with it -- two user actions lost where one of them was only ever
+    /// asked to wait.
+    ///
+    /// # Errors
+    ///
+    /// `conversion_busy` while an adoption is in flight. Nothing has moved.
+    fn begin_waiting_mutation_unless_adopting(
+        &self,
+    ) -> Result<(std::sync::MutexGuard<'_, WorkspaceMutationState>, u64), PreviewErrorDto> {
+        let mut gate = self.enter_workspace_mutation_after_drop();
+        if self.adoption_is_in_flight() {
+            return Err(conversion_busy());
+        }
+        let generation = gate.advance();
+        Ok((gate, generation))
+    }
+
+    /// A superseding mutation, refusing while an adoption is between its
+    /// halves. See [`Self::begin_waiting_mutation_unless_adopting`] for why the
+    /// order matters.
+    ///
+    /// # Errors
+    ///
+    /// `conversion_busy` while an adoption is in flight. Nothing has moved, and
+    /// in particular no native drop has been superseded.
+    fn begin_superseding_mutation_unless_adopting(
+        &self,
+    ) -> Result<(std::sync::MutexGuard<'_, WorkspaceMutationState>, u64, bool), PreviewErrorDto>
+    {
+        let mut gate = self.enter_workspace_mutation();
+        if self.adoption_is_in_flight() {
+            return Err(conversion_busy());
+        }
+        let generation = gate.advance();
+        let superseded_claim = self.native_drop_claim.swap(0, Ordering::AcqRel);
+        let superseded_drop = superseded_claim != 0;
+        let pending_busy = drop_claim_has_busy(superseded_claim);
+        gate.active_drop = None;
+        if superseded_drop {
+            self.workspace_mutation_ready.notify_all();
+        }
+        Ok((gate, generation, pending_busy))
     }
 
     /// Starts one of the explicit operations allowed to supersede a native
