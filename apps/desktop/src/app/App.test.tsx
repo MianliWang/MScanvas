@@ -2838,8 +2838,14 @@ describe("adding a folder of mzML files", () => {
     ).toBeVisible();
     expect(screen.queryByText("The folder could not be added")).toBeNull();
     expect(screen.queryByText(/workspace changed while MSCanvas was scanning/)).toBeNull();
+    // Awaited, because focus is restored by an effect that runs after the
+    // import settles rather than in the same commit. Asserting it
+    // synchronously passed whenever that effect had already flushed and failed
+    // under load, which is a flake rather than a claim about focus.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
+    });
     expect(document.body).not.toHaveFocus();
-    expect(screen.getByRole("button", { name: "Add files…" })).toHaveFocus();
   });
 
   it("keeps a real folder failure visible when Clear list overlaps the scan", async () => {
