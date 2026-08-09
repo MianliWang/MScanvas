@@ -1777,13 +1777,18 @@ impl PreviewService {
             drop(guard);
             Ok(match attempt {
                 ConversionAttempt::Completed(report) => {
-                    ConvertedItem::Reported(WorkspaceConversionReport::of(
+                    // Described first, then taken apart. The description is
+                    // what the queue shows; the retained object is what a later
+                    // adoption recognises the file by, and only a finalization
+                    // has one to give.
+                    let described = WorkspaceConversionReport::of(
                         handle.clone(),
                         file.source_kind(),
                         generation,
                         &plan,
                         &report,
-                    ))
+                    );
+                    ConvertedItem::Reported(described, report.into_finalized_output())
                 }
                 ConversionAttempt::Cancelled(report) => ConvertedItem::Cancelled(report),
                 ConversionAttempt::CancellationFailed(failure) => {
@@ -1793,11 +1798,12 @@ impl PreviewService {
         })();
 
         match outcome {
-            Ok(ConvertedItem::Reported(report)) => {
+            Ok(ConvertedItem::Reported(report, finalized)) => {
                 QueueItemAttempt::Settled(ItemOutcome::Reported {
                     state: item_state_of(report.outcome_class()),
                     retryable: report.is_retryable(),
                     report,
+                    finalized,
                 })
             }
             Ok(ConvertedItem::Cancelled(report)) => QueueItemAttempt::Cancelled(report),

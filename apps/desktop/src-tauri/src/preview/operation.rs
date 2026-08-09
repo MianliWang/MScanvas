@@ -23,12 +23,15 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use mscanvas_proteowizard::{
-    CancellationFailure, CancellationReport, CancellationRequest, StagingResidue, Termination,
+    CancellationFailure, CancellationReport, CancellationRequest, FinalizedOutput, StagingResidue,
+    Termination,
 };
 
+use super::adoption::FinalizedOutputAdoptionTicket;
 use super::destination::DestinationIdentity;
 use super::dto::{
     ConversionCancellationDto, ConversionConflictPolicyDto, ConversionQueueDto,
@@ -186,6 +189,13 @@ pub(super) struct QueueItem {
     retryable: bool,
     /// What a stop established about this item's attempt, when one reached it.
     cancellation: Option<CancellationFacts>,
+    /// The authority to admit this item's output into the workspace later.
+    ///
+    /// Shared rather than owned, because the queue this sits in is cloned on
+    /// every read: one retention, however many descriptions of it. Present only
+    /// for an item that finalized, dropped with the queue that made it, and
+    /// never rebuilt from a name.
+    adoption: Option<Arc<FinalizedOutputAdoptionTicket>>,
 }
 
 /// What a stop established about one attempt, path-free.
@@ -243,6 +253,7 @@ impl QueueItem {
             error: None,
             retryable: false,
             cancellation: None,
+            adoption: None,
         }
     }
 
@@ -998,6 +1009,9 @@ impl ConversionSlot {
         let Some(queue) = self.running_mut(operation) else {
             return false;
         };
+        // Read before the item is borrowed. A ticket needs the folder the queue
+        // is writing into, and that lives on the queue rather than on the item.
+        let destination = queue.destination.clone();
         let Some(item) = queue.items.get_mut(index) else {
             return false;
         };
@@ -1006,11 +1020,29 @@ impl ConversionSlot {
                 state,
                 retryable,
                 report,
+                finalized,
             } => {
                 item.state = state;
                 item.retryable = retryable;
                 item.report = Some(report);
                 item.error = None;
+                // Built here and nowhere else, from a finalization that
+                // actually happened. Reconstructing one later from a name and a
+                // report would be exactly the path-trusting this exists to
+                // avoid. A destination is always present by the time an item
+                // runs; without one there is nothing to adopt from.
+                item.adoption = finalized.zip(destination).map(
+                    |(finalized, destination)| {
+                        Arc::new(FinalizedOutputAdoptionTicket::new(
+                            operation,
+                            item.dataset,
+                            item.dataset_dto.file_name.clone(),
+                            item.output_file_name.clone(),
+                            destination,
+                            finalized,
+                        ))
+                    },
+                );
             }
             ItemOutcome::Refused { retryable, error } => {
                 item.state = ItemState::Failed;
@@ -1264,6 +1296,11 @@ pub(super) enum ItemOutcome {
         state: ItemState,
         retryable: bool,
         report: super::conversion::WorkspaceConversionReport,
+        /// The retained output, present exactly when the run finalized one.
+        /// Everything a later adoption needs beyond this is already on the
+        /// queue, so the ticket is assembled where the item settles rather than
+        /// carried around half-built.
+        finalized: Option<FinalizedOutput>,
     },
     /// The attempt never reached a conversion at all.
     Refused {

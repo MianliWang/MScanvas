@@ -26,6 +26,7 @@ mod conversion_run;
 mod diagnostics;
 mod discovery;
 mod failure;
+mod finalized_output;
 mod fs_guard;
 mod mzml;
 mod preview;
@@ -59,6 +60,7 @@ pub use conversion_run::{
     StagingResidue, provider_build_is_evidenced, run_conversion, run_conversion_cancellable,
 };
 pub use diagnostics::{Redactor, ReportableProcessOutput};
+pub use finalized_output::{FinalizedOutput, OutputDrift};
 pub use discovery::{
     AvailabilityState, ConfiguredLocation, DiscoveredTool, DiscoveryEnvironment, DiscoveryFailure,
     DiscoveryRequest, DiscoveryResult, DiscoverySource, ToolProbe, discover,
