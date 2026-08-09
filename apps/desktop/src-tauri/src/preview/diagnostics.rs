@@ -491,11 +491,20 @@ impl DiagnosticsExportSlot {
         self.state = ExportState::Idle;
     }
 
-    /// Returns the slot to idle after a cancelled picker or a refusal.
+    /// Returns the slot to idle however an export ended.
     ///
-    /// An ordinary no-op for a cancelled dialog: the user closed a window and
-    /// no file exists. The last recorded export is left alone, because a
-    /// cancelled export did not undo an earlier one.
+    /// Unconditional, including from `Writing`, because the guard that owns a
+    /// write calls this on every path out of it -- including a panic. A version
+    /// that refused to release a writing slot would leave the session unable to
+    /// export again for the rest of its life, which is a worse failure than the
+    /// one it would be recording.
+    ///
+    /// That is also why it is not what a cancelled dialog calls: releasing a
+    /// slot somebody else is writing is exactly the mistake this comment
+    /// explains away, so the cancel path uses the narrower one below.
+    ///
+    /// The last recorded export is left alone either way: a cancelled export did
+    /// not undo an earlier one.
     pub(super) fn release(&mut self) {
         self.state = ExportState::Idle;
     }

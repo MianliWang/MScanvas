@@ -1789,7 +1789,12 @@ impl PreviewService {
     /// last recorded export -- if there was one -- is left exactly as it was.
     pub fn cancel_conversion_diagnostics_export(&self) -> WorkspaceConversionUpdateDto {
         let mut slot = self.diagnostics_export_slot();
-        slot.release();
+        // The narrow release, not the unconditional one. Every caller reaches
+        // here before a write begins -- a dialog that could not be dispatched,
+        // one that failed, one the user closed -- and a cancel that could
+        // release a slot somebody is writing to would let a second export start
+        // beside the first.
+        slot.release_awaiting_destination();
         self.publish_diagnostics_exporting(&slot);
         drop(slot);
         self.conversion_state()
