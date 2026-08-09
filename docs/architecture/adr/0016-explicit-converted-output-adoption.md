@@ -168,6 +168,27 @@ Tickets are session-scoped and do not survive a restart. After one, the outputs
 are ordinary mzML files and `Add files…` is the way to them. That fallback is
 stated in the panel before it is needed rather than left to be discovered.
 
+### One ordering the interface approximates
+
+Rust's own commit order is authoritative and total: the mutation generation
+orders every workspace decision, and an adoption commits under that gate after
+anything that preceded it. The interface orders replies by a counter it advances
+when a request is *dispatched*, which matches that order in every case except
+one — a native drop that has already claimed Rust but whose first update has not
+yet reached the document. There the adoption is recorded first while Rust in fact
+serialised it second, and the adoption's reply can decide it was superseded and
+install nothing.
+
+The consequence is bounded and is not loss: Rust committed the rows, the roster
+it answered with is correct, and the next authoritative read shows them. What is
+missed is the immediate update.
+
+Closing it properly means carrying the committed workspace generation on the
+adoption result and ordering on that rather than on a locally counted
+approximation — a wire change, and one that belongs with the same treatment for
+the folder and drop replies rather than for adoption alone. It is recorded here
+rather than half-done.
+
 ## Consequences
 
 - `ConversionRunOutcome::Finalized` now carries the object rather than only what
