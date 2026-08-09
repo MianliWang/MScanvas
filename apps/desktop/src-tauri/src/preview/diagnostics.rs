@@ -533,24 +533,27 @@ impl DiagnosticsExportSlot {
         true
     }
 
-    /// Returns the slot to idle however an export ended.
+    /// Ends a write that is still under way, and nothing else.
     ///
-    /// Unconditional, including from `Writing`, because the guard that owns a
-    /// write calls this on every path out of it -- including a panic. A version
-    /// that refused to release a writing slot would leave the session unable to
-    /// export again for the rest of its life, which is a worse failure than the
-    /// one it would be recording.
+    /// Called by the guard that owns a write on every path out of it, including
+    /// a panic, which is why it cannot be conditional on the write having
+    /// failed: a flag left set would leave the session unable to export again
+    /// for the rest of its life.
     ///
-    /// That is also why it is not what a cancelled dialog calls: releasing a
-    /// slot somebody else is writing is exactly the mistake this comment
-    /// explains away, so the cancel path uses the narrower one below.
+    /// It *is* conditional on the slot still being that write. A successful
+    /// export returns the slot to idle before its guard falls, and another
+    /// export may reserve inside that interval -- so a release that fired
+    /// whatever it found would clear a reservation belonging to somebody else,
+    /// and the file that user was about to choose would be refused.
     ///
-    /// The last recorded export is left alone either way: a cancelled export did
-    /// not undo an earlier one.
-    pub(super) fn release(&mut self) -> bool {
-        let changed = self.is_busy();
+    /// The last recorded export is left alone either way: an export that ended
+    /// did not undo an earlier one.
+    pub(super) fn release_write(&mut self) -> bool {
+        if !matches!(self.state, ExportState::Writing) {
+            return false;
+        }
         self.state = ExportState::Idle;
-        changed
+        true
     }
 
     /// Releases an unclaimed reservation whose document is gone.

@@ -1867,6 +1867,22 @@ impl PreviewService {
         reservation_id: &str,
         destination: &Path,
     ) -> Result<ConversionDiagnosticsExportDto, PreviewErrorDto> {
+        self.write_conversion_diagnostics_seamed(reservation_id, destination, || {})
+    }
+
+    /// The body, with a seam at the one interval this write's guard is about:
+    /// after the slot has been returned to idle and before the guard falls.
+    ///
+    /// Production passes an empty hook. A test uses it to reserve a second
+    /// export inside that window, which is the only way to reach the state the
+    /// guard's condition exists for -- it is a window inside one function, so
+    /// nothing a caller can do from outside lands in it.
+    pub(super) fn write_conversion_diagnostics_seamed(
+        &self,
+        reservation_id: &str,
+        destination: &Path,
+        after_finish: impl FnOnce(),
+    ) -> Result<ConversionDiagnosticsExportDto, PreviewErrorDto> {
         let mut slot = self.diagnostics_export_slot();
         let Some((operation, retry_round)) = slot.start_writing(reservation_id) else {
             return Err(invalid_diagnostics_reservation());
@@ -1930,7 +1946,10 @@ impl PreviewService {
         // slot with no result on it.
         self.change_diagnostics(|slot| slot.finish(Some(result.clone())));
 
-        // Already idle, so this only clears the mirror it already agrees with.
+        after_finish();
+        // The slot is idle, and may already belong to an export somebody else
+        // began in the interval above. The guard ends this write and only this
+        // write, so what it finds there is left alone.
         drop(exporting);
         Ok(result)
     }
@@ -4536,7 +4555,13 @@ impl Drop for DiagnosticsExportInFlight<'_> {
         // export is seen to have ended. Releasing without moving the ordering
         // key would leave every document that installs by it still showing an
         // export under way, with every action it closes still closed.
-        self.0.change_diagnostics(DiagnosticsExportSlot::release);
+        //
+        // It ends this write and only this write. A successful export has
+        // already returned the slot to idle by the time this falls, and another
+        // export may have reserved it in between -- clearing that would refuse
+        // a file somebody else was in the middle of choosing.
+        self.0
+            .change_diagnostics(DiagnosticsExportSlot::release_write);
     }
 }
 

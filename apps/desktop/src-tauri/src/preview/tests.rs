@@ -13516,6 +13516,61 @@ fn a_reload_drops_the_answer_of_a_dialog_it_replaced() {
     fs::remove_file(&saved).expect("remove the exported diagnostics");
 }
 
+/// A finished export does not take the next one's reservation with it.
+///
+/// A successful write returns the slot to idle before the guard that owned it
+/// falls, and another export may reserve inside that interval. A guard that
+/// released whatever it found would clear a reservation belonging to somebody
+/// else, and the file that user was about to choose would be refused.
+#[test]
+fn a_finished_export_leaves_the_next_reservation_alone() {
+    let fixture = TestFile::new("diagnostics-guard");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    fs::write(destination.join("one.mzML"), b"taken").expect("occupy the planned name");
+    let update = queue_and_run(&service, &[handle], &destination);
+    let operation = terminal_operation(&update);
+    let document = current_document(&service);
+
+    let first = service
+        .begin_conversion_diagnostics_export(&operation, document)
+        .expect("the terminal queue is exportable");
+    service
+        .claim_conversion_diagnostics_export(&first.reservation_id, document)
+        .expect("claim the reservation");
+    let saved = destination.join("first.json");
+
+    // Reserved inside the interval the first export's guard falls in, which is
+    // a window inside one function and unreachable from outside it.
+    let second = std::cell::RefCell::new(None);
+    service
+        .write_conversion_diagnostics_seamed(&first.reservation_id, &saved, || {
+            *second.borrow_mut() = Some(
+                service
+                    .begin_conversion_diagnostics_export(&operation, document)
+                    .expect("a second export may be asked for"),
+            );
+        })
+        .expect("the export is written");
+    let second = second.into_inner().expect("the seam ran");
+    assert!(service.conversion_state().diagnostics.exporting);
+
+    // The second reservation is still the slot's, and still claimable.
+    service
+        .claim_conversion_diagnostics_export(&second.reservation_id, document)
+        .expect("the second reservation survives the first export's guard");
+    let again = destination.join("second.json");
+    service
+        .write_conversion_diagnostics(&second.reservation_id, &again)
+        .expect("and writes the file it chose");
+
+    assert!(saved.exists());
+    assert!(again.exists());
+    fs::remove_file(&saved).expect("remove the first export");
+    fs::remove_file(&again).expect("remove the second export");
+}
+
 /// A dialog a reload left behind cannot close the next document's export.
 ///
 /// A save dialog outlives the document that opened it. The reload releases the
