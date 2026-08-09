@@ -477,6 +477,13 @@ export interface FakePreviewApiOptions {
   readonly retry?: (
     publish: (state: WorkspaceConversionState) => void,
   ) => Promise<WorkspaceConversionState>;
+  /**
+   * How long a slot read takes to come back.
+   *
+   * A real IPC reply is not instant, and a poll that runs faster than one is a
+   * state the interface has to survive rather than a state it can assume away.
+   */
+  readonly stateReadLatency?: () => Promise<void>;
   /** Replaces the roster read entirely, for the cases where it fails. */
   readonly roster?: () => Promise<WorkspaceRoster>;
   /**
@@ -947,12 +954,15 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         capacity: 16,
       });
     },
-    getConversionState: () =>
-      Promise.resolve({
-        sequence: conversionSequence,
-        state: conversion,
-        backendQuarantined,
-      }),
+    // Answered after whatever round trip the test models, and reading the slot
+    // only once that has elapsed -- so a slow read carries the state as it was
+    // when it *arrived*, exactly as a slow IPC reply does.
+    getConversionState: async () => {
+      if (options.stateReadLatency !== undefined) {
+        await options.stateReadLatency();
+      }
+      return { sequence: conversionSequence, state: conversion, backendQuarantined };
+    },
     retryConversions: async () => {
       const settled = options.retry === undefined ? conversion : await options.retry(publishConversion);
       publishConversion(settled);

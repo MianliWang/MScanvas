@@ -141,6 +141,10 @@ export function useConversionOperation(
   const installedSequence = useRef(-1);
   const planToken = useRef(0);
   const stateToken = useRef(0);
+  // Whether a slot read is outstanding. Paired with the token above rather than
+  // replacing it: the token decides which reply may install, and this decides
+  // that there is only ever one to choose between.
+  const stateReadInFlight = useRef(false);
   // Paired with the state below it, and read by every guard: a click handler
   // that read the rendered value could start a second conversion inside the
   // render that has not committed the first one yet.
@@ -211,6 +215,16 @@ export function useConversionOperation(
   }, [onInstallationGeneration]);
 
   const readState = useCallback(() => {
+    // One at a time. The token below lets only the newest read install, so two
+    // reads overlapping would leave the older one stale on arrival -- and a
+    // poll faster than the round trip would then install nothing at all,
+    // sitting for ever on a state Rust has already moved past while adding an
+    // outstanding read every tick. A read already in flight is about to answer
+    // this same question, so there is nothing for a second one to learn.
+    if (stateReadInFlight.current) {
+      return;
+    }
+    stateReadInFlight.current = true;
     stateToken.current += 1;
     const token = stateToken.current;
     api
@@ -231,6 +245,9 @@ export function useConversionOperation(
         if (mounted.current && token === stateToken.current) {
           setReadAttempt((attempt) => attempt + 1);
         }
+      })
+      .finally(() => {
+        stateReadInFlight.current = false;
       });
   }, [api, applyUpdate]);
 

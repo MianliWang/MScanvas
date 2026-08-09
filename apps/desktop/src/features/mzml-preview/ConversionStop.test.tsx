@@ -408,6 +408,11 @@ describe("stopping a running conversion queue", () => {
           // Deliberately never settled.
         });
       },
+      // Slower than the transition poll, which is the case that matters: only
+      // the newest read may install, so overlapping reads would leave every
+      // reply stale on arrival and the panel would sit on "Retrying the
+      // failures…" for ever while adding an outstanding read every tick.
+      stateReadLatency: () => new Promise((resolve) => setTimeout(resolve, 150)),
     });
     renderApp(api);
 
