@@ -12704,6 +12704,45 @@ fn an_occupied_diagnostics_name_is_refused_and_leaves_no_residue() {
     assert_eq!(after.diagnostics.last_export, None);
 }
 
+/// A write that failed and a write that failed *and* left something in the
+/// user's folder are different things to be told.
+///
+/// The primary reason stays the reason; the residue rides beside it. Folding the
+/// second into the first would drop the only part of the failure the user has to
+/// act on, which is that there is now a file MSCanvas cannot remove.
+#[test]
+fn a_leftover_temporary_is_reported_beside_the_failure_rather_than_instead_of_it() {
+    for (clean, residual) in [
+        (
+            super::dto::diagnostics_destination_exists(false),
+            super::dto::diagnostics_destination_exists(true),
+        ),
+        (
+            super::dto::diagnostics_not_written(false),
+            super::dto::diagnostics_not_written(true),
+        ),
+        (
+            super::dto::diagnostics_not_finalized(false),
+            super::dto::diagnostics_not_finalized(true),
+        ),
+    ] {
+        // The same primary reason either way, so a reader keys off one thing.
+        assert_eq!(clean.kind, residual.kind);
+        assert_eq!(clean.summary, residual.summary);
+        // And the residue is said, once, in words, and never as a path.
+        assert_eq!(clean.detail, None, "{}", clean.kind);
+        let detail = residual
+            .detail
+            .as_deref()
+            .unwrap_or_else(|| panic!("{} says what it left behind", residual.kind));
+        assert!(detail.contains(".mscanvas-export-"), "{detail}");
+        assert!(
+            mscanvas_proteowizard::absolute_path_start(detail).is_none(),
+            "{detail}"
+        );
+    }
+}
+
 /// Scenario D: a queue whose stop could not be confirmed exports, and does so
 /// while the session has stopped trusting the backend.
 #[test]

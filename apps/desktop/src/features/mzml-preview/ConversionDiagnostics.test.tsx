@@ -388,6 +388,44 @@ describe("saving conversion diagnostics", () => {
     });
   });
 
+  it("closes the export while an adoption is under way", async () => {
+    // The other direction of the same rule. Both read one terminal queue and
+    // Rust runs one at a time, so whichever is pressed first closes the other.
+    let release: (() => void) | null = null;
+    const api = apiWith(
+      terminal([converted("file-1", "run-1.raw"), failed("file-2", "run-2.raw")]),
+      {
+        adoption: () =>
+          new Promise((resolve) => {
+            release = () => {
+              resolve({
+                operationId: "1",
+                retryRound: 0,
+                roster: { datasets: [...api.datasets()], capacity: 1_024 },
+                outcomes: [],
+              });
+            };
+          }),
+      },
+    );
+    const panel = await panelOf(api);
+
+    expect(await within(panel).findByRole("button", { name: EXPORT_LABEL })).toBeEnabled();
+    fireEvent.click(
+      within(panel).getByRole("button", { name: "Add converted output to workspace" }),
+    );
+
+    await waitFor(() => {
+      expect(within(panel).getByRole("button", { name: EXPORT_LABEL })).toBeDisabled();
+    });
+    expect(api.diagnosticsExportRequests).toEqual([]);
+
+    release!();
+    await waitFor(() => {
+      expect(within(panel).getByRole("button", { name: EXPORT_LABEL })).toBeEnabled();
+    });
+  });
+
   it("treats a dismissed save dialog as an ordinary outcome", async () => {
     const api = apiWith(terminal([failed("file-1", "run-1.raw")]), {
       diagnosticsExport: () => Promise.resolve(null),

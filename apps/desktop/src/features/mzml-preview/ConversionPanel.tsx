@@ -330,7 +330,12 @@ function ExportDiagnostics({
   // Nothing to diagnose. No control, no explanation and no empty state: the
   // queue's own result already says what happened to each item, and an action
   // that is never usable is a control that only ever teaches its own absence.
-  if (!conversion.canExportDiagnostics && !conversion.exportingDiagnostics) {
+  //
+  // Asked of whether the offer exists, not of whether it can be taken right
+  // now. A control that vanished while an adoption ran and came back afterwards
+  // would read as flicker and would take the focus of whoever was standing on
+  // it; being unavailable for a moment is what `disabled` is for.
+  if (!conversion.diagnosticsAvailable && !conversion.exportingDiagnostics) {
     return null;
   }
 

@@ -148,7 +148,17 @@ export interface ConversionOperation {
   readonly adoption: WorkspaceOutputAdoptionResult | null;
   /** Saves one local, redacted JSON diagnostics file for this terminal queue. */
   readonly exportDiagnostics: () => void;
-  /** Whether this terminal queue has anything worth diagnosing. */
+  /**
+   * Whether this terminal queue has anything worth diagnosing at all.
+   *
+   * Separate from `canExportDiagnostics`, which also answers "and right now".
+   * The interface needs both: one decides whether the offer exists, the other
+   * whether it can be taken. Collapsing them would make a control vanish while
+   * an adoption ran and reappear afterwards, which reads as flicker and takes
+   * the focus of whoever was standing on it.
+   */
+  readonly diagnosticsAvailable: boolean;
+  /** Whether it can be exported right now. */
   readonly canExportDiagnostics: boolean;
   /**
    * Whether an export is between being asked for and being finished.
@@ -777,6 +787,7 @@ export function useConversionOperation(
     eligibleOutputCount,
     adoption,
     exportDiagnostics,
+    diagnosticsAvailable: state.status === "terminal" && diagnostics.available,
     canExportDiagnostics,
     exportingDiagnostics,
     diagnosticItemCount: diagnostics.eligibleItemCount,
