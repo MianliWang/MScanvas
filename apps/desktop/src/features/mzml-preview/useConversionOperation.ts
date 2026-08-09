@@ -215,6 +215,10 @@ export function useConversionOperation(
   // because every workspace action has to stop being offered for the whole of
   // that window rather than only once Rust answers.
   const [adopting, setAdopting] = useState(false);
+  // Paired with the state above and read by the handler, like every other gate
+  // here: a click handler that read the rendered value could start a second
+  // adoption inside the render that has not committed the first one yet.
+  const adoptingRef = useRef(false);
   const [adoption, setAdoption] = useState<WorkspaceOutputAdoptionResult | null>(null);
 
   useEffect(() => {
@@ -553,9 +557,15 @@ export function useConversionOperation(
     state.status === "terminal" && eligibleOutputCount > 0 && !adopting && !retrying;
 
   const adopt = useCallback(() => {
-    if (state.status !== "terminal" || adopting) {
+    // The ref, not the rendered flag. Two activations inside one render both
+    // see `adopting` false, and the second would advance the workspace decision
+    // count for a request Rust is about to refuse -- which would then make the
+    // first one's reply look superseded and install nothing, losing rows that
+    // were actually committed.
+    if (state.status !== "terminal" || adoptingRef.current) {
       return;
     }
+    adoptingRef.current = true;
     // Marked before the request leaves, like every other gate here: the actions
     // this closes must close on the press rather than on the reply.
     setAdopting(true);
@@ -568,6 +578,7 @@ export function useConversionOperation(
     api
       .adoptConversionOutputs(operationId)
       .then((result) => {
+        adoptingRef.current = false;
         if (mounted.current) {
           setAdopting(false);
           setAdoption(result);
@@ -577,13 +588,14 @@ export function useConversionOperation(
         onOutputsAdopted.apply(result, startedAt);
       })
       .catch((cause: unknown) => {
+        adoptingRef.current = false;
         if (!mounted.current) {
           return;
         }
         setAdopting(false);
         setError(toPreviewError(cause));
       });
-  }, [adopting, api, onOutputsAdopted, state]);
+  }, [api, onOutputsAdopted, state]);
 
   const dismissError = useCallback(() => {
     setError(null);

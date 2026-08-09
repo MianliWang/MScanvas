@@ -3207,7 +3207,12 @@ impl PreviewService {
         // Refused rather than queued. The backend gate would serialize it
         // anyway, but a preview that waited behind a whole conversion would sit
         // there for as long as one takes with nothing on screen saying why.
-        if self.conversion_is_busy() || self.adoption_is_in_flight() {
+        //
+        // A conversion only. An adoption launches no process, holds no backend
+        // gate and does not touch an open preview -- refusing a read for it
+        // would turn ordinary navigation into an error for no reason of the
+        // user's, which is the opposite of what the adoption guard is for.
+        if self.conversion_is_busy() {
             return Err(conversion_busy());
         }
         let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
@@ -3423,7 +3428,11 @@ impl PreviewService {
         // gate would serialize it anyway, but a spectrum waiting behind a whole
         // conversion sits in a loading state for as long as one takes, and
         // every further selection adds another queued request nobody sees.
-        if self.conversion_is_busy() || self.adoption_is_in_flight() {
+        //
+        // A conversion only, for the reason an open says: an adoption launches
+        // nothing and leaves an open preview exactly as it is, so navigating
+        // one while outputs are being checked is ordinary work.
+        if self.conversion_is_busy() {
             return Err(conversion_busy());
         }
         let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
