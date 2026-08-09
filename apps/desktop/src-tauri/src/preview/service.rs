@@ -2101,6 +2101,12 @@ impl PreviewService {
         if pending.baseline_generation != gate.generation {
             return Err(import_superseded());
         }
+        // Again, under the gate and before the generation moves. An adoption can
+        // claim the gate in the interval since the check above, and advancing
+        // here would supersede it while still opening a picker.
+        if self.adoption_is_in_flight() {
+            return Err(conversion_busy());
+        }
         let generation = gate.advance();
         Ok(FolderImportToken { generation })
     }
@@ -2426,7 +2432,15 @@ impl PreviewService {
         // the interval before an adoption sets its flag -- and advancing here
         // would supersede that adoption whether or not this drop went on to
         // commit anything.
+        //
+        // The claim was taken a line ago and is this worker's, so declining
+        // means giving it back: a claim left set refuses every later drop, roster
+        // read and mutation for the rest of the session, which is far worse than
+        // the supersession it was avoiding. Released exactly as a failed worker
+        // releases it, waiters included.
         if self.adoption_is_in_flight() {
+            self.clear_native_drop_claim(operation_id);
+            self.workspace_mutation_ready.notify_all();
             drop(gate);
             drop(delivery);
             return None;
