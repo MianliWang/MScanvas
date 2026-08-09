@@ -200,16 +200,16 @@ function AdoptOutputs({ conversion }: { readonly conversion: ConversionOperation
     );
   }
 
-  if (conversion.adopting) {
-    return (
-      <div className="conversion-adoption">
-        <p>{ADOPT_IN_FLIGHT}</p>
-      </div>
-    );
-  }
-
   return (
     <div className="conversion-adoption">
+      {/* Said beside the action rather than instead of it. Replacing the
+          control a keyboard user just activated would drop focus to the
+          document and announce nothing; leaving it mounted and disabled keeps
+          the focus where they put it, and a live region is what tells them the
+          work finished. */}
+      <p aria-live="polite" className="quiet-text">
+        {conversion.adopting ? ADOPT_IN_FLIGHT : ""}
+      </p>
       {adoption !== null && added.length === 0 && refused.length === 0 ? (
         <p>All finalized outputs from this queue are already in the workspace.</p>
       ) : adoption !== null ? (

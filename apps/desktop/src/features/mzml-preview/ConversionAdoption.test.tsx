@@ -415,6 +415,13 @@ describe("adding converted outputs to the workspace", () => {
     expect(await within(panel).findByText("Adding converted outputs…")).toBeVisible();
     // Not called a conversion, and no fraction invented.
     expect(panel.textContent ?? "").not.toContain("%");
+    // The control the user activated is still there and still focused, said
+    // beside it rather than in place of it.
+    const adopting = within(panel).getByRole("button", {
+      name: "Add converted output to workspace",
+    });
+    expect(adopting).toBeDisabled();
+    expect(adopting).toBeVisible();
     // And the actions that would fight with it are gone or refused.
     expect(within(panel).queryByRole("button", { name: /^Retry/ })).toBeNull();
     await waitFor(() => {
