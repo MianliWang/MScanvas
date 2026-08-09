@@ -12303,13 +12303,40 @@ fn assert_no_location(path: &Path, fragments: &[&str]) {
         );
     }
     for text in &strings {
-        assert!(
-            mscanvas_proteowizard::absolute_path_start(text).is_none()
-                || text.starts_with('<')
-                || text.contains("mscanvas-export-"),
-            "an exported string looks like a path: {text}"
-        );
+        for line in scannable(text).lines() {
+            assert!(
+                mscanvas_proteowizard::absolute_path_start(line).is_none(),
+                "an exported line looks like a path: {line}"
+            );
+        }
     }
+}
+
+/// The placeholders a diagnostics export can emit.
+const PLACEHOLDERS: [&str; 5] = [
+    "<source>",
+    "<destination>",
+    "<staging>",
+    "<backend>",
+    "<user-profile>",
+];
+
+/// One exported string with its redaction placeholders neutralised.
+///
+/// The same allowance the production shape test makes, restated here rather
+/// than reused, so this helper agrees with the rule by argument instead of by
+/// calling it: what follows a placeholder is the remainder of a path whose root
+/// was already replaced, and a remainder begins with a separator. Replacing
+/// each placeholder-and-separator with an ordinary word character is what makes
+/// the rest of the line answerable without that exemption.
+fn scannable(text: &str) -> String {
+    let mut scanned = text.to_owned();
+    for placeholder in PLACEHOLDERS {
+        scanned = scanned
+            .replace(&format!("{placeholder}\\"), "x")
+            .replace(&format!("{placeholder}/"), "x");
+    }
+    scanned
 }
 
 /// A backend that fails and says a great deal about where everything is.
@@ -12321,6 +12348,13 @@ fn assert_no_location(path: &Path, fragments: &[&str]) {
 struct NoisyFailingRunner {
     source: PathBuf,
     destination: PathBuf,
+    /// Whether to also print a location nothing handed this process.
+    ///
+    /// The two halves of the contract need different backends to show. With
+    /// only known paths the excerpt survives with placeholders in it, which is
+    /// what makes the feature useful; with one unknown path anywhere in it the
+    /// whole excerpt is withheld, which is what makes it safe.
+    unknown_share: bool,
 }
 
 impl ProcessRunner for NoisyFailingRunner {
@@ -12348,9 +12382,13 @@ impl ProcessRunner for NoisyFailingRunner {
                 "error: profile {}",
                 std::env::var("USERPROFILE").unwrap_or_else(|_| String::from("C:\\Users\\nobody"))
             ),
-            String::from(r"error: share \\reporting-server\lab-share\archive\run.raw"),
             String::from("mz=101.007276 rt=1.0 intensity=1.25e+07"),
-        ] {
+        ]
+        .into_iter()
+        .chain(
+            self.unknown_share
+                .then(|| String::from(r"error: share \\reporting-server\lab-share\run.raw")),
+        ) {
             stderr.extend_from_slice(line.as_bytes());
             stderr.extend_from_slice(b"\r\n");
         }
@@ -12470,10 +12508,10 @@ fn a_real_queue_exports_only_the_attempt_that_failed() {
     fs::remove_file(&saved).expect("remove the exported diagnostics");
 }
 
-/// Scenario B: a backend that names everything, and an export that names
-/// nothing.
+/// Scenario B, first half: a backend that names every path this run knows, and
+/// an export that keeps the text with placeholders where they were.
 #[test]
-fn every_spelling_a_backend_prints_is_removed_or_withheld() {
+fn every_spelling_of_a_known_path_is_replaced_and_the_rest_survives() {
     let fixture = TestFile::new("diagnostics-redaction");
     let destination = destination_root(&fixture, "out");
     let source = fixture.thermo_raw("secret-acquisition.raw");
@@ -12482,6 +12520,7 @@ fn every_spelling_a_backend_prints_is_removed_or_withheld() {
         NoisyFailingRunner {
             source: source.clone(),
             destination: destination.clone(),
+            unknown_share: false,
         },
     )));
     let handle = add_one_acquisition(&service, &source);
@@ -12510,37 +12549,34 @@ fn every_spelling_a_backend_prints_is_removed_or_withheld() {
     );
     assert_eq!(stdout["retained"], "prefix");
 
-    match stderr["retained"].as_str() {
-        // Every registered spelling was replaced and nothing path-shaped
-        // survived, so the text is exported with placeholders in it.
-        Some("prefix") => {
-            let text = stderr["text"].as_str().expect("exported text");
-            assert!(text.contains("<source>"), "{text}");
-            assert!(
-                text.contains("<destination>") || text.contains("<staging>"),
-                "{text}"
-            );
-            assert!(text.contains("<backend>"), "{text}");
-            assert!(
-                text.contains("mz=101.007276"),
-                "ordinary backend text survives redaction: {text}"
-            );
-            assert!(!text.contains('\u{0}'), "NUL is removed");
-            assert!(!text.contains('\u{1b}'), "escape sequences are removed");
-        }
-        // The unregistered share this backend also printed is a location
-        // nothing replaced, so the whole excerpt is withheld rather than
-        // exported with it in.
-        Some("withheld") => {
-            assert_eq!(stderr["text"], serde_json::Value::Null);
-            assert_eq!(stderr["suppressed"], "residual_absolute_path");
-        }
-        other => panic!("an excerpt is either a prefix or withheld; got {other:?}"),
+    // Every path this run knows was replaced, so the text survives.
+    assert_eq!(stderr["retained"], "prefix");
+    assert_eq!(stderr["suppressed"], serde_json::Value::Null);
+    let text = stderr["text"].as_str().expect("exported text");
+    for placeholder in ["<source>", "<destination>", "<staging>", "<backend>"] {
+        assert!(
+            text.contains(placeholder),
+            "{placeholder} is missing: {text}"
+        );
     }
     assert!(
-        stderr["redactionCount"].as_u64().expect("a count") > 0,
-        "the export says how much was rewritten without saying what"
+        text.contains("mz=101.007276 rt=1.0 intensity=1.25e+07"),
+        "ordinary backend text survives redaction: {text}"
     );
+    assert!(!text.contains('\u{0}'), "NUL is removed: {text}");
+    assert!(
+        !text.contains('\u{1b}'),
+        "escape sequences are removed: {text}"
+    );
+    assert!(
+        stderr["redactionCount"].as_u64().expect("a count") >= 8,
+        "every spelling was replaced, not merely the canonical one"
+    );
+    assert_eq!(document["redaction"]["suppressedExcerptCount"], 0);
+    // Printed, because the whole claim of this feature is what the text looks
+    // like afterwards, and a green assertion does not show that to a reader.
+    println!("exported stderr: {stderr}");
+    println!("exported redaction: {}", document["redaction"]);
 
     assert_no_location(
         &saved,
@@ -12552,15 +12588,19 @@ fn every_spelling_a_backend_prints_is_removed_or_withheld() {
             "mscanvas-staging",
         ],
     );
-    // The acquisition's own name is a bounded display fact and is allowed --
-    // twice, as the source name and the name its output would have taken. It
-    // must not appear anywhere else, and above all not inside an excerpt, where
-    // it could only have arrived as part of a path.
+    // The acquisition's own name is a bounded display fact and is allowed:
+    // twice as the schema's own `sourceFileName` and `outputFileName`, and once
+    // more as the remainder of a staging path whose root was replaced. That
+    // third one carries nothing the first two do not -- the staged name is
+    // derived from the source name, and both are already exported -- which is
+    // the whole reason a remainder after a placeholder is kept rather than
+    // suppressed. What must never appear is a directory, and nothing else in
+    // this document does.
     let raw = fs::read_to_string(&saved).expect("the diagnostics file is UTF-8");
     assert_eq!(
         raw.matches("secret-acquisition").count(),
-        2,
-        "the display name appears only where the schema puts it"
+        3,
+        "the display name appears only where a display name may"
     );
     assert_eq!(item["sourceFileName"], "secret-acquisition.raw");
     assert_eq!(item["outputFileName"], "secret-acquisition.mzML");
@@ -12570,6 +12610,52 @@ fn every_spelling_a_backend_prints_is_removed_or_withheld() {
     assert!(!wire.contains("could not read"), "{wire}");
     assert!(!wire.contains("progress: reading spectra"), "{wire}");
 
+    fs::remove_file(&saved).expect("remove the exported diagnostics");
+}
+
+/// Scenario B, second half: one location nothing handed this process, and the
+/// whole excerpt is withheld rather than exported around it.
+///
+/// Fail-closed, and closed on the excerpt rather than on the line. A backend
+/// that names somewhere MSCanvas never registered is a backend this boundary
+/// cannot promise anything about, and the honest answer is to say so and keep
+/// quiet.
+#[test]
+fn one_unknown_absolute_path_withholds_the_whole_excerpt() {
+    let fixture = TestFile::new("diagnostics-suppression");
+    let destination = destination_root(&fixture, "out");
+    let source = fixture.thermo_raw("secret-acquisition.raw");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        NoisyFailingRunner {
+            source: source.clone(),
+            destination: destination.clone(),
+            unknown_share: true,
+        },
+    )));
+    let handle = add_one_acquisition(&service, &source);
+
+    let update = queue_and_run(&service, &[handle], &destination);
+    let operation = terminal_operation(&update);
+    let saved = destination.join("diagnostics.json");
+    export_diagnostics(&service, &operation, &saved).expect("the export is written");
+
+    let document = read_export(&saved);
+    let stderr = &document["items"].as_array().expect("items")[0]["stderr"];
+
+    assert_eq!(stderr["retained"], "withheld");
+    assert_eq!(stderr["text"], serde_json::Value::Null);
+    assert_eq!(stderr["suppressed"], "residual_absolute_path");
+    // Withholding the text does not withhold the facts about it. A reader has
+    // to be able to tell "the backend said nothing" from "the backend said
+    // something this refused to repeat".
+    assert!(stderr["totalBytes"].as_u64().expect("a total") > 0);
+    assert!(stderr["redactionCount"].as_u64().expect("a count") > 0);
+    assert_eq!(stderr["lossy"], true);
+    assert_eq!(document["redaction"]["suppressedExcerptCount"], 1);
+
+    assert_no_location(&saved, &["reporting-server", "lab-share"]);
+    println!("withheld stderr: {stderr}");
     fs::remove_file(&saved).expect("remove the exported diagnostics");
 }
 
