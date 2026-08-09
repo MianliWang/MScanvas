@@ -24,6 +24,19 @@ import { toPreviewError } from "./contracts";
  */
 const POLL_INTERVAL_MS = 2_000;
 
+/**
+ * How often the slot is re-read while a dispatched retry has not been seen to
+ * move it.
+ *
+ * Much shorter than the ordinary interval, and deliberately only for that one
+ * window. The retry command proves the calling document before it moves the
+ * slot, so a read issued beside it can land first and be discarded — and until
+ * a running queue is visible there is nothing for the user to stop. This is a
+ * slot read, which launches nothing, and it stops the moment the transition is
+ * seen.
+ */
+const RETRY_TRANSITION_POLL_MS = 100;
+
 /** The plan summary for one row, and how the reading of it went. */
 export type ConversionPlanState =
   | { readonly status: "none" }
@@ -254,6 +267,12 @@ export function useConversionOperation(
     state.status === "running" ||
     state.status === "stopping";
 
+  // A retry this document dispatched, for a slot that has not been seen to move
+  // yet. It is the one window in this workflow where the authoritative state is
+  // known to be about to change and the interface has nothing to offer until it
+  // does.
+  const awaitingRetryTransition = retrying && state.status === "terminal";
+
   // While something is under way, and not otherwise. An idle slot changes only
   // when this document changes it, and a terminal report does not change at
   // all — so polling either would be asking a question whose answer is already
@@ -265,15 +284,22 @@ export function useConversionOperation(
     // Leading, not only on the interval. A retry moves the slot to running
     // inside a command that does not answer until the whole rerun is over, so
     // the first thing this document can learn about that queue is a read of its
-    // own -- and waiting a poll interval for it is a window in which a rerun of
-    // several acquisitions offers no way to stop it. The interval still covers
-    // the case where this read lands before Rust made the transition.
+    // own.
     readState();
-    const timer = setInterval(readState, POLL_INTERVAL_MS);
+    // And quickly until it arrives. The retry command proves the calling
+    // document before it moves the slot, so the read issued beside it can and
+    // often does land first -- and one that lands first is discarded by the
+    // sequence guard, leaving a rerun of several acquisitions with no Stop for
+    // the ordinary interval. Asking again in a fraction of that costs one slot
+    // read, which launches nothing, and only for as long as the transition
+    // takes: the moment the running queue is visible this reverts to the
+    // interval the rest of the workflow uses.
+    const interval = awaitingRetryTransition ? RETRY_TRANSITION_POLL_MS : POLL_INTERVAL_MS;
+    const timer = setInterval(readState, interval);
     return () => {
       clearInterval(timer);
     };
-  }, [busy, readState]);
+  }, [awaitingRetryTransition, busy, readState]);
 
   const describe = useCallback(
     (handles: readonly string[]) => {

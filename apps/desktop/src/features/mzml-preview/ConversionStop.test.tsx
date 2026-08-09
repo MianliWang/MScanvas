@@ -393,10 +393,16 @@ describe("stopping a running conversion queue", () => {
       initialDatasets: DATASETS,
       availability: availableBackend,
       initialConversion: completed,
-      // Modelled as Rust behaves: the slot moves to running inside the command,
-      // and the command does not answer until the whole rerun is over. This one
-      // never answers, so everything below happens inside the window under test.
-      retry: (publish) => {
+      // Modelled as Rust behaves, including the part that makes this hard: the
+      // command proves the calling document before it moves the slot, so the
+      // read this document issues beside the dispatch lands *first* and is
+      // discarded by the sequence guard. Recovering from that is the case under
+      // test, so the transition is deliberately deferred rather than immediate.
+      // The command itself never answers, because Rust's does not until the
+      // whole rerun is over.
+      retry: async (publish) => {
+        await Promise.resolve();
+        await Promise.resolve();
         publish(runningQueue());
         return new Promise<WorkspaceConversionState>(() => {
           // Deliberately never settled.
