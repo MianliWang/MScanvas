@@ -41,7 +41,7 @@ use super::dto::{
 };
 use super::installation::InstallationIdentity;
 use super::operation::{
-    AdmittedDestination, ConversionQueue, ConversionSlot, QueueItem, StopAccepted,
+    AdmittedDestination, ConversionQueue, ConversionSlot, QueueItem, StopAccepted, TerminalReason,
 };
 /// The share-mode probe that answers whether a file is still held open. It
 /// lives beside the flags the lease is opened with, because that is what makes
@@ -6697,6 +6697,11 @@ struct ConvertingProvider<R = FakeConversionRunner> {
     /// fixed answer can never advance the service's installation sequence, and
     /// a queue that spans two installations is the thing being tested.
     installation_label: Arc<Mutex<String>>,
+    /// How many times a backend has been resolved for a conversion. In
+    /// production this runs the installed tools' help, so a test can say that a
+    /// queue which will convert nothing spent nothing proving which build it
+    /// was not going to use.
+    bindings: Arc<AtomicUsize>,
 }
 
 impl<R: ProcessRunner + Send + Sync> ConvertingProvider<R> {
@@ -6708,7 +6713,13 @@ impl<R: ProcessRunner + Send + Sync> ConvertingProvider<R> {
             preview_started: Mutex::new(None),
             preview_release: Mutex::new(None),
             installation_label: Arc::new(Mutex::new(String::from("msconvert"))),
+            bindings: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// How many backend resolutions this provider has been asked for.
+    fn bindings(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.bindings)
     }
 
     /// The name this provider will answer with, changeable from the test.
@@ -6778,6 +6789,7 @@ impl<R: ProcessRunner + Send + Sync> PreviewProvider for ConvertingProvider<R> {
     }
 
     fn conversion_backend(&self) -> Result<ConversionBackend<'_>, PreviewErrorDto> {
+        self.bindings.fetch_add(1, Ordering::SeqCst);
         Ok(ConversionBackend {
             capabilities: self.capabilities.clone(),
             installation: Some(backend(
@@ -11472,6 +11484,138 @@ fn a_quarantined_session_rechecks_without_launching_anything() {
         elsewhere.installation_generation, before.installation_generation,
         "a refused change is not a change"
     );
+}
+
+/// A queue stopped while it waited on the backend gate resolves no backend.
+///
+/// Resolving one runs the installed tools' help, which is two processes spent
+/// proving which build a queue that will convert nothing was not going to use.
+#[test]
+fn a_queue_stopped_behind_the_gate_resolves_no_backend() {
+    let fixture = TestFile::new("queue-stop-gate-first");
+    let destination = destination_root(&fixture, "out");
+    let (provider, observe_start, release_preview) =
+        ConvertingProvider::faithful().parking_the_first_preview();
+    let bindings = provider.bindings();
+    let service = Arc::new(PreviewService::new(Box::new(provider)));
+    let preview_source = service
+        .add_dataset(&fixture.path)
+        .expect("add the preview dataset");
+    let handles: Vec<String> = ["one.raw", "two.raw"]
+        .iter()
+        .map(|name| add_one_acquisition(&service, &fixture.thermo_raw(name)))
+        .collect();
+
+    // A preview holds the one backend lane, which is what a queue waits behind.
+    let opening = std::thread::spawn({
+        let service = Arc::clone(&service);
+        let handle = preview_source.handle.clone();
+        move || service.open_preview(&handle)
+    });
+    observe_start
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the preview reached the provider and holds the gate");
+
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("the queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let worker = {
+        let service = Arc::clone(&service);
+        let destination = destination.clone();
+        std::thread::spawn(move || service.run_claimed_conversion(operation, &destination))
+    };
+    // Waited for rather than assumed: the worker marks the queue running and
+    // then blocks on the gate, and the stop below is only the case under test
+    // once it has.
+    while !matches!(
+        service.conversion_state().state,
+        WorkspaceConversionStateDto::Running { .. }
+    ) {
+        std::thread::yield_now();
+    }
+
+    service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("the running queue of this document is stoppable");
+
+    release_preview
+        .send(())
+        .expect("release the parked preview");
+    let update = worker.join().expect("the queue worker finishes");
+    opening.join().expect("the preview finishes").ok();
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Stopped
+    );
+    let WorkspaceConversionStateDto::Terminal { queue, .. } = &update.state else {
+        panic!("the queue reaches a terminal state");
+    };
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::NotRun,
+            ConversionQueueItemStateDto::NotRun
+        ],
+        "nothing ran, so nothing is an attempt"
+    );
+    assert_eq!(
+        bindings.load(Ordering::SeqCst),
+        0,
+        "no build was resolved for a queue that will convert nothing"
+    );
+    assert_eq!(
+        entry_names(&destination),
+        Vec::<String>::new(),
+        "no output and no staging in the folder the user chose"
+    );
+}
+
+/// A stop accepted while the worker was deciding is not overwritten by the
+/// completion the worker was about to commit.
+///
+/// The worker reads the stop flag and then has to take the slot lock to commit
+/// the terminal state. A stop landing in that interval moves the slot to
+/// stopping and tells its caller the request was accepted -- so a completion
+/// arriving afterwards would report a queue the user stopped as one that ran to
+/// its own end, and offer a retry over it. Asked of the slot directly, because
+/// the interval is a lock ordering rather than something a worker thread can be
+/// scheduled into on demand.
+#[test]
+fn a_stop_accepted_while_a_queue_settles_is_not_overwritten_by_completion() {
+    let mut slot = ConversionSlot::default();
+    let queue = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        vec![test_queue_item()],
+    )
+    .expect("one item is a queue");
+    let _ = slot.begin(queue).expect("reservation");
+    let operation = slot
+        .claim(&reservation_handle(&slot), 0)
+        .expect("claim the reservation");
+    assert!(slot.start_running(operation, test_destination()));
+
+    // The worker has observed no stop and is about to commit a completion.
+    assert!(!slot.stop_requested(operation));
+    // The stop lands first, and its caller is told it was accepted.
+    assert!(matches!(
+        slot.request_stop(operation).expect("stoppable"),
+        StopAccepted::Requested(_)
+    ));
+    slot.finish(operation, None, TerminalReason::Completed);
+
+    let update = slot.read(false);
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Stopped,
+        "a stop the user was told had been accepted is what the queue reports"
+    );
+    // And it is terminal in the way a stopped queue is: never rerun in place.
+    assert!(slot.begin_retry().is_none());
 }
 
 /// No read ever reports a queue whose stop could not be confirmed beside a

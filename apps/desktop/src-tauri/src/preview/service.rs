@@ -1465,6 +1465,15 @@ impl PreviewService {
             drop(running);
             return self.refuse_queue(operation, backend_quarantined());
         }
+        // Before the backend is resolved, not after. Resolving it runs the
+        // installed tools' help, so a queue stopped while it waited behind
+        // another operation would otherwise spend two processes proving which
+        // build it was not going to use. Nothing has been launched at this
+        // point, so the whole queue is stranded for nothing.
+        if self.conversion_slot().stop_requested(operation) {
+            drop(running);
+            return self.finish_queue(operation, TerminalReason::Stopped);
+        }
         // Bound once, for the whole queue. Binding per item would let a batch
         // span two installations, and the evidence a conversion is gated on is
         // a statement about one exact build.
@@ -1507,10 +1516,8 @@ impl PreviewService {
             return self.refuse_queue(operation, error);
         }
 
-        // Asked after the gate, which is where a stop made while this queue was
-        // waiting behind another backend operation lands. Nothing has been
-        // launched at this point, so the whole queue is stranded and no process
-        // is spent proving it.
+        // Again, because binding the installation released the lock and a stop
+        // can have landed in between. Still before any item.
         if self.conversion_slot().stop_requested(operation) {
             drop(running);
             return self.finish_queue(operation, TerminalReason::Stopped);
@@ -1649,16 +1656,11 @@ impl PreviewService {
             }
         }
 
-        let reason = if self.conversion_slot().stop_requested(operation) {
-            // Every item ran, and the user asked for it to stop. There is
-            // nothing left to strand, and it is still a stopped queue: it is
-            // not offered a retry, because the batch is not what the user is
-            // waiting on any more.
-            TerminalReason::Stopped
-        } else {
-            TerminalReason::Completed
-        };
-        let update = self.finish_queue(operation, reason);
+        // Every item ran. Whether that is a completed queue or a stopped one is
+        // decided by the slot, under the one lock that commits it -- reading
+        // the flag here and committing afterwards would let a stop accepted in
+        // between be answered as accepted and then reported as a completion.
+        let update = self.finish_queue(operation, TerminalReason::Completed);
         drop(running);
         update
     }

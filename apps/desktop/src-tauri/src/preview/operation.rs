@@ -1032,8 +1032,20 @@ impl ConversionSlot {
         error: Option<PreviewErrorDto>,
         reason: TerminalReason,
     ) {
+        // Read before the queue is borrowed, and decisive. A worker observes
+        // this flag and then has to take this lock to commit; a stop landing in
+        // between was answered to its caller as accepted, so an ordinary
+        // completion arriving afterwards must not overwrite it. Only a
+        // completion is upgraded: `Stopped` and `StopFailed` are what the
+        // attempt itself produced, and no flag read here can contradict them.
+        let stop_requested = self.stop_requested;
         let Some(queue) = self.running_mut(operation) else {
             return;
+        };
+        let reason = if reason == TerminalReason::Completed && stop_requested {
+            TerminalReason::Stopped
+        } else {
+            reason
         };
         if error.is_some() {
             queue.error = error;
