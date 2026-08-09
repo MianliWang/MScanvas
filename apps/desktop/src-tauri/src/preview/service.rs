@@ -1805,13 +1805,19 @@ impl PreviewService {
     ///
     /// An ordinary outcome. Nothing was created, nothing was written, and the
     /// last recorded export -- if there was one -- is left exactly as it was.
-    pub fn cancel_conversion_diagnostics_export(&self) -> WorkspaceConversionUpdateDto {
-        // The narrow release, not the unconditional one. Every caller reaches
-        // here before a write begins -- a dialog that could not be dispatched,
-        // one that failed, one the user closed -- and a cancel that could
-        // release a slot somebody is writing to would let a second export start
-        // beside the first.
-        self.change_diagnostics(DiagnosticsExportSlot::release_awaiting_destination);
+    pub fn cancel_conversion_diagnostics_export(
+        &self,
+        reservation_id: &str,
+    ) -> WorkspaceConversionUpdateDto {
+        // Named, and narrow. Named because a save dialog outlives the document
+        // that opened it: a reload releases the reservation while the window is
+        // still up, the replacement may begin an export of its own, and the old
+        // dialog then closes and says so -- an unnamed cancel would take the
+        // replacement's reservation with it, and two dialogs for one queue
+        // carry the same operation, so only the identifier tells them apart.
+        // Narrow because it releases only a slot still awaiting a destination,
+        // so it can never end a write.
+        self.change_diagnostics(|slot| slot.cancel(reservation_id));
         self.conversion_state()
     }
 

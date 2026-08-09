@@ -496,6 +496,33 @@ impl DiagnosticsExportSlot {
         true
     }
 
+    /// Returns the slot to idle after one exact dialog closed with nothing.
+    ///
+    /// Named by the queue and the settling it was opened for, exactly as a
+    /// conversion picker's cancellation is named by its operation. A dialog
+    /// outlives the document that opened it: a reload releases the reservation
+    /// while the window is still on screen, the replacement can begin an export
+    /// of its own, and the old dialog then closes and reports that it closed.
+    /// An unnamed cancel would take the replacement's reservation with it, and
+    /// the file the user was in the middle of choosing would be refused.
+    /// Named by the reservation and by nothing weaker. Two dialogs for one
+    /// terminal queue carry the same operation and the same settling, so those
+    /// cannot tell the abandoned one from the live one; the identifier can,
+    /// because exactly one was ever issued for each.
+    pub(super) fn cancel(&mut self, reservation_id: &str) -> bool {
+        let Some(requested) = DiagnosticsReservationId::parse(reservation_id) else {
+            return false;
+        };
+        let ExportState::AwaitingDestination { reservation, .. } = self.state else {
+            return false;
+        };
+        if reservation != requested {
+            return false;
+        }
+        self.state = ExportState::Idle;
+        true
+    }
+
     /// Returns the slot to idle however an export ended.
     ///
     /// Unconditional, including from `Writing`, because the guard that owns a

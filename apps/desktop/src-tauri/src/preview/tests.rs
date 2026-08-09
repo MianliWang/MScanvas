@@ -12876,8 +12876,10 @@ fn an_export_answers_only_for_the_current_document_and_queue() {
         "invalid_diagnostics_reservation"
     );
 
-    // Cancelling the dialog is an ordinary no-op that returns the offer.
-    let after = service.cancel_conversion_diagnostics_export();
+    // Cancelling the dialog is an ordinary no-op that returns the offer. Named
+    // by the queue and settling the dialog was opened for, so a cancel from a
+    // window a reload left behind cannot close somebody else's.
+    let after = service.cancel_conversion_diagnostics_export(&reservation.reservation_id);
     assert!(!after.diagnostics.exporting);
     assert!(after.diagnostics.available);
     assert_eq!(after.diagnostics.last_export, None);
@@ -13417,11 +13419,11 @@ fn every_diagnostics_transition_moves_the_ordering_key() {
     assert!(written.diagnostics.last_export.is_some());
 
     // A cancelled dialog moves it too, because it is what returns the offer.
-    service
+    let second = service
         .begin_conversion_diagnostics_export(&operation, document)
         .expect("a second export may be asked for");
     let asked = service.conversion_state().sequence;
-    let cancelled = service.cancel_conversion_diagnostics_export();
+    let cancelled = service.cancel_conversion_diagnostics_export(&second.reservation_id);
     assert!(cancelled.sequence > asked, "so is closing the dialog");
     assert!(!cancelled.diagnostics.exporting);
 
@@ -13513,6 +13515,53 @@ fn a_reload_drops_the_answer_of_a_dialog_it_replaced() {
     assert!(!recovered.diagnostics.exporting);
     assert_eq!(recovered.diagnostics.last_export, None);
     export_diagnostics(&service, &operation, &saved).expect("the replacement exports");
+    fs::remove_file(&saved).expect("remove the exported diagnostics");
+}
+
+/// A dialog a reload left behind cannot close the next document's export.
+///
+/// A save dialog outlives the document that opened it. The reload releases the
+/// reservation while the window is still up, the replacement begins an export
+/// of its own, and only then does the old window close and report that it did.
+/// An unnamed cancel would take the replacement's reservation with it, and the
+/// file that user was in the middle of choosing would be refused.
+#[test]
+fn a_cancel_from_a_replaced_document_cannot_close_the_next_export() {
+    let fixture = TestFile::new("diagnostics-cancel-race");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    fs::write(destination.join("one.mzML"), b"taken").expect("occupy the planned name");
+    let update = queue_and_run(&service, &[handle], &destination);
+    let operation = terminal_operation(&update);
+    // The first document opens a dialog, then goes away.
+    let first = service
+        .begin_conversion_diagnostics_export(&operation, current_document(&service))
+        .expect("the terminal queue is exportable");
+    service
+        .claim_conversion_diagnostics_export(&first.reservation_id, current_document(&service))
+        .expect("claim the reservation");
+    service.begin_webview_document();
+
+    // The replacement asks for its own, and gets as far as an open dialog.
+    let second = service
+        .begin_conversion_diagnostics_export(&operation, current_document(&service))
+        .expect("the replacement may export");
+    let (claimed, round) = service
+        .claim_conversion_diagnostics_export(&second.reservation_id, current_document(&service))
+        .expect("claim the replacement's reservation");
+
+    // Only now does the abandoned window close and say so.
+    service.cancel_conversion_diagnostics_export(&first.reservation_id);
+
+    assert!(
+        service.conversion_state().diagnostics.exporting,
+        "the replacement's dialog is still open"
+    );
+    let saved = destination.join("diagnostics.json");
+    service
+        .write_conversion_diagnostics(claimed, round, &saved)
+        .expect("and the file it chose is still written");
     fs::remove_file(&saved).expect("remove the exported diagnostics");
 }
 

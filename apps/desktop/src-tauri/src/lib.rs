@@ -426,10 +426,15 @@ async fn save_workspace_conversion_diagnostics(
         // leaves nothing to close it, so without this the session would hold a
         // reservation whose dialog does not exist -- and every action on the
         // terminal queue would stay refused until a reload.
-        service.cancel_conversion_diagnostics_export();
+        service.cancel_conversion_diagnostics_export(&reservation_id);
         return Err(diagnostics_picker_unavailable());
     }
 
+    // Moved into the worker so a cancellation can name the exact dialog it is
+    // closing. Two dialogs for one terminal queue carry the same operation and
+    // the same settling, so the identifier is the only thing that tells an
+    // abandoned window from a live one.
+    let cancelled_reservation = reservation_id;
     // The wait spans the modal dialog and then the write, neither of which is
     // something to hold an async worker for.
     off_the_async_runtime(move || {
@@ -442,12 +447,12 @@ async fn save_workspace_conversion_diagnostics(
                 // The dialog itself failed. That is a refusal of this export,
                 // not a write that went wrong, and the slot has to be released
                 // either way.
-                service.cancel_conversion_diagnostics_export();
+                service.cancel_conversion_diagnostics_export(&cancelled_reservation);
                 return Err(error);
             }
         };
         let Some(destination) = chosen else {
-            return Ok(service.cancel_conversion_diagnostics_export());
+            return Ok(service.cancel_conversion_diagnostics_export(&cancelled_reservation));
         };
         service.write_conversion_diagnostics(operation, retry_round, &destination)?;
         Ok(service.conversion_state())
