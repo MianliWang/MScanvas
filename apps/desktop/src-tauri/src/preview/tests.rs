@@ -11755,6 +11755,12 @@ fn no_read_reports_an_unconfirmed_stop_beside_a_trusted_backend() {
             // observation the invariant is about.
             let mut settled_observations = 0_usize;
             loop {
+                // Read before the read, break after it. A read already under way
+                // when the flag is set describes the queue as it was *before*
+                // the worker finished, so deciding to stop on the flag first is
+                // what makes the last read land after the settling rather than
+                // possibly across it.
+                let last = stop_reading.load(Ordering::Relaxed);
                 let update = service.conversion_state();
                 if matches!(
                     update.state,
@@ -11769,7 +11775,7 @@ fn no_read_reports_an_unconfirmed_stop_beside_a_trusted_backend() {
                     );
                     settled_observations += 1;
                 }
-                if stop_reading.load(Ordering::Relaxed) {
+                if last {
                     break;
                 }
             }
