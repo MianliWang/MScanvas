@@ -2451,10 +2451,15 @@ impl PreviewService {
         // the supersession it was avoiding. Released exactly as a failed worker
         // releases it, waiters included.
         if self.adoption_is_in_flight() {
+            drop(gate);
+            // Answered, not merely declined. Nothing else will publish for this
+            // drop -- the claim was this worker's -- so returning silently would
+            // leave the interface saying a drop was being imported for the rest
+            // of the session. The same transient refusal the commit half uses.
+            self.drop_updates
+                .publish_transient(delivery, conversion_busy_state());
             self.clear_native_drop_claim(operation_id);
             self.workspace_mutation_ready.notify_all();
-            drop(gate);
-            drop(delivery);
             return None;
         }
 

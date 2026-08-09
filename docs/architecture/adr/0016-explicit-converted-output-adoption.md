@@ -189,6 +189,19 @@ approximation — a wire change, and one that belongs with the same treatment fo
 the folder and drop replies rather than for adoption alone. It is recorded here
 rather than half-done.
 
+### The identity half is Windows-only, as it has always been
+
+ADR 0006 claims the filesystem-identity guarantee for Windows and no other
+platform, and finalization says the same: the non-Windows path links from the
+staged *name* and does not carry the object-bound guarantee. Adoption inherits
+that exactly. On Windows both halves of the invariant hold; elsewhere the byte
+comparison runs and the identity comparison has no object to make, so a
+byte-identical substitution would be admitted.
+
+That is the existing boundary rather than a new gap, and it is stated here so
+the invariant is not read as platform-independent. Windows is the platform this
+application ships on and the only one its CI builds.
+
 ### What a supersession does not interrupt
 
 Supersession is observed between outputs, not inside one. A reload or a mutation
