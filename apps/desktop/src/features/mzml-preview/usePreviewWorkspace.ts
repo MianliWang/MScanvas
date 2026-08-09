@@ -1774,6 +1774,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   // like any other mutation: adopted whole, with the query, the sort and the
   // preview on screen left exactly as the user had them.
   const adoptOutputs = useCallback((result: WorkspaceOutputAdoptionResult) => {
+    // Counted as a workspace decision, like a removal or a clear. An import or
+    // a drop that committed in Rust before this one can still have a reply in
+    // flight, and that reply carries a roster from before these rows existed;
+    // advancing here is what makes it recognise itself as superseded rather
+    // than installing a list the adopted rows are missing from.
+    workspaceMutations.current += 1;
     dispatchRoster({ type: "outputsAdopted", result });
   }, []);
   const conversion = useConversionOperation(reconcileConversionGeneration, adoptOutputs);

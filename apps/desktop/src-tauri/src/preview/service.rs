@@ -1534,17 +1534,27 @@ impl PreviewService {
                 let output_file_name = ticket.output_file_name().to_owned();
                 let source_handle = ticket.source().handle();
                 match accepted {
-                    Ok(accepted) => PendingAdoption::Registered {
-                        item_index: index,
-                        source_handle,
-                        output_file_name,
-                        outcome: workspace.registry.add_converted(
+                    Ok(admitted) => {
+                        let (accepted, no_writers) = admitted.into_parts();
+                        let outcome = workspace.registry.add_converted(
                             accepted,
                             ticket.source(),
                             ticket.source_display_name().to_owned(),
                             ticket.operation(),
-                        ),
-                    },
+                        );
+                        // Released here and not a statement earlier. What was
+                        // proved about this file is that its bytes are the
+                        // validated ones; that stays true only while nobody may
+                        // write it, so the hold ends when the row exists rather
+                        // than when the check did.
+                        drop(no_writers);
+                        PendingAdoption::Registered {
+                            item_index: index,
+                            source_handle,
+                            output_file_name,
+                            outcome,
+                        }
+                    }
                     Err(refusal) => PendingAdoption::Refused {
                         item_index: index,
                         source_handle,

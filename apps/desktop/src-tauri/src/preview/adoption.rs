@@ -155,23 +155,32 @@ impl FinalizedOutputAdoptionTicket {
     /// Answers with the first reason the output cannot be admitted. Nothing is
     /// created, nothing is written, and the file is left exactly as it was found
     /// on every path.
-    pub(super) fn accept(&self) -> Result<AcceptedFile, AdoptionRefusal> {
+    pub(super) fn accept(&self) -> Result<AdmittedOutput, AdoptionRefusal> {
         // Held, not merely checked, and held for the whole of the inspection.
         // Proving the root and then reaching a name inside it are two steps, and
         // a directory that could be renamed away between them would leave the
         // proof describing one directory and the name resolving inside another.
         // Admission withholds delete sharing on the directory, which is what
         // stops that for as long as this lives.
-        let _root = self.held_destination_root()?;
+        let root = self.held_destination_root()?;
         let output = self.destination.root().join(&self.output_file_name);
         // Held for the same reason one level down. The retention this ticket
         // carries deliberately permits writers, so this is what makes "the bytes
         // are still these" true at the moment it is said rather than a moment
         // before.
-        let _no_writers = hold_against_writers(&output)?;
+        let no_writers = hold_against_writers(&output)?;
         let accepted = accept_mzml_file(&output).map_err(|error| refusal_of(&error.kind))?;
         self.recognises(&accepted)?;
-        Ok(accepted)
+        // Both holds travel with the accepted file rather than ending here. The
+        // caller checks every other output before it commits any of them, which
+        // for a queue of large documents is not a short interval -- and a
+        // rewrite inside it would put bytes into the workspace that no longer
+        // match the ones just proved.
+        Ok(AdmittedOutput {
+            accepted,
+            _root: root,
+            no_writers,
+        })
     }
 
     /// The admitted destination root, proved to still be the same directory and
@@ -217,6 +226,33 @@ impl FinalizedOutputAdoptionTicket {
     }
 }
 
+/// One output that passed every check, with the holds that keep it true.
+///
+/// The checks establish that this object is the finalized one and still holds
+/// the validated bytes. That stays true only while nobody may write it, so the
+/// writer-excluding hold and the directory it lives in travel with the accepted
+/// file and are released by the commit rather than by the check.
+pub(super) struct AdmittedOutput {
+    accepted: AcceptedFile,
+    /// The directory, still the admitted one. Held so the file cannot be moved
+    /// out from under the row about to name it.
+    _root: DestinationHold,
+    /// Held until the registry has the row. Named rather than underscored
+    /// because the commit drops it deliberately, at a point that matters.
+    no_writers: WriterExclusion,
+}
+
+impl AdmittedOutput {
+    /// Takes the file to register, and the hold to release once it is.
+    ///
+    /// Two values rather than one, so the caller cannot accidentally release
+    /// the hold before the row exists: dropping the second is a statement, and
+    /// it has to be written where it happens.
+    pub(super) fn into_parts(self) -> (AcceptedFile, WriterExclusion) {
+        (self.accepted, self.no_writers)
+    }
+}
+
 /// Deliberately opaque. It holds a handle, a destination and two names, and none
 /// of them is something a log may carry.
 impl std::fmt::Debug for FinalizedOutputAdoptionTicket {
@@ -233,8 +269,16 @@ impl std::fmt::Debug for FinalizedOutputAdoptionTicket {
 /// Reparse points are not followed: a link that appeared at the final name is
 /// not the object this queue finalized, and following it would ask the identity
 /// comparison a question about somewhere else entirely.
+/// What keeps an inspected output from being written while it is admitted.
 #[cfg(windows)]
-fn hold_against_writers(output: &Path) -> Result<File, AdoptionRefusal> {
+pub(super) type WriterExclusion = File;
+
+/// Nothing, elsewhere, and deliberately: this platform takes no such hold.
+#[cfg(not(windows))]
+pub(super) type WriterExclusion = ();
+
+#[cfg(windows)]
+fn hold_against_writers(output: &Path) -> Result<WriterExclusion, AdoptionRefusal> {
     use std::os::windows::fs::OpenOptionsExt as _;
 
     const FILE_READ_DATA: u32 = 0x0000_0001;
@@ -258,7 +302,7 @@ fn hold_against_writers(output: &Path) -> Result<File, AdoptionRefusal> {
 
 /// No platform outside Windows offers the hold, and this one does not claim it.
 #[cfg(not(windows))]
-fn hold_against_writers(output: &Path) -> Result<(), AdoptionRefusal> {
+fn hold_against_writers(output: &Path) -> Result<WriterExclusion, AdoptionRefusal> {
     match std::fs::symlink_metadata(output) {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(AdoptionRefusal::Missing),
