@@ -209,6 +209,14 @@ output auto-import or auto-preview.
   a cancelled one. That is the name the plan derived and the queue displays
   throughout; the claim that a file *was produced* lives in the report, and a
   cancelled item has none.
+- Because a cancelled item has no report, anything a report would normally carry
+  has to be read from its cancellation facts instead. Staging residue is the one
+  that matters to the user: what cleanup failed to remove is in the folder they
+  chose, so it is said for a cancelled item exactly as it is for a finalized one.
+- A queue whose stop could not be confirmed is never headed "Queue stopped". The
+  heading someone skims is the one place the unqualified claim must not be made
+  and then walked back by the warning below it, so both the panel and the live
+  region say the stop could not be confirmed.
 
 ## Alternatives considered
 

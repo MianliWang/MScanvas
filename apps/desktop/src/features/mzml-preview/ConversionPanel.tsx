@@ -336,7 +336,10 @@ function QueueState({
           </p>
         </>
       ) : state.reason === "stopFailed" ? (
-        <p>Queue stopped</p>
+        // Deliberately not "Queue stopped". That state means a converter may
+        // still be running, and a heading someone skims is exactly where the
+        // claim must not be made and then walked back by the warning below it.
+        <p>Stop could not be confirmed</p>
       ) : state.reason === "stopped" ? (
         <p>Queue stopped</p>
       ) : (
@@ -406,8 +409,11 @@ function QueueState({
               </>
             )}
             {/* Cleanup failing is the user's problem, not only MSCanvas', because
-                what is left behind is in the folder they chose. */}
-            {item.report?.stagingResidue == null ? null : (
+                what is left behind is in the folder they chose. Read from both
+                places it can be recorded: a cancelled item has no report by
+                construction, so a residue it left would otherwise be knowable
+                to MSCanvas and invisible to the person whose folder it is in. */}
+            {(item.report?.stagingResidue ?? item.cancellation?.stagingResidue) == null ? null : (
               <>
                 <span className="visually-hidden">, </span>
                 <span className="conversion-queue-residue">{RESIDUE_EXPLANATION}</span>

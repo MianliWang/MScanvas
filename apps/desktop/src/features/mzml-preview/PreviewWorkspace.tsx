@@ -784,7 +784,9 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
       : `Converting item ${String(position + 1)} of ${String(queue.itemCount)}, ${current.fileName}.`;
   }
   if (state.status === "terminal" && state.reason === "stopFailed") {
-    return `Queue stopped. MSCanvas could not confirm that the backend process stopped.${
+    // Not "Queue stopped" either. The one thing this state does not establish
+    // is that the queue's converter stopped.
+    return `Stop could not be confirmed. MSCanvas could not confirm that the backend process stopped.${
       workspace.conversion.backendQuarantined
         ? " Restart MSCanvas before starting another preview or conversion."
         : ""

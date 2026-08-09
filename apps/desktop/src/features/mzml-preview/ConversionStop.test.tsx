@@ -270,6 +270,54 @@ describe("stopping a running conversion queue", () => {
     ).toBeVisible();
   });
 
+  it("names a temporary folder a cancelled item left in the user's destination", async () => {
+    // A cancelled item carries no report by construction, so the residue it
+    // left is recorded only on its cancellation facts. What is left behind is
+    // in the folder the user chose, which makes it theirs to know about.
+    renderApp(
+      apiWith({
+        status: "terminal",
+        operationId: "1",
+        reason: "stopped",
+        queue: queueOf([
+          converted("file-1", "run-1.raw"),
+          queueItem("file-2", "run-2.raw", {
+            state: "cancelled",
+            attempts: 1,
+            cancellation: {
+              processLaunched: true,
+              terminationRequested: true,
+              treeTerminationConfirmed: true,
+              elapsedMilliseconds: 64,
+              termination: "cancelled",
+              partialOutputObserved: true,
+              stagingResidue: "directory_remains",
+            },
+          }),
+          notRun("file-3", "run-3.raw"),
+        ]),
+      }),
+    );
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const items = await waitFor(() => {
+      const rows = Array.from(
+        panel.querySelectorAll<HTMLElement>(".conversion-running .conversion-queue-list > li"),
+      );
+      expect(rows).toHaveLength(3);
+      return rows;
+    });
+    expect(within(items[1]).getByText("Cancelled")).toBeVisible();
+    expect(
+      within(items[1]).getByText("MSCanvas could not remove its own temporary folder afterwards."),
+    ).toBeVisible();
+    // Said about that item and no other.
+    expect(items[0].textContent ?? "").not.toContain("temporary folder");
+    expect(items[2].textContent ?? "").not.toContain("temporary folder");
+    // And no path to the folder it is talking about.
+    expect(panel.textContent ?? "").not.toContain("\\");
+  });
+
   it("announces both the stop and the refusal that ended the queue", async () => {
     // A queue-level refusal and a stop are not alternatives: the destination
     // can become unwritable in the same moment the user presses Stop. The panel
@@ -406,6 +454,18 @@ describe("stopping a running conversion queue", () => {
     renderApp(api);
 
     const panel = await screen.findByRole("region", { name: "Convert" });
+    // The heading a user skims must not claim the one thing this state does
+    // not establish, and then be walked back by the warning under it.
+    // Outside the item list: the same words label the item that could not be
+    // confirmed, and it is the queue's own heading being asserted here.
+    const headings = await within(panel).findAllByText("Stop could not be confirmed");
+    expect(headings.filter((node) => node.closest("li") === null)).toHaveLength(1);
+    expect(within(panel).queryByText("Queue stopped")).toBeNull();
+    await waitFor(() => {
+      expect(liveRegion()).toContain("Stop could not be confirmed.");
+    });
+    expect(liveRegion()).not.toContain("Queue stopped");
+
     const warning = await within(panel).findByRole("alert");
     // High priority, and not carried by colour alone.
     expect(warning.textContent ?? "").toContain(
@@ -415,7 +475,7 @@ describe("stopping a running conversion queue", () => {
       "Restart MSCanvas before starting another preview or conversion.",
     );
     // Never called cancelled, and never called stopped without qualification.
-    expect(within(panel).getByText("Stop could not be confirmed")).toBeVisible();
+    expect(headings.filter((node) => node.closest("li") !== null)).toHaveLength(1);
     // No raw process detail anywhere.
     for (const forbidden of ["pid", "PID", "handle 0x", "0x"]) {
       expect(panel.textContent ?? "").not.toContain(forbidden);
