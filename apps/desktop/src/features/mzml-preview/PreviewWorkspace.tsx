@@ -162,8 +162,15 @@ export function PreviewWorkspace() {
   // Rust refuses a removal only when the converting row is among the handles,
   // so every other row stays the user's to prune -- which matters most during a
   // conversion, because that is when the list is unusable for longest.
+  // An adoption is the one workspace state a terminal queue puts the session in
+  // that holds no rows: `queueHandles` is empty, so the check beside this one
+  // cannot see it. Rust refuses a removal outright while one runs, and pressing
+  // it anyway would move the workspace decision count on the way to that
+  // refusal -- superseding the adoption the user is waiting on.
   const canRemove =
-    canMutate && !queueHandles.some((handle) => roster.selected.has(handle));
+    canMutate &&
+    !workspace.conversion.adopting &&
+    !queueHandles.some((handle) => roster.selected.has(handle));
   // Reading the list back is not an escape route. It is a pure, gate-linearized
   // snapshot, but during a scan it would add a loading state and a projection
   // whose usefulness depends on whether the scan committed before or after it.
