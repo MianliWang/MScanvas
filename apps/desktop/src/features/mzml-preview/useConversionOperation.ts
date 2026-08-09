@@ -415,7 +415,10 @@ export function useConversionOperation(
 
   const convert = useCallback(
     (handles: readonly string[]) => {
-      if (busyRef.current) {
+      // The adoption claim as well. A new queue replaces the terminal one an
+      // adoption is reading, so the two are exclusive for the same reason a
+      // retry and an adoption are.
+      if (busyRef.current || adoptingRef.current) {
         return;
       }
       // Claimed before the request leaves, so a second activation inside the

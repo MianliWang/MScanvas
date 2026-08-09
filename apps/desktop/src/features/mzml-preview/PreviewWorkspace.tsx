@@ -185,14 +185,21 @@ export function PreviewWorkspace() {
   // lost track of a converter process of its own and will not start another
   // until it is restarted. Rust enforces it; this is what stops the interface
   // offering a control that can only answer with a refusal.
+  //
+  // An adoption is the one thing in `busy` that is not a reason to wait here:
+  // it launches no process, holds no backend gate and leaves an open preview
+  // exactly as it is, and Rust admits a read throughout. Converting is
+  // different, and waits for it below.
   const canPreview =
     backendUsable &&
     !workspace.backendBusy &&
     !workspace.previewBackendBusy &&
-    !workspace.conversion.busy &&
+    (!workspace.conversion.busy || workspace.conversion.adopting) &&
     !workspace.conversion.backendQuarantined;
-  // Converting needs the same backend a preview does, and the same free lane.
-  const canConvert = canPreview && !workspace.workspaceBusy;
+  // Converting needs the same backend a preview does, and the same free lane --
+  // plus the terminal queue an adoption is reading, which it would replace.
+  const canConvert =
+    canPreview && !workspace.workspaceBusy && !workspace.conversion.adopting;
 
   // The row the keyboard is on. Deliberately not `activeDataset`: the preview
   // and the conversion panel may describe different rows, and this slice's whole
