@@ -50,10 +50,15 @@ const DIRECTORY_ENTRY_BYTES: usize = 128;
 /// terminator.
 const DIRECTORY_NAME_BYTES: usize = 64;
 
-/// The two sector sizes the format defines: 512 bytes for major version 3 and
-/// 4096 for major version 4. Anything else is refused rather than trusted.
-const MINIMUM_SECTOR_SHIFT: u16 = 9;
-const MAXIMUM_SECTOR_SHIFT: u16 = 12;
+/// The two sector shifts the format defines: 9 for the 512-byte sectors of
+/// major version 3, and 12 for the 4096-byte sectors of major version 4.
+///
+/// A set of two, not a range. A range from 9 to 12 also admits 10 and 11, and
+/// the format defines neither — a header declaring one would send this reader
+/// looking for a directory at an invented 1024- or 2048-byte geometry, and a
+/// crafted file could put three convincing marker names wherever that lands.
+/// Anything outside this set is refused rather than trusted.
+const DEFINED_SECTOR_SHIFTS: [u16; 2] = [9, 12];
 
 /// How far into the file this reader will seek to reach the directory.
 ///
@@ -140,7 +145,7 @@ pub(crate) fn read_root_directory_names(
     }
 
     let sector_shift = u16::from_le_bytes([header[30], header[31]]);
-    if !(MINIMUM_SECTOR_SHIFT..=MAXIMUM_SECTOR_SHIFT).contains(&sector_shift) {
+    if !DEFINED_SECTOR_SHIFTS.contains(&sector_shift) {
         return Err(CompoundFileError::NotACompoundFile);
     }
     let sector_bytes = 1_usize << sector_shift;
@@ -191,11 +196,24 @@ fn entry_name(entry: &[u8]) -> Result<Option<String>, CompoundFileError> {
         return Err(CompoundFileError::DirectoryUnreadable);
     }
 
-    let units: Vec<u16> = entry[..declared - 2]
+    let units: Vec<u16> = entry[..declared]
         .chunks_exact(2)
         .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
         .collect();
-    String::from_utf16(&units)
+
+    // The last declared code unit has to be the terminator, and dropping it
+    // without looking is how a name gets forged. A field holding
+    // `LSS Raw DataX` whose declared length covers the `X` would otherwise
+    // decode to exactly `LSS Raw Data`; do that three times and a container
+    // that is not an acquisition passes recognition.
+    let (terminator, name) = units
+        .split_last()
+        .expect("the declared length is at least 2");
+    if *terminator != 0 {
+        return Err(CompoundFileError::DirectoryUnreadable);
+    }
+
+    String::from_utf16(name)
         .map(Some)
         .map_err(|_| CompoundFileError::DirectoryUnreadable)
 }
@@ -350,8 +368,12 @@ mod tests {
             CompoundFileError::NotACompoundFile
         );
 
-        // A sector size the format does not define.
-        for shift in [0_u16, 8, 13, 31] {
+        // A sector size the format does not define. 10 and 11 are the ones
+        // worth naming: they sit *between* the two defined shifts, so a range
+        // check would wave them through and send the directory read to an
+        // invented 1024- or 2048-byte geometry, where a crafted file is free to
+        // have put whatever names it likes.
+        for shift in [0_u16, 8, 10, 11, 13, 31] {
             let mut odd = compound_file(&[("Root Entry", 5)], 12);
             odd[30..32].copy_from_slice(&shift.to_le_bytes());
             assert_eq!(
@@ -408,14 +430,45 @@ mod tests {
             CompoundFileError::DirectoryUnreadable
         );
 
-        // A used entry whose name is not valid UTF-16.
+        // A used entry whose name is not valid UTF-16. Terminated properly, so
+        // what this refuses is the decoding and not the terminator below.
         let mut lone_surrogate = compound_file(&[("Root Entry", 5)], 12);
         lone_surrogate[4096..4096 + 2].copy_from_slice(&0xD800_u16.to_le_bytes());
+        lone_surrogate[4096 + 2..4096 + 4].copy_from_slice(&0_u16.to_le_bytes());
         lone_surrogate[4096 + 64..4096 + 66].copy_from_slice(&4_u16.to_le_bytes());
         assert_eq!(
             names_of(&lone_surrogate, "utf16").expect_err("a name must decode"),
             CompoundFileError::DirectoryUnreadable
         );
+    }
+
+    /// The declared length's last code unit must be the terminator it claims to
+    /// be, because discarding it unlooked-at is a way to forge a name.
+    ///
+    /// A field holding `Marker!` whose declared length covers the `!` would
+    /// decode to exactly `Marker` if the last unit were simply dropped. Nothing
+    /// downstream could tell the difference: the family recognition asks
+    /// whether a name is present, and this would answer yes about a container
+    /// that never held it.
+    #[test]
+    fn a_name_whose_declared_length_does_not_end_in_the_terminator_is_refused() {
+        let mut forged = compound_file(&[("Root Entry", 5), ("Marker!", 2)], 12);
+        let entry = 4096 + DIRECTORY_ENTRY_BYTES;
+        // Seven characters and two bytes each, declared as though the seventh
+        // were the terminator.
+        forged[entry + 64..entry + 66].copy_from_slice(&14_u16.to_le_bytes());
+
+        assert_eq!(
+            names_of(&forged, "terminator").expect_err("the terminator is checked"),
+            CompoundFileError::DirectoryUnreadable
+        );
+
+        // The same field, declared honestly, is read as the whole name — so
+        // what the refusal above rejects is the mismatch and not the content.
+        let honest = compound_file(&[("Root Entry", 5), ("Marker!", 2)], 12);
+        let names = names_of(&honest, "honest").expect("an honest name is read");
+        assert!(names.contains("Marker!"));
+        assert!(!names.contains("Marker"));
     }
 
     /// This reader moves the handle, so the caller's rewind is load-bearing:

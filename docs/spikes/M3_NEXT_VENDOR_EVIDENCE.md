@@ -223,11 +223,25 @@ answers `don't know how to read` to.
 The header and one directory sector. Nothing else.
 
 No FAT walk, no red-black tree traversal, no stream is opened, no content is
-decoded. Every refusal is a refusal: a geometry outside the two documented
-sector sizes, a directory sector that does not fit, an entry with an impossible
-name length or an undefined object type, or a name that is not valid UTF-16 all
-refuse rather than answering from the part that could be read. The directory
-offset is bounded at 4 GiB so a crafted header cannot direct a seek.
+decoded. Every refusal is a refusal: a sector shift that is not one of the two
+the format defines, a directory sector that does not fit, an entry with an
+impossible name length, an undefined object type, a declared name that does not
+end in its terminator, or a name that is not valid UTF-16 all refuse rather than
+answering from the part that could be read. The directory offset is bounded at
+4 GiB so a crafted header cannot direct a seek.
+
+Two of those are there because review found them missing, and both were
+fail-open in a reader whose whole argument is that it fails closed:
+
+- **The sector shift is a set of two, not a range.** A range from 9 to 12 also
+  admits 10 and 11, which the format does not define. A header declaring one
+  would have sent the directory read to an invented 1024- or 2048-byte
+  geometry, where a crafted file is free to have placed three convincing marker
+  names.
+- **The last declared code unit of a name must be the terminator.** Discarding
+  it unlooked-at means a field holding `LSS Raw DataX`, declared as though the
+  `X` were the terminator, reads back as exactly `LSS Raw Data`. Three of those
+  and a container that holds none of the markers passes recognition.
 
 The reading happens **through the handle admission already pinned**, before the
 rewind and the digest, so what is inspected is the object that was recognised
@@ -263,16 +277,30 @@ Both fixtures, both stages, on the build above.
 | Extension | `mzML` | `mzML` |
 | Partial-output suffix present | no | no |
 | Sidecars, logs, index files, directories | **none** | **none** |
-| Output byte length | `1,382,324` | `481,497` |
-| Output SHA-256 | `F9FD7E72B05AD34CBF8F6D4120252A1F5426EE2A0EA59BDF1744FE8C0A933FC7` | `1FB77DD3A2F62EBAC5D0E6E4E1F849B56302D7314E0928DA4D294C8AC07FCD61` |
+| Output byte length | `1,382,434` | `482,003` |
+| Output SHA-256 | `5C7B95484017DE755A51FAC52C166C58470E35F658B7F0CA45CCA94FC48EE1D3` | `056CACB7A18EC38FF50B6BD0E6FDD6504E9DE421D9A19E5F7EF43E5A8CE24777` |
 | Backend exit code | 0 | 0 |
 | Backend stderr | 0 bytes | 0 bytes |
 
-Fixture A was converted twice on this head; the second run produced a
-byte-identical output. **One source, one output, no sidecars** — the layout the
-conversion boundary's exactly-one-entry rule requires, measured rather than
-assumed. This closes, for this family, the same question M3.0.3 closed for the
-first: *whether `msconvert` writes anything besides its output.*
+Fixture A was converted twice; the second run produced a byte-identical output.
+**One source, one output, no sidecars** — the layout the conversion boundary's
+exactly-one-entry rule requires, measured rather than assumed. This closes, for
+this family, the same question M3.0.3 closed for the first: *whether
+`msconvert` writes anything besides its output.*
+
+### The output digest depends on the input's file name
+
+Measured, and worth stating because it looks like non-determinism if you meet it
+by accident. `msconvert` embeds the source file's basename in the document it
+writes, so converting the same acquisition under a different name produces a
+different byte length and a different digest — the same fixture A under the
+basename `10nmol.lcd` yields `1,382,324` bytes and
+`F9FD7E72B05AD34CBF8F6D4120252A1F5426EE2A0EA59BDF1744FE8C0A933FC7`.
+
+**The digests in the table above are therefore recorded under the fixtures'
+upstream basenames**, which is what a reproduction from the retrieval URLs will
+have. The conversion is deterministic; the digest is a fact about the
+acquisition *and its name together*, and this record does not claim otherwise.
 
 The committed reference outputs agree with the measurement: at the pinned
 commit, each `.lcd` in the test data has exactly one `.mzML` beside it — unlike

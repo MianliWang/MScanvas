@@ -3969,6 +3969,55 @@ fn a_compound_file_family_is_recognized_by_its_contents_and_not_by_its_magic() {
     );
 }
 
+/// Two ways a crafted container could have talked its way past recognition,
+/// both refused. Neither is exotic: each is a field this reader has to take
+/// from the file it is judging.
+#[test]
+fn a_crafted_container_cannot_talk_its_way_into_the_family() {
+    let directory = TestDirectory::new();
+
+    // A geometry the format does not define. 10 and 11 sit between the two
+    // that are defined, so a range check would accept them and send the
+    // directory read to an invented 1024- or 2048-byte offset -- where a
+    // crafted file is free to have put three convincing marker names.
+    for shift in [10_u16, 11] {
+        let mut invented = compound_bytes(&SHIMADZU_ENTRIES);
+        invented[30..32].copy_from_slice(&shift.to_le_bytes());
+        let path = directory.path().join(format!("shift-{shift}.lcd"));
+        fs::write(&path, &invented).expect("write an invented geometry");
+        assert_eq!(
+            ConversionSource::open_shimadzu_lcd_file(&path, MzmlScanLimits::default()),
+            Err(ConversionSourceRejection::FamilyStructureMismatch),
+            "a container claiming sector shift {shift} was admitted"
+        );
+    }
+
+    // A marker forged out of a longer name. `LSS Raw DataX` declared as though
+    // the `X` were the two-byte terminator reads back as `LSS Raw Data` unless
+    // the terminator is actually checked -- and then this container, which
+    // holds no such entry, passes for an acquisition.
+    let mut forged = compound_bytes(&["Method File Property", "GUMM_Information", "LSS Raw DataX"]);
+    // Third entry after "Root Entry", in the directory sector one sector in.
+    let entry = 512 + 3 * 128;
+    let declared = u16::try_from("LSS Raw DataX".len() * 2).expect("a short name");
+    forged[entry + 64..entry + 66].copy_from_slice(&declared.to_le_bytes());
+    let path = directory.path().join("forged.lcd");
+    fs::write(&path, &forged).expect("write a forged marker");
+    assert_eq!(
+        ConversionSource::open_shimadzu_lcd_file(&path, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::FamilyStructureMismatch),
+        "a forged marker was admitted"
+    );
+
+    // And the honest container the forgery was built from is still admitted,
+    // so the refusal above is about the mismatch and not about the shape.
+    let honest = write_shimadzu_source(directory.path(), "honest.lcd");
+    assert_eq!(
+        open_shimadzu(&honest).kind(),
+        ConversionSourceKind::ShimadzuLcdFile
+    );
+}
+
 /// The two vendor postures are independent, and neither is a fallback for the
 /// other. A rule that let one family answer for another would make the family
 /// recorded on a run something other than what was recognized.

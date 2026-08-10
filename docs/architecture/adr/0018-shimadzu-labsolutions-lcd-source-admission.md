@@ -100,11 +100,20 @@ does not traverse the red-black tree the directory is ordered as, opens no
 stream, and decodes no content. A parser used to decide what an acquisition *is*
 should be as small as the question.
 
-Every ambiguity refuses: a sector geometry outside the two documented sizes, a
-directory sector that does not fit in the file, an entry with an impossible name
-length or an undefined object type, a name that is not valid UTF-16. The
-directory offset is bounded so a crafted header cannot direct a seek. Nothing is
-answered from the part of a file that could be read.
+Every ambiguity refuses: a sector shift outside the set of two the format
+defines, a directory sector that does not fit in the file, an entry with an
+impossible name length, an undefined object type, a declared name that does not
+end in its terminator, a name that is not valid UTF-16. The directory offset is
+bounded so a crafted header cannot direct a seek. Nothing is answered from the
+part of a file that could be read.
+
+The last two of those were added after review found them missing, and the shape
+of both mistakes is worth recording: each was a field taken from the file being
+judged and then trusted. A shift checked as a *range* admits the undefined 10
+and 11 and sends the directory read to an invented geometry; a declared name
+length whose final code unit is discarded without being checked lets
+`LSS Raw DataX` read back as `LSS Raw Data`. Either one turns this reader from
+a recognition into a thing a crafted container can talk past.
 
 Requiring all three markers is a conservative choice made on two fixtures. It
 was chosen for its failure direction: refusing an acquisition MSCanvas could
