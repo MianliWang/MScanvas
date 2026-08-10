@@ -293,20 +293,44 @@ fn has_thermo_raw_extension(path: &Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case(THERMO_RAW_EXTENSION))
 }
 
+/// Whether a name proposes the Shimadzu LabSolutions family.
+///
+/// A routing question and only that. It chooses which admission is asked; it
+/// never admits anything, and the crate's own admission re-applies its whole
+/// rule -- extension included -- to whatever this routes to it. ADR 0018's
+/// recognition is untouched: LCD bytes under another name are still not
+/// identified as Shimadzu, and another vendor's container under this name is
+/// still refused by the container's contents.
+fn has_shimadzu_lcd_extension(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("lcd"))
+}
+
 /// Admits one file the user named, under the rule its name proposes.
 ///
 /// The single entry point for the picker, and the only place the product widens
 /// what it accepts. The extension chooses *which admission runs*; it never
-/// admits anything itself. A `.raw` candidate is put to the signature rule and
-/// is refused when its bytes are not an acquisition; everything else is put to
-/// mzML admission, which refuses an unsupported name with the error it always
-/// has, so a candidate the product does not open reads the same as before.
+/// admits anything itself. A `.raw` candidate is put to the Thermo signature
+/// rule and a `.lcd` candidate to the Shimadzu compound-file rule, and each is
+/// refused when its bytes are not an acquisition of that family; everything
+/// else is put to mzML admission, which refuses an unsupported name with the
+/// error it always has, so a candidate the product does not open reads the same
+/// as before.
+///
+/// Folder discovery and the Explorer drop do not call this. Both walk or
+/// classify a filesystem surface the user did not enumerate file by file, and
+/// they stay regular-mzML-only on purpose -- admitting a vendor family from a
+/// walk is a wider claim than admitting one the user named. ADR 0020 records
+/// the distinction.
 ///
 /// No backend process is launched here, for any family. Admission is filesystem
 /// work and stays filesystem work.
 pub(super) fn accept_workspace_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
     if has_thermo_raw_extension(path) {
         return accept_thermo_raw_file(path);
+    }
+    if has_shimadzu_lcd_extension(path) {
+        return accept_shimadzu_lcd_file(path);
     }
     accept_mzml_file(path)
 }
@@ -396,15 +420,12 @@ pub(super) fn accept_thermo_raw_file(path: &Path) -> Result<AcceptedFile, Previe
     })
 }
 
-/// Accepts a Shimadzu LabSolutions LCD acquisition, for conversion only.
+/// Accepts a Shimadzu LabSolutions LCD acquisition.
 ///
-/// The Thermo function above says it is not reachable from any ingestion
-/// surface; this one is not reachable from anything at all.
-/// [`accept_workspace_file`] does not test for this family's extension, so a
-/// `.lcd` the user picks reaches mzML admission and is refused by name exactly
-/// as it was before this function existed. What it exists for is the private
-/// path: a dataset that is going to be converted by an ignored evidence run can
-/// be admitted under the rule its family actually needs.
+/// Reachable from the file picker through [`accept_workspace_file`]'s routing,
+/// and from nowhere else: folder discovery and the Explorer drop remain
+/// regular-mzML-only. ADR 0019 landed this privately; ADR 0020 gives it the
+/// picker.
 ///
 /// **No recognition is reimplemented here, and for this family that matters
 /// more than it did for the last one.** A LabSolutions `.lcd` and a SCIEX

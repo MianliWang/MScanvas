@@ -4,8 +4,11 @@ import type {
   ConversionConflictPolicy,
   ConversionQueue,
   ConversionQueueItem,
+  ConversionQueuePlanItem,
   ConversionReport,
+  DatasetSourceKind,
 } from "./contracts";
+import { SOURCE_KIND_LABEL } from "./contracts";
 import { formatByteLength, formatCount, formatDuration } from "./format";
 import type { ConversionOperation } from "./useConversionOperation";
 
@@ -31,6 +34,34 @@ const CONFLICT_POLICIES: readonly ConversionConflictPolicy[] = ["fail", "skip"];
  */
 const OUTPUT_ONLY_DISCLOSURE =
   "Output-only validation. This does not compare the converted data with a readable vendor-source spectrum model.";
+
+/**
+ * The plan summary sentence, family-aware.
+ *
+ * A homogeneous queue names its exact family, because "vendor" is vaguer than
+ * what is known. A mixed queue counts first and then itemizes per family, in
+ * plan order, so the sentence stays true for whatever combination the closed
+ * vocabulary allows -- there is deliberately no generic vendor wording that a
+ * new family could hide inside.
+ */
+function describeQueueFamilies(items: readonly ConversionQueuePlanItem[]): string {
+  const counts = new Map<DatasetSourceKind, number>();
+  for (const item of items) {
+    counts.set(item.sourceKind, (counts.get(item.sourceKind) ?? 0) + 1);
+  }
+  const count = items.length;
+  const first = items[0];
+  if (counts.size === 1 && first !== undefined) {
+    const family = SOURCE_KIND_LABEL[first.sourceKind];
+    return count === 1
+      ? `One ${family} acquisition will be converted to mzML.`
+      : `${String(count)} ${family} acquisitions will be converted to mzML, one after another, in the order below.`;
+  }
+  const perFamily = [...counts.entries()]
+    .map(([kind, familyCount]) => `${String(familyCount)} ${SOURCE_KIND_LABEL[kind]}`)
+    .join(" · ");
+  return `${String(count)} supported vendor acquisitions will be converted to mzML, one after another, in the order below. ${perFamily}.`;
+}
 
 /** What each staging residue means for the folder the user chose. */
 const RESIDUE_EXPLANATION = "MSCanvas could not remove its own temporary folder afterwards.";
@@ -432,7 +463,11 @@ function PlanState({
     );
   }
   if (plan.status === "none") {
-    return <div className="empty-state">Select or focus a Thermo RAW row to convert it.</div>;
+    return (
+      <div className="empty-state">
+        Select or focus a supported vendor acquisition to convert it.
+      </div>
+    );
   }
 
   const summary = plan.plan;
@@ -440,9 +475,7 @@ function PlanState({
   return (
     <div className="conversion-plan">
       <p id="conversion-plan-summary">
-        {count === 1
-          ? "One Thermo RAW acquisition will be converted to mzML."
-          : `${String(count)} Thermo RAW acquisitions will be converted to mzML, one after another, in the order below.`}
+        {describeQueueFamilies(summary.items)}
         {excludedSelectedCount === 0
           ? ""
           : ` ${String(excludedSelectedCount)} selected ${
@@ -457,6 +490,10 @@ function PlanState({
             <span className="conversion-queue-name" title={item.fileName}>
               {item.fileName}
             </span>
+            {/* Which family this row is, said on the row. In a mixed queue the
+                summary's counts cannot say which item is which, and colour is
+                not a channel this information may live in. */}
+            <span className="conversion-queue-kind">{SOURCE_KIND_LABEL[item.sourceKind]}</span>
             <span aria-hidden="true">→</span>
             <span className="visually-hidden">converts to </span>
             <span className="conversion-queue-output" title={item.outputFileName}>

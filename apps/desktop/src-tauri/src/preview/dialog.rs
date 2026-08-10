@@ -164,17 +164,18 @@ mod windows_dialog {
         owner: Option<isize>,
     ) -> Result<Option<Vec<PathBuf>>, PreviewErrorDto> {
         // A double-NUL terminated pair list: display label, then pattern. One
-        // combined entry rather than two, because the two families are one
+        // combined entry rather than three, because the three families are one
         // workspace and a user choosing an acquisition should not have to know
         // which filter row it is under.
         //
         // Candidate filtering only. What a file is is decided by opening it:
-        // an mzML candidate goes to mzML admission and a `.raw` candidate goes
-        // to the signature rule, which refuses a name whose bytes are not an
-        // acquisition.
+        // an mzML candidate goes to mzML admission, a `.raw` candidate to the
+        // signature rule, and a `.lcd` candidate to the compound-file rule --
+        // each of which refuses a name whose bytes are not an acquisition of
+        // that family.
         let mut filter = Vec::new();
-        filter.extend_from_slice(&wide("Acquisitions (*.mzML;*.raw)"));
-        filter.extend_from_slice(&wide("*.mzML;*.raw"));
+        filter.extend_from_slice(&wide("Acquisitions (*.mzML;*.raw;*.lcd)"));
+        filter.extend_from_slice(&wide("*.mzML;*.raw;*.lcd"));
         filter.push(0);
         let title = wide("Open acquisitions");
         let default_extension = wide("mzML");

@@ -393,6 +393,16 @@ button:disabled {
   color: var(--color-text-secondary);
 }
 
+/* The family, quiet and unshrinkable. A truncated family name could read as a
+   different family, and which family a row is must survive any width the two
+   filenames fight over -- the row wraps before this ellipsizes. */
+.conversion-queue-kind {
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+  font-size: 0.8em;
+  white-space: nowrap;
+}
+
 /* The state takes the next line whole rather than competing with the names for
    the first. It is the part that changes while the user watches, and a failure
    sentence is a sentence -- so it wraps instead of being clipped. */

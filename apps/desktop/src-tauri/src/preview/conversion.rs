@@ -482,13 +482,13 @@ pub(super) const fn is_convertible(kind: DatasetSourceKind) -> bool {
     match kind {
         DatasetSourceKind::Mzml => false,
         DatasetSourceKind::ThermoRaw => true,
-        // The private path converts this family and the visible queue does not,
-        // which is the difference between "the boundary can carry it" and "the
-        // product offers it". The queue reads this predicate to decide which
-        // selected rows it will accept, so answering `true` here would be the
-        // whole product decision -- made in one word, with no ingestion surface
-        // to put such a row on the roster in the first place. ADR 0019.
-        DatasetSourceKind::ShimadzuLcd => false,
+        // The word ADR 0019 said would be the whole product decision, now
+        // deliberately said. ADR 0020 gives this family an ingestion surface
+        // and the same queue Thermo uses; the queue reads this predicate to
+        // decide which selected rows it accepts, and each item still
+        // revalidates under its own family and is gated on its own family's
+        // provider evidence.
+        DatasetSourceKind::ShimadzuLcd => true,
     }
 }
 
@@ -513,7 +513,10 @@ pub(super) fn planned_output_name(file_name: &str) -> Option<String> {
 /// rather than a run-time surprise. There is deliberately no fallback: a family
 /// the crate cannot name is a family it cannot convert, and guessing one would
 /// admit an acquisition under another family's rules.
-#[cfg(test)]
+///
+/// Production since M3.9: the queue's provider-evidence gate asks it for every
+/// distinct family a queue holds, before the picker and again before any item
+/// stages.
 pub(super) const fn conversion_source_kind(kind: DatasetSourceKind) -> ConversionSourceKind {
     match kind {
         DatasetSourceKind::Mzml => ConversionSourceKind::MzmlFile,

@@ -8196,9 +8196,11 @@ fn the_family_recorded_at_admission_is_the_one_every_later_use_applies() {
         ConversionSourceKind::ThermoRawFile
     );
 
-    // Nothing about this family is previewable or queue-eligible.
+    // The family is not previewable, and -- since M3.9 -- is queue-eligible.
     assert!(!DatasetSourceKind::ShimadzuLcd.is_previewable());
-    assert!(!is_convertible(DatasetSourceKind::ShimadzuLcd));
+    assert!(is_convertible(DatasetSourceKind::ShimadzuLcd));
+    assert!(is_convertible(DatasetSourceKind::ThermoRaw));
+    assert!(!is_convertible(DatasetSourceKind::Mzml));
 }
 
 /// An acquisition another program is writing is not a finished acquisition.
@@ -8539,52 +8541,315 @@ fn a_shimadzu_report_names_no_output_it_did_not_produce_and_no_path_at_all() {
 /// folder import, the Explorer drop and the visible queue each get a real
 /// LabSolutions acquisition and each refuses it.
 #[test]
-fn no_visible_surface_reaches_the_shimadzu_family() {
-    let fixture = TestFile::new("shimadzu-unreachable");
+fn the_picker_admits_the_shimadzu_family_and_no_walking_surface_does() {
+    let fixture = TestFile::new("shimadzu-reachable");
     let acquisition = fixture.shimadzu_lcd("acquisition.lcd");
     let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
 
-    // The picker. `.lcd` is not consulted at all, so this reaches mzML
-    // admission and is refused by name -- exactly as it was before the family
-    // existed.
-    let refusal = accept_workspace_file(&acquisition)
-        .expect_err("the picker does not admit a LabSolutions acquisition");
-    assert_eq!(refusal.kind, "unsupported_extension");
+    // The picker. `.lcd` now routes to the family's own admission -- and the
+    // extension only routes. The bytes are what admit, so another vendor's
+    // container and an archive under this name are refused by the container
+    // rule, not silently taken on trust.
+    let admitted =
+        accept_workspace_file(&acquisition).expect("the picker admits a LabSolutions acquisition");
+    assert_eq!(admitted.source_kind(), DatasetSourceKind::ShimadzuLcd);
+    assert_eq!(
+        accept_workspace_file(&fixture.named_bytes("renamed-wiff.lcd", &wiff_like_bytes()))
+            .expect_err("another vendor's container is not this family")
+            .kind,
+        "unrecognized_acquisition"
+    );
+    assert_eq!(
+        accept_workspace_file(&fixture.named_bytes("archive.lcd", b"PK this is a zip archive"))
+            .expect_err("an archive is not an acquisition")
+            .kind,
+        "unrecognized_acquisition"
+    );
+    // LCD bytes under an unsupported name stay unidentified: the routing never
+    // sniffs content, so they reach mzML admission and are refused by name.
+    assert_eq!(
+        accept_workspace_file(&fixture.named_bytes("acquisition.dat", &shimadzu_lcd_bytes()))
+            .expect_err("no surface identifies a family the name did not propose")
+            .kind,
+        "unsupported_extension"
+    );
 
-    // The visible queue. A row of this family is not queue-eligible, so even a
-    // session that somehow held one could not convert it from the interface.
+    // The visible queue plans this family now, and the plan says which family
+    // each row is.
     let dataset = service
-        .add_shimadzu_dataset(&acquisition)
-        .expect("admit the acquisition privately");
+        .add_files(std::slice::from_ref(&acquisition))
+        .expect("the picker batch admits the acquisition")
+        .outcomes
+        .first()
+        .and_then(|outcome| match outcome {
+            WorkspaceAddOutcomeDto::Added { dataset } => Some(dataset.clone()),
+            _ => None,
+        })
+        .expect("the acquisition became a row");
+    assert_eq!(dataset.source_kind, DatasetSourceKindDto::ShimadzuLcd);
+    let plan = service
+        .conversion_plan_summary(&dataset.handle)
+        .expect("the visible queue plans this family");
+    assert_eq!(plan.items.len(), 1);
     assert_eq!(
-        service
-            .conversion_plan_summary(&dataset.handle)
-            .expect_err("the visible queue has no plan for this family")
-            .kind,
-        "dataset_not_convertible"
+        plan.items[0].source_kind,
+        DatasetSourceKindDto::ShimadzuLcd,
+        "the plan row says which family it is"
     );
-    assert_eq!(
-        service
-            .begin_conversion_queue(
-                std::slice::from_ref(&dataset.handle),
-                ConversionConflictPolicyDto::Fail,
-                0
-            )
-            .expect_err("the visible queue refuses this family")
-            .kind,
-        "dataset_not_convertible"
+    assert_eq!(plan.items[0].output_file_name, "acquisition.mzML");
+
+    // Folder discovery does not walk into this family. A scan of the fixture
+    // folder proposes the mzML and never the acquisition beside it.
+    let proposals = super::discovery::discover_mzml_candidates(
+        &fixture.directory,
+        super::discovery::DiscoveryBudget::default(),
+    )
+    .expect("the folder scan completes");
+    assert!(
+        proposals.candidates().iter().all(|candidate| {
+            candidate
+                .path()
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("mzml"))
+        }),
+        "a folder walk proposed a vendor acquisition"
     );
 
-    // The roster still describes the row honestly rather than hiding it.
-    let roster = service.roster();
-    assert_eq!(roster.datasets.len(), 1);
+    // And it is still not previewable: converting is the way to read one.
     assert_eq!(
-        roster.datasets[0].source_kind,
-        DatasetSourceKindDto::ShimadzuLcd
+        service
+            .open_preview(&dataset.handle)
+            .expect_err("a vendor acquisition has no direct preview")
+            .kind,
+        "dataset_not_previewable"
+    );
+}
+
+/// The real visible vertical for Shimadzu, and the real mixed queue.
+///
+/// Ignored by default, like the Thermo one beside it. Run with the two lawful
+/// Shimadzu fixtures, the lawful Thermo fixture, and an empty destination
+/// folder named by environment:
+///
+/// ```text
+/// set MSCANVAS_SHIMADZU_LCD_FIXTURE=<path to 10nmol...lcd>
+/// set MSCANVAS_SHIMADZU_LCD_FIXTURE_B=<path to the scheduled ...lcd>
+/// set MSCANVAS_THERMO_FIXTURE=<path to FT-HCD-MSX.raw>
+/// set MSCANVAS_CONVERSION_DESTINATION=<path to an empty folder>
+/// cargo test -p mscanvas-desktop --lib -- --ignored --nocapture visible_shimadzu
+/// ```
+#[test]
+#[ignore = "needs a local ProteoWizard installation and real vendor acquisitions"]
+fn the_visible_workflow_converts_real_shimadzu_and_mixed_queues_end_to_end() {
+    let fixture_a = PathBuf::from(
+        std::env::var("MSCANVAS_SHIMADZU_LCD_FIXTURE").expect("set MSCANVAS_SHIMADZU_LCD_FIXTURE"),
+    );
+    let fixture_b = PathBuf::from(
+        std::env::var("MSCANVAS_SHIMADZU_LCD_FIXTURE_B")
+            .expect("set MSCANVAS_SHIMADZU_LCD_FIXTURE_B"),
+    );
+    let thermo = PathBuf::from(
+        std::env::var("MSCANVAS_THERMO_FIXTURE").expect("set MSCANVAS_THERMO_FIXTURE"),
+    );
+    let destination = PathBuf::from(
+        std::env::var("MSCANVAS_CONVERSION_DESTINATION")
+            .expect("set MSCANVAS_CONVERSION_DESTINATION"),
     );
 
-    // And it is not previewable.
-    assert!(service.open_preview(&dataset.handle).is_err());
+    // Scenario A: the production Add-files path admits both fixtures as their
+    // family, launches nothing, and refuses a renamed compound-file control.
+    let service = PreviewService::new(Box::new(super::backend::ProteoWizardProvider::new()));
+    let batch = service.add_files_now(&[fixture_a.clone(), fixture_b.clone(), thermo.clone()]);
+    let kinds: Vec<DatasetSourceKindDto> = batch
+        .roster
+        .datasets
+        .iter()
+        .map(|dataset| dataset.source_kind)
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            DatasetSourceKindDto::ShimadzuLcd,
+            DatasetSourceKindDto::ShimadzuLcd,
+            DatasetSourceKindDto::ThermoRaw,
+        ],
+        "the picker admits both families in picker order"
+    );
+    let handles: Vec<String> = batch
+        .roster
+        .datasets
+        .iter()
+        .map(|dataset| dataset.handle.clone())
+        .collect();
+    let control =
+        std::env::temp_dir().join(format!("mscanvas-renamed-wiff-{}.lcd", std::process::id()));
+    fs::write(&control, wiff_like_bytes()).expect("write the negative control");
+    let refused = service.add_files_now(std::slice::from_ref(&control));
+    assert!(
+        matches!(
+            refused.outcomes.first(),
+            Some(WorkspaceAddOutcomeDto::Rejected { error, .. })
+                if error.kind == "unrecognized_acquisition"
+        ),
+        "a renamed compound file of another vendor is refused"
+    );
+    let _ = fs::remove_file(&control);
+
+    // Scenario C (which subsumes B): a deliberately ordered mixed queue --
+    // Shimadzu A, Thermo, Shimadzu B -- through the product queue on the real
+    // evidenced build.
+    let document = current_document(&service);
+    let plan = service
+        .conversion_queue_plan(&handles)
+        .expect("the mixed queue has a plan");
+    assert_eq!(plan.items.len(), 3);
+    let reservation = service
+        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("the mixed queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let update = service.run_claimed_conversion(operation, &destination);
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Completed
+    );
+    let queue = terminal_queue(&update);
+    println!("mixed queue: {queue:?}");
+    for item in &queue.items {
+        assert_eq!(item.state, ConversionQueueItemStateDto::Finalized);
+        let report = item.report.as_ref().expect("finalized items report");
+        let validation = report.validation.as_ref().expect("judged");
+        assert_eq!(validation.mode, ValidationModeDto::OutputOnly);
+        assert!(!validation.fully_verified);
+    }
+    // The chromatogram-only shape survives the whole visible vertical.
+    let scheduled = queue
+        .items
+        .iter()
+        .find(|item| {
+            item.report
+                .as_ref()
+                .and_then(|report| report.output.as_ref())
+                .is_some_and(|output| output.spectrum_count == 0)
+        })
+        .expect("the scheduled fixture converts to a chromatogram-only document");
+    let output = scheduled
+        .report
+        .as_ref()
+        .and_then(|report| report.output.as_ref())
+        .expect("measured");
+    assert_eq!(output.chromatogram_count, 144);
+    assert_eq!(
+        entry_names(&destination).len(),
+        3,
+        "three mzML, no sidecars"
+    );
+
+    // Scenario B's adoption tail: the Shimadzu outputs enter the workspace as
+    // ordinary mzML rows, and nothing auto-previews them.
+    let before = service.roster().datasets.len();
+    let adopted = service
+        .adopt_conversion_outputs(&operation.to_string(), document)
+        .expect("finalized outputs are adoptable");
+    assert_eq!(service.roster().datasets.len(), before + 3);
+    for outcome in &adopted.outcomes {
+        let WorkspaceOutputAdoptionOutcomeDto::Added { dataset, .. } = outcome else {
+            panic!("every output was added; got {outcome:?}");
+        };
+        assert_eq!(dataset.source_kind, DatasetSourceKindDto::Mzml);
+    }
+}
+
+/// The real Stop against a running Shimadzu process, when timing permits.
+///
+/// Scenario E. The queue is one real Shimadzu conversion; the stop is issued
+/// the moment the slot says the item is running. On this machine the real
+/// conversion takes around two seconds, so the stop normally lands while the
+/// process is alive -- but a natural completion is reported truthfully rather
+/// than faked into a cancellation.
+///
+/// ```text
+/// set MSCANVAS_SHIMADZU_LCD_FIXTURE=<path to the acquisition>
+/// set MSCANVAS_CONVERSION_DESTINATION=<path to an empty folder>
+/// cargo test -p mscanvas-desktop --lib -- --ignored --nocapture real_shimadzu_stop
+/// ```
+#[test]
+#[ignore = "needs a local ProteoWizard installation and a real vendor acquisition"]
+fn a_real_shimadzu_stop_terminates_the_owned_process_tree() {
+    let acquisition = PathBuf::from(
+        std::env::var("MSCANVAS_SHIMADZU_LCD_FIXTURE").expect("set MSCANVAS_SHIMADZU_LCD_FIXTURE"),
+    );
+    let destination = PathBuf::from(
+        std::env::var("MSCANVAS_CONVERSION_DESTINATION")
+            .expect("set MSCANVAS_CONVERSION_DESTINATION"),
+    );
+    let service = Arc::new(PreviewService::new(Box::new(
+        super::backend::ProteoWizardProvider::new(),
+    )));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("the row converts");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let worker = {
+        let service = Arc::clone(&service);
+        let destination = destination.clone();
+        std::thread::spawn(move || service.run_claimed_conversion(operation, &destination))
+    };
+    // An observable milestone, not a sleep: the slot itself says when the item
+    // is running, which is after the backend gate was taken and the item
+    // started.
+    while !matches!(
+        service.conversion_state().state,
+        WorkspaceConversionStateDto::Running { .. }
+    ) {
+        std::thread::yield_now();
+    }
+    let stopped = service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("the running queue is stoppable");
+    println!("stop accepted from state: {:?}", stopped.state);
+    let update = worker.join().expect("the worker finishes");
+    let queue = terminal_queue(&update);
+    println!("terminal: {queue:?}");
+
+    match terminal_reason(&update) {
+        ConversionQueueTerminalReasonDto::Stopped => {
+            let item = &queue.items[0];
+            match item.state {
+                ConversionQueueItemStateDto::Cancelled => {
+                    let facts = item.cancellation.as_ref().expect("a reached stop reports");
+                    assert!(facts.termination_requested);
+                    assert!(
+                        facts.tree_termination_confirmed,
+                        "no owned converter survives a confirmed stop"
+                    );
+                    assert!(
+                        entry_names(&destination).is_empty(),
+                        "a cancelled conversion finalizes nothing"
+                    );
+                    println!(
+                        "real stop: cancelled, tree confirmed empty, staging residue {:?}",
+                        facts.staging_residue
+                    );
+                }
+                ConversionQueueItemStateDto::Finalized => {
+                    // The process finished in the window between the running
+                    // state and the stop reaching it. Reported truthfully.
+                    println!("real stop: natural completion won the race");
+                }
+                other => panic!("a stopped queue's item is cancelled or finalized: {other:?}"),
+            }
+        }
+        ConversionQueueTerminalReasonDto::Completed => {
+            println!("real stop: the queue completed before the stop was accepted");
+        }
+        other => panic!("a real stop must not fail: {other:?}"),
+    }
 }
 
 /// The real private vertical, from a workspace handle to a judged output.
@@ -8783,6 +9048,68 @@ fn one_picker_batch_admits_mzml_and_thermo_rows_in_picker_order() {
         "the roster is the order the picker reported, and every row says its family"
     );
     assert_eq!(batch.outcomes.len(), 3);
+}
+
+/// One picker batch across all three families, in the dialog's order, with no
+/// process spent and no preview started for any of them.
+#[test]
+fn one_picker_batch_admits_all_three_families_in_picker_order() {
+    let fixture = TestFile::new("three-family-batch");
+    let first = fixture.shimadzu_lcd("first.lcd");
+    let second = fixture.thermo_raw("second.raw");
+    let third = fixture.readable_mzml("third.mzML");
+    let fourth = fixture.shimadzu_lcd("fourth.lcd");
+    let provider = ConvertingProvider::faithful();
+    let launches = provider.runner.launches();
+    let service = PreviewService::new(Box::new(provider));
+
+    let batch = service.add_files_now(&[first, second, third, fourth]);
+
+    let kinds: Vec<DatasetSourceKindDto> = batch
+        .roster
+        .datasets
+        .iter()
+        .map(|dataset| dataset.source_kind)
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            DatasetSourceKindDto::ShimadzuLcd,
+            DatasetSourceKindDto::ThermoRaw,
+            DatasetSourceKindDto::Mzml,
+            DatasetSourceKindDto::ShimadzuLcd,
+        ],
+        "the roster is the order the picker reported, and every row says its family"
+    );
+    assert_eq!(batch.outcomes.len(), 4);
+    assert_eq!(
+        launches.load(Ordering::SeqCst),
+        0,
+        "admitting a batch launches no backend process"
+    );
+
+    // A renamed compound file of the other vendor, refused in a batch exactly
+    // as it is alone, and costing no identifier: the row after it still
+    // arrives.
+    let decoy = fixture.named_bytes("decoy.lcd", &wiff_like_bytes());
+    let real = fixture.shimadzu_lcd("real.lcd");
+    let followup = service.add_files_now(&[decoy, real]);
+    assert!(
+        matches!(
+            followup.outcomes.first(),
+            Some(WorkspaceAddOutcomeDto::Rejected { error, .. })
+                if error.kind == "unrecognized_acquisition"
+        ),
+        "a name is not a recognition; got {:?}",
+        followup.outcomes.first()
+    );
+    assert!(
+        matches!(
+            followup.outcomes.get(1),
+            Some(WorkspaceAddOutcomeDto::Added { dataset }) if dataset.file_name == "real.lcd"
+        ),
+        "the refusal consumed nothing"
+    );
 }
 
 /// A `.raw` name whose bytes are not an acquisition is refused, and consumes no
@@ -12752,7 +13079,16 @@ fn converted_queue(fixture: &TestFile, names: &[&str]) -> (Arc<PreviewService>, 
     ));
     let handles: Vec<String> = names
         .iter()
-        .map(|name| add_one_acquisition(&service, &fixture.thermo_raw(name)))
+        .map(|name| {
+            // The extension picks which fixture family to write, mirroring the
+            // picker's own routing: this helper now drives mixed queues too.
+            let path = if name.ends_with(".lcd") {
+                fixture.shimadzu_lcd(name)
+            } else {
+                fixture.thermo_raw(name)
+            };
+            add_one_acquisition(&service, &path)
+        })
         .collect();
     let document = current_document(&service);
     let reservation = service
@@ -12779,6 +13115,480 @@ fn adoption_kinds(result: &WorkspaceOutputAdoptionResultDto) -> Vec<&'static str
             WorkspaceOutputAdoptionOutcomeDto::Refused { .. } => "refused",
         })
         .collect()
+}
+
+/// Folder ingestion and the Explorer drop stay regular-mzML-only: the picker's
+/// widened routing is deliberately not theirs.
+///
+/// The distinction ADR 0020 pins: `Add files\u2026` acts on files the user named
+/// one by one, and the walking surfaces classify a broader filesystem surface.
+/// Widening a walk is a wider claim than widening the picker, and it is not
+/// made here -- no vendor-family recognition runs during traversal at all.
+#[cfg(windows)]
+#[test]
+fn folder_and_drop_ingestion_remain_mzml_only_for_vendor_files() {
+    let chosen = FolderTree::new("vendor-in-folder");
+    chosen.file("kept.mzML", b"<mzML>inside</mzML>");
+    chosen.file("acquisition.lcd", &shimadzu_lcd_bytes());
+    chosen.file("acquisition.raw", &thermo_raw_bytes());
+    let service = PreviewService::new(Box::new(NoProcess));
+
+    // A dropped folder discovers the mzML and never the acquisitions beside
+    // it: they are not candidates, so they are not even rejections.
+    let work = reserve_drop_work(&service, &[chosen.path().to_path_buf()]);
+    let result = service
+        .process_native_drop_with(work, expand_drop_paths)
+        .expect("the drop completes");
+    assert_eq!(roster_names(&service), vec!["kept.mzML"]);
+    assert!(
+        result.outcomes.iter().all(|outcome| !matches!(
+            outcome,
+            WorkspaceAddOutcomeDto::Rejected { candidate_name, .. }
+                if candidate_name.ends_with(".lcd") || candidate_name.ends_with(".raw")
+        )),
+        "a walk neither admits nor names vendor files"
+    );
+
+    // A vendor file dropped directly is refused by name -- the drop admits
+    // through mzML acceptance and never through the picker's routing.
+    let direct = FolderTree::new("vendor-direct-drop");
+    direct.file("direct.lcd", &shimadzu_lcd_bytes());
+    let work = reserve_drop_work(&service, &[direct.path().join("direct.lcd")]);
+    let result = service
+        .process_native_drop_with(work, expand_drop_paths)
+        .expect("the drop completes");
+    assert!(
+        matches!(
+            result.outcomes.first(),
+            Some(WorkspaceAddOutcomeDto::Rejected { error, .. })
+                if error.kind == "unsupported_extension"
+        ),
+        "a directly dropped vendor file stays unsupported; got {:?}",
+        result.outcomes.first()
+    );
+    assert_eq!(roster_names(&service), vec!["kept.mzML"]);
+}
+
+/// Stop queue reaches a running Shimadzu item exactly as it reaches a Thermo
+/// one, and later items of either family become notRun.
+#[test]
+fn a_stop_reaching_a_running_shimadzu_item_cancels_it_and_runs_no_other() {
+    let fixture = TestFile::new("shimadzu-stop");
+    let destination = destination_root(&fixture, "out");
+    let (runner, started, release) = StopAwareRunner::parked(StopEnding::Confirmed);
+    let launches = runner.launches();
+    let service = Arc::new(PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    ))));
+    // Shimadzu first -- the running item a stop reaches -- then one of each
+    // family behind it.
+    let handles = vec![
+        add_one_acquisition(&service, &fixture.shimadzu_lcd("one.lcd")),
+        add_one_acquisition(&service, &fixture.thermo_raw("two.raw")),
+        add_one_acquisition(&service, &fixture.shimadzu_lcd("three.lcd")),
+    ];
+
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("the mixed queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let worker = {
+        let service = Arc::clone(&service);
+        let destination = destination.clone();
+        std::thread::spawn(move || service.run_claimed_conversion(operation, &destination))
+    };
+    started
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the Shimadzu item reaches its process");
+
+    let stopped = service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("the running queue is stoppable");
+    assert!(matches!(
+        stopped.state,
+        WorkspaceConversionStateDto::Stopping { .. }
+    ));
+    release.send(()).expect("release the parked conversion");
+    let update = worker.join().expect("the queue worker finishes");
+
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Stopped
+    );
+    let queue = terminal_queue(&update);
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Cancelled,
+            ConversionQueueItemStateDto::NotRun,
+            ConversionQueueItemStateDto::NotRun,
+        ]
+    );
+    assert_eq!(
+        queue.items[0].source_kind,
+        DatasetSourceKindDto::ShimadzuLcd,
+        "the cancelled item is the Shimadzu one"
+    );
+    let cancellation = queue.items[0]
+        .cancellation
+        .as_ref()
+        .expect("a reached stop reports what it established");
+    assert!(cancellation.termination_requested);
+    assert!(cancellation.tree_termination_confirmed);
+    // One process: the first item's. Nothing behind the stop launched.
+    assert_eq!(launches.load(Ordering::SeqCst), 1);
+    assert!(
+        entry_names(&destination).is_empty(),
+        "nothing was finalized"
+    );
+}
+
+/// The visible vertical for the second vendor family: one focused Shimadzu row,
+/// begin, claim, destination, convert, path-free report.
+#[test]
+fn one_focused_shimadzu_row_converts_through_the_product_path_and_reports_path_free() {
+    let fixture = TestFile::new("visible-shimadzu");
+    let acquisition = fixture.shimadzu_lcd("10nmol.lcd");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+
+    // The plan the user reviews says which family the row is.
+    let plan = service
+        .conversion_plan_summary(&handle)
+        .expect("a vendor row has a plan");
+    assert_eq!(plan.items[0].source_kind, DatasetSourceKindDto::ShimadzuLcd);
+    assert_eq!(plan.items[0].output_file_name, "10nmol.mzML");
+    assert_eq!(plan.validation_mode, ValidationModeDto::OutputOnly);
+
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("a vendor row can be converted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the exact reservation is claimed once");
+    let update = service.run_claimed_conversion(operation, &destination);
+
+    let rendered = serde_json::to_string(&update).expect("the update serializes");
+    let Some(report) = sole_report(&update.state) else {
+        panic!("the conversion reaches an outcome; got {:?}", update.state);
+    };
+    assert_eq!(report.outcome, "finalized");
+    assert_eq!(report.source_kind, DatasetSourceKindDto::ShimadzuLcd);
+    assert_eq!(report.output_file_name.as_deref(), Some("10nmol.mzML"));
+    let validation = report
+        .validation
+        .as_ref()
+        .expect("a finalized run was judged");
+    assert_eq!(validation.mode, ValidationModeDto::OutputOnly);
+    assert!(!validation.fully_verified);
+    assert_eq!(entry_names(&destination), vec!["10nmol.mzML"]);
+    for fragment in [
+        fixture.directory.to_string_lossy().into_owned(),
+        destination.to_string_lossy().into_owned(),
+    ] {
+        assert!(
+            !rendered.contains(&fragment),
+            "the update names {fragment:?}: {rendered}"
+        );
+    }
+}
+
+/// A mixed queue is one queue: visible order preserved, one serial lane, each
+/// item under its own family, each with its own family in plan and report.
+#[test]
+fn a_mixed_family_queue_converts_serially_in_visible_order() {
+    let fixture = TestFile::new("mixed-family-queue");
+    let destination = destination_root(&fixture, "out");
+    let provider = ConvertingProvider::faithful();
+    let launches = provider.runner.launches();
+    let service = PreviewService::new(Box::new(provider));
+    // A deliberately interleaved order: Shimadzu first, Thermo second, Shimadzu
+    // third, so neither family is "the queue's family".
+    let handles = vec![
+        add_one_acquisition(&service, &fixture.shimadzu_lcd("alpha.lcd")),
+        add_one_acquisition(&service, &fixture.thermo_raw("beta.raw")),
+        add_one_acquisition(&service, &fixture.shimadzu_lcd("gamma.lcd")),
+    ];
+
+    // The plan carries each row's family, in the caller's order.
+    let plan = service
+        .conversion_queue_plan(&handles)
+        .expect("a mixed queue has a plan");
+    let plan_kinds: Vec<DatasetSourceKindDto> =
+        plan.items.iter().map(|item| item.source_kind).collect();
+    assert_eq!(
+        plan_kinds,
+        vec![
+            DatasetSourceKindDto::ShimadzuLcd,
+            DatasetSourceKindDto::ThermoRaw,
+            DatasetSourceKindDto::ShimadzuLcd,
+        ]
+    );
+
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("the mixed queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let update = service.run_claimed_conversion(operation, &destination);
+
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Completed
+    );
+    let queue = terminal_queue(&update);
+    let kinds: Vec<DatasetSourceKindDto> =
+        queue.items.iter().map(|item| item.source_kind).collect();
+    assert_eq!(
+        kinds, plan_kinds,
+        "the queue ran the families the plan showed"
+    );
+    for item in &queue.items {
+        assert_eq!(item.state, ConversionQueueItemStateDto::Finalized);
+        let report = item.report.as_ref().expect("a finalized item has a report");
+        assert_eq!(report.source_kind, item.source_kind);
+        let validation = report.validation.as_ref().expect("judged");
+        assert_eq!(validation.mode, ValidationModeDto::OutputOnly);
+        assert!(!validation.fully_verified);
+    }
+    // Three items, three processes, one lane: the runner is the lane, and it
+    // was entered exactly once per item.
+    assert_eq!(launches.load(Ordering::SeqCst), 3);
+    let mut produced = entry_names(&destination);
+    produced.sort();
+    assert_eq!(produced, vec!["alpha.mzML", "beta.mzML", "gamma.mzML"]);
+}
+
+/// Two families, one output basename: the queue is invalid before a picker
+/// could open, whatever the conflict policy would have said.
+#[test]
+fn a_cross_family_output_name_collision_refuses_the_queue_before_the_picker() {
+    let fixture = TestFile::new("cross-family-collision");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let raw = add_one_acquisition(&service, &fixture.thermo_raw("sample.raw"));
+    let lcd = add_one_acquisition(&service, &fixture.shimadzu_lcd("sample.lcd"));
+    let handles = vec![raw, lcd];
+
+    // The read-only plan already refuses it.
+    assert_eq!(
+        service
+            .conversion_queue_plan(&handles)
+            .expect_err("two planned items may not write one name")
+            .kind,
+        "queue_output_name_collision"
+    );
+    // And so does the reservation, for either policy: which file would win is
+    // not a question Fail versus Skip may answer.
+    let document = current_document(&service);
+    for policy in [
+        ConversionConflictPolicyDto::Fail,
+        ConversionConflictPolicyDto::Skip,
+    ] {
+        assert_eq!(
+            service
+                .begin_conversion_queue(&handles, policy, document)
+                .expect_err("the queue itself is invalid")
+                .kind,
+            "queue_output_name_collision"
+        );
+    }
+    assert!(
+        matches!(
+            service.conversion_state().state,
+            WorkspaceConversionStateDto::Idle
+        ),
+        "no reservation was taken for an invalid queue"
+    );
+}
+
+/// A chromatogram-only Shimadzu result is a successful conversion through the
+/// visible queue, with those exact facts on the report.
+#[test]
+fn a_chromatogram_only_shimadzu_result_completes_the_visible_queue() {
+    let fixture = TestFile::new("visible-chromatograms");
+    let acquisition = fixture.shimadzu_lcd("scheduled.lcd");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::ConvertChromatogramsOnly),
+    )));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("the row converts");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let update = service.run_claimed_conversion(operation, &destination);
+
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Completed
+    );
+    let report = sole_report(&update.state).expect("the item reports");
+    assert_eq!(report.outcome, "finalized");
+    let output = report.output.as_ref().expect("measured");
+    assert_eq!(output.spectrum_count, 0);
+    assert_eq!(output.chromatogram_count, 144);
+}
+
+/// A queue with an unevidenced build for any family in it is refused before
+/// the destination picker opens -- and the refusal costs no reservation.
+#[test]
+fn an_unevidenced_build_refuses_a_queue_before_the_destination_picker() {
+    let fixture = TestFile::new("preflight-evidence");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        conversion_capabilities("3.0.26204", Some("a09eea9"), EVIDENCED_EXECUTABLE_SHA256),
+        FakeConversionRunner::new(BackendAct::Convert),
+    )));
+    let document = current_document(&service);
+
+    // A Shimadzu-only queue, a Thermo-only queue, and a mixed one: every
+    // family present is asked, so every one of these is refused up front.
+    let lcd = add_one_acquisition(&service, &fixture.shimadzu_lcd("one.lcd"));
+    let raw = add_one_acquisition(&service, &fixture.thermo_raw("two.raw"));
+    for handles in [
+        vec![lcd.clone()],
+        vec![raw.clone()],
+        vec![lcd.clone(), raw.clone()],
+    ] {
+        assert_eq!(
+            service
+                .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+                .expect_err("an unevidenced build is refused before the picker")
+                .kind,
+            "provider_build_not_evidenced"
+        );
+        assert!(
+            matches!(
+                service.conversion_state().state,
+                WorkspaceConversionStateDto::Idle
+            ),
+            "no reservation was taken"
+        );
+    }
+}
+
+/// The distinct-family projection the evidence gate iterates: every family in
+/// the queue, once, in first-appearance order.
+///
+/// This is the seam the "check only the first family" mistake would live in,
+/// and it is tested directly because the evidence *outcomes* cannot show it
+/// today: the one evidenced build carries a row for both families, so a gate
+/// that asked about the wrong one would still be answered yes. The projection
+/// itself is what has to be right.
+#[test]
+fn a_queue_reports_each_distinct_family_once_in_first_appearance_order() {
+    let dto = |name: &str, kind: DatasetSourceKindDto| SelectedFileDto {
+        handle: String::from("file-0"),
+        file_name: name.to_owned(),
+        byte_length: 1,
+        source_kind: kind,
+        relative_context: None,
+    };
+    let item = |index: u64, name: &str, kind: DatasetSourceKind, wire: DatasetSourceKindDto| {
+        QueueItem::new(
+            DatasetId::parse(&format!("file-{index}")).expect("a handle"),
+            0,
+            kind,
+            dto(name, wire),
+            name.replace(".lcd", ".mzML").replace(".raw", ".mzML"),
+        )
+    };
+    let queue = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        vec![
+            item(
+                0,
+                "one.lcd",
+                DatasetSourceKind::ShimadzuLcd,
+                DatasetSourceKindDto::ShimadzuLcd,
+            ),
+            item(
+                1,
+                "two.raw",
+                DatasetSourceKind::ThermoRaw,
+                DatasetSourceKindDto::ThermoRaw,
+            ),
+            item(
+                2,
+                "three.lcd",
+                DatasetSourceKind::ShimadzuLcd,
+                DatasetSourceKindDto::ShimadzuLcd,
+            ),
+        ],
+    )
+    .expect("a mixed queue is a queue");
+    assert_eq!(
+        queue.distinct_source_kinds(),
+        vec![DatasetSourceKind::ShimadzuLcd, DatasetSourceKind::ThermoRaw],
+        "each family once, in the order the queue first shows it"
+    );
+}
+
+/// A Shimadzu failure is diagnosable, and the export names the family exactly.
+#[test]
+fn a_shimadzu_failure_is_diagnosable_and_names_its_family_exactly() {
+    let fixture = TestFile::new("shimadzu-diagnostics");
+    let acquisition = fixture.shimadzu_lcd("broken.lcd");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::Fail),
+    )));
+    let handle = add_one_acquisition(&service, &acquisition);
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion(&handle, ConversionConflictPolicyDto::Fail, document)
+        .expect("the row converts");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let update = service.run_claimed_conversion(operation, &destination);
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Completed
+    );
+    assert!(
+        update.diagnostics.available,
+        "a failed vendor conversion is diagnosable"
+    );
+
+    let reservation = service
+        .begin_conversion_diagnostics_export(&operation.to_string(), document)
+        .expect("the terminal queue is exportable");
+    service
+        .claim_conversion_diagnostics_export(&reservation.reservation_id, document)
+        .expect("claim the export");
+    let saved = fixture.directory.join("diagnostics.json");
+    service
+        .write_conversion_diagnostics(&reservation.reservation_id, &saved)
+        .expect("the document is written");
+    let exported = read_export(&saved);
+    let item = &exported["items"][0];
+    assert_eq!(
+        item["sourceKind"], "shimadzu_lcd",
+        "the export names the family exactly: {exported}"
+    );
+    assert_no_location(
+        &saved,
+        &[
+            "shimadzu-diagnostics",
+            &fixture.directory.to_string_lossy(),
+            &destination.to_string_lossy(),
+        ],
+    );
 }
 
 /// The ordinary case: every finalized output enters the workspace as mzML, in
@@ -12815,6 +13625,39 @@ fn adopting_a_completed_queue_adds_its_outputs_in_queue_order() {
         };
         assert_eq!(dataset.source_kind, DatasetSourceKindDto::Mzml);
     }
+}
+
+/// A Shimadzu conversion's output is ordinary mzML, adopted exactly as a
+/// Thermo one is, with its converted origin naming the source row.
+#[test]
+fn adopting_a_shimadzu_output_yields_an_ordinary_mzml_row() {
+    let fixture = TestFile::new("adopt-shimadzu");
+    let (service, _destination, operation, document) =
+        converted_queue(&fixture, &["acquisition.lcd"]);
+
+    let result = service
+        .adopt_conversion_outputs(&operation.to_string(), document)
+        .expect("a finalized Shimadzu output is adoptable");
+
+    assert_eq!(adoption_kinds(&result), vec!["added"]);
+    let Some(WorkspaceOutputAdoptionOutcomeDto::Added { dataset, .. }) = result.outcomes.first()
+    else {
+        panic!("the output was added");
+    };
+    assert_eq!(dataset.file_name, "acquisition.mzML");
+    assert_eq!(
+        dataset.source_kind,
+        DatasetSourceKindDto::Mzml,
+        "an adopted output is mzML whatever it was converted from"
+    );
+    // The origin names the Shimadzu source row, exactly as it does for Thermo.
+    let roster = service.roster();
+    let source_row = roster
+        .datasets
+        .iter()
+        .find(|row| row.file_name == "acquisition.lcd")
+        .expect("the source row is still in the workspace");
+    assert_eq!(source_row.source_kind, DatasetSourceKindDto::ShimadzuLcd);
 }
 
 /// An output the session already holds is reported as such, and consumes

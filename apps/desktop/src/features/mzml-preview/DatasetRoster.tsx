@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { ChangeEvent, KeyboardEvent, MouseEvent } from "react";
 
-import type { DatasetSourceKind } from "./contracts";
+import { SOURCE_KIND_LABEL, isConvertibleSourceKind } from "./contracts";
 import { formatByteLength, formatCount } from "./format";
 import {
   rowPresentation,
@@ -112,14 +112,9 @@ export interface DatasetRosterProps {
  * colour or a glyph: which family a row is decides whether it can be previewed
  * at all, and that is not a fact to encode as a shade.
  */
-const SOURCE_KIND_LABEL: Record<DatasetSourceKind, string> = {
-  mzml: "mzML",
-  thermo_raw: "Thermo RAW",
-  // Product-unreachable, and still named. A row this interface cannot label is
-  // a row it would draw a blank beside; the label is what keeps the roster
-  // readable if one ever appears, and it grants nothing on its own.
-  shimadzu_lcd: "Shimadzu LCD",
-};
+// The family labels live in the wire vocabulary module: the queue plan names
+// families too, and one record is what keeps the surfaces from calling one
+// family two things.
 
 const ROW_STATE_LABEL: Record<RowPresentation, string> = {
   ready: "",
@@ -769,7 +764,7 @@ export function DatasetRoster({
   // a focused row pinned outside a search is still the focused row, and the
   // reason `Preview focused` is unavailable does not change with a query.
   const focusedIsConvertible = state.datasets.some(
-    (dataset) => dataset.handle === state.focused && dataset.sourceKind === "thermo_raw",
+    (dataset) => dataset.handle === state.focused && isConvertibleSourceKind(dataset.sourceKind),
   );
   // Measured against what the search matched, never against what is on screen:
   // a query that matched three of four files narrowed the view whether or not
