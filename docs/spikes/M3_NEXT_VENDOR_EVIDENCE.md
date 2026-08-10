@@ -233,11 +233,15 @@ answering from the part that could be read. The directory offset is bounded at
 Two of those are there because review found them missing, and both were
 fail-open in a reader whose whole argument is that it fails closed:
 
-- **The sector shift is a set of two, not a range.** A range from 9 to 12 also
-  admits 10 and 11, which the format does not define. A header declaring one
-  would have sent the directory read to an invented 1024- or 2048-byte
-  geometry, where a crafted file is free to have placed three convincing marker
-  names.
+- **The geometry is a set of two (major version, sector shift) pairs, not a
+  range and not two independent fields.** A range from 9 to 12 also admits 10
+  and 11, which the format does not define; a header declaring one would have
+  sent the directory read to an invented 1024- or 2048-byte geometry, where a
+  crafted file is free to have placed three convincing marker names. And a
+  shift checked without its version accepts a header that contradicts itself.
+  Both real fixtures declare version 4 with shift 12 — measured before the rule
+  was added, because a rule that refused a real acquisition would be worse than
+  the gap it closed.
 - **The last declared code unit of a name must be the terminator.** Discarding
   it unlooked-at means a field holding `LSS Raw DataX`, declared as though the
   `X` were the terminator, reads back as exactly `LSS Raw Data`. Three of those
@@ -277,30 +281,49 @@ Both fixtures, both stages, on the build above.
 | Extension | `mzML` | `mzML` |
 | Partial-output suffix present | no | no |
 | Sidecars, logs, index files, directories | **none** | **none** |
-| Output byte length | `1,382,434` | `482,003` |
-| Output SHA-256 | `5C7B95484017DE755A51FAC52C166C58470E35F658B7F0CA45CCA94FC48EE1D3` | `056CACB7A18EC38FF50B6BD0E6FDD6504E9DE421D9A19E5F7EF43E5A8CE24777` |
+| Output byte length | ~1.38 MB | ~0.48 MB |
+| Output SHA-256 | *not a property of the acquisition — see below* | *as A* |
 | Backend exit code | 0 | 0 |
 | Backend stderr | 0 bytes | 0 bytes |
 
-Fixture A was converted twice; the second run produced a byte-identical output.
-**One source, one output, no sidecars** — the layout the conversion boundary's
-exactly-one-entry rule requires, measured rather than assumed. This closes, for
-this family, the same question M3.0.3 closed for the first: *whether
-`msconvert` writes anything besides its output.*
+Fixture A was converted twice from the same location; the second run produced a
+byte-identical output. **One source, one output, no sidecars** — the layout the
+conversion boundary's exactly-one-entry rule requires, measured rather than
+assumed. This closes, for this family, the same question M3.0.3 closed for the
+first: *whether `msconvert` writes anything besides its output.*
 
-### The output digest depends on the input's file name
+### No output digest is recorded, and that is a finding rather than an omission
 
-Measured, and worth stating because it looks like non-determinism if you meet it
-by accident. `msconvert` embeds the source file's basename in the document it
-writes, so converting the same acquisition under a different name produces a
-different byte length and a different digest — the same fixture A under the
-basename `10nmol.lcd` yields `1,382,324` bytes and
-`F9FD7E72B05AD34CBF8F6D4120252A1F5426EE2A0EA59BDF1744FE8C0A933FC7`.
+An earlier draft of this record carried an output SHA-256 for each fixture. They
+were wrong to record, and the way they were wrong is worth keeping.
 
-**The digests in the table above are therefore recorded under the fixtures'
-upstream basenames**, which is what a reproduction from the retrieval URLs will
-have. The conversion is deterministic; the digest is a fact about the
-acquisition *and its name together*, and this record does not claim otherwise.
+`msconvert` writes the source's **absolute directory** into the document:
+
+```text
+<sourceFile id="same.lcd" name="same.lcd" location="file:///C:\...\dirA">
+```
+
+So the output's bytes depend on where the input happened to sit. Measured
+directly — the same acquisition, same basename, converted from two directories
+whose names differ by four characters, produced outputs differing by exactly
+four bytes and, of course, two different digests. Renaming the file moves the
+length too, by the difference in the basename.
+
+The conversion **is** deterministic: same acquisition, same path, same build →
+byte-identical output, confirmed by repeat. But a digest recorded here could
+only ever be reproduced by someone who put the fixture at the same absolute
+path, which is not a thing an evidence record can ask for. What is stable and
+is recorded instead: exactly one output, named as planned, with the `mzML`
+extension, no sidecar and no partial-output name, and the spectrum and
+chromatogram counts below.
+
+Two consequences worth naming. A converted mzML **contains the absolute
+directory its acquisition was read from** — it is the user's own output in the
+user's own workspace, so nothing in this slice changes, but it is the kind of
+fact this repository would rather have written down than rediscover. And output
+digests are still meaningful *within* a run — the boundary hashes the object it
+finalizes through the handle it finalizes — they are simply not portable facts
+about a family.
 
 The committed reference outputs agree with the measurement: at the pinned
 commit, each `.lcd` in the test data has exactly one `.mzML` beside it — unlike

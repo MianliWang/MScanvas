@@ -3839,6 +3839,11 @@ fn compound_bytes(entries: &[&str]) -> Vec<u8> {
     const SECTOR: usize = 512;
     let mut bytes = vec![0_u8; SECTOR * 2];
     bytes[..8].copy_from_slice(&COMPOUND_HEADER);
+    // Major version 3, which is the version 512-byte sectors belong to. Both
+    // real fixtures are version 4 with 4096-byte sectors; either defined pair
+    // exercises the same reading, and a header that named neither would be a
+    // file no writer produces.
+    bytes[26..28].copy_from_slice(&3_u16.to_le_bytes());
     bytes[28..30].copy_from_slice(&[0xFE, 0xFF]);
     bytes[30..32].copy_from_slice(&9_u16.to_le_bytes());
     bytes[48..52].copy_from_slice(&0_u32.to_le_bytes());
@@ -3991,6 +3996,19 @@ fn a_crafted_container_cannot_talk_its_way_into_the_family() {
             "a container claiming sector shift {shift} was admitted"
         );
     }
+
+    // A header that contradicts itself. Each field is one the format defines;
+    // the combination is not, and a reader that checked them separately would
+    // read the directory at whichever geometry the crafted file preferred.
+    let mut contradictory = compound_bytes(&SHIMADZU_ENTRIES);
+    contradictory[26..28].copy_from_slice(&4_u16.to_le_bytes());
+    let path = directory.path().join("contradictory.lcd");
+    fs::write(&path, &contradictory).expect("write a contradictory header");
+    assert_eq!(
+        ConversionSource::open_shimadzu_lcd_file(&path, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::FamilyStructureMismatch),
+        "a container claiming version 4 with 512-byte sectors was admitted"
+    );
 
     // A marker forged out of a longer name. `LSS Raw DataX` declared as though
     // the `X` were the two-byte terminator reads back as `LSS Raw Data` unless

@@ -50,15 +50,21 @@ const DIRECTORY_ENTRY_BYTES: usize = 128;
 /// terminator.
 const DIRECTORY_NAME_BYTES: usize = 64;
 
-/// The two sector shifts the format defines: 9 for the 512-byte sectors of
-/// major version 3, and 12 for the 4096-byte sectors of major version 4.
+/// The two (major version, sector shift) pairs the format defines: version 3
+/// with 512-byte sectors, and version 4 with 4096-byte sectors.
 ///
-/// A set of two, not a range. A range from 9 to 12 also admits 10 and 11, and
-/// the format defines neither — a header declaring one would send this reader
-/// looking for a directory at an invented 1024- or 2048-byte geometry, and a
-/// crafted file could put three convincing marker names wherever that lands.
-/// Anything outside this set is refused rather than trusted.
-const DEFINED_SECTOR_SHIFTS: [u16; 2] = [9, 12];
+/// A set of two pairs, not a range and not two independent fields. A range from
+/// 9 to 12 also admits 10 and 11, which the format does not define — a header
+/// declaring one would send this reader looking for a directory at an invented
+/// 1024- or 2048-byte geometry. And a shift checked without its version accepts
+/// a header that contradicts itself, which is the same kind of thing the byte
+/// order marker and the entry terminator are checked for: a file saying two
+/// incompatible things about itself is not one to read on.
+///
+/// Both LabSolutions fixtures declare version 4 with shift 12. Nothing here is
+/// inferred from one field to excuse the other; a pair not in this set is
+/// refused.
+const DEFINED_VERSION_GEOMETRIES: [(u16, u16); 2] = [(3, 9), (4, 12)];
 
 /// How far into the file this reader will seek to reach the directory.
 ///
@@ -144,8 +150,9 @@ pub(crate) fn read_root_directory_names(
         return Err(CompoundFileError::NotACompoundFile);
     }
 
+    let major_version = u16::from_le_bytes([header[26], header[27]]);
     let sector_shift = u16::from_le_bytes([header[30], header[31]]);
-    if !DEFINED_SECTOR_SHIFTS.contains(&sector_shift) {
+    if !DEFINED_VERSION_GEOMETRIES.contains(&(major_version, sector_shift)) {
         return Err(CompoundFileError::NotACompoundFile);
     }
     let sector_bytes = 1_usize << sector_shift;
@@ -251,6 +258,11 @@ mod tests {
         let sector_bytes = 1_usize << sector_shift;
         let mut bytes = vec![0_u8; sector_bytes.max(HEADER_BYTES)];
         bytes[..8].copy_from_slice(&COMPOUND_FILE_SIGNATURE);
+        // The major version its shift implies, because a real header carries
+        // one and the reader now checks the pair. A builder that left this
+        // zero would have been quietly testing a file no writer produces.
+        let major_version: u16 = if sector_shift == 9 { 3 } else { 4 };
+        bytes[26..28].copy_from_slice(&major_version.to_le_bytes());
         bytes[28..30].copy_from_slice(&LITTLE_ENDIAN_MARKER);
         bytes[30..32].copy_from_slice(&sector_shift.to_le_bytes());
         // Directory at sector 0, which begins one sector in.
@@ -381,6 +393,34 @@ mod tests {
                 CompoundFileError::NotACompoundFile,
                 "shift {shift}"
             );
+        }
+
+        // A header that contradicts itself: each field defined on its own, the
+        // pair not. Version 0 is the case a synthetic fixture falls into by
+        // simply not writing the field, which is how this was missed.
+        for major in [0_u16, 3, 5, 0xFFFF] {
+            let mut mismatched = compound_file(&[("Root Entry", 5)], 12);
+            mismatched[26..28].copy_from_slice(&major.to_le_bytes());
+            assert_eq!(
+                names_of(&mismatched, "version").expect_err("the pair is checked, not the fields"),
+                CompoundFileError::NotACompoundFile,
+                "major {major} with shift 12"
+            );
+        }
+        let mut swapped = compound_file(&[("Root Entry", 5)], 9);
+        swapped[26..28].copy_from_slice(&4_u16.to_le_bytes());
+        assert_eq!(
+            names_of(&swapped, "swapped").expect_err("version 4 does not use 512-byte sectors"),
+            CompoundFileError::NotACompoundFile
+        );
+
+        // Both defined pairs are still read, so what the refusals above reject
+        // is the contradiction and not the fields.
+        for (major, shift) in [(3_u16, 9_u16), (4, 12)] {
+            let mut defined = compound_file(&[("Root Entry", 5), ("Marker", 2)], shift);
+            defined[26..28].copy_from_slice(&major.to_le_bytes());
+            let names = names_of(&defined, "defined").expect("a defined pair is read");
+            assert!(names.contains("Marker"), "version {major} shift {shift}");
         }
 
         // Shorter than the header.
