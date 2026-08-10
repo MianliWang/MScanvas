@@ -3598,3 +3598,59 @@ No dependency and no capability was added. The two new commands are the
 twenty-first and twenty-second. No upload, no telemetry, no clipboard, no support
 workflow, no diagnostics history, no logging framework, and no claim that an
 exported file is anonymous or safe to share unreviewed.
+
+## Second evidenced vendor source family: Shimadzu LabSolutions LCD, 2026-08-09
+
+ADR 0010 admitted one vendor family and left open whether its posture generalised
+or was Thermo-shaped. It generalises, with one correction, and this slice records
+both. Nothing user-visible converts the new family.
+
+**Why the first rule was not enough.** A Shimadzu `.lcd` and a SCIEX `.wiff`
+begin with the same eight bytes: both are Microsoft compound files, and
+`D0 CF 11 E0 A1 B1 1A E1` names the container rather than the vendor — measured
+on real fixtures of both. ADR 0010's rule applied unchanged would admit a `.wiff`
+renamed `.lcd`, and the backend then launches, writes nothing and exits `1` with
+`[ShimadzuReader::ctor] LoadData error: E_UNSUPPORTEDFILE`. Following ADR 0010
+would have produced exactly the deferral ADR 0010 forbids. ProteoWizard gave no
+help: `Reader_Shimadzu::identify` and `Reader_ABI::identify` both test the
+filename and ignore the bytes they are handed.
+
+**What recognises the family.** One step inserted into the shared admission body
+after the signature comparison and before the rewind, through the same pinned
+handle: the entry names in the compound file's first directory sector must
+include `Method File Property`, `GUMM_Information` and `LSS Raw Data`, exactly
+and case-sensitively. Skipped entirely for families whose leading bytes are the
+recognition on their own, and dispatched by a function total over the enum, so a
+family added later has to answer rather than inherit. The reader is a little over
+two hundred lines before its tests, and reads a header and one sector — no FAT
+walk, no tree traversal, no stream opened, no content decoded, every ambiguity a
+refusal, the seek bounded. No dependency was added.
+
+**Why not SCIEX WIFF.** It was investigated first and refused on a measured
+fact. `Reader_ABI::read` pushes one `MSDataPtr` per sample, and pwiz's own
+committed reference outputs are ten `.mzML` files for one input acquisition. A
+one-source/one-output conversion plan cannot represent that, so the gate was
+recorded instead of the plan being bent around it.
+
+**What was measured.** Two lawful fixtures from ProteoWizard's Apache-2.0
+repository at a pinned commit, downloaded outside the repository and deleted
+afterwards. On release `3.0.26013` revision `47b13cf` with the executable digest
+ADR 0010 already pinned: each converts to exactly one `mzML`, no sidecars, no
+partial-output names, byte-identical on repeat. `finalized`, `output_only`,
+`is_fully_verified` false, no residue. One fixture produced zero spectra and 144
+chromatograms and was finalized correctly — a chromatogram-only acquisition is a
+real acquisition, and no rule was weakened to accept it.
+
+**The build table gained a row, not a wider row.** Both entries name the same
+build, because both families were measured on the same installation, but a row
+is a family converted on a build — a build that reads one vendor's files is not
+evidence about another vendor's library beside it in the same binary. No
+vendor-library identity is claimed; this repository does not hash those DLLs.
+
+**Scope.** No picker entry, no workspace row, no conversion action, no queue
+support, no Tauri command, no DTO, no capability, no frontend code. One arm was
+added to the desktop crate's rejection mapping because that match is exhaustive;
+it reports what the neighbouring signature refusal reports and no workspace path
+can reach it. See
+[ADR 0018](docs/architecture/adr/0018-shimadzu-labsolutions-lcd-source-admission.md)
+and [the M3.7 evidence record](docs/spikes/M3_NEXT_VENDOR_EVIDENCE.md).

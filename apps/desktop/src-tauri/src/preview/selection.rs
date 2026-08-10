@@ -456,6 +456,15 @@ fn source_not_admitted(rejection: ConversionSourceRejection) -> PreviewErrorDto 
             "unrecognized_acquisition",
             "That file does not carry the signature its family requires.",
         ),
+        // Answered here because the match is exhaustive, and answered as the
+        // one above it because they are one thing to a user: the file is not
+        // what its name says. No workspace path can produce this today — the
+        // family that raises it is private to the conversion crate — so this
+        // adds a compiled arm and no surface.
+        ConversionSourceRejection::FamilyStructureMismatch => (
+            "unrecognized_acquisition",
+            "That file does not hold the structure its family requires.",
+        ),
         ConversionSourceRejection::NotARegularFile => (
             "not_a_regular_file",
             "MSCanvas opens regular files, not folders or links.",

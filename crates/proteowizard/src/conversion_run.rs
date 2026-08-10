@@ -47,6 +47,7 @@ use crate::capability::{InstalledHelpCapabilities, Sha256Digest};
 use crate::command::{
     InputSpelling, OpenFormat, PlanError, SourceIdentity, build_msconvert_command_for_source,
 };
+use crate::compound_file;
 use crate::conversion::{
     ConversionIntegrityOutcome, ConversionPolicy, ConversionSourceError, ConversionSourceFacts,
     SourceObjectFacts, ValidConversion, VerifiedConversion, capture_conversion_source,
@@ -122,6 +123,13 @@ pub enum ConversionSourceKind {
     /// object model the mzML posture already established rather than needing a
     /// new one.
     ThermoRawFile,
+    /// A regular file holding a Shimadzu LabSolutions acquisition.
+    ///
+    /// Single-file, like Thermo RAW, and recognised one level deeper. It is a
+    /// Microsoft compound file, so its first eight bytes are the same eight
+    /// bytes a SCIEX `.wiff` begins with — measured on real fixtures of both.
+    /// What names the family is the set of entries inside it.
+    ShimadzuLcdFile,
 }
 
 impl ConversionSourceKind {
@@ -130,6 +138,7 @@ impl ConversionSourceKind {
         match self {
             Self::MzmlFile => "mzml_file",
             Self::ThermoRawFile => "thermo_raw_file",
+            Self::ShimadzuLcdFile => "shimadzu_lcd_file",
         }
     }
 
@@ -155,7 +164,13 @@ impl ConversionSourceKind {
     pub const fn input_spelling(self) -> InputSpelling {
         match self {
             Self::MzmlFile => InputSpelling::Canonical,
-            Self::ThermoRawFile => InputSpelling::PlainVerified,
+            // Measured for each of them separately, and they agree. The
+            // Shimadzu route refuses an extended-length spelling one step
+            // earlier than the Thermo one does: `msconvert` expands its file
+            // masks before any reader sees them and answers "no files found
+            // matching", where the Thermo library accepts the argument and
+            // then reports a corrupt file. Different messages, one fact.
+            Self::ThermoRawFile | Self::ShimadzuLcdFile => InputSpelling::PlainVerified,
         }
     }
 
@@ -168,7 +183,7 @@ impl ConversionSourceKind {
     /// repository has measured on exactly the builds it has measured.
     #[must_use]
     pub const fn requires_provider_build_evidence(self) -> bool {
-        matches!(self, Self::ThermoRawFile)
+        matches!(self, Self::ThermoRawFile | Self::ShimadzuLcdFile)
     }
 }
 
@@ -181,6 +196,69 @@ impl ConversionSourceKind {
 const THERMO_RAW_SIGNATURE: [u8; 18] = [
     0x01, 0xA1, b'F', 0, b'i', 0, b'n', 0, b'n', 0, b'i', 0, b'g', 0, b'a', 0, b'n', 0,
 ];
+
+/// The extension the installed Shimadzu reader requires.
+///
+/// Measured exactly as the Thermo one was, and the answer is the same shape for
+/// a different reason. `Reader_Shimadzu::identify` consults the name and
+/// nothing else, so an LCD under another extension is not identified at all:
+/// the run ends with "don't know how to read" and produces nothing. Admitting
+/// it would defer a stateable refusal to a launched process.
+const SHIMADZU_LCD_EXTENSION: &str = "lcd";
+
+/// The entries a Shimadzu LabSolutions acquisition carries in the first sector
+/// of its compound-file directory.
+///
+/// This is the recognition, and it has to be, because the eight-byte magic in
+/// front of it is shared with every other compound file — a SCIEX `.wiff`
+/// among them. Measured on both LabSolutions fixtures in ProteoWizard's own
+/// test data, and absent from the `.wiff` fixture beside them: renaming that
+/// `.wiff` to `.lcd` is refused here, where without this rule it would have
+/// been admitted and refused by a launched backend instead.
+///
+/// All three are required. Two fixtures is a small sample, and the direction to
+/// be wrong in is refusing an acquisition rather than admitting a document that
+/// is not one.
+const SHIMADZU_LCD_DIRECTORY_ENTRIES: [&str; 3] =
+    ["Method File Property", "GUMM_Information", "LSS Raw Data"];
+
+/// Requires whatever a family needs beyond its leading bytes, through the
+/// handle those bytes were read from.
+///
+/// Total over the source families rather than defaulting, so a family added
+/// later has to say whether its signature is the whole recognition. Two of
+/// them say yes: mzML was read as a document before it became a source, and a
+/// Thermo RAW carries a signature no other family shares.
+fn require_family_structure(
+    kind: ConversionSourceKind,
+    file: &mut File,
+) -> Result<(), ConversionSourceRejection> {
+    match kind {
+        ConversionSourceKind::MzmlFile | ConversionSourceKind::ThermoRawFile => Ok(()),
+        ConversionSourceKind::ShimadzuLcdFile => {
+            let names = compound_file::read_root_directory_names(file).map_err(|error| {
+                match error {
+                    // It carried the compound-file magic a moment ago, so a
+                    // reader that now says it is not one is describing an
+                    // object that cannot be recognised rather than an object
+                    // that is a different family.
+                    compound_file::CompoundFileError::NotACompoundFile
+                    | compound_file::CompoundFileError::DirectoryUnreadable => {
+                        ConversionSourceRejection::FamilyStructureMismatch
+                    }
+                    compound_file::CompoundFileError::Unreadable { kind } => {
+                        ConversionSourceRejection::NotInspectable { kind }
+                    }
+                }
+            })?;
+            if names.contains_all(&SHIMADZU_LCD_DIRECTORY_ENTRIES) {
+                Ok(())
+            } else {
+                Err(ConversionSourceRejection::FamilyStructureMismatch)
+            }
+        }
+    }
+}
 
 /// One ProteoWizard build a vendor source family was actually converted on.
 ///
@@ -212,12 +290,23 @@ struct EvidencedProviderBuild {
 /// installation is the claim ADR 0002 and the M0 spike both refuse to make,
 /// because a vendor family is read by a vendor library whose behaviour changes
 /// between releases and whose availability is not uniform across builds.
-const EVIDENCED_PROVIDER_BUILDS: [EvidencedProviderBuild; 1] = [EvidencedProviderBuild {
-    kind: ConversionSourceKind::ThermoRawFile,
-    release: "3.0.26013",
-    source_revision: "47b13cf",
-    executable_sha256: "9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD",
-}];
+const EVIDENCED_PROVIDER_BUILDS: [EvidencedProviderBuild; 2] = [
+    EvidencedProviderBuild {
+        kind: ConversionSourceKind::ThermoRawFile,
+        release: "3.0.26013",
+        source_revision: "47b13cf",
+        executable_sha256: "9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD",
+    },
+    // The same build, and a second row rather than a widened one. A row is a
+    // family converted on a build, and a build that reads one vendor's files
+    // is not thereby evidence about another vendor's library sitting beside it.
+    EvidencedProviderBuild {
+        kind: ConversionSourceKind::ShimadzuLcdFile,
+        release: "3.0.26013",
+        source_revision: "47b13cf",
+        executable_sha256: "9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD",
+    },
+];
 
 /// Whether the installed build is one this family has been converted on.
 ///
@@ -281,6 +370,11 @@ pub enum ConversionSourceRejection {
     /// it.
     #[error("the conversion source does not carry the expected file signature")]
     SignatureMismatch,
+    /// The object is a container of the right kind and does not hold the
+    /// structure the family is recognised by. A compound file is a compound
+    /// file whichever vendor wrote it; this is what tells them apart.
+    #[error("the conversion source does not hold the expected family structure")]
+    FamilyStructureMismatch,
 }
 
 impl ConversionSourceRejection {
@@ -293,6 +387,7 @@ impl ConversionSourceRejection {
             Self::NotHashed => "source_not_hashed",
             Self::UnsupportedExtension => "source_unsupported_extension",
             Self::SignatureMismatch => "source_signature_mismatch",
+            Self::FamilyStructureMismatch => "source_family_structure_mismatch",
         }
     }
 }
@@ -410,6 +505,37 @@ impl ConversionSource {
         )
     }
 
+    /// Opens a regular-file Shimadzu LabSolutions acquisition as a conversion
+    /// source.
+    ///
+    /// The same three steps in the same order as Thermo — posture, extension
+    /// filter, then recognition through the pinned handle — with the third one
+    /// reaching one level further in.
+    ///
+    /// It has to. An LCD begins with the eight bytes every Microsoft compound
+    /// file begins with, and so does a SCIEX `.wiff`; measured on real fixtures
+    /// of both, that prefix cannot say which family it is looking at. What can
+    /// is the set of entries in the container's directory, and the negative
+    /// control is the reason it is worth reading: a `.wiff` renamed to `.lcd`
+    /// passes every earlier check and is refused here, where the installed
+    /// reader would otherwise have refused it after a process had run.
+    ///
+    /// The scan limits judge nothing on this side. An LCD is not mzML and this
+    /// boundary never pretends to read one; they are carried so a plan keeps
+    /// one limit contract whatever its source is.
+    pub fn open_shimadzu_lcd_file(
+        path: &Path,
+        limits: MzmlScanLimits,
+    ) -> Result<Self, ConversionSourceRejection> {
+        Self::open_signed_object(
+            path,
+            limits,
+            ConversionSourceKind::ShimadzuLcdFile,
+            SHIMADZU_LCD_EXTENSION,
+            &compound_file::COMPOUND_FILE_SIGNATURE,
+        )
+    }
+
     /// The shared body of every signature-recognized single-file family.
     fn open_signed_object(
         path: &Path,
@@ -468,6 +594,11 @@ impl ConversionSource {
         if head != signature {
             return Err(ConversionSourceRejection::SignatureMismatch);
         }
+
+        // For a family whose signature names a container rather than a vendor,
+        // one more reading through the same pinned handle. It is skipped for
+        // every family whose leading bytes are the recognition on their own.
+        require_family_structure(kind, &mut file)?;
 
         file.rewind()
             .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;

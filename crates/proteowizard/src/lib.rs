@@ -21,6 +21,7 @@ compile_error!(
 mod cancellation;
 mod capability;
 mod command;
+mod compound_file;
 mod conversion;
 mod conversion_run;
 mod diagnostics;
