@@ -832,7 +832,7 @@ type SourcePosture =
     fn(&Path, MzmlScanLimits) -> Result<ConversionSource, ConversionSourceRejection>;
 
 /// Every posture this repository has evidence for, with the family each admits.
-const SOURCE_POSTURES: [(ConversionSourceKind, SourcePosture); 2] = [
+const SOURCE_POSTURES: [(ConversionSourceKind, SourcePosture); 3] = [
     (
         ConversionSourceKind::MzmlFile,
         ConversionSource::open_mzml_file,
@@ -840,5 +840,9 @@ const SOURCE_POSTURES: [(ConversionSourceKind, SourcePosture); 2] = [
     (
         ConversionSourceKind::ThermoRawFile,
         ConversionSource::open_thermo_raw_file,
+    ),
+    (
+        ConversionSourceKind::ShimadzuLcdFile,
+        ConversionSource::open_shimadzu_lcd_file,
     ),
 ];

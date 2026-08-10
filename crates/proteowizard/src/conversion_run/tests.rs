@@ -3808,6 +3808,593 @@ fn the_vendor_raw_evidence_run_is_reproducible() {
     assert_eq!(entry_names(&root).len(), 1);
 }
 
+// --- The second evidenced vendor source family ---
+//
+// Shimadzu LabSolutions LCD. Everything the section above establishes applies
+// unchanged, so nothing here re-tests the boundary itself. What is new is the
+// one thing that is different about this family: its leading bytes name a
+// container, not a vendor, so recognition reads one level in. These tests are
+// about that reading, and about the family reaching the same boundary through
+// it.
+//
+// As above, no backend is reached. The real acquisition is measured by a
+// separate ignored run.
+
+/// The eight bytes a Microsoft compound file begins with, spelled out here
+/// rather than imported for the same reason the Thermo header is.
+const COMPOUND_HEADER: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+
+/// The entries a LabSolutions acquisition carries, spelled out for the same
+/// reason. If the constant in the crate is edited to match a mistake, these
+/// still say what was measured.
+const SHIMADZU_ENTRIES: [&str; 3] = ["Method File Property", "GUMM_Information", "LSS Raw Data"];
+
+/// A compound file holding exactly these entries.
+///
+/// Built, not vendor data. What this boundary decides about a source is decided
+/// from the container's header, the entry names inside it, the posture and the
+/// object's identity, and every one of those is real here. What it cannot stand
+/// in for is the Shimadzu reader, which is measured for real elsewhere.
+fn compound_bytes(entries: &[&str]) -> Vec<u8> {
+    const SECTOR: usize = 512;
+    let mut bytes = vec![0_u8; SECTOR * 2];
+    bytes[..8].copy_from_slice(&COMPOUND_HEADER);
+    bytes[28..30].copy_from_slice(&[0xFE, 0xFF]);
+    bytes[30..32].copy_from_slice(&9_u16.to_le_bytes());
+    bytes[48..52].copy_from_slice(&0_u32.to_le_bytes());
+
+    // "Root Entry" first, as a real one has, and then the family's own.
+    let named = std::iter::once("Root Entry").chain(entries.iter().copied());
+    for (index, name) in named.enumerate() {
+        let at = SECTOR + index * 128;
+        let units: Vec<u16> = name.encode_utf16().collect();
+        for (unit, slot) in units.iter().zip(bytes[at..].chunks_exact_mut(2)) {
+            slot.copy_from_slice(&unit.to_le_bytes());
+        }
+        let declared = u16::try_from(units.len() * 2 + 2).expect("a short name");
+        bytes[at + 64..at + 66].copy_from_slice(&declared.to_le_bytes());
+        bytes[at + 66] = if index == 0 { 5 } else { 2 };
+    }
+    bytes
+}
+
+fn write_shimadzu_source(directory: &Path, name: &str) -> PathBuf {
+    let path = directory.join(name);
+    fs::write(&path, compound_bytes(&SHIMADZU_ENTRIES)).expect("write a vendor source");
+    path
+}
+
+fn open_shimadzu(path: &Path) -> ConversionSource {
+    ConversionSource::open_shimadzu_lcd_file(path, MzmlScanLimits::default())
+        .expect("open a Shimadzu LCD source")
+}
+
+/// The claim that justifies reading inside the container at all: the signature
+/// alone cannot name this family, and the entries can.
+///
+/// The decoy here is not arbitrary. A SCIEX `.wiff` is a compound file too, and
+/// its first eight bytes are byte-for-byte these -- measured on real fixtures
+/// of both. Renaming one to `.lcd` is the exact case a suffix-plus-signature
+/// rule would admit, and the backend would then refuse it after launching. It
+/// is refused here instead.
+#[test]
+fn a_compound_file_family_is_recognized_by_its_contents_and_not_by_its_magic() {
+    let directory = TestDirectory::new();
+
+    let admitted = write_shimadzu_source(directory.path(), "acquisition.lcd");
+    let source = open_shimadzu(&admitted);
+    assert_eq!(source.kind(), ConversionSourceKind::ShimadzuLcdFile);
+    assert_eq!(source.byte_length(), 1024);
+    assert!(source.mzml_facts().is_none(), "an LCD was read as mzML");
+    assert!(!source.kind().supports_source_comparison());
+
+    // The magic is right, the extension is right, and the contents belong to
+    // another vendor. This is the whole reason the family reads one level in.
+    let other_vendor = directory.path().join("renamed-wiff.lcd");
+    fs::write(
+        &other_vendor,
+        compound_bytes(&["Sample", "WiffFileInfo", "AcqMethod"]),
+    )
+    .expect("write another vendor's compound file");
+    assert_eq!(
+        ConversionSource::open_shimadzu_lcd_file(&other_vendor, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::FamilyStructureMismatch)
+    );
+
+    // Every marker is required. A container holding two of the three is not
+    // two-thirds of an acquisition.
+    for (absent, missing) in SHIMADZU_ENTRIES.iter().enumerate() {
+        let partial: Vec<&str> = SHIMADZU_ENTRIES
+            .iter()
+            .enumerate()
+            .filter_map(|(index, name)| (index != absent).then_some(*name))
+            .collect();
+        let path = directory.path().join(format!("partial-{absent}.lcd"));
+        fs::write(&path, compound_bytes(&partial)).expect("write an incomplete container");
+        assert_eq!(
+            ConversionSource::open_shimadzu_lcd_file(&path, MzmlScanLimits::default()),
+            Err(ConversionSourceRejection::FamilyStructureMismatch),
+            "a container without {missing} was admitted"
+        );
+    }
+
+    // The markers are not a substring search. An entry that merely contains one
+    // is a different entry.
+    let nearly = directory.path().join("nearly.lcd");
+    fs::write(
+        &nearly,
+        compound_bytes(&["Method File Property 2", "GUMM_Information", "LSS Raw Data"]),
+    )
+    .expect("write a near miss");
+    assert_eq!(
+        ConversionSource::open_shimadzu_lcd_file(&nearly, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::FamilyStructureMismatch)
+    );
+
+    // Not a compound file at all: refused before any structure is looked for,
+    // and refused as a signature mismatch, because that is what it is.
+    let decoy = directory.path().join("not-really.lcd");
+    fs::write(&decoy, b"PK\x03\x04 this is a zip archive").expect("write a decoy");
+    assert_eq!(
+        ConversionSource::open_shimadzu_lcd_file(&decoy, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::SignatureMismatch)
+    );
+
+    // The container itself has to hold together. One whose directory sector is
+    // not there is not admitted on the strength of its first eight bytes.
+    let mut headless = compound_bytes(&SHIMADZU_ENTRIES);
+    headless.truncate(512);
+    let unreadable = directory.path().join("no-directory.lcd");
+    fs::write(&unreadable, &headless).expect("write a truncated container");
+    assert_eq!(
+        ConversionSource::open_shimadzu_lcd_file(&unreadable, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::FamilyStructureMismatch)
+    );
+
+    // And the structure alone is not enough, because the installed reader
+    // consults the name and refuses every other extension.
+    let unsupported = directory.path().join("acquisition.dat");
+    fs::write(&unsupported, compound_bytes(&SHIMADZU_ENTRIES)).expect("write a misnamed one");
+    assert_eq!(
+        ConversionSource::open_shimadzu_lcd_file(&unsupported, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::UnsupportedExtension)
+    );
+
+    // Case, as everywhere else on this platform.
+    let shouted = directory.path().join("acquisition.LCD");
+    fs::write(&shouted, compound_bytes(&SHIMADZU_ENTRIES)).expect("write an upper-case one");
+    assert_eq!(
+        open_shimadzu(&shouted).kind(),
+        ConversionSourceKind::ShimadzuLcdFile
+    );
+}
+
+/// The two vendor postures are independent, and neither is a fallback for the
+/// other. A rule that let one family answer for another would make the family
+/// recorded on a run something other than what was recognized.
+#[test]
+fn the_two_vendor_postures_do_not_admit_each_others_acquisitions() {
+    let directory = TestDirectory::new();
+    let thermo = write_thermo_source(directory.path(), "acquisition.raw");
+    let shimadzu = write_shimadzu_source(directory.path(), "acquisition.lcd");
+
+    assert_eq!(
+        ConversionSource::open_shimadzu_lcd_file(&thermo, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::UnsupportedExtension)
+    );
+    assert_eq!(
+        ConversionSource::open_thermo_raw_file(&shimadzu, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::UnsupportedExtension)
+    );
+
+    // Under each other's names, so the extension filter is not what answers.
+    let thermo_named_lcd = directory.path().join("thermo-inside.lcd");
+    fs::write(&thermo_named_lcd, thermo_bytes(b"acquisition-body")).expect("write one");
+    assert_eq!(
+        ConversionSource::open_shimadzu_lcd_file(&thermo_named_lcd, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::SignatureMismatch)
+    );
+    let shimadzu_named_raw = directory.path().join("shimadzu-inside.raw");
+    fs::write(&shimadzu_named_raw, compound_bytes(&SHIMADZU_ENTRIES)).expect("write one");
+    assert_eq!(
+        ConversionSource::open_thermo_raw_file(&shimadzu_named_raw, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::SignatureMismatch)
+    );
+
+    // Neither is admitted by the open-format posture, and an mzML is admitted
+    // by neither of theirs.
+    let mzml = write_source(directory.path(), "sample.mzML");
+    assert_eq!(
+        ConversionSource::open_shimadzu_lcd_file(&mzml, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::UnsupportedExtension)
+    );
+    assert!(matches!(
+        ConversionSource::open_mzml_file(&shimadzu, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::NotReadableAsMzml(_))
+    ));
+}
+
+/// The posture the family inherits, exercised on this family rather than
+/// assumed from the shared body: a directory and a missing object are refused,
+/// and no refusal names a path.
+#[test]
+fn a_compound_file_family_keeps_the_posture_the_shared_admission_has() {
+    let directory = TestDirectory::new();
+
+    let as_directory = directory.path().join("acquisition-folder.lcd");
+    fs::create_dir(&as_directory).expect("create a directory named like an acquisition");
+    assert_eq!(
+        ConversionSource::open_shimadzu_lcd_file(&as_directory, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::NotARegularFile)
+    );
+
+    let absent = directory.path().join("absent.lcd");
+    assert!(matches!(
+        ConversionSource::open_shimadzu_lcd_file(&absent, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::NotInspectable { .. })
+    ));
+
+    // A path whose Debug would be the most tempting place for one to leak.
+    let named = write_shimadzu_source(directory.path(), "\u{6837}\u{672c} 02.lcd");
+    let rendered = format!("{:?}", open_shimadzu(&named));
+    assert!(rendered.contains("ShimadzuLcdFile"));
+    assert!(!rendered.contains('\u{6837}'), "a source rendered its path");
+    assert!(!rendered.contains(".lcd"), "a source rendered its name");
+
+    // Every refusal this family can produce, rendered.
+    for rejection in [
+        ConversionSourceRejection::FamilyStructureMismatch,
+        ConversionSourceRejection::SignatureMismatch,
+        ConversionSourceRejection::UnsupportedExtension,
+    ] {
+        let rendered = format!("{rejection}");
+        assert!(!rendered.contains(std::path::MAIN_SEPARATOR));
+        assert!(!rendered.contains(".lcd"));
+    }
+    assert_eq!(
+        ConversionSourceRejection::FamilyStructureMismatch.stable_id(),
+        "source_family_structure_mismatch"
+    );
+    assert_ne!(
+        ConversionSourceRejection::FamilyStructureMismatch.stable_id(),
+        ConversionSourceRejection::SignatureMismatch.stable_id()
+    );
+}
+
+/// A no-follow open, on this family. The structure is read through the handle
+/// that was pinned, so a name repointed after admission cannot change what was
+/// recognized.
+#[cfg(windows)]
+#[test]
+fn a_compound_file_family_is_not_reached_through_a_link() {
+    let directory = TestDirectory::new();
+    let target = directory.path().join("target");
+    fs::create_dir(&target).expect("create a link target directory");
+    fs::write(target.join("real.lcd"), compound_bytes(&SHIMADZU_ENTRIES))
+        .expect("write behind the link");
+
+    let link = directory.path().join("linked.lcd");
+    if std::os::windows::fs::symlink_file(target.join("real.lcd"), &link).is_err() {
+        // An unprivileged account cannot create one. The claim is untestable
+        // here, not false, and reporting it as checked would be worse.
+        return;
+    }
+    assert!(matches!(
+        ConversionSource::open_shimadzu_lcd_file(&link, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::NotInspectable { .. })
+            | Err(ConversionSourceRejection::NotARegularFile)
+    ));
+}
+
+/// The identity the source carries is the object that was recognized, so an
+/// acquisition replaced between admission and the run is caught before the
+/// backend is launched -- for this family as for the other.
+#[test]
+fn a_replaced_compound_file_acquisition_is_caught_before_the_backend() {
+    let directory = TestDirectory::new();
+    let source = write_shimadzu_source(directory.path(), "acquisition.lcd");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    let plan = ConversionPlan::to_mzml(open_shimadzu(&source), &root, ConflictPolicy::Fail)
+        .expect("plan a vendor conversion");
+    // Same family, same length, different bytes: only the digest tells them
+    // apart, and it is the digest of the object the handle recognized.
+    fs::write(
+        &source,
+        compound_bytes(&["Method File Property", "GUMM_Information", "LSS Raw Data "]),
+    )
+    .expect("replace the acquisition");
+
+    let runner = FakeRunner::new(&convert_faithfully);
+    let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
+
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::SourceChangedBeforeRun)
+    );
+    assert_eq!(
+        runner.calls(),
+        0,
+        "a replaced acquisition launched a backend"
+    );
+    assert!(entry_names(&root).is_empty());
+}
+
+/// The family reaches the same boundary: private staging, no-clobber
+/// finalization, and an output-only judgement that never claims to be more.
+#[test]
+fn a_compound_file_family_runs_through_the_same_boundary_and_is_judged_on_its_output() {
+    let directory = TestDirectory::new();
+    let source = write_shimadzu_source(directory.path(), "acquisition.lcd");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+
+    let act = |spec: &CommandSpec| {
+        let staged = staged_destination(spec);
+        assert!(
+            staged
+                .parent()
+                .and_then(Path::parent)
+                .is_some_and(|staging| staging
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with(".mscanvas-staging"))),
+            "a vendor run wrote outside a private staging area"
+        );
+        fs::write(&staged, output_document()).expect("write the staged output");
+        Ok(0)
+    };
+    let plan = ConversionPlan::to_mzml(open_shimadzu(&source), &root, ConflictPolicy::Fail)
+        .expect("plan a vendor conversion");
+    let runner = FakeRunner::new(&act);
+    let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
+
+    let ConversionRunOutcome::Finalized(finalized) = report.outcome() else {
+        panic!("the vendor conversion did not finalize: {report:?}");
+    };
+    let valid = finalized.valid();
+    assert_eq!(valid.validation_mode(), ValidationMode::OutputOnly);
+    assert!(
+        !valid.is_fully_verified(),
+        "an output-only judgement claimed full verification"
+    );
+    assert!(report.residue().is_none(), "staging survived a vendor run");
+    assert_eq!(entry_names(&root), vec![OsString::from("acquisition.mzML")]);
+
+    // No-clobber, on this family.
+    let existing = fs::read(root.join("acquisition.mzML")).expect("read the finalized output");
+    let plan = ConversionPlan::to_mzml(open_shimadzu(&source), &root, ConflictPolicy::Fail)
+        .expect("plan a second vendor conversion");
+    let runner = FakeRunner::new(&convert_faithfully);
+    let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
+    assert_eq!(
+        *report.outcome(),
+        ConversionRunOutcome::Failed(ConversionRunFailure::DestinationExists)
+    );
+    assert_eq!(runner.calls(), 0);
+    assert_eq!(
+        fs::read(root.join("acquisition.mzML")).expect("read it again"),
+        existing
+    );
+}
+
+/// The measured layout for this family is one mzML and nothing else, and that
+/// is a requirement rather than an observation. A backend that writes anything
+/// beside the planned output finalizes nothing, and neither does one whose
+/// output is still being written.
+///
+/// Recorded for this family specifically because the evidence run measured the
+/// layout it produces. A family that turned out to emit a sidecar would have
+/// been a gate to record, not something to make this boundary tolerate.
+#[test]
+fn a_compound_file_run_that_left_more_than_the_planned_output_finalizes_nothing() {
+    let directory = TestDirectory::new();
+    let source = write_shimadzu_source(directory.path(), "acquisition.lcd");
+
+    let attempt = |act: &dyn Fn(&CommandSpec) -> Result<i32, ProcessError>| {
+        let root = directory.path().join(format!(
+            "out-{}",
+            NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).expect("create destination root");
+        let plan = ConversionPlan::to_mzml(open_shimadzu(&source), &root, ConflictPolicy::Fail)
+            .expect("plan a vendor conversion");
+        let runner = FakeRunner::new(act);
+        let report = run_conversion(&plan, &evidenced_capabilities(), &runner);
+        // The detailed identifier, because the distinction between these two
+        // refusals is the point: an interrupted write is not the same defect as
+        // an output set nobody planned, and one reported as the other would
+        // send an investigation to the wrong place.
+        let outcome = match report.outcome() {
+            ConversionRunOutcome::Failed(failure) => failure.detailed_stable_id(),
+            other => panic!("a refused vendor run reported {other:?}"),
+        };
+        (outcome, entry_names(&root), report.residue().is_none())
+    };
+
+    // A sidecar the plan did not name. Real for other vendors; not for this
+    // one, and refused either way.
+    let (outcome, entries, swept) = attempt(&|spec: &CommandSpec| {
+        let staged = staged_destination(spec);
+        fs::write(&staged, output_document()).expect("write the staged output");
+        let sidecar = staged.with_file_name("acquisition.mzML.scan");
+        fs::write(&sidecar, b"a sidecar nobody planned for").expect("write a sidecar");
+        Ok(0)
+    });
+    assert_eq!(outcome, "unexpected_output");
+    assert!(entries.is_empty(), "a sidecar run finalized {entries:?}");
+    assert!(swept, "staging survived a refused vendor run");
+
+    // Output the backend is still in the middle of writing, reported as that
+    // rather than as an output set nobody planned. The distinction matters:
+    // one says the run was interrupted, the other says it produced something
+    // unexpected, and they send an investigation to different places.
+    let (outcome, entries, swept) = attempt(&|spec: &CommandSpec| {
+        let staged = staged_destination(spec);
+        let in_progress = staged.with_file_name("acquisition.mzML.part");
+        fs::write(&in_progress, output_document()).expect("write an in-progress output");
+        Ok(0)
+    });
+    assert_eq!(outcome, "partial_output");
+    assert!(
+        entries.is_empty(),
+        "an interrupted run finalized {entries:?}"
+    );
+    assert!(swept, "staging survived a refused vendor run");
+
+    // A document that stops in the middle of itself. This family's reader is
+    // not granted an exception for it: an output that does not parse is
+    // refused whichever vendor's file it came from.
+    let (outcome, entries, swept) = attempt(&|spec: &CommandSpec| {
+        let staged = staged_destination(spec);
+        let whole = output_document();
+        fs::write(&staged, &whole[..whole.len() / 2]).expect("write half an output");
+        Ok(0)
+    });
+    assert_eq!(outcome, "malformed_xml");
+    assert!(entries.is_empty(), "a malformed run finalized {entries:?}");
+    assert!(swept, "staging survived a refused vendor run");
+}
+
+/// The build gate is per family, and the second row was added rather than the
+/// first widened. A build with no evidence for this family launches nothing.
+#[test]
+fn the_compound_file_family_runs_only_on_a_build_it_has_evidence_for() {
+    assert!(ConversionSourceKind::ShimadzuLcdFile.requires_provider_build_evidence());
+    assert_eq!(
+        ConversionSourceKind::ShimadzuLcdFile.stable_id(),
+        "shimadzu_lcd_file"
+    );
+    // Two families, two rows, one build. A row is a family converted on a
+    // build; a build that reads one vendor's files is not evidence about
+    // another vendor's library sitting beside it.
+    assert_eq!(EVIDENCED_PROVIDER_BUILDS.len(), 2);
+    assert!(
+        EVIDENCED_PROVIDER_BUILDS
+            .iter()
+            .any(|build| build.kind == ConversionSourceKind::ShimadzuLcdFile)
+    );
+
+    let directory = TestDirectory::new();
+    let source = write_shimadzu_source(directory.path(), "acquisition.lcd");
+
+    let attempt = |installed: &InstalledHelpCapabilities| {
+        let root = directory.path().join(format!(
+            "out-{}",
+            NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).expect("create destination root");
+        let plan = ConversionPlan::to_mzml(open_shimadzu(&source), &root, ConflictPolicy::Fail)
+            .expect("plan a vendor conversion");
+        let runner = FakeRunner::new(&convert_faithfully);
+        let report = run_conversion(&plan, installed, &runner);
+        (
+            report.outcome().stable_id().to_owned(),
+            runner.calls(),
+            entry_names(&root),
+        )
+    };
+
+    let (outcome, calls, entries) = attempt(&evidenced_capabilities());
+    assert_eq!(outcome, "finalized");
+    assert_eq!(calls, 1);
+    assert_eq!(entries, vec![OsString::from("acquisition.mzML")]);
+
+    // A later release, a different revision, a build that will not say, and the
+    // same two strings out of a different binary. Each is a different build.
+    for installed in [
+        capabilities_reporting("3.0.26204", Some("a09eea9")),
+        capabilities_reporting(EVIDENCED_RELEASE, Some("deadbee")),
+        capabilities_reporting(EVIDENCED_RELEASE, None),
+        capabilities_reporting_for(
+            EVIDENCED_RELEASE,
+            Some(EVIDENCED_REVISION),
+            EXECUTABLE_SHA256,
+        ),
+    ] {
+        let (outcome, calls, entries) = attempt(&installed);
+        assert_eq!(outcome, "source_family_not_evidenced");
+        assert_eq!(calls, 0, "an unevidenced build launched a backend");
+        assert!(
+            entries.is_empty(),
+            "an unevidenced build created {entries:?}"
+        );
+    }
+}
+
+/// The measured spelling for this family, which agrees with the other vendor
+/// one for a different reason: `msconvert` expands its file masks before any
+/// reader sees the argument, so an extended-length path matches nothing.
+#[cfg(windows)]
+#[test]
+fn a_compound_file_family_is_named_to_the_backend_in_the_spelling_its_reader_accepts() {
+    assert_eq!(
+        ConversionSourceKind::ShimadzuLcdFile.input_spelling(),
+        InputSpelling::PlainVerified
+    );
+
+    let directory = TestDirectory::new();
+    let source = write_shimadzu_source(directory.path(), "acquisition.lcd");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let plan = ConversionPlan::to_mzml(open_shimadzu(&source), &root, ConflictPolicy::Fail)
+        .expect("plan a vendor conversion");
+
+    let runner = FakeRunner::new(&convert_faithfully);
+    assert_eq!(
+        run_conversion(&plan, &evidenced_capabilities(), &runner)
+            .outcome()
+            .stable_id(),
+        "finalized"
+    );
+
+    let argv = runner.argv();
+    let input = Path::new(argv.first().expect("the input is the first argument"));
+    assert!(
+        !input.to_string_lossy().starts_with(r"\\?\"),
+        "the vendor reader was handed an extended-length path"
+    );
+    assert!(input.is_absolute());
+    assert_eq!(
+        fs::read(input).expect("read through the spelling handed to the backend"),
+        fs::read(&source).expect("read the admitted acquisition")
+    );
+}
+
+/// The real-acquisition evidence for this family, kept out of ordinary runs for
+/// the same reason the other one is.
+#[test]
+#[ignore = "requires a lawful vendor acquisition and an installed ProteoWizard; see docs/spikes/M3_NEXT_VENDOR_EVIDENCE.md"]
+fn the_shimadzu_lcd_evidence_run_is_reproducible() {
+    let Some(fixture) = std::env::var_os("MSCANVAS_SHIMADZU_LCD_FIXTURE").map(PathBuf::from) else {
+        panic!(
+            "set MSCANVAS_SHIMADZU_LCD_FIXTURE to the lawful acquisition described in the evidence document"
+        );
+    };
+    let source = ConversionSource::open_shimadzu_lcd_file(&fixture, MzmlScanLimits::default())
+        .expect("the fixture is admitted as a Shimadzu LCD source");
+    assert_eq!(source.kind(), ConversionSourceKind::ShimadzuLcdFile);
+
+    let discovery = crate::discovery::discover(crate::discovery::DiscoveryRequest::automatic());
+    let capabilities = InstalledHelpCapabilities::from_discovered_tool(&discovery.msconvert)
+        .expect("installed help");
+    let directory = TestDirectory::new();
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let plan = ConversionPlan::to_mzml(source, &root, ConflictPolicy::Fail).expect("plan");
+
+    let report = run_conversion(&plan, &capabilities, &crate::process::SystemProcessRunner);
+    let ConversionRunOutcome::Finalized(finalized) = report.outcome() else {
+        panic!("the evidence conversion did not finalize: {report:?}");
+    };
+    let valid = finalized.valid();
+    assert_eq!(valid.validation_mode(), ValidationMode::OutputOnly);
+    assert!(!valid.is_fully_verified());
+    assert!(report.residue().is_none());
+    // One source, one output, no sidecars. The measured layout, asserted.
+    assert_eq!(entry_names(&root).len(), 1);
+}
+
 // --- Private cancellation ---------------------------------------------------
 
 /// A `msconvert` stand-in that acts on the cancellation request the boundary
