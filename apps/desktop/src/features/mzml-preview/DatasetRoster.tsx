@@ -103,19 +103,13 @@ export interface DatasetRosterProps {
   readonly restoreAddFolderFocusToken: number;
 }
 
-/** What a row says about itself when it is not simply listed. */
-/**
- * What each admitted family is called on screen.
- *
- * Exhaustive over the union, so a family added to the boundary fails
- * compilation here rather than rendering as a blank cell. Words rather than a
- * colour or a glyph: which family a row is decides whether it can be previewed
- * at all, and that is not a fact to encode as a shade.
- */
-// The family labels live in the wire vocabulary module: the queue plan names
-// families too, and one record is what keeps the surfaces from calling one
-// family two things.
+// The family labels live in the wire vocabulary module now: the queue plan
+// names families too, and one record is what keeps the surfaces from calling
+// one family two things. They stay words rather than a colour or a glyph,
+// because which family a row is decides whether it can be previewed at all,
+// and that is not a fact to encode as a shade.
 
+/** What a row says about itself when it is not simply listed. */
 const ROW_STATE_LABEL: Record<RowPresentation, string> = {
   ready: "",
   opening: "Reading…",

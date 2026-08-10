@@ -5,6 +5,14 @@
   into one local folder, under one conflict policy; cancellation, parallelism,
   persistence and every other family separately gated
 - Date: 2026-08-08
+- Amended: 2026-08-10 (M3.9) — the queue is family-plural. It accepts evidenced
+  Shimadzu LabSolutions LCD rows beside Thermo RAW ones, mixed in one queue in
+  visible order; each plan item carries its family, each item revalidates under
+  its recorded family, and the provider-evidence gate is asked per distinct
+  family in the queue rather than once for a family the queue was assumed to
+  be. Membership, order, bound, seriality, Stop, Retry, diagnostics and
+  adoption are unchanged. See
+  [ADR 0020](0020-first-visible-shimadzu-lcd-workflow.md).
 
 ## Context
 

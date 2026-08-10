@@ -7,6 +7,12 @@
   its two-phase reservation, the concurrency rules, and the path-free result —
   stands unchanged and is what the queue is built on
 - Date: 2026-08-07
+- Amended: 2026-08-10 (M3.9) — the widened ingestion surface is no longer
+  Thermo's alone. `Add files…` also admits the evidenced Shimadzu LabSolutions
+  LCD family, under the same rule this ADR set: the extension routes to a
+  family's own admission and never admits anything itself. Folder ingestion and
+  the Explorer drop remain regular-mzML-only. See
+  [ADR 0020](0020-first-visible-shimadzu-lcd-workflow.md).
 
 ## Context
 

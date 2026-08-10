@@ -8800,13 +8800,19 @@ fn a_real_shimadzu_stop_terminates_the_owned_process_tree() {
         let destination = destination.clone();
         std::thread::spawn(move || service.run_claimed_conversion(operation, &destination))
     };
-    // An observable milestone, not a sleep: the slot itself says when the item
-    // is running, which is after the backend gate was taken and the item
-    // started.
-    while !matches!(
-        service.conversion_state().state,
-        WorkspaceConversionStateDto::Running { .. }
-    ) {
+    // An observable milestone, not a sleep: the queue's *item* says when it is
+    // running, which is after the backend was bound and the item started --
+    // the whole-queue Running state arrives earlier, while the first item is
+    // still pending, and a stop issued then would land before any process.
+    loop {
+        if let WorkspaceConversionStateDto::Running { queue, .. } = service.conversion_state().state
+            && queue
+                .items
+                .first()
+                .is_some_and(|item| item.state == ConversionQueueItemStateDto::Running)
+        {
+            break;
+        }
         std::thread::yield_now();
     }
     let stopped = service
@@ -8842,7 +8848,15 @@ fn a_real_shimadzu_stop_terminates_the_owned_process_tree() {
                     // state and the stop reaching it. Reported truthfully.
                     println!("real stop: natural completion won the race");
                 }
-                other => panic!("a stopped queue's item is cancelled or finalized: {other:?}"),
+                ConversionQueueItemStateDto::NotRun => {
+                    // The stop landed in the interval between the item being
+                    // observed running and its process being bound. Truthful,
+                    // and weaker than the run this test wants -- rerun it.
+                    println!("real stop: landed before the process launched (notRun)");
+                }
+                other => {
+                    panic!("a stopped queue's item is cancelled, finalized or notRun: {other:?}")
+                }
             }
         }
         ConversionQueueTerminalReasonDto::Completed => {

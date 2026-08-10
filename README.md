@@ -6,9 +6,11 @@ MSCanvas aims to be a Windows-first, local-first desktop application for importi
 
 > Status: **pre-alpha**. The application has two real end-to-end paths: curate a
 > session workspace of local `.mzML` files and inspect one of them against a
-> user-installed ProteoWizard, and queue up to sixteen selected Thermo Scientific
-> RAW rows for serial conversion to mzML on one evidenced ProteoWizard build. It
-> is not yet the batch workspace described under [Product scope](#product-scope).
+> user-installed ProteoWizard, and queue up to sixteen selected vendor rows —
+> Thermo Scientific RAW and Shimadzu LabSolutions LCD, alone or mixed — for
+> serial conversion to mzML, each family on the exact ProteoWizard build
+> evidenced for it. It is not yet the batch workspace described under
+> [Product scope](#product-scope).
 
 Canonical repository: [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas) (currently private).
 
@@ -96,12 +98,19 @@ and figure export. mzXML output stays disabled and fail-closed until
 representative multi-source integrity checks pass.
 
 A conversion queue is reachable, and its limits are the claim. `Add files…`
-admits regular `.mzML` files and one evidenced Thermo Scientific RAW family —
-recognized by its signature, never by its name. Select up to **16** Thermo rows
-and MSCanvas shows the ordered list it would run and the name each item would
-write; you choose Fail or Skip for names already taken, with no overwrite, and
-one folder on this computer through a Rust-owned picker. The items convert one at
-a time, in the order shown, and each reports what was measured of its own output.
+admits regular `.mzML` files plus two precisely evidenced vendor regular-file
+families — **Thermo Scientific RAW** and **Shimadzu LabSolutions LCD** — each
+recognized by what its bytes are, never by its name alone: a RAW by its
+signature, an LCD by the measured structure inside its container, which shares
+its leading bytes with other vendors' files. Folders and Explorer drops still
+discover mzML only. Select up to **16** vendor rows — either family, or both
+mixed — and MSCanvas shows the ordered list it would run, which family each
+row is, and the name each item would write; you choose Fail or Skip for names
+already taken, with no overwrite, and one folder on this computer through a
+Rust-owned picker. The items convert one at a time, in the order shown, each on
+the exact provider build evidenced for its own family, and each reports what
+was measured of its own output. Conversion is judged on its output alone —
+MSCanvas cannot read a vendor container, so nothing claims source fidelity.
 
 One file's failure does not stop the files after it, and nothing already
 converted is undone. `Retry` reruns only the failures MSCanvas can say another

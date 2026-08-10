@@ -3709,3 +3709,53 @@ Nine focused mutations, all red. No dependency, no capability, no command, no
 queue or cancellation change, no diagnostics or adoption change, and no rendered
 QA needed because no user-visible behaviour changed. See
 [ADR 0019](docs/architecture/adr/0019-private-shimadzu-workspace-conversion.md).
+
+## First visible Shimadzu LCD workflow, 2026-08-10
+
+ADR 0018 measured the family, ADR 0019 carried it through the workspace
+privately, and this makes the product claim: `Add files…` admits evidenced
+Shimadzu LabSolutions LCD beside mzML and Thermo RAW, and the one serial queue
+converts it — alone or mixed with Thermo, in visible order.
+
+**What widened, exactly.** The picker filter covers `*.lcd` and the Add-files
+routing sends the extension to the family's own admission; the extension only
+routes, and the container rule in the crate is what admits, so renamed and
+malformed compound files are refused at add time. `is_convertible` says yes for
+both vendor families through one Rust predicate and one frontend helper. The
+queue plan item carries its `sourceKind`, snapshotted at plan time. Copy is
+family-aware: homogeneous queues name their exact family, mixed queues count
+per family, plan rows label their own, and the roster label is the precise
+"Shimadzu LabSolutions LCD".
+
+**What deliberately did not widen.** Folder ingestion and Explorer Drop remain
+regular-mzML-only — no vendor recognition runs during traversal, so a walked
+`.lcd` is not even a rejection — and the distinction is pinned in tests and in
+ADR 0020. No direct vendor preview; the automatic first preview still reads at
+most the first newly added mzML row. No SCIEX WIFF, no multi-output model, no
+directory acquisitions, no second queue or lane, no new command: the count
+stays at 22.
+
+**Mixed queues.** One queue, one destination, one policy, one serial lane. Each
+item revalidates under its recorded family; the provider-evidence gate is asked
+per distinct family — opportunistically before the destination picker (only
+when the backend lane is free, because a queue has always been admittable while
+a preview holds the lane) and authoritatively at execution, replacing a
+hard-coded Thermo constant. Cross-family output-name collisions — `sample.raw`
+and `sample.lcd` both planning `sample.mzML` — are refused by the existing
+folded rule before the picker opens, whatever the policy.
+
+**Real evidence on the exact evidenced build.** Both lawful LCD fixtures and
+the Thermo fixture, digests re-verified: the production picker path admitted
+all three in order and refused a renamed-WIFF control; a mixed queue converted
+serially to three mzML files, no sidecars, no residue, output-only and not
+fully verified throughout, the 0-spectra/144-chromatogram shape intact;
+adoption added three ordinary mzML rows; and a product Stop against a running
+real Shimadzu conversion cancelled it with the owned process tree confirmed
+empty and an empty destination.
+
+Ten focused mutations red; one recorded equivalent (swapping the folder
+import's acceptance function is unobservable because discovery proposes only
+mzML candidates — the discovery filter is the guarded seam, and widening it is
+caught). UI evidence is jsdom + CSSOM: production components, copy,
+accessibility and CSS contracts, no pixel claims. See
+[ADR 0020](docs/architecture/adr/0020-first-visible-shimadzu-lcd-workflow.md).

@@ -416,7 +416,6 @@ impl ConversionQueue {
         self.items.iter().any(|item| item.dataset == dataset)
     }
 
-    /// The next item to run, with the index that names it.
     /// The distinct source families of this queue's items, in first-appearance
     /// order.
     ///
@@ -434,6 +433,7 @@ impl ConversionQueue {
         kinds
     }
 
+    /// The next item to run, with the index that names it.
     pub(super) fn next_pending(&self) -> Option<(usize, QueueItem)> {
         self.items
             .iter()
