@@ -3654,3 +3654,58 @@ it reports what the neighbouring signature refusal reports and no workspace path
 can reach it. See
 [ADR 0018](docs/architecture/adr/0018-shimadzu-labsolutions-lcd-source-admission.md)
 and [the M3.7 evidence record](docs/spikes/M3_NEXT_VENDOR_EVIDENCE.md).
+
+## Private workspace Shimadzu LCD conversion, 2026-08-10
+
+ADR 0018 established what a LabSolutions `.lcd` is. This establishes that the
+product can hold one: a workspace row with an identity, a lease and a recorded
+family, carried whole into the conversion boundary and back. Nothing a user can
+click does any of it.
+
+**Two decisions, kept apart.** ADR 0006 refused to let a source-family type exist
+while the only evidence was for mzML, on the ground that a variant which exists
+is a claim the data behind it is understood -- and said such a claim needs its
+own decision. ADR 0011 made the same split for Thermo: private path first,
+surface later. The gap this closes is exactly the one that was left: the crate
+could convert an LCD from a path, and nothing could convert one from a dataset.
+
+**Internal family.** `DatasetSourceKind::ShimadzuLcd`, decided at admission and
+stored on the accepted dataset beside the identity and the lease. Every mapping
+over it is total at compile time -- preview eligibility, queue eligibility, wire
+projection, diagnostics identifier, conversion-source kind, revalidation
+dispatch -- and none has a fallback that could treat it as Thermo or mzML.
+Duplicate admission keeps the row it already has.
+
+**No recognition is duplicated, and here that matters more than usual.** The
+desktop crate holds no compound-file magic, no sector geometry, no root-storage
+rule, no marker names and no build strings; `accept_shimadzu_lcd_file` delegates
+to `ConversionSource::open_shimadzu_lcd_file` and adds only the session's own
+inspection and the identity lease. A `.lcd` and a `.wiff` begin with the same
+eight bytes, so a second spelling of that rule would be a second rule the moment
+either changed.
+
+**Private, and asserted to be.** `accept_workspace_file` does not consult the
+LCD extension, so a `.lcd` the user picks still reaches mzML admission and is
+still refused by name. The one operation that admits the family is compiled out
+of the shipped binary. The picker, folder import, Explorer drop, visible queue
+and preview each refuse it in a test, and the command registration list is
+asserted not to name it.
+
+**One inert wire member.** `DatasetSourceKindDto` gains `shimadzu_lcd`, with a
+TypeScript member and a roster label beside it. Structural rather than product:
+every row carries a family and the projection is total over what Rust can admit.
+Reporting such a row as another family would make the roster lie; an unknown
+member would make every row's family a guess. It grants no ingestion, no queue
+eligibility and no action.
+
+**Real evidence, from a handle.** Both lawful fixtures re-acquired, digests
+re-verified, admitted through the private service and converted on the evidenced
+build. One mzML each, no sidecars, no residue, `output_only`, not fully
+verified. The second produced **0 spectra and 144 chromatograms** and finalized
+-- a real acquisition shape, and the deterministic suite now states both that
+and its converse, that a document with no records at all is refused.
+
+Nine focused mutations, all red. No dependency, no capability, no command, no
+queue or cancellation change, no diagnostics or adoption change, and no rendered
+QA needed because no user-visible behaviour changed. See
+[ADR 0019](docs/architecture/adr/0019-private-shimadzu-workspace-conversion.md).

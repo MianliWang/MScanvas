@@ -39,10 +39,15 @@ export interface BackendAvailability {
  * Which family Rust admitted a row as.
  *
  * Closed, and deliberately not general. There is no `vendorRaw`, no `raw` and
- * no `unknown`: one vendor family has measured conversion evidence, and a
- * member here is a claim the product understands the data behind it.
+ * no `unknown`: a member here is a claim the product understands the data
+ * behind it, backed by measured conversion evidence.
+ *
+ * Two of the three are product-reachable. `shimadzu_lcd` is not: Rust can admit
+ * that family privately, so the roster model has to be able to describe such a
+ * row honestly, but no ingestion surface, queue eligibility or action in this
+ * interface reaches one. It is labelled and offered nothing. See ADR 0019.
  */
-export type DatasetSourceKind = "mzml" | "thermo_raw";
+export type DatasetSourceKind = "mzml" | "thermo_raw" | "shimadzu_lcd";
 
 export interface SelectedFile {
   /** Opaque, session-scoped. Never a path. */

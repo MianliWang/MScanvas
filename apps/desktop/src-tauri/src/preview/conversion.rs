@@ -482,6 +482,13 @@ pub(super) const fn is_convertible(kind: DatasetSourceKind) -> bool {
     match kind {
         DatasetSourceKind::Mzml => false,
         DatasetSourceKind::ThermoRaw => true,
+        // The private path converts this family and the visible queue does not,
+        // which is the difference between "the boundary can carry it" and "the
+        // product offers it". The queue reads this predicate to decide which
+        // selected rows it will accept, so answering `true` here would be the
+        // whole product decision -- made in one word, with no ingestion surface
+        // to put such a row on the roster in the first place. ADR 0019.
+        DatasetSourceKind::ShimadzuLcd => false,
     }
 }
 
@@ -511,6 +518,7 @@ pub(super) const fn conversion_source_kind(kind: DatasetSourceKind) -> Conversio
     match kind {
         DatasetSourceKind::Mzml => ConversionSourceKind::MzmlFile,
         DatasetSourceKind::ThermoRaw => ConversionSourceKind::ThermoRawFile,
+        DatasetSourceKind::ShimadzuLcd => ConversionSourceKind::ShimadzuLcdFile,
     }
 }
 

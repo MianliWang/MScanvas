@@ -3469,6 +3469,31 @@ impl PreviewService {
         Ok(dataset_dto(&workspace, id).expect("the dataset was registered a line ago"))
     }
 
+    /// The same, for a dataset admitted as a Shimadzu LabSolutions acquisition.
+    ///
+    /// The only way an LCD dataset enters a workspace, and unlike the Thermo one
+    /// above there is no visible route beside it: the picker does not consult
+    /// the LCD extension at all, so a `.lcd` a user chooses is still refused by
+    /// mzML admission. This takes a Rust-owned path because nothing that could
+    /// hand it one from a webview exists -- it is compiled out of the shipped
+    /// binary, and the command surface is asserted to be unchanged.
+    ///
+    /// Everything after this point is ordinary. The row gets a normal
+    /// [`DatasetId`], the normal identity lease, a normal place in the registry
+    /// and normal duplicate handling; the family it carries is the only thing
+    /// about it that is new, and every later use re-applies that family's rule.
+    pub(super) fn add_shimadzu_dataset(
+        &self,
+        path: &Path,
+    ) -> Result<SelectedFileDto, PreviewErrorDto> {
+        use super::selection::accept_shimadzu_lcd_file;
+
+        let accepted = accept_shimadzu_lcd_file(path)?;
+        let mut workspace = self.workspace();
+        let id = workspace.registry.add_direct(accepted).id();
+        Ok(dataset_dto(&workspace, id).expect("the dataset was registered a line ago"))
+    }
+
     /// How many datasets the session holds.
     pub(super) fn dataset_count(&self) -> usize {
         self.workspace().registry.len()

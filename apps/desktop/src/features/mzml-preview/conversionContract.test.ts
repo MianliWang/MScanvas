@@ -92,7 +92,13 @@ const diagnosticsExportIsExact: Equal<
   ExpectedConversionDiagnosticsExport
 > = true;
 
-const familyIsExact: Equal<DatasetSourceKind, "mzml" | "thermo_raw"> = true;
+// Three members, and the third is deliberate. `shimadzu_lcd` is admitted by
+// Rust privately and is reachable from no surface in this interface; it is
+// listed because the roster model is total over what Rust can admit, and a wire
+// family the interface did not know about would be a row it could not describe.
+// Widening this line is the whole decision, so it is made here on purpose
+// rather than absorbed by a permissive type. See ADR 0019.
+const familyIsExact: Equal<DatasetSourceKind, "mzml" | "thermo_raw" | "shimadzu_lcd"> = true;
 const validationIsExact: Equal<ValidationMode, "source_comparison" | "output_only"> = true;
 const conflictIsExact: Equal<ConversionConflictPolicy, "fail" | "skip"> = true;
 const itemStateIsExact: Equal<

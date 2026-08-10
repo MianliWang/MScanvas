@@ -8,6 +8,15 @@
   below are closed: a surface exists, and the msconvert help binding now has
   deterministic coverage from both ends. See
   [ADR 0012](0012-first-visible-thermo-conversion.md).
+- Amended: 2026-08-10 (M3.8) — the coordinator carries a second family. The
+  order below is unchanged and is the reason it needed no rewriting: every step
+  is expressed over *the family the row was accepted as*, so admitting one more
+  meant making the mappings total rather than adding a branch. Shimadzu
+  LabSolutions LCD now reaches the same gate, the same staging, the same
+  output-only validation and the same report, and reaches them from nothing a
+  user can click. The "no second source family" gate below is therefore closed
+  for exactly one further family and unchanged for the rest. See
+  [ADR 0019](0019-private-shimadzu-workspace-conversion.md).
 
 ## Context
 
@@ -210,8 +219,12 @@ not exist, or worse, one that does and that this run deliberately did not touch.
   [ADR 0013](0013-serial-conversion-queue.md); this path is still what one item
   of that queue runs through, one plan at a time. Cancellation, a progress
   percentage and persistence remain open on the same terms.*
-- **No second source family.** Bruker, Waters and directory acquisitions remain
-  where ADR 0010 left them: unevidenced and unnamed.
+- **No second source family.** *Closed for one further family by
+  [ADR 0019](0019-private-shimadzu-workspace-conversion.md): Shimadzu
+  LabSolutions LCD is evidenced by
+  [ADR 0018](0018-shimadzu-labsolutions-lcd-source-admission.md) and admitted
+  here privately.* Bruker, Waters, SCIEX WIFF and directory acquisitions remain
+  where ADR 0010 and ADR 0018 left them: unevidenced or refused, and unnamed.
 
 ## Consequences
 

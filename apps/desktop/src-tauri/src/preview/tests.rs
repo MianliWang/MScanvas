@@ -13,12 +13,13 @@ use std::time::Duration;
 
 use mscanvas_proteowizard::{
     BackendTool, CancellationToken, CapturedHelpStream, CommandSpec, CompleteHelpCapture,
-    ConflictPolicy, ConversionCancellation, InstalledHelpCapabilities, PreviewOperation,
-    PreviewOutcome, PreviewOutputEntry, PreviewOutputManifest, ProcessError, ProcessOutput,
-    ProcessRunner, Sha256Digest, Termination, interpret_preview,
+    ConflictPolicy, ConversionCancellation, ConversionSourceKind, InstalledHelpCapabilities,
+    PreviewOperation, PreviewOutcome, PreviewOutputEntry, PreviewOutputManifest, ProcessError,
+    ProcessOutput, ProcessRunner, Sha256Digest, Termination, interpret_preview,
 };
 
 use super::backend::{ConversionBackend, OperationAttempt, PreviewProvider, interpretation_error};
+use super::conversion::{conversion_source_kind, is_convertible};
 #[cfg(windows)]
 use super::discovery::inspect_drop_root;
 use super::discovery::{
@@ -52,7 +53,10 @@ use super::operation::{
 #[cfg(windows)]
 use super::selection::nothing_else_holds_open;
 use super::selection::{DatasetId, DatasetSourceKind};
-use super::selection::{FileIdentity, accept_thermo_raw_file, open_conversion_source};
+use super::selection::{
+    FileIdentity, accept_mzml_file, accept_shimadzu_lcd_file, accept_thermo_raw_file,
+    accept_workspace_file, open_conversion_source, revalidate,
+};
 use super::service::PreviewService;
 
 const METADATA_OUTPUT: &str = concat!(
@@ -6465,6 +6469,10 @@ const EVIDENCED_REVISION: &str = "47b13cf";
 const EVIDENCED_EXECUTABLE_SHA256: &str =
     "9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD";
 
+/// The same two help strings out of a different artifact.
+const OTHER_EXECUTABLE_SHA256: &str =
+    "0000000000000000000000000000000000000000000000000000000000000001";
+
 const HELP_STDOUT_SHA256: Sha256Digest = Sha256Digest::from_bytes([0xAB; 32]);
 const HELP_STDERR_SHA256: Sha256Digest = Sha256Digest::from_bytes([0xCD; 32]);
 
@@ -6518,6 +6526,96 @@ fn mzml_document(spectra: u32, indexed: bool) -> String {
     } else {
         format!(r#"<mzML version="1.1.0">{run}</mzML>"#)
     }
+}
+
+/// An mzML document with chromatograms and no spectra at all.
+///
+/// A real shape, not a contrived one: the second lawful LabSolutions fixture
+/// converts to exactly this -- 0 spectra, 144 chromatograms -- and a contract
+/// that treated an empty spectrum list as a defect would have refused a real
+/// acquisition. Written here so the deterministic suite states that on its own,
+/// without an installation or vendor data.
+fn mzml_chromatogram_document(chromatograms: u32) -> String {
+    let mut body = String::new();
+    for index in 0..chromatograms {
+        body.push_str(&format!(
+            r#"<chromatogram index="{index}" id="TIC{index}" defaultArrayLength="4"><binaryDataArrayList count="2">"#
+        ));
+        // Both roles. A chromatogram that carries arrays and names only one of
+        // them fails the integrity contract -- which is what the first draft of
+        // this fixture did, and the contract was right: a real converted
+        // chromatogram carries a time array and an intensity array.
+        for accession in ["MS:1000595", "MS:1000515"] {
+            body.push_str(&format!(
+                r#"<binaryDataArray encodedLength="8"><cvParam accession="{accession}"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/><binary>AA==</binary></binaryDataArray>"#
+            ));
+        }
+        body.push_str("</binaryDataArrayList></chromatogram>");
+    }
+    let run = format!(
+        r#"<run id="R1"><spectrumList count="0"></spectrumList><chromatogramList count="{chromatograms}">{body}</chromatogramList></run>"#
+    );
+    format!(r#"<indexedmzML><mzML version="1.1.0">{run}</mzML></indexedmzML>"#)
+}
+
+/// The eight bytes every Microsoft compound file begins with.
+///
+/// Spelled out rather than imported, like the Thermo signature beside it: a
+/// test that read its expectation from the constant it checks would pass
+/// because that constant had been changed to match a mistake. It is also the
+/// point of this family -- these same eight bytes begin a SCIEX `.wiff`, so
+/// they cannot be the recognition.
+const COMPOUND_FILE_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+
+/// The entries a LabSolutions acquisition carries, likewise spelled out.
+const SHIMADZU_MARKERS: [&str; 3] = ["Method File Property", "GUMM_Information", "LSS Raw Data"];
+
+/// A compound file whose first directory sector holds exactly these entries.
+///
+/// Built, never vendor data. Everything this boundary decides about an LCD --
+/// posture, extension, container, entry names, identity, digest -- is real
+/// here; what it cannot stand in for is the Shimadzu reader, which is measured
+/// by the ignored evidence run and recorded in ADR 0018.
+///
+/// The header is written the way a real one is, because the crate's reader
+/// refuses a container that contradicts itself: major version 3 belongs with
+/// 512-byte sectors, the root storage comes first and is named, and every
+/// declared name length ends in its terminator.
+fn compound_file_bytes(entries: &[&str]) -> Vec<u8> {
+    const SECTOR: usize = 512;
+    let mut bytes = vec![0_u8; SECTOR * 2];
+    bytes[..8].copy_from_slice(&COMPOUND_FILE_MAGIC);
+    bytes[26..28].copy_from_slice(&3_u16.to_le_bytes());
+    bytes[28..30].copy_from_slice(&[0xFE, 0xFF]);
+    bytes[30..32].copy_from_slice(&9_u16.to_le_bytes());
+    bytes[48..52].copy_from_slice(&0_u32.to_le_bytes());
+
+    let named = std::iter::once("Root Entry").chain(entries.iter().copied());
+    for (index, name) in named.enumerate() {
+        let at = SECTOR + index * 128;
+        let units: Vec<u16> = name.encode_utf16().collect();
+        for (unit, slot) in units.iter().zip(bytes[at..].chunks_exact_mut(2)) {
+            slot.copy_from_slice(&unit.to_le_bytes());
+        }
+        let declared = u16::try_from(units.len() * 2 + 2).expect("a short entry name");
+        bytes[at + 64..at + 66].copy_from_slice(&declared.to_le_bytes());
+        bytes[at + 66] = if index == 0 { 5 } else { 2 };
+    }
+    bytes
+}
+
+/// A stand-in LabSolutions acquisition.
+fn shimadzu_lcd_bytes() -> Vec<u8> {
+    compound_file_bytes(&SHIMADZU_MARKERS)
+}
+
+/// A compound file belonging to the other vendor whose container this is.
+///
+/// The entry names are the ones a real `.wiff` carries. Renaming one of these
+/// to `.lcd` is the case a suffix-plus-signature rule would admit and a
+/// launched backend would then refuse.
+fn wiff_like_bytes() -> Vec<u8> {
+    compound_file_bytes(&["SampleSubtree", "MethodSubtree", "AcqMethodConfigStm"])
 }
 
 /// Installed help that also declares which build produced it.
@@ -6589,6 +6687,9 @@ enum BackendAct {
     WriteNothing,
     /// Writes a document with no spectra in it.
     ConvertEmpty,
+    /// Writes a document that is all chromatograms and no spectra, which is the
+    /// shape a real LabSolutions acquisition converts to.
+    ConvertChromatogramsOnly,
     /// Fails, as a backend that could not read its input would.
     Fail,
 }
@@ -6666,6 +6767,11 @@ impl ProcessRunner for FakeConversionRunner {
             }
             BackendAct::ConvertEmpty => {
                 fs::write(destination, mzml_document(0, true)).expect("write staged output");
+                0
+            }
+            BackendAct::ConvertChromatogramsOnly => {
+                fs::write(destination, mzml_chromatogram_document(144))
+                    .expect("write staged output");
                 0
             }
             BackendAct::WriteNothing => 0,
@@ -6830,6 +6936,24 @@ impl TestFile {
     fn readable_mzml(&self, name: &str) -> PathBuf {
         let path = self.directory.join(name);
         fs::write(&path, mzml_document(2, false)).expect("write an mzML source");
+        path
+    }
+
+    /// A Shimadzu LabSolutions acquisition beside the mzML this fixture is
+    /// named for.
+    fn shimadzu_lcd(&self, name: &str) -> PathBuf {
+        let path = self.directory.join(name);
+        fs::write(&path, shimadzu_lcd_bytes()).expect("write a Shimadzu LCD fixture");
+        path
+    }
+
+    /// A file of the caller's own bytes, under a name of the caller's choosing.
+    ///
+    /// For the decoys: a container of another vendor named `.lcd`, an archive
+    /// named `.lcd`, an acquisition named something else.
+    fn named_bytes(&self, name: &str, bytes: &[u8]) -> PathBuf {
+        let path = self.directory.join(name);
+        fs::write(&path, bytes).expect("write a named fixture");
         path
     }
 
@@ -7872,6 +7996,699 @@ fn a_conversion_is_stamped_with_the_installation_it_ran_on() {
         first.to_dto().installation_generation,
         second.to_dto().installation_generation,
         "two runs on one unchanged installation belong to one point in the sequence"
+    );
+}
+
+// --- The private Shimadzu LabSolutions path ---------------------------------
+//
+// ADR 0018 established that this repository can recognise and convert one
+// LabSolutions acquisition. What is under test here is the other half: that a
+// workspace can hold one, carry it whole into the conversion boundary, and
+// describe what came back -- and that nothing a user can reach does any of it.
+//
+// Every test below runs against a substituted backend. The real acquisition is
+// a separate ignored run.
+
+/// Admission is the container's contents, and the extension is only a filter.
+///
+/// The decoys are the point. A LabSolutions `.lcd` and a SCIEX `.wiff` begin
+/// with the same eight bytes, so a rule made of the suffix and the signature
+/// would admit the wrong vendor's acquisition and leave a launched backend to
+/// discover it. None of that logic is written here: this asserts that the
+/// desktop crate asks the crate that owns the rule, and gets the crate's
+/// answers.
+#[test]
+fn a_shimadzu_dataset_is_admitted_by_its_container_and_not_by_its_name() {
+    let fixture = TestFile::new("shimadzu-admission");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+
+    let admitted = fixture.shimadzu_lcd("acquisition.lcd");
+    let dataset = service
+        .add_shimadzu_dataset(&admitted)
+        .expect("a LabSolutions acquisition is admitted");
+    assert_eq!(dataset.source_kind, DatasetSourceKindDto::ShimadzuLcd);
+    assert_eq!(dataset.file_name, "acquisition.lcd");
+    assert_eq!(service.dataset_count(), 1);
+
+    // Another vendor's container under this family's name.
+    let other_vendor = fixture.named_bytes("renamed-wiff.lcd", &wiff_like_bytes());
+    let refusal = service
+        .add_shimadzu_dataset(&other_vendor)
+        .expect_err("another vendor's container is not this family");
+    assert_eq!(refusal.kind, "unrecognized_acquisition");
+
+    // The magic and nothing else: a compound file holding none of the markers.
+    let bare = fixture.named_bytes("bare.lcd", &compound_file_bytes(&[]));
+    assert_eq!(
+        service
+            .add_shimadzu_dataset(&bare)
+            .expect_err("the shared magic is not a family")
+            .kind,
+        "unrecognized_acquisition"
+    );
+
+    // Two markers of three. Not two-thirds of an acquisition.
+    let partial = fixture.named_bytes("partial.lcd", &compound_file_bytes(&SHIMADZU_MARKERS[..2]));
+    assert_eq!(
+        service
+            .add_shimadzu_dataset(&partial)
+            .expect_err("every marker is required")
+            .kind,
+        "unrecognized_acquisition"
+    );
+
+    // A container whose header contradicts itself: version 3 with the sector
+    // shift version 4 uses. Refused by the crate's reader, not by anything
+    // spelled out in this crate.
+    let mut contradictory = shimadzu_lcd_bytes();
+    contradictory[30..32].copy_from_slice(&12_u16.to_le_bytes());
+    let malformed = fixture.named_bytes("malformed.lcd", &contradictory);
+    assert_eq!(
+        service
+            .add_shimadzu_dataset(&malformed)
+            .expect_err("a self-contradicting container is not admitted")
+            .kind,
+        "unrecognized_acquisition"
+    );
+
+    // A directory whose root storage is demoted, so the marker names are there
+    // and the thing carrying them is not a directory.
+    let mut rootless = shimadzu_lcd_bytes();
+    rootless[512 + 66] = 1;
+    let no_root = fixture.named_bytes("rootless.lcd", &rootless);
+    assert_eq!(
+        service
+            .add_shimadzu_dataset(&no_root)
+            .expect_err("a directory without its root storage is not one")
+            .kind,
+        "unrecognized_acquisition"
+    );
+
+    // Not a compound file at all.
+    let archive = fixture.named_bytes("archive.lcd", b"PK\x03\x04 this is a zip archive");
+    assert_eq!(
+        service
+            .add_shimadzu_dataset(&archive)
+            .expect_err("an archive is not an acquisition")
+            .kind,
+        "unrecognized_acquisition"
+    );
+
+    // The right container under the wrong name. The installed reader consults
+    // the name, so this boundary refuses it here rather than letting a process
+    // discover it.
+    let misnamed = fixture.named_bytes("acquisition.dat", &shimadzu_lcd_bytes());
+    assert_eq!(
+        service
+            .add_shimadzu_dataset(&misnamed)
+            .expect_err("the reader requires the extension")
+            .kind,
+        "unsupported_extension"
+    );
+
+    // A directory named like an acquisition.
+    let folder = fixture.directory.join("folder.lcd");
+    fs::create_dir(&folder).expect("create a directory named like an acquisition");
+    assert!(service.add_shimadzu_dataset(&folder).is_err());
+
+    // Nothing at all behind the name.
+    assert!(
+        service
+            .add_shimadzu_dataset(&fixture.absent("gone.lcd"))
+            .is_err()
+    );
+
+    // Every refusal above consumed no identifier and left no row.
+    assert_eq!(
+        service.dataset_count(),
+        1,
+        "a refused candidate became a dataset"
+    );
+}
+
+/// One filesystem object is one dataset, whatever it is admitted as and however
+/// many times.
+#[test]
+fn admitting_one_shimadzu_acquisition_twice_keeps_the_row_it_already_has() {
+    let fixture = TestFile::new("shimadzu-duplicate");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let acquisition = fixture.shimadzu_lcd("acquisition.lcd");
+
+    let first = service
+        .add_shimadzu_dataset(&acquisition)
+        .expect("the acquisition is admitted");
+    let again = service
+        .add_shimadzu_dataset(&acquisition)
+        .expect("the same acquisition is the same dataset");
+
+    assert_eq!(first.handle, again.handle);
+    assert_eq!(again.source_kind, DatasetSourceKindDto::ShimadzuLcd);
+    assert_eq!(service.dataset_count(), 1);
+}
+
+/// The family recorded at admission is the family every later use re-applies.
+///
+/// The three admissions are not interchangeable and this is where that is
+/// stated: an LCD is not admitted by the mzML rule or the Thermo rule, a Thermo
+/// acquisition is not admitted by the LCD rule, and the family a row carries is
+/// not something a later step can choose differently.
+#[test]
+fn the_family_recorded_at_admission_is_the_one_every_later_use_applies() {
+    let fixture = TestFile::new("shimadzu-family");
+    let acquisition = fixture.shimadzu_lcd("acquisition.lcd");
+    let thermo = fixture.thermo_raw("acquisition.raw");
+
+    // No family admits another's acquisition.
+    assert!(accept_mzml_file(&acquisition).is_err());
+    assert!(accept_thermo_raw_file(&acquisition).is_err());
+    assert!(accept_shimadzu_lcd_file(&thermo).is_err());
+    assert!(accept_shimadzu_lcd_file(&fixture.path).is_err());
+
+    // The row keeps the family it was admitted under, and revalidating it
+    // re-applies that family rather than whichever rule runs first.
+    let accepted = accept_shimadzu_lcd_file(&acquisition).expect("admit the acquisition");
+    assert_eq!(accepted.source_kind(), DatasetSourceKind::ShimadzuLcd);
+    let again = revalidate(&accepted).expect("an unchanged acquisition revalidates");
+    assert_eq!(again.source_kind(), DatasetSourceKind::ShimadzuLcd);
+
+    // Same name, different bytes: the digest is not what catches this, the
+    // family rule is -- the replacement is not a LabSolutions container.
+    fs::write(&acquisition, wiff_like_bytes()).expect("replace the acquisition");
+    let refusal = revalidate(&accepted).expect_err("a replaced acquisition is refused");
+    assert_eq!(refusal.kind, "unrecognized_acquisition");
+
+    // And a genuine acquisition of the same family at the same name is still a
+    // different object than the one that was admitted.
+    fs::remove_file(&acquisition).expect("remove the replacement");
+    fs::write(&acquisition, shimadzu_lcd_bytes()).expect("write a second acquisition");
+    let refusal = revalidate(&accepted).expect_err("a different object is not this dataset");
+    assert_eq!(refusal.kind, "file_identity_changed");
+
+    // The mapping into the conversion boundary's own vocabulary is exact. This
+    // is what makes the provider-build gate below a question about *this*
+    // family: the gate is asked with whatever this returns.
+    assert_eq!(
+        conversion_source_kind(DatasetSourceKind::ShimadzuLcd),
+        ConversionSourceKind::ShimadzuLcdFile
+    );
+    assert_eq!(
+        conversion_source_kind(DatasetSourceKind::ThermoRaw),
+        ConversionSourceKind::ThermoRawFile
+    );
+
+    // Nothing about this family is previewable or queue-eligible.
+    assert!(!DatasetSourceKind::ShimadzuLcd.is_previewable());
+    assert!(!is_convertible(DatasetSourceKind::ShimadzuLcd));
+}
+
+/// An acquisition another program is writing is not a finished acquisition.
+#[cfg(windows)]
+#[test]
+fn a_shimadzu_acquisition_being_written_is_not_admitted() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    /// Share reads only: our read is still permitted, so the refusal is about
+    /// write sharing rather than about the file being open at all.
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+    let fixture = TestFile::new("shimadzu-writer");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let acquisition = fixture.shimadzu_lcd("acquisition.lcd");
+
+    let writer = fs::OpenOptions::new()
+        .write(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&acquisition)
+        .expect("hold the acquisition open for writing");
+
+    assert!(
+        service.add_shimadzu_dataset(&acquisition).is_err(),
+        "an acquisition with a writer on it was admitted"
+    );
+
+    drop(writer);
+    assert!(
+        service.add_shimadzu_dataset(&acquisition).is_ok(),
+        "the acquisition is admitted once the writer has gone"
+    );
+}
+
+/// The whole private vertical: a workspace handle in, a judged output back.
+#[test]
+fn a_shimadzu_workspace_dataset_converts_through_the_private_path() {
+    let fixture = TestFile::new("shimadzu-convert");
+    let acquisition = fixture.shimadzu_lcd("acquisition.lcd");
+    let destination = fixture.destination("out");
+    let provider = ConvertingProvider::faithful();
+    let launches = provider.runner.launches();
+    let service = PreviewService::new(Box::new(provider));
+
+    let dataset = service
+        .add_shimadzu_dataset(&acquisition)
+        .expect("admit the acquisition");
+    let report = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+
+    let dto = report.to_dto();
+    assert_eq!(dto.outcome, "finalized");
+    assert_eq!(dto.dataset_handle, dataset.handle);
+    assert_eq!(dto.source_kind, DatasetSourceKindDto::ShimadzuLcd);
+    assert_eq!(dto.output_file_name.as_deref(), Some("acquisition.mzML"));
+    assert_eq!(entry_names(&destination), vec!["acquisition.mzML"]);
+    assert_eq!(launches.load(Ordering::SeqCst), 1);
+    assert!(dto.staging_residue.is_none());
+
+    // Output-only, and never claiming to be more. A vendor acquisition is not
+    // mzML, so nothing about the output can be compared against a document that
+    // was never read -- which is why the source-side properties come back
+    // inapplicable rather than merely unverified.
+    let validation = dto.validation.expect("a finalized run was judged");
+    assert_eq!(validation.mode, ValidationModeDto::OutputOnly);
+    assert!(
+        !validation.fully_verified,
+        "an output-only judgement claimed full verification"
+    );
+    assert!(!validation.inapplicable.is_empty());
+    let output = dto.output.expect("a finalized run measured its output");
+    assert!(output.byte_length > 0);
+    assert_eq!(output.spectrum_count, 2);
+}
+
+/// Zero spectra and some chromatograms is a real acquisition, not a defect.
+///
+/// The second lawful LabSolutions fixture converts to exactly this shape, so a
+/// contract that rejected it would refuse a real acquisition. Asserted here
+/// without an installation, and confirmed against the real one by the ignored
+/// evidence run.
+#[test]
+fn a_chromatogram_only_shimadzu_output_is_finalized() {
+    let fixture = TestFile::new("shimadzu-chromatograms");
+    let acquisition = fixture.shimadzu_lcd("acquisition.lcd");
+    let destination = fixture.destination("out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::ConvertChromatogramsOnly),
+    )));
+
+    let dataset = service
+        .add_shimadzu_dataset(&acquisition)
+        .expect("admit the acquisition");
+    let report = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+
+    let dto = report.to_dto();
+    assert_eq!(dto.outcome, "finalized");
+    let output = dto.output.expect("a finalized run measured its output");
+    assert_eq!(output.spectrum_count, 0);
+    assert_eq!(output.chromatogram_count, 144);
+    let validation = dto.validation.expect("a finalized run was judged");
+    assert_eq!(validation.mode, ValidationModeDto::OutputOnly);
+    assert!(!validation.fully_verified);
+}
+
+/// The gate is asked about this family, on this build, before anything exists.
+#[test]
+fn a_shimadzu_conversion_runs_only_on_a_build_evidenced_for_this_family() {
+    let fixture = TestFile::new("shimadzu-evidence");
+    let acquisition = fixture.shimadzu_lcd("acquisition.lcd");
+
+    let attempt = |capabilities: InstalledHelpCapabilities, label: &str| {
+        let destination = fixture.destination(label);
+        let provider =
+            ConvertingProvider::new(capabilities, FakeConversionRunner::new(BackendAct::Convert));
+        let launches = provider.runner.launches();
+        let service = PreviewService::new(Box::new(provider));
+        let dataset = service
+            .add_shimadzu_dataset(&acquisition)
+            .expect("admit the acquisition");
+        let outcome =
+            service.convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail);
+        (
+            outcome.map(|report| report.to_dto().outcome),
+            launches.load(Ordering::SeqCst),
+            entry_names(&destination),
+        )
+    };
+
+    let (outcome, launches, entries) = attempt(evidenced_capabilities(), "evidenced");
+    assert_eq!(outcome.expect("the evidenced build converts"), "finalized");
+    assert_eq!(launches, 1);
+    assert_eq!(entries, vec!["acquisition.mzML"]);
+
+    // A different release, a different revision, a build that will not say, and
+    // the same two strings out of a different executable. Every one of them is
+    // refused, nothing is launched, and the destination stays empty -- the
+    // refusal happens before a staging directory could exist.
+    for (capabilities, label) in [
+        (
+            conversion_capabilities("3.0.26204", Some("a09eea9"), EVIDENCED_EXECUTABLE_SHA256),
+            "other-release",
+        ),
+        (
+            conversion_capabilities(
+                EVIDENCED_RELEASE,
+                Some("deadbee"),
+                EVIDENCED_EXECUTABLE_SHA256,
+            ),
+            "other-revision",
+        ),
+        (
+            conversion_capabilities(EVIDENCED_RELEASE, None, EVIDENCED_EXECUTABLE_SHA256),
+            "no-revision",
+        ),
+        (
+            conversion_capabilities(
+                EVIDENCED_RELEASE,
+                Some(EVIDENCED_REVISION),
+                OTHER_EXECUTABLE_SHA256,
+            ),
+            "other-executable",
+        ),
+    ] {
+        let (outcome, launches, entries) = attempt(capabilities, label);
+        assert_eq!(
+            outcome.expect_err("an unevidenced build is refused").kind,
+            "provider_build_not_evidenced",
+            "{label}"
+        );
+        assert_eq!(
+            launches, 0,
+            "{label}: an unevidenced build launched a process"
+        );
+        assert!(
+            entries.is_empty(),
+            "{label}: an unevidenced build created {entries:?}"
+        );
+    }
+}
+
+/// Every handle that is not a live Shimadzu row, refused.
+#[test]
+fn only_a_live_shimadzu_handle_reaches_the_private_conversion() {
+    let fixture = TestFile::new("shimadzu-handles");
+    let acquisition = fixture.shimadzu_lcd("acquisition.lcd");
+    let destination = fixture.destination("out");
+    let provider = ConvertingProvider::faithful();
+    let launches = provider.runner.launches();
+    let service = PreviewService::new(Box::new(provider));
+
+    // A handle the session never issued.
+    assert_eq!(
+        service
+            .convert_workspace_dataset("file-404", &destination, ConflictPolicy::Fail)
+            .expect_err("an unknown handle names no dataset")
+            .kind,
+        "unknown_file_handle"
+    );
+
+    // An mzML row is not a Shimadzu row, and the private path will not treat it
+    // as one: its own family is not convertible at all.
+    let mzml = service
+        .add_dataset(&fixture.readable_mzml("sample.mzML"))
+        .expect("admit an mzML dataset");
+    let report = service
+        .convert_workspace_dataset(&mzml.handle, &destination, ConflictPolicy::Fail)
+        .expect("an mzML conversion reaches an outcome");
+    assert_eq!(report.to_dto().source_kind, DatasetSourceKindDto::Mzml);
+
+    // A revoked row's handle names nothing afterwards.
+    let dataset = service
+        .add_shimadzu_dataset(&acquisition)
+        .expect("admit the acquisition");
+    service
+        .remove_datasets(std::slice::from_ref(&dataset.handle))
+        .expect("the row is removed");
+    assert_eq!(
+        service
+            .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+            .expect_err("a revoked handle names no dataset")
+            .kind,
+        "unknown_file_handle"
+    );
+    assert_eq!(
+        launches.load(Ordering::SeqCst),
+        1,
+        "only the one convertible row launched anything"
+    );
+}
+
+/// The workspace and the conversion must name one filesystem object.
+///
+/// The window this closes is real: the row is revalidated, then the object is
+/// pinned, then it is re-admitted as a conversion source. Comparing the two
+/// identities is what makes those three steps about one file rather than three
+/// resolutions of one name.
+#[test]
+fn a_shimadzu_conversion_refuses_a_source_that_is_not_the_admitted_object() {
+    let fixture = TestFile::new("shimadzu-identity");
+    let acquisition = fixture.shimadzu_lcd("acquisition.lcd");
+    let elsewhere = fixture.shimadzu_lcd("second.lcd");
+
+    let accepted = accept_shimadzu_lcd_file(&acquisition).expect("admit the acquisition");
+    let other = accept_shimadzu_lcd_file(&elsewhere).expect("admit the other acquisition");
+
+    // The same family, the same rule, a different object. Opening the source
+    // for one row against the other's identity is refused.
+    // And the honest pairing opens, so the refusal below is about the mismatch
+    // rather than about either row.
+    assert!(open_conversion_source(&accepted).is_ok());
+
+    let confused = accepted.misremembering_its_object(other.identity());
+    let refusal =
+        open_conversion_source(&confused).expect_err("two objects are not one conversion");
+    assert_eq!(refusal.kind, "file_identity_changed");
+}
+
+/// A refused or non-finalizing run names no output and leaks no location.
+#[test]
+fn a_shimadzu_report_names_no_output_it_did_not_produce_and_no_path_at_all() {
+    let fixture = TestFile::new("shimadzu-report");
+    let acquisition = fixture.shimadzu_lcd("acquisition.lcd");
+
+    let attempt = |act: BackendAct, label: &str, conflict: ConflictPolicy| {
+        let destination = fixture.destination(label);
+        let service = PreviewService::new(Box::new(ConvertingProvider::new(
+            evidenced_capabilities(),
+            FakeConversionRunner::new(act),
+        )));
+        let dataset = service
+            .add_shimadzu_dataset(&acquisition)
+            .expect("admit the acquisition");
+        let report = service
+            .convert_workspace_dataset(&dataset.handle, &destination, conflict)
+            .expect("the conversion reaches an outcome");
+        (format!("{report:?}"), report.to_dto())
+    };
+
+    // The backend rejected its input. No output name, no measurements, no
+    // judgement -- there is nothing to have judged.
+    let (_, dto) = attempt(BackendAct::Fail, "failed", ConflictPolicy::Fail);
+    assert_eq!(dto.outcome, "backend_rejected");
+    assert!(dto.output_file_name.is_none());
+    assert!(dto.output.is_none());
+    assert!(dto.validation.is_none());
+    assert!(
+        dto.staging_residue.is_none(),
+        "a refused run swept its staging"
+    );
+
+    // The backend exited cleanly having written nothing at all.
+    let (_, dto) = attempt(BackendAct::WriteNothing, "nothing", ConflictPolicy::Fail);
+    assert_eq!(dto.outcome, "output_rejected");
+    assert_eq!(dto.detailed_outcome.as_deref(), Some("missing_output"));
+    assert!(dto.output_file_name.is_none());
+
+    // A document with no records at all is refused, and the contrast with the
+    // chromatogram-only test above is the point: zero spectra is not what makes
+    // an output unacceptable -- zero *records* is. A contract that keyed on the
+    // spectrum count would have refused a real LabSolutions acquisition.
+    let (_, dto) = attempt(BackendAct::ConvertEmpty, "empty", ConflictPolicy::Fail);
+    assert_eq!(dto.outcome, "output_rejected");
+    assert_eq!(
+        dto.detailed_outcome.as_deref(),
+        Some("output_contains_no_records")
+    );
+
+    // The whole report, printed. A roster of many rows is where a path would
+    // leak the most, and a report is what a panic or a log would reach.
+    let (rendered, _) = attempt(BackendAct::Convert, "printed", ConflictPolicy::Fail);
+    for fragment in [
+        fixture.directory.to_string_lossy().into_owned(),
+        String::from("acquisition.lcd"),
+        String::from(":\\"),
+        String::from("\\\\?\\"),
+    ] {
+        assert!(
+            !rendered.contains(&fragment),
+            "the report names {fragment:?}, which is a location: {rendered}"
+        );
+    }
+    assert!(
+        rendered.contains("ShimadzuLcd"),
+        "the report says which family it converted: {rendered}"
+    );
+    assert!(rendered.contains("acquisition.mzML"));
+}
+
+/// Nothing a user can reach admits, lists or converts this family.
+///
+/// The private path exists and the product does not have it. Asserted against
+/// the surfaces themselves rather than by reading the code: the picker, the
+/// folder import, the Explorer drop and the visible queue each get a real
+/// LabSolutions acquisition and each refuses it.
+#[test]
+fn no_visible_surface_reaches_the_shimadzu_family() {
+    let fixture = TestFile::new("shimadzu-unreachable");
+    let acquisition = fixture.shimadzu_lcd("acquisition.lcd");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+
+    // The picker. `.lcd` is not consulted at all, so this reaches mzML
+    // admission and is refused by name -- exactly as it was before the family
+    // existed.
+    let refusal = accept_workspace_file(&acquisition)
+        .expect_err("the picker does not admit a LabSolutions acquisition");
+    assert_eq!(refusal.kind, "unsupported_extension");
+
+    // The visible queue. A row of this family is not queue-eligible, so even a
+    // session that somehow held one could not convert it from the interface.
+    let dataset = service
+        .add_shimadzu_dataset(&acquisition)
+        .expect("admit the acquisition privately");
+    assert_eq!(
+        service
+            .conversion_plan_summary(&dataset.handle)
+            .expect_err("the visible queue has no plan for this family")
+            .kind,
+        "dataset_not_convertible"
+    );
+    assert_eq!(
+        service
+            .begin_conversion_queue(
+                std::slice::from_ref(&dataset.handle),
+                ConversionConflictPolicyDto::Fail,
+                0
+            )
+            .expect_err("the visible queue refuses this family")
+            .kind,
+        "dataset_not_convertible"
+    );
+
+    // The roster still describes the row honestly rather than hiding it.
+    let roster = service.roster();
+    assert_eq!(roster.datasets.len(), 1);
+    assert_eq!(
+        roster.datasets[0].source_kind,
+        DatasetSourceKindDto::ShimadzuLcd
+    );
+
+    // And it is not previewable.
+    assert!(service.open_preview(&dataset.handle).is_err());
+}
+
+/// The real private vertical, from a workspace handle to a judged output.
+///
+/// Ignored by default, like the Thermo one it sits beside and for the same
+/// reason: a deterministic suite cannot tell you that the Shimadzu library on
+/// this machine reads this acquisition. This is evidence collection, run
+/// deliberately, and what it produces is recorded in ADR 0018 and ADR 0019.
+///
+/// It deliberately starts from `add_shimadzu_dataset` rather than from a
+/// directly constructed `ConversionSource`. Constructing one would prove the
+/// crate can convert the file, which ADR 0018 already established; what is
+/// under test here is the join -- that a workspace row carries the family, the
+/// identity and the lease all the way into the boundary and back.
+///
+/// Run with the acquisition and a destination folder named by environment, so
+/// neither the repository nor this file learns a path:
+///
+/// ```text
+/// set MSCANVAS_SHIMADZU_LCD_FIXTURE=<path to the acquisition>
+/// set MSCANVAS_CONVERSION_DESTINATION=<path to an empty folder>
+/// cargo test -p mscanvas-desktop --lib -- --ignored --nocapture real_shimadzu
+/// ```
+#[test]
+#[ignore = "needs a local ProteoWizard installation and a real vendor acquisition"]
+fn a_real_shimadzu_acquisition_converts_through_a_workspace_handle() {
+    let Ok(fixture) = std::env::var("MSCANVAS_SHIMADZU_LCD_FIXTURE") else {
+        panic!("set MSCANVAS_SHIMADZU_LCD_FIXTURE to the acquisition to convert");
+    };
+    let Ok(destination) = std::env::var("MSCANVAS_CONVERSION_DESTINATION") else {
+        panic!("set MSCANVAS_CONVERSION_DESTINATION to an empty folder");
+    };
+    let acquisition = PathBuf::from(fixture);
+    let destination = PathBuf::from(destination);
+
+    // The production provider. Nothing is substituted: this resolves a real
+    // installation, reads its real help, and launches its real msconvert.
+    let service = PreviewService::new(Box::new(super::backend::ProteoWizardProvider::new()));
+    let dataset = service
+        .add_shimadzu_dataset(&acquisition)
+        .expect("the acquisition is admitted as a Shimadzu LCD source");
+    println!("dataset handle: {}", dataset.handle);
+    println!("admitted bytes: {}", dataset.byte_length);
+    assert_eq!(dataset.source_kind, DatasetSourceKindDto::ShimadzuLcd);
+
+    let report = service
+        .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+
+    println!("report: {report:?}");
+    let dto = report.to_dto();
+    assert_eq!(
+        dto.outcome, "finalized",
+        "the evidenced build converts this family"
+    );
+    assert_eq!(dto.dataset_handle, dataset.handle);
+    assert_eq!(source_kind_id(&report), "shimadzu_lcd");
+    assert!(dto.staging_residue.is_none(), "the run swept its staging");
+
+    let validation = dto.validation.expect("a finalized run was judged");
+    assert_eq!(validation.mode, ValidationModeDto::OutputOnly);
+    assert!(!validation.fully_verified);
+
+    // One mzML and nothing beside it. The measured layout, asserted rather than
+    // assumed -- a sidecar would mean the one-source/one-output plan does not
+    // describe this family after all.
+    let entries = entry_names(&destination);
+    println!("destination entries: {entries:?}");
+    assert_eq!(entries.len(), 1);
+
+    // Printed rather than pinned. The output digest is not a portable fact
+    // about this family: msconvert writes the source's own directory into the
+    // document, so the same acquisition converted from another folder hashes
+    // differently. See the M3.7 evidence record.
+    let output = dto.output.expect("a finalized run measured its output");
+    println!(
+        "output bytes: {} spectra: {} chromatograms: {}",
+        output.byte_length, output.spectrum_count, output.chromatogram_count
+    );
+}
+
+/// The command surface is exactly what it was.
+///
+/// A private family is private only for as long as no command reaches it. This
+/// reads the registration list out of the source and requires it to be
+/// unchanged, so adding a Shimadzu command would fail here rather than in
+/// review.
+#[test]
+fn the_command_surface_does_not_grow_for_the_private_family() {
+    let source = include_str!("../lib.rs");
+    let handler = source
+        .split_once("generate_handler![")
+        .expect("the command registration list is in lib.rs")
+        .1
+        .split_once(']')
+        .expect("the registration list is closed")
+        .0;
+    assert!(
+        !handler.to_ascii_lowercase().contains("shimadzu"),
+        "a command names this family: {handler}"
+    );
+    assert!(
+        !handler.to_ascii_lowercase().contains("lcd"),
+        "a command names this family: {handler}"
     );
 }
 

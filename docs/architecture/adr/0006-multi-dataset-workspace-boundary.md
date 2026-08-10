@@ -45,6 +45,14 @@
   the one evidenced vendor family as well as mzML; folder ingestion and
   Explorer drop are unchanged and remain regular-mzML-only. See
   [ADR 0012](0012-first-visible-thermo-conversion.md).
+- Amended: 2026-08-10 (M3.8) — the family list has a third member and the
+  product has not widened. `DatasetSourceKind` gains `ShimadzuLcd` and the wire
+  enumeration gains an inert `shimadzu_lcd` beside it, because the roster
+  carries a family on every row and the projection is total over what Rust can
+  admit. Nothing a user can reach admits, lists, previews or converts that
+  family: `Add files…` still admits mzML and the one evidenced Thermo family,
+  folder ingestion and Explorer drop are unchanged, and no command names it.
+  See [ADR 0019](0019-private-shimadzu-workspace-conversion.md).
 
 ## Context
 
@@ -542,6 +550,19 @@ their own evidence and their own decision.
 > unevidenced and unnamed. The variant is also unreachable from every ingestion
 > surface — the picker, folder discovery and the Explorer drop are still
 > mzML-only — so what the registry *accepts from a user* has not changed.
+>
+> **Amended 2026-08-10 by M3.8.** A third variant, `ShimadzuLcd`, on the same
+> terms and with the same rule met:
+> [ADR 0018](0018-shimadzu-labsolutions-lcd-source-admission.md) is the
+> measurement and [ADR 0019](0019-private-shimadzu-workspace-conversion.md) is
+> the decision to admit it here. It is stronger than "unreachable from every
+> ingestion surface": the operation that admits it is compiled out of the
+> shipped binary. What crosses the roster boundary is an inert `shimadzu_lcd`
+> member, which exists because every row carries a family and the two
+> alternatives — reporting such a row as another family, or adding an unknown
+> member — would each make the roster dishonest in a different way. Directory
+> acquisitions, SCIEX WIFF and every other vendor format remain unevidenced and
+> unnamed.
 
 ## Persistence exclusion
 

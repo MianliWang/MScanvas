@@ -115,6 +115,10 @@ export interface DatasetRosterProps {
 const SOURCE_KIND_LABEL: Record<DatasetSourceKind, string> = {
   mzml: "mzML",
   thermo_raw: "Thermo RAW",
+  // Product-unreachable, and still named. A row this interface cannot label is
+  // a row it would draw a blank beside; the label is what keeps the roster
+  // readable if one ever appears, and it grants nothing on its own.
+  shimadzu_lcd: "Shimadzu LCD",
 };
 
 const ROW_STATE_LABEL: Record<RowPresentation, string> = {

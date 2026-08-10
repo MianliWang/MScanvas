@@ -250,6 +250,16 @@ pub(super) enum DatasetSourceKind {
     /// user did not enumerate, and admitting a vendor family from a walk is a
     /// wider claim than admitting one the user named.
     ThermoRaw,
+    /// Accepted as a Shimadzu LabSolutions LCD acquisition, by the reviewed
+    /// compound-file admission in `mscanvas-proteowizard`.
+    ///
+    /// Reachable from nothing at all. ADR 0018 measured the family and ADR 0019
+    /// records this decision: the workspace can hold one, carry it whole into a
+    /// conversion and describe what came back, and no picker, folder walk,
+    /// drop, queue or command puts one here. That is not an oversight to be
+    /// tidied up later -- ingestion is a product claim with its own evidence,
+    /// and this slice deliberately does not make it.
+    ShimadzuLcd,
 }
 
 impl DatasetSourceKind {
@@ -262,7 +272,9 @@ impl DatasetSourceKind {
     pub(super) const fn is_previewable(self) -> bool {
         match self {
             Self::Mzml => true,
-            Self::ThermoRaw => false,
+            // Neither vendor family, and for one reason: the preview boundary
+            // reads mzML and this product reads no vendor container directly.
+            Self::ThermoRaw | Self::ShimadzuLcd => false,
         }
     }
 }
@@ -384,6 +396,67 @@ pub(super) fn accept_thermo_raw_file(path: &Path) -> Result<AcceptedFile, Previe
     })
 }
 
+/// Accepts a Shimadzu LabSolutions LCD acquisition, for conversion only.
+///
+/// The Thermo function above says it is not reachable from any ingestion
+/// surface; this one is not reachable from anything at all.
+/// [`accept_workspace_file`] does not test for this family's extension, so a
+/// `.lcd` the user picks reaches mzML admission and is refused by name exactly
+/// as it was before this function existed. What it exists for is the private
+/// path: a dataset that is going to be converted by an ignored evidence run can
+/// be admitted under the rule its family actually needs.
+///
+/// **No recognition is reimplemented here, and for this family that matters
+/// more than it did for the last one.** A LabSolutions `.lcd` and a SCIEX
+/// `.wiff` begin with the same eight bytes, so the rule that separates them is
+/// the set of entries inside the container's first directory sector -- read
+/// through a pinned handle, with a root storage required to be first, alone and
+/// named, and every ambiguous field refused. All of that lives in
+/// `mscanvas-proteowizard` behind [`ConversionSource::open_shimadzu_lcd_file`],
+/// it was measured on real acquisitions, and a second spelling of it in this
+/// crate would be a second rule the moment either changed. This function adds
+/// only what the crate cannot: the session's own inspection and the
+/// [`FileIdentityLease`] that keeps the object the one that was admitted.
+///
+/// The extension filter is the crate's too, and is deliberately not repeated
+/// here. It would return the same identifier and the same sentence, and a
+/// second home for the policy is a second thing to keep true -- the reason this
+/// function delegates the container rule is the reason it delegates the name
+/// rule as well.
+///
+/// As above, the lease is taken *first* so the object cannot be replaced
+/// between the two admissions, and the identities are compared afterwards so
+/// that promise is checked rather than assumed.
+pub(super) fn accept_shimadzu_lcd_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
+    let inspected = inspect_selected_file(path)?;
+    let canonical = std::fs::canonicalize(path).map_err(|_| unresolvable())?;
+    let file_name = canonical
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .ok_or_else(|| {
+            PreviewErrorDto::new("file_has_no_name", "That path has no file name.", false)
+        })?;
+
+    // The admission that decides, and the only thing that does. Its result is
+    // dropped for the same reason the Thermo one is: what this returns is a
+    // registry row, and the source a run needs is opened again at the moment of
+    // the run, against this same held object.
+    drop(bound_source(
+        DatasetSourceKind::ShimadzuLcd,
+        &canonical,
+        inspected.identity,
+    )?);
+
+    Ok(AcceptedFile {
+        path: canonical,
+        file_name,
+        kind: DatasetSourceKind::ShimadzuLcd,
+        byte_length: inspected.byte_length,
+        identity: inspected.identity,
+        lease: inspected.lease,
+    })
+}
+
 /// Re-admits an accepted dataset as a conversion source, under the family it
 /// was accepted as.
 ///
@@ -420,6 +493,9 @@ fn bound_source(
     let source = match kind {
         DatasetSourceKind::Mzml => ConversionSource::open_mzml_file(canonical, limits),
         DatasetSourceKind::ThermoRaw => ConversionSource::open_thermo_raw_file(canonical, limits),
+        DatasetSourceKind::ShimadzuLcd => {
+            ConversionSource::open_shimadzu_lcd_file(canonical, limits)
+        }
     }
     .map_err(source_not_admitted)?;
     let Some((volume_serial, file_id)) = source.object_identity() else {
@@ -1250,6 +1326,7 @@ pub(super) fn revalidate(remembered: &AcceptedFile) -> Result<AcceptedFile, Prev
     let current = match remembered.kind {
         DatasetSourceKind::Mzml => accept_mzml_file(remembered.path())?,
         DatasetSourceKind::ThermoRaw => accept_thermo_raw_file(remembered.path())?,
+        DatasetSourceKind::ShimadzuLcd => accept_shimadzu_lcd_file(remembered.path())?,
     };
     // Both, because a name can come to point elsewhere and a different file can
     // also take the same name.
@@ -1317,6 +1394,13 @@ pub(super) const fn source_kind_dto(kind: DatasetSourceKind) -> DatasetSourceKin
     match kind {
         DatasetSourceKind::Mzml => DatasetSourceKindDto::Mzml,
         DatasetSourceKind::ThermoRaw => DatasetSourceKindDto::ThermoRaw,
+        // Projected as itself. The two alternatives were to report it as
+        // another family, which would make the roster lie about a row it holds,
+        // and to add an unknown member, which would make every row's family a
+        // thing the interface has to guess about. A row of this family cannot
+        // occur in a shipped session -- nothing admits one -- and if that ever
+        // stops being true the roster will already be describing it correctly.
+        DatasetSourceKind::ShimadzuLcd => DatasetSourceKindDto::ShimadzuLcd,
     }
 }
 
