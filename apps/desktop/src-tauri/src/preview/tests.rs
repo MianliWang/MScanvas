@@ -6818,6 +6818,12 @@ struct ConvertingProvider<R = FakeConversionRunner> {
     /// queue which will convert nothing spent nothing proving which build it
     /// was not going to use.
     bindings: Arc<AtomicUsize>,
+    /// Runs inside `conversion_backend`, where production runs the installed
+    /// tools' help. A test that needs something to happen *during* that window
+    /// -- a row removed while the pre-picker preflight is resolving -- puts it
+    /// here, because the window is real time in production and injected code
+    /// in a deterministic test.
+    on_conversion_backend: Arc<Mutex<Option<Box<dyn Fn() + Send>>>>,
 }
 
 impl<R: ProcessRunner + Send + Sync> ConvertingProvider<R> {
@@ -6830,7 +6836,14 @@ impl<R: ProcessRunner + Send + Sync> ConvertingProvider<R> {
             preview_release: Mutex::new(None),
             installation_label: Arc::new(Mutex::new(String::from("msconvert"))),
             bindings: Arc::new(AtomicUsize::new(0)),
+            on_conversion_backend: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// The hook slot, shared so a test can arm it after the provider has been
+    /// moved into the service.
+    fn on_conversion_backend(&self) -> Arc<Mutex<Option<Box<dyn Fn() + Send>>>> {
+        Arc::clone(&self.on_conversion_backend)
     }
 
     /// How many backend resolutions this provider has been asked for.
@@ -6906,6 +6919,14 @@ impl<R: ProcessRunner + Send + Sync> PreviewProvider for ConvertingProvider<R> {
 
     fn conversion_backend(&self) -> Result<ConversionBackend<'_>, PreviewErrorDto> {
         self.bindings.fetch_add(1, Ordering::SeqCst);
+        if let Some(hook) = self
+            .on_conversion_backend
+            .lock()
+            .expect("the backend hook is never poisoned")
+            .as_ref()
+        {
+            hook();
+        }
         Ok(ConversionBackend {
             capabilities: self.capabilities.clone(),
             installation: Some(backend(
@@ -13491,6 +13512,50 @@ fn an_unevidenced_build_refuses_a_queue_before_the_destination_picker() {
             "no reservation was taken"
         );
     }
+}
+
+/// A row removed while the pre-picker preflight is resolving the backend is
+/// refused before a reservation exists, because the queue is planned again
+/// under the mutation gate from the workspace as it is then.
+#[test]
+fn a_row_removed_during_the_preflight_refuses_the_queue_before_a_reservation() {
+    let fixture = TestFile::new("preflight-removal");
+    let provider = ConvertingProvider::faithful();
+    let hook = provider.on_conversion_backend();
+    let service = Arc::new(PreviewService::new(Box::new(provider)));
+    let handle = add_one_acquisition(&service, &fixture.shimadzu_lcd("one.lcd"));
+    let document = current_document(&service);
+
+    // Armed after admission: the next backend resolution -- which is exactly
+    // the pre-picker preflight -- removes the row the queue was planned from.
+    {
+        let service = Arc::clone(&service);
+        let handle = handle.clone();
+        *hook.lock().expect("arm the hook") = Some(Box::new(move || {
+            service
+                .remove_datasets(std::slice::from_ref(&handle))
+                .expect("the row is removable while the preflight runs");
+        }));
+    }
+
+    assert_eq!(
+        service
+            .begin_conversion_queue(
+                std::slice::from_ref(&handle),
+                ConversionConflictPolicyDto::Fail,
+                document,
+            )
+            .expect_err("a queue whose row is gone is refused before the picker")
+            .kind,
+        "unknown_file_handle"
+    );
+    assert!(
+        matches!(
+            service.conversion_state().state,
+            WorkspaceConversionStateDto::Idle
+        ),
+        "no reservation was taken for a queue that could only end superseded"
+    );
 }
 
 /// The distinct-family projection the evidence gate iterates: every family in

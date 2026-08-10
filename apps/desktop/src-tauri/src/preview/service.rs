@@ -1337,7 +1337,21 @@ impl PreviewService {
         if self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
-        let items = self.plan_queue_items(handles)?;
+        // Planned once here so the preflight below has a validated family set
+        // to ask about -- and planned *again* under the mutation gate, which
+        // is the plan the queue is actually bound from. This first pass also
+        // keeps a batch of dead handles from costing a help probe.
+        let preflight_families: Vec<ConversionSourceKind> = {
+            let items = self.plan_queue_items(handles)?;
+            let mut families = Vec::new();
+            for item in &items {
+                let kind = conversion_source_kind(item.kind());
+                if !families.contains(&kind) {
+                    families.push(kind);
+                }
+            }
+            families
+        };
         // Provider evidence for every distinct family in the plan, before the
         // destination picker opens. Execution re-asks fail-closed per item and
         // per family regardless; what this adds is that a user is normally
@@ -1354,15 +1368,8 @@ impl PreviewService {
         // authoritative per-family gate at execution refuses before anything
         // is staged.
         if let Some(running) = self.try_enter_backend() {
-            let mut families: Vec<ConversionSourceKind> = Vec::new();
-            for item in &items {
-                let kind = conversion_source_kind(item.kind());
-                if !families.contains(&kind) {
-                    families.push(kind);
-                }
-            }
             let backend = self.provider.conversion_backend()?;
-            for kind in families {
+            for kind in preflight_families {
                 refuse_unevidenced_build(&backend.capabilities, kind)?;
             }
             drop(running);
@@ -1382,6 +1389,14 @@ impl PreviewService {
         if self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
+        // Re-planned under the gate, and this plan is the one the queue is
+        // bound from. The preflight above can take as long as two help probes,
+        // and a row can be removed while they run; a snapshot taken before
+        // them would reserve a queue whose item is already gone, and the
+        // picker would open for a run guaranteed to end superseded. Planning
+        // is lock-cheap and launches nothing, so it is simply done again where
+        // it counts.
+        let items = self.plan_queue_items(handles)?;
         let mut slot = self.conversion_slot();
         // Under the slot lock, and immediately before the slot is taken. The
         // authority proof is awaited, so a reload can start any time after it
