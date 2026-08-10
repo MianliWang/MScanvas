@@ -260,6 +260,12 @@ const fn source_kind_id(kind: DatasetSourceKind) -> &'static str {
     match kind {
         DatasetSourceKind::Mzml => "mzml",
         DatasetSourceKind::ThermoRaw => "thermo_raw",
+        // Total over the families rather than over the ones a queue can hold.
+        // A diagnostics export describes queue items and nothing admits this
+        // family into a queue, so this arm is unreachable today; naming it is
+        // still cheaper than a fallback that would quietly export one family
+        // under another's identifier.
+        DatasetSourceKind::ShimadzuLcd => "shimadzu_lcd",
     }
 }
 

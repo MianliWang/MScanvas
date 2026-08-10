@@ -4,6 +4,12 @@
   privately. No user-visible surface, no other family, and every queue concern
   separately gated
 - Date: 2026-08-09
+- Amended: 2026-08-10 (M3.8) — the family has been carried through the
+  workspace, and the measurement is recorded below under *Private workspace
+  evidence*. Nothing about the recognition, the build gate or the claims here
+  changed; what was added is a second, independent confirmation of them from a
+  dataset handle rather than from a directly constructed source. See
+  [ADR 0019](0019-private-shimadzu-workspace-conversion.md).
 
 ## Context
 
@@ -231,6 +237,51 @@ reports, and no workspace path can reach it.
 - A LabSolutions writer that emits a container without one of the three markers
   would be refused. That is the chosen failure direction, and it is the first
   thing to re-measure if a real acquisition is ever refused unexpectedly.
+
+## Private workspace evidence (added 2026-08-10, M3.8)
+
+Both lawful fixtures were re-acquired at the pinned commit, their byte lengths
+and SHA-256 digests re-verified against the table in
+[the M3.7 evidence record](../../spikes/M3_NEXT_VENDOR_EVIDENCE.md), and each was
+run through the **private workspace path** rather than through a directly
+constructed source: admitted by `PreviewService::add_shimadzu_dataset`, given an
+ordinary opaque handle, and converted by the private coordinator on the
+production provider.
+
+| | Fixture A | Fixture B |
+| --- | --- | --- |
+| Admitted byte length | `2,367,488` | `1,753,088` |
+| Recorded workspace family | `shimadzu_lcd` | `shimadzu_lcd` |
+| Outcome | `finalized` | `finalized` |
+| Destination entries | 1 | 1 |
+| Staging residue | none | none |
+| Validation mode | `output_only` | `output_only` |
+| Fully verified | **false** | **false** |
+| Spectra / chromatograms | 150 / 1 | **0 / 144** |
+
+Verified for both: `source_unchanged`, `output_declared_counts`,
+`output_declared_array_lengths`, `output_array_payload_presence`,
+`output_array_roles`, `output_array_encoding`, `output_spectrum_metadata`,
+`index_sequences`, `compression_policy`. Unverified: none. The eleven
+source-side properties are inapplicable, as before.
+
+Nothing here contradicts the measurements above; it confirms them from the other
+end. Two things are worth stating because only this route could show them.
+
+**The chromatogram-only shape survives the whole vertical.** Fixture B produced
+zero spectra and 144 chromatograms and was finalized through the workspace path,
+not merely by the crate. The deterministic suite now states the same contract
+without an installation, and states its converse: a document with no records at
+all is refused. A contract keyed on the spectrum count would have refused a real
+acquisition.
+
+**Output digests are still not recorded as family facts.** They differ between
+these runs and the M3.7 ones for the reason that record documents: `msconvert`
+writes the source's own directory into the document. What is recorded here is
+the shape, the counts and the judgement.
+
+The fixtures, outputs, destinations and staging roots were deleted after the
+measurement. No vendor data is tracked.
 
 ## Evidence gates still open
 

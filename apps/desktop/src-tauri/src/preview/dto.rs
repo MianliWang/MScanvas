@@ -153,14 +153,24 @@ pub struct SelectedFileDto {
 /// The complete family vocabulary a roster row can carry.
 ///
 /// Closed, and deliberately not general. There is no `vendorRaw`, no `raw` and
-/// no `unknown`: ADR 0010 admitted exactly one vendor family on measured
-/// evidence, and a member that exists here is a claim the product understands
-/// the data behind it.
+/// no `unknown`: a member that exists here is a claim the product understands
+/// the data behind it, backed by measured conversion evidence.
+///
+/// Two of the three are product-reachable. `shimadzu_lcd` is not, and is here
+/// only because this enumeration is total over the families Rust can admit and
+/// every roster row carries one. ADR 0019 records why the alternatives are
+/// worse: reporting such a row as another family would make the roster lie
+/// about what it holds, and adding an unknown member would make every row's
+/// family a thing the interface has to guess about. No ingestion surface, queue
+/// eligibility or action reaches it, and the interface labels it and offers
+/// nothing.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DatasetSourceKindDto {
     Mzml,
     ThermoRaw,
+    /// Admitted privately, product-unreachable. See ADR 0019.
+    ShimadzuLcd,
 }
 
 /// Every dataset the session holds, in the order they were added.
