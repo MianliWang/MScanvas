@@ -6694,6 +6694,10 @@ enum BackendAct {
     Fail,
 }
 
+/// A hook a test can run inside a provider's backend resolution, shared so it
+/// can be armed after the provider has been moved into the service.
+type BackendResolutionHook = Arc<Mutex<Option<Box<dyn Fn() + Send>>>>;
+
 /// A `msconvert` stand-in.
 ///
 /// It receives the real planned command, so the destination it writes to is the
@@ -6823,7 +6827,7 @@ struct ConvertingProvider<R = FakeConversionRunner> {
     /// -- a row removed while the pre-picker preflight is resolving -- puts it
     /// here, because the window is real time in production and injected code
     /// in a deterministic test.
-    on_conversion_backend: Arc<Mutex<Option<Box<dyn Fn() + Send>>>>,
+    on_conversion_backend: BackendResolutionHook,
 }
 
 impl<R: ProcessRunner + Send + Sync> ConvertingProvider<R> {
@@ -6842,7 +6846,7 @@ impl<R: ProcessRunner + Send + Sync> ConvertingProvider<R> {
 
     /// The hook slot, shared so a test can arm it after the provider has been
     /// moved into the service.
-    fn on_conversion_backend(&self) -> Arc<Mutex<Option<Box<dyn Fn() + Send>>>> {
+    fn on_conversion_backend(&self) -> BackendResolutionHook {
         Arc::clone(&self.on_conversion_backend)
     }
 
