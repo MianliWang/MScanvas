@@ -20,6 +20,23 @@
 //! red-black tree the directory is ordered as, or decodes any content. A parser
 //! used to decide what an acquisition *is* should be as small as the question.
 //!
+//! **What that leaves unproven, stated exactly.** These names are the *used
+//! entries of the first directory sector*, not the members of the root's tree.
+//! An entry that no path from the root reaches is still counted here, and a
+//! real reader would not treat it as a member. Establishing membership means
+//! following child and sibling identifiers, which are indices into the
+//! directory *stream* — a FAT chain — so any entry past the first sector needs
+//! the FAT walk this module refuses, and a traversal that stopped at the sector
+//! boundary would start refusing real acquisitions rather than crafted ones.
+//!
+//! The gap is narrower than it sounds, because it is not what stands between a
+//! crafted file and admission: whoever can write three marker names into
+//! unreachable slots can write them into reachable ones. What this reader
+//! establishes is that the object is a well-formed compound file whose first
+//! directory sector carries the family's marker names — which is the claim the
+//! recognition rests on, and it is worth being clear that it is not the
+//! stronger one.
+//!
 //! Every refusal is a refusal. A file whose geometry is not one of the two
 //! documented shapes, whose directory sector does not fit, or whose entry names
 //! are not valid UTF-16 is not admitted on the strength of what could be read

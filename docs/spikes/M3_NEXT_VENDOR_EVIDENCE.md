@@ -251,6 +251,36 @@ fail-open in a reader whose whole argument is that it fails closed:
   convincing names reads as a directory unless something checks that a
   directory is what it is. Both fixtures have exactly one root entry, first.
 
+### What the reader does not establish
+
+The names it returns are the **used entries of the first directory sector**,
+not the members of the root's tree. A compound file orders its directory as a
+red-black tree, and an entry no path from the root reaches is not a member — but
+it is still counted here.
+
+This was raised in review and is deliberately not fixed, for three reasons
+worth recording rather than deciding again later:
+
+1. **A correct traversal needs the FAT.** Child and sibling identifiers are
+   indices into the directory *stream*, which is a chain of sectors. Any entry
+   past the first one requires following that chain — the FAT walk this module
+   exists to avoid.
+2. **A traversal stopped at the sector boundary would refuse real files, not
+   crafted ones.** A real acquisition's tree may route through entries in later
+   sectors; a partial walk would have to either refuse those or accept them,
+   and the first is a regression while the second is the same gap with more
+   code.
+3. **It is not what stands between a crafted file and admission.** Anyone able
+   to write three marker names into unreachable slots can write them into
+   reachable ones. Tree membership rejects a narrower class of *malformed*
+   containers, not a determined forgery.
+
+So the claim is stated at the strength it has: the object is a well-formed
+compound file whose first directory sector carries the family's marker names.
+Closing the gap properly means a directory-stream reader, which is a different
+and larger thing than this module is, and it would be a new evidence gate rather
+than an edit.
+
 The reading happens **through the handle admission already pinned**, before the
 rewind and the digest, so what is inspected is the object that was recognised
 and not whatever the name means afterwards.

@@ -142,6 +142,26 @@ an acquisition is neither.
 would have brought a general-purpose parser, and a larger attack surface, to
 answer a question this small.
 
+### What the container reader deliberately does not establish
+
+The names it matches are the used entries of the first directory sector, not
+the members of the root's red-black tree. Review asked for a reachability walk;
+it is declined, and recorded here so the decision is visible rather than
+repeated.
+
+Child and sibling identifiers index the directory *stream*, which is a FAT
+chain, so a correct traversal needs the FAT walk this module refuses. A walk
+that stopped at the sector boundary would refuse real acquisitions whose trees
+route through later sectors — a regression traded for the appearance of rigour.
+And it is not the thing keeping a crafted file out: whoever can write three
+marker names into unreachable slots can write them into reachable ones, so tree
+membership rejects a narrower class of malformed containers rather than a
+forgery.
+
+The recognition therefore claims what it can prove — a well-formed compound file
+whose first directory sector carries the family's markers — and the stronger
+claim is listed as an open gate below rather than implied here.
+
 ### The refusal vocabulary gains one term
 
 `ConversionSourceRejection::FamilyStructureMismatch`, stable id
@@ -225,6 +245,11 @@ reports, and no workspace path can reach it.
   model does.
 - **Directory acquisitions.** Agilent, Bruker and Waters are unchanged. ADR
   0007's evidence list is what governs them and none of it was gathered here.
+- **Directory-tree membership.** The container reader matches names among the
+  used entries of the first directory sector, not the members of the root's
+  tree. Proving membership needs a directory-stream reader that follows the
+  FAT — a larger thing than this module, and a separate piece of work with its
+  own evidence. Recorded above with the reasoning.
 - **Other Shimadzu formats.** Only `.lcd` was measured. Nothing else is claimed.
 - **Other provider builds.** The claim binds to one executable digest. A
   different build is unevidenced until it is measured.
