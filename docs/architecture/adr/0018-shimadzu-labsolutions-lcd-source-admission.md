@@ -107,19 +107,31 @@ does not end in its terminator, a name that is not valid UTF-16. The directory
 offset is bounded so a crafted header cannot direct a seek. Nothing is answered
 from the part of a file that could be read.
 
-Three of those were added after review found them missing, and the shape of the
-mistake was the same each time: a field taken from the file being judged and
-then trusted. A shift checked as a *range* admits the undefined 10 and 11 and
-sends the directory read to an invented geometry. A shift checked without its
-version accepts a header that contradicts itself — and the tell was that the
-synthetic fixtures never wrote a version at all and were admitted anyway. A
-declared name length whose final code unit is discarded without being checked
-lets `LSS Raw DataX` read back as exactly `LSS Raw Data`. Any one of them turns
-this reader from a recognition into something a crafted container can talk past.
+Four of those were added after review found them missing, and the shape of the
+mistake was the same every time: a field taken from the file being judged and
+then trusted.
 
-The version rule was measured against the real fixtures before it was added —
-both declare version 4 with shift 12 — because a rule that refused a real
+- A shift checked as a *range* admits the undefined 10 and 11 and sends the
+  directory read to an invented geometry.
+- A shift checked without its major version accepts a header that contradicts
+  itself. The tell was that the synthetic fixtures never wrote a version at all
+  and were admitted anyway — a builder producing files no writer produces will
+  hide exactly this.
+- A declared name length whose final code unit is discarded unlooked-at lets
+  `LSS Raw DataX` read back as exactly `LSS Raw Data`.
+- A directory read without checking that it *is* one: recognition asks which
+  names are present, so a block of bytes carrying three convincing names passes
+  unless the root storage is required to be there, first, and alone.
+
+Any one of them turns this reader from a recognition into something a crafted
+container can talk past. Each new rule was measured against the real fixtures
+before it was added — both declare major version 4 with sector shift 12, and
+both carry exactly one root entry first — because a rule that refused a real
 acquisition would be worse than the gap it closed.
+
+The pattern is worth keeping for whoever reads this next: the bugs were not in
+the recognition, which was measured. They were in the parsing underneath it,
+where every field is attacker-chosen and the temptation is to read on.
 
 Requiring all three markers is a conservative choice made on two fixtures. It
 was chosen for its failure direction: refusing an acquisition MSCanvas could

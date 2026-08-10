@@ -246,6 +246,10 @@ fail-open in a reader whose whole argument is that it fails closed:
   it unlooked-at means a field holding `LSS Raw DataX`, declared as though the
   `X` were the terminator, reads back as exactly `LSS Raw Data`. Three of those
   and a container that holds none of the markers passes recognition.
+- **The first directory entry must be the root storage, and the only one.** The
+  recognition asks which names are present, so a block of bytes carrying three
+  convincing names reads as a directory unless something checks that a
+  directory is what it is. Both fixtures have exactly one root entry, first.
 
 The reading happens **through the handle admission already pinned**, before the
 rewind and the digest, so what is inspected is the object that was recognised

@@ -3829,6 +3829,10 @@ const COMPOUND_HEADER: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1
 /// still say what was measured.
 const SHIMADZU_ENTRIES: [&str; 3] = ["Method File Property", "GUMM_Information", "LSS Raw Data"];
 
+/// Where a directory entry says what it is, spelled out here for the same
+/// reason everything else in this section is.
+const OBJECT_TYPE_IN_ENTRY: usize = 66;
+
 /// A compound file holding exactly these entries.
 ///
 /// Built, not vendor data. What this boundary decides about a source is decided
@@ -4008,6 +4012,19 @@ fn a_crafted_container_cannot_talk_its_way_into_the_family() {
         ConversionSource::open_shimadzu_lcd_file(&path, MzmlScanLimits::default()),
         Err(ConversionSourceRejection::FamilyStructureMismatch),
         "a container claiming version 4 with 512-byte sectors was admitted"
+    );
+
+    // The three markers in a block of bytes that is not a directory at all:
+    // no root storage in front of them. The names are what recognition asks
+    // about, so without the root rule this passes for an acquisition.
+    let mut rootless = compound_bytes(&SHIMADZU_ENTRIES);
+    rootless[512 + OBJECT_TYPE_IN_ENTRY] = 1; // the root demoted to a storage
+    let path = directory.path().join("rootless.lcd");
+    fs::write(&path, &rootless).expect("write a rootless directory");
+    assert_eq!(
+        ConversionSource::open_shimadzu_lcd_file(&path, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::FamilyStructureMismatch),
+        "a directory with no root storage was admitted"
     );
 
     // A marker forged out of a longer name. `LSS Raw DataX` declared as though

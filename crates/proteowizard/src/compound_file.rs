@@ -46,6 +46,13 @@ const LITTLE_ENDIAN_MARKER: [u8; 2] = [0xFE, 0xFF];
 /// One directory entry is 128 bytes, always.
 const DIRECTORY_ENTRY_BYTES: usize = 128;
 
+/// Where an entry says what it is, and the value that says "root storage".
+///
+/// The other defined values are 1 for a storage and 2 for a stream; 0 marks an
+/// entry that holds nothing yet.
+const OBJECT_TYPE_OFFSET: usize = 66;
+const ROOT_OBJECT_TYPE: u8 = 5;
+
 /// The name field is 64 bytes — at most 32 UTF-16 code units including the
 /// terminator.
 const DIRECTORY_NAME_BYTES: usize = 64;
@@ -171,7 +178,16 @@ pub(crate) fn read_root_directory_names(
 
     let sector = read_at(file, offset, sector_bytes)?;
     let mut names = Vec::new();
-    for entry in sector.chunks_exact(DIRECTORY_ENTRY_BYTES) {
+    for (position, entry) in sector.chunks_exact(DIRECTORY_ENTRY_BYTES).enumerate() {
+        // The format puts the root storage first and allows exactly one, so
+        // being the root and being first are the same condition and this is
+        // both checks at once. A sector that carries convincing marker names
+        // but no root — or a second one — is not a compound file's directory;
+        // it is a block of bytes arranged to read like one, which is the only
+        // way to arrive here.
+        if (position == 0) != (entry[OBJECT_TYPE_OFFSET] == ROOT_OBJECT_TYPE) {
+            return Err(CompoundFileError::DirectoryUnreadable);
+        }
         if let Some(name) = entry_name(entry)? {
             names.push(name);
         }
@@ -189,11 +205,11 @@ pub(crate) fn read_root_directory_names(
 fn entry_name(entry: &[u8]) -> Result<Option<String>, CompoundFileError> {
     // 0 is an unallocated entry; 1 storage, 2 stream, 5 root. Anything else is
     // not a shape this format defines.
-    let object_type = entry[66];
+    let object_type = entry[OBJECT_TYPE_OFFSET];
     if object_type == 0 {
         return Ok(None);
     }
-    if !matches!(object_type, 1 | 2 | 5) {
+    if !matches!(object_type, 1 | 2 | ROOT_OBJECT_TYPE) {
         return Err(CompoundFileError::DirectoryUnreadable);
     }
 
@@ -462,9 +478,11 @@ mod tests {
             );
         }
 
-        // A used entry with an object type the format does not define.
-        let mut odd_type = compound_file(&[("Root Entry", 5)], 12);
-        odd_type[4096 + 66] = 7;
+        // A used entry with an object type the format does not define. On the
+        // second entry, because the first one is answered by the root rule
+        // below and this is meant to be about the type vocabulary.
+        let mut odd_type = compound_file(&[("Root Entry", 5), ("Marker", 2)], 12);
+        odd_type[4096 + DIRECTORY_ENTRY_BYTES + 66] = 7;
         assert_eq!(
             names_of(&odd_type, "objtype").expect_err("only three object types are defined"),
             CompoundFileError::DirectoryUnreadable
@@ -509,6 +527,52 @@ mod tests {
         let names = names_of(&honest, "honest").expect("an honest name is read");
         assert!(names.contains("Marker!"));
         assert!(!names.contains("Marker"));
+    }
+
+    /// The first directory entry is the root storage, and it is the only one.
+    ///
+    /// Without this a block of bytes carrying convincing entry names reads as a
+    /// directory: the names are what recognition asks about, and nothing else
+    /// in this reader would have noticed that no compound file was ever there.
+    #[test]
+    fn a_directory_without_exactly_one_root_first_is_refused() {
+        // First entry is an ordinary storage rather than the root.
+        let mut rootless = compound_file(&[("Method File Property", 1), ("LSS Raw Data", 1)], 12);
+        assert_eq!(
+            names_of(&rootless, "rootless").expect_err("the first entry is the root"),
+            CompoundFileError::DirectoryUnreadable
+        );
+
+        // First entry unallocated, which would otherwise simply be skipped.
+        rootless = compound_file(&[("Root Entry", 5), ("Marker", 2)], 12);
+        rootless[4096 + OBJECT_TYPE_OFFSET] = 0;
+        assert_eq!(
+            names_of(&rootless, "unallocated-first").expect_err("the first entry is the root"),
+            CompoundFileError::DirectoryUnreadable
+        );
+
+        // A second root further along. One is what the format allows.
+        let mut two_roots = compound_file(&[("Root Entry", 5), ("Another Root", 5)], 12);
+        two_roots[4096 + DIRECTORY_ENTRY_BYTES + OBJECT_TYPE_OFFSET] = ROOT_OBJECT_TYPE;
+        assert_eq!(
+            names_of(&two_roots, "two-roots").expect_err("one root is what the format allows"),
+            CompoundFileError::DirectoryUnreadable
+        );
+
+        // The shape both real fixtures have: one root, first, and the rest
+        // ordinary. Still read, so the refusals above are about the root and
+        // not about the entries beside it.
+        let ordinary = compound_file(
+            &[
+                ("Root Entry", 5),
+                ("Method File Property", 2),
+                ("LSS SST", 1),
+            ],
+            12,
+        );
+        let names = names_of(&ordinary, "ordinary").expect("an ordinary directory is read");
+        assert!(names.contains("Root Entry"));
+        assert!(names.contains("Method File Property"));
     }
 
     /// This reader moves the handle, so the caller's rewind is load-bearing:
