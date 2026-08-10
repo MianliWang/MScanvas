@@ -81,8 +81,8 @@ pub(crate) enum CompoundFileError {
 /// The entry names in a compound file's first directory sector.
 ///
 /// Bounded by construction: one sector holds at most thirty-two entries, and
-/// each name is at most thirty-one characters. There is no way to grow this by
-/// pointing it at a larger file.
+/// each name is at most thirty-one UTF-16 code units. There is no way to grow
+/// this by pointing it at a larger file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RootDirectoryNames {
     names: Vec<String>,

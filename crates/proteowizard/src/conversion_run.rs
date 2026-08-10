@@ -127,7 +127,7 @@ pub enum ConversionSourceKind {
     ///
     /// Single-file, like Thermo RAW, and recognised one level deeper. It is a
     /// Microsoft compound file, so its first eight bytes are the same eight
-    /// bytes a SCIEX `.wiff` begins with -- measured on real fixtures of both.
+    /// bytes a SCIEX `.wiff` begins with — measured on real fixtures of both.
     /// What names the family is the set of entries inside it.
     ShimadzuLcdFile,
 }
