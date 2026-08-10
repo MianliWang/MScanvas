@@ -121,13 +121,14 @@ then trusted.
   `LSS Raw DataX` read back as exactly `LSS Raw Data`.
 - A directory read without checking that it *is* one: recognition asks which
   names are present, so a block of bytes carrying three convincing names passes
-  unless the root storage is required to be there, first, and alone.
+  unless the root storage is required to be there, first, alone, and under the
+  exact name the format gives it.
 
 Any one of them turns this reader from a recognition into something a crafted
 container can talk past. Each new rule was measured against the real fixtures
 before it was added — both declare major version 4 with sector shift 12, and
-both carry exactly one root entry first — because a rule that refused a real
-acquisition would be worse than the gap it closed.
+both carry exactly one root entry first, named `Root Entry` — because a rule
+that refused a real acquisition would be worse than the gap it closed.
 
 The pattern is worth keeping for whoever reads this next: the bugs were not in
 the recognition, which was measured. They were in the parsing underneath it,

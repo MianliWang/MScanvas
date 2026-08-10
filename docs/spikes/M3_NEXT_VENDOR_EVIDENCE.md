@@ -246,10 +246,13 @@ fail-open in a reader whose whole argument is that it fails closed:
   it unlooked-at means a field holding `LSS Raw DataX`, declared as though the
   `X` were the terminator, reads back as exactly `LSS Raw Data`. Three of those
   and a container that holds none of the markers passes recognition.
-- **The first directory entry must be the root storage, and the only one.** The
-  recognition asks which names are present, so a block of bytes carrying three
-  convincing names reads as a directory unless something checks that a
-  directory is what it is. Both fixtures have exactly one root entry, first.
+- **The first directory entry must be the root storage, the only one, and
+  named `Root Entry`.** The recognition asks which names are present, so a block
+  of bytes carrying three convincing names reads as a directory unless something
+  checks that a directory is what it is — and a root that is one by type and
+  position alone can still be called anything. Both fixtures carry exactly one
+  root entry, first, under that exact name; so does the SCIEX fixture, because
+  it is a property of the container rather than of any vendor.
 
 ### What the reader does not establish
 

@@ -4027,6 +4027,21 @@ fn a_crafted_container_cannot_talk_its_way_into_the_family() {
         "a directory with no root storage was admitted"
     );
 
+    // A root in type only: the right slot and the right type, the wrong name.
+    let mut misnamed_root = compound_bytes(&SHIMADZU_ENTRIES);
+    for (index, unit) in "Root Entry!".encode_utf16().enumerate() {
+        let at = 512 + index * 2;
+        misnamed_root[at..at + 2].copy_from_slice(&unit.to_le_bytes());
+    }
+    misnamed_root[512 + 64..512 + 66].copy_from_slice(&24_u16.to_le_bytes());
+    let path = directory.path().join("misnamed-root.lcd");
+    fs::write(&path, &misnamed_root).expect("write a misnamed root");
+    assert_eq!(
+        ConversionSource::open_shimadzu_lcd_file(&path, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::FamilyStructureMismatch),
+        "a container whose root is named something else was admitted"
+    );
+
     // A marker forged out of a longer name. `LSS Raw DataX` declared as though
     // the `X` were the two-byte terminator reads back as `LSS Raw Data` unless
     // the terminator is actually checked -- and then this container, which

@@ -70,6 +70,12 @@ const DIRECTORY_ENTRY_BYTES: usize = 128;
 const OBJECT_TYPE_OFFSET: usize = 66;
 const ROOT_OBJECT_TYPE: u8 = 5;
 
+/// The name the format requires the root storage to carry, exactly.
+///
+/// Both LabSolutions fixtures have it, and so does the SCIEX one — it is a
+/// property of the container, not of any vendor.
+const ROOT_ENTRY_NAME: &str = "Root Entry";
+
 /// The name field is 64 bytes — at most 32 UTF-16 code units including the
 /// terminator.
 const DIRECTORY_NAME_BYTES: usize = 64;
@@ -205,7 +211,14 @@ pub(crate) fn read_root_directory_names(
         if (position == 0) != (entry[OBJECT_TYPE_OFFSET] == ROOT_OBJECT_TYPE) {
             return Err(CompoundFileError::DirectoryUnreadable);
         }
-        if let Some(name) = entry_name(entry)? {
+        let name = entry_name(entry)?;
+        // And the root is named. The format requires this exact string, both
+        // fixtures carry it, and without it a container can hold a root that is
+        // one in type only — a 5 in the right slot, called anything or nothing.
+        if position == 0 && name.as_deref() != Some(ROOT_ENTRY_NAME) {
+            return Err(CompoundFileError::DirectoryUnreadable);
+        }
+        if let Some(name) = name {
             names.push(name);
         }
     }
@@ -575,6 +588,22 @@ mod tests {
             names_of(&two_roots, "two-roots").expect_err("one root is what the format allows"),
             CompoundFileError::DirectoryUnreadable
         );
+
+        // A root in type only: slot zero, object type 5, named something else.
+        // The format requires the exact string, and without checking it a
+        // container can present a root that is one by position alone.
+        // The doubled space is built rather than written, because a run of
+        // spaces in a literal is what a lost line continuation looks like and
+        // the repository check says so.
+        let doubled = format!("Root{}{}Entry", ' ', ' ');
+        for impostor in ["root entry", &doubled, "RootEntry", "Anything"] {
+            let named = compound_file(&[(impostor, 5), ("Marker", 2)], 12);
+            assert_eq!(
+                names_of(&named, "rootname").expect_err("the root carries one name"),
+                CompoundFileError::DirectoryUnreadable,
+                "root named {impostor}"
+            );
+        }
 
         // The shape both real fixtures have: one root, first, and the rest
         // ordinary. Still read, so the refusals above are about the root and
