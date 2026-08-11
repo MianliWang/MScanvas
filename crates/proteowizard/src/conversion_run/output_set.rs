@@ -89,10 +89,10 @@ pub enum OutputSetRejection {
     /// for, and admitting it as a sidecar would publish something no judgement
     /// covers.
     UnexpectedMember { member: String },
-    /// Two members whose names collide under Windows filename folding. Both
-    /// cannot be published into one destination, and choosing one would drop
-    /// a document the backend produced.
-    FoldedDuplicateMember { member: String },
+    /// Two members whose names differ only by ASCII case. A case-insensitive
+    /// destination directory holds one of them, so publishing both would leave
+    /// the set half-published for a reason discovery could see first.
+    CaseInsensitiveDuplicateMember { member: String },
 }
 
 impl OutputSetRejection {
@@ -105,7 +105,7 @@ impl OutputSetRejection {
             Self::NonRegularMember { .. } => "output_set_member_not_regular",
             Self::PartialOutputMember { .. } => "output_set_member_partial",
             Self::UnexpectedMember { .. } => "output_set_member_unexpected",
-            Self::FoldedDuplicateMember { .. } => "output_set_member_folded_duplicate",
+            Self::CaseInsensitiveDuplicateMember { .. } => "output_set_member_case_duplicate",
         }
     }
 }
@@ -133,10 +133,23 @@ impl std::fmt::Debug for OutputSetRejection {
 
 /// One discovered staged member: its backend-chosen name and the length the
 /// directory reported for it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct DiscoveredMember {
     name: OsString,
     byte_length: u64,
+}
+
+impl std::fmt::Debug for DiscoveredMember {
+    /// The shape, never the name. A backend-chosen basename embeds the
+    /// vendor's own sample identifiers, and this type is exactly what a
+    /// `Vec<DiscoveredMember>` in a failed `expect_err` would print.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DiscoveredMember")
+            .field("name", &"<redacted>")
+            .field("byte_length", &self.byte_length)
+            .finish()
+    }
 }
 
 impl DiscoveredMember {
@@ -176,8 +189,7 @@ pub(crate) fn discover_staged_output_set(
         });
     }
 
-    let mut members = Vec::with_capacity(snapshot.len());
-    let mut folded: Vec<String> = Vec::with_capacity(snapshot.len());
+    let mut members: Vec<DiscoveredMember> = Vec::with_capacity(snapshot.len());
     for entry in snapshot.entries() {
         let member = entry.file_name().to_string_lossy().into_owned();
         // Partial first: an in-progress name explains more than "unexpected".
@@ -199,13 +211,33 @@ pub(crate) fn discover_staged_output_set(
         {
             return Err(OutputSetRejection::UnexpectedMember { member });
         }
-        // The same Windows folding the queue's collision rule uses. Two staged
-        // names that fold together cannot both take a destination name.
-        let fold = member.to_uppercase();
-        if folded.contains(&fold) {
-            return Err(OutputSetRejection::FoldedDuplicateMember { member });
+        // ASCII case only, and the narrowness is the point.
+        //
+        // These members coexist in one directory *on the destination's own
+        // volume* -- staging is created inside the destination root -- so the
+        // volume has already proved it tells their names apart, and anything
+        // it distinguishes here it can hold there. Full Unicode uppercasing
+        // does not agree with a volume's upcase table at the edges: it expands
+        // `ß` to `SS`, so it would refuse a `straße.mzML` / `STRASSE.mzML`
+        // pair that NTFS keeps apart and would have published perfectly well.
+        // The queue's own collision rule folds that way deliberately, because
+        // there the two names come from rows that need not coexist anywhere;
+        // here they demonstrably do.
+        //
+        // What is left is the case a case-sensitive staging directory can
+        // produce under a case-insensitive destination -- Windows sets that
+        // flag per directory -- where the second publication would hit the
+        // no-clobber rename. Catching it here refuses the set whole instead of
+        // leaving it half-published. An exotic non-ASCII equivalence this
+        // misses is not a hazard: it falls through to the same no-clobber
+        // rename and becomes an honest partial finalization. Nothing is ever
+        // overwritten either way.
+        if members
+            .iter()
+            .any(|seen| seen.name().eq_ignore_ascii_case(entry.file_name()))
+        {
+            return Err(OutputSetRejection::CaseInsensitiveDuplicateMember { member });
         }
-        folded.push(fold);
         members.push(DiscoveredMember {
             name: entry.file_name().to_owned(),
             byte_length: entry.byte_length(),

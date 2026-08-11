@@ -4676,18 +4676,40 @@ fn a_member_that_is_not_an_ordinary_mzml_refuses_the_whole_set() {
         OutputSetRejection::UnexpectedMember { .. }
     ));
 
-    // Two names that fold together under Windows semantics. NTFS keeps these
-    // two apart -- `\u{df}` uppercases to `SS` in the fold and not on the
-    // volume -- so both can exist in staging while only one destination name
-    // could survive.
-    let folded = SetFixture::new("folded");
-    folded.member("stra\u{df}e.mzML");
-    folded.member("STRASSE.mzML");
-    assert!(matches!(
-        output_set::discover_staged_output_set(&folded.staged)
-            .expect_err("a folded duplicate refuses the set"),
-        OutputSetRejection::FoldedDuplicateMember { .. }
-    ));
+    // Two names differing only by ASCII case. A case-insensitive destination
+    // directory holds one of them, so discovery refuses the set rather than
+    // letting the second publication hit the no-clobber rename and leave the
+    // set half-published. Guarded, because a case-insensitive staging
+    // directory cannot hold both to begin with -- which is the case where the
+    // rule has nothing to catch.
+    let cased = SetFixture::new("cased");
+    cased.member("Sample_01.mzML");
+    let _ = fs::write(cased.staged.join("SAMPLE_01.mzML"), output_document());
+    if entry_names(&cased.staged).len() == 2 {
+        assert!(matches!(
+            output_set::discover_staged_output_set(&cased.staged)
+                .expect_err("a case-only duplicate refuses the set"),
+            OutputSetRejection::CaseInsensitiveDuplicateMember { .. }
+        ));
+    }
+
+    // And the pair full Unicode uppercasing would have folded together is
+    // accepted, because the volume plainly keeps them apart: both are sitting
+    // in one directory on it, and staging is inside the destination root. A
+    // rule that upcased `\u{df}` to `SS` would refuse a set that publishes
+    // perfectly well.
+    let sharp = SetFixture::new("sharp-s");
+    sharp.member("stra\u{df}e.mzML");
+    sharp.member("STRASSE.mzML");
+    if entry_names(&sharp.staged).len() == 2 {
+        assert_eq!(
+            output_set::discover_staged_output_set(&sharp.staged)
+                .expect("names the volume distinguishes are a valid set")
+                .len(),
+            2,
+            "a valid set was refused by a fold the filesystem does not perform"
+        );
+    }
 
     // A link member, where this account may create one.
     #[cfg(windows)]

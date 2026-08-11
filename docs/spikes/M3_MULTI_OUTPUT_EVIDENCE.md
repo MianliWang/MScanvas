@@ -97,8 +97,18 @@ member publishing nothing; group Fail/Skip semantics with no partial skip; the
 deterministic mid-set race producing an explicit `PartiallyFinalized` with the
 published prefix kept, no rollback, and the remainder cleaned; cancellation
 before and during the run publishing nothing; and the single-output boundary
-still refusing a second output or a sidecar. Ten focused mutations, each
-removing one of those guards, all go red.
+still refusing a second output or a sidecar. Twelve focused mutations, each
+removing one of those guards, go red.
+
+**One mutation is structurally unreachable on this machine and is recorded as
+such.** The case-only duplicate check exists for a case-sensitive staging
+directory beneath a case-insensitive destination — Windows sets that flag per
+directory — and this machine's default NTFS is case-insensitive, so two names
+differing only by ASCII case cannot both exist in staging to be discovered.
+The test is guarded on that condition and skips here; removing the check
+therefore fails nothing. It is kept because the configuration it guards is
+real, and its failure direction is a refused set rather than a half-published
+one.
 
 ## What is claimed, and what is not
 
