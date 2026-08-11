@@ -388,6 +388,33 @@ impl WorkspaceMultiOutputConversionReport {
         }
     }
 
+    /// The same report, remembering no completeness.
+    ///
+    /// There is no other way to reach the ticket's completeness gate from a
+    /// test: the SCIEX path establishes completeness before publication, so a
+    /// fully finalized run of that family always has it. The gate exists for
+    /// the runs that would not -- another family's, or the evidence entry point
+    /// that is never asked -- and this forges that state directly rather than
+    /// waiting for one to exist.
+    #[cfg(test)]
+    pub(super) fn without_completeness(mut self) -> Self {
+        self.completeness = None;
+        self
+    }
+
+    /// The same report, one member short.
+    ///
+    /// Likewise the only way to reach the pairing gate. A report and its
+    /// retained objects come from one publication and agree by construction;
+    /// what the gate is for is the day they stop agreeing, and a ticket that
+    /// paired an object with the wrong member's name would be worse than a
+    /// refusal.
+    #[cfg(test)]
+    pub(super) fn without_last_member(mut self) -> Self {
+        self.members.pop();
+        self
+    }
+
     /// What this run established about the acquisition's samples.
     ///
     /// Separate from [`Self::group_outcome`] and it must stay separate: that

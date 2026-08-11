@@ -13,6 +13,11 @@
   own stdout. `SciexWiffBundle` is now an admitted family, so the statements
   below that no source family is admitted describe this ADR's slice and not
   the current boundary. Everything else here stands.
+- **Extended by [ADR 0025](0025-private-sciex-output-set-adoption.md),
+  2026-08-11.** A fully finalized set's retained `FinalizedOutputSet` can now be
+  handed to workspace adoption whole, through one ownership-transferring
+  accessor. `PartiallyFinalized` deliberately cannot: its published members stay
+  user-owned files and are never packaged as the acquisition's output set.
 - **Extended by [ADR 0024](0024-sciex-sample-completeness.md), 2026-08-11.**
   The lifecycle gained one closed `PrePublicationRequirement`, examined after
   the backend exits and before discovery. `fully_finalized` is unchanged and

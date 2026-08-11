@@ -4,6 +4,11 @@
   ingestion, queue integration, adoption of output sets and every UI concern
   remain separately gated
 - Date: 2026-08-11
+- **Extended by [ADR 0025](0025-private-sciex-output-set-adoption.md),
+  2026-08-11.** The consequence recorded below -- that output-set adoption does
+  not exist, so a converted SCIEX acquisition cannot enter a workspace as its
+  outputs -- no longer holds. It can, privately, when the run was fully finalized
+  and sample-complete.
 - **The completeness gate recorded at the end of this document is closed by
   [ADR 0024](0024-sciex-sample-completeness.md), 2026-08-11.** The workspace
   report now carries an evidence-bearing completeness judgement, and an

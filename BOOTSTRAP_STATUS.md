@@ -4022,3 +4022,56 @@ measure around, and it is recorded rather than smoothed over. SCIEX stays
 invisible: output-set adoption does not exist yet. See
 [ADR 0024](docs/architecture/adr/0024-sciex-sample-completeness.md) and
 [the M3.13 evidence record](docs/spikes/M3_SCIEX_COMPLETENESS_EVIDENCE.md).
+
+## Private SCIEX output-set adoption, 2026-08-11
+
+A SCIEX acquisition converts to as many as twenty-four mzML files and the
+workspace had no way to take them. ADR 0016's adoption already did the hard
+part — exact object *and* exact validated bytes per output, one refusal not
+abandoning the rest, duplicate before capacity, hashing outside the workspace
+lock, a reserved generation so a workspace that moved on gets nothing — and it
+already processed several outputs in one attempt, because a queue finalizes
+several items. The mismatch was cardinality and only cardinality.
+
+**So the engine was lifted, not rewritten.** The ordered multi-candidate
+machinery that was inline in `adopt_conversion_outputs` is now two functions
+that both paths call. The evidence that visible behaviour did not change is that
+the tests pinning it pass untouched. No second verifier, no second hashing, no
+second duplicate engine, no second commit protocol.
+
+**The set ticket wraps member tickets rather than replacing them**, so nothing
+about how one output is proved differs because there are ten. It is minted from
+the retained objects at the moment the conversion ends, taking them by value:
+there is no path in it from a name back to a file, which is the point.
+
+**Eligibility is `FullyFinalized` *and* established sample completeness**, plus
+a report and a set of objects that pair one-to-one in order. Never inferred from
+a non-empty retained set.
+
+**A partially finalized conversion gets no ticket, deliberately.** Its published
+members are real files the user owns; nothing rolls them back, deletes them or
+hides them, and they open the way any other mzML on disk opens. Packaging the
+prefix under an action named for the acquisition's output set would make a
+conversion that stopped halfway read as one that finished. That is a different
+thing from a partial *adoption* — a complete set whose members the workspace
+could not all take — and the two are kept apart in the code and in ADR 0025.
+
+**Every adopted member is an ordinary `Mzml` row**, by construction rather than
+by assignment: adoption admits each candidate through the workspace's own mzML
+admission. No converted-output family, no automatic preview, no backend gate, no
+command. The whole path is compiled out of the shipped binary, like the
+conversion that feeds it.
+
+**Real evidence.** The ten-sample Enolase acquisition, digests verified,
+converted on the evidenced build to ten published members with completeness
+established, then adopted: ten `added` in publication order, eleven workspace
+rows (the acquisition still one bundle row), every adopted row `mzml`, no
+preview anywhere, no path in the ticket's or the result's rendering, and a
+second adoption reporting all ten as already present.
+
+Eight focused mutations, seven red. The survivor — a superseded adoption allowed
+to commit — guards a window one file hash wide that a single-threaded suite
+cannot move the workspace inside, and is recorded rather than papered over; two
+further mutations from the brief were considered and not run, with reasons. See
+[ADR 0025](docs/architecture/adr/0025-private-sciex-output-set-adoption.md) and
+[the M3.14 evidence record](docs/spikes/M3_SCIEX_OUTPUT_SET_ADOPTION_EVIDENCE.md).
