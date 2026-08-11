@@ -152,6 +152,38 @@ emptiness is established when the command is built, and the runner rechecks it
 immediately before spawning. Found in review; the gap was real, and the fix is
 the existing mechanism rather than a new one.
 
+### What the staging directory's authority does and does not establish
+
+Discovery trusts the staged output directory's contents, and it is worth
+stating exactly how far that trust reaches. The directory is created
+exclusively inside the destination root the user chose, proved empty when the
+command is built, and rechecked empty immediately before the spawn. Between
+that recheck and the post-run snapshot, an open directory handle does not stop
+another local process with write access to that root from creating a file
+inside it — Windows pins the directory against rename and deletion, not
+against having entries added.
+
+For a single-output run such an entry is refused: the boundary requires
+exactly one planned entry, so an extra file fails the run. For a set, an
+injected *valid* mzML is indistinguishable from a backend member and would be
+validated, published and attributed to the acquisition. That asymmetry is real
+and is introduced by this slice. The related exposure is not new — an attacker
+who can write into that directory before validation can already substitute the
+content of a single output — but the set case turns a refusal into an
+admission, which is worse.
+
+Closing it needs a mechanism this slice does not have: either a restrictive
+DACL on the staging directory, which does not exclude the same user's other
+processes and adds new unsafe Win32 surface for partial protection, or
+per-file provenance the backend does not offer. Neither belongs in a
+foundation slice, and neither should be pretended.
+
+**Gate:** before a multi-output family is admitted to any product path, decide
+staging exclusivity deliberately — establish member provenance from something
+stronger than a shared directory snapshot, or document the trust as part of
+the product's threat model. A private evidence lifecycle may rely on a
+directory the operator owns; a user-facing conversion should not have to.
+
 ### Failures keep what the backend said
 
 A run worth diagnosing retains a bounded, redacted `BackendDiagnosticText` —
@@ -217,7 +249,7 @@ the decisive measurements:
 - The ten-member shape is exercised deterministically, shaped exactly like the
   committed reference set.
 
-## The honest gate that remains
+## The honest gates that remain
 
 The Enolase acquisition behind the ten committed reference outputs is **not in
 the pwiz tree at the pinned commit**, and no lawful multi-sample WIFF was
@@ -230,7 +262,8 @@ acquisition and run it through this lifecycle on the evidenced build, confirming
 set size > 1, per-sample naming, repeatability, and publication. The admission
 slice also owes the source-side topology this ADR deliberately did not decide:
 companion-file identity and pinning (the `.wiff` alone is not the acquisition),
-recognition, and a provider-evidence row.
+recognition, and a provider-evidence row — and the staging-exclusivity decision
+recorded above.
 
 ## Consequences
 

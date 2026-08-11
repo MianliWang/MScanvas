@@ -145,12 +145,19 @@ fn run(cli: Cli) -> Result<(), String> {
              it holds entries that are not this run's to remove",
         ));
     }
+    // Held for as long as the harness owns it. A pinned directory cannot be
+    // renamed or removed, so the workspace this cleans up at the end is the
+    // one the emptiness check above judged.
+    let _workspace = hold_directory(&cli.workspace)?;
+
     let mut previous_names: Option<Vec<String>> = None;
-    // Exactly the directories this invocation created, in creation order. The
-    // emptiness check above says the workspace was ours when we started; it
-    // cannot say what appeared during a conversion that takes as long as it
-    // takes, so cleanup removes these and nothing else.
-    let mut created: Vec<PathBuf> = Vec::new();
+    // Exactly the directories this invocation created, in creation order, each
+    // held open. The emptiness check above says the workspace was ours when we
+    // started; it cannot say what appeared during a conversion that takes as
+    // long as it takes -- so cleanup removes these and nothing else, and the
+    // hold is what makes "these" mean the objects that were created rather
+    // than whatever now answers to their names.
+    let mut created: Vec<(PathBuf, fs::File)> = Vec::new();
     let result = (|| -> Result<(), String> {
         for round in 1..=cli.runs {
             let destination = cli.workspace.join(format!("destination-{round}"));
@@ -159,7 +166,7 @@ fn run(cli: Cli) -> Result<(), String> {
             fs::create_dir(&destination).map_err(|error| {
                 format!("the destination could not be created: {:?}", error.kind())
             })?;
-            created.push(destination.clone());
+            created.push((destination.clone(), hold_directory(&destination)?));
             println!("run[{round}].begin=true");
             let run = run_multi_output_conversion_evidence(
                 &cli.source,
@@ -233,7 +240,7 @@ fn run(cli: Cli) -> Result<(), String> {
 
     // Everything the harness created goes -- and only that, whichever way the
     // runs ended.
-    let cleanup = remove_created(&created);
+    let cleanup = remove_created(created);
     match (result, cleanup) {
         (Ok(()), residue) => residue,
         (Err(failure), Ok(())) => Err(failure),
@@ -247,16 +254,70 @@ fn count_entries(directory: &Path) -> Result<usize, String> {
         .count())
 }
 
+/// Opens a directory so it cannot be renamed or removed while it is held.
+///
+/// The same posture the older evidence harness takes, for the same reason and
+/// with one more: this one recursively deletes what it created, and it decides
+/// what to delete by resolving a path. A created directory renamed away and
+/// replaced between the run and the cleanup would have this deleting somebody
+/// else's tree. Holding it without delete sharing means the name cannot come
+/// to mean a different object while the harness is using it.
+#[cfg(windows)]
+fn hold_directory(path: &Path) -> Result<fs::File, String> {
+    use std::os::windows::fs::MetadataExt;
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+
+    let opened = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|error| format!("the directory could not be held: {:?}", error.kind()))?;
+    let metadata = opened
+        .metadata()
+        .map_err(|error| format!("the directory could not be inspected: {:?}", error.kind()))?;
+    // The open refuses to traverse a link; this refuses to act on one. Holding
+    // a junction pins the link, not its target, so a path-based recursive
+    // delete would follow a target that can still be redirected.
+    if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err("the directory is a reparse point".to_owned());
+    }
+    if !metadata.is_dir() {
+        return Err("the path is not a directory".to_owned());
+    }
+    Ok(opened)
+}
+
+/// Opens a directory. No platform outside Windows offers a mandatory share
+/// mode through the standard library, so the guarantee here is narrower and is
+/// not described as equivalent.
+#[cfg(not(windows))]
+fn hold_directory(path: &Path) -> Result<fs::File, String> {
+    fs::File::open(path)
+        .map_err(|error| format!("the directory could not be held: {:?}", error.kind()))
+}
+
 /// Removes exactly the directories this invocation created.
 ///
 /// Not the workspace's contents. A conversion can run for as long as it runs,
 /// and anything that appeared in the workspace meanwhile is not this run's to
 /// delete -- the acquisition least of all, if the caller's scratch directory
 /// turns out to be somewhere they also work.
-fn remove_created(created: &[PathBuf]) -> Result<(), String> {
+///
+/// Each hold is released immediately before its own removal, so the object
+/// stayed pinned for the whole run and no other directory can have taken its
+/// name in the meantime.
+fn remove_created(created: Vec<(PathBuf, fs::File)>) -> Result<(), String> {
     let mut left = 0_usize;
-    for path in created {
-        if fs::remove_dir_all(path).is_err() {
+    for (path, hold) in created {
+        drop(hold);
+        if fs::remove_dir_all(&path).is_err() {
             left += 1;
         }
     }

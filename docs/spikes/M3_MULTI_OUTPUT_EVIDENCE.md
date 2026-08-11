@@ -112,11 +112,18 @@ provider build is evidenced for WIFF; that the two single-sample fixtures
 represent SCIEX acquisitions generally; that output digests are portable
 facts; or that the lifecycle's member order is sample order.
 
-**The remaining gate, exactly:** real-backend evidence of a
-multi-member (>1) set requires one lawful multi-sample WIFF acquisition, which
-the pinned tree does not contain. That evidence, plus source-side topology
-(companion identity and pinning), recognition, and a provider-evidence row,
-belong to the SCIEX admission slice.
+**The remaining gates, exactly:**
+
+1. Real-backend evidence of a multi-member (>1) set requires one lawful
+   multi-sample WIFF acquisition, which the pinned tree does not contain.
+2. Staging exclusivity. Discovery trusts the staged directory's contents, and
+   an open directory handle does not stop another local process from adding an
+   entry mid-run; for a set, an injected valid mzML would be admitted as a
+   member where a single-output run would have refused it. Recorded in ADR
+   0021 with the two mechanisms that could close it.
+
+Both, plus source-side topology (companion identity and pinning), recognition
+and a provider-evidence row, belong to the SCIEX admission slice.
 
 ## Cleanup
 
