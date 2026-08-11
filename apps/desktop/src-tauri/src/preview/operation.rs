@@ -416,6 +416,23 @@ impl ConversionQueue {
         self.items.iter().any(|item| item.dataset == dataset)
     }
 
+    /// The distinct source families of this queue's items, in first-appearance
+    /// order.
+    ///
+    /// For the provider-evidence gate, which is asked once per family rather
+    /// than once per queue: a queue may now mix families, and the evidence a
+    /// conversion is gated on is a statement about one family on one build. A
+    /// set of one is the common case and costs nothing.
+    pub(super) fn distinct_source_kinds(&self) -> Vec<DatasetSourceKind> {
+        let mut kinds = Vec::new();
+        for item in &self.items {
+            if !kinds.contains(&item.kind) {
+                kinds.push(item.kind);
+            }
+        }
+        kinds
+    }
+
     /// The next item to run, with the index that names it.
     pub(super) fn next_pending(&self) -> Option<(usize, QueueItem)> {
         self.items

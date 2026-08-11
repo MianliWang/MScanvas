@@ -600,6 +600,17 @@ export interface ConversionRequest {
   readonly conflictPolicy: ConversionConflictPolicy;
 }
 
+/** One Shimadzu LabSolutions LCD roster row, as Rust would report it. */
+export function shimadzuDataset(index: number): SelectedFile {
+  return {
+    handle: `file-${String(index)}`,
+    fileName: `sample-${String(index)}.lcd`,
+    byteLength: 2_367_488,
+    sourceKind: "shimadzu_lcd",
+    relativeContext: null,
+  };
+}
+
 /** One queue item, as a test describes it. */
 export function queueItem(
   handle: string,
@@ -1027,7 +1038,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         items: rows.map((row) => ({
           datasetHandle: row!.handle,
           fileName: row!.fileName,
-          outputFileName: row!.fileName.replace(/\.raw$/i, ".mzML"),
+          sourceKind: row!.sourceKind,
+          outputFileName: row!.fileName.replace(/\.(raw|lcd)$/i, ".mzML"),
         })),
         outputFormat: "mzML",
         compression: "zlib",

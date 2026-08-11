@@ -10,6 +10,13 @@
   changed; what was added is a second, independent confirmation of them from a
   dataset handle rather than from a directly constructed source. See
   [ADR 0019](0019-private-shimadzu-workspace-conversion.md).
+- Amended: 2026-08-10 (M3.9) — the family is product-reachable: `Add files…`
+  admits it and the serial queue converts it, alone or mixed with Thermo RAW.
+  The recognition this ADR records is unchanged and remains the authority —
+  the picker extension only routes to it — and the measured limitation stands
+  as part of the visible support boundary: all three markers are required, and
+  a container without one is refused. See
+  [ADR 0020](0020-first-visible-shimadzu-lcd-workflow.md).
 
 ## Context
 

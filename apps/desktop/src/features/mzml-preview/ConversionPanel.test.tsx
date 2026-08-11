@@ -12,6 +12,7 @@ import {
   queueItem,
   queueOf,
   selectedFile,
+  shimadzuDataset,
 } from "../../test/previewFixtures";
 import type { FakePreviewApi } from "../../test/previewFixtures";
 import type { SelectedFile } from "./contracts";
@@ -68,6 +69,147 @@ function selectAllRows(): void {
     fireEvent.click(row, { ctrlKey: true });
   }
 }
+
+describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
+  const lcdRow = shimadzuDataset(7);
+
+  it("labels the roster row with the exact family name, accessibly", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [lcdRow],
+      availability: availableBackend,
+    });
+    renderApp(api);
+    // The label is part of the accessible row name, not a visual aside: a
+    // reader hears which family the row is.
+    const row = await screen.findByRole("option", {
+      name: /sample-7\.lcd.*Shimadzu LabSolutions LCD/,
+    });
+    expect(row).toBeVisible();
+  });
+
+  it("plans one Shimadzu row with exact-family copy and a family label on the row", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [lcdRow],
+      availability: availableBackend,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /sample-7\.lcd/ });
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(
+        within(panel).getByText(
+          /One Shimadzu LabSolutions LCD acquisition will be converted to mzML\./,
+        ),
+      ).toBeVisible();
+    });
+    // The plan row itself says the family and the output name.
+    expect(within(panel).getByText("sample-7.mzML")).toBeVisible();
+    expect(within(panel).getAllByText("Shimadzu LabSolutions LCD").length).toBeGreaterThan(0);
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Convert focused…" }));
+    await waitFor(() => {
+      expect(api.conversionRequests).toEqual([{ handles: ["file-7"], conflictPolicy: "fail" }]);
+    });
+  });
+
+  it("describes a mixed queue by count and by exact per-family counts", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [first, lcdRow, second],
+      availability: availableBackend,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /run-2\.raw/ });
+    selectAllRows();
+
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(
+        within(panel).getByText(
+          /3 supported vendor acquisitions will be converted to mzML, one after another, in the order below\. 2 Thermo RAW · 1 Shimadzu LabSolutions LCD\./,
+        ),
+      ).toBeVisible();
+    });
+    // Each plan row still names its own family, in the visible order.
+    const orderedKinds = [...panel.querySelectorAll(".conversion-queue-kind")].map(
+      (node) => node.textContent,
+    );
+    expect(orderedKinds).toEqual(["Thermo RAW", "Shimadzu LabSolutions LCD", "Thermo RAW"]);
+    // The excluded rows are the mzML ones, and only those: nothing describes
+    // the Shimadzu row as excluded.
+    expect(within(panel).queryByText(/not part of this conversion/)).toBeNull();
+  });
+
+  it("mounts no Convert panel for an mzML-only workspace, and no family-specific invitation", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      availability: availableBackend,
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /QC_pool_01\.mzML/ });
+
+    // The panel is not a fixture: with nothing convertible and nothing to
+    // report it stays unmounted, and no sentence anywhere invites the user to
+    // pick a "Thermo RAW row" -- the empty state, where it does render, is
+    // family-neutral.
+    expect(screen.queryByRole("region", { name: "Convert" })).toBeNull();
+    expect(document.body.textContent).not.toMatch(/Thermo RAW row/);
+  });
+
+  it("renders a chromatogram-only result as a success with those exact facts", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [lcdRow],
+      availability: availableBackend,
+      initialConversion: {
+        status: "terminal",
+        reason: "completed" as const,
+        operationId: "1",
+        queue: queueOf([
+          queueItem("file-7", "sample-7.lcd", {
+            sourceKind: "shimadzu_lcd",
+            outputFileName: "sample-7.mzML",
+            state: "finalized",
+            attempts: 1,
+            report: {
+              datasetHandle: "file-7",
+              sourceKind: "shimadzu_lcd",
+              outcome: "finalized",
+              detailedOutcome: null,
+              outputFileName: "sample-7.mzML",
+              output: {
+                byteLength: 481_997,
+                sha256: "9CE497643AE025DD1834E8AAFC8F69DFB38D68381C842B4B15E86047968E34CA",
+                spectrumCount: 0,
+                chromatogramCount: 144,
+              },
+              validation: {
+                mode: "output_only",
+                fullyVerified: false,
+                verified: ["source_unchanged"],
+                unverified: [],
+                inapplicable: ["spectrum_count"],
+              },
+              backend: { exitCode: 0, elapsedMilliseconds: 592 },
+              stagingResidue: null,
+              installationGeneration: 0,
+            },
+          }),
+        ]),
+      },
+    });
+    renderApp(api);
+    await screen.findByRole("option", { name: /sample-7\.lcd/ });
+
+    // A success, in the queue's own terms, with the exact measured facts --
+    // never "empty", "failed" or "no data".
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(within(panel).getByText("1 converted, 0 skipped, 0 failed of 1.")).toBeVisible();
+    });
+    expect(within(panel).getByText(/0 spectra, 144 chromatograms/)).toBeVisible();
+    expect(panel.textContent).not.toMatch(/no data|invalid|empty/i);
+  });
+});
 
 describe("queueing selected Thermo RAW conversions", () => {
   it("keeps one focused row a queue of one, with the action it always had", async () => {

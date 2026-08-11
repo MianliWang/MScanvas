@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "reac
 
 import { BackendStatus } from "./BackendStatus";
 import type { WorkspaceDropRejectionReason } from "./contracts";
+import { isConvertibleSourceKind } from "./contracts";
 import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
 import { PreviewSummary } from "./PreviewSummary";
@@ -222,7 +223,8 @@ export function PreviewWorkspace() {
   const selectedConvertible = useMemo(
     () =>
       projection.datasets.filter(
-        (dataset) => roster.selected.has(dataset.handle) && dataset.sourceKind === "thermo_raw",
+        (dataset) =>
+          roster.selected.has(dataset.handle) && isConvertibleSourceKind(dataset.sourceKind),
       ),
     [projection, roster.selected],
   );
@@ -231,12 +233,13 @@ export function PreviewWorkspace() {
   const excludedSelectedCount = useMemo(
     () =>
       projection.datasets.filter(
-        (dataset) => roster.selected.has(dataset.handle) && dataset.sourceKind !== "thermo_raw",
+        (dataset) =>
+          roster.selected.has(dataset.handle) && !isConvertibleSourceKind(dataset.sourceKind),
       ).length,
     [projection, roster.selected],
   );
   const focusedConvertible =
-    focusedDataset !== null && focusedDataset.sourceKind === "thermo_raw";
+    focusedDataset !== null && isConvertibleSourceKind(focusedDataset.sourceKind);
   const queueHandlesToConvert = useMemo(
     () =>
       selectedConvertible.length > 0

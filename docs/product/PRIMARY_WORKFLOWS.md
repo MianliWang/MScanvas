@@ -125,14 +125,16 @@ settings, its output-root choice and "Open file/folder" remain unreachable. See
 [ADR 0009](../architecture/adr/0009-mzml-conversion-execution-boundary.md) and
 [ADR 0013](../architecture/adr/0013-serial-conversion-queue.md).
 
-## WF-004a — Convert a queue of Thermo RAW acquisitions
+## WF-004a — Convert a queue of vendor acquisitions
 
-1. `Add files…` and choose acquisitions. mzML and evidenced Thermo RAW are both
-   admitted; a folder or a drop still admits mzML only.
-2. Select the Thermo RAW rows to convert, or focus one. Vendor rows cannot be
-   previewed, and say so.
-3. Review the plan: the ordered list of what will run, the name each item will
-   write, how many selected rows are excluded for being mzML already, and the
+1. `Add files…` and choose acquisitions. mzML, evidenced Thermo Scientific RAW
+   and evidenced Shimadzu LabSolutions LCD are all admitted; a folder or a drop
+   still admits mzML only.
+2. Select the vendor rows to convert, or focus one. The two families may be
+   mixed in one selection. Vendor rows cannot be previewed, and say so.
+3. Review the plan: the ordered list of what will run, which family each row
+   is, the name each item will write, how many selected rows are excluded for
+   being mzML already, and the
    output-only validation disclosure. Two rows that would write one name are
    refused here, before anything is chosen or created.
 4. Choose Fail or Skip if a file of that name already exists. There is no

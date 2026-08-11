@@ -903,6 +903,14 @@ pub struct ConversionQueuePlanDto {
 pub struct ConversionQueuePlanItemDto {
     pub dataset_handle: String,
     pub file_name: String,
+    /// The family this row was admitted as, snapshotted into the plan.
+    ///
+    /// On the plan and not only on the started queue, because a queue may now
+    /// mix families and the user reviewing the plan is entitled to see which
+    /// row is which before choosing a folder. The interface reads it from
+    /// here rather than rediscovering it from the live roster, so the plan it
+    /// shows is the immutable one the queue will run.
+    pub source_kind: DatasetSourceKindDto,
     pub output_file_name: String,
 }
 

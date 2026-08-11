@@ -4,6 +4,12 @@
   workspace family, one inert wire member, no ingestion, no queue eligibility,
   no command
 - Date: 2026-08-10
+- Amended: 2026-08-10 (M3.9) — the surface exists. The wire member is no
+  longer inert: `Add files…` admits the family and the queue converts it, so
+  the "next visible-integration gate" below is closed. The private admission
+  operation and the private coordinator remain what the deterministic suite
+  drives; what changed is that the product now reaches the same boundary. See
+  [ADR 0020](0020-first-visible-shimadzu-lcd-workflow.md).
 
 ## Context
 

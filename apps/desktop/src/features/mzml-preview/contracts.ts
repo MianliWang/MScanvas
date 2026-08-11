@@ -42,12 +42,36 @@ export interface BackendAvailability {
  * no `unknown`: a member here is a claim the product understands the data
  * behind it, backed by measured conversion evidence.
  *
- * Two of the three are product-reachable. `shimadzu_lcd` is not: Rust can admit
- * that family privately, so the roster model has to be able to describe such a
- * row honestly, but no ingestion surface, queue eligibility or action in this
- * interface reaches one. It is labelled and offered nothing. See ADR 0019.
+ * All three are product-reachable since ADR 0020: `Add files…` admits every
+ * family here, and the two vendor families convert through the one queue.
+ * Folder ingestion and the Explorer drop remain regular-mzML-only.
  */
 export type DatasetSourceKind = "mzml" | "thermo_raw" | "shimadzu_lcd";
+
+/**
+ * The exact visible name of each family.
+ *
+ * One record for the roster, the queue plan and every other surface, so the
+ * product cannot call one family two things. The vendor names are precise on
+ * purpose: what is supported is these two evidenced families, not "vendor RAW".
+ */
+export const SOURCE_KIND_LABEL: Record<DatasetSourceKind, string> = {
+  mzml: "mzML",
+  thermo_raw: "Thermo RAW",
+  shimadzu_lcd: "Shimadzu LabSolutions LCD",
+};
+
+/**
+ * Whether the visible queue converts rows of this family.
+ *
+ * The one frontend projection of Rust's own `is_convertible`, used by every
+ * surface that filters or gates on convertibility so none of them can answer
+ * differently. Rust remains authoritative: a stale or hand-crafted state that
+ * disagreed would still be refused by the boundary itself.
+ */
+export function isConvertibleSourceKind(kind: DatasetSourceKind): boolean {
+  return kind === "thermo_raw" || kind === "shimadzu_lcd";
+}
 
 export interface SelectedFile {
   /** Opaque, session-scoped. Never a path. */
@@ -624,6 +648,12 @@ export interface WorkspaceConversionUpdate {
 export interface ConversionQueuePlanItem {
   readonly datasetHandle: string;
   readonly fileName: string;
+  /**
+   * The family this row was admitted as, snapshotted into the plan. Read from
+   * here rather than rediscovered from the live roster, so the plan shown is
+   * the immutable one the queue will run.
+   */
+  readonly sourceKind: DatasetSourceKind;
   readonly outputFileName: string;
 }
 

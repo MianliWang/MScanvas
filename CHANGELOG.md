@@ -6,6 +6,18 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
+- **Shimadzu LabSolutions LCD conversion.** `Add files…` now also admits the
+  evidenced Shimadzu LabSolutions LCD family, and the serial conversion queue
+  converts it — alone or mixed with Thermo Scientific RAW rows, in the order
+  shown, each family gated on the exact ProteoWizard build evidenced for it.
+  Recognition reads the measured structure inside the container, never the
+  file name alone: a renamed or malformed compound file is refused when it is
+  added, not after a converter has run. Folders and Explorer drops still
+  discover mzML only, LCD rows cannot be previewed directly (convert first,
+  then add the output), and a chromatogram-only acquisition converts to a
+  successful mzML that says exactly that — 0 spectra and its chromatogram
+  count. Validation remains output-only; nothing claims source fidelity.
+
 - **`Export failure diagnostics…`**, for a conversion queue that has reached a
   terminal state and has something worth diagnosing. It saves one local JSON
   file, where you choose, describing the latest attempt of every diagnosable

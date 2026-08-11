@@ -18,9 +18,6 @@ use mscanvas_proteowizard::{
     SpectrumIdentity, SpectrumTableResult, write_new_local_file,
 };
 
-// Both are used only by the one-item conversion the private orchestration
-// tests drive; the queue reaches the same body through its own path.
-#[cfg(test)]
 use super::conversion::conversion_source_kind;
 #[cfg(test)]
 use mscanvas_proteowizard::ConflictPolicy;
@@ -94,7 +91,7 @@ use super::selection::{
     AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity, RevocationReason,
     accept_mzml_file, accept_workspace_file, candidate_display_name, file_identity,
     lock_against_replacement, open_conversion_source, relative_contexts, revalidate,
-    selected_file_dto, unknown_dataset,
+    selected_file_dto, source_kind_dto, unknown_dataset,
 };
 
 /// The name the native save dialog offers for a diagnostics export.
@@ -1214,6 +1211,7 @@ impl PreviewService {
                 .map(|item| ConversionQueuePlanItemDto {
                     dataset_handle: item.handle().to_owned(),
                     file_name: item.file_name().to_owned(),
+                    source_kind: source_kind_dto(item.kind()),
                     output_file_name: item.output_file_name().to_owned(),
                 })
                 .collect(),
@@ -1339,7 +1337,43 @@ impl PreviewService {
         if self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
-        let items = self.plan_queue_items(handles)?;
+        // Planned once here so the preflight below has a validated family set
+        // to ask about -- and planned *again* under the mutation gate, which
+        // is the plan the queue is actually bound from. This first pass also
+        // keeps a batch of dead handles from costing a help probe.
+        let preflight_families: Vec<ConversionSourceKind> = {
+            let items = self.plan_queue_items(handles)?;
+            let mut families = Vec::new();
+            for item in &items {
+                let kind = conversion_source_kind(item.kind());
+                if !families.contains(&kind) {
+                    families.push(kind);
+                }
+            }
+            families
+        };
+        // Provider evidence for every distinct family in the plan, before the
+        // destination picker opens. Execution re-asks fail-closed per item and
+        // per family regardless; what this adds is that a user is normally
+        // refused before choosing a folder rather than after -- and refused
+        // for *any* unevidenced family in the batch, because a mixed queue is
+        // not authorized by its first item.
+        //
+        // Only when the backend lane is free right now. Resolving the backend
+        // runs the installed tools' help, which is a process, and processes
+        // take the one lane -- but a queue has always been admittable while a
+        // preview holds that lane, with the queue's own worker doing the
+        // waiting rather than this click. Blocking here would change that, so
+        // when the lane is held the pre-picker courtesy is skipped and the
+        // authoritative per-family gate at execution refuses before anything
+        // is staged.
+        if let Some(running) = self.try_enter_backend() {
+            let backend = self.provider.conversion_backend()?;
+            for kind in preflight_families {
+                refuse_unevidenced_build(&backend.capabilities, kind)?;
+            }
+            drop(running);
+        }
         // The same gate every workspace mutation takes, so a queue and a batch
         // cannot both be admitted by each reading the other's state before
         // either committed. `_after_drop` because a drop is accepted by a
@@ -1355,6 +1389,14 @@ impl PreviewService {
         if self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
+        // Re-planned under the gate, and this plan is the one the queue is
+        // bound from. The preflight above can take as long as two help probes,
+        // and a row can be removed while they run; a snapshot taken before
+        // them would reserve a queue whose item is already gone, and the
+        // picker would open for a run guaranteed to end superseded. Planning
+        // is lock-cheap and launches nothing, so it is simply done again where
+        // it counts.
+        let items = self.plan_queue_items(handles)?;
         let mut slot = self.conversion_slot();
         // Under the slot lock, and immediately before the slot is taken. The
         // authority proof is awaited, so a reload can start any time after it
@@ -2070,13 +2112,23 @@ impl PreviewService {
                 return self.refuse_queue(operation, error);
             }
         };
-        // Asked once, before any item creates a staging directory. Every item
-        // of this queue is the same family, so one answer settles all of them.
-        if let Err(error) =
-            refuse_unevidenced_build(&backend.capabilities, ConversionSourceKind::ThermoRawFile)
-        {
-            drop(running);
-            return self.refuse_queue(operation, error);
+        // Asked once per distinct family, before any item creates a staging
+        // directory. A queue may mix families, and one family's evidence says
+        // nothing about another's -- the current build happens to be evidenced
+        // for both, and this loop is what keeps that a coincidence rather than
+        // an assumption.
+        let families = self
+            .conversion_slot()
+            .running(operation)
+            .map(|queue| queue.distinct_source_kinds())
+            .unwrap_or_default();
+        for family in families {
+            if let Err(error) =
+                refuse_unevidenced_build(&backend.capabilities, conversion_source_kind(family))
+            {
+                drop(running);
+                return self.refuse_queue(operation, error);
+            }
         }
         // One installation for one queue, retries included. Noted once here
         // rather than per item, and compared against what the queue's earlier
@@ -4151,6 +4203,26 @@ fn differs(left: f64, right: f64) -> bool {
 }
 
 impl PreviewService {
+    /// Takes the right to run a backend operation only if it is free now.
+    ///
+    /// For work that is a courtesy rather than a duty: the queue's pre-picker
+    /// evidence check improves where a refusal lands, and the authoritative
+    /// check at execution does not depend on it having run. Nothing that
+    /// *must* happen may use this.
+    fn try_enter_backend(&self) -> Option<BackendRun<'_>> {
+        match self.backend_gate.try_lock() {
+            Ok(guard) => Some(BackendRun {
+                installation: self.installation_generation.load(Ordering::Relaxed),
+                _guard: guard,
+            }),
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(BackendRun {
+                installation: self.installation_generation.load(Ordering::Relaxed),
+                _guard: poisoned.into_inner(),
+            }),
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        }
+    }
+
     /// Waits for the right to run a backend operation.
     ///
     /// The guard is the permission; dropping it releases the next caller.

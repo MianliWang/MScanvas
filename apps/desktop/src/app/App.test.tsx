@@ -33,6 +33,7 @@ import {
   previewError,
   secondFile,
   selectedFile,
+  shimadzuDataset,
   thirdFile,
   unavailableBackend,
 } from "../test/previewFixtures";
@@ -1987,6 +1988,45 @@ describe("the session workspace roster", () => {
       expect(screen.getByRole("button", { name: "Remove selected" })).toBeEnabled();
     });
     expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
+  });
+
+  it("auto-previews only the first added mzML of a mixed three-family batch", async () => {
+    // A batch of Shimadzu, Thermo, mzML, Shimadzu into an empty workspace. The
+    // one automatic read this workspace allows goes to the mzML row and to
+    // nothing else: a vendor acquisition has no direct preview, so reading the
+    // first row whatever it was would open a first-run session with a failure
+    // nobody asked for.
+    const thermoRow: SelectedFile = {
+      handle: "file-30",
+      fileName: "run-30.raw",
+      byteLength: 78_309,
+      sourceKind: "thermo_raw",
+      relativeContext: null,
+    };
+    const api = createFakePreviewApi({
+      pickedFiles: [shimadzuDataset(28), thermoRow, selectedFile, shimadzuDataset(29)],
+      availability: availableBackend,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+
+    // All four rows arrive, in picker order, each saying its family.
+    await screen.findByRole("option", { name: /sample-29\.lcd/ });
+    expect(
+      screen.getByRole("option", { name: /sample-28\.lcd.*Shimadzu LabSolutions LCD/ }),
+    ).toBeVisible();
+    expect(screen.getByRole("option", { name: /run-30\.raw.*Thermo RAW/ })).toBeVisible();
+
+    // Exactly one read, and it is the mzML row's.
+    await screen.findByRole("grid", { name: "Spectra" });
+    expect(api.openCount()).toBe(1);
+    expect(api.openedHandles).toEqual([selectedFile.handle]);
+
+    // Moving focus to a Shimadzu row does not clear the mzML preview and does
+    // not read anything further.
+    fireEvent.click(screen.getByRole("option", { name: /sample-28\.lcd/ }));
+    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(api.openCount()).toBe(1);
   });
 
   it("reads nothing on its own when a slow first read hid a session that was not empty", async () => {
