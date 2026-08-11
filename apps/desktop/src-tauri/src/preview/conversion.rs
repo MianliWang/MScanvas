@@ -609,9 +609,16 @@ pub(super) fn plan_conversion(
 /// refused admission is: a plan error added later has to be answered here.
 fn not_plannable(error: ConversionPlanError) -> PreviewErrorDto {
     let message = match error {
+        // The last one is answered with the others because it is the same
+        // sentence about a different cause: for a family whose backend names
+        // its own outputs, there is no name for a plan to derive. No workspace
+        // path can produce it -- that family is private to the conversion crate
+        // and reaches a different lifecycle -- so this adds a compiled arm, an
+        // existing message and no surface.
         ConversionPlanError::SourceHasNoConvertibleName
         | ConversionPlanError::UnsafeOutputFileName
-        | ConversionPlanError::OutputFileNameTooLongToStage => {
+        | ConversionPlanError::OutputFileNameTooLongToStage
+        | ConversionPlanError::SourceProducesAnOutputSet => {
             "MSCanvas could not derive a safe output name for that acquisition."
         }
         ConversionPlanError::DestinationRootNotInspectable { .. }

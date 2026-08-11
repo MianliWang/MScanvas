@@ -140,6 +140,89 @@ impl SourceIdentity {
     }
 }
 
+/// The most objects one logical acquisition may be bound to.
+///
+/// The measured SCIEX bundle is two — a `.wiff` and its `.wiff.scan` — and the
+/// bound is twice that, the same reasoning the output-set bound uses: room for
+/// a family whose shape is a little larger than the one that has been measured,
+/// and a hard stop well before "however many the caller passed". The number
+/// this bound protects is not memory. It is how many objects a pre-spawn
+/// recheck must confirm one at a time, in the moment before a process starts,
+/// while nothing is holding them still.
+pub(crate) const MAX_SOURCE_BUNDLE_MEMBERS: usize = 4;
+
+/// Every filesystem object one logical acquisition is made of.
+///
+/// One primary and, for the families that have them, the companions the vendor
+/// reader opens beside it. A single-object family is a set of one and takes the
+/// identical path through every check, so there is one recheck rule rather than
+/// one per cardinality.
+///
+/// The distinction the type keeps is between *the object the acquisition is
+/// named by* and *the objects the run also depends on*. The primary is what the
+/// argv names and what the plan derives from; a companion is never named to the
+/// backend and is bound anyway, because the backend will open it regardless of
+/// whether this boundary looked at it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceIdentitySet {
+    primary: SourceIdentity,
+    companions: Vec<SourceIdentity>,
+}
+
+impl SourceIdentitySet {
+    /// The set every single-object family has: the one it is named by.
+    pub(crate) const fn single(primary: SourceIdentity) -> Self {
+        Self {
+            primary,
+            companions: Vec::new(),
+        }
+    }
+
+    /// The same set with load-bearing companions bound to it.
+    ///
+    /// `None` when the result would exceed [`MAX_SOURCE_BUNDLE_MEMBERS`] — a
+    /// refusal, not a truncation. Binding some of an acquisition's objects and
+    /// discarding the rest would leave the discarded ones unwatched while
+    /// reporting that the source was checked.
+    pub(crate) fn with_companions(mut self, companions: Vec<SourceIdentity>) -> Option<Self> {
+        if companions.len() + 1 > MAX_SOURCE_BUNDLE_MEMBERS {
+            return None;
+        }
+        self.companions = companions;
+        Some(self)
+    }
+
+    /// The object the acquisition is named by.
+    ///
+    /// Production code reaches every member through [`Self::all_match_current`]
+    /// rather than singling one out, so this exists for the tests that assert
+    /// *which* object a built command was bound to.
+    #[cfg(test)]
+    pub(crate) const fn primary(&self) -> &SourceIdentity {
+        &self.primary
+    }
+
+    /// Every bound object, primary first.
+    pub(crate) fn members(&self) -> impl Iterator<Item = &SourceIdentity> {
+        std::iter::once(&self.primary).chain(self.companions.iter())
+    }
+
+    /// Whether every bound object is still the object it was bound as.
+    ///
+    /// Short-circuits on the first member that is not, because the answer is
+    /// already no and the remaining members' current state is not a fact this
+    /// run needs. An inspection failure is neither a match nor a mismatch and
+    /// is returned as itself.
+    pub(crate) fn all_match_current(&self) -> io::Result<bool> {
+        for member in self.members() {
+            if !member.matches_current()? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
 #[cfg(windows)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PlatformSourceIdentity {
@@ -314,7 +397,10 @@ pub struct CommandSpec {
     pub(crate) args: Vec<OsString>,
     pub(crate) working_directory: PathBuf,
     pub(crate) executable_sha256: Option<Sha256Digest>,
-    pub(crate) source_identity: Option<SourceIdentity>,
+    /// Every object the run depends on, or `None` where the command has no
+    /// source object to be about. One member for every single-object family;
+    /// more only where a family's acquisition is measurably more than one file.
+    pub(crate) source_identity: Option<SourceIdentitySet>,
     pub(crate) output_safety: OutputSafety,
 }
 
@@ -342,8 +428,43 @@ impl CommandSpec {
     }
 
     pub(crate) fn with_source_identity(mut self, source_identity: SourceIdentity) -> Self {
-        self.source_identity = Some(source_identity);
+        self.source_identity = Some(SourceIdentitySet::single(source_identity));
         self
+    }
+
+    /// Binds the companions of a bundle acquisition to a spec that already
+    /// carries its primary.
+    ///
+    /// Deliberately an extension rather than a second way to set the whole set.
+    /// The builder that formed this spec is the one authority for which object
+    /// the argv names, and a call that could replace the primary would be a
+    /// second one — able to hand the pre-spawn recheck a different object from
+    /// the one the command line points at, which is precisely the confusion the
+    /// recheck exists to catch.
+    ///
+    /// `None` where the spec has no source object, or where the bundle would
+    /// exceed [`MAX_SOURCE_BUNDLE_MEMBERS`].
+    /// How many filesystem objects this command's run is bound to.
+    ///
+    /// Zero where the command has no source object. Exists so a test can assert
+    /// that a bundle run spawns a command bound to the whole acquisition: the
+    /// difference between binding one member and binding all of them is
+    /// invisible until something is swapped, which is exactly the wrong time to
+    /// find out.
+    #[cfg(test)]
+    pub(crate) fn bound_source_object_count(&self) -> usize {
+        self.source_identity
+            .as_ref()
+            .map_or(0, |set| set.members().count())
+    }
+
+    pub(crate) fn with_source_companion_identities(
+        mut self,
+        companions: Vec<SourceIdentity>,
+    ) -> Option<Self> {
+        let set = self.source_identity.take()?;
+        self.source_identity = Some(set.with_companions(companions)?);
+        Some(self)
     }
 
     pub(crate) fn with_output_destination(

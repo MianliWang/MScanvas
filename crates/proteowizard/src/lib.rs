@@ -32,6 +32,7 @@ mod fs_guard;
 mod mzml;
 mod preview;
 mod process;
+mod sciex_wiff;
 mod sha256;
 
 pub use cancellation::{CancellationObservation, CancellationRequest, ConversionCancellation};
@@ -60,7 +61,7 @@ pub use conversion_run::output_set::{
     FinalizedOutputSet, MAX_CONVERSION_OUTPUTS_PER_SOURCE, MultiOutputConversionReport,
     MultiOutputConversionRun, MultiOutputFailure, MultiOutputOutcome, OutputMemberReport,
     OutputMemberState, OutputMemberValidation, OutputSetRejection,
-    run_multi_output_conversion_evidence,
+    run_admitted_multi_output_conversion, run_multi_output_conversion_evidence,
 };
 pub use conversion_run::{
     BackendDiagnosticText, BackendExecutionFailure, BackendRunFacts, BackendStream,

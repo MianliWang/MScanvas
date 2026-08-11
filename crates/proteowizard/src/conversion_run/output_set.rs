@@ -19,11 +19,19 @@
 //! is honestly *not* atomic, and an explicit partial-finalization result when
 //! the filesystem makes one true.
 //!
-//! **No source family is admitted here.** There is no WIFF variant, no
-//! recognition, no provider-evidence row; the entry point takes a Rust-owned
-//! path and exists for evidence collection and for the deterministic suite. A
-//! later, separate admission decides whether MSCanvas *supports* a multi-output
-//! family; this decides only that the crate could carry one safely.
+//! There are two ways in, and the difference between them is the point.
+//! [`run_multi_output_conversion_evidence`] takes a Rust-owned path, applies no
+//! recognition and consults no provider-evidence row; it is how the lifecycle
+//! was measured before any family was admitted to it, and it stays for that.
+//! [`run_admitted_multi_output_conversion`] takes an admitted
+//! [`ConversionSource`], and will not start until the family is one that
+//! produces a set, the installed build carries that family's evidence row by
+//! digest, and every object the acquisition is made of has been proved
+//! unchanged and pinned.
+//!
+//! **There is still no product surface.** No workspace row, no queue entry, no
+//! command, no UI: a caller inside this crate can convert an admitted SCIEX
+//! bundle, and nothing outside it can reach that.
 
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
@@ -45,8 +53,8 @@ use crate::process::{ProcessRunner, Termination};
 use crate::{ConversionCancellation, fs_guard};
 
 use super::{
-    BackendExecutionFailure, BackendRunFacts, ConflictPolicy, OwnedStagingArea, StagingResidue,
-    finalize,
+    BackendExecutionFailure, BackendRunFacts, ConflictPolicy, ConversionSource, OwnedStagingArea,
+    StagingResidue, finalize,
 };
 use crate::BackendDiagnosticText;
 use crate::diagnostics::Redactor;
@@ -159,6 +167,146 @@ impl DiscoveredMember {
 
     fn display_name(&self) -> String {
         self.name.to_string_lossy().into_owned()
+    }
+
+    /// A member with this name and no length, for testing the comparison
+    /// against a declaration. Discovery is the only production constructor.
+    #[cfg(test)]
+    pub(crate) fn named_for_test(name: &str) -> Self {
+        Self {
+            name: OsString::from(name),
+            byte_length: 0,
+        }
+    }
+}
+
+/// The exact line the measured backend prints immediately before it writes
+/// each document.
+///
+/// Bound to a build, deliberately. This is not a documented interface and
+/// nothing pretends it is one; it is a measured behaviour of the exact
+/// `msconvert.exe` the provider-evidence row pins by digest, in the same way
+/// the input spelling and the reader's companion requirement are measured
+/// behaviours of that build. A build whose wording differs is a build with no
+/// evidence row, and the family is refused before it could get here.
+const OUTPUT_DECLARATION_PREFIX: &str = "writing output file: ";
+
+/// The output names the backend itself said it wrote.
+///
+/// ## Why this exists
+///
+/// ADR 0021 left one gate open and named it: discovery trusts the staged
+/// directory's contents, and an open directory handle does not stop another
+/// local process from adding an entry to it. For a single-output run an extra
+/// entry is refused, because exactly one was planned. For a *set* there is no
+/// planned set, so an injected valid mzML would be validated, published and
+/// credited to the acquisition — a refusal turned into an admission, which is
+/// strictly worse than the exposure it grew out of.
+///
+/// This closes that. The backend announces each document on its own stdout,
+/// which reaches this process through an anonymous pipe created here and
+/// inherited only by the child it spawned — so unlike the staging directory,
+/// it is not a place another local process can put things. Requiring the
+/// discovered set to be exactly the declared set restores the single-output
+/// boundary's property: a member nobody's backend claimed to write is refused,
+/// and the whole set with it.
+///
+/// ## What it does not establish
+///
+/// It is a check against *additions*, not a completeness proof. Upstream's
+/// `Reader_ABI::read` catches a per-sample failure, logs it and continues, so
+/// an acquisition whose samples partly fail to open produces fewer documents,
+/// declares exactly those fewer documents, and exits zero. Declaration and
+/// discovery agree, and both are short. Nothing in this boundary can currently
+/// tell that from a complete conversion.
+///
+/// Nor does it protect a member's *content*: an attacker who can write into the
+/// staging directory can overwrite a declared member before validation, which
+/// is the exposure that already existed for a single output and is unchanged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeclaredOutputSet {
+    names: Vec<String>,
+    /// The declaration could not be read whole, so it cannot be compared
+    /// against anything. Kept as a flag rather than an error because a
+    /// declaration that is merely absent and one that is unreadable both mean
+    /// the same thing here: refuse.
+    unreadable: bool,
+}
+
+impl DeclaredOutputSet {
+    /// Reads the declaration out of a completed run's captured stdout.
+    ///
+    /// The bytes are required to be UTF-8 — measured on this build, including
+    /// for a non-ASCII output name, where the declared bytes are byte-identical
+    /// to the name's own UTF-8 encoding rather than console-encoded. Anything
+    /// else is a declaration this cannot read, and an unreadable declaration
+    /// refuses the run rather than waving it through.
+    pub(crate) fn from_backend_stdout(stdout: &[u8], truncated: bool) -> Self {
+        let Ok(text) = std::str::from_utf8(stdout) else {
+            return Self {
+                names: Vec::new(),
+                unreadable: true,
+            };
+        };
+        let mut names = Vec::new();
+        // A truncated capture is a partial declaration, and a partial
+        // declaration compared against a whole directory would refuse honest
+        // runs and, worse, could be *made* to match by an injector who knew the
+        // prefix. Neither is a comparison worth making.
+        let mut unreadable = truncated;
+        for line in text.lines() {
+            let Some(declared) = line.trim_end().strip_prefix(OUTPUT_DECLARATION_PREFIX) else {
+                continue;
+            };
+            // The backend prints an absolute path; only the last component can
+            // be compared with a directory entry. Both separators, because the
+            // spelling that reaches the backend is the caller's.
+            let basename = declared.rsplit(['\\', '/']).next().unwrap_or(declared);
+            if basename.is_empty() {
+                unreadable = true;
+                continue;
+            }
+            if names.len() == MAX_CONVERSION_OUTPUTS_PER_SOURCE {
+                // Past the bound the set is refused whichever way this went;
+                // stopping here keeps the parse bounded by the same number the
+                // lifecycle is bounded by.
+                unreadable = true;
+                break;
+            }
+            names.push(basename.to_owned());
+        }
+        Self { names, unreadable }
+    }
+
+    /// How many documents the backend said it wrote.
+    pub(crate) fn len(&self) -> usize {
+        self.names.len()
+    }
+
+    /// Whether the discovered members are exactly what was declared.
+    ///
+    /// Exact string equality after sorting, not a case-folded comparison. Both
+    /// sides come from the same event — the backend printed the name it was
+    /// about to write, then wrote it — so any difference at all is a difference
+    /// worth refusing, and folding would only discard information. A member
+    /// whose name is not valid Unicode has no comparable form and fails the
+    /// match, which is the safe direction: discovery already requires a safe
+    /// single-component mzML name, so this costs nothing real.
+    pub(crate) fn matches(&self, discovered: &[DiscoveredMember]) -> bool {
+        if self.unreadable || self.names.len() != discovered.len() {
+            return false;
+        }
+        let mut found: Vec<&str> = Vec::with_capacity(discovered.len());
+        for member in discovered {
+            let Some(name) = member.name().to_str() else {
+                return false;
+            };
+            found.push(name);
+        }
+        found.sort_unstable();
+        let mut declared: Vec<&str> = self.names.iter().map(String::as_str).collect();
+        declared.sort_unstable();
+        found == declared
     }
 }
 
@@ -440,6 +588,24 @@ pub enum MultiOutputFailure {
     /// earlier members were already published is not this — it is
     /// [`MultiOutputOutcome::PartiallyFinalized`].
     MemberNotFinalized { member: String, kind: io::ErrorKind },
+    /// The staged set is not the set the backend said it wrote.
+    ///
+    /// Counts only, because a name that is in one set and not the other is
+    /// either the backend's or the injector's and this refusal cannot say
+    /// which.
+    OutputSetNotAsDeclared { declared: usize, discovered: usize },
+    /// The source's family does not convert to a set of documents, so this
+    /// lifecycle is not the one for it.
+    SourceFamilyNotMultiOutput,
+    /// The installed build is not one this source's family has been converted
+    /// on and recorded against.
+    ProviderBuildNotEvidenced,
+    /// An object the acquisition is made of is no longer the object that was
+    /// admitted, or could not be rechecked.
+    SourceNotStillAdmitted(super::ConversionRunFailure),
+    /// The acquisition's objects could not be bound to the command — more
+    /// members than the bound allows, or a command with no source at all.
+    SourceBundleNotBound,
 }
 
 impl MultiOutputFailure {
@@ -462,6 +628,11 @@ impl MultiOutputFailure {
             Self::DestinationOccupied { .. } => "multi_output_destination_occupied",
             Self::MixedDestinationConflict { .. } => "multi_output_mixed_destination_conflict",
             Self::MemberNotFinalized { .. } => "multi_output_member_not_finalized",
+            Self::OutputSetNotAsDeclared { .. } => "multi_output_set_not_as_declared",
+            Self::SourceFamilyNotMultiOutput => "multi_output_source_family_not_multi_output",
+            Self::ProviderBuildNotEvidenced => "multi_output_provider_build_not_evidenced",
+            Self::SourceNotStillAdmitted(_) => "multi_output_source_not_still_admitted",
+            Self::SourceBundleNotBound => "multi_output_source_bundle_not_bound",
         }
     }
 }
@@ -524,6 +695,21 @@ impl std::fmt::Debug for MultiOutputFailure {
                 .debug_struct("MixedDestinationConflict")
                 .field("occupied_count", &occupied.len())
                 .finish(),
+            Self::OutputSetNotAsDeclared {
+                declared,
+                discovered,
+            } => formatter
+                .debug_struct("OutputSetNotAsDeclared")
+                .field("declared", declared)
+                .field("discovered", discovered)
+                .finish(),
+            Self::SourceFamilyNotMultiOutput => formatter.write_str("SourceFamilyNotMultiOutput"),
+            Self::ProviderBuildNotEvidenced => formatter.write_str("ProviderBuildNotEvidenced"),
+            Self::SourceNotStillAdmitted(failure) => formatter
+                .debug_tuple("SourceNotStillAdmitted")
+                .field(failure)
+                .finish(),
+            Self::SourceBundleNotBound => formatter.write_str("SourceBundleNotBound"),
             Self::MemberNotFinalized { kind, .. } => formatter
                 .debug_struct("MemberNotFinalized")
                 .field("member", &"<redacted>")
@@ -728,8 +914,6 @@ pub fn run_multi_output_conversion_evidence(
     limits: MzmlScanLimits,
     cancellation: Option<&ConversionCancellation>,
 ) -> MultiOutputConversionRun {
-    let policy = ConversionPolicy::default();
-
     // Before anything is opened, inspected or created, so a request that was
     // already made costs the user no staging directory and no reads.
     if let Some(cancellation) = cancellation
@@ -751,6 +935,151 @@ pub fn run_multi_output_conversion_evidence(
         Ok(captured) => captured,
         Err(kind) => return refused(MultiOutputFailure::SourceNotCaptured { kind }, None, None),
     };
+
+    run_bound_multi_output(
+        BoundSource {
+            pins: vec![pinned_source],
+            facts,
+            canonical_primary: canonical_source,
+            companions: Vec::new(),
+        },
+        destination_root,
+        conflict,
+        capabilities,
+        runner,
+        limits,
+        cancellation,
+    )
+}
+
+/// Runs one **admitted** acquisition of a multi-output family through the
+/// lifecycle.
+///
+/// This is the production entry point the evidence one was a rehearsal for, and
+/// the difference is entirely in what must be true before the backend starts:
+///
+/// 1. the source's family must actually produce a set — a single-output family
+///    routed here would be converted under a lifecycle that expects the backend
+///    to name its own outputs, and it does not;
+/// 2. the installed build must be one this family has been converted on and
+///    recorded against, by release, revision **and** executable digest;
+/// 3. every object the acquisition is made of must still be the object that was
+///    admitted — reopened no-follow, posture, length and digest — and must stay
+///    held for the whole run.
+///
+/// Step 3 is where a bundle differs from everything before it. The `.wiff.scan`
+/// is never named on the command line and is opened by the vendor library
+/// regardless; measured on this build, removing it turns a ten-document
+/// conversion into ten truncated documents and a non-zero exit. An acquisition
+/// is not pinned if only the part with the name on it is pinned.
+///
+/// There is still no product surface for any of this: no workspace row, no
+/// queue, no command. What exists now is a boundary a later surface could be
+/// built on without loosening anything.
+pub fn run_admitted_multi_output_conversion(
+    source: &ConversionSource,
+    destination_root: &Path,
+    conflict: ConflictPolicy,
+    capabilities: &InstalledHelpCapabilities,
+    runner: &dyn ProcessRunner,
+    cancellation: Option<&ConversionCancellation>,
+) -> MultiOutputConversionRun {
+    if let Some(cancellation) = cancellation
+        && cancellation.is_requested()
+    {
+        return refused(
+            MultiOutputFailure::Cancelled {
+                surviving_processes: None,
+            },
+            None,
+            None,
+        );
+    }
+
+    if !source.kind().produces_output_set() {
+        return refused(MultiOutputFailure::SourceFamilyNotMultiOutput, None, None);
+    }
+    // The same predicate the single-output boundary applies, asked here for the
+    // same reason: a family is evidence about the build it was measured on, and
+    // an installation that merely calls itself that build is not that build.
+    if !super::provider_build_is_evidenced(capabilities, source.kind()) {
+        return refused(MultiOutputFailure::ProviderBuildNotEvidenced, None, None);
+    }
+
+    let pins = match super::pin_source_bundle(source) {
+        Ok(pins) => pins,
+        Err(failure) => {
+            return refused(
+                MultiOutputFailure::SourceNotStillAdmitted(failure),
+                None,
+                None,
+            );
+        }
+    };
+    let companions = source
+        .companions()
+        .iter()
+        .map(|companion| companion.identity().clone())
+        .collect();
+
+    run_bound_multi_output(
+        BoundSource {
+            pins,
+            facts: source.primary_object().clone(),
+            canonical_primary: source
+                .primary_object()
+                .identity()
+                .canonical_path()
+                .to_path_buf(),
+            companions,
+        },
+        destination_root,
+        conflict,
+        capabilities,
+        runner,
+        source.scan_limits(),
+        cancellation,
+    )
+}
+
+/// One acquisition bound for a run: every object held open, the primary's facts
+/// and canonical name, and the companion identities the command must carry.
+struct BoundSource {
+    /// Held for the whole run and dropped together. A companion released early
+    /// is a companion the backend could be reading while somebody else replaces
+    /// it.
+    pins: Vec<File>,
+    /// The primary's facts. Every staged member is validated against these, as
+    /// the source object the run is attributed to.
+    facts: SourceObjectFacts,
+    canonical_primary: PathBuf,
+    /// Empty for a single-object acquisition.
+    companions: Vec<SourceIdentity>,
+}
+
+/// Everything a multi-output run does once its source is bound.
+///
+/// Shared verbatim by the evidence entry point and the admitted one, so the two
+/// cannot drift into different staging, different discovery or different
+/// publication. What differs between them is only how the source was obtained
+/// and what had to be true before it was: a family, a provider-evidence row and
+/// a recheck of every member on one side; a Rust-owned path on the other.
+fn run_bound_multi_output(
+    bound: BoundSource,
+    destination_root: &Path,
+    conflict: ConflictPolicy,
+    capabilities: &InstalledHelpCapabilities,
+    runner: &dyn ProcessRunner,
+    limits: MzmlScanLimits,
+    cancellation: Option<&ConversionCancellation>,
+) -> MultiOutputConversionRun {
+    let policy = ConversionPolicy::default();
+    let BoundSource {
+        pins,
+        facts,
+        canonical_primary: canonical_source,
+        companions,
+    } = bound;
 
     let canonical_destination = match std::fs::canonicalize(destination_root) {
         Ok(canonical) => canonical,
@@ -795,6 +1124,16 @@ pub fn run_multi_output_conversion_evidence(
             return refused(MultiOutputFailure::NotPlannable(error), None, residue);
         }
     };
+    // The companions never appear in the argv — the backend derives their names
+    // itself — and they are bound to the spec anyway, so the pre-spawn recheck
+    // covers every object the run will read rather than only the one it names.
+    let command = match command.with_source_companion_identities(companions) {
+        Some(command) => command,
+        None => {
+            let residue = staging.discard();
+            return refused(MultiOutputFailure::SourceBundleNotBound, None, residue);
+        }
+    };
 
     let staging_output = staging.output_directory();
     let (backend, process_failure, process_output) =
@@ -816,15 +1155,22 @@ pub fn run_multi_output_conversion_evidence(
         return refused_diagnosable(failure, backend, residue, diagnostics);
     }
 
+    let declared = process_output.as_ref().map_or_else(
+        || DeclaredOutputSet::from_backend_stdout(&[], true),
+        |output| DeclaredOutputSet::from_backend_stdout(&output.stdout, output.stdout_truncated),
+    );
     let settled = settle_staged_output_set(
-        &facts,
-        &staging_output,
+        StagedOutputSet {
+            source: &facts,
+            directory: &staging_output,
+            declared: &declared,
+        },
         &destination,
         conflict,
         policy,
         limits,
     );
-    drop(pinned_source);
+    drop(pins);
     // Retained only where the run is worth diagnosing. A finalized or skipped
     // set keeps no backend text, exactly as a finalized single output keeps
     // none; anything refused or partial keeps what the backend said, redacted.
@@ -1062,22 +1408,26 @@ pub(crate) struct SettledOutputSet {
 /// 4. only then are members published, one at a time, in the deterministic
 ///    order, each through the handle-bound no-clobber rename.
 pub(crate) fn settle_staged_output_set(
-    source: &SourceObjectFacts,
-    staged_output_directory: &Path,
+    staged: StagedOutputSet<'_>,
     destination: &finalize::DestinationDirectory,
     conflict: ConflictPolicy,
     policy: ConversionPolicy,
     limits: MzmlScanLimits,
 ) -> SettledOutputSet {
-    settle_staged_output_set_seamed(
-        source,
-        staged_output_directory,
-        destination,
-        conflict,
-        policy,
-        limits,
-        |_| {},
-    )
+    settle_staged_output_set_seamed(staged, destination, conflict, policy, limits, |_| {})
+}
+
+/// What one settlement is about: the acquisition it is attributed to, the
+/// private directory the backend wrote into, and the backend's own account of
+/// what it put there.
+///
+/// The three travel together because settlement is meaningless without all
+/// three — a directory with no declaration cannot be told from a directory
+/// somebody added to.
+pub(crate) struct StagedOutputSet<'a> {
+    pub(crate) source: &'a SourceObjectFacts,
+    pub(crate) directory: &'a Path,
+    pub(crate) declared: &'a DeclaredOutputSet,
 }
 
 /// The same lifecycle, with a seam at the one interval its central claims are
@@ -1088,14 +1438,18 @@ pub(crate) fn settle_staged_output_set(
 ///
 /// The hook receives the zero-based index of the member about to be published.
 pub(crate) fn settle_staged_output_set_seamed(
-    source: &SourceObjectFacts,
-    staged_output_directory: &Path,
+    staged: StagedOutputSet<'_>,
     destination: &finalize::DestinationDirectory,
     conflict: ConflictPolicy,
     policy: ConversionPolicy,
     limits: MzmlScanLimits,
     mut before_member_publication: impl FnMut(usize),
 ) -> SettledOutputSet {
+    let StagedOutputSet {
+        source,
+        directory: staged_output_directory,
+        declared,
+    } = staged;
     // 1. Discovery. The staging directory is the authority.
     let discovered = match discover_staged_output_set(staged_output_directory) {
         Ok(discovered) => discovered,
@@ -1109,6 +1463,24 @@ pub(crate) fn settle_staged_output_set_seamed(
             };
         }
     };
+
+    // 1b. The backend's own account of what it wrote, against what is there.
+    // Ordered after discovery's rules so a sidecar, a directory or a
+    // partial-output name is still refused for what it is; this catches the one
+    // thing discovery cannot, which is a member that is a perfectly ordinary
+    // mzML document the backend never wrote.
+    if !declared.matches(&discovered) {
+        return SettledOutputSet {
+            outcome: MultiOutputOutcome::RefusedBeforePublication(
+                MultiOutputFailure::OutputSetNotAsDeclared {
+                    declared: declared.len(),
+                    discovered: discovered.len(),
+                },
+            ),
+            members: Vec::new(),
+            retained: Vec::new(),
+        };
+    }
 
     // 2. Validation, all before any. Every validated member's exact object is
     // held; a failure publishes nothing whatever the other members looked like.

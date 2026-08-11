@@ -3812,3 +3812,69 @@ partial collapsed to ordinary failure, rollback, staging never cleaned,
 single-output accepting two — all red. See
 [ADR 0021](docs/architecture/adr/0021-private-multi-output-conversion-lifecycle.md)
 and [the M3.10 evidence record](docs/spikes/M3_MULTI_OUTPUT_EVIDENCE.md).
+
+## Private SCIEX WIFF source admission, 2026-08-11
+
+Both gates ADR 0021 left open are closed, and one new one is opened honestly.
+`ConversionSourceKind::SciexWiffBundle` is a real source family — recognised,
+bound, provider-evidenced, converting through the existing output-set
+lifecycle — and no user can reach it. `DatasetSourceKind`, its DTO, the
+TypeScript union, Add files…, folder ingestion, Explorer Drop, the queue and
+every Tauri command are untouched; the two arms added to the desktop crate's
+exhaustive matches reuse existing codes and existing message strings, because
+inventing copy for an unreachable family would be inventing the surface.
+
+**The acquisition is not one file, and that is measured, not assumed.** A SCIEX
+source is a `<name>.wiff` and the `<name>.wiff.scan` beside it. Remove the
+companion and the backend does not refuse cleanly: it exits 1 *and leaves one
+truncated document per sample behind* — ten of them for the ten-sample fixture,
+about a seventh the size of the real outputs and each well-formed enough to
+open. So `CommandSpec::source_identity` is now a bounded `SourceIdentitySet`,
+the pre-spawn check confirms **every** member, and the admitted run reopens,
+posture-checks, length-checks, digest-checks and holds each member for the whole
+run. A companion never appears in the argv; nothing else would ever look at it.
+
+**Recognition is the container's contents and the companion's own bytes.**
+Upstream's `Reader_ABI::identify` consults the file name and nothing else, with
+an unanswered `// TODO: check header signature?` above it. A `.wiff` shares its
+first eight bytes with a LabSolutions `.lcd`, so four entry names in the
+compound-file directory are required — disjoint from the LabSolutions set, so
+no object satisfies both rules — and the companion is recognised by its own
+32-byte prefix because it is not a compound file at all. The companion's name is
+derived from the admitted primary and never searched for: upstream's own test
+data has a `.wiff.scan` whose primary is a `.wiff2`, beside two unrelated
+`.wiff` files. `.wiff2` is refused at the extension filter.
+
+**The multi-sample gate, closed on a real acquisition.** The M3.10 record said
+the ten-sample Enolase input was absent from the pwiz tree; that was true of the
+commit it pinned and not generally — the file was deleted with a test-data
+tarball in 2019 and restored upstream in 2022. Pinned at the restore commit
+(Apache-2.0, 3.9 MB), it converts on the evidenced build to **ten mzML
+documents**, one per sample under backend-chosen names, `fully_finalized`, same
+basename set on a second run, no residue. Both single-sample fixtures convert
+the same way. A third provider row, not a widened one.
+
+**The staging-membership gate, decided and closed.** No shipped executable of
+this build enumerates samples before conversion — `readIds` is library-only,
+`--runIndexSet` selects by index, `msaccess` needs a full read — so the expected
+set is genuinely unknowable in advance. But the backend states each document on
+its own stdout, over a pipe only its process tree can write to, so the
+discovered set must now equal the declared set or the whole set is refused. That
+restores the property ADR 0021 recorded as lost. It compares names rather than
+counts (the declared bytes are UTF-8, byte-identical to the on-disk name — checked
+with a non-ASCII name), fails closed on an absent, truncated or unreadable
+declaration, and is bound to the build the provider row pins by digest.
+
+**The gate this opens.** `Reader_ABI::read` catches a per-sample failure, logs
+it and continues — so an acquisition whose samples partly fail produces fewer
+documents, declares exactly those fewer, and exits zero. Declaration and
+discovery agree and both are short, and nothing here can tell that from a
+complete conversion without parsing vendor internals this reader refuses to
+parse. Recorded as a gate on any user-facing surface rather than papered over.
+
+Twelve focused mutations, each removing one guard, all red — including one that
+survived the first pass, because the conversion-level test caught a replaced
+companion at admission and left the pre-spawn recheck deletable; the test that
+kills it aims at the process boundary where the guard lives. See
+[ADR 0022](docs/architecture/adr/0022-sciex-wiff-source-admission.md) and
+[the M3.11 evidence record](docs/spikes/M3_SCIEX_WIFF_EVIDENCE.md).
