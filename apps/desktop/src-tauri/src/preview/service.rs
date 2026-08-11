@@ -3693,6 +3693,7 @@ impl PreviewService {
                 bound_source_objects,
                 generation,
                 &run.report,
+                run.completeness,
             ),
             run.retained,
         ))

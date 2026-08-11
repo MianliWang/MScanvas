@@ -32,6 +32,7 @@ mod fs_guard;
 mod mzml;
 mod preview;
 mod process;
+mod sciex_completeness;
 mod sciex_wiff;
 mod sha256;
 
@@ -106,6 +107,9 @@ pub use preview::{
 pub use process::{
     CancellationToken, LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner,
     SystemProcessRunner, Termination, execute, execute_cancellable,
+};
+pub use sciex_completeness::{
+    EstablishedSampleCompleteness, SampleCompletenessRefusal, SciexSampleCompleteness,
 };
 pub use sciex_wiff::sciex_wiff_companion_path;
 pub use sha256::Sha256Error;

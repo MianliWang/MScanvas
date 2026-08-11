@@ -2,9 +2,14 @@
 
 - Status: Accepted as a private workspace path with no product surface. Visible
   ingestion, queue integration, adoption of output sets and every UI concern
-  remain separately gated — and are additionally blocked by the completeness
-  gate recorded at the end of this document
+  remain separately gated
 - Date: 2026-08-11
+- **The completeness gate recorded at the end of this document is closed by
+  [ADR 0024](0024-sciex-sample-completeness.md), 2026-08-11.** The workspace
+  report now carries an evidence-bearing completeness judgement, and an
+  acquisition that cannot be shown complete publishes nothing. The reasoning
+  below for why this report carries no *bare* completeness field is unchanged:
+  what it carries is a value only the audit can mint, not a boolean.
 
 ## Context
 

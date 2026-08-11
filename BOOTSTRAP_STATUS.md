@@ -3956,3 +3956,69 @@ while the interval they overlap is already held by the crate. Two further
 mutations were considered and not run, with reasons. See
 [ADR 0023](docs/architecture/adr/0023-private-workspace-sciex-wiff-conversion.md)
 and [the M3.12 evidence record](docs/spikes/M3_WORKSPACE_SCIEX_WIFF_EVIDENCE.md).
+
+## SCIEX per-sample completeness, 2026-08-11
+
+ADR 0022 recorded a gap and would not close it by assertion: the reader can fail
+one sample, log it, continue, declare only what it wrote, and exit 0 — so
+declaration equal to discovery proved nothing about the acquisition. That gap is
+now measured, not reasoned about. Zeroing **one sample's own streams** inside a
+copy of the real ten-sample acquisition, with container, FAT, directory and the
+other nine samples byte-identical, makes the backend exit 0, declare nine, write
+nine, and lose the tenth in silence. The pre-slice boundary called that
+`fully_finalized`.
+
+**A source-side manifest was looked for first and does not exist.** No shipped
+executable enumerates a WIFF's samples without converting it: `msaccess -x
+metadata` takes the single-run overload and reports an empty sample list,
+`--verbose` adds nothing, `--runIndexSet` filters the vector the reader already
+returned — so it counts samples that read *successfully*, which is the question
+— and no command-line tool calls `readIds` at all.
+
+**So the proof runs the other way: nothing was lost.** At the evidenced source
+revision the loop is `for i in 1..=getSampleCount()` with one
+`catch (exception&)` that emits its marker unconditionally before continuing;
+anything it does not catch fails the whole file. Every zeroable per-sample
+stream was broken in turn and **no silent skip was observed** — one marker per
+lost sample, none otherwise.
+
+**But an error-stream audit is necessary and not sufficient, and tracing the
+driver is what showed it.** Two paths lose a sample saying nothing at all: a
+sample whose name is a substring of the file's basename shares an output path
+and is silently overwritten — reproduced with **no corruption, only a file
+name**: ten declarations, nine files, exit 0, empty stderr — and a sample whose
+index comes out empty writes a record-free document. Both were already refused,
+by the declared-set comparison ADR 0022 added against injected members and by
+output-only validation. Completeness is therefore a conjunction of five links,
+of which this slice owns two.
+
+**The positive state is a typestate, not a boolean.** Only the examination can
+produce a `NoSampleLoss`, and only that can become an
+`EstablishedSampleCompleteness`, which carries the proof method, the count and
+the exact executable digest. There is no `bool fully_converted` anywhere.
+
+**Enforced before publication** — after the backend exits, before discovery,
+validation or any destination name. It is the only point where refusing costs
+nothing: found later, the choice would be between telling the user their
+acquisition converted when it did not and deleting files they already have.
+An incomplete run publishes zero members.
+
+`fully_finalized` keeps ADR 0021's meaning. Completeness sits beside it, is
+asked only of the family whose backend can lose part of an acquisition without
+saying so, and is `None` for every other family rather than a value they must
+fabricate.
+
+**Real evidence.** All three lawful acquisitions establish completeness through
+a workspace handle (10, 1, 1). Both damaged acquisitions — the zeroed sample and
+the colliding names — are refused before publication with **zero** files
+written, where the pre-slice boundary published nine and reported success.
+Eight focused mutations, all red.
+
+**Still not claimed:** fidelity, and samples the reader never identified —
+`getSampleCount()` is `getSampleNames().size()` and the reconciliation against
+the vendor's own count is commented out upstream, beneath a note that some files
+have more samples than names. That is an upstream defect this boundary cannot
+measure around, and it is recorded rather than smoothed over. SCIEX stays
+invisible: output-set adoption does not exist yet. See
+[ADR 0024](docs/architecture/adr/0024-sciex-sample-completeness.md) and
+[the M3.13 evidence record](docs/spikes/M3_SCIEX_COMPLETENESS_EVIDENCE.md).

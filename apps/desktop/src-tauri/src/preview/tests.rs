@@ -15502,6 +15502,8 @@ struct FakeOutputSetRunner {
     probe_refused: Arc<Mutex<Option<bool>>>,
     /// Basenames it writes without declaring: the injection ADR 0021 named.
     undeclared: Vec<String>,
+    /// What this stand-in writes to its error stream.
+    stderr: String,
     exit_code: i32,
     calls: Arc<AtomicUsize>,
 }
@@ -15513,6 +15515,7 @@ impl FakeOutputSetRunner {
             probe: None,
             probe_refused: Arc::new(Mutex::new(None)),
             undeclared: Vec::new(),
+            stderr: String::new(),
             exit_code: 0,
             calls: Arc::new(AtomicUsize::new(0)),
         }
@@ -15529,6 +15532,12 @@ impl FakeOutputSetRunner {
     /// the process never ran.
     fn probe_refused(&self) -> Arc<Mutex<Option<bool>>> {
         Arc::clone(&self.probe_refused)
+    }
+
+    /// A backend that says something on its error stream.
+    fn complaining(mut self, stderr: &str) -> Self {
+        self.stderr = stderr.to_owned();
+        self
     }
 
     fn also_injecting(mut self, name: &str) -> Self {
@@ -15582,8 +15591,8 @@ impl ProcessRunner for FakeOutputSetRunner {
         Ok(ProcessOutput {
             stdout_total_bytes: stdout.len() as u64,
             stdout,
-            stderr: Vec::new(),
-            stderr_total_bytes: 0,
+            stderr_total_bytes: self.stderr.len() as u64,
+            stderr: self.stderr.clone().into_bytes(),
             stdout_truncated: false,
             stderr_truncated: false,
             exit_code: Some(self.exit_code),
@@ -15922,9 +15931,12 @@ fn a_fully_finalized_set_makes_no_claim_about_the_source_acquisition() {
 
     assert_eq!(report.group_outcome(), "fully_finalized");
 
-    // The report's own rendering must not contain a completeness claim. Read as
-    // text rather than field by field so a field added later that says one is
-    // caught here rather than in review.
+    // Since ADR 0024 the report *may* say something about the acquisition's
+    // samples -- but only as evidence, and never as a value some code path
+    // could set because the run looked fine. What it must still never contain
+    // is a bare claim: a boolean, or a field whose name asserts an outcome no
+    // audit produced. Read as text so a field added later is caught here rather
+    // than in review.
     let rendered = format!("{report:?}").to_ascii_lowercase();
     for forbidden in [
         "source_complete",
@@ -15933,8 +15945,6 @@ fn a_fully_finalized_set_makes_no_claim_about_the_source_acquisition() {
         "allsamples",
         "fully_converted",
         "fullyconverted",
-        "sample_count",
-        "samplecount",
     ] {
         assert!(
             !rendered.contains(forbidden),
@@ -15942,8 +15952,18 @@ fn a_fully_finalized_set_makes_no_claim_about_the_source_acquisition() {
         );
     }
 
-    // What it does say is a count of what was published, and that count comes
-    // from the members rather than from the group outcome.
+    // The two answers stay two answers. The group outcome is about publication;
+    // the completeness is about the acquisition, carries how it was proved, and
+    // is bound to the executable that proved it.
+    let completeness = report
+        .completeness()
+        .expect("this family is asked the question");
+    let evidence = completeness
+        .established()
+        .expect("a clean run establishes completeness");
+    assert_eq!(evidence.sample_count(), 1);
+    assert_eq!(evidence.method(), "reader_error_audit_v1");
+
     assert_eq!(report.published_count(), 1);
     assert_eq!(report.members().len(), 1);
 }
@@ -16029,6 +16049,49 @@ fn every_bundle_member_is_pinned_while_the_backend_runs() {
         refused,
         Some(true),
         "the companion was writable while the backend was reading it"
+    );
+}
+
+/// The shape the evidenced build writes to stderr when the reader loses one
+/// sample and carries on.
+const READER_LOST_A_SAMPLE: &str = "[Reader_ABI::read] Error opening run 3 in \"a.wiff\":\nboom\n";
+
+/// An incomplete acquisition publishes nothing, through the workspace path.
+///
+/// The pre-slice behaviour was the false claim this gate exists for: nine of
+/// ten samples converted, exit 0, declaration equal to discovery, every member
+/// valid, and a report saying `fully_finalized`. Now the run is refused before
+/// a single member reaches the destination.
+#[test]
+fn an_incomplete_acquisition_publishes_nothing_through_the_workspace() {
+    let fixture = TestFile::new("sciex-incomplete");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let destination = fixture.destination("out");
+    let service = output_set_service(
+        FakeOutputSetRunner::writing(&["acquisition-S1.mzML", "acquisition-S2.mzML"])
+            .complaining(READER_LOST_A_SAMPLE),
+    );
+    let dataset = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the bundle is admitted");
+
+    let (report, retained) = service
+        .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the run reaches an outcome");
+
+    assert_eq!(report.group_outcome(), "refused_before_publication");
+    assert_eq!(report.refusal_id(), Some("source_sample_failure_observed"));
+    assert_eq!(report.published_count(), 0);
+    assert!(retained.is_empty());
+    assert!(
+        entry_names(&destination).is_empty(),
+        "an incomplete acquisition published something"
+    );
+    // And no positive evidence survives the refusal.
+    assert!(
+        report
+            .completeness()
+            .is_none_or(|completeness| completeness.established().is_none())
     );
 }
 
@@ -16236,6 +16299,31 @@ fn a_real_sciex_bundle_converts_through_a_workspace_handle() {
         .expect("the conversion reaches an outcome");
 
     println!("report: {report:?}");
+
+    // Pointed at an acquisition with a deliberately broken sample, the whole
+    // point is that this refuses. Driven by an environment variable so the same
+    // test is both the success evidence and the discrimination evidence.
+    if std::env::var("MSCANVAS_SCIEX_EXPECT_INCOMPLETE").is_ok() {
+        assert_eq!(
+            report.group_outcome(),
+            "refused_before_publication",
+            "an incomplete acquisition was published"
+        );
+        assert_eq!(
+            report.refusal_id(),
+            Some("source_sample_failure_observed"),
+            "refused, but not for the reason this gate exists"
+        );
+        assert_eq!(report.published_count(), 0);
+        assert!(retained.is_empty());
+        assert!(
+            entry_names(&destination).is_empty(),
+            "an incomplete acquisition left files behind"
+        );
+        println!("incomplete acquisition refused before publication; nothing was written");
+        return;
+    }
+
     assert_eq!(report.group_outcome(), "fully_finalized");
     assert_eq!(report.bound_source_objects(), 2);
     assert_eq!(report.members().len(), expected);
@@ -16263,11 +16351,15 @@ fn a_real_sciex_bundle_converts_through_a_workspace_handle() {
     }
     assert_eq!(entry_names(&destination).len(), expected);
 
-    // Printed, not asserted: this is the gate, and no evidence here can close
-    // it. A full publication says every admitted member was published; it does
-    // not say every sample in the acquisition converted.
+    // The gate ADR 0022 opened, now closed and asserted rather than printed.
+    let evidence = report
+        .completeness()
+        .and_then(mscanvas_proteowizard::SciexSampleCompleteness::established)
+        .expect("a complete acquisition establishes completeness");
+    assert_eq!(evidence.sample_count(), expected);
     println!(
-        "published {} members; source sample completeness is NOT established",
-        report.published_count()
+        "every one of the {} samples the reader identified produced its output ({})",
+        evidence.sample_count(),
+        evidence.method()
     );
 }

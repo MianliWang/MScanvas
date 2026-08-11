@@ -156,6 +156,11 @@ struct FakeRunner<'a> {
     calls: Cell<usize>,
     argv: RefCell<Vec<OsString>>,
     working_directory: RefCell<Option<PathBuf>>,
+    /// Whether this stand-in's error stream was cut short. False by default,
+    /// because a stand-in that captured everything should say so.
+    stderr_truncated: bool,
+    /// What this stand-in writes to its error stream.
+    stderr: &'a str,
     /// The output basenames this substituted backend announces on its stdout.
     ///
     /// Empty for every single-output test, which is faithful: that boundary
@@ -173,6 +178,8 @@ impl<'a> FakeRunner<'a> {
             calls: Cell::new(0),
             argv: RefCell::new(Vec::new()),
             working_directory: RefCell::new(None),
+            stderr_truncated: false,
+            stderr: "",
             declared: Vec::new(),
         }
     }
@@ -188,6 +195,18 @@ impl<'a> FakeRunner<'a> {
     /// this boundary requests one; only a substituted runner can produce it.
     const fn reporting(mut self, termination: Termination) -> Self {
         self.termination = termination;
+        self
+    }
+
+    /// A runner whose error stream was cut short by the capture bound.
+    const fn reporting_truncated_stderr(mut self) -> Self {
+        self.stderr_truncated = true;
+        self
+    }
+
+    /// A runner that says something on its error stream.
+    fn complaining(mut self, stderr: &'a str) -> Self {
+        self.stderr = stderr;
         self
     }
 
@@ -223,10 +242,10 @@ impl ProcessRunner for FakeRunner<'_> {
         Ok(ProcessOutput {
             stdout_total_bytes: stdout.len() as u64,
             stdout,
-            stderr: Vec::new(),
-            stderr_total_bytes: 0,
+            stderr_total_bytes: self.stderr.len() as u64,
+            stderr: self.stderr.as_bytes().to_vec(),
             stdout_truncated: false,
-            stderr_truncated: true,
+            stderr_truncated: self.stderr_truncated,
             exit_code: Some(exit_code),
             elapsed: Duration::from_millis(7),
             termination: self.termination,
@@ -1183,7 +1202,10 @@ fn backend_facts_are_projected_faithfully_on_success_and_on_rejection() {
             .expect("write a lossy output");
         Ok(0)
     };
-    let runner = FakeRunner::new(&act);
+    // Truncation is asserted here, so it is arranged here rather than inherited
+    // from whatever the shared stand-in happens to claim: the point of the test
+    // is that both flags are projected faithfully, which needs them to differ.
+    let runner = FakeRunner::new(&act).reporting_truncated_stderr();
     let report = run_conversion(&plan, &capabilities(), &runner);
 
     let backend = report
@@ -6868,5 +6890,267 @@ fn a_bundle_run_binds_every_member_to_the_command_it_spawns() {
         bound.get(),
         2,
         "the spawned command bound the primary and its companion"
+    );
+}
+
+/// Completeness is judged before anything is published, and an incomplete
+/// acquisition publishes nothing at all.
+///
+/// The gate ADR 0022 opened, closed here at the only point where closing it
+/// costs the user nothing. A refusal discovered after publication would leave
+/// the choice between telling the user their acquisition converted when it did
+/// not, and deleting files they already have; taking the judgement before the
+/// first rename means neither is ever needed.
+#[test]
+fn an_incomplete_sciex_acquisition_publishes_no_member() {
+    let directory = TestDirectory::new();
+    let primary = write_sciex_bundle(directory.path(), "acquisition");
+    let destination_root = directory.path().join("destination");
+    fs::create_dir(&destination_root).expect("create the destination root");
+
+    // The exact shape the evidenced build emits when the reader loses one
+    // sample and carries on: a marker on stderr, a clean exit, and an output
+    // set that is internally consistent -- declared equals discovered, every
+    // member valid.
+    let act = |spec: &CommandSpec| {
+        for name in ["a-S1.mzML", "a-S2.mzML"] {
+            fs::write(
+                set_command_output_directory(spec).join(name),
+                output_document(),
+            )
+            .expect("write a backend output");
+        }
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act)
+        .declaring(&["a-S1.mzML", "a-S2.mzML"])
+        .complaining("[Reader_ABI::read] Error opening run 3 in \"a.wiff\":\nboom\n");
+    let run = run_admitted_multi_output_conversion(
+        &open_sciex(&primary),
+        &destination_root,
+        ConflictPolicy::Fail,
+        &evidenced_capabilities(),
+        &runner,
+        None,
+    );
+
+    assert!(
+        matches!(
+            run.report.outcome(),
+            MultiOutputOutcome::RefusedBeforePublication(
+                MultiOutputFailure::SampleCompletenessNotEstablished(
+                    crate::SampleCompletenessRefusal::SampleFailureObserved { failed: 1 }
+                )
+            )
+        ),
+        "a lost sample refuses the set: {:?}",
+        run.report.outcome()
+    );
+    assert!(run.retained.is_empty());
+    assert!(
+        entry_names(&destination_root).is_empty(),
+        "an incomplete acquisition published something"
+    );
+    assert!(run.report.residue().is_none(), "staging was still swept");
+    // And no positive claim survives the refusal.
+    assert!(
+        run.completeness
+            .as_ref()
+            .is_none_or(|completeness| completeness.established().is_none())
+    );
+}
+
+/// An error stream that was cut short cannot support a negative proof.
+#[test]
+fn a_truncated_error_stream_publishes_no_member() {
+    let directory = TestDirectory::new();
+    let primary = write_sciex_bundle(directory.path(), "acquisition");
+    let destination_root = directory.path().join("destination");
+    fs::create_dir(&destination_root).expect("create the destination root");
+
+    let act = |spec: &CommandSpec| {
+        fs::write(
+            set_command_output_directory(spec).join("a-S1.mzML"),
+            output_document(),
+        )
+        .expect("write a backend output");
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act)
+        .declaring(&["a-S1.mzML"])
+        .reporting_truncated_stderr();
+    let run = run_admitted_multi_output_conversion(
+        &open_sciex(&primary),
+        &destination_root,
+        ConflictPolicy::Fail,
+        &evidenced_capabilities(),
+        &runner,
+        None,
+    );
+
+    assert_eq!(
+        run.report.outcome().stable_id(),
+        "refused_before_publication"
+    );
+    assert!(entry_names(&destination_root).is_empty());
+    assert!(run.retained.is_empty());
+}
+
+/// A complete acquisition publishes, and carries evidence that says so.
+#[test]
+fn a_complete_sciex_acquisition_publishes_and_carries_its_evidence() {
+    let directory = TestDirectory::new();
+    let primary = write_sciex_bundle(directory.path(), "acquisition");
+    let destination_root = directory.path().join("destination");
+    fs::create_dir(&destination_root).expect("create the destination root");
+
+    let act = |spec: &CommandSpec| {
+        for name in ["a-S1.mzML", "a-S2.mzML", "a-S3.mzML"] {
+            fs::write(
+                set_command_output_directory(spec).join(name),
+                output_document(),
+            )
+            .expect("write a backend output");
+        }
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act).declaring(&["a-S1.mzML", "a-S2.mzML", "a-S3.mzML"]);
+    let run = run_admitted_multi_output_conversion(
+        &open_sciex(&primary),
+        &destination_root,
+        ConflictPolicy::Fail,
+        &evidenced_capabilities(),
+        &runner,
+        None,
+    );
+
+    assert!(matches!(
+        run.report.outcome(),
+        MultiOutputOutcome::FullyFinalized
+    ));
+    let evidence = run
+        .completeness
+        .as_ref()
+        .and_then(crate::SciexSampleCompleteness::established)
+        .expect("a complete run carries its evidence");
+    assert_eq!(evidence.sample_count(), 3);
+    assert_eq!(evidence.method(), "reader_error_audit_v1");
+    // Bound to the exact executable, not to a version string.
+    assert_eq!(
+        evidence.executable_sha256(),
+        evidenced_capabilities().executable_sha256()
+    );
+}
+
+/// Publication state and source completeness stay two different answers.
+///
+/// `fully_finalized` keeps the meaning ADR 0021 gave it, and the new claim sits
+/// beside it rather than inside it: a run can be fully finalized and carry no
+/// completeness at all, which is exactly what every other family does.
+#[test]
+fn full_finalization_is_not_the_completeness_claim() {
+    let directory = TestDirectory::new();
+    let source = directory.path().join("acquisition.bin");
+    fs::write(&source, b"an acquisition this entry point takes by path").expect("write a source");
+    let destination_root = directory.path().join("destination");
+    fs::create_dir(&destination_root).expect("create the destination root");
+
+    let act = |spec: &CommandSpec| {
+        fs::write(
+            set_command_output_directory(spec).join("only.mzML"),
+            output_document(),
+        )
+        .expect("write a backend output");
+        Ok(0)
+    };
+    // The evidence entry point asks for no completeness, and a stderr full of
+    // markers cannot change that: the question was never posed, so the run is
+    // published on the lifecycle's own terms and says nothing about samples.
+    let runner = FakeRunner::new(&act)
+        .declaring(&["only.mzML"])
+        .complaining("[Reader_ABI::read] Error opening run 2 in \"x.wiff\":\nboom\n");
+    let run = run_multi_output_conversion_evidence(
+        &source,
+        &destination_root,
+        ConflictPolicy::Fail,
+        &capabilities(),
+        &runner,
+        MzmlScanLimits::default(),
+        None,
+    );
+
+    assert!(matches!(
+        run.report.outcome(),
+        MultiOutputOutcome::FullyFinalized
+    ));
+    assert!(
+        run.completeness.is_none(),
+        "a run that was never asked answered anyway"
+    );
+}
+
+/// A set that did not reach its destination whole is not a complete
+/// acquisition, whatever the audit found.
+///
+/// The audit answers one question — did the backend lose a sample — and full
+/// finalization answers another — did every surviving member reach the user.
+/// Completeness is the conjunction, so an outcome that skipped or stopped
+/// partway must not inherit the audit's answer. `Skip` is the shape of that
+/// which a test can produce on demand: the same acquisition converted twice
+/// into one destination, where the second run has nothing left to publish.
+#[test]
+fn a_set_that_did_not_publish_whole_is_not_complete() {
+    let directory = TestDirectory::new();
+    let primary = write_sciex_bundle(directory.path(), "acquisition");
+    let destination_root = directory.path().join("destination");
+    fs::create_dir(&destination_root).expect("create the destination root");
+
+    let act = |spec: &CommandSpec| {
+        fs::write(
+            set_command_output_directory(spec).join("a-S1.mzML"),
+            output_document(),
+        )
+        .expect("write a backend output");
+        Ok(0)
+    };
+    let convert = |conflict| {
+        let runner = FakeRunner::new(&act).declaring(&["a-S1.mzML"]);
+        run_admitted_multi_output_conversion(
+            &open_sciex(&primary),
+            &destination_root,
+            conflict,
+            &evidenced_capabilities(),
+            &runner,
+            None,
+        )
+    };
+
+    let first = convert(ConflictPolicy::Fail);
+    assert!(matches!(
+        first.report.outcome(),
+        MultiOutputOutcome::FullyFinalized
+    ));
+    assert!(
+        first
+            .completeness
+            .as_ref()
+            .and_then(crate::SciexSampleCompleteness::established)
+            .is_some(),
+        "the first run published whole and is complete"
+    );
+
+    // The same acquisition again, with the name already taken.
+    let second = convert(ConflictPolicy::Skip);
+    assert!(matches!(
+        second.report.outcome(),
+        MultiOutputOutcome::SkippedExistingDestinations
+    ));
+    assert_eq!(
+        second
+            .completeness
+            .as_ref()
+            .and_then(crate::SciexSampleCompleteness::refusal),
+        Some(crate::SampleCompletenessRefusal::SetNotFullyPublished),
+        "a set that published nothing this run claimed the acquisition converted"
     );
 }
