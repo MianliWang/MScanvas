@@ -223,7 +223,7 @@ const OUTPUT_DECLARATION_PREFIX: &str = "writing output file: ";
 /// Nor does it protect a member's *content*: an attacker who can write into the
 /// staging directory can overwrite a declared member before validation, which
 /// is the exposure that already existed for a single output and is unchanged.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct DeclaredOutputSet {
     names: Vec<String>,
     /// The declaration could not be read whole, so it cannot be compared
@@ -231,6 +231,24 @@ pub(crate) struct DeclaredOutputSet {
     /// declaration that is merely absent and one that is unreadable both mean
     /// the same thing here: refuse.
     unreadable: bool,
+}
+
+impl std::fmt::Debug for DeclaredOutputSet {
+    /// The shape, never the names.
+    ///
+    /// The same discipline every other type in this module keeps, for the same
+    /// reason: these are backend-chosen basenames carrying the vendor's own
+    /// sample identifiers, and a derived projection would put all of them into
+    /// the first panic message or assertion failure that touched this value.
+    /// The count and whether the declaration could be read are what a reader of
+    /// such a message actually needs.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DeclaredOutputSet")
+            .field("declared", &self.names.len())
+            .field("unreadable", &self.unreadable)
+            .finish()
+    }
 }
 
 impl DeclaredOutputSet {

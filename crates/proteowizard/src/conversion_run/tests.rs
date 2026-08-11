@@ -6735,6 +6735,16 @@ fn the_declared_set_is_compared_by_name_and_fails_closed() {
         output_set::DeclaredOutputSet::from_backend_stdout(stdout.as_bytes(), false)
     };
 
+    // The declaration itself renders as a shape and never as its contents.
+    // Every other type in this module redacts for this reason, and this one
+    // holds the same vendor-derived basenames they do.
+    let rendered = format!("{:?}", declaration(&["Enolase-20070918_En_01.mzML"]));
+    assert!(
+        !rendered.contains("Enolase"),
+        "the declaration's debug projection names a member: {rendered}"
+    );
+    assert!(rendered.contains("declared: 1"), "{rendered}");
+
     // A swap that keeps the count is caught, which a count check would miss.
     assert!(
         !declaration(&["a.mzML", "b.mzML"]).matches(&discovered_members(&["a.mzML", "c.mzML"]))
