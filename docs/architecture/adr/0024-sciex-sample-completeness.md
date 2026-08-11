@@ -48,9 +48,12 @@ shipped in this installation enumerates a WIFF's samples without converting it:
 `msaccess -x metadata` takes the reader's single-run overload and reports an
 empty sample list, `--verbose` adds nothing, `--runIndexSet` filters the vector
 the reader already returned — so it counts samples that read *successfully*,
-which is the question — and no command-line tool calls `readIds` at all. Reading
-the container's own sample table would need a FAT-walking compound-file parser
-this boundary does not have and will not grow for this.
+which is the question — and no command-line tool calls `readIds` at all. The one
+upstream tool that prints a line per run, `msdir --detailed`, is not in this
+installation, and would not have been an independent manifest anyway: it goes
+through the same reader, so a sample that fails to open simply gets no line.
+Reading the container's own sample table would need a FAT-walking compound-file
+parser this boundary does not have and will not grow for this.
 
 So the proof runs the other way: rather than counting what should have happened,
 it establishes that nothing was lost. At source revision

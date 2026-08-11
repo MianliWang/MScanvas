@@ -90,10 +90,16 @@ installation:
 | `msconvert --verbose` | nothing about runs |
 | `msconvert --runIndexSet 0-4` | five outputs, exit 0 — but the filter is applied to the vector the reader already returned, so it counts samples that *read successfully*: circular |
 | `msconvert --runIndexSet 99` | exit 1, `No runs correspond to the specified indices` — an out-of-range probe, still after the full read |
-| any shipped executable calling `readIds` | **none**; `readIds` exists in the library and no command-line tool calls it |
+| any shipped executable calling `readIds` | **none**; `readIds` exists in the library and no command-line tool at that revision calls it |
+| `msdir --detailed`, the one upstream tool that prints a line per run | **not in this installation.** Upstream builds it and it is absent from the eighteen executables here. Even if present it would not be an independent manifest: it goes through the same `Reader_ABI::read`, so a sample that fails to open simply gets no line — it cannot cross-check the reader against itself |
 
 Reading the sample table out of the container would need a FAT-walking
 compound-file parser this boundary deliberately does not have.
+
+The eighteen executables in this installation, for the record: `chainsaw`,
+`idcat`, `idconvert`, `msaccess`, `msbenchmark`, `mscat`, `msconvert`,
+`MSConvertGUI`, `msistats`, `mspicture`, `peakaboo`, `pepcat`, `pepsum`,
+`qtofpeakpicker`, `seems`, `sldout`, `ThermoRawMetaDump`, `txt2mzml`.
 
 ## Route B: the proof, and why it is a conjunction
 
