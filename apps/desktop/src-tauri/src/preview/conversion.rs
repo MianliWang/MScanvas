@@ -33,6 +33,7 @@ use mscanvas_proteowizard::{
 #[cfg(test)]
 use mscanvas_proteowizard::{
     MultiOutputConversionReport, MultiOutputOutcome, OutputMemberReport, OutputMemberValidation,
+    SciexSampleCompleteness,
 };
 
 use super::backend::ConversionBackend;
@@ -276,6 +277,18 @@ pub(super) struct WorkspaceMultiOutputConversionReport {
     /// The installation sequence this run was stamped with, read at the moment
     /// the backend gate was taken.
     installation_generation: u64,
+    /// Whether every sample the reader identified became one of these members.
+    ///
+    /// A judgement carried beside the publication state, never folded into it.
+    /// `None` means the question was not posed -- which for this report cannot
+    /// happen, since it only ever describes a family that asks -- and a
+    /// `NotEstablished` is a statement that the run did not support the claim
+    /// rather than that the acquisition was incomplete.
+    ///
+    /// Nothing here is a boolean, deliberately. The positive state can only be
+    /// minted by the audit that proved it and carries what it was proved from:
+    /// the method, the count and the exact executable.
+    completeness: Option<SciexSampleCompleteness>,
 }
 
 /// One published-or-not member of an output set.
@@ -333,6 +346,7 @@ impl WorkspaceMultiOutputConversionReport {
         bound_source_objects: usize,
         installation_generation: u64,
         run: &MultiOutputConversionReport,
+        completeness: Option<SciexSampleCompleteness>,
     ) -> Self {
         let (partial, refusal) = match run.outcome() {
             MultiOutputOutcome::PartiallyFinalized {
@@ -370,7 +384,18 @@ impl WorkspaceMultiOutputConversionReport {
             backend: run.backend(),
             residue: run.residue(),
             installation_generation,
+            completeness,
         }
+    }
+
+    /// What this run established about the acquisition's samples.
+    ///
+    /// Separate from [`Self::group_outcome`] and it must stay separate: that
+    /// one says every admitted member was published, and this one says every
+    /// identified sample was among them. A run can satisfy the first and not
+    /// the second -- measured on the real backend, which is why this exists.
+    pub(super) const fn completeness(&self) -> Option<&SciexSampleCompleteness> {
+        self.completeness.as_ref()
     }
 
     pub(super) fn dataset(&self) -> &str {

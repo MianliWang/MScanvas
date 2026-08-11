@@ -50,11 +50,15 @@ use crate::conversion::{
 use crate::finalized_output::FinalizedOutput;
 use crate::mzml::MzmlScanLimits;
 use crate::process::{ProcessRunner, Termination};
+use crate::sciex_completeness::{
+    BackendSampleEvidence, NoSampleLoss, SampleCompletenessRefusal, SciexSampleCompleteness,
+    argv_requests_filtering, examine_backend_evidence,
+};
 use crate::{ConversionCancellation, fs_guard};
 
 use super::{
-    BackendExecutionFailure, BackendRunFacts, ConflictPolicy, ConversionSource, OwnedStagingArea,
-    StagingResidue, finalize,
+    BackendExecutionFailure, BackendRunFacts, ConflictPolicy, ConversionSource,
+    ConversionSourceKind, OwnedStagingArea, StagingResidue, finalize,
 };
 use crate::BackendDiagnosticText;
 use crate::diagnostics::Redactor;
@@ -624,6 +628,15 @@ pub enum MultiOutputFailure {
     /// The acquisition's objects could not be bound to the command — more
     /// members than the bound allows, or a command with no source at all.
     SourceBundleNotBound,
+    /// The run could not be shown to have converted every sample the reader
+    /// identified, so nothing was published.
+    ///
+    /// A refusal rather than a warning, and taken before the first member
+    /// reaches its destination: a partially converted acquisition that had
+    /// already been written could not be withdrawn without deleting the user's
+    /// files, and this boundary does not delete a finalized output to tidy up
+    /// a claim it should not have made.
+    SampleCompletenessNotEstablished(SampleCompletenessRefusal),
 }
 
 impl MultiOutputFailure {
@@ -651,6 +664,7 @@ impl MultiOutputFailure {
             Self::ProviderBuildNotEvidenced => "multi_output_provider_build_not_evidenced",
             Self::SourceNotStillAdmitted(_) => "multi_output_source_not_still_admitted",
             Self::SourceBundleNotBound => "multi_output_source_bundle_not_bound",
+            Self::SampleCompletenessNotEstablished(refusal) => refusal.stable_id(),
         }
     }
 }
@@ -728,6 +742,10 @@ impl std::fmt::Debug for MultiOutputFailure {
                 .field(failure)
                 .finish(),
             Self::SourceBundleNotBound => formatter.write_str("SourceBundleNotBound"),
+            Self::SampleCompletenessNotEstablished(refusal) => formatter
+                .debug_tuple("SampleCompletenessNotEstablished")
+                .field(refusal)
+                .finish(),
             Self::MemberNotFinalized { kind, .. } => formatter
                 .debug_struct("MemberNotFinalized")
                 .field("member", &"<redacted>")
@@ -904,11 +922,33 @@ impl std::fmt::Debug for FinalizedOutputSet {
     }
 }
 
-/// One multi-output run: the path-free report, and the retained objects.
+/// What, beyond the lifecycle's own rules, must hold before a set may publish.
+///
+/// Named at the call site rather than inferred, and deliberately a closed
+/// enumeration rather than a hook: this lifecycle knows about staged files and
+/// destination names, and it must not grow an opinion about source samples. It
+/// knows only that a requirement can refuse, and which one was asked for.
+pub(crate) enum PrePublicationRequirement {
+    /// Nothing beyond what the lifecycle already checks.
+    None,
+    /// Every sample the SCIEX reader identified must have produced its output.
+    /// See [`crate::sciex_completeness`] for what that is proved from.
+    SciexSampleCompleteness { executable_sha256: Sha256Digest },
+}
+
+/// One multi-output run: the path-free report, the retained objects, and
+/// whatever the pre-publication requirement established.
 #[derive(Debug)]
 pub struct MultiOutputConversionRun {
     pub report: MultiOutputConversionReport,
     pub retained: FinalizedOutputSet,
+    /// The completeness judgement, for a run that asked for one.
+    ///
+    /// `None` means the question was never posed — every family but SCIEX, and
+    /// the evidence entry point. It does not mean "incomplete", which is why it
+    /// is an `Option` of a judgement rather than a judgement with a neutral
+    /// value.
+    pub completeness: Option<SciexSampleCompleteness>,
 }
 
 /// Runs one acquisition through the multi-output lifecycle, for evidence.
@@ -966,12 +1006,15 @@ pub fn run_multi_output_conversion_evidence(
             canonical_primary: canonical_source,
             companions: Vec::new(),
         },
-        destination_root,
-        conflict,
-        capabilities,
-        runner,
-        limits,
-        cancellation,
+        SetRunRequest {
+            destination_root,
+            conflict,
+            capabilities,
+            runner,
+            limits,
+            cancellation,
+            requirement: &PrePublicationRequirement::None,
+        },
     )
 }
 
@@ -1056,13 +1099,58 @@ pub fn run_admitted_multi_output_conversion(
                 .to_path_buf(),
             companions,
         },
-        destination_root,
-        conflict,
-        capabilities,
-        runner,
-        source.scan_limits(),
-        cancellation,
+        SetRunRequest {
+            destination_root,
+            conflict,
+            capabilities,
+            runner,
+            limits: source.scan_limits(),
+            cancellation,
+            // Asked for by family, and asked for here rather than inside the
+            // lifecycle: the lifecycle publishes staged files and has no notion
+            // of a source sample, and giving it one would make every other
+            // family's run answer a question that is not about it.
+            requirement: &completeness_requirement(source.kind(), capabilities),
+        },
     )
+}
+
+/// What must be established about a run of this family before it may publish.
+///
+/// Total over the families, so one added later has to say whether its backend
+/// can lose part of an acquisition without saying so. The three single-output
+/// families cannot: one source, one planned output, and a run that produced
+/// anything else is already refused.
+fn completeness_requirement(
+    kind: ConversionSourceKind,
+    capabilities: &InstalledHelpCapabilities,
+) -> PrePublicationRequirement {
+    match kind {
+        ConversionSourceKind::MzmlFile
+        | ConversionSourceKind::ThermoRawFile
+        | ConversionSourceKind::ShimadzuLcdFile => PrePublicationRequirement::None,
+        ConversionSourceKind::SciexWiffBundle => {
+            PrePublicationRequirement::SciexSampleCompleteness {
+                executable_sha256: capabilities.executable_sha256(),
+            }
+        }
+    }
+}
+
+/// Everything a set run needs besides its source.
+///
+/// Gathered because the list had grown past the point where a reader could tell
+/// the arguments apart at a call site, and because the last of them --
+/// [`PrePublicationRequirement`] -- is the one that must never be passed by
+/// accident.
+struct SetRunRequest<'a> {
+    destination_root: &'a Path,
+    conflict: ConflictPolicy,
+    capabilities: &'a InstalledHelpCapabilities,
+    runner: &'a dyn ProcessRunner,
+    limits: MzmlScanLimits,
+    cancellation: Option<&'a ConversionCancellation>,
+    requirement: &'a PrePublicationRequirement,
 }
 
 /// One acquisition bound for a run: every object held open, the primary's facts
@@ -1089,13 +1177,17 @@ struct BoundSource {
 /// a recheck of every member on one side; a Rust-owned path on the other.
 fn run_bound_multi_output(
     bound: BoundSource,
-    destination_root: &Path,
-    conflict: ConflictPolicy,
-    capabilities: &InstalledHelpCapabilities,
-    runner: &dyn ProcessRunner,
-    limits: MzmlScanLimits,
-    cancellation: Option<&ConversionCancellation>,
+    request: SetRunRequest<'_>,
 ) -> MultiOutputConversionRun {
+    let SetRunRequest {
+        destination_root,
+        conflict,
+        capabilities,
+        runner,
+        limits,
+        cancellation,
+        requirement,
+    } = request;
     let policy = ConversionPolicy::default();
     let BoundSource {
         pins,
@@ -1178,6 +1270,24 @@ fn run_bound_multi_output(
         return refused_diagnosable(failure, backend, residue, diagnostics);
     }
 
+    // Before discovery, before validation, before any destination name is
+    // taken: the earliest point at which the finished run can be judged. A
+    // requirement that could only be judged after publication would not be a
+    // gate at all -- it would be a note attached to files the user already has.
+    let proof = match examine_requirement(requirement, &command, process_output.as_ref()) {
+        Ok(proof) => proof,
+        Err(refusal) => {
+            let diagnostics = diagnostics_of(&process_output);
+            let residue = staging.discard();
+            return refused_diagnosable(
+                MultiOutputFailure::SampleCompletenessNotEstablished(refusal),
+                backend,
+                residue,
+                diagnostics,
+            );
+        }
+    };
+
     let declared = process_output.as_ref().map_or_else(
         || DeclaredOutputSet::from_backend_stdout(&[], true),
         |output| DeclaredOutputSet::from_backend_stdout(&output.stdout, output.stdout_truncated),
@@ -1204,6 +1314,17 @@ fn run_bound_multi_output(
         MultiOutputOutcome::RefusedBeforePublication(_)
         | MultiOutputOutcome::PartiallyFinalized { .. } => diagnostics_of(&process_output),
     };
+    // Completed only by a set that reached its destination whole. The audit
+    // says no identified sample was lost on the way out of the backend; full
+    // finalization says every surviving member reached the user. Neither alone
+    // is the claim, and a partially published set is explicitly not one.
+    let completeness = proof.map(|proof| {
+        if matches!(settled.outcome, MultiOutputOutcome::FullyFinalized) {
+            proof.with_published_members(settled.retained.len())
+        } else {
+            SciexSampleCompleteness::NotEstablished(SampleCompletenessRefusal::SetNotFullyPublished)
+        }
+    });
     let residue = staging.discard();
     MultiOutputConversionRun {
         report: MultiOutputConversionReport {
@@ -1216,6 +1337,38 @@ fn run_bound_multi_output(
         retained: FinalizedOutputSet {
             outputs: settled.retained,
         },
+        completeness,
+    }
+}
+
+/// Applies the run's pre-publication requirement, if it has one.
+///
+/// The lifecycle's whole knowledge of the subject: a requirement either
+/// produces a proof to be completed later, or refuses. What the proof is about
+/// lives in the module that owns it.
+fn examine_requirement(
+    requirement: &PrePublicationRequirement,
+    command: &CommandSpec,
+    output: Option<&ProcessOutput>,
+) -> Result<Option<NoSampleLoss>, SampleCompletenessRefusal> {
+    match requirement {
+        PrePublicationRequirement::None => Ok(None),
+        PrePublicationRequirement::SciexSampleCompleteness { executable_sha256 } => {
+            // No captured output at all is not a clean run to audit. Reached
+            // only if the boundary reported success without a capture, which
+            // it does not do -- answered rather than unwrapped.
+            let Some(output) = output else {
+                return Err(SampleCompletenessRefusal::BackendDidNotCompleteCleanly);
+            };
+            examine_backend_evidence(&BackendSampleEvidence {
+                stderr: &output.stderr,
+                stderr_truncated: output.stderr_truncated,
+                exited_cleanly: output.termination == Termination::Exited && output.success(),
+                argv_requests_filtering: argv_requests_filtering(command.args()),
+                executable_sha256: *executable_sha256,
+            })
+            .map(Some)
+        }
     }
 }
 
@@ -1248,6 +1401,8 @@ fn refused(
         retained: FinalizedOutputSet {
             outputs: Vec::new(),
         },
+        // A run that published nothing answers no question about the source.
+        completeness: None,
     }
 }
 
