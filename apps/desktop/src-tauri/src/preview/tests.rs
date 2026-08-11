@@ -16052,6 +16052,10 @@ fn every_bundle_member_is_pinned_while_the_backend_runs() {
     );
 }
 
+/// The shape the evidenced build writes to stderr when the reader loses one
+/// sample and carries on.
+const READER_LOST_A_SAMPLE: &str = "[Reader_ABI::read] Error opening run 3 in \"a.wiff\":\nboom\n";
+
 /// An incomplete acquisition publishes nothing, through the workspace path.
 ///
 /// The pre-slice behaviour was the false claim this gate exists for: nine of
@@ -16064,11 +16068,8 @@ fn an_incomplete_acquisition_publishes_nothing_through_the_workspace() {
     let acquisition = fixture.sciex_bundle("acquisition");
     let destination = fixture.destination("out");
     let service = output_set_service(
-        FakeOutputSetRunner::writing(&["acquisition-S1.mzML", "acquisition-S2.mzML"]).complaining(
-            "[Reader_ABI::read] Error opening run 3 in \"acquisition.wiff\":
-boom
-",
-        ),
+        FakeOutputSetRunner::writing(&["acquisition-S1.mzML", "acquisition-S2.mzML"])
+            .complaining(READER_LOST_A_SAMPLE),
     );
     let dataset = service
         .add_sciex_wiff_dataset(&acquisition)
