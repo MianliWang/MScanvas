@@ -172,21 +172,28 @@ impl DiscoveredMember {
 pub(crate) fn discover_staged_output_set(
     output_directory: &Path,
 ) -> Result<Vec<DiscoveredMember>, OutputSetRejection> {
-    let snapshot = fs_guard::snapshot_output_directory(output_directory).map_err(|error| {
-        OutputSetRejection::DirectoryUnreadable {
-            kind: match error {
-                fs_guard::RegularFileError::Io { kind } => kind,
-                _ => io::ErrorKind::Other,
-            },
+    // Bounded enumeration, not a bounded answer over an unbounded reading. A
+    // backend that filled staging is refused after `MAX + 1` entries rather
+    // than after a metadata read for every one of them.
+    let snapshot = match fs_guard::snapshot_output_directory_bounded(
+        output_directory,
+        MAX_CONVERSION_OUTPUTS_PER_SOURCE,
+    ) {
+        Ok(fs_guard::BoundedSnapshot::Within(snapshot)) => snapshot,
+        Ok(fs_guard::BoundedSnapshot::OverBound { observed }) => {
+            return Err(OutputSetRejection::TooManyOutputs { observed });
         }
-    })?;
+        Err(error) => {
+            return Err(OutputSetRejection::DirectoryUnreadable {
+                kind: match error {
+                    fs_guard::RegularFileError::Io { kind } => kind,
+                    _ => io::ErrorKind::Other,
+                },
+            });
+        }
+    };
     if snapshot.is_empty() {
         return Err(OutputSetRejection::NoOutputs);
-    }
-    if snapshot.len() > MAX_CONVERSION_OUTPUTS_PER_SOURCE {
-        return Err(OutputSetRejection::TooManyOutputs {
-            observed: snapshot.len(),
-        });
     }
 
     let mut members: Vec<DiscoveredMember> = Vec::with_capacity(snapshot.len());

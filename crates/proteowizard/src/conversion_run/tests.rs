@@ -4626,11 +4626,26 @@ fn a_staged_output_set_is_discovered_bounded_ordered_and_mzml_only() {
     for index in 0..=MAX_CONVERSION_OUTPUTS_PER_SOURCE {
         over.member(&format!("sample_{index:03}.mzML"));
     }
+    // `MAX + 1` because enumeration stops the moment the answer is certain --
+    // the count is what proved the bound was exceeded, not a total.
     assert_eq!(
         output_set::discover_staged_output_set(&over.staged).expect_err("over the bound"),
         OutputSetRejection::TooManyOutputs {
             observed: MAX_CONVERSION_OUTPUTS_PER_SOURCE + 1
         }
+    );
+    // Far over the bound: still refused, and still after the same bounded
+    // reading rather than after a metadata read for every entry.
+    let far_over = SetFixture::new("far-over-bound");
+    for index in 0..(MAX_CONVERSION_OUTPUTS_PER_SOURCE * 4) {
+        far_over.member(&format!("sample_{index:03}.mzML"));
+    }
+    assert_eq!(
+        output_set::discover_staged_output_set(&far_over.staged).expect_err("far over the bound"),
+        OutputSetRejection::TooManyOutputs {
+            observed: MAX_CONVERSION_OUTPUTS_PER_SOURCE + 1
+        },
+        "the refusal counts what it read, not what was there"
     );
 }
 
