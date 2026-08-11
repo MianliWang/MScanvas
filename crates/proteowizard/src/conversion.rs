@@ -338,6 +338,14 @@ impl ValidatedConversionOutput {
         ))
     }
 
+    /// What was established, read without consuming the object.
+    ///
+    /// For the output-set lifecycle, which copies each member's safe facts
+    /// into its report row before finalization consumes the object itself.
+    pub(crate) const fn valid_ref(&self) -> &ValidConversion {
+        &self.valid
+    }
+
     /// Consumes the validated reading, yielding the handle that read it.
     ///
     /// Consuming is the point: an object can be finalized once, and the handle
@@ -1109,6 +1117,53 @@ pub(crate) fn verify_vendor_conversion_retaining_output(
         Err(rejection) => return VerifiedConversion::Rejected(rejection.into()),
     };
 
+    match judge_output_alone(source, output, policy) {
+        ConversionIntegrityOutcome::Valid(valid) => {
+            VerifiedConversion::Valid(Box::new(ValidatedConversionOutput {
+                file,
+                valid: *valid,
+            }))
+        }
+        rejected => VerifiedConversion::Rejected(rejected),
+    }
+}
+
+/// Judges one member of a staged output *set*, retaining the exact object.
+///
+/// The single-output twin above insists the directory holds exactly one
+/// planned entry, because for every admitted family that is the contract. A
+/// set's membership is established once for the whole directory by the
+/// output-set discovery; what this judges is one named member of it — opened
+/// renameably with writers denied, length-checked against the enumeration that
+/// admitted it, scanned fail-closed and hashed through the held object, then
+/// judged output-only exactly as a vendor output is. The source-object recheck
+/// inside that judgement runs per member, which re-reads the acquisition once
+/// per output; that is deliberate — stricter, not cheaper — and bounded by the
+/// set bound.
+pub(crate) fn verify_staged_member_retaining_output(
+    source: &SourceObjectFacts,
+    output_directory: &Path,
+    member_file_name: &OsStr,
+    enumerated_byte_length: u64,
+    policy: ConversionPolicy,
+    limits: MzmlScanLimits,
+) -> VerifiedConversion {
+    let path = output_directory.join(member_file_name);
+    let (file, observed_byte_length) = match fs_guard::open_regular_file_renameable(&path) {
+        Ok(opened) => opened,
+        Err(error) => {
+            return VerifiedConversion::Rejected(ConversionOutputRejection::from(error).into());
+        }
+    };
+    if observed_byte_length != enumerated_byte_length {
+        return VerifiedConversion::Rejected(
+            ConversionOutputRejection::ChangedDuringInspection.into(),
+        );
+    }
+    let (file, output) = match inspect_open_output(file, observed_byte_length, limits) {
+        Ok(inspected) => inspected,
+        Err(rejection) => return VerifiedConversion::Rejected(rejection.into()),
+    };
     match judge_output_alone(source, output, policy) {
         ConversionIntegrityOutcome::Valid(valid) => {
             VerifiedConversion::Valid(Box::new(ValidatedConversionOutput {

@@ -43,7 +43,7 @@ use crate::finalized_output::FinalizedOutput;
 /// being renamed or removed for as long as a run is in flight. The final name is
 /// then formed against the canonical path of a directory object that cannot be
 /// swapped underneath it.
-pub(super) struct DestinationDirectory {
+pub(crate) struct DestinationDirectory {
     #[cfg(windows)]
     _pin: File,
     path: PathBuf,
@@ -101,7 +101,7 @@ impl DestinationDirectory {
         })
     }
 
-    fn path(&self) -> &Path {
+    pub(super) fn path(&self) -> &Path {
         &self.path
     }
 }

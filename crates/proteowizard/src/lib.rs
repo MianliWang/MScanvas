@@ -56,6 +56,12 @@ pub use conversion::{
 pub use conversion_run::artifact::{
     LocalFileWriteError, LocalFileWriteFailure, write_new_local_file,
 };
+pub use conversion_run::output_set::{
+    FinalizedOutputSet, MAX_CONVERSION_OUTPUTS_PER_SOURCE, MultiOutputConversionReport,
+    MultiOutputConversionRun, MultiOutputFailure, MultiOutputOutcome, OutputMemberReport,
+    OutputMemberState, OutputMemberValidation, OutputSetRejection,
+    run_multi_output_conversion_evidence,
+};
 pub use conversion_run::{
     BackendDiagnosticText, BackendExecutionFailure, BackendRunFacts, BackendStream,
     CancellationFailure, CancellationReport, ConflictPolicy, ConversionAttempt, ConversionPlan,

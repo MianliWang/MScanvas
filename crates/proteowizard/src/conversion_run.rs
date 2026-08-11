@@ -2725,6 +2725,7 @@ fn run_staged(
 pub(crate) mod artifact;
 mod cleanup;
 mod finalize;
+pub mod output_set;
 
 /// The volume serial and file identity of an object, read through a handle the
 /// caller already holds.

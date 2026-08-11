@@ -272,6 +272,17 @@ impl OutputDirectoryEntry {
         open_regular_file(&directory.join(&self.name))
     }
 
+    /// The entry's own name.
+    ///
+    /// For the output-set discovery, whose members are named by the backend
+    /// rather than by any plan: there is no expected name to compare against,
+    /// so the name itself is the fact. It is a single directory-entry
+    /// component by construction and display-grade like every output name.
+    #[must_use]
+    pub fn file_name(&self) -> &std::ffi::OsStr {
+        &self.name
+    }
+
     /// Whether the entry name ends with a suffix a backend uses for output it
     /// has not finished writing.
     #[must_use]

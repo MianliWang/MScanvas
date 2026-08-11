@@ -503,6 +503,15 @@ dependency was added to imitate it.
   name, with no sidecar, index, log or scratch entry. One fixture per family on
   one build: a multi-sample input or a non-mzML output format is still
   unmeasured.
+
+  **Amended 2026-08-10 (M3.10).** The multi-output case is now measured and
+  modelled. A SCIEX WIFF conversion names its output itself — the plan's
+  derived name is never what the backend writes, even for one sample — and a
+  multi-sample acquisition yields one document per sample. The exactly-one
+  planned-entry rule remains the contract for every *admitted* family, all of
+  which are single-output; the topology that violates it lives in a separate
+  private lifecycle, [ADR 0021](0021-private-multi-output-conversion-lifecycle.md),
+  which no admitted source reaches.
 - **mzXML.** Rated **C** on demonstrated multi-source spectrum loss. Stays
   unplannable.
 - **Progress and locale.** Both **D**. No progress claim, and stderr wording is
