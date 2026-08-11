@@ -142,6 +142,35 @@ as a `FinalizedOutput` before its rename. When member K fails after members
 A failure on the very first member published nothing and is an ordinary
 refusal, not a partial state.
 
+### The staging directory is proved fresh, twice
+
+Discovery attributes every member of the staged output directory to the
+backend, so a file injected into it before the spawn would be published as a
+conversion output and credited to the acquisition. The set command is therefore
+built with the same fresh-directory safety the preview commands carry:
+emptiness is established when the command is built, and the runner rechecks it
+immediately before spawning. Found in review; the gap was real, and the fix is
+the existing mechanism rather than a new one.
+
+### Failures keep what the backend said
+
+A run worth diagnosing retains a bounded, redacted `BackendDiagnosticText` —
+the backend rejected the input, did not complete, or exited cleanly and
+produced something the lifecycle refused. Without it the companion-missing
+failure this slice measured would be unexplainable from the report. A
+finalized or skipped run retains none, exactly as the single-output boundary
+retains none, and the redaction is the same discipline: acquisition,
+destination, staging, executable, installation and temporary folder replaced
+before any byte is kept.
+
+### Member names are display facts, not debug facts
+
+A backend-chosen basename embeds the vendor's own sample identifiers —
+measured: `PressureTrace1-6500SysSuit1269`, `201208-378803-ABRR-AUG-1`. Reports
+carry them deliberately, through accessors; **every** debug projection in this
+module redacts them, including the aggregate report and outcome, because a
+debug string reaches logs and panic messages nobody meant to publish.
+
 ### Retained objects, staging, cancellation
 
 Each published member is retained as the existing `FinalizedOutput` — the same

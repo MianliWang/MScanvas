@@ -1468,6 +1468,30 @@ pub struct BackendDiagnosticText {
 }
 
 impl BackendDiagnosticText {
+    /// Builds the pair of redacted excerpts from one process output.
+    ///
+    /// Shared by the single-output attempt text and the output-set lifecycle,
+    /// so the two cannot drift in what they retain.
+    pub(crate) fn from_streams(
+        output: &crate::process::ProcessOutput,
+        redactor: &crate::diagnostics::Redactor,
+    ) -> Self {
+        Self {
+            stdout: crate::diagnostics::BackendTextExcerpt::of_stream(
+                &output.stdout,
+                output.stdout_total_bytes,
+                output.stdout_truncated,
+                redactor,
+            ),
+            stderr: crate::diagnostics::BackendTextExcerpt::of_stream(
+                &output.stderr,
+                output.stderr_total_bytes,
+                output.stderr_truncated,
+                redactor,
+            ),
+        }
+    }
+
     #[must_use]
     pub const fn stdout(&self) -> &BackendTextExcerpt {
         &self.stdout

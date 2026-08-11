@@ -5334,9 +5334,17 @@ fn the_multi_output_report_names_no_location() {
         rendered.contains("FinalizedOutputSet { outputs: 2 }"),
         "the retained set renders as a count: {rendered}"
     );
+    // Not even the member basenames: they are backend-chosen and embed the
+    // vendor's own sample identifiers, so the aggregate debug projection
+    // redacts them too. A caller that wants a name asks for one.
     assert!(
-        rendered.contains("sample_01.mzML"),
-        "basenames are display facts"
+        !rendered.contains("sample_01.mzML"),
+        "the run's debug projection names a member: {rendered}"
+    );
+    assert_eq!(
+        run.report.members()[0].file_name(),
+        "sample_01.mzML",
+        "the accessor is how a report carries a display name"
     );
 
     // A failure's debug projection, by contrast, redacts the member name: a
@@ -5366,6 +5374,54 @@ fn the_multi_output_report_names_no_location() {
     assert!(
         !rendered.contains("secret-sample"),
         "a set rejection debug projection names a member: {rendered}"
+    );
+}
+
+/// The set command carries the pre-spawn fresh-directory recheck.
+///
+/// Discovery afterwards attributes every member of the staging output
+/// directory to the backend, so a file injected between the staging area's
+/// creation and the spawn would be published as a conversion output and
+/// credited to this acquisition. The runner rechecks emptiness immediately
+/// before it spawns, and it only does so for a command that carries the
+/// safety -- so the command must, and the emptiness must be established when
+/// the command is built.
+#[test]
+fn the_set_command_requires_and_rechecks_a_fresh_output_directory() {
+    let directory = TestDirectory::new();
+    let source = directory.path().join("acquisition.bin");
+    fs::write(&source, b"an acquisition").expect("write the source");
+    let staged = directory.path().join("staged");
+    fs::create_dir(&staged).expect("create the staged output directory");
+
+    let command = crate::command::build_msconvert_set_command_for_source(
+        &capabilities(),
+        &source,
+        &staged,
+        InputSpelling::PlainVerified,
+    )
+    .expect("an empty output directory is plannable");
+    assert!(
+        command.fresh_output_directory().is_some(),
+        "the runner rechecks emptiness only for a command that carries the safety"
+    );
+    assert!(
+        command.output_destination().is_none(),
+        "a set command names no single planned destination"
+    );
+
+    // An occupied output directory is refused while the command is built, so
+    // nothing is ever spawned against a directory that already holds files.
+    fs::write(staged.join("injected.mzML"), output_document()).expect("inject a file");
+    assert!(
+        crate::command::build_msconvert_set_command_for_source(
+            &capabilities(),
+            &source,
+            &staged,
+            InputSpelling::PlainVerified,
+        )
+        .is_err(),
+        "an occupied output directory is not plannable"
     );
 }
 

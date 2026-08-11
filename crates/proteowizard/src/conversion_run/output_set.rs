@@ -48,6 +48,9 @@ use super::{
     BackendExecutionFailure, BackendRunFacts, ConflictPolicy, OwnedStagingArea, StagingResidue,
     finalize,
 };
+use crate::BackendDiagnosticText;
+use crate::diagnostics::Redactor;
+use crate::process::ProcessOutput;
 
 /// The most mzML documents one backend run may hand this lifecycle.
 ///
@@ -234,14 +237,29 @@ impl OutputMemberState {
     }
 }
 
-/// What was established about one member. Path-free: the name is the
-/// backend-chosen basename, which is display-grade like every other output
-/// name this crate reports.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What was established about one member.
+///
+/// The name is intentionally reachable only through [`Self::file_name`]: a
+/// backend-chosen basename embeds the vendor's own sample identifiers, so the
+/// debug projection below redacts it and a caller that wants it says so.
+#[derive(Clone, PartialEq, Eq)]
 pub struct OutputMemberReport {
     file_name: String,
     state: OutputMemberState,
     validation: Option<OutputMemberValidation>,
+}
+
+impl std::fmt::Debug for OutputMemberReport {
+    /// State and shape, with the backend-chosen name redacted. Reports carry
+    /// names through accessors on purpose; incidental diagnostics do not.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OutputMemberReport")
+            .field("file_name", &"<redacted>")
+            .field("state", &self.state)
+            .field("validated", &self.validation.is_some())
+            .finish()
+    }
 }
 
 impl OutputMemberReport {
@@ -480,7 +498,7 @@ impl std::fmt::Debug for MultiOutputFailure {
 }
 
 /// How one multi-output run ended, as a group.
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 pub enum MultiOutputOutcome {
     /// Every member was validated and every member received its final name.
     FullyFinalized,
@@ -509,6 +527,34 @@ pub enum MultiOutputOutcome {
     },
 }
 
+impl std::fmt::Debug for MultiOutputOutcome {
+    /// Stable identifiers and counts; member basenames stay out, as they do
+    /// on every failure projection in this module.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FullyFinalized | Self::SkippedExistingDestinations => {
+                formatter.write_str(self.stable_id())
+            }
+            Self::RefusedBeforePublication(failure) => formatter
+                .debug_tuple("RefusedBeforePublication")
+                .field(failure)
+                .finish(),
+            Self::PartiallyFinalized {
+                finalized,
+                kind,
+                not_published,
+                ..
+            } => formatter
+                .debug_struct("PartiallyFinalized")
+                .field("finalized_count", &finalized.len())
+                .field("failed_member", &"<redacted>")
+                .field("kind", kind)
+                .field("not_published_count", &not_published.len())
+                .finish(),
+        }
+    }
+}
+
 impl MultiOutputOutcome {
     #[must_use]
     pub const fn stable_id(&self) -> &'static str {
@@ -522,12 +568,29 @@ impl MultiOutputOutcome {
 }
 
 /// What one multi-output run established. Path-free by construction.
-#[derive(Debug, PartialEq)]
 pub struct MultiOutputConversionReport {
     outcome: MultiOutputOutcome,
     members: Vec<OutputMemberReport>,
     backend: Option<BackendRunFacts>,
     residue: Option<StagingResidue>,
+    /// Bounded, redacted backend text, retained only where a run is worth
+    /// diagnosing: the backend rejected the input, did not complete, or exited
+    /// cleanly and produced something the lifecycle then refused. A run that
+    /// finalized keeps none, exactly as the single-output boundary keeps none.
+    diagnostics: Option<Box<BackendDiagnosticText>>,
+}
+
+impl std::fmt::Debug for MultiOutputConversionReport {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MultiOutputConversionReport")
+            .field("outcome", &self.outcome)
+            .field("members", &self.members)
+            .field("backend", &self.backend)
+            .field("residue", &self.residue)
+            .field("diagnostics_retained", &self.diagnostics.is_some())
+            .finish()
+    }
 }
 
 impl MultiOutputConversionReport {
@@ -551,6 +614,12 @@ impl MultiOutputConversionReport {
     #[must_use]
     pub const fn residue(&self) -> Option<StagingResidue> {
         self.residue
+    }
+
+    /// Bounded, redacted backend text for a diagnosis-worthy run.
+    #[must_use]
+    pub fn diagnostics(&self) -> Option<&BackendDiagnosticText> {
+        self.diagnostics.as_deref()
     }
 }
 
@@ -688,21 +757,45 @@ pub fn run_multi_output_conversion_evidence(
         }
     };
 
-    let (backend, process_failure) = run_set_backend(&command, runner, cancellation);
+    let staging_output = staging.output_directory();
+    let (backend, process_failure, process_output) =
+        run_set_backend(&command, runner, cancellation);
+    let diagnostics_of = |output: &Option<ProcessOutput>| {
+        output.as_ref().and_then(|output| {
+            set_diagnostic_text(
+                output,
+                &canonical_source,
+                &canonical_destination,
+                &staging_output,
+                &command.executable,
+            )
+        })
+    };
     if let Some(failure) = process_failure {
+        let diagnostics = diagnostics_of(&process_output);
         let residue = staging.discard();
-        return refused(failure, backend, residue);
+        return refused_diagnosable(failure, backend, residue, diagnostics);
     }
 
     let settled = settle_staged_output_set(
         &facts,
-        &staging.output_directory(),
+        &staging_output,
         &destination,
         conflict,
         policy,
         limits,
     );
     drop(pinned_source);
+    // Retained only where the run is worth diagnosing. A finalized or skipped
+    // set keeps no backend text, exactly as a finalized single output keeps
+    // none; anything refused or partial keeps what the backend said, redacted.
+    let diagnostics = match &settled.outcome {
+        MultiOutputOutcome::FullyFinalized | MultiOutputOutcome::SkippedExistingDestinations => {
+            None
+        }
+        MultiOutputOutcome::RefusedBeforePublication(_)
+        | MultiOutputOutcome::PartiallyFinalized { .. } => diagnostics_of(&process_output),
+    };
     let residue = staging.discard();
     MultiOutputConversionRun {
         report: MultiOutputConversionReport {
@@ -710,11 +803,24 @@ pub fn run_multi_output_conversion_evidence(
             members: settled.members,
             backend,
             residue,
+            diagnostics,
         },
         retained: FinalizedOutputSet {
             outputs: settled.retained,
         },
     }
+}
+
+/// A refusal carrying what the backend said on the way.
+fn refused_diagnosable(
+    failure: MultiOutputFailure,
+    backend: Option<BackendRunFacts>,
+    residue: Option<StagingResidue>,
+    diagnostics: Option<Box<BackendDiagnosticText>>,
+) -> MultiOutputConversionRun {
+    let mut run = refused(failure, backend, residue);
+    run.report.diagnostics = diagnostics;
+    run
 }
 
 /// A refusal that produced no members.
@@ -729,6 +835,7 @@ fn refused(
             members: Vec::new(),
             backend,
             residue,
+            diagnostics: None,
         },
         retained: FinalizedOutputSet {
             outputs: Vec::new(),
@@ -792,7 +899,11 @@ fn run_set_backend(
     command: &CommandSpec,
     runner: &dyn ProcessRunner,
     cancellation: Option<&ConversionCancellation>,
-) -> (Option<BackendRunFacts>, Option<MultiOutputFailure>) {
+) -> (
+    Option<BackendRunFacts>,
+    Option<MultiOutputFailure>,
+    Option<ProcessOutput>,
+) {
     if let Some(cancellation) = cancellation
         && cancellation.is_requested()
     {
@@ -801,6 +912,7 @@ fn run_set_backend(
             Some(MultiOutputFailure::Cancelled {
                 surviving_processes: None,
             }),
+            None,
         );
     }
     let result = match cancellation {
@@ -821,7 +933,7 @@ fn run_set_backend(
             } else {
                 MultiOutputFailure::Backend(cause)
             };
-            return (None, Some(failure));
+            return (None, Some(failure), None);
         }
     };
     let backend = Some(BackendRunFacts::from(&output));
@@ -843,17 +955,51 @@ fn run_set_backend(
                 ),
             }
         };
-        return (backend, Some(failure));
+        return (backend, Some(failure), Some(output));
     }
     if !output.success() {
-        return (
-            backend,
-            Some(MultiOutputFailure::BackendRejected {
-                exit_code: output.exit_code,
-            }),
-        );
+        let failure = MultiOutputFailure::BackendRejected {
+            exit_code: output.exit_code,
+        };
+        return (backend, Some(failure), Some(output));
     }
-    (backend, None)
+    (backend, None, Some(output))
+}
+
+/// Bounded, redacted backend text for this run.
+///
+/// The same shape and the same redaction discipline as the single-output
+/// boundary's: every location this run knows -- the acquisition, the
+/// destination, the staging area, the executable and its installation, the
+/// temporary folder -- is replaced before a byte of backend text is retained.
+fn set_diagnostic_text(
+    output: &ProcessOutput,
+    source: &Path,
+    destination_root: &Path,
+    staging_output: &Path,
+    executable: &Path,
+) -> Option<Box<BackendDiagnosticText>> {
+    let mut redactor = Redactor::new();
+    redactor.add_path(source, "<source>");
+    if let Some(directory) = source.parent() {
+        redactor.add_path(directory, "<source>");
+    }
+    redactor.add_path(destination_root, "<destination>");
+    if let Some(staging_root) = staging_output.parent() {
+        redactor.add_path(staging_root, "<staging>");
+    }
+    redactor.add_path(staging_output, "<staging>");
+    redactor.add_path(executable, "<backend>");
+    if let Some(directory) = executable.parent() {
+        redactor.add_path(directory, "<backend>");
+        if let Some(home) = directory.parent() {
+            redactor.add_path(home, "<backend>");
+        }
+    }
+    redactor.add_path(&std::env::temp_dir(), "<local-path>");
+    Some(Box::new(BackendDiagnosticText::from_streams(
+        output, &redactor,
+    )))
 }
 
 /// Everything the filesystem half of a settled run produced.
