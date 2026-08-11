@@ -13,6 +13,12 @@
   own stdout. `SciexWiffBundle` is now an admitted family, so the statements
   below that no source family is admitted describe this ADR's slice and not
   the current boundary. Everything else here stands.
+- **Extended by [ADR 0024](0024-sciex-sample-completeness.md), 2026-08-11.**
+  The lifecycle gained one closed `PrePublicationRequirement`, examined after
+  the backend exits and before discovery. `fully_finalized` is unchanged and
+  still means *every admitted output member was validated and published*; a
+  family may now additionally be required to show it lost no source sample, and
+  that judgement is reported beside this outcome rather than folded into it.
 - **Extended by [ADR 0023](0023-private-workspace-sciex-wiff-conversion.md),
   2026-08-11.** This lifecycle now has a workspace caller: a private
   coordinator carries an admitted bundle from a `DatasetId` into

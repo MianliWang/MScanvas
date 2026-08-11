@@ -7,8 +7,15 @@
 - **Extended by [ADR 0023](0023-private-workspace-sciex-wiff-conversion.md),
   2026-08-11.** Workspace integration named above as gated is now built,
   privately: one `DatasetId` holds a whole bundle and converts from a workspace
-  handle. Everything else here stands, and the per-sample completeness gate this
-  ADR opened is restated there as the block on any visible surface.
+  handle.
+- **The per-sample completeness gate this ADR opened is closed by
+  [ADR 0024](0024-sciex-sample-completeness.md), 2026-08-11**, for this exact
+  build and enforced before publication. The statement below that
+  declaration/discovery equality cannot prove sample completeness stands and is
+  precisely why: completeness is now a conjunction of five links, and that
+  equality is one of them. What remains open is narrower and upstream — the
+  reader's own enumeration can be short of the acquisition, which no evidence
+  available here can check.
 
 ## Context
 

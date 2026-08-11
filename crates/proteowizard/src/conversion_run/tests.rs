@@ -7088,3 +7088,69 @@ fn full_finalization_is_not_the_completeness_claim() {
         "a run that was never asked answered anyway"
     );
 }
+
+/// A set that did not reach its destination whole is not a complete
+/// acquisition, whatever the audit found.
+///
+/// The audit answers one question — did the backend lose a sample — and full
+/// finalization answers another — did every surviving member reach the user.
+/// Completeness is the conjunction, so an outcome that skipped or stopped
+/// partway must not inherit the audit's answer. `Skip` is the shape of that
+/// which a test can produce on demand: the same acquisition converted twice
+/// into one destination, where the second run has nothing left to publish.
+#[test]
+fn a_set_that_did_not_publish_whole_is_not_complete() {
+    let directory = TestDirectory::new();
+    let primary = write_sciex_bundle(directory.path(), "acquisition");
+    let destination_root = directory.path().join("destination");
+    fs::create_dir(&destination_root).expect("create the destination root");
+
+    let act = |spec: &CommandSpec| {
+        fs::write(
+            set_command_output_directory(spec).join("a-S1.mzML"),
+            output_document(),
+        )
+        .expect("write a backend output");
+        Ok(0)
+    };
+    let convert = |conflict| {
+        let runner = FakeRunner::new(&act).declaring(&["a-S1.mzML"]);
+        run_admitted_multi_output_conversion(
+            &open_sciex(&primary),
+            &destination_root,
+            conflict,
+            &evidenced_capabilities(),
+            &runner,
+            None,
+        )
+    };
+
+    let first = convert(ConflictPolicy::Fail);
+    assert!(matches!(
+        first.report.outcome(),
+        MultiOutputOutcome::FullyFinalized
+    ));
+    assert!(
+        first
+            .completeness
+            .as_ref()
+            .and_then(crate::SciexSampleCompleteness::established)
+            .is_some(),
+        "the first run published whole and is complete"
+    );
+
+    // The same acquisition again, with the name already taken.
+    let second = convert(ConflictPolicy::Skip);
+    assert!(matches!(
+        second.report.outcome(),
+        MultiOutputOutcome::SkippedExistingDestinations
+    ));
+    assert_eq!(
+        second
+            .completeness
+            .as_ref()
+            .and_then(crate::SciexSampleCompleteness::refusal),
+        Some(crate::SampleCompletenessRefusal::SetNotFullyPublished),
+        "a set that published nothing this run claimed the acquisition converted"
+    );
+}
