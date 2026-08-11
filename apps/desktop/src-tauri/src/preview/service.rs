@@ -1695,18 +1695,21 @@ impl PreviewService {
     #[cfg(test)]
     pub(super) fn output_set_adoption_ticket(
         &self,
-        handle: &str,
         destination_root: &Path,
         conversion: SciexConversion,
     ) -> Result<FinalizedOutputSetAdoptionTicket, PreviewErrorDto> {
-        let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
-        let (source_display_name, source_kind) = {
+        // The source comes from the conversion, not from a handle beside it.
+        // A handle the caller supplied could name any live row, and every
+        // member ticket would then carry that row as its origin -- so a
+        // conversion of A, adopted with B's handle, would persist B as where
+        // A's files came from. The conversion already knows which dataset it
+        // was of; asking it is the only answer that cannot be paired wrongly.
+        let id = DatasetId::parse(conversion.report.dataset()).ok_or_else(unknown_dataset)?;
+        let source_kind = conversion.report.source_kind();
+        let source_display_name = {
             let workspace = self.workspace();
             let dataset = workspace.registry.get(id).ok_or_else(unknown_dataset)?;
-            (
-                dataset.file().file_name().to_owned(),
-                dataset.file().source_kind(),
-            )
+            dataset.file().file_name().to_owned()
         };
         // The folder as the object it was admitted as, exactly as a queue binds
         // its destination. A name would let a later adoption write into

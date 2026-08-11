@@ -60,6 +60,12 @@ conversion whose files it was not adopting — same member count, same states,
 nothing for a check to notice. Taking them together makes that unexpressible
 rather than merely checked for.
 
+The source is taken from the conversion too, not from a handle beside it: a
+supplied handle could name any live row, and every member ticket would then
+carry that row as its origin — so a conversion of A adopted with B's handle
+would persist B as where A's files came from. The conversion already knows
+which dataset it was of.
+
 The run identity is allocated once when the conversion finishes, from a
 monotonic counter. It is deliberately **not** the workspace mutation generation:
 converting does not advance that, so two conversions of one dataset into two
