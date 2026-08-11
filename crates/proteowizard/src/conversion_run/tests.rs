@@ -6770,6 +6770,53 @@ fn the_declared_set_is_compared_by_name_and_fails_closed() {
     assert!(mixed.matches(&discovered_members(&["a.mzML", "b.mzML"])));
 }
 
+/// An acquisition's objects are bound once, and a second binding is refused.
+///
+/// Not a hypothetical tidiness rule. A call that replaced the companions a
+/// previous one bound is the single way this type could end up watching fewer
+/// objects than the run reads while still reporting a bound acquisition.
+#[test]
+fn a_command_binds_an_acquisition_s_companions_exactly_once() {
+    let directory = TestDirectory::new();
+    let primary = write_sciex_bundle(directory.path(), "acquisition");
+    let companion = directory.path().join("acquisition.wiff.scan");
+    let other = write_sciex_bundle(directory.path(), "other");
+
+    let identity = |path: &Path| super::SourceIdentity::capture(path).expect("capture an identity");
+    let spec = CommandSpec::new(
+        BackendTool::MsConvert,
+        std::env::current_exe().expect("test executable"),
+        ["--mzML"],
+        directory.path(),
+    )
+    .with_source_identity(identity(&primary));
+
+    let bound = spec
+        .clone()
+        .with_source_companion_identities(vec![identity(&companion)])
+        .expect("bind the acquisition's companion");
+    assert_eq!(bound.bound_source_object_count(), 2);
+
+    assert!(
+        bound
+            .with_source_companion_identities(vec![identity(&other)])
+            .is_none(),
+        "a second binding replaced the first"
+    );
+
+    // And the bound is a refusal, not a truncation.
+    assert!(
+        spec.with_source_companion_identities(vec![
+            identity(&companion),
+            identity(&other),
+            identity(&primary),
+            identity(&companion),
+        ])
+        .is_none(),
+        "an over-large acquisition was bound anyway"
+    );
+}
+
 /// The command a bundle run spawns carries every object the acquisition is made
 /// of, not only the one it names.
 ///

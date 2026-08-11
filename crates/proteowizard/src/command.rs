@@ -164,7 +164,7 @@ pub(crate) const MAX_SOURCE_BUNDLE_MEMBERS: usize = 4;
 /// backend and is bound anyway, because the backend will open it regardless of
 /// whether this boundary looked at it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SourceIdentitySet {
+pub(crate) struct SourceIdentitySet {
     primary: SourceIdentity,
     companions: Vec<SourceIdentity>,
 }
@@ -185,6 +185,13 @@ impl SourceIdentitySet {
     /// discarding the rest would leave the discarded ones unwatched while
     /// reporting that the source was checked.
     pub(crate) fn with_companions(mut self, companions: Vec<SourceIdentity>) -> Option<Self> {
+        // Once, or not at all. A second call would silently replace the
+        // companions the first one bound, which is the one way this could
+        // leave a run watching fewer objects than it reads while reporting
+        // that the acquisition was bound.
+        if !self.companions.is_empty() {
+            return None;
+        }
         if companions.len() + 1 > MAX_SOURCE_BUNDLE_MEMBERS {
             return None;
         }
