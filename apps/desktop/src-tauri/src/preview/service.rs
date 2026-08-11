@@ -89,8 +89,6 @@ use super::operation::{
     AdmittedDestination, CancellationFacts, ConversionQueue, ConversionSlot, ItemOutcome,
     ItemState, QueueItem, QueueItemAttempt, StopAccepted, TerminalReason, item_state_of,
 };
-#[cfg(test)]
-use super::selection::DatasetSourceKind;
 use super::selection::{
     AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity, RevocationReason,
     accept_mzml_file, accept_workspace_file, candidate_display_name, file_identity,
@@ -3648,11 +3646,17 @@ impl PreviewService {
             return Err(superseded());
         }
         let file = revalidate(&remembered)?;
-        // Refused here rather than deep in the lifecycle. This coordinator
-        // exists for families whose backend names its own outputs, and routing
-        // any other family through it would convert it under a contract its
-        // measurements do not support.
-        if file.source_kind() != DatasetSourceKind::SciexWiff {
+        // Refused here rather than deep in the lifecycle, and asked of the
+        // conversion boundary's own predicate rather than of one family name.
+        // This coordinator exists for families whose backend names its own
+        // outputs; routing any other family through it would convert it under a
+        // contract its measurements do not support, and naming a variant here
+        // would silently refuse the next family that does belong.
+        //
+        // Before the backend is bound, because the answer needs no installation
+        // and a refusal should cost the user nothing.
+        let kind = conversion_source_kind(file.source_kind());
+        if !kind.produces_output_set() {
             return Err(PreviewErrorDto::new(
                 "dataset_not_multi_output",
                 "That acquisition does not convert to a set of documents.",
@@ -3660,7 +3664,6 @@ impl PreviewService {
             ));
         }
         let backend = self.provider.conversion_backend()?;
-        let kind = conversion_source_kind(file.source_kind());
         refuse_unevidenced_build(&backend.capabilities, kind)?;
 
         // Every member, and the guards are held together for the whole run. A

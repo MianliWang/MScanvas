@@ -563,10 +563,27 @@ pub(super) fn accept_sciex_wiff_bundle(path: &Path) -> Result<AcceptedFile, Prev
     // be resolved" about an acquisition whose companion is simply missing would
     // describe the wrong thing.
     let companion_path = sciex_wiff_companion_path(&canonical).ok_or_else(unresolvable)?;
-    let Ok(companion_inspected) = inspect_selected_file(&companion_path) else {
-        return Err(bound_bundle_source(&canonical, inspected.identity, &[])
-            .err()
-            .unwrap_or_else(unresolvable));
+    let companion_inspected = match inspect_selected_file(&companion_path) {
+        Ok(inspected) => inspected,
+        Err(inspection_failure) => {
+            // Ask the family why before reporting an inspection failure. If the
+            // crate refuses the acquisition, that reason describes what is
+            // wrong with it -- a missing companion, a companion that is not a
+            // file, a companion that is not one -- and is worth far more than
+            // "that path could not be resolved". If the crate is satisfied, the
+            // companion is there and is what it should be, and what failed is
+            // this session's own attempt to take a hold on it; then the
+            // inspection's own reason is the true one.
+            return Err(
+                match ConversionSource::open_sciex_wiff_bundle(
+                    &canonical,
+                    MzmlScanLimits::default(),
+                ) {
+                    Err(rejection) => source_not_admitted(rejection),
+                    Ok(_) => inspection_failure,
+                },
+            );
+        }
     };
     let companion_canonical = std::fs::canonicalize(&companion_path).map_err(|_| unresolvable())?;
 
