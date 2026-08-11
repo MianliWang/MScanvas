@@ -146,12 +146,20 @@ fn run(cli: Cli) -> Result<(), String> {
         ));
     }
     let mut previous_names: Option<Vec<String>> = None;
+    // Exactly the directories this invocation created, in creation order. The
+    // emptiness check above says the workspace was ours when we started; it
+    // cannot say what appeared during a conversion that takes as long as it
+    // takes, so cleanup removes these and nothing else.
+    let mut created: Vec<PathBuf> = Vec::new();
     let result = (|| -> Result<(), String> {
         for round in 1..=cli.runs {
             let destination = cli.workspace.join(format!("destination-{round}"));
-            fs::create_dir_all(&destination).map_err(|error| {
+            // Exclusively, so this can never adopt -- and later delete -- a
+            // directory something else made.
+            fs::create_dir(&destination).map_err(|error| {
                 format!("the destination could not be created: {:?}", error.kind())
             })?;
+            created.push(destination.clone());
             println!("run[{round}].begin=true");
             let run = run_multi_output_conversion_evidence(
                 &cli.source,
@@ -223,8 +231,9 @@ fn run(cli: Cli) -> Result<(), String> {
         Ok(())
     })();
 
-    // Everything the harness created goes, whichever way the runs ended.
-    let cleanup = remove_workspace_contents(&cli.workspace);
+    // Everything the harness created goes -- and only that, whichever way the
+    // runs ended.
+    let cleanup = remove_created(&created);
     match (result, cleanup) {
         (Ok(()), residue) => residue,
         (Err(failure), Ok(())) => Err(failure),
@@ -238,28 +247,22 @@ fn count_entries(directory: &Path) -> Result<usize, String> {
         .count())
 }
 
-fn remove_workspace_contents(root: &Path) -> Result<(), String> {
-    let entries = fs::read_dir(root)
-        .map_err(|error| format!("the workspace could not be re-read: {:?}", error.kind()))?;
+/// Removes exactly the directories this invocation created.
+///
+/// Not the workspace's contents. A conversion can run for as long as it runs,
+/// and anything that appeared in the workspace meanwhile is not this run's to
+/// delete -- the acquisition least of all, if the caller's scratch directory
+/// turns out to be somewhere they also work.
+fn remove_created(created: &[PathBuf]) -> Result<(), String> {
     let mut left = 0_usize;
-    for entry in entries {
-        let Ok(entry) = entry else {
-            left += 1;
-            continue;
-        };
-        let path = entry.path();
-        let removed = if path.is_dir() {
-            fs::remove_dir_all(&path)
-        } else {
-            fs::remove_file(&path)
-        };
-        if removed.is_err() {
+    for path in created {
+        if fs::remove_dir_all(path).is_err() {
             left += 1;
         }
     }
     if left > 0 {
         return Err(format!(
-            "the harness could not remove {left} workspace entries; they may derive from the acquisition"
+            "{left} of the harness' own destination directories survived cleanup"
         ));
     }
     Ok(())
