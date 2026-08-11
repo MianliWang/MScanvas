@@ -114,8 +114,8 @@ Fourteen, each removing exactly one guard.
 | 10 | a full publication is reported as source-complete | red |
 | 11 | a companion swapped for an identical copy is admitted | red |
 | 12 | the visible picker routes a `.wiff` to the bundle admission | red |
-| 13 | the visible queue treats the bundle family as convertible | red |
-| 14 | re-admitting a rewritten bundle hands back the stale row | red |
+| 13 | re-admitting a rewritten bundle hands back the stale row | red |
+| 14 | the visible queue treats the bundle family as convertible | red |
 
 **Mutation 9 survived, and the reason is recorded rather than worked around.**
 Two guards cover a companion during a conversion and they cover different
