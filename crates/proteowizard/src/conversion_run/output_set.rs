@@ -1109,7 +1109,11 @@ pub(crate) fn settle_staged_output_set_seamed(
     // in the report keeps them whatever finalization later consumes.
     let mut validated: Vec<(DiscoveredMember, ValidatedConversionOutput)> =
         Vec::with_capacity(discovered.len());
-    let mut facts: Vec<(String, OutputMemberValidation)> = Vec::with_capacity(discovered.len());
+    // Keyed by the member's own `OsString`, never by its display string: a
+    // lossy conversion can map two distinct native names to one value, and a
+    // report that matched on it would attach one member's facts to another's
+    // row -- or call an unpublished member finalized.
+    let mut facts: Vec<(OsString, OutputMemberValidation)> = Vec::with_capacity(discovered.len());
     for member in &discovered {
         match verify_staged_member_retaining_output(
             source,
@@ -1121,7 +1125,7 @@ pub(crate) fn settle_staged_output_set_seamed(
         ) {
             VerifiedConversion::Valid(output) => {
                 facts.push((
-                    member.display_name(),
+                    member.name().to_owned(),
                     OutputMemberValidation::of(output.valid_ref()),
                 ));
                 validated.push((member.clone(), *output));
@@ -1197,6 +1201,7 @@ pub(crate) fn settle_staged_output_set_seamed(
     // object-bound and no-clobber, and a failure between renames leaves the
     // published prefix exactly where the user asked for it.
     let mut retained: Vec<FinalizedOutput> = Vec::new();
+    let mut finalized: Vec<OsString> = Vec::new();
     let mut finalized_names: Vec<String> = Vec::new();
     let mut waiting = validated.into_iter();
     let mut position = 0_usize;
@@ -1213,9 +1218,10 @@ pub(crate) fn settle_staged_output_set_seamed(
             member.name(),
         );
         match result {
-            Ok(finalized) => {
+            Ok(output) => {
+                finalized.push(member.name().to_owned());
                 finalized_names.push(member.display_name());
-                retained.push(finalized);
+                retained.push(output);
             }
             Err(error) => {
                 let failed_member = member.display_name();
@@ -1239,7 +1245,7 @@ pub(crate) fn settle_staged_output_set_seamed(
                     }
                 };
                 return SettledOutputSet {
-                    members: build_member_reports(&discovered, &facts, &finalized_names),
+                    members: build_member_reports(&discovered, &facts, &finalized),
                     outcome,
                     retained,
                 };
@@ -1249,7 +1255,7 @@ pub(crate) fn settle_staged_output_set_seamed(
 
     SettledOutputSet {
         outcome: MultiOutputOutcome::FullyFinalized,
-        members: build_member_reports(&discovered, &facts, &finalized_names),
+        members: build_member_reports(&discovered, &facts, &finalized),
         retained,
     }
 }
@@ -1260,18 +1266,23 @@ pub(crate) fn settle_staged_output_set_seamed(
 /// or not finalization later consumed its object.
 fn build_member_reports(
     discovered: &[DiscoveredMember],
-    facts: &[(String, OutputMemberValidation)],
-    finalized: &[String],
+    facts: &[(OsString, OutputMemberValidation)],
+    finalized: &[OsString],
 ) -> Vec<OutputMemberReport> {
     discovered
         .iter()
         .map(|member| {
             let display = member.display_name();
+            // Matched on the native name, so two members whose display strings
+            // collapse together still keep their own facts and their own state.
             let validation = facts
                 .iter()
-                .find(|(name, _)| *name == display)
+                .find(|(name, _)| name.as_os_str() == member.name())
                 .map(|(_, validation)| validation.clone());
-            let state = if finalized.contains(&display) {
+            let state = if finalized
+                .iter()
+                .any(|name| name.as_os_str() == member.name())
+            {
                 OutputMemberState::Finalized
             } else if validation.is_some() {
                 OutputMemberState::ValidatedNotPublished

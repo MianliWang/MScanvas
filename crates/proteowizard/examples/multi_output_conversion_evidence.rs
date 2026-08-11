@@ -157,7 +157,7 @@ fn run(cli: Cli) -> Result<(), String> {
     // long as it takes -- so cleanup removes these and nothing else, and the
     // hold is what makes "these" mean the objects that were created rather
     // than whatever now answers to their names.
-    let mut created: Vec<(PathBuf, fs::File)> = Vec::new();
+    let mut created: Vec<(PathBuf, Option<fs::File>)> = Vec::new();
     let result = (|| -> Result<(), String> {
         for round in 1..=cli.runs {
             let destination = cli.workspace.join(format!("destination-{round}"));
@@ -166,7 +166,16 @@ fn run(cli: Cli) -> Result<(), String> {
             fs::create_dir(&destination).map_err(|error| {
                 format!("the destination could not be created: {:?}", error.kind())
             })?;
-            created.push((destination.clone(), hold_directory(&destination)?));
+            // Recorded before the hold is attempted, not after. A hold that
+            // fails still leaves a directory this invocation created, and a
+            // `?` between the creation and the record would leave it behind --
+            // where it becomes residue and fails the next run's emptiness
+            // check.
+            created.push((destination.clone(), None));
+            let hold = hold_directory(&destination)?;
+            if let Some(last) = created.last_mut() {
+                last.1 = Some(hold);
+            }
             println!("run[{round}].begin=true");
             let run = run_multi_output_conversion_evidence(
                 &cli.source,
@@ -225,13 +234,26 @@ fn run(cli: Cli) -> Result<(), String> {
                 .iter()
                 .map(|member| member.file_name().to_owned())
                 .collect();
-            if let Some(previous) = &previous_names {
-                println!(
-                    "run[{round}].same_basename_set_as_previous={}",
-                    *previous == names
-                );
+            // Only two observed sets can agree. Two runs that were refused
+            // before discovery have no basenames between them, and reporting
+            // `true` there would record a positive repeatability conclusion
+            // from a failed experiment -- in the one harness whose output is
+            // the evidence for that very claim.
+            match (&previous_names, names.is_empty()) {
+                (Some(previous), false) if !previous.is_empty() => {
+                    println!(
+                        "run[{round}].same_basename_set_as_previous={}",
+                        *previous == names
+                    );
+                }
+                (Some(_), _) => {
+                    println!("run[{round}].same_basename_set_as_previous=unavailable");
+                }
+                (None, _) => {}
             }
-            previous_names = Some(names);
+            if !names.is_empty() {
+                previous_names = Some(names);
+            }
             let produced = count_entries(&destination)?;
             println!("run[{round}].destination_entry_count={produced}");
         }
@@ -313,7 +335,7 @@ fn hold_directory(path: &Path) -> Result<fs::File, String> {
 /// Each hold is released immediately before its own removal, so the object
 /// stayed pinned for the whole run and no other directory can have taken its
 /// name in the meantime.
-fn remove_created(created: Vec<(PathBuf, fs::File)>) -> Result<(), String> {
+fn remove_created(created: Vec<(PathBuf, Option<fs::File>)>) -> Result<(), String> {
     let mut left = 0_usize;
     for (path, hold) in created {
         drop(hold);
