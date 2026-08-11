@@ -3759,3 +3759,56 @@ mzML candidates — the discovery filter is the guarded seam, and widening it is
 caught). UI evidence is jsdom + CSSOM: production components, copy,
 accessibility and CSS contracts, no pixel claims. See
 [ADR 0020](docs/architecture/adr/0020-first-visible-shimadzu-lcd-workflow.md).
+
+## Private multi-output conversion lifecycle, 2026-08-10
+
+ADR 0018 refused to force the measured SCIEX topology into the single-output
+plan and recorded the gate; this builds the model that closes the model half of
+it. One logical source, one backend run, a bounded set of mzML documents —
+implemented as `conversion_run::output_set`, reusing the process boundary,
+staging ownership, scanner, handle-bound finalizer and identity-bound cleanup,
+with no second implementation of any of them. No source family is admitted:
+there is no WIFF variant anywhere, no recognition, no provider row, and the
+entry point is an evidence function over a Rust-owned path.
+
+**The sharpened motivation.** New measurements show even a single-sample WIFF
+cannot use the single-output plan: `msconvert` names the output itself
+(`PressureTrace1.wiff` → `PressureTrace1-6500SysSuit1269.mzML`). Backend-
+authoritative naming, not output count, is what makes the lifecycle necessary.
+
+**The model.** Names are discovered from private staging after the run — the
+directory is the sole authority. Discovery is bounded
+(`MAX_CONVERSION_OUTPUTS_PER_SOURCE = 24`, more than double the measured ten,
+deliberately no existing capacity constant) and refuses sidecars, non-regular
+members, partial names, unsafe names and Windows-folded duplicates whole.
+Ordering is stable filename order, recorded as application ordering rather
+than sample order. Every member validates — writer-denied open, fail-closed
+scan, hash through the held object, output-only judgement — before the first
+publishes. Conflicts are knowable only after the work: Fail refuses the set on
+any occupied name; Skip skips only the whole group and refuses a strict-subset
+conflict as mixed. Publication is one handle-bound no-clobber rename at a
+time, honestly non-atomic: a mid-set failure yields an explicit
+`PartiallyFinalized` naming the kept prefix, the failed member and the
+unpublished remainder — no rollback of the user's published files, staged
+remainder cleaned, residue separate. Each published member is retained as the
+existing `FinalizedOutput`, collected beside the path-free report.
+
+**Real evidence, on the exact evidenced build.** Both lawful re-acquirable
+WIFFs are single-sample; the ten-output Enolase input is not in the pinned
+tree — recorded honestly, with the multi-member real-backend run left as the
+admission slice's gate. What was measured end to end: backend-chosen names
+discovered, a chromatogram-only real output (0 spectra / 41 chromatograms)
+validated and finalized, a 29.6 MB / 2,235-spectrum output validated and
+finalized, repeat runs naming the same set, and the companion-less failure —
+exit 1 *with partial output left behind* — refused and cleaned by the
+lifecycle. The `.wiff.scan` companion is required, which is a source-topology
+fact the admission slice owns. Output digests embed source location and are
+not recorded as portable facts.
+
+The single-output boundary is untouched and still refuses a second output or a
+sidecar. Ten focused mutations — publish-before-validate, sidecar ignored,
+bound removed, folded duplicate accepted, Fail/Skip partial publication,
+partial collapsed to ordinary failure, rollback, staging never cleaned,
+single-output accepting two — all red. See
+[ADR 0021](docs/architecture/adr/0021-private-multi-output-conversion-lifecycle.md)
+and [the M3.10 evidence record](docs/spikes/M3_MULTI_OUTPUT_EVIDENCE.md).

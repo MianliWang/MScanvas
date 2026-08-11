@@ -4494,6 +4494,984 @@ fn the_shimadzu_lcd_evidence_run_is_reproducible() {
     assert_eq!(entry_names(&root).len(), 1);
 }
 
+// --- The multi-output conversion lifecycle ----------------------------------
+//
+// One logical source, one backend run, a bounded set of mzML documents. The
+// measured SCIEX topology motivates the model; no source family is admitted to
+// it, so everything here drives the lifecycle over synthetic staging content
+// and a substituted runner. The real acquisition is a separate ignored-path
+// evidence harness.
+
+use super::output_set::{
+    self, MAX_CONVERSION_OUTPUTS_PER_SOURCE, MultiOutputFailure, MultiOutputOutcome,
+    OutputMemberState, OutputSetRejection, run_multi_output_conversion_evidence,
+};
+
+/// A directory pretending to be a staging output directory, plus the admitted
+/// destination beside it and the source object the set is judged against.
+struct SetFixture {
+    directory: TestDirectory,
+    staged: PathBuf,
+    destination_root: PathBuf,
+    source_facts: crate::conversion::SourceObjectFacts,
+}
+
+impl SetFixture {
+    fn new(label: &str) -> Self {
+        let directory = TestDirectory::new();
+        let _ = label;
+        let staged = directory.path().join("staged-output");
+        fs::create_dir(&staged).expect("create the staged output directory");
+        let destination_root = directory.path().join("destination");
+        fs::create_dir(&destination_root).expect("create the destination root");
+        let source = directory.path().join("acquisition.bin");
+        fs::write(
+            &source,
+            b"one logical acquisition, bytes opaque to this test",
+        )
+        .expect("write the source");
+        let identity =
+            super::SourceIdentity::capture(&source).expect("capture the source identity");
+        let sha256 = Sha256Digest::calculate_file(&source).expect("hash the source");
+        let byte_length = fs::metadata(&source).expect("source metadata").len();
+        Self {
+            directory,
+            staged,
+            destination_root,
+            source_facts: crate::conversion::SourceObjectFacts::from_parts(
+                identity,
+                byte_length,
+                sha256,
+            ),
+        }
+    }
+
+    /// A valid staged member with the given name.
+    fn member(&self, name: &str) -> PathBuf {
+        let path = self.staged.join(name);
+        fs::write(&path, output_document()).expect("write a staged member");
+        path
+    }
+
+    /// A chromatogram-only staged member: zero spectra, real chromatograms.
+    fn chromatogram_member(&self, name: &str) {
+        let body = r#"<indexedmzML><mzML version="1.1.0"><run id="R1"><spectrumList count="0"></spectrumList><chromatogramList count="2"><chromatogram index="0" id="TIC0" defaultArrayLength="4"><binaryDataArrayList count="2"><binaryDataArray encodedLength="8"><cvParam accession="MS:1000595"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/><binary>AA==</binary></binaryDataArray><binaryDataArray encodedLength="8"><cvParam accession="MS:1000515"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/><binary>AA==</binary></binaryDataArray></binaryDataArrayList></chromatogram><chromatogram index="1" id="TIC1" defaultArrayLength="4"><binaryDataArrayList count="2"><binaryDataArray encodedLength="8"><cvParam accession="MS:1000595"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/><binary>AA==</binary></binaryDataArray><binaryDataArray encodedLength="8"><cvParam accession="MS:1000515"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/><binary>AA==</binary></binaryDataArray></binaryDataArrayList></chromatogram></chromatogramList></run></mzML></indexedmzML>"#;
+        fs::write(self.staged.join(name), body).expect("write a chromatogram-only member");
+    }
+
+    /// A well-formed document with no records at all.
+    fn empty_member(&self, name: &str) {
+        let body = r#"<indexedmzML><mzML version="1.1.0"><run id="R1"><spectrumList count="0"></spectrumList><chromatogramList count="0"></chromatogramList></run></mzML></indexedmzML>"#;
+        fs::write(self.staged.join(name), body).expect("write an empty member");
+    }
+
+    fn destination(&self) -> super::finalize::DestinationDirectory {
+        super::finalize::DestinationDirectory::open(&self.destination_root)
+            .expect("open the destination root")
+    }
+
+    fn settle(&self, conflict: ConflictPolicy) -> output_set::SettledOutputSet {
+        let destination = self.destination();
+        output_set::settle_staged_output_set(
+            &self.source_facts,
+            &self.staged,
+            &destination,
+            conflict,
+            ConversionPolicy::default(),
+            MzmlScanLimits::default(),
+        )
+    }
+}
+
+/// Discovery is the staging directory and its rules: bounded, mzML-only,
+/// ordinary files under safe single-component names, deterministically ordered.
+#[test]
+fn a_staged_output_set_is_discovered_bounded_ordered_and_mzml_only() {
+    let fixture = SetFixture::new("discovery");
+
+    // Zero members is a failure, not an empty success.
+    assert_eq!(
+        output_set::discover_staged_output_set(&fixture.staged).expect_err("zero is refused"),
+        OutputSetRejection::NoOutputs
+    );
+
+    // Ten members -- the measured SCIEX shape -- in deliberately shuffled
+    // creation order come back in stable name order.
+    for index in [3_u32, 1, 7, 2, 9, 10, 4, 8, 5, 6] {
+        fixture.member(&format!("sample_{index:02}.mzML"));
+    }
+    let discovered =
+        output_set::discover_staged_output_set(&fixture.staged).expect("ten members are a set");
+    let names: Vec<String> = discovered
+        .iter()
+        .map(|member| member.name().to_string_lossy().into_owned())
+        .collect();
+    let mut sorted = names.clone();
+    sorted.sort();
+    assert_eq!(names, sorted, "the order is the stable filename order");
+    assert_eq!(names.len(), 10);
+
+    // One member alone is also a set: the model is one-or-more.
+    let solo = SetFixture::new("solo");
+    solo.member("only.mzML");
+    assert_eq!(
+        output_set::discover_staged_output_set(&solo.staged)
+            .expect("one member is a set")
+            .len(),
+        1
+    );
+
+    // Over the bound is refused whole, not truncated.
+    let over = SetFixture::new("over-bound");
+    for index in 0..=MAX_CONVERSION_OUTPUTS_PER_SOURCE {
+        over.member(&format!("sample_{index:03}.mzML"));
+    }
+    // `MAX + 1` because enumeration stops the moment the answer is certain --
+    // the count is what proved the bound was exceeded, not a total.
+    assert_eq!(
+        output_set::discover_staged_output_set(&over.staged).expect_err("over the bound"),
+        OutputSetRejection::TooManyOutputs {
+            observed: MAX_CONVERSION_OUTPUTS_PER_SOURCE + 1
+        }
+    );
+    // Far over the bound: still refused, and still after the same bounded
+    // reading rather than after a metadata read for every entry.
+    let far_over = SetFixture::new("far-over-bound");
+    for index in 0..(MAX_CONVERSION_OUTPUTS_PER_SOURCE * 4) {
+        far_over.member(&format!("sample_{index:03}.mzML"));
+    }
+    assert_eq!(
+        output_set::discover_staged_output_set(&far_over.staged).expect_err("far over the bound"),
+        OutputSetRejection::TooManyOutputs {
+            observed: MAX_CONVERSION_OUTPUTS_PER_SOURCE + 1
+        },
+        "the refusal counts what it read, not what was there"
+    );
+}
+
+/// Everything that is not an ordinary safe mzML member refuses the whole set.
+#[test]
+fn a_member_that_is_not_an_ordinary_mzml_refuses_the_whole_set() {
+    // A sidecar beside a good member.
+    let sidecar = SetFixture::new("sidecar");
+    sidecar.member("good.mzML");
+    fs::write(sidecar.staged.join("backend.log"), b"chatter").expect("write a sidecar");
+    assert!(matches!(
+        output_set::discover_staged_output_set(&sidecar.staged)
+            .expect_err("a sidecar refuses the set"),
+        OutputSetRejection::UnexpectedMember { member } if member == "backend.log"
+    ));
+
+    // A partial-output name.
+    let partial = SetFixture::new("partial");
+    partial.member("good.mzML");
+    fs::write(partial.staged.join("half.mzML.part"), b"...").expect("write a partial");
+    assert!(matches!(
+        output_set::discover_staged_output_set(&partial.staged)
+            .expect_err("an unfinished output refuses the set"),
+        OutputSetRejection::PartialOutputMember { .. }
+    ));
+
+    // A directory member.
+    let with_directory = SetFixture::new("dir-member");
+    with_directory.member("good.mzML");
+    fs::create_dir(with_directory.staged.join("scratch.mzML")).expect("create a directory member");
+    assert!(matches!(
+        output_set::discover_staged_output_set(&with_directory.staged)
+            .expect_err("a directory refuses the set"),
+        OutputSetRejection::NonRegularMember { member } if member == "scratch.mzML"
+    ));
+
+    // A name with an empty stem is not a document name.
+    let unnamed = SetFixture::new("unnamed");
+    fs::write(unnamed.staged.join(".mzML"), output_document()).expect("write a stemless member");
+    assert!(matches!(
+        output_set::discover_staged_output_set(&unnamed.staged)
+            .expect_err("a stemless name refuses the set"),
+        OutputSetRejection::UnexpectedMember { .. }
+    ));
+
+    // Two names differing only by ASCII case. A case-insensitive destination
+    // directory holds one of them, so discovery refuses the set rather than
+    // letting the second publication hit the no-clobber rename and leave the
+    // set half-published. Guarded, because a case-insensitive staging
+    // directory cannot hold both to begin with -- which is the case where the
+    // rule has nothing to catch.
+    let cased = SetFixture::new("cased");
+    cased.member("Sample_01.mzML");
+    let _ = fs::write(cased.staged.join("SAMPLE_01.mzML"), output_document());
+    if entry_names(&cased.staged).len() == 2 {
+        assert!(matches!(
+            output_set::discover_staged_output_set(&cased.staged)
+                .expect_err("a case-only duplicate refuses the set"),
+            OutputSetRejection::CaseInsensitiveDuplicateMember { .. }
+        ));
+    }
+
+    // And the pair full Unicode uppercasing would have folded together is
+    // accepted, because the volume plainly keeps them apart: both are sitting
+    // in one directory on it, and staging is inside the destination root. A
+    // rule that upcased `\u{df}` to `SS` would refuse a set that publishes
+    // perfectly well.
+    let sharp = SetFixture::new("sharp-s");
+    sharp.member("stra\u{df}e.mzML");
+    sharp.member("STRASSE.mzML");
+    if entry_names(&sharp.staged).len() == 2 {
+        assert_eq!(
+            output_set::discover_staged_output_set(&sharp.staged)
+                .expect("names the volume distinguishes are a valid set")
+                .len(),
+            2,
+            "a valid set was refused by a fold the filesystem does not perform"
+        );
+    }
+
+    // A link member, where this account may create one.
+    #[cfg(windows)]
+    {
+        let linked = SetFixture::new("linked");
+        linked.member("good.mzML");
+        let target = linked.directory.path().join("elsewhere.mzML");
+        fs::write(&target, output_document()).expect("write the link target");
+        if std::os::windows::fs::symlink_file(&target, linked.staged.join("link.mzML")).is_ok() {
+            assert!(matches!(
+                output_set::discover_staged_output_set(&linked.staged)
+                    .expect_err("a link refuses the set"),
+                OutputSetRejection::NonRegularMember { member } if member == "link.mzML"
+            ));
+        }
+    }
+}
+
+/// Every member is validated before the first is published, and one bad member
+/// publishes nothing -- whatever the others looked like.
+#[test]
+fn one_bad_member_publishes_nothing() {
+    let fixture = SetFixture::new("bad-member");
+    fixture.member("sample_01.mzML");
+    fixture.empty_member("sample_02.mzML");
+    fixture.member("sample_03.mzML");
+
+    let settled = fixture.settle(ConflictPolicy::Fail);
+
+    assert!(matches!(
+        &settled.outcome,
+        MultiOutputOutcome::RefusedBeforePublication(MultiOutputFailure::MemberRejected {
+            member,
+            ..
+        }) if member == "sample_02.mzML"
+    ));
+    assert!(settled.retained.is_empty());
+    assert!(
+        entry_names(&fixture.destination_root).is_empty(),
+        "nothing was published"
+    );
+    // The member that had already validated says so; the bad one and the one
+    // never reached say they were not published.
+    let states: Vec<OutputMemberState> = settled
+        .members
+        .iter()
+        .map(super::output_set::OutputMemberReport::state)
+        .collect();
+    assert_eq!(
+        states,
+        vec![
+            OutputMemberState::ValidatedNotPublished,
+            OutputMemberState::NotPublished,
+            OutputMemberState::NotPublished,
+        ]
+    );
+}
+
+/// A chromatogram-only member is a real document; a recordless one is not.
+#[test]
+fn a_chromatogram_only_member_is_valid_and_a_recordless_one_is_not() {
+    let fixture = SetFixture::new("chromatogram-only");
+    fixture.member("sample_01.mzML");
+    fixture.chromatogram_member("sample_02.mzML");
+
+    let settled = fixture.settle(ConflictPolicy::Fail);
+    assert!(matches!(
+        &settled.outcome,
+        MultiOutputOutcome::FullyFinalized
+    ));
+    assert_eq!(settled.retained.len(), 2);
+    let chromatograms = settled
+        .members
+        .iter()
+        .find(|member| member.file_name() == "sample_02.mzML")
+        .and_then(|member| member.validation())
+        .expect("a finalized member keeps its facts");
+    assert_eq!(chromatograms.spectrum_count(), 0);
+    assert_eq!(chromatograms.chromatogram_count(), 2);
+    assert!(!chromatograms.verified().is_empty());
+
+    // And the recordless twin is refused outright -- covered again here so the
+    // set contract cannot drift from the single-output one.
+    let empty = SetFixture::new("recordless");
+    empty.empty_member("sample_01.mzML");
+    assert!(matches!(
+        empty.settle(ConflictPolicy::Fail).outcome,
+        MultiOutputOutcome::RefusedBeforePublication(MultiOutputFailure::MemberRejected { .. })
+    ));
+}
+
+/// A member somebody else is writing cannot be judged and refuses the set.
+#[cfg(windows)]
+#[test]
+fn a_writer_active_member_refuses_the_set() {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+    let fixture = SetFixture::new("writer-active");
+    let held = fixture.member("sample_01.mzML");
+    let writer = fs::OpenOptions::new()
+        .write(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&held)
+        .expect("hold the member open for writing");
+
+    let settled = fixture.settle(ConflictPolicy::Fail);
+    assert!(matches!(
+        settled.outcome,
+        MultiOutputOutcome::RefusedBeforePublication(MultiOutputFailure::MemberRejected { .. })
+    ));
+    assert!(entry_names(&fixture.destination_root).is_empty());
+    drop(writer);
+}
+
+/// The full set publishes in deterministic order, each member through the
+/// handle-bound rename, and each published member is retained.
+#[test]
+fn a_full_set_finalizes_in_order_and_retains_every_member() {
+    let fixture = SetFixture::new("full-set");
+    for index in 1..=10 {
+        fixture.member(&format!("sample_{index:02}.mzML"));
+    }
+
+    let settled = fixture.settle(ConflictPolicy::Fail);
+
+    assert!(matches!(
+        &settled.outcome,
+        MultiOutputOutcome::FullyFinalized
+    ));
+    assert_eq!(settled.retained.len(), 10);
+    let mut produced = entry_names(&fixture.destination_root);
+    produced.sort();
+    let expected: Vec<OsString> = (1..=10)
+        .map(|index| OsString::from(format!("sample_{index:02}.mzML")))
+        .collect();
+    assert_eq!(produced, expected);
+    assert!(
+        entry_names(&fixture.staged).is_empty(),
+        "every member left staging by rename"
+    );
+    for member in &settled.members {
+        assert_eq!(member.state(), OutputMemberState::Finalized);
+        assert!(member.validation().is_some(), "facts survive finalization");
+    }
+}
+
+/// The published object is the validated object: a staged member replaced
+/// between validation and publication does not reach the destination.
+#[cfg(windows)]
+#[test]
+fn publication_moves_the_validated_object_not_whatever_the_name_holds() {
+    let fixture = SetFixture::new("retained-object");
+    fixture.member("sample_01.mzML");
+    let original = fs::read(fixture.staged.join("sample_01.mzML")).expect("read the member");
+
+    let destination = fixture.destination();
+    let settled = output_set::settle_staged_output_set_seamed(
+        &fixture.source_facts,
+        &fixture.staged,
+        &destination,
+        ConflictPolicy::Fail,
+        ConversionPolicy::default(),
+        MzmlScanLimits::default(),
+        |_| {
+            // Between validation and publication, the validated object is
+            // moved aside and a different file is put at the staged name. The
+            // rename acts on the validated handle, so the impostor must not be
+            // what arrives at the destination.
+            let staged_name = fixture.staged.join("sample_01.mzML");
+            fs::rename(
+                &staged_name,
+                fixture.directory.path().join("moved-aside.mzML"),
+            )
+            .expect("move the validated object aside");
+            fs::write(&staged_name, b"<mzML>impostor</mzML>").expect("replace the staged name");
+        },
+    );
+
+    assert!(
+        matches!(&settled.outcome, MultiOutputOutcome::FullyFinalized),
+        "outcome: {:?}",
+        settled.outcome
+    );
+    let published = fs::read(fixture.destination_root.join("sample_01.mzML"))
+        .expect("read the published output");
+    assert_eq!(
+        published, original,
+        "the destination holds the judged bytes, not the impostor's"
+    );
+}
+
+/// Fail: one occupied name refuses the whole set before anything publishes.
+#[test]
+fn one_occupied_name_under_fail_publishes_nothing() {
+    let fixture = SetFixture::new("fail-conflict");
+    for index in 1..=3 {
+        fixture.member(&format!("sample_{index:02}.mzML"));
+    }
+    fs::write(
+        fixture.destination_root.join("sample_02.mzML"),
+        b"someone else's file",
+    )
+    .expect("occupy one destination name");
+
+    let settled = fixture.settle(ConflictPolicy::Fail);
+
+    assert!(matches!(
+        &settled.outcome,
+        MultiOutputOutcome::RefusedBeforePublication(MultiOutputFailure::DestinationOccupied {
+            occupied
+        }) if occupied == &vec![String::from("sample_02.mzML")]
+    ));
+    assert!(settled.retained.is_empty());
+    assert_eq!(
+        fs::read(fixture.destination_root.join("sample_02.mzML")).expect("read the occupant"),
+        b"someone else's file",
+        "the occupant is untouched"
+    );
+    assert_eq!(entry_names(&fixture.destination_root).len(), 1);
+}
+
+/// Skip: every name occupied is a group skip; a strict subset is a mixed
+/// conflict and publishes nothing. An existing file is never called this
+/// run's output.
+#[test]
+fn skip_is_a_group_decision_never_a_partial_one() {
+    // Every target occupied: the group steps aside.
+    let all = SetFixture::new("skip-all");
+    for index in 1..=3 {
+        all.member(&format!("sample_{index:02}.mzML"));
+        fs::write(
+            all.destination_root.join(format!("sample_{index:02}.mzML")),
+            b"already there",
+        )
+        .expect("occupy every name");
+    }
+    let settled = all.settle(ConflictPolicy::Skip);
+    assert!(matches!(
+        settled.outcome,
+        MultiOutputOutcome::SkippedExistingDestinations
+    ));
+    assert!(
+        settled.retained.is_empty(),
+        "nothing existing becomes this run's output"
+    );
+    for index in 1..=3 {
+        assert_eq!(
+            fs::read(all.destination_root.join(format!("sample_{index:02}.mzML")))
+                .expect("read the occupant"),
+            b"already there"
+        );
+    }
+
+    // A strict subset occupied: neither publishing around it nor skipping the
+    // whole set would be true, so the set is refused with the conflict named.
+    let subset = SetFixture::new("skip-subset");
+    for index in 1..=3 {
+        subset.member(&format!("sample_{index:02}.mzML"));
+    }
+    fs::write(subset.destination_root.join("sample_01.mzML"), b"occupied")
+        .expect("occupy one name");
+    let settled = subset.settle(ConflictPolicy::Skip);
+    assert!(matches!(
+        &settled.outcome,
+        MultiOutputOutcome::RefusedBeforePublication(
+            MultiOutputFailure::MixedDestinationConflict { occupied }
+        ) if occupied == &vec![String::from("sample_01.mzML")]
+    ));
+    assert_eq!(entry_names(&subset.destination_root).len(), 1);
+}
+
+/// The mid-set race, deterministically: a name occupied after the preflight
+/// and before its member's rename produces the explicit partial result. The
+/// published prefix stays, nothing rolls back, and the remainder is cleaned by
+/// the staging teardown that follows.
+#[test]
+fn a_mid_set_publication_failure_is_reported_as_partially_finalized() {
+    let fixture = SetFixture::new("partial");
+    for index in 1..=3 {
+        fixture.member(&format!("sample_{index:02}.mzML"));
+    }
+
+    let destination = fixture.destination();
+    let settled = output_set::settle_staged_output_set_seamed(
+        &fixture.source_facts,
+        &fixture.staged,
+        &destination,
+        ConflictPolicy::Fail,
+        ConversionPolicy::default(),
+        MzmlScanLimits::default(),
+        |position| {
+            if position == 1 {
+                // The race: after the set preflight passed, the second name is
+                // taken by someone else.
+                fs::write(fixture.destination_root.join("sample_02.mzML"), b"raced in")
+                    .expect("occupy the second name mid-set");
+            }
+        },
+    );
+
+    let MultiOutputOutcome::PartiallyFinalized {
+        finalized,
+        failed_member,
+        kind,
+        not_published,
+    } = &settled.outcome
+    else {
+        panic!(
+            "a mid-set failure is partial, not ordinary: {:?}",
+            settled.outcome
+        );
+    };
+    assert_eq!(finalized, &vec![String::from("sample_01.mzML")]);
+    assert_eq!(failed_member, "sample_02.mzML");
+    assert_eq!(*kind, io::ErrorKind::AlreadyExists);
+    assert_eq!(
+        not_published,
+        &vec![
+            String::from("sample_02.mzML"),
+            String::from("sample_03.mzML")
+        ]
+    );
+    // The retained set is exactly the published prefix.
+    assert_eq!(settled.retained.len(), 1);
+    // The first output was published and stays; the racer's file is untouched;
+    // the third was never published.
+    assert!(fixture.destination_root.join("sample_01.mzML").exists());
+    assert_eq!(
+        fs::read(fixture.destination_root.join("sample_02.mzML")).expect("read the racer's file"),
+        b"raced in"
+    );
+    assert!(!fixture.destination_root.join("sample_03.mzML").exists());
+    // The failed and waiting members are still staged -- the caller's staging
+    // teardown owns their removal, and the first member left by rename.
+    let mut left = entry_names(&fixture.staged);
+    left.sort();
+    assert_eq!(
+        left,
+        vec![
+            OsString::from("sample_02.mzML"),
+            OsString::from("sample_03.mzML")
+        ]
+    );
+    // Member states tell the same story.
+    let states: Vec<(String, OutputMemberState)> = settled
+        .members
+        .iter()
+        .map(|member| (member.file_name().to_owned(), member.state()))
+        .collect();
+    assert_eq!(
+        states,
+        vec![
+            (String::from("sample_01.mzML"), OutputMemberState::Finalized),
+            (
+                String::from("sample_02.mzML"),
+                OutputMemberState::ValidatedNotPublished
+            ),
+            (
+                String::from("sample_03.mzML"),
+                OutputMemberState::ValidatedNotPublished
+            ),
+        ]
+    );
+}
+
+/// A failure on the very first member is an ordinary refusal: nothing was
+/// published, so nothing is called partial.
+#[test]
+fn a_first_member_publication_failure_is_a_refusal_not_a_partial_state() {
+    let fixture = SetFixture::new("first-member-fails");
+    fixture.member("sample_01.mzML");
+    fixture.member("sample_02.mzML");
+
+    let destination = fixture.destination();
+    let settled = output_set::settle_staged_output_set_seamed(
+        &fixture.source_facts,
+        &fixture.staged,
+        &destination,
+        ConflictPolicy::Fail,
+        ConversionPolicy::default(),
+        MzmlScanLimits::default(),
+        |position| {
+            if position == 0 {
+                fs::write(fixture.destination_root.join("sample_01.mzML"), b"raced in")
+                    .expect("occupy the first name mid-set");
+            }
+        },
+    );
+
+    assert!(matches!(
+        &settled.outcome,
+        MultiOutputOutcome::RefusedBeforePublication(MultiOutputFailure::MemberNotFinalized {
+            member,
+            kind: io::ErrorKind::AlreadyExists,
+        }) if member == "sample_01.mzML"
+    ));
+    assert!(settled.retained.is_empty());
+    assert!(!fixture.destination_root.join("sample_02.mzML").exists());
+}
+
+/// The whole evidence entry over a substituted runner: staging created, the
+/// backend's files discovered, validated, published, staging swept.
+#[test]
+fn the_evidence_entry_runs_the_whole_lifecycle_over_a_substituted_backend() {
+    let fixture = SetFixture::new("entry");
+    let source = fixture.directory.path().join("acquisition.bin");
+    let destination_root = fixture.destination_root.clone();
+
+    // The runner writes three documents into the command's output directory,
+    // exactly as a multi-output backend would.
+    let act = |spec: &CommandSpec| {
+        let output_directory = set_command_output_directory(spec);
+        for index in 1..=3 {
+            fs::write(
+                output_directory.join(format!("sample_{index:02}.mzML")),
+                output_document(),
+            )
+            .expect("write a backend output");
+        }
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act);
+    let run = run_multi_output_conversion_evidence(
+        &source,
+        &destination_root,
+        ConflictPolicy::Fail,
+        &capabilities(),
+        &runner,
+        MzmlScanLimits::default(),
+        None,
+    );
+
+    assert!(
+        matches!(run.report.outcome(), MultiOutputOutcome::FullyFinalized),
+        "the lifecycle finalizes: {:?}",
+        run.report.outcome()
+    );
+    assert_eq!(run.retained.len(), 3);
+    assert_eq!(run.report.members().len(), 3);
+    assert!(run.report.residue().is_none(), "staging swept");
+    let mut produced = entry_names(&destination_root);
+    produced.sort();
+    assert_eq!(
+        produced,
+        vec![
+            OsString::from("sample_01.mzML"),
+            OsString::from("sample_02.mzML"),
+            OsString::from("sample_03.mzML")
+        ]
+    );
+    // No staging directory survives beside the outputs.
+    assert_eq!(
+        entry_names(&destination_root).len(),
+        3,
+        "the destination holds the outputs and nothing else"
+    );
+
+    // A second identical run under Skip: every name occupied, group skip.
+    let runner = FakeRunner::new(&act);
+    let run = run_multi_output_conversion_evidence(
+        &source,
+        &destination_root,
+        ConflictPolicy::Skip,
+        &capabilities(),
+        &runner,
+        MzmlScanLimits::default(),
+        None,
+    );
+    assert!(matches!(
+        run.report.outcome(),
+        MultiOutputOutcome::SkippedExistingDestinations
+    ));
+    assert!(run.retained.is_empty());
+}
+
+/// A backend that fails, and a backend that produces nothing, publish nothing.
+#[test]
+fn a_failing_or_empty_backend_publishes_nothing() {
+    let fixture = SetFixture::new("backend-failures");
+    let source = fixture.directory.path().join("acquisition.bin");
+
+    // Exit 1: the backend rejected the input.
+    let fail = |_: &CommandSpec| Ok(1);
+    let runner = FakeRunner::new(&fail);
+    let run = run_multi_output_conversion_evidence(
+        &source,
+        &fixture.destination_root,
+        ConflictPolicy::Fail,
+        &capabilities(),
+        &runner,
+        MzmlScanLimits::default(),
+        None,
+    );
+    assert!(matches!(
+        run.report.outcome(),
+        MultiOutputOutcome::RefusedBeforePublication(MultiOutputFailure::BackendRejected {
+            exit_code: Some(1)
+        })
+    ));
+    assert!(run.report.residue().is_none());
+
+    // Exit 0 with an empty output directory: zero outputs is failure.
+    let nothing = |_: &CommandSpec| Ok(0);
+    let runner = FakeRunner::new(&nothing);
+    let run = run_multi_output_conversion_evidence(
+        &source,
+        &fixture.destination_root,
+        ConflictPolicy::Fail,
+        &capabilities(),
+        &runner,
+        MzmlScanLimits::default(),
+        None,
+    );
+    assert!(matches!(
+        run.report.outcome(),
+        MultiOutputOutcome::RefusedBeforePublication(MultiOutputFailure::OutputSet(
+            OutputSetRejection::NoOutputs
+        ))
+    ));
+    assert!(entry_names(&fixture.destination_root).is_empty());
+}
+
+/// Cancellation: requested before the run, nothing is created; confirmed
+/// mid-run with several staged partial outputs, everything staged is cleaned
+/// and nothing is published.
+#[test]
+fn a_cancelled_multi_output_run_publishes_nothing_and_cleans_staging() {
+    let fixture = SetFixture::new("cancelled");
+    let source = fixture.directory.path().join("acquisition.bin");
+
+    // Requested before the run: no staging area is created at all.
+    let never = |_: &CommandSpec| panic!("a pre-cancelled run launches nothing");
+    let runner = FakeRunner::new(&never);
+    let cancellation = ConversionCancellation::new();
+    cancellation.request_handle().request();
+    let before = entry_names(&fixture.destination_root).len();
+    let run = run_multi_output_conversion_evidence(
+        &source,
+        &fixture.destination_root,
+        ConflictPolicy::Fail,
+        &capabilities(),
+        &runner,
+        MzmlScanLimits::default(),
+        Some(&cancellation),
+    );
+    assert!(matches!(
+        run.report.outcome(),
+        MultiOutputOutcome::RefusedBeforePublication(MultiOutputFailure::Cancelled { .. })
+    ));
+    assert_eq!(entry_names(&fixture.destination_root).len(), before);
+
+    // Confirmed mid-run: the backend wrote three partial documents before the
+    // stop; all are cleaned, none is published.
+    let writes = |spec: &CommandSpec| {
+        let output_directory = set_command_output_directory(spec);
+        for index in 1..=3 {
+            fs::write(
+                output_directory.join(format!("sample_{index:02}.mzML")),
+                b"partial bytes the stop interrupted",
+            )
+            .expect("write a partial output");
+        }
+        Ok(0)
+    };
+    let cancellation = ConversionCancellation::new();
+    let handle = cancellation.request_handle();
+    // Requested from inside the run -- the act runs where the backend would --
+    // so the pre-run check passes and the stop lands on a process that has
+    // already written into staging.
+    let writes_then_requests = |spec: &CommandSpec| {
+        let code = writes(spec)?;
+        handle.request();
+        Ok(code)
+    };
+    let runner = FakeRunner::new(&writes_then_requests).reporting(Termination::Cancelled);
+    let run = run_multi_output_conversion_evidence(
+        &source,
+        &fixture.destination_root,
+        ConflictPolicy::Fail,
+        &capabilities(),
+        &runner,
+        MzmlScanLimits::default(),
+        Some(&cancellation),
+    );
+    assert!(matches!(
+        run.report.outcome(),
+        MultiOutputOutcome::RefusedBeforePublication(MultiOutputFailure::Cancelled {
+            surviving_processes: Some(0)
+        })
+    ));
+    assert!(run.retained.is_empty());
+    assert!(
+        run.report.residue().is_none(),
+        "the staged partials were cleaned"
+    );
+    assert_eq!(entry_names(&fixture.destination_root).len(), before);
+}
+
+/// Nothing in the run's debug output names a path, and the retained set's
+/// debug is a count rather than a handle dump.
+#[test]
+fn the_multi_output_report_names_no_location() {
+    let fixture = SetFixture::new("privacy");
+    for index in 1..=2 {
+        fixture.member(&format!("sample_{index:02}.mzML"));
+    }
+    let source = fixture.directory.path().join("acquisition.bin");
+    let act = |spec: &CommandSpec| {
+        let output_directory = set_command_output_directory(spec);
+        for index in 1..=2 {
+            fs::write(
+                output_directory.join(format!("sample_{index:02}.mzML")),
+                output_document(),
+            )
+            .expect("write a backend output");
+        }
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act);
+    let run = run_multi_output_conversion_evidence(
+        &source,
+        &fixture.destination_root,
+        ConflictPolicy::Fail,
+        &capabilities(),
+        &runner,
+        MzmlScanLimits::default(),
+        None,
+    );
+
+    let rendered = format!("{run:?}");
+    for fragment in [
+        fixture.directory.path().to_string_lossy().into_owned(),
+        String::from(":\\"),
+        String::from("acquisition.bin"),
+        String::from("mscanvas-staging"),
+    ] {
+        assert!(
+            !rendered.contains(&fragment),
+            "the run names {fragment:?}: {rendered}"
+        );
+    }
+    assert!(
+        rendered.contains("FinalizedOutputSet { outputs: 2 }"),
+        "the retained set renders as a count: {rendered}"
+    );
+    // Not even the member basenames: they are backend-chosen and embed the
+    // vendor's own sample identifiers, so the aggregate debug projection
+    // redacts them too. A caller that wants a name asks for one.
+    assert!(
+        !rendered.contains("sample_01.mzML"),
+        "the run's debug projection names a member: {rendered}"
+    );
+    assert_eq!(
+        run.report.members()[0].file_name(),
+        "sample_01.mzML",
+        "the accessor is how a report carries a display name"
+    );
+
+    // A failure's debug projection, by contrast, redacts the member name: a
+    // backend-chosen basename embeds the vendor's own sample identifiers, and
+    // a debug string is not a report.
+    let failure = MultiOutputFailure::MemberRejected {
+        member: String::from("secret-sample-run-7.mzML"),
+        rejection: crate::conversion::ConversionIntegrityOutcome::OutputContainsNoRecords,
+    };
+    let rendered = format!("{failure:?}");
+    assert!(
+        !rendered.contains("secret-sample"),
+        "a failure debug projection names a member: {rendered}"
+    );
+    let occupied = MultiOutputFailure::DestinationOccupied {
+        occupied: vec![String::from("secret-sample-run-7.mzML")],
+    };
+    let rendered = format!("{occupied:?}");
+    assert!(
+        !rendered.contains("secret-sample"),
+        "a conflict debug projection names a member: {rendered}"
+    );
+    let rejected = OutputSetRejection::UnexpectedMember {
+        member: String::from("secret-sample-run-7.log"),
+    };
+    let rendered = format!("{rejected:?}");
+    assert!(
+        !rendered.contains("secret-sample"),
+        "a set rejection debug projection names a member: {rendered}"
+    );
+}
+
+/// The set command carries the pre-spawn fresh-directory recheck.
+///
+/// Discovery afterwards attributes every member of the staging output
+/// directory to the backend, so a file injected between the staging area's
+/// creation and the spawn would be published as a conversion output and
+/// credited to this acquisition. The runner rechecks emptiness immediately
+/// before it spawns, and it only does so for a command that carries the
+/// safety -- so the command must, and the emptiness must be established when
+/// the command is built.
+#[test]
+fn the_set_command_requires_and_rechecks_a_fresh_output_directory() {
+    let directory = TestDirectory::new();
+    let source = directory.path().join("acquisition.bin");
+    fs::write(&source, b"an acquisition").expect("write the source");
+    let staged = directory.path().join("staged");
+    fs::create_dir(&staged).expect("create the staged output directory");
+
+    let command = crate::command::build_msconvert_set_command_for_source(
+        &capabilities(),
+        &source,
+        &staged,
+        InputSpelling::PlainVerified,
+    )
+    .expect("an empty output directory is plannable");
+    assert!(
+        command.fresh_output_directory().is_some(),
+        "the runner rechecks emptiness only for a command that carries the safety"
+    );
+    assert!(
+        command.output_destination().is_none(),
+        "a set command names no single planned destination"
+    );
+
+    // An occupied output directory is refused while the command is built, so
+    // nothing is ever spawned against a directory that already holds files.
+    fs::write(staged.join("injected.mzML"), output_document()).expect("inject a file");
+    assert!(
+        crate::command::build_msconvert_set_command_for_source(
+            &capabilities(),
+            &source,
+            &staged,
+            InputSpelling::PlainVerified,
+        )
+        .is_err(),
+        "an occupied output directory is not plannable"
+    );
+}
+
+/// The output directory the set command told the backend to write into.
+fn set_command_output_directory(spec: &CommandSpec) -> PathBuf {
+    let args = spec.args();
+    let position = args
+        .iter()
+        .position(|argument| argument == "--outdir")
+        .expect("the set command names an output directory");
+    PathBuf::from(&args[position + 1])
+}
+
 // --- Private cancellation ---------------------------------------------------
 
 /// A `msconvert` stand-in that acts on the cancellation request the boundary

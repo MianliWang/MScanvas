@@ -540,6 +540,54 @@ fn build_msconvert_command(
     ))
 }
 
+/// Builds an mzML conversion command with **no** `--outfile`: the backend
+/// names its outputs itself, inside the given output directory.
+///
+/// For the multi-output evidence lifecycle only. Every validation the
+/// single-output builder applies to its inputs applies here — the confirmed
+/// option grammar, the path rules, the safe-output-directory rule, the
+/// measured per-family input spelling, the executable and source identities
+/// retained for the pre-spawn rechecks. What is absent is the planned output
+/// name, because for this topology there is none: the private staging
+/// directory is inspected afterwards for what the backend actually produced,
+/// and no `output_destination` is claimed on the command for the same reason.
+pub(crate) fn build_msconvert_set_command_for_source(
+    capabilities: &InstalledHelpCapabilities,
+    input: &Path,
+    output_directory: &Path,
+    spelling: InputSpelling,
+) -> Result<CommandSpec, PlanError> {
+    capabilities.require_conversion(OpenFormat::MzMl)?;
+    let executable = capabilities.executable().to_path_buf();
+    validate_paths(&executable, input, output_directory)?;
+    // Fresh, not merely safe. Discovery afterwards attributes every member of
+    // this directory to the backend, so a file injected between the staging
+    // area's creation and the spawn would be published as a conversion output.
+    // The emptiness is established here and rechecked by the runner
+    // immediately before the spawn, exactly as the preview commands do.
+    let safe_output = require_fresh_output_directory(input, output_directory)?;
+    let canonical_input = backend_input_spelling(&safe_output.source_identity, spelling)?;
+    let command = CommandSpec::new(
+        BackendTool::MsConvert,
+        executable,
+        [
+            canonical_input.as_os_str().to_owned(),
+            OsString::from(OpenFormat::MzMl.argument()),
+            OsString::from("--zlib"),
+            OsString::from("--outdir"),
+            safe_output.output_directory.as_os_str().to_owned(),
+        ],
+        &safe_output.output_directory,
+    )
+    .with_fresh_output_directory(
+        safe_output.output_directory.clone(),
+        safe_output.source_directory_boundary.clone(),
+    );
+    Ok(command
+        .with_executable_identity(capabilities.executable_sha256())
+        .with_source_identity(safe_output.source_identity))
+}
+
 /// Builds an mzML conversion command only after the complete installed help has
 /// confirmed every option used by the typed plan and the exact output
 /// destination is absent in an inspectable output root outside a directory

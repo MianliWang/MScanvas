@@ -272,6 +272,17 @@ impl OutputDirectoryEntry {
         open_regular_file(&directory.join(&self.name))
     }
 
+    /// The entry's own name.
+    ///
+    /// For the output-set discovery, whose members are named by the backend
+    /// rather than by any plan: there is no expected name to compare against,
+    /// so the name itself is the fact. It is a single directory-entry
+    /// component by construction and display-grade like every output name.
+    #[must_use]
+    pub fn file_name(&self) -> &std::ffi::OsStr {
+        &self.name
+    }
+
     /// Whether the entry name ends with a suffix a backend uses for output it
     /// has not finished writing.
     #[must_use]
@@ -322,8 +333,47 @@ impl OutputDirectorySnapshot {
 pub fn snapshot_output_directory(
     directory: &Path,
 ) -> Result<OutputDirectorySnapshot, RegularFileError> {
+    match snapshot_output_directory_bounded(directory, usize::MAX) {
+        Ok(BoundedSnapshot::Within(snapshot)) => Ok(snapshot),
+        // Unreachable with `usize::MAX`: a directory cannot hold more entries
+        // than a `Vec` can index, and the enumeration stops long before then.
+        Ok(BoundedSnapshot::OverBound { .. }) => Err(RegularFileError::Io {
+            kind: std::io::ErrorKind::InvalidData,
+        }),
+        Err(error) => Err(error),
+    }
+}
+
+/// What a bounded enumeration found.
+#[derive(Debug)]
+pub enum BoundedSnapshot {
+    /// The directory holds at most `maximum` entries, and here they are.
+    Within(OutputDirectorySnapshot),
+    /// The directory holds more. Enumeration stopped as soon as that was
+    /// certain, so `observed` is `maximum + 1` and not a total.
+    OverBound { observed: usize },
+}
+
+/// Records an output directory's entries, stopping as soon as it is certain
+/// there are more than `maximum`.
+///
+/// The bound is the point. A caller that will refuse an over-large directory
+/// should not first read metadata for every entry of one: a faulty backend
+/// that filled staging would otherwise cost the whole enumeration before the
+/// refusal, which makes the advertised bound a statement about the answer
+/// rather than about the work. Stopping at `maximum + 1` is enough to know the
+/// answer and is all this reads.
+pub fn snapshot_output_directory_bounded(
+    directory: &Path,
+    maximum: usize,
+) -> Result<BoundedSnapshot, RegularFileError> {
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(directory).map_err(io_error)? {
+        if entries.len() > maximum {
+            return Ok(BoundedSnapshot::OverBound {
+                observed: entries.len(),
+            });
+        }
         let entry = entry.map_err(io_error)?;
         let metadata = std::fs::symlink_metadata(entry.path()).map_err(io_error)?;
         entries.push(OutputDirectoryEntry {
@@ -333,8 +383,13 @@ pub fn snapshot_output_directory(
             modified: metadata.modified().ok(),
         });
     }
+    if entries.len() > maximum {
+        return Ok(BoundedSnapshot::OverBound {
+            observed: entries.len(),
+        });
+    }
     entries.sort_by(|left, right| left.name.cmp(&right.name));
-    Ok(OutputDirectorySnapshot { entries })
+    Ok(BoundedSnapshot::Within(OutputDirectorySnapshot { entries }))
 }
 
 #[cfg(test)]

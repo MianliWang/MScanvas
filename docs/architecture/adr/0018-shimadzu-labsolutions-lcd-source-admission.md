@@ -17,6 +17,17 @@
   as part of the visible support boundary: all three markers are required, and
   a container without one is refused. See
   [ADR 0020](0020-first-visible-shimadzu-lcd-workflow.md).
+- Amended: 2026-08-10 (M3.10) — the SCIEX gate below is narrowed. The
+  one-source/many-outputs topology this ADR refused to force into the
+  single-output plan can now be represented by a private output-set lifecycle
+  ([ADR 0021](0021-private-multi-output-conversion-lifecycle.md)), measured
+  against the real backend. WIFF **source admission remains gated**: new
+  measurements show the `.wiff` alone is not the acquisition (its `.wiff.scan`
+  companion is required), the backend names outputs itself even for one
+  sample, and no lawful multi-sample acquisition was re-acquirable at the
+  pinned commit — so recognition, companion topology, provider evidence and
+  multi-member real-backend evidence all still belong to a future admission
+  slice.
 
 ## Context
 
