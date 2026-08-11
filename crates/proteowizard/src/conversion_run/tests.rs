@@ -5338,6 +5338,35 @@ fn the_multi_output_report_names_no_location() {
         rendered.contains("sample_01.mzML"),
         "basenames are display facts"
     );
+
+    // A failure's debug projection, by contrast, redacts the member name: a
+    // backend-chosen basename embeds the vendor's own sample identifiers, and
+    // a debug string is not a report.
+    let failure = MultiOutputFailure::MemberRejected {
+        member: String::from("secret-sample-run-7.mzML"),
+        rejection: crate::conversion::ConversionIntegrityOutcome::OutputContainsNoRecords,
+    };
+    let rendered = format!("{failure:?}");
+    assert!(
+        !rendered.contains("secret-sample"),
+        "a failure debug projection names a member: {rendered}"
+    );
+    let occupied = MultiOutputFailure::DestinationOccupied {
+        occupied: vec![String::from("secret-sample-run-7.mzML")],
+    };
+    let rendered = format!("{occupied:?}");
+    assert!(
+        !rendered.contains("secret-sample"),
+        "a conflict debug projection names a member: {rendered}"
+    );
+    let rejected = OutputSetRejection::UnexpectedMember {
+        member: String::from("secret-sample-run-7.log"),
+    };
+    let rendered = format!("{rejected:?}");
+    assert!(
+        !rendered.contains("secret-sample"),
+        "a set rejection debug projection names a member: {rendered}"
+    );
 }
 
 /// The output directory the set command told the backend to write into.

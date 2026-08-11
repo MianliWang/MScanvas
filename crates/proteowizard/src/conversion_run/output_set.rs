@@ -68,7 +68,7 @@ pub const MAX_CONVERSION_OUTPUTS_PER_SOURCE: usize = 24;
 /// may carry beyond a count or an [`io::ErrorKind`] is a *basename* — the
 /// display-grade name of a staged member, which is derived from the source's
 /// own display name and is the least that can explain a refusal.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum OutputSetRejection {
     /// The backend exited cleanly and produced nothing at all.
     NoOutputs,
@@ -103,6 +103,27 @@ impl OutputSetRejection {
             Self::PartialOutputMember { .. } => "output_set_member_partial",
             Self::UnexpectedMember { .. } => "output_set_member_unexpected",
             Self::FoldedDuplicateMember { .. } => "output_set_member_folded_duplicate",
+        }
+    }
+}
+
+impl std::fmt::Debug for OutputSetRejection {
+    /// The stable identifier plus the bounded shape, with the member name
+    /// redacted. A backend-chosen basename embeds the vendor's own sample
+    /// identifiers, and a debug projection is exactly where such a value would
+    /// leak into a log or a panic message nobody meant to publish. Intentional
+    /// reporting reads the fields by matching; this renders none of them.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooManyOutputs { observed } => formatter
+                .debug_struct("TooManyOutputs")
+                .field("observed", observed)
+                .finish(),
+            Self::DirectoryUnreadable { kind } => formatter
+                .debug_struct("DirectoryUnreadable")
+                .field("kind", kind)
+                .finish(),
+            _ => formatter.write_str(self.stable_id()),
         }
     }
 }
@@ -318,7 +339,7 @@ impl OutputMemberValidation {
 ///
 /// Path-free. Where a variant names members it names bounded basenames, and
 /// only the ones needed to explain the refusal.
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 pub enum MultiOutputFailure {
     /// The command could not be planned against these capabilities.
     NotPlannable(PlanError),
@@ -384,6 +405,76 @@ impl MultiOutputFailure {
             Self::DestinationOccupied { .. } => "multi_output_destination_occupied",
             Self::MixedDestinationConflict { .. } => "multi_output_mixed_destination_conflict",
             Self::MemberNotFinalized { .. } => "multi_output_member_not_finalized",
+        }
+    }
+}
+
+impl std::fmt::Debug for MultiOutputFailure {
+    /// The stable identifier plus bounded, name-free shape. Member basenames
+    /// stay out of every debug projection for the reason the set rejection's
+    /// does; the counts say how much was involved without saying what it was
+    /// called. Reports carry names deliberately, through accessors -- a debug
+    /// string is not a report.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotPlannable(error) => {
+                formatter.debug_tuple("NotPlannable").field(error).finish()
+            }
+            Self::SourceNotCaptured { kind } => formatter
+                .debug_struct("SourceNotCaptured")
+                .field("kind", kind)
+                .finish(),
+            Self::DestinationRootNotOpened { kind } => formatter
+                .debug_struct("DestinationRootNotOpened")
+                .field("kind", kind)
+                .finish(),
+            Self::StagingNotCreated { kind } => formatter
+                .debug_struct("StagingNotCreated")
+                .field("kind", kind)
+                .finish(),
+            Self::Backend(cause) => formatter.debug_tuple("Backend").field(cause).finish(),
+            Self::BackendRejected { exit_code } => formatter
+                .debug_struct("BackendRejected")
+                .field("exit_code", exit_code)
+                .finish(),
+            Self::Cancelled {
+                surviving_processes,
+            } => formatter
+                .debug_struct("Cancelled")
+                .field("surviving_processes", surviving_processes)
+                .finish(),
+            Self::CancellationNotConfirmed(cause) => formatter
+                .debug_tuple("CancellationNotConfirmed")
+                .field(cause)
+                .finish(),
+            Self::OutputSet(rejection) => {
+                formatter.debug_tuple("OutputSet").field(rejection).finish()
+            }
+            Self::MemberRejected { rejection, .. } => formatter
+                .debug_struct("MemberRejected")
+                .field("member", &"<redacted>")
+                .field("rejection", rejection)
+                .finish(),
+            Self::DestinationNotInspectable { kind } => formatter
+                .debug_struct("DestinationNotInspectable")
+                .field("kind", kind)
+                .finish(),
+            Self::DestinationOccupied { occupied } => formatter
+                .debug_struct("DestinationOccupied")
+                .field("occupied_count", &occupied.len())
+                .finish(),
+            Self::MixedDestinationConflict { occupied } => formatter
+                .debug_struct("MixedDestinationConflict")
+                .field("occupied_count", &occupied.len())
+                .finish(),
+            Self::MemberNotFinalized { kind, .. } => formatter
+                .debug_struct("MemberNotFinalized")
+                .field("member", &"<redacted>")
+                .field("kind", kind)
+                .finish(),
+            Self::StagingTargetExists | Self::BackendDidNotComplete => {
+                formatter.write_str(self.stable_id())
+            }
         }
     }
 }

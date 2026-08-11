@@ -131,6 +131,20 @@ fn run(cli: Cli) -> Result<(), String> {
 
     fs::create_dir_all(&cli.workspace)
         .map_err(|error| format!("the workspace could not be created: {:?}", error.kind()))?;
+    // Owned exclusively, or not used. The cleanup below removes the
+    // workspace's *contents*, so a workspace that already holds anything --
+    // least of all the acquisition, if the caller pointed this at its folder
+    // -- must be refused before a single artifact is created. This refusal
+    // deliberately returns before the cleanup path exists.
+    let preexisting = fs::read_dir(&cli.workspace)
+        .map_err(|error| format!("the workspace could not be read: {:?}", error.kind()))?
+        .count();
+    if preexisting != 0 {
+        return Err(String::from(
+            "the workspace must be an empty scratch directory this harness may own; \
+             it holds entries that are not this run's to remove",
+        ));
+    }
     let mut previous_names: Option<Vec<String>> = None;
     let result = (|| -> Result<(), String> {
         for round in 1..=cli.runs {
@@ -150,8 +164,9 @@ fn run(cli: Cli) -> Result<(), String> {
             );
             println!("run[{round}].outcome={}", run.report.outcome().stable_id());
             if let MultiOutputOutcome::RefusedBeforePublication(failure) = run.report.outcome() {
+                // The stable identifier only. The failure debug projection is
+                // redacted anyway, and this prints nothing finer than it.
                 println!("run[{round}].failure={}", failure.stable_id());
-                println!("run[{round}].failure_detail={failure:?}");
             }
             if let Some(backend) = run.report.backend() {
                 println!("run[{round}].backend.exit_code={:?}", backend.exit_code());
