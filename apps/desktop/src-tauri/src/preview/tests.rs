@@ -16363,3 +16363,447 @@ fn a_real_sciex_bundle_converts_through_a_workspace_handle() {
         evidence.method()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Private SCIEX output-set adoption. ADR 0025.
+// ---------------------------------------------------------------------------
+
+/// A converted SCIEX acquisition and the session that converted it.
+struct ConvertedSet {
+    service: PreviewService,
+    source: String,
+    destination: PathBuf,
+    ticket: super::adoption::FinalizedOutputSetAdoptionTicket,
+}
+
+/// Converts one synthetic SCIEX bundle to `names` and mints its ticket.
+fn converted_output_set(label: &str, names: &[&str]) -> (TestFile, ConvertedSet) {
+    converted_output_set_with(label, FakeOutputSetRunner::writing(names))
+}
+
+fn converted_output_set_with(label: &str, runner: FakeOutputSetRunner) -> (TestFile, ConvertedSet) {
+    let fixture = TestFile::new(label);
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let destination = fixture.destination("out");
+    let service = output_set_service(runner);
+    let dataset = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the bundle is admitted");
+    let (report, retained) = service
+        .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+    assert_eq!(report.group_outcome(), "fully_finalized");
+    let ticket = service
+        .output_set_adoption_ticket(&dataset.handle, &report, &destination, retained)
+        .expect("a complete set mints a ticket");
+    (
+        fixture,
+        ConvertedSet {
+            service,
+            source: dataset.handle,
+            destination,
+            ticket,
+        },
+    )
+}
+
+/// The kinds of every adoption outcome, in order.
+fn set_adoption_kinds(
+    result: &super::service::WorkspaceOutputSetAdoptionResult,
+) -> Vec<&'static str> {
+    result
+        .outcomes
+        .iter()
+        .map(|outcome| match outcome {
+            WorkspaceOutputAdoptionOutcomeDto::Added { .. } => "added",
+            WorkspaceOutputAdoptionOutcomeDto::AlreadyInWorkspace { .. } => "already",
+            WorkspaceOutputAdoptionOutcomeDto::Refused { .. } => "refused",
+        })
+        .collect()
+}
+
+fn set_refusal_reasons(result: &super::service::WorkspaceOutputSetAdoptionResult) -> Vec<String> {
+    result
+        .outcomes
+        .iter()
+        .filter_map(|outcome| match outcome {
+            WorkspaceOutputAdoptionOutcomeDto::Refused { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The names an adoption result reports, in order.
+fn set_output_names(result: &super::service::WorkspaceOutputSetAdoptionResult) -> Vec<String> {
+    result
+        .outcomes
+        .iter()
+        .map(|outcome| match outcome {
+            WorkspaceOutputAdoptionOutcomeDto::Added {
+                output_file_name, ..
+            }
+            | WorkspaceOutputAdoptionOutcomeDto::AlreadyInWorkspace {
+                output_file_name, ..
+            }
+            | WorkspaceOutputAdoptionOutcomeDto::Refused {
+                output_file_name, ..
+            } => output_file_name.clone(),
+        })
+        .collect()
+}
+
+/// The whole private vertical: one acquisition, ten outputs, ten mzML rows.
+#[test]
+fn a_complete_output_set_is_adopted_as_ordinary_mzml_rows() {
+    let names: Vec<String> = (1..=10)
+        .map(|index| format!("a-S{index:02}.mzML"))
+        .collect();
+    let borrowed: Vec<&str> = names.iter().map(String::as_str).collect();
+    let (_fixture, converted) = converted_output_set("set-adopt", &borrowed);
+
+    assert_eq!(converted.ticket.len(), 10);
+    assert_eq!(converted.ticket.sample_count(), 10);
+    assert_eq!(converted.ticket.source_kind(), DatasetSourceKind::SciexWiff);
+    // The ticket names no location and no member, even under `{:?}`.
+    let rendered = format!("{:?}", converted.ticket);
+    for fragment in [":\\", "a-S01", "acquisition"] {
+        assert!(
+            !rendered.contains(fragment),
+            "the ticket names {fragment:?}: {rendered}"
+        );
+    }
+
+    // One row before: the acquisition itself.
+    assert_eq!(converted.service.dataset_count(), 1);
+
+    let result = converted
+        .service
+        .adopt_output_set(&converted.ticket)
+        .expect("a complete set adopts");
+
+    assert_eq!(result.members, 10);
+    assert_eq!(result.source, converted.source);
+    assert_eq!(result.source_kind, DatasetSourceKind::SciexWiff);
+    assert_eq!(set_adoption_kinds(&result), vec!["added"; 10]);
+    // Publication order, preserved through the whole handoff.
+    assert_eq!(set_output_names(&result), names);
+
+    // Eleven rows: the acquisition, still one logical bundle row, and its ten
+    // outputs as independent mzML datasets.
+    assert_eq!(converted.service.dataset_count(), 11);
+    let roster = converted.service.roster();
+    assert_eq!(roster.datasets.len(), 11);
+    let adopted: Vec<&SelectedFileDto> = roster
+        .datasets
+        .iter()
+        .filter(|dataset| dataset.handle != converted.source)
+        .collect();
+    assert_eq!(adopted.len(), 10);
+    for dataset in adopted {
+        assert_eq!(
+            dataset.source_kind,
+            DatasetSourceKindDto::Mzml,
+            "an adopted output kept a vendor family"
+        );
+    }
+    // The source row is untouched and still the bundle.
+    let source_row = roster
+        .datasets
+        .iter()
+        .find(|dataset| dataset.handle == converted.source)
+        .expect("the acquisition is still listed");
+    assert_eq!(source_row.source_kind, DatasetSourceKindDto::SciexWiff);
+
+    // Nothing was previewed. Adoption reads no file for display and launches
+    // no process; a session that has stopped trusting its backend could still
+    // have done this.
+    assert!(!converted.service.holds_preview_state(&converted.source));
+
+    // The result names no location either.
+    let rendered = format!("{result:?}");
+    assert!(
+        !rendered.contains(":\\"),
+        "the result names a path: {rendered}"
+    );
+}
+
+/// Adopting again adds nothing and reports every member as already present.
+#[test]
+fn adopting_a_set_twice_adds_nothing_the_second_time() {
+    let (_fixture, converted) =
+        converted_output_set("set-twice", &["a-S1.mzML", "a-S2.mzML", "a-S3.mzML"]);
+
+    let first = converted
+        .service
+        .adopt_output_set(&converted.ticket)
+        .expect("the first adoption succeeds");
+    assert_eq!(set_adoption_kinds(&first), vec!["added"; 3]);
+    let after_first = converted.service.dataset_count();
+
+    // The ticket is not consumed: it still holds the same objects, so the same
+    // questions are asked of the same files.
+    let second = converted
+        .service
+        .adopt_output_set(&converted.ticket)
+        .expect("the second adoption reaches an outcome");
+    assert_eq!(set_adoption_kinds(&second), vec!["already"; 3]);
+    assert_eq!(
+        converted.service.dataset_count(),
+        after_first,
+        "a repeated adoption added a row"
+    );
+    // And the handles are the existing rows', not new ones.
+    for (again, before) in second.outcomes.iter().zip(&first.outcomes) {
+        let (
+            WorkspaceOutputAdoptionOutcomeDto::AlreadyInWorkspace { dataset: again, .. },
+            WorkspaceOutputAdoptionOutcomeDto::Added {
+                dataset: before, ..
+            },
+        ) = (again, before)
+        else {
+            panic!("unexpected outcome shapes");
+        };
+        assert_eq!(again.handle, before.handle);
+    }
+}
+
+/// One member that is no longer the exact object it was does not stop the rest.
+#[test]
+fn a_replaced_member_is_refused_and_the_others_are_adopted() {
+    let (_fixture, converted) =
+        converted_output_set("set-replaced", &["a-S1.mzML", "a-S2.mzML", "a-S3.mzML"]);
+
+    // A byte-identical impostor at the second member's final name. Same bytes,
+    // same length, different object -- which identity alone catches and a
+    // digest alone would not.
+    let victim = converted.destination.join("a-S2.mzML");
+    let bytes = fs::read(&victim).expect("read the finalized output");
+    fs::rename(&victim, converted.destination.join("moved-aside")).expect("move it aside");
+    fs::write(&victim, &bytes).expect("write an identical copy");
+    assert_eq!(
+        fs::read(&victim).expect("read the impostor"),
+        bytes,
+        "the impostor really is byte-identical"
+    );
+
+    let result = converted
+        .service
+        .adopt_output_set(&converted.ticket)
+        .expect("the adoption reaches an outcome");
+
+    assert_eq!(
+        set_adoption_kinds(&result),
+        vec!["added", "refused", "added"]
+    );
+    assert_eq!(set_refusal_reasons(&result), vec!["output_changed"]);
+    assert_eq!(
+        converted.service.dataset_count(),
+        3,
+        "one source, two outputs"
+    );
+}
+
+/// The same object with different bytes is refused too.
+#[test]
+fn a_rewritten_member_is_refused() {
+    let (_fixture, converted) = converted_output_set("set-rewritten", &["a-S1.mzML", "a-S2.mzML"]);
+
+    // Rewritten in place: the file id does not change, so only the digest can
+    // see it. The retention deliberately permits this -- the output is the
+    // user's file.
+    fs::write(
+        converted.destination.join("a-S1.mzML"),
+        mzml_document(3, true),
+    )
+    .expect("rewrite the first output");
+
+    let result = converted
+        .service
+        .adopt_output_set(&converted.ticket)
+        .expect("the adoption reaches an outcome");
+    assert_eq!(set_adoption_kinds(&result), vec!["refused", "added"]);
+    assert_eq!(set_refusal_reasons(&result), vec!["output_changed"]);
+}
+
+/// A member whose final name is gone is refused; the rest are adopted.
+#[test]
+fn a_missing_member_is_refused() {
+    let (_fixture, converted) = converted_output_set("set-missing", &["a-S1.mzML", "a-S2.mzML"]);
+    fs::remove_file(converted.destination.join("a-S2.mzML")).expect("remove the second output");
+
+    let result = converted
+        .service
+        .adopt_output_set(&converted.ticket)
+        .expect("the adoption reaches an outcome");
+    assert_eq!(set_adoption_kinds(&result), vec!["added", "refused"]);
+    assert_eq!(set_refusal_reasons(&result), vec!["output_missing"]);
+}
+
+/// A member the workspace already holds is reported as such, not duplicated.
+#[test]
+fn a_member_already_in_the_workspace_is_reported_not_duplicated() {
+    let (_fixture, converted) = converted_output_set("set-existing", &["a-S1.mzML", "a-S2.mzML"]);
+
+    // Admitted the ordinary way, before the set is adopted.
+    converted
+        .service
+        .add_files(&[converted.destination.join("a-S1.mzML")])
+        .expect("an ordinary mzML is admitted");
+    let before = converted.service.dataset_count();
+
+    let result = converted
+        .service
+        .adopt_output_set(&converted.ticket)
+        .expect("the adoption reaches an outcome");
+    assert_eq!(set_adoption_kinds(&result), vec!["already", "added"]);
+    assert_eq!(
+        converted.service.dataset_count(),
+        before + 1,
+        "the already-present member consumed a row"
+    );
+}
+
+/// A partially finalized conversion is not an adoptable set, and its published
+/// members stay exactly where they are.
+///
+/// The distinction this slice must not blur. A partial publication produced
+/// real files the user owns; offering them through an action named for the
+/// acquisition's output set would present a conversion that stopped halfway as
+/// one that finished.
+#[test]
+fn a_partially_finalized_conversion_mints_no_ticket() {
+    let fixture = TestFile::new("set-partial");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let destination = fixture.destination("out");
+
+    // The second member's destination name is already taken by something the
+    // conversion did not write, so publication stops after the first.
+    let occupied = destination.join("a-S2.mzML");
+    fs::write(&occupied, b"a file the user already had").expect("occupy the second name");
+    let occupied_bytes = fs::read(&occupied).expect("read it");
+
+    let service = output_set_service(FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML"]));
+    let dataset = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the bundle is admitted");
+    let (report, retained) = service
+        .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+
+    // Whatever the lifecycle did with the occupied name, the one thing that
+    // must hold is that a set which did not publish whole mints no ticket.
+    if report.group_outcome() == "fully_finalized" {
+        panic!("the occupied destination name did not stop the set publishing whole");
+    }
+    let refused = service
+        .output_set_adoption_ticket(&dataset.handle, &report, &destination, retained)
+        .expect_err("an incomplete publication is not an adoptable set");
+    assert!(
+        refused.kind.starts_with("output_set_"),
+        "refused for an unrelated reason: {refused:?}"
+    );
+
+    // Nothing was added, and the file that was already there is untouched.
+    assert_eq!(service.dataset_count(), 1, "only the acquisition");
+    assert_eq!(fs::read(&occupied).expect("read it again"), occupied_bytes);
+}
+
+/// A run that never established sample completeness mints no ticket either.
+#[test]
+fn an_incomplete_acquisition_mints_no_ticket() {
+    let fixture = TestFile::new("set-incomplete");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let destination = fixture.destination("out");
+    let service = output_set_service(
+        FakeOutputSetRunner::writing(&["a-S1.mzML"]).complaining(READER_LOST_A_SAMPLE),
+    );
+    let dataset = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the bundle is admitted");
+    let (report, retained) = service
+        .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the run reaches an outcome");
+
+    // M3.13 refuses this before publication, so there is nothing to adopt and
+    // the ticket refuses for the outcome rather than for the completeness.
+    assert_eq!(report.group_outcome(), "refused_before_publication");
+    assert!(retained.is_empty());
+    let refused = service
+        .output_set_adoption_ticket(&dataset.handle, &report, &destination, retained)
+        .expect_err("a refused run is not an adoptable set");
+    assert_eq!(refused.kind, "output_set_not_fully_finalized");
+    assert_eq!(service.dataset_count(), 1);
+    assert!(entry_names(&destination).is_empty());
+}
+
+/// A skipped set has no finalized objects of its own and is not adoptable.
+#[test]
+fn a_skipped_set_is_not_adoptable() {
+    let (_fixture, converted) = converted_output_set("set-skipped", &["a-S1.mzML"]);
+    // The first run published; a second run under Skip finds the name taken.
+    let (report, retained) = converted
+        .service
+        .convert_workspace_sciex_bundle(
+            &converted.source,
+            &converted.destination,
+            ConflictPolicy::Skip,
+        )
+        .expect("the second run reaches an outcome");
+    assert_eq!(report.group_outcome(), "skipped_existing_destinations");
+    assert!(
+        retained.is_empty(),
+        "a skipped run finalized nothing of its own"
+    );
+
+    let refused = converted
+        .service
+        .output_set_adoption_ticket(&converted.source, &report, &converted.destination, retained)
+        .expect_err("a skipped run is not an adoptable set");
+    assert_eq!(refused.kind, "output_set_not_fully_finalized");
+}
+
+/// Adoption launches no process and takes no backend gate.
+///
+/// Structural in the implementation -- there is no provider call in it -- and
+/// pinned here because it is the invariant that lets a session which has
+/// stopped trusting its backend still take its outputs.
+#[test]
+fn adopting_a_set_launches_no_process() {
+    let fixture = TestFile::new("set-no-process");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let destination = fixture.destination("out");
+    let runner = FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML"]);
+    let launches = runner.launches();
+    let service = output_set_service(runner);
+    let dataset = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the bundle is admitted");
+    let (report, retained) = service
+        .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+    let ticket = service
+        .output_set_adoption_ticket(&dataset.handle, &report, &destination, retained)
+        .expect("a complete set mints a ticket");
+    assert_eq!(
+        launches.load(Ordering::SeqCst),
+        1,
+        "the conversion ran once"
+    );
+
+    service.adopt_output_set(&ticket).expect("the set adopts");
+    service.adopt_output_set(&ticket).expect("and again");
+
+    assert_eq!(
+        launches.load(Ordering::SeqCst),
+        1,
+        "adoption launched a process"
+    );
+    // And no adopted row is holding preview state: reading a file stays a
+    // separate action the user takes.
+    for dataset in service.roster().datasets {
+        assert!(
+            !service.holds_preview_state(&dataset.handle),
+            "adoption previewed a row"
+        );
+    }
+}
