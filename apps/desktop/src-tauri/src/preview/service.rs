@@ -1761,7 +1761,12 @@ impl PreviewService {
         ticket: &FinalizedOutputSetAdoptionTicket,
     ) -> Result<WorkspaceOutputSetAdoptionResult, PreviewErrorDto> {
         let reserved = {
-            let gate = self.enter_workspace_mutation();
+            // The same gate the visible adoption reserves under, waiting out a
+            // native drop that has claimed the workspace. Reserving in front of
+            // one would guarantee this adoption is superseded by a decision
+            // that had already been made -- and cost the user the drop or the
+            // adoption for nothing.
+            let gate = self.enter_workspace_mutation_after_drop();
             // The same two owners the visible adoption answers to. An export
             // holds a terminal queue's result; an adoption in flight holds the
             // workspace's own capacity and duplicate answers.

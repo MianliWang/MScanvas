@@ -8,6 +8,13 @@
   [ADR 0009](0009-mzml-conversion-execution-boundary.md) (finalization),
   [ADR 0013](0013-serial-conversion-queue.md) (the serial queue) and
   [ADR 0015](0015-user-visible-queue-stop.md) (the queue-level stop).
+- **Extended by:** [ADR 0025](0025-private-sciex-output-set-adoption.md),
+  2026-08-11. The ordered multi-candidate engine described here is lifted into
+  two shared functions and called by a second, private caller: one acquisition's
+  whole finalized output set. Every rule below is unchanged and is now literally
+  the same code for both paths — exact object and exact bytes per output, one
+  refusal not abandoning the rest, duplicate before capacity, hashing outside
+  the workspace lock, and the reserved generation.
 
 ## Context
 
