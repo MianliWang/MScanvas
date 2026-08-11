@@ -13,6 +13,12 @@
   own stdout. `SciexWiffBundle` is now an admitted family, so the statements
   below that no source family is admitted describe this ADR's slice and not
   the current boundary. Everything else here stands.
+- **Extended by [ADR 0023](0023-private-workspace-sciex-wiff-conversion.md),
+  2026-08-11.** This lifecycle now has a workspace caller: a private
+  coordinator carries an admitted bundle from a `DatasetId` into
+  `run_admitted_multi_output_conversion` and projects the result into a
+  path-free workspace report that preserves all four group outcomes, partial
+  finalization included.
 
 ## Context
 

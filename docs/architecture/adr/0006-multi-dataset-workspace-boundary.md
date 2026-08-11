@@ -3,6 +3,12 @@
 - Status: Accepted for the M1 workspace foundation, its first interface, the
   view projection over it and folder ingestion; drag-and-drop separately gated
 - Date: 2026-07-30
+- **Amended by [ADR 0023](0023-private-workspace-sciex-wiff-conversion.md),
+  2026-08-11.** A dataset is one *logical acquisition*, which is one filesystem
+  object for every family this ADR was written about and two for a SCIEX WIFF
+  bundle. Duplicate identity is correspondingly the whole acquisition's
+  identity rather than a single object's; for every family described here that
+  is the same value it always was.
 - Amended: 2026-07-30 (M1.1.5) — identity lifetime. Every registered dataset now
   holds a live handle on its file, so a filesystem identity cannot be recycled
   while a row still names it. See *Identity lifetime* below; the paragraphs this

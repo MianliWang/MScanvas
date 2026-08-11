@@ -15495,6 +15495,11 @@ impl TestFile {
 struct FakeOutputSetRunner {
     /// The basenames this backend writes and declares.
     declared: Vec<String>,
+    /// A source member to try to open for writing while the process is
+    /// "running", so a test can ask whether the boundary really pinned it.
+    probe: Option<PathBuf>,
+    /// Whether that attempt was refused. `None` until the run happens.
+    probe_refused: Arc<Mutex<Option<bool>>>,
     /// Basenames it writes without declaring: the injection ADR 0021 named.
     undeclared: Vec<String>,
     exit_code: i32,
@@ -15505,10 +15510,25 @@ impl FakeOutputSetRunner {
     fn writing(names: &[&str]) -> Self {
         Self {
             declared: names.iter().map(|name| (*name).to_owned()).collect(),
+            probe: None,
+            probe_refused: Arc::new(Mutex::new(None)),
             undeclared: Vec::new(),
             exit_code: 0,
             calls: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// The same runner, which will try to open this object for writing from
+    /// inside the process and remember whether it was refused.
+    fn probing(mut self, member: &Path) -> Self {
+        self.probe = Some(member.to_path_buf());
+        self
+    }
+
+    /// Whether the probed member was pinned while the process ran. `None` if
+    /// the process never ran.
+    fn probe_refused(&self) -> Arc<Mutex<Option<bool>>> {
+        Arc::clone(&self.probe_refused)
     }
 
     fn also_injecting(mut self, name: &str) -> Self {
@@ -15535,6 +15555,18 @@ impl ProcessRunner for FakeOutputSetRunner {
             .position(|argument| argument == "--outdir")
             .expect("a set command names an output directory");
         let outdir = PathBuf::from(&args[position + 1]);
+
+        if let Some(probe) = &self.probe {
+            // Write access, because that is what a pin withholds: the boundary
+            // opens each member sharing reads only, so any request for write
+            // access is refused for as long as it holds them. Asked from inside
+            // the process, which is exactly the window that matters.
+            let refused = fs::OpenOptions::new().write(true).open(probe).is_err();
+            *self
+                .probe_refused
+                .lock()
+                .expect("the probe result is never poisoned") = Some(refused);
+        }
 
         let mut stdout = Vec::new();
         for name in &self.declared {
@@ -15870,6 +15902,90 @@ fn a_fully_finalized_set_makes_no_claim_about_the_source_acquisition() {
     // from the members rather than from the group outcome.
     assert_eq!(report.published_count(), 1);
     assert_eq!(report.members().len(), 1);
+}
+
+/// A companion replaced by a *different object with identical content* is
+/// still refused.
+///
+/// The case only the identity comparison can catch. Digests match, byte lengths
+/// match, names match -- and the object under the companion's name is not the
+/// object this session leased, so the acquisition is not the one it accepted.
+#[test]
+fn a_companion_swapped_for_an_identical_copy_is_still_refused() {
+    let fixture = TestFile::new("sciex-identical-swap");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let companion = fixture.companion_of("acquisition");
+    let admitted =
+        super::selection::accept_sciex_wiff_bundle(&acquisition).expect("the bundle is admitted");
+    revalidate(&admitted).expect("an untouched bundle revalidates");
+
+    // Same bytes, different object: removed and written again rather than
+    // rewritten in place, so the file id changes and nothing else does.
+    let content = fs::read(&companion).expect("read the companion");
+    fs::remove_file(&companion).expect("remove the companion");
+    fs::write(&companion, &content).expect("write an identical copy");
+    assert_eq!(
+        fs::read(&companion).expect("read the copy"),
+        content,
+        "the copy really is identical"
+    );
+
+    let error = revalidate(&admitted).expect_err("an identical copy is a different object");
+    assert_eq!(error.kind, "file_identity_changed");
+}
+
+/// Every member is pinned while the backend reads it, not just the one the argv
+/// names.
+///
+/// A companion is never on a command line, so a swap during the run would be
+/// read by the backend and reported by nothing: the outputs would validate
+/// against themselves and the report would say the acquisition converted. The
+/// probe asks the operating system, from inside the running process, whether
+/// the boundary is holding it.
+///
+/// **Which layer is holding it, stated exactly.** Two guards cover this member
+/// and they cover different intervals. `pin_source_bundle` inside
+/// `mscanvas-proteowizard` holds every member from admission until the run
+/// ends, and it is that one this probe observes -- the probe fires while the
+/// process is running, which is inside its window. The coordinator's own
+/// `lock_against_replacement` covers the earlier interval, between revalidation
+/// and the crate's admission, and this test cannot reach it: there is no seam
+/// in the middle of the coordinator, and the deterministic suite does not
+/// invent one for a window a real replacement would have to win a race to use.
+/// So removing the coordinator's companion locks leaves this test green, and
+/// that is recorded as a surviving mutation rather than papered over.
+#[cfg(windows)]
+#[test]
+fn every_bundle_member_is_pinned_while_the_backend_runs() {
+    let fixture = TestFile::new("sciex-pinned");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let companion = fixture.companion_of("acquisition");
+    let destination = fixture.destination("out");
+
+    // A control first: with nothing holding it, the companion opens for writing.
+    assert!(
+        fs::OpenOptions::new().write(true).open(&companion).is_ok(),
+        "the probe would pass for the wrong reason"
+    );
+
+    let runner = FakeOutputSetRunner::writing(&["acquisition-S1.mzML"]).probing(&companion);
+    let refused = runner.probe_refused();
+    let service = output_set_service(runner);
+    let dataset = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the bundle is admitted");
+
+    let (report, _retained) = service
+        .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+    assert_eq!(report.group_outcome(), "fully_finalized");
+
+    let refused = *refused.lock().expect("the probe result is never poisoned");
+    assert_eq!(
+        refused,
+        Some(true),
+        "the companion was writable while the backend was reading it"
+    );
 }
 
 /// A member the backend never declared refuses the whole set, through the
