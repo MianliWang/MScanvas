@@ -4538,11 +4538,11 @@ fn the_shimadzu_lcd_evidence_run_is_reproducible() {
 
 // --- The multi-output conversion lifecycle ----------------------------------
 //
-// One logical source, one backend run, a bounded set of mzML documents. The
-// measured SCIEX topology motivates the model; no source family is admitted to
-// it, so everything here drives the lifecycle over synthetic staging content
-// and a substituted runner. The real acquisition is a separate ignored-path
-// evidence harness.
+// One logical source, one backend run, a bounded set of mzML documents. These
+// drive the lifecycle itself over synthetic staging content and a substituted
+// runner, so every branch of it is reachable; the SCIEX family that is admitted
+// to it has its own section further down, and the real acquisitions run through
+// a separate developer-only evidence harness.
 
 use super::output_set::{
     self, DiscoveredMember, MAX_CONVERSION_OUTPUTS_PER_SOURCE, MultiOutputFailure,

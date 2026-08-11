@@ -2,7 +2,9 @@
 
 - **Status:** A private one-source/multi-output lifecycle implemented and
   measured against the real backend. No source family admitted; SCIEX WIFF
-  remains gated.
+  remains gated. **Both gates this record leaves open were closed on
+  2026-08-11** — see the correction at the end and
+  [the M3.11 record](M3_SCIEX_WIFF_EVIDENCE.md).
 - **Date:** 2026-08-10
 - **Decision recorded in:** [ADR 0021](../architecture/adr/0021-private-multi-output-conversion-lifecycle.md)
 
