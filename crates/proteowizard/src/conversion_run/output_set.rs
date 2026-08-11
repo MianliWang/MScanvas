@@ -897,11 +897,16 @@ pub struct MultiOutputConversionRun {
 ///
 /// **This is not a production conversion.** It takes a Rust-owned path rather
 /// than an admitted source, applies no source-family recognition and consults
-/// no provider-evidence row, because no source family is admitted to this
-/// lifecycle yet. What it shares with production is everything that matters
-/// for the evidence: the reviewed process boundary, the private staging
-/// ownership, the fail-closed scanner, the handle-bound finalization and the
-/// identity-bound cleanup.
+/// no provider-evidence row — which is how the lifecycle was measured before
+/// any family was admitted to it, and is why it stays. Production conversion
+/// of an admitted family is
+/// [`run_admitted_multi_output_conversion`], which reaches this same body only
+/// after the gates this one has none of.
+///
+/// What it shares with production is everything that matters for the evidence:
+/// the reviewed process boundary, the private staging ownership, the
+/// fail-closed scanner, the backend's own declaration of what it wrote, the
+/// handle-bound finalization and the identity-bound cleanup.
 ///
 /// The input spelling is the plain verified one both measured vendor readers
 /// require; the harness confirms it against the real backend.

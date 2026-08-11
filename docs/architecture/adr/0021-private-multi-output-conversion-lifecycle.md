@@ -5,6 +5,14 @@
   workspace integration, queue integration and every UI concern separately
   gated
 - Date: 2026-08-10
+- **Superseded in part by
+  [ADR 0022](0022-sciex-wiff-source-admission.md), 2026-08-11.** Both gates
+  this ADR left open are closed there: a lawful ten-sample acquisition ran
+  through this lifecycle on the evidenced build, and staging membership is
+  decided — the discovered set must equal the set the backend declared on its
+  own stdout. `SciexWiffBundle` is now an admitted family, so the statements
+  below that no source family is admitted describe this ADR's slice and not
+  the current boundary. Everything else here stands.
 
 ## Context
 

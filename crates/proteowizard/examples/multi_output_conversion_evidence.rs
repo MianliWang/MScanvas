@@ -8,10 +8,18 @@
 //! bounded discovery, all-before-any validation, the group conflict preflight,
 //! and one-at-a-time handle-bound publication into a scratch destination.
 //!
-//! **No source family is admitted here.** The acquisition is named on the
-//! command line, is never recognized into a production source kind, and its
-//! path never appears in what this prints: every reported fact is a bounded
-//! shape or a backend-chosen output basename.
+//! Two modes, and the difference is what had to be true before the backend
+//! started. By default the acquisition is named on the command line and is
+//! never recognized into a source kind — the mode the lifecycle was measured
+//! under before any family was admitted to it. With `--admitted` the same path
+//! goes through the real admission chain first: extension filter, container
+//! recognition, companion derivation and recognition, every member bound and
+//! hashed, then the family gate, the provider-evidence row and a recheck of
+//! each member before the spawn.
+//!
+//! Either way its path never appears in what this prints: every reported fact
+//! is a bounded shape, a stable identifier, or a backend-chosen output
+//! basename.
 //!
 //! This example is intentionally not a stable MSCanvas CLI contract.
 

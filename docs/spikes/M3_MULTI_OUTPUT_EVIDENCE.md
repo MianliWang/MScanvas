@@ -140,3 +140,26 @@ and a provider-evidence row, belong to the SCIEX admission slice.
 Both fixtures, their companions, every converted output, every staging root
 and every probe directory were deleted after measurement. No vendor data is
 tracked and no local path appears in this record.
+
+## Correction: the ten-sample acquisition was there after all, 2026-08-11
+
+The provenance fact above — that the Enolase acquisition behind the ten
+committed reference outputs "is **not present** in the pwiz tree at the pinned
+commit" — is true of the commit this record pinned and false as a general claim,
+and it is repeated in the gates below as though it were general.
+
+The file was deleted upstream in 2019 along with a test-data tarball and
+restored on 2022-09-08 in commit `1e4c3abccc05626bc215bcf3fee6ed0e33613360`,
+whose message says so. Pinning that revision instead yields a lawful, 3.9 MB,
+**ten-sample** acquisition. Both fixtures recorded above are byte-identical at
+that revision.
+
+Gate 1 below ("real-backend evidence of a multi-member set requires one lawful
+multi-sample WIFF acquisition, which the pinned tree does not contain") is
+therefore closed, and gate 2 (staging exclusivity) is closed too. Both in
+[the M3.11 record](M3_SCIEX_WIFF_EVIDENCE.md); the decisions in
+[ADR 0022](../architecture/adr/0022-sciex-wiff-source-admission.md).
+
+What stands unchanged here: every measurement of the two single-sample
+fixtures, the output-topology findings, and the lifecycle evidence. The error
+was in how far a search was taken, not in anything that was measured.
