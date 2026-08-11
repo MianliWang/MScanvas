@@ -66,6 +66,17 @@ different acquisition by this rule.** That is correct for a duplicate question
 and insufficient for a staleness question, which is what the digests below are
 for.
 
+It has one consequence worth stating, because getting it wrong makes the
+staleness refusal a trap. Revalidation refuses a row whose members were
+rewritten and tells the user to open the acquisition again — and opening it
+again arrives at this same duplicate lookup, where the identities are unchanged.
+So when the identities match and the remembered digests do not, the existing row
+is **rebound** to the freshly admitted acquisition and returned under the same
+`DatasetId`. It is the same acquisition, the interface keeps the handle it
+already holds, the stale holds go with the value they were attached to, and the
+instruction the refusal gives is one the user can actually follow. Without that,
+the row would stay unusable however many times they obeyed it.
+
 ### The workspace remembers what each member held
 
 A bundle records the SHA-256 of every member, from the digests the crate

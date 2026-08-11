@@ -15690,6 +15690,50 @@ fn bundle_duplicate_identity_is_the_whole_acquisition() {
     assert_eq!(service.dataset_count(), 2);
 }
 
+/// "Open it again to continue" has to actually continue.
+///
+/// A bundle member rewritten in place keeps its file id, so the identities that
+/// decide duplicate do not change -- and the digests the row remembers do.
+/// Revalidation refuses the row and says to open the acquisition again; opening
+/// it again must rebind that row rather than hand back the stale one, or the
+/// instruction is a loop the user cannot leave.
+#[test]
+fn reopening_a_rewritten_bundle_makes_its_row_usable_again() {
+    let fixture = TestFile::new("sciex-reopen");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let companion = fixture.companion_of("acquisition");
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+
+    let first = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the bundle is admitted");
+
+    // Rewritten in place: same object, new bytes. The row is now stale.
+    fs::write(&companion, scan_companion_bytes("rewritten in place"))
+        .expect("rewrite the companion");
+    let stale = super::selection::accept_sciex_wiff_bundle(&acquisition)
+        .expect("the acquisition itself is still admissible");
+    let _ = stale;
+
+    // Opening it again returns the same handle -- one acquisition, one row --
+    // and the row it returns is bound to what is on disk now.
+    let again = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the acquisition is admitted again");
+    assert_eq!(again.handle, first.handle, "one acquisition, one row");
+    assert_eq!(service.dataset_count(), 1);
+
+    // The proof that it was rebound rather than handed back: it revalidates.
+    let destination = fixture.destination("out");
+    let error = service
+        .convert_workspace_sciex_bundle(&again.handle, &destination, ConflictPolicy::Fail)
+        .expect_err("this service has no conversion backend");
+    assert_ne!(
+        error.kind, "file_content_changed",
+        "the reopened row is still stale: {error:?}"
+    );
+}
+
 /// A refused bundle costs the session nothing, and every way it can be refused
 /// is a refusal rather than a partial admission.
 #[test]

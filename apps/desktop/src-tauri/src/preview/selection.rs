@@ -1699,6 +1699,26 @@ impl DatasetRegistry {
         // acquisition, and handing back the existing row for it would give the
         // user a dataset bound to a companion that is no longer there.
         if let Some(&existing_id) = self.by_identity.get(&file.dataset_identity()) {
+            // The same objects, and possibly not the same bytes. A bundle
+            // remembers what each member held, so a member rewritten in place
+            // -- same file id, new content -- makes the existing row stale:
+            // revalidation refuses it and tells the user to open it again.
+            // Opening it again arrives here, so this is where that has to
+            // work. Rebinding the row to the freshly admitted acquisition is
+            // what makes the instruction true; without it the row stays
+            // unusable however many times the user obeys it, because the
+            // identities that decide duplicate are exactly the ones a rewrite
+            // does not change.
+            //
+            // The row, not a second one. It is the same acquisition, the
+            // handle the interface already holds keeps naming it, and the
+            // stale holds go with the value they were attached to.
+            if let Some(existing) = self.datasets.get_mut(&existing_id)
+                && existing.file.member_digests() != file.member_digests()
+            {
+                existing.file = file;
+                return AddDatasetOutcome::Duplicate { existing_id };
+            }
             // The existing row keeps the origin it was registered with. The
             // second name for one acquisition is not a second acquisition, and
             // rewriting where the row "came from" would move a user's row

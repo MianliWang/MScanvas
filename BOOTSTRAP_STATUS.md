@@ -3943,7 +3943,13 @@ command list is asserted unchanged. The inert `sciex_wiff` wire member exists
 for the reason ADR 0019 gave `shimadzu_lcd` one: the roster projection is total
 over what Rust can admit.
 
-Thirteen focused mutations, twelve red. The survivor is recorded rather than
+A staleness refusal has to leave a way out: revalidation refuses a row whose
+members were rewritten in place and says to open the acquisition again, and
+opening it again reaches the duplicate lookup with unchanged identities. So a
+matching identity with differing digests **rebinds** the existing row rather
+than handing it back. Without that the instruction is a loop.
+
+Fourteen focused mutations, thirteen red. The survivor is recorded rather than
 hidden — removing the coordinator's own companion locks leaves the suite green,
 because the interval they protect has no seam a deterministic test can reach
 while the interval they overlap is already held by the crate. Two further
