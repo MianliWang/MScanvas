@@ -163,6 +163,20 @@ pub(crate) const MAX_SOURCE_BUNDLE_MEMBERS: usize = 4;
 /// argv names and what the plan derives from; a companion is never named to the
 /// backend and is bound anyway, because the backend will open it regardless of
 /// whether this boundary looked at it.
+///
+/// **Its debug projection carries paths, deliberately.** The crate's
+/// path-free discipline is a rule about *errors, outcomes and reports* — the
+/// values that leave this boundary — and this is none of those: it is plan
+/// state, it appears in no report, and its members' paths are what a failing
+/// plan assertion exists to show. `SourceIdentity` and [`CommandSpec`] itself
+/// have printed their paths since before bundles existed, and `CommandSpec`
+/// prints the executable, the working directory and the argv besides, so
+/// redacting only this field would hide a companion path sitting next to the
+/// primary path it was derived from and leave the projection no safer while
+/// implying it was.
+///
+/// If the whole spec's projection should be path-free, that is one change to
+/// `CommandSpec` and `SourceIdentity`, not a special case here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SourceIdentitySet {
     primary: SourceIdentity,
