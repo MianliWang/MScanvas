@@ -1689,13 +1689,14 @@ impl PreviewService {
     /// because that is the only moment both exist together: after this the
     /// objects live in the ticket and there is no way back to them from a name.
     ///
-    /// Takes the conversion whole, so the report and the objects it describes
-    /// cannot come from two different runs. The run identity was allocated when
-    /// the conversion finished; it names an event and never reaches disk.
+    /// Takes the conversion whole and takes nothing else. Everything the ticket
+    /// needs about the run comes from the run: the source row and family from
+    /// the report, the objects, the folder it wrote into, and the identity that
+    /// was allocated when it finished. The only thing this looks up is the
+    /// source row's display name, by the id the conversion itself carries.
     #[cfg(test)]
     pub(super) fn output_set_adoption_ticket(
         &self,
-        destination_root: &Path,
         conversion: SciexConversion,
     ) -> Result<FinalizedOutputSetAdoptionTicket, PreviewErrorDto> {
         // The source comes from the conversion, not from a handle beside it.
@@ -1711,24 +1712,14 @@ impl PreviewService {
             let dataset = workspace.registry.get(id).ok_or_else(unknown_dataset)?;
             dataset.file().file_name().to_owned()
         };
-        // The folder as the object it was admitted as, exactly as a queue binds
-        // its destination. A name would let a later adoption write into
-        // whatever had since taken it.
-        let (root, identity, _held) = admit_destination_root(destination_root)?;
-        FinalizedOutputSetAdoptionTicket::of(
-            id,
-            source_display_name,
-            source_kind,
-            AdmittedDestination::new(root, identity),
-            conversion,
-        )
-        .map_err(|refusal| {
-            PreviewErrorDto::new(
-                refusal.stable_id(),
-                "That conversion did not produce a complete output set to adopt.",
-                false,
-            )
-        })
+        FinalizedOutputSetAdoptionTicket::of(id, source_display_name, source_kind, conversion)
+            .map_err(|refusal| {
+                PreviewErrorDto::new(
+                    refusal.stable_id(),
+                    "That conversion did not produce a complete output set to adopt.",
+                    false,
+                )
+            })
     }
 
     /// Adopts one fully finalized, sample-complete output set into this
@@ -3779,9 +3770,14 @@ impl PreviewService {
         }
         let source = open_conversion_source(&file)?;
         let bound_source_objects = source.bound_object_count();
+        // Admitted as an object before anything is written into it, so what the
+        // result carries is the folder this run actually targeted rather than a
+        // name that may mean something else by the time it is adopted.
+        let (destination_root, destination_identity, _held) =
+            admit_destination_root(destination_root)?;
         let run = run_admitted_multi_output_conversion(
             &source,
-            destination_root,
+            &destination_root,
             conflict,
             &backend.capabilities,
             backend.runner,
@@ -3803,6 +3799,7 @@ impl PreviewService {
             // Allocated here, once, for this conversion. Never read from the
             // workspace generation: converting does not advance it.
             run: NEXT_CONVERSION_RUN.fetch_add(1, Ordering::Relaxed),
+            destination: AdmittedDestination::new(destination_root, destination_identity),
         })
     }
 
@@ -4951,8 +4948,8 @@ impl Drop for AdoptionInFlight<'_> {
     }
 }
 
-/// One private SCIEX conversion: what it reported, what it retained, and
-/// which run it was.
+/// One private SCIEX conversion: what it reported, what it retained, which
+/// folder it wrote into, and which run it was.
 ///
 /// The three travel together because two of them are only meaningful about the
 /// same run. A report describes a set of members; the retained objects *are*
@@ -4961,14 +4958,27 @@ impl Drop for AdoptionInFlight<'_> {
 /// same states, nothing to notice — and mint a ticket whose provenance and
 /// completeness described a run whose files it was not adopting.
 ///
-/// So the conversion hands back one value, the ticket constructor takes it by
-/// value, and the mismatch is not expressible rather than merely checked for.
+/// So the conversion hands back one value carrying everything a ticket needs
+/// about the run -- the source, the objects, the folder and the identity -- the
+/// constructor takes it by value, and nothing about the run is supplied beside
+/// it. Every one of those was a way to pair two conversions wrongly, and each
+/// is closed by removal rather than by a check, because a check leaves the
+/// wrong call expressible.
 #[cfg(test)]
 #[derive(Debug)]
 pub(super) struct SciexConversion {
     pub(super) report: WorkspaceMultiOutputConversionReport,
     pub(super) retained: mscanvas_proteowizard::FinalizedOutputSet,
     run: u64,
+    /// The folder this conversion wrote into, as the object it was admitted as.
+    ///
+    /// Carried rather than supplied again later, and that closes the last way
+    /// two runs could be crossed. Adoption proves each member is the exact
+    /// object that was finalized, and a hard link in another folder is the same
+    /// object -- so a destination handed in separately could point adoption at
+    /// aliases and register rows under a directory the conversion never wrote
+    /// to, with every per-member proof still passing.
+    destination: AdmittedDestination,
 }
 
 #[cfg(test)]
@@ -4976,6 +4986,11 @@ impl SciexConversion {
     /// Which conversion this was.
     pub(super) const fn run(&self) -> u64 {
         self.run
+    }
+
+    /// The folder it wrote into, as the object it was admitted as.
+    pub(super) const fn destination(&self) -> &AdmittedDestination {
+        &self.destination
     }
 
     /// The same conversion, remembering no completeness.

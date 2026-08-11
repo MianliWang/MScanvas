@@ -39,6 +39,13 @@ finishes, not from the workspace mutation generation: converting does not
 advance that generation, so two conversions of one dataset into two folders
 would otherwise read the same value and claim to be the same run.
 
+The destination folder rides along too, admitted as an object before the
+conversion wrote into it. Adoption proves each member is the exact object that
+was finalized, and a hard link in another folder is the *same object* — so a
+separately supplied destination could point adoption at aliases and register
+rows under a directory the run never targeted, with every per-member proof
+still passing.
+
 Eligibility is a conjunction, and the constructor fails closed on each part:
 
 | Refused when | Stable id |

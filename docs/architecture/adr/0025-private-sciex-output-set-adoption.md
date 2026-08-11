@@ -60,11 +60,20 @@ conversion whose files it was not adopting — same member count, same states,
 nothing for a check to notice. Taking them together makes that unexpressible
 rather than merely checked for.
 
-The source is taken from the conversion too, not from a handle beside it: a
-supplied handle could name any live row, and every member ticket would then
-carry that row as its origin — so a conversion of A adopted with B's handle
-would persist B as where A's files came from. The conversion already knows
-which dataset it was of.
+**Nothing about the run is supplied beside it.** The source row and family come
+from the report; the objects and the run identity from the same value; and the
+destination folder, admitted as an object before the conversion wrote into it,
+travels with them. Each of those was, at some point in this slice's review, a
+separate parameter — and each was a way to pair two conversions wrongly:
+
+- a supplied *handle* could name any live row, so a conversion of A adopted with
+  B's handle would persist B as where A's files came from;
+- a supplied *destination* could be a folder of hard links to the same objects,
+  so every per-member proof would pass and the rows would be registered under a
+  directory the conversion never wrote to.
+
+All of them are closed by removal rather than by a check, because a check leaves
+the wrong call expressible.
 
 The run identity is allocated once when the conversion finishes, from a
 monotonic counter. It is deliberately **not** the workspace mutation generation:

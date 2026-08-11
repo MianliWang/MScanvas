@@ -370,10 +370,10 @@ impl FinalizedOutputSetAdoptionTicket {
         source: DatasetId,
         source_display_name: String,
         source_kind: DatasetSourceKind,
-        destination: AdmittedDestination,
         conversion: SciexConversion,
     ) -> Result<Self, OutputSetNotAdoptable> {
         let run = conversion.run();
+        let destination = conversion.destination().clone();
         let SciexConversion {
             report, retained, ..
         } = conversion;

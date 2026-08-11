@@ -16431,7 +16431,7 @@ fn converted_output_set_with(label: &str, runner: FakeOutputSetRunner) -> (TestF
         .expect("the conversion reaches an outcome");
     assert_eq!(conversion.report.group_outcome(), "fully_finalized");
     let ticket = service
-        .output_set_adoption_ticket(&destination, conversion)
+        .output_set_adoption_ticket(conversion)
         .expect("a complete set mints a ticket");
     (
         fixture,
@@ -16733,7 +16733,7 @@ fn a_partially_finalized_conversion_mints_no_ticket() {
         panic!("the occupied destination name did not stop the set publishing whole");
     }
     let refused = service
-        .output_set_adoption_ticket(&destination, conversion)
+        .output_set_adoption_ticket(conversion)
         .expect_err("an incomplete publication is not an adoptable set");
     assert!(
         refused.kind.starts_with("output_set_"),
@@ -16769,7 +16769,7 @@ fn an_incomplete_acquisition_mints_no_ticket() {
     );
     assert!(conversion.retained.is_empty());
     let refused = service
-        .output_set_adoption_ticket(&destination, conversion)
+        .output_set_adoption_ticket(conversion)
         .expect_err("a refused run is not an adoptable set");
     assert_eq!(refused.kind, "output_set_not_fully_finalized");
     assert_eq!(service.dataset_count(), 1);
@@ -16800,7 +16800,7 @@ fn a_skipped_set_is_not_adoptable() {
 
     let refused = converted
         .service
-        .output_set_adoption_ticket(&converted.destination, conversion)
+        .output_set_adoption_ticket(conversion)
         .expect_err("a skipped run is not an adoptable set");
     assert_eq!(refused.kind, "output_set_not_fully_finalized");
 }
@@ -16825,7 +16825,7 @@ fn adopting_a_set_launches_no_process() {
         .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
     let ticket = service
-        .output_set_adoption_ticket(&destination, conversion)
+        .output_set_adoption_ticket(conversion)
         .expect("a complete set mints a ticket");
     assert_eq!(
         launches.load(Ordering::SeqCst),
@@ -16897,7 +16897,7 @@ fn a_real_sciex_output_set_is_adopted_into_the_workspace() {
     assert_eq!(completeness.sample_count(), expected);
 
     let ticket = service
-        .output_set_adoption_ticket(&destination, conversion)
+        .output_set_adoption_ticket(conversion)
         .expect("a complete, sample-complete set mints a ticket");
     assert_eq!(ticket.len(), expected);
     println!("ticket: {ticket:?}");
@@ -16967,7 +16967,7 @@ fn a_set_without_established_completeness_mints_no_ticket() {
     assert_eq!(conversion.report.group_outcome(), "fully_finalized");
 
     let refused = service
-        .output_set_adoption_ticket(&destination, conversion.without_completeness())
+        .output_set_adoption_ticket(conversion.without_completeness())
         .expect_err("a set with no completeness evidence is not adoptable");
     assert_eq!(refused.kind, "output_set_completeness_not_established");
     assert_eq!(service.dataset_count(), 1);
@@ -16992,7 +16992,7 @@ fn a_set_whose_members_do_not_pair_mints_no_ticket() {
     // and guessing which object belongs to which name is the one thing worse
     // than refusing.
     let refused = service
-        .output_set_adoption_ticket(&destination, conversion.without_last_member())
+        .output_set_adoption_ticket(conversion.without_last_member())
         .expect_err("a set that does not pair is not adoptable");
     assert_eq!(refused.kind, "output_set_members_do_not_pair");
     assert_eq!(service.dataset_count(), 1);
