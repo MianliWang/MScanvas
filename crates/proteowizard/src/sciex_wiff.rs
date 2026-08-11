@@ -118,6 +118,28 @@ pub(crate) fn companion_path(primary: &Path) -> Option<PathBuf> {
     Some(parent.join(companion))
 }
 
+/// The companion name a caller outside this crate must lease alongside the
+/// primary.
+///
+/// The naming policy has exactly one home, and this is how a caller reaches it
+/// without copying it. A session that admits a SCIEX acquisition has to take
+/// its own hold on *both* objects **before** the crate's admission runs — a
+/// hold taken afterwards leaves the interval the hold exists to close — and it
+/// cannot do that without knowing what the second object is called. Answering
+/// from here rather than letting the caller append `".scan"` itself keeps the
+/// rule single: if this ever changes shape, nothing else has to be found and
+/// changed with it.
+///
+/// This says nothing about whether such an object exists, is a regular file, or
+/// is a companion at all. It is a name. [`ConversionSource::open_sciex_wiff_bundle`]
+/// remains the only thing that admits one.
+///
+/// [`ConversionSource::open_sciex_wiff_bundle`]: crate::ConversionSource::open_sciex_wiff_bundle
+#[must_use]
+pub fn sciex_wiff_companion_path(primary: &Path) -> Option<PathBuf> {
+    companion_path(primary)
+}
+
 /// Whether an open object begins with the companion's signature.
 ///
 /// Takes the handle, like every other recognition in this crate, so what is

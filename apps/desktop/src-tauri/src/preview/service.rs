@@ -19,15 +19,17 @@ use mscanvas_proteowizard::{
 };
 
 use super::conversion::conversion_source_kind;
-#[cfg(test)]
-use mscanvas_proteowizard::ConflictPolicy;
 #[allow(clippy::wildcard_imports)]
 use mscanvas_proteowizard::{BackendRunFacts, ConversionAttempt, ConversionCancellation};
+#[cfg(test)]
+use mscanvas_proteowizard::{ConflictPolicy, run_admitted_multi_output_conversion};
 
 use super::backend::{
     ConversionBackend, PreviewProvider, open_operations, reporting_redactor,
     selected_spectrum_operation,
 };
+#[cfg(test)]
+use super::conversion::WorkspaceMultiOutputConversionReport;
 #[cfg(test)]
 use super::conversion::run_planned_conversion;
 use super::conversion::{
@@ -87,6 +89,8 @@ use super::operation::{
     AdmittedDestination, CancellationFacts, ConversionQueue, ConversionSlot, ItemOutcome,
     ItemState, QueueItem, QueueItemAttempt, StopAccepted, TerminalReason, item_state_of,
 };
+#[cfg(test)]
+use super::selection::DatasetSourceKind;
 use super::selection::{
     AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity, RevocationReason,
     accept_mzml_file, accept_workspace_file, candidate_display_name, file_identity,
@@ -3546,6 +3550,151 @@ impl PreviewService {
         Ok(dataset_dto(&workspace, id).expect("the dataset was registered a line ago"))
     }
 
+    /// The same, for a whole SCIEX WIFF acquisition.
+    ///
+    /// The only way a SCIEX dataset enters a workspace, and there is no visible
+    /// route beside it: the picker does not consult the `.wiff` extension at
+    /// all, folder discovery and the Explorer drop stay regular-mzML-only, and
+    /// this takes a Rust-owned path because nothing that could hand it one from
+    /// a webview exists. It is compiled out of the shipped binary and the
+    /// command surface is asserted to be unchanged.
+    ///
+    /// **One row for two files.** The admission below leases the `.wiff` *and*
+    /// the `.wiff.scan`, and the registry stores both under one
+    /// [`DatasetId`][super::selection::DatasetId]. The companion is not a
+    /// second dataset, is not in a side map, and is not found again later by
+    /// guessing its name: it is part of the acquisition this row *is*. Duplicate
+    /// handling follows from that -- two additions are the same dataset when
+    /// they are the same bundle, and a `.wiff` whose companion has been replaced
+    /// is a different acquisition rather than a duplicate of the first.
+    #[cfg(test)]
+    pub(super) fn add_sciex_wiff_dataset(
+        &self,
+        path: &Path,
+    ) -> Result<SelectedFileDto, PreviewErrorDto> {
+        use super::selection::accept_sciex_wiff_bundle;
+
+        let accepted = accept_sciex_wiff_bundle(path)?;
+        let mut workspace = self.workspace();
+        let id = workspace.registry.add_direct(accepted).id();
+        Ok(dataset_dto(&workspace, id).expect("the dataset was registered a line ago"))
+    }
+
+    /// Converts one accepted SCIEX dataset through the private multi-output
+    /// lifecycle.
+    ///
+    /// Private, and further from a product surface than the single-output path
+    /// beside it: no command reaches this, no transfer object is built from
+    /// what it returns, the visible queue refuses this family, and it is
+    /// compiled out of the shipped binary. What it exists to establish is that
+    /// a *bundle* the session already holds can be carried whole -- both
+    /// objects, both identities, both leases -- into the output-set boundary and
+    /// back.
+    ///
+    /// ## The order, and why it is the same one
+    ///
+    /// Step for step the order the single-output path keeps, because every
+    /// reason for it is a property of this service rather than of the output
+    /// cardinality:
+    ///
+    /// 1. the handle is resolved and the epoch claimed **before** the wait;
+    /// 2. the backend gate is taken with **no workspace lock held**;
+    /// 3. the epoch is rechecked **after** the wait;
+    /// 4. the dataset is revalidated under the family it was accepted as --
+    ///    which for this family re-admits the *whole bundle* and compares every
+    ///    member's identity, not just the one the row is named by;
+    /// 5. the installation is bound and its build checked against the recorded
+    ///    SCIEX evidence **before** anything is pinned or created;
+    /// 6. every member is pinned against replacement, and only then is the
+    ///    bundle re-admitted as a conversion source -- the identity comparison
+    ///    inside that admission is what closes the window between revalidation
+    ///    and the pins, and it closes it before an output could exist;
+    /// 7. the run is stamped with the generation carried by the gate guard.
+    ///
+    /// Step 6 is where this differs, and it is the difference that matters. A
+    /// single-file family pins one object; this pins the primary *and* the
+    /// companion. The companion never appears in any argv, so nothing
+    /// downstream would notice it had been swapped -- the run would succeed and
+    /// the documents it published would be of an acquisition nobody chose.
+    ///
+    /// ## What a successful result does not say
+    ///
+    /// [`WorkspaceMultiOutputConversionReport`] documents this at length and it
+    /// is repeated here because this is where a caller meets it: a
+    /// `fully_finalized` group outcome says every member of the *admitted
+    /// output set* was validated and published. It does not say every sample in
+    /// the acquisition converted. `Reader_ABI` can fail a sample, log it,
+    /// continue, declare only what it wrote and exit zero.
+    #[cfg(test)]
+    pub(super) fn convert_workspace_sciex_bundle(
+        &self,
+        handle: &str,
+        destination_root: &Path,
+        conflict: ConflictPolicy,
+    ) -> Result<
+        (
+            WorkspaceMultiOutputConversionReport,
+            mscanvas_proteowizard::FinalizedOutputSet,
+        ),
+        PreviewErrorDto,
+    > {
+        let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
+        let (epoch, remembered) = self
+            .workspace()
+            .begin_reading_request(id)
+            .ok_or_else(unknown_dataset)?;
+        let running = self.enter_backend();
+        if !self.workspace().request_is_current(id, epoch) {
+            return Err(superseded());
+        }
+        let file = revalidate(&remembered)?;
+        // Refused here rather than deep in the lifecycle. This coordinator
+        // exists for families whose backend names its own outputs, and routing
+        // any other family through it would convert it under a contract its
+        // measurements do not support.
+        if file.source_kind() != DatasetSourceKind::SciexWiff {
+            return Err(PreviewErrorDto::new(
+                "dataset_not_multi_output",
+                "That acquisition does not convert to a set of documents.",
+                false,
+            ));
+        }
+        let backend = self.provider.conversion_backend()?;
+        let kind = conversion_source_kind(file.source_kind());
+        refuse_unevidenced_build(&backend.capabilities, kind)?;
+
+        // Every member, and the guards are held together for the whole run. A
+        // companion released early is a companion the backend could be reading
+        // while somebody else replaces it.
+        let mut guards = vec![lock_against_replacement(file.path())?];
+        for companion in file.companions() {
+            guards.push(lock_against_replacement(companion.path())?);
+        }
+        let source = open_conversion_source(&file)?;
+        let bound_source_objects = source.bound_object_count();
+        let run = run_admitted_multi_output_conversion(
+            &source,
+            destination_root,
+            conflict,
+            &backend.capabilities,
+            backend.runner,
+            None,
+        );
+        let generation = self.note_resolved(backend.installation.clone());
+        drop(guards);
+        drop(running);
+        Ok((
+            WorkspaceMultiOutputConversionReport::of(
+                id.handle(),
+                file.source_kind(),
+                bound_source_objects,
+                generation,
+                &run.report,
+            ),
+            run.retained,
+        ))
+    }
+
     /// How many datasets the session holds.
     pub(super) fn dataset_count(&self) -> usize {
         self.workspace().registry.len()
@@ -3562,6 +3711,23 @@ impl PreviewService {
             .registry
             .get(id)
             .map(|dataset| dataset.file().lease_witness())
+    }
+
+    /// The same, over every object the acquisition is made of.
+    ///
+    /// A bundle's row takes one hold per member, and a release test that
+    /// watched only the primary would pass while a companion handle stayed
+    /// open -- pinning an object with nothing left in the session naming it.
+    #[cfg(test)]
+    pub(super) fn lease_witnesses(
+        &self,
+        handle: &str,
+    ) -> Option<Vec<super::selection::LeaseWitness>> {
+        let id = DatasetId::parse(handle)?;
+        self.workspace()
+            .registry
+            .get(id)
+            .map(|dataset| dataset.file().lease_witnesses())
     }
 
     /// Whether the session is holding preview facts under this handle.

@@ -15401,3 +15401,713 @@ fn a_provider_label_that_names_a_path_is_scrubbed_before_it_is_written() {
     // The path is gone and the version it was printed beside is not.
     assert!(release.contains("<path>"), "{release}");
 }
+
+// ---------------------------------------------------------------------------
+// A workspace dataset that is a bundle, converting to a set. ADR 0023.
+// ---------------------------------------------------------------------------
+
+/// The entries a SCIEX acquisition carries, spelled out for the same reason the
+/// LabSolutions ones are: a test that read its expectation from the constant it
+/// checks would pass because that constant had been changed to match a mistake.
+const SCIEX_MARKERS: [&str; 4] = [
+    "SampleSubtree",
+    "MethodSubtree",
+    "SampleTable",
+    "MassSpecMethod",
+];
+
+/// A compound file under the geometry a real `.wiff` declares.
+///
+/// Version 4 with 4096-byte sectors, because five entries do not fit in the
+/// 512-byte directory sector the LabSolutions fixture uses -- and because that
+/// is what all three lawful fixtures declare.
+fn wiff_container_bytes(entries: &[&str]) -> Vec<u8> {
+    const SECTOR: usize = 4096;
+    let mut bytes = vec![0_u8; SECTOR * 2];
+    bytes[..8].copy_from_slice(&COMPOUND_FILE_MAGIC);
+    bytes[26..28].copy_from_slice(&4_u16.to_le_bytes());
+    bytes[28..30].copy_from_slice(&[0xFE, 0xFF]);
+    bytes[30..32].copy_from_slice(&12_u16.to_le_bytes());
+    bytes[48..52].copy_from_slice(&0_u32.to_le_bytes());
+
+    let named = std::iter::once("Root Entry").chain(entries.iter().copied());
+    for (index, name) in named.enumerate() {
+        let at = SECTOR + index * 128;
+        let units: Vec<u16> = name.encode_utf16().collect();
+        for (unit, slot) in units.iter().zip(bytes[at..].chunks_exact_mut(2)) {
+            slot.copy_from_slice(&unit.to_le_bytes());
+        }
+        let declared = u16::try_from(units.len() * 2 + 2).expect("a short entry name");
+        bytes[at + 64..at + 66].copy_from_slice(&declared.to_le_bytes());
+        bytes[at + 66] = if index == 0 { 5 } else { 2 };
+    }
+    bytes
+}
+
+/// The 32 bytes every measured `.wiff.scan` begins with, then opaque payload.
+///
+/// Spelled out rather than imported, like every other signature here.
+fn scan_companion_bytes(payload: &str) -> Vec<u8> {
+    let mut bytes = vec![
+        0x82, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x11, 0x11, 0x11, 0x82, 0x05, 0x00, 0x00, 0x01, 0x00,
+        0x00, 0x00,
+    ];
+    bytes.extend_from_slice(payload.as_bytes());
+    bytes
+}
+
+impl TestFile {
+    /// A whole SCIEX acquisition: the container and the companion beside it.
+    ///
+    /// Returns the primary, which is the only member anything is ever handed.
+    fn sciex_bundle(&self, stem: &str) -> PathBuf {
+        self.sciex_bundle_with_companion(stem, "opaque spectral payload")
+    }
+
+    /// The same, with the companion's content chosen by the caller, so a test
+    /// can rewrite exactly one member.
+    fn sciex_bundle_with_companion(&self, stem: &str, payload: &str) -> PathBuf {
+        let primary = self.named_bytes(
+            &format!("{stem}.wiff"),
+            &wiff_container_bytes(&SCIEX_MARKERS),
+        );
+        self.named_bytes(&format!("{stem}.wiff.scan"), &scan_companion_bytes(payload));
+        primary
+    }
+
+    /// The companion of a bundle this fixture wrote.
+    fn companion_of(&self, stem: &str) -> PathBuf {
+        self.directory.join(format!("{stem}.wiff.scan"))
+    }
+}
+
+/// A substituted backend for a run whose outputs the backend names itself.
+///
+/// Different from [`FakeConversionRunner`] in the two ways that matter. It
+/// writes into the command's `--outdir` rather than to one planned destination,
+/// because a set command carries no destination -- the boundary measured that
+/// the backend names its own outputs. And it announces each document on stdout
+/// in the exact line shape the evidenced build prints, because the multi-output
+/// lifecycle compares the staged set against what the backend said it wrote. A
+/// stand-in that wrote files without announcing them would not be standing in
+/// for the measured backend; it would be standing in for an injector.
+struct FakeOutputSetRunner {
+    /// The basenames this backend writes and declares.
+    declared: Vec<String>,
+    /// Basenames it writes without declaring: the injection ADR 0021 named.
+    undeclared: Vec<String>,
+    exit_code: i32,
+    calls: Arc<AtomicUsize>,
+}
+
+impl FakeOutputSetRunner {
+    fn writing(names: &[&str]) -> Self {
+        Self {
+            declared: names.iter().map(|name| (*name).to_owned()).collect(),
+            undeclared: Vec::new(),
+            exit_code: 0,
+            calls: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn also_injecting(mut self, name: &str) -> Self {
+        self.undeclared.push(name.to_owned());
+        self
+    }
+
+    fn failing(mut self) -> Self {
+        self.exit_code = 1;
+        self
+    }
+
+    fn launches(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.calls)
+    }
+}
+
+impl ProcessRunner for FakeOutputSetRunner {
+    fn run(&self, spec: &CommandSpec) -> Result<ProcessOutput, ProcessError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let args = spec.args();
+        let position = args
+            .iter()
+            .position(|argument| argument == "--outdir")
+            .expect("a set command names an output directory");
+        let outdir = PathBuf::from(&args[position + 1]);
+
+        let mut stdout = Vec::new();
+        for name in &self.declared {
+            fs::write(outdir.join(name), mzml_document(2, true)).expect("write a backend output");
+            stdout.extend_from_slice(b"writing output file: ");
+            stdout.extend_from_slice(outdir.join(name).display().to_string().as_bytes());
+            stdout.push(b'\n');
+        }
+        for name in &self.undeclared {
+            fs::write(outdir.join(name), mzml_document(2, true)).expect("write an injected file");
+        }
+
+        Ok(ProcessOutput {
+            stdout_total_bytes: stdout.len() as u64,
+            stdout,
+            stderr: Vec::new(),
+            stderr_total_bytes: 0,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            exit_code: Some(self.exit_code),
+            elapsed: Duration::from_millis(5),
+            termination: Termination::Exited,
+            max_active_processes: Some(1),
+            final_active_processes: Some(0),
+            peak_job_memory_bytes: Some(2_048),
+        })
+    }
+}
+
+/// A service whose backend converts an acquisition to the named set.
+fn output_set_service(runner: FakeOutputSetRunner) -> PreviewService {
+    PreviewService::new(Box::new(ConvertingProvider::new(
+        conversion_capabilities(
+            EVIDENCED_RELEASE,
+            Some(EVIDENCED_REVISION),
+            EVIDENCED_EXECUTABLE_SHA256,
+        ),
+        runner,
+    )))
+}
+
+/// One acquisition, two files, one row.
+///
+/// The claim ADR 0023 rests on. A bundle is not a `.wiff` with something nearby;
+/// it is one dataset that owns both objects, holds both identities and keeps
+/// both leases, and the roster describes it as one thing.
+#[test]
+fn a_sciex_bundle_becomes_one_dataset_that_owns_both_objects() {
+    let fixture = TestFile::new("sciex-one-row");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+
+    let dataset = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("a whole bundle is admitted");
+
+    assert_eq!(dataset.source_kind, DatasetSourceKindDto::SciexWiff);
+    assert_eq!(dataset.file_name, "acquisition.wiff");
+    // One row, not two. The companion is part of this dataset and is not a
+    // dataset of its own.
+    assert_eq!(service.dataset_count(), 1);
+    assert_eq!(service.roster().datasets.len(), 1);
+
+    // And the size the roster shows is the acquisition's, not the primary's.
+    // A row that reported only the `.wiff` would understate a SCIEX dataset by
+    // most of it.
+    let primary_bytes = fs::metadata(&acquisition).expect("primary metadata").len();
+    let companion_bytes = fs::metadata(fixture.companion_of("acquisition"))
+        .expect("companion metadata")
+        .len();
+    assert_eq!(dataset.byte_length, primary_bytes + companion_bytes);
+    assert!(companion_bytes > 0, "the companion contributes something");
+
+    // Both holds are taken, and both are released with the row.
+    let witnesses = service
+        .lease_witnesses(&dataset.handle)
+        .expect("a live dataset has its holds");
+    assert_eq!(witnesses.len(), 2, "one hold per member");
+    if cfg!(windows) {
+        assert!(witnesses.iter().all(|witness| !witness.is_released()));
+    }
+}
+
+/// Duplicate means the same acquisition, and an acquisition is all of it.
+#[test]
+fn bundle_duplicate_identity_is_the_whole_acquisition() {
+    let fixture = TestFile::new("sciex-duplicate");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+
+    let first = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the bundle is admitted");
+    // The exact same bundle: the same two objects, unchanged.
+    let again = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the same bundle is admitted again");
+    assert_eq!(again.handle, first.handle, "one acquisition, one row");
+    assert_eq!(service.dataset_count(), 1);
+
+    // The same `.wiff`, a *different object* under the companion's name. Not a
+    // duplicate: handing back the first row would give the user a dataset bound
+    // to a companion that is no longer there.
+    //
+    // Removed and recreated rather than rewritten in place, deliberately. A
+    // rewrite keeps the file id, so the identity key cannot see it and should
+    // not pretend to -- that is what the remembered digests are for, and
+    // revalidation is where they are compared. Duplicate identity is a question
+    // about which objects an acquisition is made of.
+    let companion = fixture.companion_of("acquisition");
+    fs::remove_file(&companion).expect("remove the companion");
+    fs::write(&companion, scan_companion_bytes("a different acquisition"))
+        .expect("put a different object under the companion name");
+    let after = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the changed bundle is admitted");
+    assert_ne!(
+        after.handle, first.handle,
+        "a replaced companion is a different acquisition"
+    );
+    assert_eq!(service.dataset_count(), 2);
+}
+
+/// A refused bundle costs the session nothing, and every way it can be refused
+/// is a refusal rather than a partial admission.
+#[test]
+fn a_refused_bundle_consumes_no_dataset_id() {
+    let fixture = TestFile::new("sciex-refusals");
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+
+    // A `.wiff` with nothing beside it.
+    let lonely = fixture.named_bytes("lonely.wiff", &wiff_container_bytes(&SCIEX_MARKERS));
+    let error = service
+        .add_sciex_wiff_dataset(&lonely)
+        .expect_err("a bundle missing its companion is refused");
+    // The family's own reason, not "that path could not be resolved". A `.wiff`
+    // with nothing beside it is an incomplete acquisition, and saying so is the
+    // whole reason the crate owns this refusal.
+    assert_eq!(error.kind, "unrecognized_acquisition");
+
+    // The companion's name taken by something that is not one.
+    let impostor = fixture.named_bytes("impostor.wiff", &wiff_container_bytes(&SCIEX_MARKERS));
+    fixture.named_bytes(
+        "impostor.wiff.scan",
+        b"not a scan file, whatever it is called",
+    );
+    assert!(service.add_sciex_wiff_dataset(&impostor).is_err());
+
+    // Another vendor's container under a `.wiff` name, with a genuine companion
+    // beside it. Extension right, magic right, companion right, family wrong.
+    let decoy = fixture.named_bytes("decoy.wiff", &shimadzu_lcd_bytes());
+    fixture.named_bytes("decoy.wiff.scan", &scan_companion_bytes("payload"));
+    assert!(service.add_sciex_wiff_dataset(&decoy).is_err());
+
+    assert_eq!(service.dataset_count(), 0, "no refusal registered a row");
+    assert!(service.roster().datasets.is_empty());
+}
+
+/// Revalidation re-admits the whole bundle, and refuses every way a member can
+/// stop being the member that was admitted.
+#[test]
+fn bundle_revalidation_covers_every_member() {
+    let fixture = TestFile::new("sciex-revalidation");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let companion = fixture.companion_of("acquisition");
+
+    let admitted =
+        super::selection::accept_sciex_wiff_bundle(&acquisition).expect("the bundle is admitted");
+    assert_eq!(admitted.companions().len(), 1);
+    revalidate(&admitted).expect("an untouched bundle revalidates");
+
+    // The companion rewritten in place. The file id is unchanged -- this is the
+    // same object -- so nothing about identity can see it, and the remembered
+    // digest is the only thing that can. Nothing else in this boundary ever
+    // looks at a companion, which is why the workspace remembers what it held.
+    fs::write(&companion, scan_companion_bytes("rewritten")).expect("rewrite the companion");
+    let error = revalidate(&admitted).expect_err("a rewritten companion is refused");
+    assert_eq!(error.kind, "file_content_changed");
+
+    // The companion removed entirely.
+    fs::remove_file(&companion).expect("remove the companion");
+    let error = revalidate(&admitted).expect_err("a missing companion is refused");
+    assert_eq!(error.kind, "unrecognized_acquisition");
+
+    // Put back, and then the primary rewritten instead.
+    fixture.named_bytes("acquisition.wiff.scan", &scan_companion_bytes("restored"));
+    let restored = super::selection::accept_sciex_wiff_bundle(&acquisition)
+        .expect("the bundle is admitted again");
+    let mut rewritten = wiff_container_bytes(&SCIEX_MARKERS);
+    rewritten.extend_from_slice(b"and a little more");
+    fs::write(&acquisition, rewritten).expect("rewrite the primary");
+    let error = revalidate(&restored).expect_err("a rewritten primary is refused");
+    assert_eq!(error.kind, "file_content_changed");
+}
+
+/// The handoff proves every member, not just the one the argv names.
+///
+/// The companion never reaches a command line, so this comparison is the only
+/// thing between a swapped `.wiff.scan` and a backend that reads it.
+#[test]
+fn the_bundle_handoff_refuses_a_companion_the_session_did_not_lease() {
+    let fixture = TestFile::new("sciex-handoff");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let admitted =
+        super::selection::accept_sciex_wiff_bundle(&acquisition).expect("the bundle is admitted");
+
+    open_conversion_source(&admitted).expect("an untouched bundle opens as a source");
+
+    // The primary is right and the companion this session remembers is not the
+    // object behind its name.
+    let forged = admitted.misremembering_its_companion(FileIdentity::new(7, [9; 16]));
+    let error = open_conversion_source(&forged)
+        .expect_err("a companion the session did not lease is refused");
+    assert_eq!(error.kind, "file_identity_changed");
+}
+
+/// The whole private vertical: a bundle row converts to a set of documents.
+#[test]
+fn a_bundle_dataset_converts_to_a_published_output_set() {
+    let fixture = TestFile::new("sciex-set");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let destination = fixture.destination("out");
+    let runner = FakeOutputSetRunner::writing(&[
+        "acquisition-Sample1.mzML",
+        "acquisition-Sample2.mzML",
+        "acquisition-Sample3.mzML",
+    ]);
+    let launches = runner.launches();
+    let service = output_set_service(runner);
+    let dataset = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the bundle is admitted");
+
+    let (report, retained) = service
+        .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+
+    assert_eq!(launches.load(Ordering::SeqCst), 1);
+    assert_eq!(report.group_outcome(), "fully_finalized");
+    assert_eq!(report.dataset(), dataset.handle);
+    assert_eq!(report.source_kind(), DatasetSourceKind::SciexWiff);
+    assert_eq!(report.bound_source_objects(), 2, "both members were bound");
+    assert_eq!(report.members().len(), 3);
+    assert_eq!(report.published_count(), 3);
+    assert!(report.partial_finalization().is_none());
+    assert!(report.refusal_id().is_none());
+    assert!(report.residue().is_none(), "the run swept its staging");
+    // Stamped with the generation the gate guard carried, and carrying what the
+    // backend process did -- the same two facts the single-output report keeps.
+    assert!(report.backend_facts().is_some(), "a run that ran has facts");
+    // The first resolution of a session is generation zero; what matters is
+    // that the stamp comes from the gate guard rather than from a later look.
+    assert_eq!(report.installation_generation(), 0);
+
+    // The exact finalized objects survive the handoff, one per published
+    // member. This is what a later adoption decision would rest on.
+    assert_eq!(retained.len(), report.published_count());
+
+    // Every member judged on its output alone, and never fully verified.
+    for member in report.members() {
+        assert_eq!(member.state(), "finalized");
+        let validation = member.validation().expect("a published member was judged");
+        assert_eq!(
+            validation.mode,
+            mscanvas_proteowizard::ValidationMode::OutputOnly
+        );
+        assert!(
+            !validation.fully_verified,
+            "no source reading exists for this family, so nothing is fully verified"
+        );
+        assert!(member.byte_length().is_some());
+        assert!(member.sha256().is_some());
+    }
+
+    let mut produced = entry_names(&destination);
+    produced.sort();
+    assert_eq!(
+        produced,
+        vec![
+            "acquisition-Sample1.mzML",
+            "acquisition-Sample2.mzML",
+            "acquisition-Sample3.mzML"
+        ]
+    );
+}
+
+/// A full publication is a statement about the output set, and about nothing
+/// else.
+///
+/// The gate this slice must not close by assertion. `Reader_ABI` can fail one
+/// sample, log it, carry on, declare only what it wrote and exit zero -- so a
+/// set that declared three and published three is indistinguishable here from
+/// an acquisition of ten whose other seven failed to open. The report is
+/// therefore allowed to say what it published and is not allowed to say the
+/// acquisition converted.
+#[test]
+fn a_fully_finalized_set_makes_no_claim_about_the_source_acquisition() {
+    let fixture = TestFile::new("sciex-completeness");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let destination = fixture.destination("out");
+    let service = output_set_service(FakeOutputSetRunner::writing(&["acquisition-S1.mzML"]));
+    let dataset = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the bundle is admitted");
+
+    let (report, _retained) = service
+        .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+
+    assert_eq!(report.group_outcome(), "fully_finalized");
+
+    // The report's own rendering must not contain a completeness claim. Read as
+    // text rather than field by field so a field added later that says one is
+    // caught here rather than in review.
+    let rendered = format!("{report:?}").to_ascii_lowercase();
+    for forbidden in [
+        "source_complete",
+        "sourcecomplete",
+        "all_samples",
+        "allsamples",
+        "fully_converted",
+        "fullyconverted",
+        "sample_count",
+        "samplecount",
+    ] {
+        assert!(
+            !rendered.contains(forbidden),
+            "the report claims something about the source acquisition: {forbidden} in {rendered}"
+        );
+    }
+
+    // What it does say is a count of what was published, and that count comes
+    // from the members rather than from the group outcome.
+    assert_eq!(report.published_count(), 1);
+    assert_eq!(report.members().len(), 1);
+}
+
+/// A member the backend never declared refuses the whole set, through the
+/// workspace path as well as the lifecycle's own.
+#[test]
+fn an_injected_member_refuses_the_whole_workspace_set() {
+    let fixture = TestFile::new("sciex-injected");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let destination = fixture.destination("out");
+    let service = output_set_service(
+        FakeOutputSetRunner::writing(&["acquisition-S1.mzML"])
+            .also_injecting("acquisition-S2.mzML"),
+    );
+    let dataset = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the bundle is admitted");
+
+    let (report, retained) = service
+        .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the run reaches an outcome");
+
+    assert_eq!(report.group_outcome(), "refused_before_publication");
+    assert_eq!(
+        report.refusal_id(),
+        Some("multi_output_set_not_as_declared")
+    );
+    assert_eq!(report.published_count(), 0);
+    assert!(retained.is_empty());
+    assert!(
+        entry_names(&destination).is_empty(),
+        "nothing was published"
+    );
+}
+
+/// A backend that fails publishes nothing and leaves no residue.
+#[test]
+fn a_failing_backend_publishes_no_workspace_output_set() {
+    let fixture = TestFile::new("sciex-failure");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let destination = fixture.destination("out");
+    let service =
+        output_set_service(FakeOutputSetRunner::writing(&["acquisition-S1.mzML"]).failing());
+    let dataset = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the bundle is admitted");
+
+    let (report, retained) = service
+        .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the run reaches an outcome");
+
+    assert_eq!(report.group_outcome(), "refused_before_publication");
+    assert_eq!(report.published_count(), 0);
+    assert!(retained.is_empty());
+    assert!(entry_names(&destination).is_empty());
+    assert!(report.residue().is_none(), "the run swept its staging");
+}
+
+/// The coordinator refuses a handle that is not a bundle, and one that is not a
+/// dataset at all.
+#[test]
+fn the_bundle_coordinator_refuses_a_family_it_is_not_for() {
+    let fixture = TestFile::new("sciex-wrong-family");
+    let thermo = fixture.thermo_raw("acquisition.raw");
+    let destination = fixture.destination("out");
+    let runner = FakeOutputSetRunner::writing(&["anything.mzML"]);
+    let launches = runner.launches();
+    let service = output_set_service(runner);
+    let dataset = service
+        .add_thermo_dataset(&thermo)
+        .expect("a Thermo acquisition is admitted");
+
+    let error = service
+        .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect_err("a single-output family does not belong here");
+    assert_eq!(error.kind, "dataset_not_multi_output");
+
+    let error = service
+        .convert_workspace_sciex_bundle("file-404", &destination, ConflictPolicy::Fail)
+        .expect_err("an unknown handle is unknown");
+    assert_eq!(error.kind, "unknown_file_handle");
+
+    assert_eq!(launches.load(Ordering::SeqCst), 0, "nothing was launched");
+}
+
+/// A build with no recorded SCIEX evidence launches nothing.
+#[test]
+fn an_unevidenced_build_converts_no_bundle() {
+    let fixture = TestFile::new("sciex-unevidenced");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let destination = fixture.destination("out");
+    let runner = FakeOutputSetRunner::writing(&["acquisition-S1.mzML"]);
+    let launches = runner.launches();
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        conversion_capabilities("3.0.26204", Some("a09eea9"), EVIDENCED_EXECUTABLE_SHA256),
+        runner,
+    )));
+    let dataset = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the bundle is admitted");
+
+    let error = service
+        .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect_err("an unevidenced build is refused");
+    assert_eq!(error.kind, "provider_build_not_evidenced");
+    assert_eq!(launches.load(Ordering::SeqCst), 0);
+    assert!(entry_names(&destination).is_empty());
+}
+
+/// Nothing a user can do puts a SCIEX acquisition into a workspace.
+///
+/// Four independent barriers, asserted through the surfaces themselves rather
+/// than by reading the code that implements them.
+#[test]
+fn no_product_surface_admits_a_sciex_bundle() {
+    let fixture = TestFile::new("sciex-unreachable");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+
+    // The picker. `.wiff` is not routed to the bundle admission; it falls
+    // through to mzML, which refuses it by name.
+    let added = service.add_files(std::slice::from_ref(&acquisition));
+    assert_eq!(service.dataset_count(), 0, "the picker admitted a bundle");
+    assert!(
+        format!("{added:?}").contains("unsupported_extension"),
+        "the picker refused it for another reason: {added:?}"
+    );
+
+    // The companion is refused on its own terms too, and by its own name.
+    let companion = fixture.companion_of("acquisition");
+    let _ = service.add_files(&[companion]);
+    assert_eq!(service.dataset_count(), 0);
+
+    // The visible queue. Even a row that exists -- which only the private
+    // admission can produce -- is refused as a whole request.
+    let dataset = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the private admission is the only way in");
+    assert!(!is_convertible(DatasetSourceKind::SciexWiff));
+    let plan = service.conversion_queue_plan(std::slice::from_ref(&dataset.handle));
+    assert!(
+        plan.is_err(),
+        "the visible queue accepted a bundle: {plan:?}"
+    );
+
+    // And it is not previewable either: nothing in this product reads a vendor
+    // container directly.
+    assert!(!DatasetSourceKind::SciexWiff.is_previewable());
+    assert!(service.open_preview(&dataset.handle).is_err());
+}
+
+/// The command surface is exactly what it was.
+#[test]
+fn the_command_surface_does_not_grow_for_the_bundle_family() {
+    let source = include_str!("../lib.rs");
+    let handler = source
+        .split_once("generate_handler![")
+        .expect("the command registration list is in lib.rs")
+        .1
+        .split_once(']')
+        .expect("the registration list is closed")
+        .0;
+    for forbidden in ["sciex", "wiff"] {
+        assert!(
+            !handler.to_ascii_lowercase().contains(forbidden),
+            "a command names this family: {handler}"
+        );
+    }
+}
+
+/// A real ten-sample SCIEX acquisition, through a workspace handle.
+///
+/// The evidence run for ADR 0023, kept out of ordinary CI: it needs a local
+/// ProteoWizard installation and a lawful acquisition, neither of which a test
+/// runner has. Drive it with the fixtures ADR 0022 pins.
+#[cfg(windows)]
+#[test]
+#[ignore = "needs a local ProteoWizard installation and a real vendor acquisition"]
+fn a_real_sciex_bundle_converts_through_a_workspace_handle() {
+    let Ok(fixture) = std::env::var("MSCANVAS_SCIEX_WIFF_FIXTURE") else {
+        panic!("set MSCANVAS_SCIEX_WIFF_FIXTURE to the .wiff to convert");
+    };
+    let Ok(destination) = std::env::var("MSCANVAS_CONVERSION_DESTINATION") else {
+        panic!("set MSCANVAS_CONVERSION_DESTINATION to an empty folder");
+    };
+    let expected: usize = std::env::var("MSCANVAS_SCIEX_EXPECTED_OUTPUTS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1);
+    let acquisition = PathBuf::from(fixture);
+    let destination = PathBuf::from(destination);
+
+    // The production provider. Nothing is substituted.
+    let service = PreviewService::new(Box::new(super::backend::ProteoWizardProvider::new()));
+    let dataset = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the acquisition is admitted as a SCIEX bundle");
+    println!("dataset handle: {}", dataset.handle);
+    println!("acquisition bytes (both members): {}", dataset.byte_length);
+    assert_eq!(dataset.source_kind, DatasetSourceKindDto::SciexWiff);
+    assert_eq!(service.dataset_count(), 1, "one row for the whole bundle");
+
+    let (report, retained) = service
+        .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
+        .expect("the conversion reaches an outcome");
+
+    println!("report: {report:?}");
+    assert_eq!(report.group_outcome(), "fully_finalized");
+    assert_eq!(report.bound_source_objects(), 2);
+    assert_eq!(report.members().len(), expected);
+    assert_eq!(report.published_count(), expected);
+    assert_eq!(retained.len(), expected);
+    assert!(report.residue().is_none(), "the run swept its staging");
+
+    for member in report.members() {
+        let validation = member.validation().expect("a published member was judged");
+        assert_eq!(
+            validation.mode,
+            mscanvas_proteowizard::ValidationMode::OutputOnly
+        );
+        assert!(!validation.fully_verified);
+        // Printed rather than pinned: msconvert writes the source's own
+        // directory into the document, so an output digest is not a portable
+        // fact about this family. See the M3.11 evidence record.
+        println!(
+            "member {} bytes {:?} spectra {:?} chromatograms {:?}",
+            member.file_name(),
+            member.byte_length(),
+            member.spectrum_count(),
+            member.chromatogram_count()
+        );
+    }
+    assert_eq!(entry_names(&destination).len(), expected);
+
+    // Printed, not asserted: this is the gate, and no evidence here can close
+    // it. A full publication says every admitted member was published; it does
+    // not say every sample in the acquisition converted.
+    println!(
+        "published {} members; source sample completeness is NOT established",
+        report.published_count()
+    );
+}

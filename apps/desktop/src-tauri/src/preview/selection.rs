@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mscanvas_proteowizard::{ConversionSource, ConversionSourceRejection, MzmlScanLimits};
+use mscanvas_proteowizard::{Sha256Digest, sciex_wiff_companion_path};
 
 use super::dto::{
     DatasetSourceKindDto, MAX_CANDIDATE_NAME_CHARS, MAX_RELATIVE_CONTEXT_CHARS,
@@ -260,6 +261,22 @@ pub(super) enum DatasetSourceKind {
     /// tidied up later -- ingestion is a product claim with its own evidence,
     /// and this slice deliberately does not make it.
     ShimadzuLcd,
+    /// Accepted as a SCIEX WIFF acquisition: a `<name>.wiff` **and** the
+    /// `<name>.wiff.scan` beside it, admitted together by the reviewed bundle
+    /// admission in `mscanvas-proteowizard`.
+    ///
+    /// The first family whose dataset is not one file. ADR 0022 measured why
+    /// it cannot be: with the companion absent the backend exits non-zero and
+    /// still writes one truncated document per sample, so a row that held only
+    /// the `.wiff` would be holding the half of the acquisition that does not
+    /// carry the data.
+    ///
+    /// Reachable from nothing at all, exactly as `ShimadzuLcd` was when ADR
+    /// 0019 landed it. No picker, no folder walk, no drop, no queue and no
+    /// command puts one here. It is also the first family that converts to a
+    /// *set* of documents, so it does not go through the single-output path
+    /// the other three use.
+    SciexWiff,
 }
 
 impl DatasetSourceKind {
@@ -269,12 +286,26 @@ impl DatasetSourceKind {
     /// nothing in this product reads a RAW file directly. Asked here rather
     /// than at the call site so the answer cannot be given differently by the
     /// roster, the preview command and the interface.
+    /// Whether an acquisition of this family is more than one filesystem
+    /// object.
+    ///
+    /// Asked rather than compared against one variant, so a second bundle
+    /// family added later takes the bundle handoff by saying so here instead of
+    /// silently taking the single-object one — which would admit it without
+    /// ever looking at its companions.
+    pub(super) const fn is_bundle(self) -> bool {
+        match self {
+            Self::Mzml | Self::ThermoRaw | Self::ShimadzuLcd => false,
+            Self::SciexWiff => true,
+        }
+    }
+
     pub(super) const fn is_previewable(self) -> bool {
         match self {
             Self::Mzml => true,
-            // Neither vendor family, and for one reason: the preview boundary
+            // No vendor family, and for one reason: the preview boundary
             // reads mzML and this product reads no vendor container directly.
-            Self::ThermoRaw | Self::ShimadzuLcd => false,
+            Self::ThermoRaw | Self::ShimadzuLcd | Self::SciexWiff => false,
         }
     }
 }
@@ -369,6 +400,8 @@ pub fn accept_mzml_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
         byte_length: inspected.byte_length,
         identity: inspected.identity,
         lease: inspected.lease,
+        companions: Vec::new(),
+        primary_sha256: None,
     })
 }
 
@@ -417,6 +450,8 @@ pub(super) fn accept_thermo_raw_file(path: &Path) -> Result<AcceptedFile, Previe
         byte_length: inspected.byte_length,
         identity: inspected.identity,
         lease: inspected.lease,
+        companions: Vec::new(),
+        primary_sha256: None,
     })
 }
 
@@ -475,6 +510,98 @@ pub(super) fn accept_shimadzu_lcd_file(path: &Path) -> Result<AcceptedFile, Prev
         byte_length: inspected.byte_length,
         identity: inspected.identity,
         lease: inspected.lease,
+        companions: Vec::new(),
+        primary_sha256: None,
+    })
+}
+
+/// Accepts a SCIEX WIFF acquisition -- the `.wiff` and its `.wiff.scan` -- as
+/// one dataset.
+///
+/// Reachable from nothing a user can do. No picker route, no folder walk, no
+/// drop and no command reaches this; it exists so that a dataset which is going
+/// to be *converted* can be admitted under the rule its family actually needs.
+///
+/// **What is different here, and why the order is what it is.** Every other
+/// family in this module leases one object and then asks the crate to admit it.
+/// This acquisition is two objects, and both are load-bearing: ADR 0022
+/// measured that removing the companion makes the backend exit non-zero *and*
+/// write one truncated document per sample. So both are leased, and both are
+/// leased **before** the crate's admission runs -- a hold taken afterwards
+/// leaves exactly the interval the hold exists to close, and for the companion
+/// that interval is invisible, because the companion never appears in any argv
+/// and nothing downstream would notice it had been swapped.
+///
+/// The companion's *name* comes from the crate rather than from a `".scan"`
+/// spelled here. The naming rule is the crate's -- `Reader_ABI` builds it as
+/// the whole file name plus a suffix, not the stem plus one -- and a second
+/// spelling of it in this crate would be a second rule the moment either
+/// changed. Nothing else about the family is repeated here either: the
+/// extension filter, the compound-file marker set and the companion's own
+/// signature all stay behind [`ConversionSource::open_sciex_wiff_bundle`].
+///
+/// What this function adds is the part the crate cannot: the session's own
+/// inspection of each member, the [`FileIdentityLease`] on each, and the
+/// comparison afterwards proving that the objects this session holds are the
+/// objects the crate admitted -- primary *and* companion.
+pub(super) fn accept_sciex_wiff_bundle(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
+    let inspected = inspect_selected_file(path)?;
+    let canonical = std::fs::canonicalize(path).map_err(|_| unresolvable())?;
+    let file_name = canonical
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .ok_or_else(|| {
+            PreviewErrorDto::new("file_has_no_name", "That path has no file name.", false)
+        })?;
+
+    // Leased before admission, from the name the crate itself derives.
+    //
+    // A companion that is not there at all cannot be leased, and there is no
+    // race to close for an object that does not exist -- so rather than report
+    // an inspection failure, the crate's own admission is asked, and it refuses
+    // with the reason that belongs to this family. Saying "that path could not
+    // be resolved" about an acquisition whose companion is simply missing would
+    // describe the wrong thing.
+    let companion_path = sciex_wiff_companion_path(&canonical).ok_or_else(unresolvable)?;
+    let Ok(companion_inspected) = inspect_selected_file(&companion_path) else {
+        return Err(bound_bundle_source(&canonical, inspected.identity, &[])
+            .err()
+            .unwrap_or_else(unresolvable));
+    };
+    let companion_canonical = std::fs::canonicalize(&companion_path).map_err(|_| unresolvable())?;
+
+    // The admission that decides. What it measured of each member is kept --
+    // the digests below -- and the source itself is dropped like every other
+    // family's: what this returns is a registry row, and the source a run needs
+    // is opened again at the moment of the run, against these same held
+    // objects.
+    let source = bound_bundle_source(
+        &canonical,
+        inspected.identity,
+        &[companion_inspected.identity],
+    )?;
+    let primary_sha256 = source.sha256();
+    let companion_sha256 = *source
+        .companion_digests()
+        .first()
+        .ok_or_else(unresolvable)?;
+    drop(source);
+
+    Ok(AcceptedFile {
+        path: canonical,
+        file_name,
+        kind: DatasetSourceKind::SciexWiff,
+        byte_length: inspected.byte_length,
+        identity: inspected.identity,
+        lease: inspected.lease,
+        companions: vec![AcceptedCompanion {
+            path: companion_canonical,
+            byte_length: companion_inspected.byte_length,
+            identity: companion_inspected.identity,
+            sha256: companion_sha256,
+            lease: companion_inspected.lease,
+        }],
+        primary_sha256: Some(primary_sha256),
     })
 }
 
@@ -489,7 +616,75 @@ pub(super) fn accept_shimadzu_lcd_file(path: &Path) -> Result<AcceptedFile, Prev
 pub(super) fn open_conversion_source(
     file: &AcceptedFile,
 ) -> Result<ConversionSource, PreviewErrorDto> {
+    if file.kind.is_bundle() {
+        let companions: Vec<FileIdentity> = file
+            .companions()
+            .iter()
+            .map(AcceptedCompanion::identity)
+            .collect();
+        return bound_bundle_source(file.path(), file.identity, &companions);
+    }
     bound_source(file.kind, file.path(), file.identity)
+}
+
+/// Opens the crate's bundle source and proves that **every** object this
+/// session holds is an object the crate just admitted.
+///
+/// The primary comparison is the one [`bound_source`] already makes, for the
+/// same reason. The companion comparison is the one that only a bundle needs,
+/// and it is the more important of the two: the companion is never named on the
+/// command line, so nothing downstream would report that the acquisition being
+/// read was not the acquisition that was accepted.
+///
+/// Order and count are both compared. A bundle whose members came back in a
+/// different order, or in a different number, is not the acquisition this
+/// session leased, and there is no reading of "same set, rearranged" that this
+/// boundary has evidence for.
+fn bound_bundle_source(
+    canonical: &Path,
+    expected_primary: FileIdentity,
+    expected_companions: &[FileIdentity],
+) -> Result<ConversionSource, PreviewErrorDto> {
+    let source = ConversionSource::open_sciex_wiff_bundle(canonical, MzmlScanLimits::default())
+        .map_err(source_not_admitted)?;
+    let Some((volume_serial, file_id)) = source.object_identity() else {
+        return Err(source_identity_unavailable());
+    };
+    if FileIdentity::new(volume_serial, file_id) != expected_primary {
+        return Err(source_identity_changed());
+    }
+
+    let admitted = source.companion_identities();
+    if admitted.len() != expected_companions.len() {
+        return Err(source_identity_changed());
+    }
+    for (admitted, expected) in admitted.iter().zip(expected_companions) {
+        let Some((volume_serial, file_id)) = *admitted else {
+            return Err(source_identity_unavailable());
+        };
+        if FileIdentity::new(volume_serial, file_id) != *expected {
+            return Err(source_identity_changed());
+        }
+    }
+    Ok(source)
+}
+
+/// A platform that cannot name objects by a volume and a file id.
+fn source_identity_unavailable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "source_identity_unavailable",
+        "MSCanvas cannot bind that file to a conversion on this platform.",
+        false,
+    )
+}
+
+/// A name that no longer resolves to the object this session accepted.
+fn source_identity_changed() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "file_identity_changed",
+        "That name no longer refers to the file that was opened. Open it again to continue.",
+        false,
+    )
 }
 
 /// Opens the crate's source for an object this session already holds, and
@@ -517,21 +712,24 @@ fn bound_source(
         DatasetSourceKind::ShimadzuLcd => {
             ConversionSource::open_shimadzu_lcd_file(canonical, limits)
         }
+        // Routed away before it reaches here, because a bundle's admission
+        // needs the companion identities this signature has no room for.
+        // Answered rather than left to a catch-all so the match stays total and
+        // a family added later has to say which handoff it uses.
+        DatasetSourceKind::SciexWiff => {
+            return Err(PreviewErrorDto::new(
+                "source_requires_bundle_handoff",
+                "That acquisition is more than one file and must be opened as a bundle.",
+                false,
+            ));
+        }
     }
     .map_err(source_not_admitted)?;
     let Some((volume_serial, file_id)) = source.object_identity() else {
-        return Err(PreviewErrorDto::new(
-            "source_identity_unavailable",
-            "MSCanvas cannot bind that file to a conversion on this platform.",
-            false,
-        ));
+        return Err(source_identity_unavailable());
     };
     if FileIdentity::new(volume_serial, file_id) != expected {
-        return Err(PreviewErrorDto::new(
-            "file_identity_changed",
-            "That name no longer refers to the file that was opened. Open it again to continue.",
-            false,
-        ));
+        return Err(source_identity_changed());
     }
     Ok(source)
 }
@@ -894,6 +1092,31 @@ pub struct AcceptedFile {
     /// something about *this* object rather than about a name that resolves to
     /// it -- and by shared reference only.
     lease: FileIdentityLease,
+    /// The other load-bearing objects this one acquisition is made of.
+    ///
+    /// Empty for every single-object family, which is the truth about them
+    /// rather than a placeholder. Non-empty only for a bundle family, and only
+    /// ever filled by that family's own admission -- there is no setter, and
+    /// the invariant is asserted where the value is built.
+    ///
+    /// This is what makes one `DatasetId` own a whole acquisition. The
+    /// alternative -- a second registry row for the companion, or a side map
+    /// keyed by dataset -- would put one acquisition in two places and leave
+    /// every later question ("is this a duplicate", "is it still there", "what
+    /// does the roster show") with two answers to keep in step.
+    companions: Vec<AcceptedCompanion>,
+    /// What the primary held when a *bundle* was admitted, for the same reason
+    /// its companions record theirs.
+    ///
+    /// `None` for every single-object family, and that is not an omission. A
+    /// single-file dataset's content is rechecked where it matters -- the
+    /// conversion boundary rehashes the object it pins against the source it
+    /// admitted moments earlier -- and recording a digest here as well would
+    /// be a second answer to keep true. A bundle records both members because
+    /// its members must be compared as a set: a primary that still matches
+    /// beside a companion that does not is not the acquisition that was
+    /// accepted.
+    primary_sha256: Option<Sha256Digest>,
 }
 
 impl fmt::Debug for AcceptedFile {
@@ -928,10 +1151,63 @@ impl AcceptedFile {
         self.identity
     }
 
+    /// What this acquisition's members held when it was admitted.
+    ///
+    /// `None` for a single-object family, whose content is rechecked at the
+    /// conversion boundary instead. `Some` for a bundle, primary first.
+    #[must_use]
+    pub(super) fn member_digests(&self) -> Option<Vec<Sha256Digest>> {
+        let primary = self.primary_sha256?;
+        Some(
+            std::iter::once(primary)
+                .chain(self.companions.iter().map(AcceptedCompanion::sha256))
+                .collect(),
+        )
+    }
+
+    /// How large the whole acquisition is: every object it is made of.
+    ///
+    /// Identical to [`Self::byte_length`] for every single-object family, and
+    /// deliberately not identical for a bundle. A SCIEX row that reported only
+    /// its `.wiff` would understate the acquisition by most of it — the
+    /// companion is where the spectra live, and on the measured ten-sample
+    /// fixture it is a third of the total. The roster says how big a dataset
+    /// is; a dataset is the acquisition, not the object it is named by.
+    #[must_use]
+    pub(super) fn acquisition_byte_length(&self) -> u64 {
+        self.companions
+            .iter()
+            .map(AcceptedCompanion::byte_length)
+            .fold(self.byte_length, u64::saturating_add)
+    }
+
     /// The family this file was accepted as.
     #[must_use]
     pub(super) const fn source_kind(&self) -> DatasetSourceKind {
         self.kind
+    }
+
+    /// The other objects this acquisition is made of, empty for a single-object
+    /// family.
+    #[must_use]
+    pub(super) fn companions(&self) -> &[AcceptedCompanion] {
+        &self.companions
+    }
+
+    /// What decides whether two additions are the same acquisition.
+    ///
+    /// Every member, in bind order. For a single-object family this is the bare
+    /// identity the registry has always keyed on.
+    #[must_use]
+    pub(super) fn dataset_identity(&self) -> DatasetIdentity {
+        DatasetIdentity {
+            primary: self.identity,
+            companions: self
+                .companions
+                .iter()
+                .map(AcceptedCompanion::identity)
+                .collect(),
+        }
     }
 
     /// The object this file was accepted as, for the one caller that must read
@@ -963,6 +1239,23 @@ impl AcceptedFile {
         self
     }
 
+    /// The same acquisition, remembering a companion identity that is not that
+    /// object's.
+    ///
+    /// The companion half of the forgery above, and the only way to reach the
+    /// companion comparison in [`bound_bundle_source`] from a test. It is the
+    /// comparison that matters most and the hardest to provoke honestly: every
+    /// ordinary path establishes each member's identity and its object in one
+    /// inspection, and the window it closes is one only a replacement racing
+    /// the two can open.
+    #[cfg(test)]
+    pub(super) fn misremembering_its_companion(mut self, identity: FileIdentity) -> Self {
+        if let Some(companion) = self.companions.first_mut() {
+            companion.identity = identity;
+        }
+        self
+    }
+
     /// Whether the hold this file was accepted with is still open.
     ///
     /// The lease itself is not reachable from here, in test builds or any
@@ -972,6 +1265,122 @@ impl AcceptedFile {
     #[cfg(test)]
     pub(super) fn lease_witness(&self) -> LeaseWitness {
         self.lease.witness()
+    }
+
+    /// A view of every hold this acquisition took, primary first.
+    ///
+    /// Separate from [`Self::lease_witness`] because the question a release
+    /// test asks is about the acquisition and not about one of its files: a
+    /// companion handle that outlived its row would leave the object pinned
+    /// with nothing naming it, and a witness that only watched the primary
+    /// would report that everything had been let go.
+    #[cfg(test)]
+    pub(super) fn lease_witnesses(&self) -> Vec<LeaseWitness> {
+        std::iter::once(self.lease.witness())
+            .chain(self.companions.iter().map(AcceptedCompanion::lease_witness))
+            .collect()
+    }
+}
+
+/// One load-bearing object an acquisition is made of besides the one it is
+/// named by.
+///
+/// Held with exactly the authority the primary is held with — its own canonical
+/// path, its own filesystem identity and its own lease — because the reason to
+/// hold it is the same reason: the backend is going to read it, and a name is
+/// not an object. Anything weaker would leave the workspace remembering a
+/// `.wiff` precisely and its `.wiff.scan` by hearsay.
+#[derive(Clone)]
+pub(super) struct AcceptedCompanion {
+    path: PathBuf,
+    byte_length: u64,
+    identity: FileIdentity,
+    /// What this object held when the acquisition was admitted.
+    ///
+    /// Recorded because an identity cannot answer the question this member
+    /// raises. A lease keeps an object from being *replaced*; it deliberately
+    /// permits a writer, so the bytes under a leased name can change while the
+    /// name, the object and the identity all stay exactly what they were. For
+    /// a primary that is caught later -- the conversion boundary rehashes the
+    /// object it is about to read and compares it with the source it admitted.
+    /// For a companion nothing does, because nothing else in this boundary
+    /// looks at a companion at all. So the workspace remembers it, and
+    /// revalidation compares it.
+    sha256: Sha256Digest,
+    /// Keeps this object alive for as long as the dataset names it, so the
+    /// identity above cannot come to mean a different file.
+    ///
+    /// A lifetime rather than a value, and the language has no way to say so
+    /// other than by reading it. Holding it is the whole of what it does; the
+    /// only thing that ever looks at it is a test asking whether the hold has
+    /// been let go, which is the failure this exists to watch for rather than
+    /// to enable. The primary's own lease escapes the same lint only because
+    /// adoption happens to need the object behind it.
+    #[allow(
+        dead_code,
+        reason = "held open for its lifetime, never read as a value"
+    )]
+    lease: FileIdentityLease,
+}
+
+impl fmt::Debug for AcceptedCompanion {
+    /// Opaque for the same reason [`AcceptedFile`]'s is: it holds an absolute
+    /// path, and a companion's path also discloses the acquisition's folder.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<opaque-accepted-companion>")
+    }
+}
+
+impl AcceptedCompanion {
+    pub(super) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(super) const fn identity(&self) -> FileIdentity {
+        self.identity
+    }
+
+    pub(super) const fn byte_length(&self) -> u64 {
+        self.byte_length
+    }
+
+    pub(super) const fn sha256(&self) -> Sha256Digest {
+        self.sha256
+    }
+
+    #[cfg(test)]
+    pub(super) fn lease_witness(&self) -> LeaseWitness {
+        self.lease.witness()
+    }
+}
+
+/// The identity of a whole logical acquisition, which is what decides whether
+/// two additions are the same dataset.
+///
+/// For every single-object family this is one filesystem identity and behaves
+/// exactly as the bare identity did before bundles existed. For a bundle it is
+/// the primary's identity **and** its companions', in bind order, because the
+/// acquisition is all of them: a `.wiff` whose `.wiff.scan` has been replaced
+/// is not the acquisition that was admitted, and calling the second addition a
+/// duplicate of the first would hand the user back a row bound to objects that
+/// are no longer there.
+///
+/// Built from filesystem identities rather than from names or a hash of them.
+/// The identities are already known — every member is inspected and leased at
+/// admission — and manufacturing a key out of strings would be a weaker answer
+/// to a question the platform has already answered exactly.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) struct DatasetIdentity {
+    primary: FileIdentity,
+    companions: Vec<FileIdentity>,
+}
+
+impl fmt::Debug for DatasetIdentity {
+    /// Opaque, like the identities it is made of. A dataset identity is for
+    /// comparing; printing one would put a machine-correlatable fingerprint of
+    /// the user's files somewhere nobody meant to publish.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<opaque-dataset-identity>")
     }
 }
 
@@ -1192,7 +1601,13 @@ pub(super) struct DatasetRegistry {
     /// file the user never added. The lease is what makes each key still its
     /// row's, and a replacement that arrives under a familiar name a different
     /// dataset rather than a duplicate of the one it replaced.
-    by_identity: HashMap<FileIdentity, DatasetId>,
+    ///
+    /// Keyed on the whole logical acquisition since ADR 0023: for a bundle that
+    /// is the primary's identity and its companions', so a `.wiff` whose
+    /// `.wiff.scan` has been replaced is a different acquisition rather than a
+    /// duplicate of the one already held. For every single-object family it is
+    /// the one identity it always was.
+    by_identity: HashMap<DatasetIdentity, DatasetId>,
 }
 
 impl fmt::Debug for DatasetRegistry {
@@ -1262,7 +1677,11 @@ impl DatasetRegistry {
     }
 
     fn add(&mut self, file: AcceptedFile, origin: DatasetOrigin) -> AddDatasetOutcome {
-        if let Some(&existing_id) = self.by_identity.get(&file.identity()) {
+        // Keyed on the whole acquisition, not on the object it is named by. A
+        // `.wiff` whose `.wiff.scan` has been replaced is a different
+        // acquisition, and handing back the existing row for it would give the
+        // user a dataset bound to a companion that is no longer there.
+        if let Some(&existing_id) = self.by_identity.get(&file.dataset_identity()) {
             // The existing row keeps the origin it was registered with. The
             // second name for one acquisition is not a second acquisition, and
             // rewriting where the row "came from" would move a user's row
@@ -1280,7 +1699,7 @@ impl DatasetRegistry {
             .next_id
             .checked_add(1)
             .expect("a session cannot allocate more than u64::MAX datasets");
-        self.by_identity.insert(file.identity(), id);
+        self.by_identity.insert(file.dataset_identity(), id);
         self.datasets
             .insert(id, RegisteredDataset { id, file, origin });
         self.order.push(id);
@@ -1331,11 +1750,11 @@ impl DatasetRegistry {
         // is gone and the next addition of that file would be called a
         // duplicate of nothing.
         debug_assert_eq!(
-            self.by_identity.get(&removed.file.identity()),
+            self.by_identity.get(&removed.file.dataset_identity()),
             Some(&id),
-            "one filesystem object, one dataset: the index entry is this row's"
+            "one logical acquisition, one dataset: the index entry is this row's"
         );
-        self.by_identity.remove(&removed.file.identity());
+        self.by_identity.remove(&removed.file.dataset_identity());
         self.order.retain(|held| *held != id);
         Some(removed)
     }
@@ -1358,13 +1777,47 @@ pub(super) fn revalidate(remembered: &AcceptedFile) -> Result<AcceptedFile, Prev
         DatasetSourceKind::Mzml => accept_mzml_file(remembered.path())?,
         DatasetSourceKind::ThermoRaw => accept_thermo_raw_file(remembered.path())?,
         DatasetSourceKind::ShimadzuLcd => accept_shimadzu_lcd_file(remembered.path())?,
+        DatasetSourceKind::SciexWiff => accept_sciex_wiff_bundle(remembered.path())?,
     };
     // Both, because a name can come to point elsewhere and a different file can
     // also take the same name.
     if current.path() != remembered.path() || current.identity != remembered.identity {
+        return Err(source_identity_changed());
+    }
+    // And every other object the acquisition is made of, by the same rule. A
+    // bundle re-admitted with a replaced companion passes every check above --
+    // the `.wiff` is untouched -- and is a different acquisition. Comparing the
+    // whole dataset identity is what says so; comparing counts alone would let
+    // a swap of two companions through, and comparing the primary alone is the
+    // hole this exists to close.
+    if current.dataset_identity() != remembered.dataset_identity() {
+        return Err(source_identity_changed());
+    }
+    // And the names, member for member. The identities above say the objects
+    // are the same objects; this says the acquisition still has the shape it
+    // was admitted with -- the companion sitting where its name says it sits,
+    // beside the primary it belongs to. A bundle whose members are the right
+    // objects under the wrong names is one the backend would fail to open, and
+    // failing here says why.
+    if current.companions().len() != remembered.companions().len()
+        || current
+            .companions()
+            .iter()
+            .zip(remembered.companions())
+            .any(|(current, remembered)| current.path() != remembered.path())
+    {
+        return Err(source_identity_changed());
+    }
+    // And what each member held. The comparisons above say the objects are the
+    // same objects under the same names; this says nobody rewrote one while the
+    // workspace was holding it. A lease keeps an object from being replaced and
+    // deliberately permits a writer, so for a companion -- which nothing else
+    // in this boundary ever looks at -- this is the only thing that would
+    // notice.
+    if current.member_digests() != remembered.member_digests() {
         return Err(PreviewErrorDto::new(
-            "file_identity_changed",
-            "That name no longer refers to the file that was opened. Open it again to continue.",
+            "file_content_changed",
+            "That acquisition has been modified since it was opened. Open it again to continue.",
             false,
         ));
     }
@@ -1411,7 +1864,7 @@ pub(super) fn selected_file_dto(
     SelectedFileDto {
         handle: id.handle(),
         file_name: file.file_name().to_owned(),
-        byte_length: file.byte_length(),
+        byte_length: file.acquisition_byte_length(),
         source_kind: source_kind_dto(file.source_kind()),
         relative_context,
     }
@@ -1432,6 +1885,11 @@ pub(super) const fn source_kind_dto(kind: DatasetSourceKind) -> DatasetSourceKin
         // occur in a shipped session -- nothing admits one -- and if that ever
         // stops being true the roster will already be describing it correctly.
         DatasetSourceKind::ShimadzuLcd => DatasetSourceKindDto::ShimadzuLcd,
+        // Projected as itself for the identical reason, one family later. A row
+        // of this family cannot occur in a shipped session; if that ever stops
+        // being true the roster will already be describing it correctly rather
+        // than calling it something else.
+        DatasetSourceKind::SciexWiff => DatasetSourceKindDto::SciexWiff,
     }
 }
 

@@ -156,11 +156,12 @@ pub struct SelectedFileDto {
 /// no `unknown`: a member that exists here is a claim the product understands
 /// the data behind it, backed by measured conversion evidence.
 ///
-/// Two of the three are product-reachable. `shimadzu_lcd` is not, and is here
-/// only because this enumeration is total over the families Rust can admit and
-/// every roster row carries one. ADR 0019 records why the alternatives are
-/// worse: reporting such a row as another family would make the roster lie
-/// about what it holds, and adding an unknown member would make every row's
+/// Two of the four are product-reachable. `shimadzu_lcd` and `sciex_wiff` are
+/// not, and are here only because this enumeration is total over the families
+/// Rust can admit and every roster row carries one. ADR 0019 records why the
+/// alternatives are worse, and ADR 0023 applies the same reasoning to the
+/// bundle family: reporting such a row as another family would make the roster
+/// lie about what it holds, and adding an unknown member would make every row's
 /// family a thing the interface has to guess about. No ingestion surface, queue
 /// eligibility or action reaches it, and the interface labels it and offers
 /// nothing.
@@ -171,6 +172,16 @@ pub enum DatasetSourceKindDto {
     ThermoRaw,
     /// Admitted privately, product-unreachable. See ADR 0019.
     ShimadzuLcd,
+    /// Admitted privately, product-unreachable, and the first family whose
+    /// dataset is a bundle rather than a file. See ADR 0023.
+    ///
+    /// Here for the same structural reason `shimadzu_lcd` is: every roster row
+    /// carries a family and the projection is total over what Rust can admit.
+    /// It is not a support claim. Nothing a user can do creates a row of this
+    /// family, the queue does not accept one, and the label exists so that a
+    /// row which cannot occur would still be described honestly rather than as
+    /// something else.
+    SciexWiff,
 }
 
 /// Every dataset the session holds, in the order they were added.
