@@ -42,11 +42,23 @@ export interface BackendAvailability {
  * no `unknown`: a member here is a claim the product understands the data
  * behind it, backed by measured conversion evidence.
  *
- * All three are product-reachable since ADR 0020: `Add files…` admits every
- * family here, and the two vendor families convert through the one queue.
- * Folder ingestion and the Explorer drop remain regular-mzML-only.
+ * Three of the four are product-reachable since ADR 0020: `Add files…` admits
+ * them and the two vendor families convert through the one queue. Folder
+ * ingestion and the Explorer drop remain regular-mzML-only.
+ *
+ * `sciex_wiff` is the exception and is not a support claim. ADR 0023 lets the
+ * workspace hold a SCIEX acquisition privately -- one row for a `.wiff` and the
+ * `.wiff.scan` beside it -- and nothing a user can do creates such a row: no
+ * picker route, no folder walk, no drop, no queue. It is here because every
+ * roster row carries a family and Rust's projection is total over the families
+ * it can admit; the alternative would be a roster that described one family as
+ * another, or an `unknown` member that made every row's family a guess.
  */
-export type DatasetSourceKind = "mzml" | "thermo_raw" | "shimadzu_lcd";
+export type DatasetSourceKind =
+  | "mzml"
+  | "thermo_raw"
+  | "shimadzu_lcd"
+  | "sciex_wiff";
 
 /**
  * The exact visible name of each family.
@@ -59,6 +71,7 @@ export const SOURCE_KIND_LABEL: Record<DatasetSourceKind, string> = {
   mzml: "mzML",
   thermo_raw: "Thermo RAW",
   shimadzu_lcd: "Shimadzu LabSolutions LCD",
+  sciex_wiff: "SCIEX WIFF",
 };
 
 /**

@@ -266,6 +266,10 @@ const fn source_kind_id(kind: DatasetSourceKind) -> &'static str {
         // still cheaper than a fallback that would quietly export one family
         // under another's identifier.
         DatasetSourceKind::ShimadzuLcd => "shimadzu_lcd",
+        // And this one is doubly unreachable: nothing admits it into a queue,
+        // and it does not convert through the single-output path a diagnostics
+        // export describes at all.
+        DatasetSourceKind::SciexWiff => "sciex_wiff",
     }
 }
 

@@ -4,6 +4,12 @@
   conversion surface, every queue concern and every other source family
   separately gated
 - Date: 2026-08-07
+- **Extended by [ADR 0023](0023-private-workspace-sciex-wiff-conversion.md),
+  2026-08-11.** A second private coordinator sits beside the one described here,
+  for families whose backend names its own outputs. It keeps this ADR's ordering
+  step for step -- claim, unlocked wait, epoch recheck, revalidate, bind, gate,
+  pin, admit, run -- and differs only in pinning every member of a bundle and in
+  returning a multi-output report rather than a single-output one.
 - Amended: 2026-08-07 (M3.1) — the path is no longer private. Both open gates
   below are closed: a surface exists, and the msconvert help binding now has
   deterministic coverage from both ends. See

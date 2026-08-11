@@ -1,9 +1,14 @@
 # ADR 0022 — Private SCIEX WIFF source admission
 
 - Status: Accepted as a private source family with no product surface.
-  Workspace integration, Add-files support, folder and Explorer-Drop ingestion,
-  queue integration and every UI concern remain separately gated
+  Add-files support, folder and Explorer-Drop ingestion, queue integration and
+  every UI concern remain separately gated
 - Date: 2026-08-11
+- **Extended by [ADR 0023](0023-private-workspace-sciex-wiff-conversion.md),
+  2026-08-11.** Workspace integration named above as gated is now built,
+  privately: one `DatasetId` holds a whole bundle and converts from a workspace
+  handle. Everything else here stands, and the per-sample completeness gate this
+  ADR opened is restated there as the block on any visible surface.
 
 ## Context
 

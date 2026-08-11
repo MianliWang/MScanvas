@@ -28,6 +28,12 @@ use mscanvas_proteowizard::{
     IntegrityProperty, OpenFormat, StagingResidue, ValidationMode, conversion_output_file_name,
     provider_build_is_evidenced, run_conversion_cancellable,
 };
+// The private multi-output report is built only by the private coordinator,
+// which is itself compiled out of the shipped binary.
+#[cfg(test)]
+use mscanvas_proteowizard::{
+    MultiOutputConversionReport, MultiOutputOutcome, OutputMemberReport, OutputMemberValidation,
+};
 
 use super::backend::ConversionBackend;
 use super::dto::{
@@ -204,6 +210,285 @@ impl WorkspaceConversionReport {
     pub(super) const fn validation_facts(&self) -> Option<&ValidationFacts> {
         self.validation.as_ref()
     }
+}
+
+/// What one private **multi-output** workspace conversion did.
+///
+/// A separate type rather than a widened [`WorkspaceConversionReport`], and
+/// that is a decision rather than convenience. That report names one output:
+/// `output_file_name`, `output`, `validation` are all singular, and the
+/// planned name is knowable before the run. None of the three survives contact
+/// with this topology -- the backend names its own outputs, there may be ten of
+/// them, and each is judged on its own. Stretching the singular type until its
+/// fields no longer mean what they say is how a report starts lying about the
+/// run it describes.
+///
+/// Path-free by construction, exactly as the single-output report is. What may
+/// appear here is what the multi-output lifecycle already treats as a bounded
+/// display fact: the backend-chosen basename of each member.
+///
+/// ## What `fully_finalized` means here, and what it does not
+///
+/// It means: **every member that entered the admitted output set was validated
+/// and successfully published.** It does not mean that every sample in the
+/// source acquisition produced an output.
+///
+/// The distinction is not pedantry, it is a measured property of the reader.
+/// ADR 0022 records it: `Reader_ABI` catches a per-sample failure, writes a
+/// line to stderr and carries on with the next sample. An acquisition whose
+/// samples partly fail to open therefore produces fewer documents, declares
+/// exactly those fewer documents on the backend's own stdout, and exits zero.
+/// The declaration and the staged set agree, and both are short. Nothing in
+/// this boundary can currently tell that from a complete conversion, because
+/// nothing here knows how many samples the acquisition holds.
+///
+/// So this report carries no completeness field. There is no
+/// `all_samples_converted`, no `source_complete`, and deliberately no
+/// positive variant that no evidence could produce -- a field whose only
+/// honest value is "not established" is a field that invites somebody to make
+/// it say something else. What this type reports is publication state, and the
+/// name of every accessor says so.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct WorkspaceMultiOutputConversionReport {
+    /// The handle of the dataset that was converted. The opaque name the
+    /// session already uses, not a location.
+    dataset: String,
+    /// The family the dataset was re-admitted as for this run.
+    source_kind: DatasetSourceKind,
+    /// How many filesystem objects the acquisition was bound to for the run.
+    /// Two for a measured SCIEX bundle; the number is what says the whole
+    /// acquisition was held, without naming any of it.
+    bound_source_objects: usize,
+    /// What the run did to the set as a whole, by the crate's own identifier.
+    group_outcome: &'static str,
+    /// Every member the run discovered, in the lifecycle's deterministic order.
+    members: Vec<MultiOutputMemberFacts>,
+    /// Where publication stopped, when it stopped partway. Absent for every
+    /// other outcome, and never collapsed into an ordinary failure.
+    partial: Option<PartialFinalization>,
+    /// The precise refusal, when the set was refused before anything published.
+    refusal: Option<&'static str>,
+    /// Bounded facts about the backend process, when one ran.
+    backend: Option<BackendRunFacts>,
+    /// What the run could not reclaim of its own staging area.
+    residue: Option<StagingResidue>,
+    /// The installation sequence this run was stamped with, read at the moment
+    /// the backend gate was taken.
+    installation_generation: u64,
+}
+
+/// One published-or-not member of an output set.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct MultiOutputMemberFacts {
+    /// The name the backend chose. A display fact, not a location -- the same
+    /// one the lifecycle's own report carries.
+    file_name: String,
+    /// What happened to this member, by the crate's own identifier.
+    state: &'static str,
+    /// What was measured of it, present exactly where it was validated.
+    validation: Option<ValidationFacts>,
+    byte_length: Option<u64>,
+    sha256: Option<String>,
+    spectra: Option<u64>,
+    chromatograms: Option<u64>,
+}
+
+/// Where a non-atomic publication stopped.
+///
+/// Carried whole and read through this type's `Debug`, which is deliberate: the
+/// desktop layer's job here is not to lose what the lifecycle established, and
+/// it has no surface that renders one field of a partial finalization without
+/// the others. Accessors would be four ways to read a shape nothing yet
+/// displays.
+///
+/// Kept as its own shape because the platform offers an object-bound single-file
+/// rename and not a transaction: a set of ten publishes ten times, and a
+/// failure at member six leaves five files that are the user's. Reporting that
+/// as an ordinary failure would tell the user nothing was written when five
+/// things were.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PartialFinalization {
+    /// Members that received their final names, in publication order.
+    finalized: Vec<String>,
+    /// The member whose publication failed.
+    failed_member: String,
+    /// Why it failed, as the filesystem reported it.
+    kind: std::io::ErrorKind,
+    /// Members never published: the failed one first, then the remainder.
+    not_published: Vec<String>,
+}
+
+#[cfg(test)]
+impl WorkspaceMultiOutputConversionReport {
+    /// Builds a report from the lifecycle's own, adding only what the session
+    /// knows and the crate cannot: which dataset this was, what family it was
+    /// admitted as, how many objects that acquisition was bound to, and which
+    /// installation ran it.
+    pub(super) fn of(
+        dataset: String,
+        source_kind: DatasetSourceKind,
+        bound_source_objects: usize,
+        installation_generation: u64,
+        run: &MultiOutputConversionReport,
+    ) -> Self {
+        let (partial, refusal) = match run.outcome() {
+            MultiOutputOutcome::PartiallyFinalized {
+                finalized,
+                failed_member,
+                kind,
+                not_published,
+            } => (
+                Some(PartialFinalization {
+                    finalized: finalized.clone(),
+                    failed_member: failed_member.clone(),
+                    kind: *kind,
+                    not_published: not_published.clone(),
+                }),
+                None,
+            ),
+            MultiOutputOutcome::RefusedBeforePublication(failure) => {
+                (None, Some(failure.stable_id()))
+            }
+            MultiOutputOutcome::FullyFinalized
+            | MultiOutputOutcome::SkippedExistingDestinations => (None, None),
+        };
+        Self {
+            dataset,
+            source_kind,
+            bound_source_objects,
+            group_outcome: run.outcome().stable_id(),
+            members: run
+                .members()
+                .iter()
+                .map(MultiOutputMemberFacts::of)
+                .collect(),
+            partial,
+            refusal,
+            backend: run.backend(),
+            residue: run.residue(),
+            installation_generation,
+        }
+    }
+
+    pub(super) fn dataset(&self) -> &str {
+        &self.dataset
+    }
+
+    pub(super) const fn source_kind(&self) -> DatasetSourceKind {
+        self.source_kind
+    }
+
+    pub(super) const fn bound_source_objects(&self) -> usize {
+        self.bound_source_objects
+    }
+
+    /// What happened to the set as a whole.
+    ///
+    /// Named `group_outcome` rather than `outcome` because it is a statement
+    /// about the admitted output set and not about the acquisition. See this
+    /// type's own documentation for what `fully_finalized` does and does not
+    /// establish.
+    pub(super) const fn group_outcome(&self) -> &'static str {
+        self.group_outcome
+    }
+
+    pub(super) fn members(&self) -> &[MultiOutputMemberFacts] {
+        &self.members
+    }
+
+    /// How many members this run published.
+    ///
+    /// Counted from the member states rather than from the group outcome, so a
+    /// partially finalized run reports the prefix it really wrote.
+    pub(super) fn published_count(&self) -> usize {
+        self.members
+            .iter()
+            .filter(|member| member.state == "finalized")
+            .count()
+    }
+
+    pub(super) const fn partial_finalization(&self) -> Option<&PartialFinalization> {
+        self.partial.as_ref()
+    }
+
+    pub(super) const fn refusal_id(&self) -> Option<&'static str> {
+        self.refusal
+    }
+
+    pub(super) const fn backend_facts(&self) -> Option<BackendRunFacts> {
+        self.backend
+    }
+
+    pub(super) const fn residue(&self) -> Option<StagingResidue> {
+        self.residue
+    }
+
+    pub(super) const fn installation_generation(&self) -> u64 {
+        self.installation_generation
+    }
+}
+
+#[cfg(test)]
+impl MultiOutputMemberFacts {
+    fn of(member: &OutputMemberReport) -> Self {
+        let validation = member.validation();
+        Self {
+            file_name: member.file_name().to_owned(),
+            state: member.state().stable_id(),
+            validation: validation.map(|facts| ValidationFacts {
+                mode: facts.validation_mode(),
+                verified: owned_static(facts.verified()),
+                unverified: owned_static(facts.unverified()),
+                inapplicable: owned_static(facts.inapplicable()),
+                // Never true for this family and not computed here: an output
+                // judged without a source reading of the same kind cannot be
+                // fully verified, and saying so is the contract's own answer
+                // rather than this report's opinion.
+                fully_verified: false,
+            }),
+            byte_length: validation.map(OutputMemberValidation::byte_length),
+            sha256: validation.map(|facts| facts.sha256().to_owned()),
+            spectra: validation.map(OutputMemberValidation::spectrum_count),
+            chromatograms: validation.map(OutputMemberValidation::chromatogram_count),
+        }
+    }
+
+    pub(super) fn file_name(&self) -> &str {
+        &self.file_name
+    }
+
+    pub(super) const fn state(&self) -> &'static str {
+        self.state
+    }
+
+    pub(super) const fn validation(&self) -> Option<&ValidationFacts> {
+        self.validation.as_ref()
+    }
+
+    pub(super) const fn byte_length(&self) -> Option<u64> {
+        self.byte_length
+    }
+
+    pub(super) fn sha256(&self) -> Option<&str> {
+        self.sha256.as_deref()
+    }
+
+    pub(super) const fn spectrum_count(&self) -> Option<u64> {
+        self.spectra
+    }
+
+    pub(super) const fn chromatogram_count(&self) -> Option<u64> {
+        self.chromatograms
+    }
+}
+
+/// The stable identifiers of a set of integrity properties.
+#[cfg(test)]
+fn owned_static(properties: &[&'static str]) -> Vec<&'static str> {
+    properties.to_vec()
 }
 
 /// The three answers a run can give, as a queue groups them.
@@ -489,6 +774,19 @@ pub(super) const fn is_convertible(kind: DatasetSourceKind) -> bool {
         // revalidates under its own family and is gated on its own family's
         // provider evidence.
         DatasetSourceKind::ShimadzuLcd => true,
+        // Not convertible *by the visible queue*, which is the only question
+        // this predicate answers. The family converts -- ADR 0022 measured it
+        // on three real acquisitions -- but through the private multi-output
+        // path, and admitting it to a queue built around one planned output per
+        // item would plan a name the backend never writes.
+        //
+        // It is also the honest answer for a second reason that outlives the
+        // first: a full multi-output run establishes that every *admitted
+        // output member* was published, and not that every sample in the source
+        // acquisition converted. Until that gate is closed with evidence, this
+        // family has no business in a surface that tells a user their
+        // acquisition was converted.
+        DatasetSourceKind::SciexWiff => false,
     }
 }
 
@@ -522,6 +820,7 @@ pub(super) const fn conversion_source_kind(kind: DatasetSourceKind) -> Conversio
         DatasetSourceKind::Mzml => ConversionSourceKind::MzmlFile,
         DatasetSourceKind::ThermoRaw => ConversionSourceKind::ThermoRawFile,
         DatasetSourceKind::ShimadzuLcd => ConversionSourceKind::ShimadzuLcdFile,
+        DatasetSourceKind::SciexWiff => ConversionSourceKind::SciexWiffBundle,
     }
 }
 

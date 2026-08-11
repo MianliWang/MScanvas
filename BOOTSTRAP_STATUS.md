@@ -3878,3 +3878,81 @@ companion at admission and left the pre-spawn recheck deletable; the test that
 kills it aims at the process boundary where the guard lives. See
 [ADR 0022](docs/architecture/adr/0022-sciex-wiff-source-admission.md) and
 [the M3.11 evidence record](docs/spikes/M3_SCIEX_WIFF_EVIDENCE.md).
+
+## Private workspace SCIEX WIFF bundle conversion, 2026-08-11
+
+ADR 0022 admitted the source family at the crate boundary. Nothing connected it
+to a workspace dataset, and the workspace could not have held one: every dataset
+was exactly one filesystem object, and that assumption *was* the aggregate, the
+duplicate rule, the revalidation contract and the roster's idea of how big a
+dataset is.
+
+**One `DatasetId` now represents one whole acquisition.** `AcceptedFile` carries
+the other objects it is made of, each with its own canonical path, identity,
+lease and digest, empty for every single-object family. No second registry row
+for the companion, no side map, no SCIEX-only workspace — each of those would
+put one acquisition in two places and leave every later question with two
+answers to keep in step.
+
+**Duplicate identity is the whole acquisition.** The registry keys on the
+primary's filesystem identity plus its companions', in bind order, which for
+every existing family is the one identity it always was. The same bundle is one
+row; the same `.wiff` with a *different object* under the companion's name is a
+different acquisition, because handing back the first row would give the user a
+dataset bound to a companion that is no longer there. Duplicate still precedes
+capacity, and neither a duplicate nor a rejection spends an id.
+
+**A bundle remembers what each member held.** A lease keeps an object from being
+replaced and deliberately permits a writer, so the bytes under a leased name can
+change while name, object and identity all stay what they were. For a primary
+that is caught later, when the conversion boundary rehashes what it pins. For a
+companion nothing catches it, because nothing else in this boundary ever looks
+at one — so the workspace records the digests the crate already computed, and
+revalidation compares identity, name **and** content member for member.
+
+**The coordinator keeps the single-output path's order step for step** — claim,
+unlocked wait, epoch recheck, revalidate, bind, evidence gate, pin, admit, run,
+stamp — and differs in pinning every member and holding them all for the run.
+Its result is a new path-free report rather than a widened
+`WorkspaceConversionReport`, whose singular `output_file_name`/`output`/
+`validation` do not survive a backend that names its own outputs. All four ADR
+0021 group outcomes are preserved, partial finalization kept whole rather than
+collapsed into "nothing happened" when five of ten files are the user's.
+
+**The completeness gate is stated, not closed.** `Reader_ABI` can fail a sample,
+log it, continue, declare only what it wrote and exit zero — so
+`declared == discovered` does not prove every sample converted. `fully_finalized`
+means every member of the *admitted output set* was validated and published, and
+nothing more. The report carries no completeness field at all: no
+`all_samples_converted`, no `source_complete`, and no positive variant that no
+evidence could produce. A test searches the report's own rendering for one, so a
+field added later fails there rather than in review. **The next product-visible
+SCIEX slice stays blocked until this is closed with evidence.**
+
+**Real evidence, from a workspace handle.** All three lawful acquisitions
+admitted through the private service and converted from their `DatasetId` on the
+evidenced build: ten members from Enolase and one each from the other two, every
+run `fully_finalized`, two bound source objects each, output-only validation and
+`is_fully_verified` false throughout, retained finalized objects equal to the
+published count, no residue, and a rendered report carrying no path or identity.
+
+Nothing a user can do reaches any of it: the picker does not route `.wiff`,
+folder discovery and the Explorer drop stay regular-mzML-only, the visible queue
+refuses the family as a whole-request refusal, it is not previewable, and the
+command list is asserted unchanged. The inert `sciex_wiff` wire member exists
+for the reason ADR 0019 gave `shimadzu_lcd` one: the roster projection is total
+over what Rust can admit.
+
+A staleness refusal has to leave a way out: revalidation refuses a row whose
+members were rewritten in place and says to open the acquisition again, and
+opening it again reaches the duplicate lookup with unchanged identities. So a
+matching identity with differing digests **rebinds** the existing row rather
+than handing it back. Without that the instruction is a loop.
+
+Fourteen focused mutations, thirteen red. The survivor is recorded rather than
+hidden — removing the coordinator's own companion locks leaves the suite green,
+because the interval they protect has no seam a deterministic test can reach
+while the interval they overlap is already held by the crate. Two further
+mutations were considered and not run, with reasons. See
+[ADR 0023](docs/architecture/adr/0023-private-workspace-sciex-wiff-conversion.md)
+and [the M3.12 evidence record](docs/spikes/M3_WORKSPACE_SCIEX_WIFF_EVIDENCE.md).

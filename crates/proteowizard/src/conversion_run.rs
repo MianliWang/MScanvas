@@ -845,6 +845,48 @@ impl ConversionSource {
         1 + self.companions().len()
     }
 
+    /// The volume serial and file id of each bound companion, in bind order.
+    ///
+    /// The companion half of [`Self::object_identity`], and it exists for the
+    /// same one caller: a session that admitted this acquisition under its own
+    /// rules, and has to prove that what it leased and what this crate is about
+    /// to read are the same objects — *all* of them. For a bundle the primary
+    /// comparison is not enough, because the companion is the member the argv
+    /// never names and the vendor library opens anyway.
+    ///
+    /// Carries no path, deliberately. The caller already has the names it
+    /// leased; what it cannot obtain safely by comparing names is the object
+    /// behind each one.
+    ///
+    /// Empty for every single-object family. An element is `None` only where
+    /// the platform does not name objects by a volume and a file id, and a
+    /// caller must refuse rather than invent a weaker comparison — the same
+    /// rule [`Self::object_identity`] states.
+    #[must_use]
+    pub fn companion_identities(&self) -> Vec<Option<(u64, [u8; 16])>> {
+        self.companions()
+            .iter()
+            .map(|companion| companion.identity().volume_and_file_id())
+            .collect()
+    }
+
+    /// The digest of each bound companion, in bind order.
+    ///
+    /// The companion half of [`Self::sha256`], and it exists so a session can
+    /// remember what each member *was* rather than only which object it is. An
+    /// identity says the object has not been swapped; a digest says its content
+    /// has not been rewritten underneath a workspace that is still holding it,
+    /// which for a companion nothing else in this boundary would notice.
+    ///
+    /// Empty for every single-object family.
+    #[must_use]
+    pub fn companion_digests(&self) -> Vec<Sha256Digest> {
+        self.companions()
+            .iter()
+            .map(SourceObjectFacts::sha256)
+            .collect()
+    }
+
     /// The primary's bound facts.
     pub(crate) const fn primary_object(&self) -> &SourceObjectFacts {
         self.baseline.object()

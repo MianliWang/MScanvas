@@ -107,4 +107,5 @@ pub use process::{
     CancellationToken, LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner,
     SystemProcessRunner, Termination, execute, execute_cancellable,
 };
+pub use sciex_wiff::sciex_wiff_companion_path;
 pub use sha256::Sha256Error;
