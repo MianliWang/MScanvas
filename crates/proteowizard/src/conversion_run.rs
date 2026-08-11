@@ -59,6 +59,7 @@ use crate::finalized_output::FinalizedOutput;
 use crate::fs_guard::{self, OutputEntryKind, RegularFileError, snapshot_output_directory};
 use crate::mzml::{MzmlFacts, MzmlScanError, MzmlScanLimits};
 use crate::process::{LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner, Termination};
+use crate::sciex_wiff;
 
 /// Appended to the planned output file name to name the staging directory.
 ///
@@ -130,6 +131,14 @@ pub enum ConversionSourceKind {
     /// bytes a SCIEX `.wiff` begins with — measured on real fixtures of both.
     /// What names the family is the set of entries inside it.
     ShimadzuLcdFile,
+    /// A SCIEX acquisition: a `.wiff` and the `.wiff.scan` beside it, bound
+    /// together as one logical source.
+    ///
+    /// The first family here that is not one object, and the first that
+    /// produces more than one output. Both are properties of the acquisition
+    /// rather than choices: the companion carries the data the primary
+    /// describes, and a WIFF holds one document per sample.
+    SciexWiffBundle,
 }
 
 impl ConversionSourceKind {
@@ -139,7 +148,30 @@ impl ConversionSourceKind {
             Self::MzmlFile => "mzml_file",
             Self::ThermoRawFile => "thermo_raw_file",
             Self::ShimadzuLcdFile => "shimadzu_lcd_file",
+            Self::SciexWiffBundle => "sciex_wiff_bundle",
         }
+    }
+
+    /// Whether one source of this family converts to a set of documents rather
+    /// than to one.
+    ///
+    /// Measured per family, not inferred. A SCIEX acquisition yields one mzML
+    /// per sample, named by the backend — ten from the Enolase fixture, one
+    /// each from the two single-sample ones. Cardinality is not the property
+    /// that decides the lifecycle, though: even the single-sample fixtures
+    /// cannot use the single-output plan, because the plan cannot derive the
+    /// name the backend chooses. That is why this is a family fact and not an
+    /// output count.
+    #[must_use]
+    pub const fn produces_output_set(self) -> bool {
+        matches!(self, Self::SciexWiffBundle)
+    }
+
+    /// Whether an acquisition of this family is more than one filesystem
+    /// object.
+    #[must_use]
+    pub const fn is_bundle(self) -> bool {
+        matches!(self, Self::SciexWiffBundle)
     }
 
     /// Whether a conversion from this source can be compared against it.
@@ -170,7 +202,13 @@ impl ConversionSourceKind {
             // masks before any reader sees them and answers "no files found
             // matching", where the Thermo library accepts the argument and
             // then reports a corrupt file. Different messages, one fact.
-            Self::ThermoRawFile | Self::ShimadzuLcdFile => InputSpelling::PlainVerified,
+            //
+            // Measured a third time for SCIEX and the answer is the same: the
+            // extended-length spelling is expanded as a file mask before any
+            // reader sees it and matches nothing.
+            Self::ThermoRawFile | Self::ShimadzuLcdFile | Self::SciexWiffBundle => {
+                InputSpelling::PlainVerified
+            }
         }
     }
 
@@ -183,7 +221,10 @@ impl ConversionSourceKind {
     /// repository has measured on exactly the builds it has measured.
     #[must_use]
     pub const fn requires_provider_build_evidence(self) -> bool {
-        matches!(self, Self::ThermoRawFile | Self::ShimadzuLcdFile)
+        matches!(
+            self,
+            Self::ThermoRawFile | Self::ShimadzuLcdFile | Self::SciexWiffBundle
+        )
     }
 }
 
@@ -233,30 +274,27 @@ fn require_family_structure(
     kind: ConversionSourceKind,
     file: &mut File,
 ) -> Result<(), ConversionSourceRejection> {
-    match kind {
-        ConversionSourceKind::MzmlFile | ConversionSourceKind::ThermoRawFile => Ok(()),
-        ConversionSourceKind::ShimadzuLcdFile => {
-            let names = compound_file::read_root_directory_names(file).map_err(|error| {
-                match error {
-                    // It carried the compound-file magic a moment ago, so a
-                    // reader that now says it is not one is describing an
-                    // object that cannot be recognised rather than an object
-                    // that is a different family.
-                    compound_file::CompoundFileError::NotACompoundFile
-                    | compound_file::CompoundFileError::DirectoryUnreadable => {
-                        ConversionSourceRejection::FamilyStructureMismatch
-                    }
-                    compound_file::CompoundFileError::Unreadable { kind } => {
-                        ConversionSourceRejection::NotInspectable { kind }
-                    }
-                }
-            })?;
-            if names.contains_all(&SHIMADZU_LCD_DIRECTORY_ENTRIES) {
-                Ok(())
-            } else {
-                Err(ConversionSourceRejection::FamilyStructureMismatch)
-            }
+    let required: &[&str] = match kind {
+        ConversionSourceKind::MzmlFile | ConversionSourceKind::ThermoRawFile => return Ok(()),
+        ConversionSourceKind::ShimadzuLcdFile => &SHIMADZU_LCD_DIRECTORY_ENTRIES,
+        ConversionSourceKind::SciexWiffBundle => &sciex_wiff::SCIEX_WIFF_DIRECTORY_ENTRIES,
+    };
+    let names = compound_file::read_root_directory_names(file).map_err(|error| match error {
+        // It carried the compound-file magic a moment ago, so a reader that now
+        // says it is not one is describing an object that cannot be recognised
+        // rather than an object that is a different family.
+        compound_file::CompoundFileError::NotACompoundFile
+        | compound_file::CompoundFileError::DirectoryUnreadable => {
+            ConversionSourceRejection::FamilyStructureMismatch
         }
+        compound_file::CompoundFileError::Unreadable { kind } => {
+            ConversionSourceRejection::NotInspectable { kind }
+        }
+    })?;
+    if names.contains_all(required) {
+        Ok(())
+    } else {
+        Err(ConversionSourceRejection::FamilyStructureMismatch)
     }
 }
 
@@ -290,7 +328,7 @@ struct EvidencedProviderBuild {
 /// installation is the claim ADR 0002 and the M0 spike both refuse to make,
 /// because a vendor family is read by a vendor library whose behaviour changes
 /// between releases and whose availability is not uniform across builds.
-const EVIDENCED_PROVIDER_BUILDS: [EvidencedProviderBuild; 2] = [
+const EVIDENCED_PROVIDER_BUILDS: [EvidencedProviderBuild; 3] = [
     EvidencedProviderBuild {
         kind: ConversionSourceKind::ThermoRawFile,
         release: "3.0.26013",
@@ -302,6 +340,21 @@ const EVIDENCED_PROVIDER_BUILDS: [EvidencedProviderBuild; 2] = [
     // is not thereby evidence about another vendor's library sitting beside it.
     EvidencedProviderBuild {
         kind: ConversionSourceKind::ShimadzuLcdFile,
+        release: "3.0.26013",
+        source_revision: "47b13cf",
+        executable_sha256: "9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD",
+    },
+    // A third row, and what it is evidence of is narrower than the family
+    // name. Three lawful acquisitions were converted on this exact build
+    // through this boundary — one of ten samples and two of one — and the ten
+    // came out as ten documents, twice, with the same names. What that
+    // measures is the SCIEX library sitting in this installation, at this
+    // digest, reading acquisitions written by Analyst between 2007 and 2012.
+    // It is not evidence about `.wiff2`, which is a different container this
+    // boundary does not admit, and not about acquisitions this build cannot
+    // open.
+    EvidencedProviderBuild {
+        kind: ConversionSourceKind::SciexWiffBundle,
         release: "3.0.26013",
         source_revision: "47b13cf",
         executable_sha256: "9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD",
@@ -375,6 +428,21 @@ pub enum ConversionSourceRejection {
     /// file whichever vendor wrote it; this is what tells them apart.
     #[error("the conversion source does not hold the expected family structure")]
     FamilyStructureMismatch,
+    /// The acquisition's required companion object is not there. Its name is
+    /// derived from the primary's, so this says the acquisition is incomplete
+    /// where it stands, not that a search failed.
+    #[error("the acquisition's required companion object is missing")]
+    CompanionMissing,
+    /// The companion is there and is not a plain regular file — a directory, a
+    /// link, a reparse point. Kept apart from the primary's posture refusal so
+    /// a path-free report still says which object was wrong.
+    #[error("the acquisition's required companion object is not a regular file")]
+    CompanionNotARegularFile,
+    /// The companion is a regular file that does not begin with the bytes this
+    /// family's companions begin with. The name was right and the object was
+    /// not.
+    #[error("the acquisition's required companion object does not carry the expected signature")]
+    CompanionSignatureMismatch,
 }
 
 impl ConversionSourceRejection {
@@ -388,6 +456,9 @@ impl ConversionSourceRejection {
             Self::UnsupportedExtension => "source_unsupported_extension",
             Self::SignatureMismatch => "source_signature_mismatch",
             Self::FamilyStructureMismatch => "source_family_structure_mismatch",
+            Self::CompanionMissing => "source_companion_missing",
+            Self::CompanionNotARegularFile => "source_companion_not_a_regular_file",
+            Self::CompanionSignatureMismatch => "source_companion_signature_mismatch",
         }
     }
 }
@@ -444,6 +515,10 @@ enum SourceBaseline {
     /// The source is a bound, hashed object and nothing more. There is no mzML
     /// reading of it and this boundary will not pretend there is one.
     ObjectOnly(SourceObjectFacts),
+    /// The source is several bound, hashed objects, one of which the
+    /// acquisition is named by. Boxed for the same reason the mzML variant is:
+    /// a single-object source should not carry a bundle's width.
+    Bundle(Box<SourceBundleFacts>),
 }
 
 impl SourceBaseline {
@@ -451,8 +526,23 @@ impl SourceBaseline {
         match self {
             Self::Mzml(facts) => facts.object(),
             Self::ObjectOnly(object) => object,
+            Self::Bundle(bundle) => &bundle.primary,
         }
     }
+}
+
+/// An acquisition that is more than one file, with every member bound.
+///
+/// The primary is the object the acquisition is named by and the only one the
+/// backend is told about. The companions are bound because the backend opens
+/// them anyway.
+#[derive(Clone, PartialEq)]
+struct SourceBundleFacts {
+    primary: SourceObjectFacts,
+    /// Bounded at admission by `MAX_SOURCE_BUNDLE_MEMBERS`, and never empty for
+    /// a family that has one: a bundle with no companions is an acquisition
+    /// missing the part that carries its data.
+    companions: Vec<SourceObjectFacts>,
 }
 
 impl ConversionSource {
@@ -536,6 +626,57 @@ impl ConversionSource {
         )
     }
 
+    /// Opens a SCIEX acquisition — a `.wiff` and the `.wiff.scan` beside it —
+    /// as one conversion source.
+    ///
+    /// The primary goes through the identical three steps every other
+    /// signature-recognized family goes through, reaching one level in for the
+    /// same reason the LabSolutions route does: the container magic is shared
+    /// and the entry names are not.
+    ///
+    /// Then the part that is new here. The companion's name is *derived* from
+    /// the admitted primary's canonical name rather than searched for, it is
+    /// opened under the same no-follow guard, it is recognised by its own
+    /// leading bytes, and it is bound and hashed exactly as the primary is.
+    /// None of that is ceremony. The measurement that forced it: with the
+    /// companion removed, this build converts the ten-sample fixture to ten
+    /// *truncated* documents and exits 1 — the data the outputs are supposed to
+    /// carry lives in the object a single-file admission would never have
+    /// looked at.
+    ///
+    /// A `.wiff` with no companion beside it is refused here rather than
+    /// admitted and failed by a launched process, which is the same trade the
+    /// extension filter makes one step earlier.
+    ///
+    /// The scan limits judge nothing on this side; they are carried so a run
+    /// keeps one limit contract whatever its source is.
+    pub fn open_sciex_wiff_bundle(
+        path: &Path,
+        limits: MzmlScanLimits,
+    ) -> Result<Self, ConversionSourceRejection> {
+        let primary = Self::admit_signed_object(
+            path,
+            ConversionSourceKind::SciexWiffBundle,
+            sciex_wiff::SCIEX_WIFF_EXTENSION,
+            &compound_file::COMPOUND_FILE_SIGNATURE,
+        )?;
+        // From the canonical name of the object that was just admitted, not
+        // from the name the caller passed. The two can differ by case, by a
+        // short name, or by a relative spelling, and the companion belongs
+        // beside the object rather than beside the argument.
+        let companion_path = sciex_wiff::companion_path(primary.identity().canonical_path())
+            .ok_or(ConversionSourceRejection::CompanionMissing)?;
+        let companion = admit_scan_companion(&companion_path)?;
+        Ok(Self {
+            kind: ConversionSourceKind::SciexWiffBundle,
+            limits,
+            baseline: SourceBaseline::Bundle(Box::new(SourceBundleFacts {
+                primary,
+                companions: vec![companion],
+            })),
+        })
+    }
+
     /// The shared body of every signature-recognized single-file family.
     fn open_signed_object(
         path: &Path,
@@ -544,6 +685,27 @@ impl ConversionSource {
         extension: &str,
         signature: &[u8],
     ) -> Result<Self, ConversionSourceRejection> {
+        let object = Self::admit_signed_object(path, kind, extension, signature)?;
+        Ok(Self {
+            kind,
+            limits,
+            baseline: SourceBaseline::ObjectOnly(object),
+        })
+    }
+
+    /// Admits one object of a signature-recognized family and binds it.
+    ///
+    /// Separate from [`Self::open_signed_object`] because a bundle's primary
+    /// needs exactly this and is not by itself a source. Everything the two
+    /// share — the order of the checks and the single pinned handle every
+    /// reading comes from — lives here, so a bundle's primary cannot be
+    /// admitted under weaker rules than a lone object of the same shape.
+    fn admit_signed_object(
+        path: &Path,
+        kind: ConversionSourceKind,
+        extension: &str,
+        signature: &[u8],
+    ) -> Result<SourceObjectFacts, ConversionSourceRejection> {
         if !has_extension(path, extension) {
             return Err(ConversionSourceRejection::UnsupportedExtension);
         }
@@ -604,14 +766,9 @@ impl ConversionSource {
             .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
         let sha256 = Sha256Digest::calculate_reader(&mut file)
             .map_err(|_| ConversionSourceRejection::NotHashed)?;
-        let object = SourceObjectFacts::from_parts(identity, byte_length, sha256);
         drop(file);
 
-        Ok(Self {
-            kind,
-            limits,
-            baseline: SourceBaseline::ObjectOnly(object),
-        })
+        Ok(SourceObjectFacts::from_parts(identity, byte_length, sha256))
     }
 
     #[must_use]
@@ -644,7 +801,7 @@ impl ConversionSource {
     pub const fn mzml_facts(&self) -> Option<&MzmlFacts> {
         match &self.baseline {
             SourceBaseline::Mzml(facts) => Some(facts.facts()),
-            SourceBaseline::ObjectOnly(_) => None,
+            SourceBaseline::ObjectOnly(_) | SourceBaseline::Bundle(_) => None,
         }
     }
 
@@ -664,6 +821,85 @@ impl ConversionSource {
     fn canonical_path(&self) -> &Path {
         self.baseline.object().identity().canonical_path()
     }
+
+    /// The bound companions of a bundle acquisition, primary excluded.
+    ///
+    /// Empty for every single-object family, which is the truth about them
+    /// rather than a placeholder: they have no companions to bind.
+    pub(crate) fn companions(&self) -> &[SourceObjectFacts] {
+        match &self.baseline {
+            SourceBaseline::Mzml(_) | SourceBaseline::ObjectOnly(_) => &[],
+            SourceBaseline::Bundle(bundle) => &bundle.companions,
+        }
+    }
+
+    /// How many filesystem objects this acquisition was bound to.
+    ///
+    /// One for every single-object family; for a bundle, the primary plus the
+    /// companions that were actually admitted. A count rather than the objects
+    /// themselves: a caller outside this crate has no business with a vendor
+    /// companion's name, and the number is what says whether the acquisition
+    /// was bound whole.
+    #[must_use]
+    pub fn bound_object_count(&self) -> usize {
+        1 + self.companions().len()
+    }
+
+    /// The primary's bound facts.
+    pub(crate) const fn primary_object(&self) -> &SourceObjectFacts {
+        self.baseline.object()
+    }
+}
+
+/// Admits and binds one `.wiff.scan` companion.
+///
+/// The same posture, the same no-follow guard, the same one-handle rule and the
+/// same digest as a primary — deliberately, because the difference between a
+/// primary and a companion is which one the argv names, not how carefully
+/// either is looked at. The backend reads both.
+fn admit_scan_companion(path: &Path) -> Result<SourceObjectFacts, ConversionSourceRejection> {
+    let mut file = match open_admission_candidate(path) {
+        Ok(file) => file,
+        // The name is derived, so "not there" is a statement about the
+        // acquisition rather than a failed lookup: this `.wiff` does not have
+        // its `.wiff.scan` beside it.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Err(ConversionSourceRejection::CompanionMissing);
+        }
+        Err(error) => {
+            return Err(ConversionSourceRejection::NotInspectable { kind: error.kind() });
+        }
+    };
+    let metadata = file
+        .metadata()
+        .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
+    match fs_guard::require_regular_file(&metadata) {
+        Ok(()) => {}
+        Err(
+            RegularFileError::NotRegularFile
+            | RegularFileError::Symlink
+            | RegularFileError::ReparsePoint,
+        ) => return Err(ConversionSourceRejection::CompanionNotARegularFile),
+        Err(other) => return Err(ConversionSourceRejection::from(other)),
+    }
+    let byte_length = metadata.len();
+
+    let identity = SourceIdentity::capture(path)
+        .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
+
+    if !sciex_wiff::companion_signature_matches(&mut file)
+        .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?
+    {
+        return Err(ConversionSourceRejection::CompanionSignatureMismatch);
+    }
+
+    file.rewind()
+        .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
+    let sha256 = Sha256Digest::calculate_reader(&mut file)
+        .map_err(|_| ConversionSourceRejection::NotHashed)?;
+    drop(file);
+
+    Ok(SourceObjectFacts::from_parts(identity, byte_length, sha256))
 }
 
 /// Whether a path carries exactly this extension, ignoring ASCII case.
@@ -724,6 +960,13 @@ pub enum ConversionPlanError {
     DestinationRootNotInspectable { kind: io::ErrorKind },
     #[error("the destination root is not a directory")]
     DestinationRootNotADirectory,
+    /// The source's family converts to a set of documents the backend names
+    /// itself, and this plan can express exactly one output under a name
+    /// derived before the run. Refused at the plan rather than deep in a
+    /// staging check: the mismatch is between the family and the plan, and it
+    /// is knowable the moment the source is handed over.
+    #[error("the conversion source's family produces an output set, not one output")]
+    SourceProducesAnOutputSet,
 }
 
 impl ConversionPlanError {
@@ -735,6 +978,7 @@ impl ConversionPlanError {
             Self::OutputFileNameTooLongToStage => "output_file_name_too_long_to_stage",
             Self::DestinationRootNotInspectable { .. } => "destination_root_not_inspectable",
             Self::DestinationRootNotADirectory => "destination_root_not_a_directory",
+            Self::SourceProducesAnOutputSet => "source_produces_an_output_set",
         }
     }
 }
@@ -772,6 +1016,14 @@ impl ConversionPlan {
         destination_root: &Path,
         conflict: ConflictPolicy,
     ) -> Result<Self, ConversionPlanError> {
+        // Before a name is derived at all, because for these families there is
+        // no name to derive: the backend chooses one per sample, and measured
+        // on the real build it does so even when the acquisition holds a single
+        // sample. A plan that guessed `<stem>.mzML` here would stage for a file
+        // the backend never writes.
+        if source.kind().produces_output_set() {
+            return Err(ConversionPlanError::SourceProducesAnOutputSet);
+        }
         let output_file_name =
             conversion_output_file_name(source.canonical_path(), OpenFormat::MzMl)
                 .ok_or(ConversionPlanError::SourceHasNoConvertibleName)?;
@@ -2347,8 +2599,35 @@ fn settled_failure(failure: ConversionRunFailure) -> RunResult {
 /// This costs one full read of the source. A conversion already reads it twice;
 /// binding the run to the bytes that were admitted is worth the third.
 fn pin_planned_source(source: &ConversionSource) -> Result<File, ConversionRunFailure> {
-    let object = source.baseline.object();
+    pin_source_object(source.baseline.object())
+}
 
+/// Pins every object an acquisition is made of, primary first.
+///
+/// The same recheck as the single-object one, applied member by member, and it
+/// has to be: the backend opens a bundle's companion without being told to, so
+/// a companion left unpinned is an unwatched input to the run. The handles are
+/// returned together and released together — the caller holds them for the
+/// whole run, which is what makes "the bytes that were admitted" true of the
+/// companion and not only of the primary.
+///
+/// Ordered primary first so a bundle whose primary was displaced reports the
+/// same thing a single-object source would, rather than reporting whichever
+/// member happened to be checked first.
+pub(crate) fn pin_source_bundle(
+    source: &ConversionSource,
+) -> Result<Vec<File>, ConversionRunFailure> {
+    let mut pinned = Vec::with_capacity(1 + source.companions().len());
+    pinned.push(pin_source_object(source.primary_object())?);
+    for companion in source.companions() {
+        pinned.push(pin_source_object(companion)?);
+    }
+    Ok(pinned)
+}
+
+/// Pins one admitted object and proves it is still the object that was
+/// admitted.
+fn pin_source_object(object: &SourceObjectFacts) -> Result<File, ConversionRunFailure> {
     // Held before it is judged, and the order is the whole point. Checking the
     // identity and then opening leaves the interval between them: a name
     // atomically replaced in there binds this handle to an object nothing
@@ -2357,7 +2636,7 @@ fn pin_planned_source(source: &ConversionSource) -> Result<File, ConversionRunFa
     // minutes before the post-run revalidation notices. Once the handle exists
     // without delete sharing the name cannot be repointed, so the check that
     // follows describes the object this run will actually use.
-    let path = source.canonical_path();
+    let path = object.identity().canonical_path();
     // An open that fails says the recheck could not be made, which is the
     // reason this boundary has always given for a source it cannot reach. What
     // the source *became* is decided by the posture, length and digest checks
@@ -2689,6 +2968,19 @@ fn run_staged(
         ),
         SourceBaseline::ObjectOnly(object) => verify_vendor_conversion_retaining_output(
             object,
+            staging,
+            plan.output_file_name(),
+            plan.compression,
+            plan.scan_limits(),
+        ),
+        // A bundle does not reach here: `ConversionPlan::to_mzml` refuses a
+        // family that produces an output set, because a plan cannot name what
+        // the backend has not chosen yet. It is folded into the same judgement
+        // rather than made a panic, so that if the guard above were ever
+        // loosened the result would be an ordinary output-only validation and
+        // not a crash in a conversion the user was waiting on.
+        SourceBaseline::Bundle(bundle) => verify_vendor_conversion_retaining_output(
+            &bundle.primary,
             staging,
             plan.output_file_name(),
             plan.compression,

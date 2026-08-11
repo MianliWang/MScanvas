@@ -156,6 +156,13 @@ struct FakeRunner<'a> {
     calls: Cell<usize>,
     argv: RefCell<Vec<OsString>>,
     working_directory: RefCell<Option<PathBuf>>,
+    /// The output basenames this substituted backend announces on its stdout.
+    ///
+    /// Empty for every single-output test, which is faithful: that boundary
+    /// never reads the announcement. A substituted *multi-output* backend that
+    /// wrote files without announcing them would not be standing in for the
+    /// measured one -- it would be standing in for an injector.
+    declared: Vec<&'a str>,
 }
 
 impl<'a> FakeRunner<'a> {
@@ -166,7 +173,15 @@ impl<'a> FakeRunner<'a> {
             calls: Cell::new(0),
             argv: RefCell::new(Vec::new()),
             working_directory: RefCell::new(None),
+            declared: Vec::new(),
         }
+    }
+
+    /// A runner that announces exactly these output basenames, in the line
+    /// shape the measured build prints.
+    fn declaring(mut self, names: &'a [&'a str]) -> Self {
+        self.declared = names.to_vec();
+        self
     }
 
     /// A runner that reports something other than an ordinary exit. Nothing in
@@ -196,10 +211,19 @@ impl ProcessRunner for FakeRunner<'_> {
         self.working_directory
             .replace(Some(spec.working_directory().to_path_buf()));
         let exit_code = (self.act)(spec)?;
+        let mut stdout = Vec::new();
+        if !self.declared.is_empty() {
+            let directory = set_command_output_directory(spec);
+            for name in &self.declared {
+                stdout.extend_from_slice(b"writing output file: ");
+                stdout.extend_from_slice(directory.join(name).display().to_string().as_bytes());
+                stdout.push(b'\n');
+            }
+        }
         Ok(ProcessOutput {
-            stdout: Vec::new(),
+            stdout_total_bytes: stdout.len() as u64,
+            stdout,
             stderr: Vec::new(),
-            stdout_total_bytes: 0,
             stderr_total_bytes: 0,
             stdout_truncated: false,
             stderr_truncated: true,
@@ -3840,22 +3864,32 @@ const OBJECT_TYPE_IN_ENTRY: usize = 66;
 /// object's identity, and every one of those is real here. What it cannot stand
 /// in for is the Shimadzu reader, which is measured for real elsewhere.
 fn compound_bytes(entries: &[&str]) -> Vec<u8> {
-    const SECTOR: usize = 512;
-    let mut bytes = vec![0_u8; SECTOR * 2];
-    bytes[..8].copy_from_slice(&COMPOUND_HEADER);
     // Major version 3, which is the version 512-byte sectors belong to. Both
     // real fixtures are version 4 with 4096-byte sectors; either defined pair
     // exercises the same reading, and a header that named neither would be a
     // file no writer produces.
-    bytes[26..28].copy_from_slice(&3_u16.to_le_bytes());
+    compound_bytes_with_geometry(entries, 3, 9)
+}
+
+/// The same container under either defined geometry.
+///
+/// A 512-byte directory sector holds four entries, which is enough for a
+/// LabSolutions fixture and not enough for a SCIEX one -- the real `.wiff`
+/// files declare version 4 with 4096-byte sectors and carry thirty-two entries
+/// in the first sector, so that is the geometry their fixture uses.
+fn compound_bytes_with_geometry(entries: &[&str], major: u16, shift: u16) -> Vec<u8> {
+    let sector = 1_usize << shift;
+    let mut bytes = vec![0_u8; sector * 2];
+    bytes[..8].copy_from_slice(&COMPOUND_HEADER);
+    bytes[26..28].copy_from_slice(&major.to_le_bytes());
     bytes[28..30].copy_from_slice(&[0xFE, 0xFF]);
-    bytes[30..32].copy_from_slice(&9_u16.to_le_bytes());
+    bytes[30..32].copy_from_slice(&shift.to_le_bytes());
     bytes[48..52].copy_from_slice(&0_u32.to_le_bytes());
 
     // "Root Entry" first, as a real one has, and then the family's own.
     let named = std::iter::once("Root Entry").chain(entries.iter().copied());
     for (index, name) in named.enumerate() {
-        let at = SECTOR + index * 128;
+        let at = sector + index * 128;
         let units: Vec<u16> = name.encode_utf16().collect();
         for (unit, slot) in units.iter().zip(bytes[at..].chunks_exact_mut(2)) {
             slot.copy_from_slice(&unit.to_le_bytes());
@@ -4364,15 +4398,23 @@ fn the_compound_file_family_runs_only_on_a_build_it_has_evidence_for() {
         ConversionSourceKind::ShimadzuLcdFile.stable_id(),
         "shimadzu_lcd_file"
     );
-    // Two families, two rows, one build. A row is a family converted on a
+    // Three families, three rows, one build. A row is a family converted on a
     // build; a build that reads one vendor's files is not evidence about
-    // another vendor's library sitting beside it.
-    assert_eq!(EVIDENCED_PROVIDER_BUILDS.len(), 2);
-    assert!(
-        EVIDENCED_PROVIDER_BUILDS
-            .iter()
-            .any(|build| build.kind == ConversionSourceKind::ShimadzuLcdFile)
-    );
+    // another vendor's library sitting beside it, and each family that arrived
+    // added a row rather than widening one.
+    assert_eq!(EVIDENCED_PROVIDER_BUILDS.len(), 3);
+    for kind in [
+        ConversionSourceKind::ThermoRawFile,
+        ConversionSourceKind::ShimadzuLcdFile,
+        ConversionSourceKind::SciexWiffBundle,
+    ] {
+        assert!(
+            EVIDENCED_PROVIDER_BUILDS
+                .iter()
+                .any(|build| build.kind == kind),
+            "{kind:?} has an evidence row"
+        );
+    }
 
     let directory = TestDirectory::new();
     let source = write_shimadzu_source(directory.path(), "acquisition.lcd");
@@ -4496,16 +4538,26 @@ fn the_shimadzu_lcd_evidence_run_is_reproducible() {
 
 // --- The multi-output conversion lifecycle ----------------------------------
 //
-// One logical source, one backend run, a bounded set of mzML documents. The
-// measured SCIEX topology motivates the model; no source family is admitted to
-// it, so everything here drives the lifecycle over synthetic staging content
-// and a substituted runner. The real acquisition is a separate ignored-path
-// evidence harness.
+// One logical source, one backend run, a bounded set of mzML documents. These
+// drive the lifecycle itself over synthetic staging content and a substituted
+// runner, so every branch of it is reachable; the SCIEX family that is admitted
+// to it has its own section further down, and the real acquisitions run through
+// a separate developer-only evidence harness.
 
 use super::output_set::{
-    self, MAX_CONVERSION_OUTPUTS_PER_SOURCE, MultiOutputFailure, MultiOutputOutcome,
-    OutputMemberState, OutputSetRejection, run_multi_output_conversion_evidence,
+    self, DiscoveredMember, MAX_CONVERSION_OUTPUTS_PER_SOURCE, MultiOutputFailure,
+    MultiOutputOutcome, OutputMemberState, OutputSetRejection,
+    run_admitted_multi_output_conversion, run_multi_output_conversion_evidence,
 };
+
+/// The members a directory holding exactly these names would be discovered as.
+fn discovered_members(names: &[&str]) -> Vec<DiscoveredMember> {
+    names
+        .iter()
+        .copied()
+        .map(DiscoveredMember::named_for_test)
+        .collect()
+}
 
 /// A directory pretending to be a staging output directory, plus the admitted
 /// destination beside it and the source object the set is judged against.
@@ -4514,6 +4566,12 @@ struct SetFixture {
     staged: PathBuf,
     destination_root: PathBuf,
     source_facts: crate::conversion::SourceObjectFacts,
+    /// What a backend that wrote exactly these members would have said on its
+    /// stdout. Recorded as each member is staged rather than read back off the
+    /// directory, so a file put into staging by something other than "the
+    /// backend" is genuinely undeclared here, the way it would be in a real
+    /// injection.
+    declared: std::cell::RefCell<Vec<String>>,
 }
 
 impl SetFixture {
@@ -4543,11 +4601,40 @@ impl SetFixture {
                 byte_length,
                 sha256,
             ),
+            declared: std::cell::RefCell::new(Vec::new()),
         }
     }
 
-    /// A valid staged member with the given name.
+    /// Records that the backend declared this name, without writing anything.
+    fn declare(&self, name: &str) {
+        self.declared.borrow_mut().push(name.to_owned());
+    }
+
+    /// The declaration a backend that wrote exactly the recorded members would
+    /// have printed, in the exact line shape the measured build prints.
+    fn declaration(&self) -> output_set::DeclaredOutputSet {
+        // Shaped exactly like the measured build's stdout, interleaving
+        // and all: a parser that only worked on a clean list of names
+        // would pass here and fail on the real thing.
+        let mut stdout = String::from("processing file: an acquisition\n");
+        for name in self.declared.borrow().iter() {
+            stdout.push_str("calculating source file checksums\n\n");
+            stdout.push_str("writing output file: ");
+            stdout.push_str(&self.staged.join(name).display().to_string());
+            stdout.push('\n');
+        }
+        output_set::DeclaredOutputSet::from_backend_stdout(stdout.as_bytes(), false)
+    }
+
+    /// A valid staged member with the given name, declared by the backend.
     fn member(&self, name: &str) -> PathBuf {
+        self.declare(name);
+        self.undeclared_member(name)
+    }
+
+    /// A valid staged member the backend never said it wrote: the injection
+    /// ADR 0021 named as this lifecycle's open gate.
+    fn undeclared_member(&self, name: &str) -> PathBuf {
         let path = self.staged.join(name);
         fs::write(&path, output_document()).expect("write a staged member");
         path
@@ -4555,12 +4642,14 @@ impl SetFixture {
 
     /// A chromatogram-only staged member: zero spectra, real chromatograms.
     fn chromatogram_member(&self, name: &str) {
+        self.declare(name);
         let body = r#"<indexedmzML><mzML version="1.1.0"><run id="R1"><spectrumList count="0"></spectrumList><chromatogramList count="2"><chromatogram index="0" id="TIC0" defaultArrayLength="4"><binaryDataArrayList count="2"><binaryDataArray encodedLength="8"><cvParam accession="MS:1000595"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/><binary>AA==</binary></binaryDataArray><binaryDataArray encodedLength="8"><cvParam accession="MS:1000515"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/><binary>AA==</binary></binaryDataArray></binaryDataArrayList></chromatogram><chromatogram index="1" id="TIC1" defaultArrayLength="4"><binaryDataArrayList count="2"><binaryDataArray encodedLength="8"><cvParam accession="MS:1000595"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/><binary>AA==</binary></binaryDataArray><binaryDataArray encodedLength="8"><cvParam accession="MS:1000515"/><cvParam accession="MS:1000574"/><cvParam accession="MS:1000521"/><binary>AA==</binary></binaryDataArray></binaryDataArrayList></chromatogram></chromatogramList></run></mzML></indexedmzML>"#;
         fs::write(self.staged.join(name), body).expect("write a chromatogram-only member");
     }
 
     /// A well-formed document with no records at all.
     fn empty_member(&self, name: &str) {
+        self.declare(name);
         let body = r#"<indexedmzML><mzML version="1.1.0"><run id="R1"><spectrumList count="0"></spectrumList><chromatogramList count="0"></chromatogramList></run></mzML></indexedmzML>"#;
         fs::write(self.staged.join(name), body).expect("write an empty member");
     }
@@ -4573,8 +4662,11 @@ impl SetFixture {
     fn settle(&self, conflict: ConflictPolicy) -> output_set::SettledOutputSet {
         let destination = self.destination();
         output_set::settle_staged_output_set(
-            &self.source_facts,
-            &self.staged,
+            output_set::StagedOutputSet {
+                source: &self.source_facts,
+                directory: &self.staged,
+                declared: &self.declaration(),
+            },
             &destination,
             conflict,
             ConversionPolicy::default(),
@@ -4883,8 +4975,11 @@ fn publication_moves_the_validated_object_not_whatever_the_name_holds() {
 
     let destination = fixture.destination();
     let settled = output_set::settle_staged_output_set_seamed(
-        &fixture.source_facts,
-        &fixture.staged,
+        output_set::StagedOutputSet {
+            source: &fixture.source_facts,
+            directory: &fixture.staged,
+            declared: &fixture.declaration(),
+        },
         &destination,
         ConflictPolicy::Fail,
         ConversionPolicy::default(),
@@ -5010,8 +5105,11 @@ fn a_mid_set_publication_failure_is_reported_as_partially_finalized() {
 
     let destination = fixture.destination();
     let settled = output_set::settle_staged_output_set_seamed(
-        &fixture.source_facts,
-        &fixture.staged,
+        output_set::StagedOutputSet {
+            source: &fixture.source_facts,
+            directory: &fixture.staged,
+            declared: &fixture.declaration(),
+        },
         &destination,
         ConflictPolicy::Fail,
         ConversionPolicy::default(),
@@ -5101,8 +5199,11 @@ fn a_first_member_publication_failure_is_a_refusal_not_a_partial_state() {
 
     let destination = fixture.destination();
     let settled = output_set::settle_staged_output_set_seamed(
-        &fixture.source_facts,
-        &fixture.staged,
+        output_set::StagedOutputSet {
+            source: &fixture.source_facts,
+            directory: &fixture.staged,
+            declared: &fixture.declaration(),
+        },
         &destination,
         ConflictPolicy::Fail,
         ConversionPolicy::default(),
@@ -5147,7 +5248,8 @@ fn the_evidence_entry_runs_the_whole_lifecycle_over_a_substituted_backend() {
         }
         Ok(0)
     };
-    let runner = FakeRunner::new(&act);
+    let runner =
+        FakeRunner::new(&act).declaring(&["sample_01.mzML", "sample_02.mzML", "sample_03.mzML"]);
     let run = run_multi_output_conversion_evidence(
         &source,
         &destination_root,
@@ -5184,7 +5286,8 @@ fn the_evidence_entry_runs_the_whole_lifecycle_over_a_substituted_backend() {
     );
 
     // A second identical run under Skip: every name occupied, group skip.
-    let runner = FakeRunner::new(&act);
+    let runner =
+        FakeRunner::new(&act).declaring(&["sample_01.mzML", "sample_02.mzML", "sample_03.mzML"]);
     let run = run_multi_output_conversion_evidence(
         &source,
         &destination_root,
@@ -5344,7 +5447,7 @@ fn the_multi_output_report_names_no_location() {
         }
         Ok(0)
     };
-    let runner = FakeRunner::new(&act);
+    let runner = FakeRunner::new(&act).declaring(&["sample_01.mzML", "sample_02.mzML"]);
     let run = run_multi_output_conversion_evidence(
         &source,
         &fixture.destination_root,
@@ -6250,4 +6353,520 @@ fn a_retention_renders_nothing_about_the_object() {
             "a rendered retention carries no path: {rendered}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// SCIEX WIFF: a source that is a bundle, converting to a set.
+// ---------------------------------------------------------------------------
+
+/// The entries all three lawful WIFF fixtures carry, and the rule requires.
+const SCIEX_ENTRIES: [&str; 4] = [
+    "SampleSubtree",
+    "MethodSubtree",
+    "SampleTable",
+    "MassSpecMethod",
+];
+
+/// A companion body that begins exactly the way every measured `.wiff.scan`
+/// begins, followed by content this boundary never reads.
+/// A container shaped like a real `.wiff`: version 4, 4096-byte sectors, the
+/// family's four required entries in the first directory sector.
+fn sciex_container() -> Vec<u8> {
+    compound_bytes_with_geometry(&SCIEX_ENTRIES, 4, 12)
+}
+
+fn scan_companion_bytes() -> Vec<u8> {
+    let mut bytes = crate::sciex_wiff::SCAN_COMPANION_SIGNATURE.to_vec();
+    bytes.extend_from_slice(b"opaque spectral payload this boundary never decodes");
+    bytes
+}
+
+/// Writes a whole SCIEX acquisition: the container and the companion beside it.
+fn write_sciex_bundle(directory: &Path, stem: &str) -> PathBuf {
+    let primary = directory.join(format!("{stem}.wiff"));
+    fs::write(&primary, sciex_container()).expect("write a wiff");
+    fs::write(
+        directory.join(format!("{stem}.wiff.scan")),
+        scan_companion_bytes(),
+    )
+    .expect("write a wiff.scan");
+    primary
+}
+
+fn open_sciex(path: &Path) -> ConversionSource {
+    ConversionSource::open_sciex_wiff_bundle(path, MzmlScanLimits::default())
+        .expect("open a SCIEX bundle")
+}
+
+/// Recognition, both directions, plus the negative control that motivates it.
+///
+/// The two compound-file families are told apart by their entries and by
+/// nothing else, so each one's fixture must be refused by the other's rule.
+#[test]
+fn a_sciex_bundle_is_recognized_by_its_entries_and_its_companion() {
+    let directory = TestDirectory::new();
+
+    let primary = write_sciex_bundle(directory.path(), "acquisition");
+    let source = open_sciex(&primary);
+    assert_eq!(source.kind(), ConversionSourceKind::SciexWiffBundle);
+    assert!(source.kind().is_bundle());
+    assert!(source.kind().produces_output_set());
+    assert!(!source.kind().supports_source_comparison());
+    assert!(source.mzml_facts().is_none(), "a wiff was read as mzML");
+    assert_eq!(source.companions().len(), 1, "the companion is bound");
+    // `byte_length` and `sha256` are the primary's: the acquisition is named by
+    // that object, and the companion is bound separately rather than folded
+    // into one digest that would describe neither file.
+    assert_eq!(source.byte_length(), 8192);
+
+    // Each family's real container is refused by the other family's rule. This
+    // is the whole justification for reading one level into a compound file.
+    let shimadzu = write_shimadzu_source(directory.path(), "labsolutions.wiff");
+    fs::write(
+        directory.path().join("labsolutions.wiff.scan"),
+        scan_companion_bytes(),
+    )
+    .expect("write a companion beside the decoy");
+    assert_eq!(
+        ConversionSource::open_sciex_wiff_bundle(&shimadzu, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::FamilyStructureMismatch)
+    );
+    let renamed = directory.path().join("renamed-wiff.lcd");
+    fs::write(&renamed, sciex_container()).expect("write a wiff under an lcd name");
+    assert_eq!(
+        ConversionSource::open_shimadzu_lcd_file(&renamed, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::FamilyStructureMismatch)
+    );
+
+    // Every marker is required. A container carrying three of the four is not
+    // three-quarters of an acquisition.
+    for (absent, missing) in SCIEX_ENTRIES.iter().enumerate() {
+        let partial: Vec<&str> = SCIEX_ENTRIES
+            .iter()
+            .enumerate()
+            .filter_map(|(index, name)| (index != absent).then_some(*name))
+            .collect();
+        let path = directory.path().join(format!("partial-{absent}.wiff"));
+        fs::write(&path, compound_bytes_with_geometry(&partial, 4, 12))
+            .expect("write an incomplete container");
+        fs::write(
+            directory.path().join(format!("partial-{absent}.wiff.scan")),
+            scan_companion_bytes(),
+        )
+        .expect("write the companion");
+        assert_eq!(
+            ConversionSource::open_sciex_wiff_bundle(&path, MzmlScanLimits::default()),
+            Err(ConversionSourceRejection::FamilyStructureMismatch),
+            "a container without {missing} was admitted"
+        );
+    }
+
+    // The extension is a filter, not the recognition -- and `.wiff2` is a
+    // different container this boundary has never measured, so sharing a prefix
+    // does not share an admission.
+    let wiff2 = write_sciex_bundle(directory.path(), "swath.api");
+    let renamed_wiff2 = directory.path().join("swath.api.wiff2");
+    fs::copy(&wiff2, &renamed_wiff2).expect("copy under a wiff2 name");
+    assert_eq!(
+        ConversionSource::open_sciex_wiff_bundle(&renamed_wiff2, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::UnsupportedExtension)
+    );
+}
+
+/// The companion is load-bearing, so every way it can be wrong is a refusal.
+///
+/// Measured, and this is what forces the whole bundle model: without the
+/// companion the real backend writes one truncated document per sample and
+/// exits 1. A boundary that admitted the `.wiff` alone would be binding the
+/// half of the acquisition that does not carry the data.
+#[test]
+fn a_wiff_is_refused_unless_its_companion_is_there_and_is_one() {
+    let directory = TestDirectory::new();
+
+    // Nothing beside it.
+    let lonely = directory.path().join("lonely.wiff");
+    fs::write(&lonely, sciex_container()).expect("write a wiff");
+    assert_eq!(
+        ConversionSource::open_sciex_wiff_bundle(&lonely, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::CompanionMissing)
+    );
+
+    // The stem plus `.scan` is not the companion's name -- the reader builds it
+    // from the whole file name -- so this is still an acquisition with nothing
+    // beside it.
+    fs::write(directory.path().join("lonely.scan"), scan_companion_bytes())
+        .expect("write a wrongly named companion");
+    assert_eq!(
+        ConversionSource::open_sciex_wiff_bundle(&lonely, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::CompanionMissing)
+    );
+
+    // Right name, wrong object. The name was never the recognition.
+    let impostor = directory.path().join("impostor.wiff");
+    fs::write(&impostor, sciex_container()).expect("write a wiff");
+    fs::write(
+        directory.path().join("impostor.wiff.scan"),
+        b"not a scan file, whatever it is called",
+    )
+    .expect("write an impostor companion");
+    assert_eq!(
+        ConversionSource::open_sciex_wiff_bundle(&impostor, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::CompanionSignatureMismatch)
+    );
+
+    // Shorter than the signature cannot be carrying it, and that is a mismatch
+    // rather than an inspection failure.
+    let stub = directory.path().join("stub.wiff");
+    fs::write(&stub, sciex_container()).expect("write a wiff");
+    fs::write(
+        directory.path().join("stub.wiff.scan"),
+        &crate::sciex_wiff::SCAN_COMPANION_SIGNATURE[..8],
+    )
+    .expect("write a truncated companion");
+    assert_eq!(
+        ConversionSource::open_sciex_wiff_bundle(&stub, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::CompanionSignatureMismatch)
+    );
+
+    // A directory under the companion's name is not a companion.
+    let dirish = directory.path().join("dirish.wiff");
+    fs::write(&dirish, sciex_container()).expect("write a wiff");
+    fs::create_dir(directory.path().join("dirish.wiff.scan")).expect("create a directory");
+    assert_eq!(
+        ConversionSource::open_sciex_wiff_bundle(&dirish, MzmlScanLimits::default()),
+        Err(ConversionSourceRejection::CompanionNotARegularFile)
+    );
+}
+
+/// The single-output plan cannot express this family, and says so at the plan.
+///
+/// Not a cardinality rule. Measured on the real build, even the single-sample
+/// WIFF fixtures come out under a backend-chosen name -- `PressureTrace1.wiff`
+/// becomes `PressureTrace1-6500SysSuit1269.mzML` -- so `<stem>.mzML` is a name
+/// no acquisition of this family ever takes.
+#[test]
+fn a_bundle_cannot_be_planned_as_a_single_output() {
+    let directory = TestDirectory::new();
+    let primary = write_sciex_bundle(directory.path(), "acquisition");
+    let source = open_sciex(&primary);
+    let destination = directory.path().join("destination");
+    fs::create_dir(&destination).expect("create the destination root");
+
+    assert_eq!(
+        ConversionPlan::to_mzml(source, &destination, ConflictPolicy::Fail).map(|_| ()),
+        Err(ConversionPlanError::SourceProducesAnOutputSet)
+    );
+}
+
+/// Every object the acquisition is made of is rechecked before the spawn, and
+/// the companion is the one that matters most: it never appears in the argv, so
+/// nothing else would ever look at it.
+#[test]
+fn every_bundle_member_is_rechecked_before_the_backend_starts() {
+    let directory = TestDirectory::new();
+    let primary = write_sciex_bundle(directory.path(), "acquisition");
+    let destination_root = directory.path().join("destination");
+    fs::create_dir(&destination_root).expect("create the destination root");
+
+    // Untouched, the run reaches the backend and finalizes.
+    let act = |spec: &CommandSpec| {
+        fs::write(
+            set_command_output_directory(spec).join("acquisition-S1.mzML"),
+            output_document(),
+        )
+        .expect("write a backend output");
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act).declaring(&["acquisition-S1.mzML"]);
+    let run = run_admitted_multi_output_conversion(
+        &open_sciex(&primary),
+        &destination_root,
+        ConflictPolicy::Fail,
+        &evidenced_capabilities(),
+        &runner,
+        None,
+    );
+    assert!(
+        matches!(run.report.outcome(), MultiOutputOutcome::FullyFinalized),
+        "an untouched bundle converts: {:?}",
+        run.report.outcome()
+    );
+    assert_eq!(runner.calls(), 1);
+
+    // The companion replaced after admission: refused, and nothing launched.
+    let source = open_sciex(&primary);
+    fs::write(directory.path().join("acquisition.wiff.scan"), {
+        let mut other = scan_companion_bytes();
+        other.extend_from_slice(b" -- a different acquisition's data");
+        other
+    })
+    .expect("replace the companion");
+    let runner = FakeRunner::new(&act).declaring(&["acquisition-S1.mzML"]);
+    let run = run_admitted_multi_output_conversion(
+        &source,
+        &destination_root,
+        ConflictPolicy::Fail,
+        &evidenced_capabilities(),
+        &runner,
+        None,
+    );
+    assert!(
+        matches!(
+            run.report.outcome(),
+            MultiOutputOutcome::RefusedBeforePublication(
+                MultiOutputFailure::SourceNotStillAdmitted(_)
+            )
+        ),
+        "a replaced companion is refused: {:?}",
+        run.report.outcome()
+    );
+    assert_eq!(runner.calls(), 0, "nothing was launched");
+    assert!(run.report.residue().is_none(), "no staging survived");
+}
+
+/// The admitted set lifecycle applies the same two gates the single-output one
+/// does, and one more that is its own.
+#[test]
+fn the_admitted_set_lifecycle_gates_family_and_build_before_anything_runs() {
+    let directory = TestDirectory::new();
+    let destination_root = directory.path().join("destination");
+    fs::create_dir(&destination_root).expect("create the destination root");
+    let act = |_: &CommandSpec| Ok(0);
+    let runner = FakeRunner::new(&act);
+
+    // A single-output family does not belong here: this lifecycle expects the
+    // backend to name its own outputs, and for that family it does not.
+    let lcd = write_shimadzu_source(directory.path(), "acquisition.lcd");
+    let run = run_admitted_multi_output_conversion(
+        &open_shimadzu(&lcd),
+        &destination_root,
+        ConflictPolicy::Fail,
+        &evidenced_capabilities(),
+        &runner,
+        None,
+    );
+    assert!(
+        matches!(
+            run.report.outcome(),
+            MultiOutputOutcome::RefusedBeforePublication(
+                MultiOutputFailure::SourceFamilyNotMultiOutput
+            )
+        ),
+        "a single-output family is refused: {:?}",
+        run.report.outcome()
+    );
+
+    // A build with no evidence row for this family launches nothing, exactly as
+    // the single-output boundary refuses one.
+    let primary = write_sciex_bundle(directory.path(), "acquisition");
+    let unevidenced = capabilities_reporting("3.0.26204", Some("a09eea9"));
+    let run = run_admitted_multi_output_conversion(
+        &open_sciex(&primary),
+        &destination_root,
+        ConflictPolicy::Fail,
+        &unevidenced,
+        &runner,
+        None,
+    );
+    assert!(
+        matches!(
+            run.report.outcome(),
+            MultiOutputOutcome::RefusedBeforePublication(
+                MultiOutputFailure::ProviderBuildNotEvidenced
+            )
+        ),
+        "an unevidenced build is refused: {:?}",
+        run.report.outcome()
+    );
+    assert_eq!(runner.calls(), 0);
+}
+
+/// The gate ADR 0021 left open, closed: a member the backend never said it
+/// wrote refuses the whole set.
+///
+/// Discovery trusts the staged directory, and an open directory handle does not
+/// stop another local process from adding an entry to it. For a single output
+/// an extra entry was refused because exactly one was planned; for a set there
+/// is no planned set, so the injected document would have been validated,
+/// published and credited to the acquisition. The backend's own announcement,
+/// arriving on a pipe only its process tree can write to, is what tells them
+/// apart.
+#[test]
+fn a_member_the_backend_never_declared_refuses_the_whole_set() {
+    let fixture = SetFixture::new("undeclared");
+    fixture.member("sample_01.mzML");
+    fixture.member("sample_02.mzML");
+    // Written into staging by something that is not the backend.
+    fixture.undeclared_member("sample_03.mzML");
+
+    let settled = fixture.settle(ConflictPolicy::Fail);
+    assert!(
+        matches!(
+            &settled.outcome,
+            MultiOutputOutcome::RefusedBeforePublication(
+                MultiOutputFailure::OutputSetNotAsDeclared {
+                    declared: 2,
+                    discovered: 3,
+                }
+            )
+        ),
+        "an injected member refuses the set: {:?}",
+        settled.outcome
+    );
+    assert!(settled.retained.is_empty());
+    assert!(
+        entry_names(&fixture.destination_root).is_empty(),
+        "nothing was published"
+    );
+}
+
+/// The comparison is over names, not counts, and an unreadable declaration is a
+/// refusal rather than a pass.
+#[test]
+fn the_declared_set_is_compared_by_name_and_fails_closed() {
+    let staged = Path::new("C:\\staging");
+    let declaration = |names: &[&str]| {
+        let mut stdout = String::new();
+        for name in names {
+            stdout.push_str("writing output file: ");
+            stdout.push_str(&staged.join(name).display().to_string());
+            stdout.push('\n');
+        }
+        output_set::DeclaredOutputSet::from_backend_stdout(stdout.as_bytes(), false)
+    };
+
+    // The declaration itself renders as a shape and never as its contents.
+    // Every other type in this module redacts for this reason, and this one
+    // holds the same vendor-derived basenames they do.
+    let rendered = format!("{:?}", declaration(&["Enolase-20070918_En_01.mzML"]));
+    assert!(
+        !rendered.contains("Enolase"),
+        "the declaration's debug projection names a member: {rendered}"
+    );
+    assert!(rendered.contains("declared: 1"), "{rendered}");
+
+    // A swap that keeps the count is caught, which a count check would miss.
+    assert!(
+        !declaration(&["a.mzML", "b.mzML"]).matches(&discovered_members(&["a.mzML", "c.mzML"]))
+    );
+    assert!(declaration(&["a.mzML", "b.mzML"]).matches(&discovered_members(&["b.mzML", "a.mzML"])));
+
+    // A capture that was cut short is not a declaration anything can be
+    // compared against -- and an injector who knew the prefix could otherwise
+    // arrange for the visible part to match.
+    let truncated = output_set::DeclaredOutputSet::from_backend_stdout(
+        b"writing output file: C:\\staging\\a.mzML\n",
+        true,
+    );
+    assert!(!truncated.matches(&discovered_members(&["a.mzML"])));
+
+    // Bytes that are not UTF-8 are not this build's stdout.
+    let mangled =
+        output_set::DeclaredOutputSet::from_backend_stdout(&[0xFF, 0xFE, 0x00, 0x41], false);
+    assert!(!mangled.matches(&discovered_members(&["a.mzML"])));
+    assert_eq!(mangled.len(), 0);
+
+    // A backend that announced nothing has declared nothing, whatever is in the
+    // directory.
+    let silent = output_set::DeclaredOutputSet::from_backend_stdout(b"processing file: x\n", false);
+    assert!(!silent.matches(&discovered_members(&["a.mzML"])));
+
+    // Both separators, because the spelling that reaches the backend is the
+    // caller's, and a bare name with no directory at all.
+    let mixed = output_set::DeclaredOutputSet::from_backend_stdout(
+        b"writing output file: C:/staging/a.mzML\nwriting output file: b.mzML\n",
+        false,
+    );
+    assert!(mixed.matches(&discovered_members(&["a.mzML", "b.mzML"])));
+}
+
+/// An acquisition's objects are bound once, and a second binding is refused.
+///
+/// Not a hypothetical tidiness rule. A call that replaced the companions a
+/// previous one bound is the single way this type could end up watching fewer
+/// objects than the run reads while still reporting a bound acquisition.
+#[test]
+fn a_command_binds_an_acquisition_s_companions_exactly_once() {
+    let directory = TestDirectory::new();
+    let primary = write_sciex_bundle(directory.path(), "acquisition");
+    let companion = directory.path().join("acquisition.wiff.scan");
+    let other = write_sciex_bundle(directory.path(), "other");
+
+    let identity = |path: &Path| super::SourceIdentity::capture(path).expect("capture an identity");
+    let spec = CommandSpec::new(
+        BackendTool::MsConvert,
+        std::env::current_exe().expect("test executable"),
+        ["--mzML"],
+        directory.path(),
+    )
+    .with_source_identity(identity(&primary));
+
+    let bound = spec
+        .clone()
+        .with_source_companion_identities(vec![identity(&companion)])
+        .expect("bind the acquisition's companion");
+    assert_eq!(bound.bound_source_object_count(), 2);
+
+    assert!(
+        bound
+            .with_source_companion_identities(vec![identity(&other)])
+            .is_none(),
+        "a second binding replaced the first"
+    );
+
+    // And the bound is a refusal, not a truncation.
+    assert!(
+        spec.with_source_companion_identities(vec![
+            identity(&companion),
+            identity(&other),
+            identity(&primary),
+            identity(&companion),
+        ])
+        .is_none(),
+        "an over-large acquisition was bound anyway"
+    );
+}
+
+/// The command a bundle run spawns carries every object the acquisition is made
+/// of, not only the one it names.
+///
+/// Asserted on the spec itself because that is where the omission would live: a
+/// run that bound only the primary would behave identically until the moment a
+/// companion was swapped, and then it would convert the swap.
+#[test]
+fn a_bundle_run_binds_every_member_to_the_command_it_spawns() {
+    let directory = TestDirectory::new();
+    let primary = write_sciex_bundle(directory.path(), "acquisition");
+    let destination_root = directory.path().join("destination");
+    fs::create_dir(&destination_root).expect("create the destination root");
+
+    let bound = Cell::new(0_usize);
+    let act = |spec: &CommandSpec| {
+        bound.set(spec.bound_source_object_count());
+        fs::write(
+            set_command_output_directory(spec).join("acquisition-S1.mzML"),
+            output_document(),
+        )
+        .expect("write a backend output");
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act).declaring(&["acquisition-S1.mzML"]);
+    let run = run_admitted_multi_output_conversion(
+        &open_sciex(&primary),
+        &destination_root,
+        ConflictPolicy::Fail,
+        &evidenced_capabilities(),
+        &runner,
+        None,
+    );
+
+    assert!(matches!(
+        run.report.outcome(),
+        MultiOutputOutcome::FullyFinalized
+    ));
+    assert_eq!(
+        bound.get(),
+        2,
+        "the spawned command bound the primary and its companion"
+    );
 }

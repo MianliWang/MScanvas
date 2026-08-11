@@ -416,8 +416,15 @@ fn require_source_identity(spec: &CommandSpec) -> Result<(), ProcessError> {
     let Some(source_identity) = &spec.source_identity else {
         return Ok(());
     };
+    // Every member, not just the one the argv names. A bundle acquisition's
+    // companion is opened by the vendor library without ever appearing on the
+    // command line, so a companion swapped between admission and this moment
+    // would be read by the backend and reported by nothing — the run would
+    // succeed, and the document it produced would be of an acquisition the
+    // caller never chose. The primary is checked first because it is the one
+    // whose replacement is cheapest to arrange.
     let matches = source_identity
-        .matches_current()
+        .all_match_current()
         .map_err(|error| ProcessError::SourceIdentityInspectionFailed { kind: error.kind() })?;
     if !matches {
         return Err(ProcessError::SourceIdentityChanged);
@@ -1396,6 +1403,58 @@ mod tests {
                 "the replaced-source plan launched its child"
             );
         }
+    }
+
+    /// A companion never appears in the argv, so the pre-spawn recheck is the
+    /// only thing standing between a replaced one and a backend that reads it.
+    ///
+    /// Aimed at this boundary rather than at a conversion, deliberately. The
+    /// admitted run pins every member before it builds a command, so a
+    /// conversion-level test proves the *admission* recheck and would stay
+    /// green with this one gone. What is checked here is that a spec carrying
+    /// more than one bound object has all of them confirmed, by the boundary
+    /// that owns the moment before a process starts.
+    #[cfg(windows)]
+    #[test]
+    fn a_replaced_companion_fails_closed_even_though_the_primary_is_intact() {
+        let test_directory = TestDirectory::new();
+        let marker = test_directory.path().join("child-launched");
+
+        let primary = test_directory.path().join("acquisition.wiff");
+        let companion = test_directory.path().join("acquisition.wiff.scan");
+        fs::write(&primary, b"primary sentinel").expect("write the primary");
+        fs::write(&companion, b"companion sentinel").expect("write the companion");
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        )
+        .with_source_identity(SourceIdentity::capture(&primary).expect("capture the primary"))
+        .with_source_companion_identities(vec![
+            SourceIdentity::capture(&companion).expect("capture the companion"),
+        ])
+        .expect("bind a two-member acquisition");
+
+        // The primary is untouched; only the companion is swapped for another
+        // object. Nothing on the command line changed.
+        fs::rename(&companion, test_directory.path().join("original-companion"))
+            .expect("move the companion aside");
+        fs::write(&companion, b"a different acquisition's companion")
+            .expect("write a replacement companion");
+
+        let error = execute(&spec).expect_err("a replaced companion must fail closed");
+        assert_eq!(error, ProcessError::SourceIdentityChanged);
+        assert!(
+            !marker.exists(),
+            "the replaced-companion plan launched its child"
+        );
     }
 
     #[cfg(windows)]

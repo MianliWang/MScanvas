@@ -1316,7 +1316,7 @@ msconvert data.RAW --mzXML
             conversion
                 .source_identity
                 .as_ref()
-                .map(|identity| identity.canonical_path()),
+                .map(|identity| identity.primary().canonical_path()),
             Some(canonical_input.as_path())
         );
         assert_ne!(
@@ -1349,7 +1349,7 @@ msconvert data.RAW --mzXML
             preview
                 .source_identity
                 .as_ref()
-                .map(|identity| identity.canonical_path()),
+                .map(|identity| identity.primary().canonical_path()),
             Some(canonical_input.as_path())
         );
     }

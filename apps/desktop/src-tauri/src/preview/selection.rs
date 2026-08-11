@@ -555,10 +555,20 @@ fn source_not_admitted(rejection: ConversionSourceRejection) -> PreviewErrorDto 
         ),
         // Answered here because the match is exhaustive, and answered as the
         // one above it because they are one thing to a user: the file is not
-        // what its name says. No workspace path can produce this today — the
-        // family that raises it is private to the conversion crate — so this
-        // adds a compiled arm and no surface.
-        ConversionSourceRejection::FamilyStructureMismatch => (
+        // what its name says. No workspace path can produce these today — the
+        // families that raise them are private to the conversion crate — so
+        // this adds compiled arms, an existing message and no surface.
+        //
+        // The three companion refusals belong to a family whose acquisition is
+        // a bundle: the object named is right and something it depends on is
+        // missing, is not a file, or is not what it should be. A user-facing
+        // surface for that family would owe each of them its own sentence; it
+        // does not exist, and inventing the copy here would be inventing the
+        // surface.
+        ConversionSourceRejection::FamilyStructureMismatch
+        | ConversionSourceRejection::CompanionMissing
+        | ConversionSourceRejection::CompanionNotARegularFile
+        | ConversionSourceRejection::CompanionSignatureMismatch => (
             "unrecognized_acquisition",
             "That file does not hold the structure its family requires.",
         ),

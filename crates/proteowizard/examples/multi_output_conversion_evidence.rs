@@ -8,10 +8,18 @@
 //! bounded discovery, all-before-any validation, the group conflict preflight,
 //! and one-at-a-time handle-bound publication into a scratch destination.
 //!
-//! **No source family is admitted here.** The acquisition is named on the
-//! command line, is never recognized into a production source kind, and its
-//! path never appears in what this prints: every reported fact is a bounded
-//! shape or a backend-chosen output basename.
+//! Two modes, and the difference is what had to be true before the backend
+//! started. By default the acquisition is named on the command line and is
+//! never recognized into a source kind — the mode the lifecycle was measured
+//! under before any family was admitted to it. With `--admitted` the same path
+//! goes through the real admission chain first: extension filter, container
+//! recognition, companion derivation and recognition, every member bound and
+//! hashed, then the family gate, the provider-evidence row and a recheck of
+//! each member before the spawn.
+//!
+//! Either way its path never appears in what this prints: every reported fact
+//! is a bounded shape, a stable identifier, or a backend-chosen output
+//! basename.
 //!
 //! This example is intentionally not a stable MSCanvas CLI contract.
 
@@ -22,8 +30,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use mscanvas_proteowizard::{
-    AvailabilityState, ConflictPolicy, DiscoveryRequest, MultiOutputOutcome, MzmlScanLimits,
-    SystemProcessRunner, discover, run_multi_output_conversion_evidence,
+    AvailabilityState, ConflictPolicy, ConversionSource, DiscoveryRequest, MultiOutputOutcome,
+    MzmlScanLimits, SystemProcessRunner, discover, run_admitted_multi_output_conversion,
+    run_multi_output_conversion_evidence,
 };
 
 fn main() -> ExitCode {
@@ -44,6 +53,10 @@ struct Cli {
     /// backend names the same output set twice.
     runs: u32,
     conflict: ConflictPolicy,
+    /// Admit the source as a SCIEX bundle and run the admitted lifecycle, with
+    /// the family gate, the provider-evidence gate and the per-member recheck,
+    /// rather than the path-only evidence entry.
+    admitted: bool,
 }
 
 fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Cli, String> {
@@ -53,6 +66,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Cli, String> {
     let mut proteowizard_home = None;
     let mut runs = 1_u32;
     let mut conflict = ConflictPolicy::Fail;
+    let mut admitted = false;
     while let Some(option) = args.next() {
         let Some(name) = option.to_str() else {
             return Err("option names must be valid Unicode".to_owned());
@@ -73,6 +87,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Cli, String> {
                     .ok_or("--runs requires a small number")?;
             }
             "--skip" => conflict = ConflictPolicy::Skip,
+            "--admitted" => admitted = true,
             other => return Err(format!("unknown option: {other}")),
         }
     }
@@ -82,6 +97,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Cli, String> {
         proteowizard_home,
         runs: runs.clamp(1, 4),
         conflict,
+        admitted,
     })
 }
 
@@ -177,15 +193,46 @@ fn run(cli: Cli) -> Result<(), String> {
                 last.1 = Some(hold);
             }
             println!("run[{round}].begin=true");
-            let run = run_multi_output_conversion_evidence(
-                &cli.source,
-                &destination,
-                cli.conflict,
-                &capabilities,
-                &SystemProcessRunner,
-                MzmlScanLimits::default(),
-                None,
-            );
+            let run = if cli.admitted {
+                // The whole admission chain, on the real object: extension
+                // filter, container recognition, companion derivation and
+                // recognition, both members bound and hashed -- then the
+                // family gate, the provider-evidence row and a recheck of
+                // every member before the process starts.
+                let source = ConversionSource::open_sciex_wiff_bundle(
+                    &cli.source,
+                    MzmlScanLimits::default(),
+                )
+                .map_err(|rejection| {
+                    format!(
+                        "the acquisition was not admitted: {}",
+                        rejection.stable_id()
+                    )
+                })?;
+                println!("run[{round}].source.kind={}", source.kind().stable_id());
+                println!(
+                    "run[{round}].source.bound_members={}",
+                    source.bound_object_count()
+                );
+                run_admitted_multi_output_conversion(
+                    &source,
+                    &destination,
+                    cli.conflict,
+                    &capabilities,
+                    &SystemProcessRunner,
+                    None,
+                )
+            } else {
+                run_multi_output_conversion_evidence(
+                    &cli.source,
+                    &destination,
+                    cli.conflict,
+                    &capabilities,
+                    &SystemProcessRunner,
+                    MzmlScanLimits::default(),
+                    None,
+                )
+            };
             println!("run[{round}].outcome={}", run.report.outcome().stable_id());
             if let MultiOutputOutcome::RefusedBeforePublication(failure) = run.report.outcome() {
                 // The stable identifier only. The failure debug projection is
