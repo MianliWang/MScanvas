@@ -48,18 +48,26 @@ source row, which family, which run, and how many samples the reader identified.
 Nothing about how one output is proved differs because there are ten of them, so
 nothing about `accept()` changed.
 
-It is minted from the retained objects at the moment the conversion ends, taking
-`FinalizedOutputSet` **by value** — `FinalizedOutput` holds the handle that keeps
-its object from being reissued, so there is nothing to copy and nothing to find
-again later. A ticket assembled from a report and a filename would be trusting
-precisely what this boundary exists not to trust.
+It is minted from **the whole conversion, by value** — a single owned value
+carrying the report, the retained objects and the run identity together. That
+shape is load-bearing twice.
 
-The run identity is the workspace mutation generation at mint time: monotonic
-for the session, advanced by every workspace decision, so two conversions of one
-dataset cannot mint tickets claiming to be the same run. It names an event and
-never reaches disk. The ticket is session-scoped, not serializable, has an
-opaque `Debug`, exposes no handle and no path, and dropping it closes handles
-and deletes nothing.
+`FinalizedOutput` holds the handle that keeps its object from being reissued, so
+there is nothing to copy and nothing to find again later: a ticket assembled
+from a report and a filename would trust precisely what this boundary exists not
+to trust. And a report handed in *beside* another run's objects would describe a
+conversion whose files it was not adopting — same member count, same states,
+nothing for a check to notice. Taking them together makes that unexpressible
+rather than merely checked for.
+
+The run identity is allocated once when the conversion finishes, from a
+monotonic counter. It is deliberately **not** the workspace mutation generation:
+converting does not advance that, so two conversions of one dataset into two
+folders would read the same value and claim to be the same run — which is the
+one thing this identity exists to prevent. It names an event and never reaches
+disk. The ticket is session-scoped, not serializable, has an opaque `Debug`,
+exposes no handle and no path, and dropping it closes handles and deletes
+nothing.
 
 ### Eligibility is `FullyFinalized` **and** established completeness
 

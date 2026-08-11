@@ -7921,7 +7921,7 @@ fn a_conversion_report_never_carries_a_path() {
         .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
 
-    let rendered = format!("{report:?}");
+    let rendered = format!("{:?}", report);
     for fragment in [
         fixture.directory.to_string_lossy().into_owned(),
         destination.to_string_lossy().into_owned(),
@@ -7982,7 +7982,7 @@ fn a_real_thermo_acquisition_converts_through_a_workspace_handle() {
         .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
 
-    println!("report: {report:?}");
+    println!("report: {:?}", report);
     assert_eq!(
         report.to_dto().outcome,
         "finalized",
@@ -8506,7 +8506,7 @@ fn a_shimadzu_report_names_no_output_it_did_not_produce_and_no_path_at_all() {
         let report = service
             .convert_workspace_dataset(&dataset.handle, &destination, conflict)
             .expect("the conversion reaches an outcome");
-        (format!("{report:?}"), report.to_dto())
+        (format!("{:?}", report), report.to_dto())
     };
 
     // The backend rejected its input. No output name, no measurements, no
@@ -8938,7 +8938,7 @@ fn a_real_shimadzu_acquisition_converts_through_a_workspace_handle() {
         .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
 
-    println!("report: {report:?}");
+    println!("report: {:?}", report);
     let dto = report.to_dto();
     assert_eq!(
         dto.outcome, "finalized",
@@ -15853,33 +15853,49 @@ fn a_bundle_dataset_converts_to_a_published_output_set() {
         .add_sciex_wiff_dataset(&acquisition)
         .expect("the bundle is admitted");
 
-    let (report, retained) = service
+    let conversion = service
         .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
 
     assert_eq!(launches.load(Ordering::SeqCst), 1);
-    assert_eq!(report.group_outcome(), "fully_finalized");
-    assert_eq!(report.dataset(), dataset.handle);
-    assert_eq!(report.source_kind(), DatasetSourceKind::SciexWiff);
-    assert_eq!(report.bound_source_objects(), 2, "both members were bound");
-    assert_eq!(report.members().len(), 3);
-    assert_eq!(report.published_count(), 3);
-    assert!(report.partial_finalization().is_none());
-    assert!(report.refusal_id().is_none());
-    assert!(report.residue().is_none(), "the run swept its staging");
+    assert_eq!(conversion.report.group_outcome(), "fully_finalized");
+    assert_eq!(conversion.report.dataset(), dataset.handle);
+    assert_eq!(
+        conversion.report.source_kind(),
+        DatasetSourceKind::SciexWiff
+    );
+    assert_eq!(
+        conversion.report.bound_source_objects(),
+        2,
+        "both members were bound"
+    );
+    assert_eq!(conversion.report.members().len(), 3);
+    assert_eq!(conversion.report.published_count(), 3);
+    assert!(conversion.report.partial_finalization().is_none());
+    assert!(conversion.report.refusal_id().is_none());
+    assert!(
+        conversion.report.residue().is_none(),
+        "the run swept its staging"
+    );
     // Stamped with the generation the gate guard carried, and carrying what the
     // backend process did -- the same two facts the single-output report keeps.
-    assert!(report.backend_facts().is_some(), "a run that ran has facts");
+    assert!(
+        conversion.report.backend_facts().is_some(),
+        "a run that ran has facts"
+    );
     // The first resolution of a session is generation zero; what matters is
     // that the stamp comes from the gate guard rather than from a later look.
-    assert_eq!(report.installation_generation(), 0);
+    assert_eq!(conversion.report.installation_generation(), 0);
 
     // The exact finalized objects survive the handoff, one per published
     // member. This is what a later adoption decision would rest on.
-    assert_eq!(retained.len(), report.published_count());
+    assert_eq!(
+        conversion.retained.len(),
+        conversion.report.published_count()
+    );
 
     // Every member judged on its output alone, and never fully verified.
-    for member in report.members() {
+    for member in conversion.report.members() {
         assert_eq!(member.state(), "finalized");
         let validation = member.validation().expect("a published member was judged");
         assert_eq!(
@@ -15925,11 +15941,11 @@ fn a_fully_finalized_set_makes_no_claim_about_the_source_acquisition() {
         .add_sciex_wiff_dataset(&acquisition)
         .expect("the bundle is admitted");
 
-    let (report, _retained) = service
+    let conversion = service
         .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
 
-    assert_eq!(report.group_outcome(), "fully_finalized");
+    assert_eq!(conversion.report.group_outcome(), "fully_finalized");
 
     // Since ADR 0024 the report *may* say something about the acquisition's
     // samples -- but only as evidence, and never as a value some code path
@@ -15937,7 +15953,7 @@ fn a_fully_finalized_set_makes_no_claim_about_the_source_acquisition() {
     // is a bare claim: a boolean, or a field whose name asserts an outcome no
     // audit produced. Read as text so a field added later is caught here rather
     // than in review.
-    let rendered = format!("{report:?}").to_ascii_lowercase();
+    let rendered = format!("{:?}", conversion.report).to_ascii_lowercase();
     for forbidden in [
         "source_complete",
         "sourcecomplete",
@@ -15955,7 +15971,8 @@ fn a_fully_finalized_set_makes_no_claim_about_the_source_acquisition() {
     // The two answers stay two answers. The group outcome is about publication;
     // the completeness is about the acquisition, carries how it was proved, and
     // is bound to the executable that proved it.
-    let completeness = report
+    let completeness = conversion
+        .report
         .completeness()
         .expect("this family is asked the question");
     let evidence = completeness
@@ -15964,8 +15981,8 @@ fn a_fully_finalized_set_makes_no_claim_about_the_source_acquisition() {
     assert_eq!(evidence.sample_count(), 1);
     assert_eq!(evidence.method(), "reader_error_audit_v1");
 
-    assert_eq!(report.published_count(), 1);
-    assert_eq!(report.members().len(), 1);
+    assert_eq!(conversion.report.published_count(), 1);
+    assert_eq!(conversion.report.members().len(), 1);
 }
 
 /// A companion replaced by a *different object with identical content* is
@@ -16039,10 +16056,10 @@ fn every_bundle_member_is_pinned_while_the_backend_runs() {
         .add_sciex_wiff_dataset(&acquisition)
         .expect("the bundle is admitted");
 
-    let (report, _retained) = service
+    let conversion = service
         .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
-    assert_eq!(report.group_outcome(), "fully_finalized");
+    assert_eq!(conversion.report.group_outcome(), "fully_finalized");
 
     let refused = *refused.lock().expect("the probe result is never poisoned");
     assert_eq!(
@@ -16075,21 +16092,28 @@ fn an_incomplete_acquisition_publishes_nothing_through_the_workspace() {
         .add_sciex_wiff_dataset(&acquisition)
         .expect("the bundle is admitted");
 
-    let (report, retained) = service
+    let conversion = service
         .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the run reaches an outcome");
 
-    assert_eq!(report.group_outcome(), "refused_before_publication");
-    assert_eq!(report.refusal_id(), Some("source_sample_failure_observed"));
-    assert_eq!(report.published_count(), 0);
-    assert!(retained.is_empty());
+    assert_eq!(
+        conversion.report.group_outcome(),
+        "refused_before_publication"
+    );
+    assert_eq!(
+        conversion.report.refusal_id(),
+        Some("source_sample_failure_observed")
+    );
+    assert_eq!(conversion.report.published_count(), 0);
+    assert!(conversion.retained.is_empty());
     assert!(
         entry_names(&destination).is_empty(),
         "an incomplete acquisition published something"
     );
     // And no positive evidence survives the refusal.
     assert!(
-        report
+        conversion
+            .report
             .completeness()
             .is_none_or(|completeness| completeness.established().is_none())
     );
@@ -16110,17 +16134,20 @@ fn an_injected_member_refuses_the_whole_workspace_set() {
         .add_sciex_wiff_dataset(&acquisition)
         .expect("the bundle is admitted");
 
-    let (report, retained) = service
+    let conversion = service
         .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the run reaches an outcome");
 
-    assert_eq!(report.group_outcome(), "refused_before_publication");
     assert_eq!(
-        report.refusal_id(),
+        conversion.report.group_outcome(),
+        "refused_before_publication"
+    );
+    assert_eq!(
+        conversion.report.refusal_id(),
         Some("multi_output_set_not_as_declared")
     );
-    assert_eq!(report.published_count(), 0);
-    assert!(retained.is_empty());
+    assert_eq!(conversion.report.published_count(), 0);
+    assert!(conversion.retained.is_empty());
     assert!(
         entry_names(&destination).is_empty(),
         "nothing was published"
@@ -16139,15 +16166,21 @@ fn a_failing_backend_publishes_no_workspace_output_set() {
         .add_sciex_wiff_dataset(&acquisition)
         .expect("the bundle is admitted");
 
-    let (report, retained) = service
+    let conversion = service
         .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the run reaches an outcome");
 
-    assert_eq!(report.group_outcome(), "refused_before_publication");
-    assert_eq!(report.published_count(), 0);
-    assert!(retained.is_empty());
+    assert_eq!(
+        conversion.report.group_outcome(),
+        "refused_before_publication"
+    );
+    assert_eq!(conversion.report.published_count(), 0);
+    assert!(conversion.retained.is_empty());
     assert!(entry_names(&destination).is_empty());
-    assert!(report.residue().is_none(), "the run swept its staging");
+    assert!(
+        conversion.report.residue().is_none(),
+        "the run swept its staging"
+    );
 }
 
 /// The coordinator refuses a handle that is not a bundle, and one that is not a
@@ -16294,28 +16327,28 @@ fn a_real_sciex_bundle_converts_through_a_workspace_handle() {
     assert_eq!(dataset.source_kind, DatasetSourceKindDto::SciexWiff);
     assert_eq!(service.dataset_count(), 1, "one row for the whole bundle");
 
-    let (report, retained) = service
+    let conversion = service
         .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
 
-    println!("report: {report:?}");
+    println!("report: {:?}", conversion.report);
 
     // Pointed at an acquisition with a deliberately broken sample, the whole
     // point is that this refuses. Driven by an environment variable so the same
     // test is both the success evidence and the discrimination evidence.
     if std::env::var("MSCANVAS_SCIEX_EXPECT_INCOMPLETE").is_ok() {
         assert_eq!(
-            report.group_outcome(),
+            conversion.report.group_outcome(),
             "refused_before_publication",
             "an incomplete acquisition was published"
         );
         assert_eq!(
-            report.refusal_id(),
+            conversion.report.refusal_id(),
             Some("source_sample_failure_observed"),
             "refused, but not for the reason this gate exists"
         );
-        assert_eq!(report.published_count(), 0);
-        assert!(retained.is_empty());
+        assert_eq!(conversion.report.published_count(), 0);
+        assert!(conversion.retained.is_empty());
         assert!(
             entry_names(&destination).is_empty(),
             "an incomplete acquisition left files behind"
@@ -16324,14 +16357,17 @@ fn a_real_sciex_bundle_converts_through_a_workspace_handle() {
         return;
     }
 
-    assert_eq!(report.group_outcome(), "fully_finalized");
-    assert_eq!(report.bound_source_objects(), 2);
-    assert_eq!(report.members().len(), expected);
-    assert_eq!(report.published_count(), expected);
-    assert_eq!(retained.len(), expected);
-    assert!(report.residue().is_none(), "the run swept its staging");
+    assert_eq!(conversion.report.group_outcome(), "fully_finalized");
+    assert_eq!(conversion.report.bound_source_objects(), 2);
+    assert_eq!(conversion.report.members().len(), expected);
+    assert_eq!(conversion.report.published_count(), expected);
+    assert_eq!(conversion.retained.len(), expected);
+    assert!(
+        conversion.report.residue().is_none(),
+        "the run swept its staging"
+    );
 
-    for member in report.members() {
+    for member in conversion.report.members() {
         let validation = member.validation().expect("a published member was judged");
         assert_eq!(
             validation.mode,
@@ -16352,7 +16388,8 @@ fn a_real_sciex_bundle_converts_through_a_workspace_handle() {
     assert_eq!(entry_names(&destination).len(), expected);
 
     // The gate ADR 0022 opened, now closed and asserted rather than printed.
-    let evidence = report
+    let evidence = conversion
+        .report
         .completeness()
         .and_then(mscanvas_proteowizard::SciexSampleCompleteness::established)
         .expect("a complete acquisition establishes completeness");
@@ -16389,12 +16426,12 @@ fn converted_output_set_with(label: &str, runner: FakeOutputSetRunner) -> (TestF
     let dataset = service
         .add_sciex_wiff_dataset(&acquisition)
         .expect("the bundle is admitted");
-    let (report, retained) = service
+    let conversion = service
         .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
-    assert_eq!(report.group_outcome(), "fully_finalized");
+    assert_eq!(conversion.report.group_outcome(), "fully_finalized");
     let ticket = service
-        .output_set_adoption_ticket(&dataset.handle, &report, &destination, retained)
+        .output_set_adoption_ticket(&dataset.handle, &destination, conversion)
         .expect("a complete set mints a ticket");
     (
         fixture,
@@ -16686,17 +16723,17 @@ fn a_partially_finalized_conversion_mints_no_ticket() {
     let dataset = service
         .add_sciex_wiff_dataset(&acquisition)
         .expect("the bundle is admitted");
-    let (report, retained) = service
+    let conversion = service
         .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
 
     // Whatever the lifecycle did with the occupied name, the one thing that
     // must hold is that a set which did not publish whole mints no ticket.
-    if report.group_outcome() == "fully_finalized" {
+    if conversion.report.group_outcome() == "fully_finalized" {
         panic!("the occupied destination name did not stop the set publishing whole");
     }
     let refused = service
-        .output_set_adoption_ticket(&dataset.handle, &report, &destination, retained)
+        .output_set_adoption_ticket(&dataset.handle, &destination, conversion)
         .expect_err("an incomplete publication is not an adoptable set");
     assert!(
         refused.kind.starts_with("output_set_"),
@@ -16720,16 +16757,19 @@ fn an_incomplete_acquisition_mints_no_ticket() {
     let dataset = service
         .add_sciex_wiff_dataset(&acquisition)
         .expect("the bundle is admitted");
-    let (report, retained) = service
+    let conversion = service
         .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the run reaches an outcome");
 
     // M3.13 refuses this before publication, so there is nothing to adopt and
     // the ticket refuses for the outcome rather than for the completeness.
-    assert_eq!(report.group_outcome(), "refused_before_publication");
-    assert!(retained.is_empty());
+    assert_eq!(
+        conversion.report.group_outcome(),
+        "refused_before_publication"
+    );
+    assert!(conversion.retained.is_empty());
     let refused = service
-        .output_set_adoption_ticket(&dataset.handle, &report, &destination, retained)
+        .output_set_adoption_ticket(&dataset.handle, &destination, conversion)
         .expect_err("a refused run is not an adoptable set");
     assert_eq!(refused.kind, "output_set_not_fully_finalized");
     assert_eq!(service.dataset_count(), 1);
@@ -16741,7 +16781,7 @@ fn an_incomplete_acquisition_mints_no_ticket() {
 fn a_skipped_set_is_not_adoptable() {
     let (_fixture, converted) = converted_output_set("set-skipped", &["a-S1.mzML"]);
     // The first run published; a second run under Skip finds the name taken.
-    let (report, retained) = converted
+    let conversion = converted
         .service
         .convert_workspace_sciex_bundle(
             &converted.source,
@@ -16749,15 +16789,18 @@ fn a_skipped_set_is_not_adoptable() {
             ConflictPolicy::Skip,
         )
         .expect("the second run reaches an outcome");
-    assert_eq!(report.group_outcome(), "skipped_existing_destinations");
+    assert_eq!(
+        conversion.report.group_outcome(),
+        "skipped_existing_destinations"
+    );
     assert!(
-        retained.is_empty(),
+        conversion.retained.is_empty(),
         "a skipped run finalized nothing of its own"
     );
 
     let refused = converted
         .service
-        .output_set_adoption_ticket(&converted.source, &report, &converted.destination, retained)
+        .output_set_adoption_ticket(&converted.source, &converted.destination, conversion)
         .expect_err("a skipped run is not an adoptable set");
     assert_eq!(refused.kind, "output_set_not_fully_finalized");
 }
@@ -16778,11 +16821,11 @@ fn adopting_a_set_launches_no_process() {
     let dataset = service
         .add_sciex_wiff_dataset(&acquisition)
         .expect("the bundle is admitted");
-    let (report, retained) = service
+    let conversion = service
         .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
     let ticket = service
-        .output_set_adoption_ticket(&dataset.handle, &report, &destination, retained)
+        .output_set_adoption_ticket(&dataset.handle, &destination, conversion)
         .expect("a complete set mints a ticket");
     assert_eq!(
         launches.load(Ordering::SeqCst),
@@ -16835,21 +16878,26 @@ fn a_real_sciex_output_set_is_adopted_into_the_workspace() {
     let dataset = service
         .add_sciex_wiff_dataset(&acquisition)
         .expect("the acquisition is admitted as a SCIEX bundle");
-    let (report, retained) = service
+    let conversion = service
         .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
 
-    assert_eq!(report.group_outcome(), "fully_finalized");
-    assert_eq!(report.published_count(), expected);
-    assert_eq!(retained.len(), expected, "one retained object per member");
-    let completeness = report
+    assert_eq!(conversion.report.group_outcome(), "fully_finalized");
+    assert_eq!(conversion.report.published_count(), expected);
+    assert_eq!(
+        conversion.retained.len(),
+        expected,
+        "one retained object per member"
+    );
+    let completeness = conversion
+        .report
         .completeness()
         .and_then(mscanvas_proteowizard::SciexSampleCompleteness::established)
         .expect("a complete acquisition establishes completeness");
     assert_eq!(completeness.sample_count(), expected);
 
     let ticket = service
-        .output_set_adoption_ticket(&dataset.handle, &report, &destination, retained)
+        .output_set_adoption_ticket(&dataset.handle, &destination, conversion)
         .expect("a complete, sample-complete set mints a ticket");
     assert_eq!(ticket.len(), expected);
     println!("ticket: {ticket:?}");
@@ -16913,17 +16961,16 @@ fn a_set_without_established_completeness_mints_no_ticket() {
     let dataset = service
         .add_sciex_wiff_dataset(&acquisition)
         .expect("the bundle is admitted");
-    let (report, retained) = service
+    let conversion = service
         .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
-    assert_eq!(report.group_outcome(), "fully_finalized");
+    assert_eq!(conversion.report.group_outcome(), "fully_finalized");
 
     let refused = service
         .output_set_adoption_ticket(
             &dataset.handle,
-            &report.without_completeness(),
             &destination,
-            retained,
+            conversion.without_completeness(),
         )
         .expect_err("a set with no completeness evidence is not adoptable");
     assert_eq!(refused.kind, "output_set_completeness_not_established");
@@ -16940,10 +16987,10 @@ fn a_set_whose_members_do_not_pair_mints_no_ticket() {
     let dataset = service
         .add_sciex_wiff_dataset(&acquisition)
         .expect("the bundle is admitted");
-    let (report, retained) = service
+    let conversion = service
         .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
-    assert_eq!(retained.len(), 2);
+    assert_eq!(conversion.retained.len(), 2);
 
     // Two objects, one reported member: nothing here could be paired safely,
     // and guessing which object belongs to which name is the one thing worse
@@ -16951,9 +16998,8 @@ fn a_set_whose_members_do_not_pair_mints_no_ticket() {
     let refused = service
         .output_set_adoption_ticket(
             &dataset.handle,
-            &report.without_last_member(),
             &destination,
-            retained,
+            conversion.without_last_member(),
         )
         .expect_err("a set that does not pair is not adoptable");
     assert_eq!(refused.kind, "output_set_members_do_not_pair");

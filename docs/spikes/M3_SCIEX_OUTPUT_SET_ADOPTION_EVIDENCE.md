@@ -28,10 +28,16 @@ untouched.
 
 ## The set ticket
 
-Minted only from a conversion that really happened, taking the retained objects
-**by value**. There is no path in it from which an output could be found again
-by name — which is the whole point, since a name is what this boundary exists
-not to trust.
+Minted only from a conversion that really happened, taking that conversion
+**whole and by value**: report, retained objects and run identity in one owned
+value. There is no path in it from which an output could be found again by name,
+and no way to hand it one run's report beside another run's objects — the second
+is the failure counting members cannot see.
+
+The run identity comes from a monotonic counter allocated when the conversion
+finishes, not from the workspace mutation generation: converting does not
+advance that generation, so two conversions of one dataset into two folders
+would otherwise read the same value and claim to be the same run.
 
 Eligibility is a conjunction, and the constructor fails closed on each part:
 

@@ -1689,17 +1689,15 @@ impl PreviewService {
     /// because that is the only moment both exist together: after this the
     /// objects live in the ticket and there is no way back to them from a name.
     ///
-    /// The run identity is the workspace mutation generation at mint time. It
-    /// is monotonic for the session and advances on every workspace decision,
-    /// so two conversions of one dataset cannot mint tickets that claim to be
-    /// the same run; it names an event and never reaches disk.
+    /// Takes the conversion whole, so the report and the objects it describes
+    /// cannot come from two different runs. The run identity was allocated when
+    /// the conversion finished; it names an event and never reaches disk.
     #[cfg(test)]
     pub(super) fn output_set_adoption_ticket(
         &self,
         handle: &str,
-        report: &WorkspaceMultiOutputConversionReport,
         destination_root: &Path,
-        retained: mscanvas_proteowizard::FinalizedOutputSet,
+        conversion: SciexConversion,
     ) -> Result<FinalizedOutputSetAdoptionTicket, PreviewErrorDto> {
         let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
         let (source_display_name, source_kind) = {
@@ -1714,15 +1712,12 @@ impl PreviewService {
         // its destination. A name would let a later adoption write into
         // whatever had since taken it.
         let (root, identity, _held) = admit_destination_root(destination_root)?;
-        let run = self.enter_workspace_mutation().generation;
         FinalizedOutputSetAdoptionTicket::of(
             id,
             source_display_name,
             source_kind,
-            run,
-            report,
             AdmittedDestination::new(root, identity),
-            retained,
+            conversion,
         )
         .map_err(|refusal| {
             PreviewErrorDto::new(
@@ -3741,13 +3736,7 @@ impl PreviewService {
         handle: &str,
         destination_root: &Path,
         conflict: ConflictPolicy,
-    ) -> Result<
-        (
-            WorkspaceMultiOutputConversionReport,
-            mscanvas_proteowizard::FinalizedOutputSet,
-        ),
-        PreviewErrorDto,
-    > {
+    ) -> Result<SciexConversion, PreviewErrorDto> {
         let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
         let (epoch, remembered) = self
             .workspace()
@@ -3798,8 +3787,8 @@ impl PreviewService {
         let generation = self.note_resolved(backend.installation.clone());
         drop(guards);
         drop(running);
-        Ok((
-            WorkspaceMultiOutputConversionReport::of(
+        Ok(SciexConversion {
+            report: WorkspaceMultiOutputConversionReport::of(
                 id.handle(),
                 file.source_kind(),
                 bound_source_objects,
@@ -3807,8 +3796,11 @@ impl PreviewService {
                 &run.report,
                 run.completeness,
             ),
-            run.retained,
-        ))
+            retained: run.retained,
+            // Allocated here, once, for this conversion. Never read from the
+            // workspace generation: converting does not advance it.
+            run: NEXT_CONVERSION_RUN.fetch_add(1, Ordering::Relaxed),
+        })
     }
 
     /// How many datasets the session holds.
@@ -4955,6 +4947,64 @@ impl Drop for AdoptionInFlight<'_> {
         self.0.adopting_outputs.store(false, Ordering::Release);
     }
 }
+
+/// One private SCIEX conversion: what it reported, what it retained, and
+/// which run it was.
+///
+/// The three travel together because two of them are only meaningful about the
+/// same run. A report describes a set of members; the retained objects *are*
+/// that set. Handing a ticket constructor one of each separately would let a
+/// report from one conversion meet the objects of another — same member count,
+/// same states, nothing to notice — and mint a ticket whose provenance and
+/// completeness described a run whose files it was not adopting.
+///
+/// So the conversion hands back one value, the ticket constructor takes it by
+/// value, and the mismatch is not expressible rather than merely checked for.
+#[cfg(test)]
+#[derive(Debug)]
+pub(super) struct SciexConversion {
+    pub(super) report: WorkspaceMultiOutputConversionReport,
+    pub(super) retained: mscanvas_proteowizard::FinalizedOutputSet,
+    run: u64,
+}
+
+#[cfg(test)]
+impl SciexConversion {
+    /// Which conversion this was.
+    pub(super) const fn run(&self) -> u64 {
+        self.run
+    }
+
+    /// The same conversion, remembering no completeness.
+    ///
+    /// The gate it reaches is unreachable through the SCIEX path, which
+    /// establishes completeness before publication -- so a fully finalized run
+    /// of that family always has it. The gate is for the runs that would not,
+    /// and this forges that state rather than waiting for one to exist.
+    pub(super) fn without_completeness(mut self) -> Self {
+        self.report = self.report.without_completeness();
+        self
+    }
+
+    /// The same conversion, its report one member short.
+    ///
+    /// Likewise the only way to reach the pairing gate: a report and its
+    /// retained objects come from one publication and agree by construction.
+    pub(super) fn without_last_member(mut self) -> Self {
+        self.report = self.report.without_last_member();
+        self
+    }
+}
+
+/// Hands out one identity per private conversion.
+///
+/// Process-wide and monotonic, which is stronger than it needs to be and
+/// simpler than a per-session counter. It must not be the workspace mutation
+/// generation: converting does not advance that, so two conversions of one
+/// dataset into two folders would read the same value and claim to be the same
+/// run — which is the one thing this identity exists to prevent.
+#[cfg(test)]
+static NEXT_CONVERSION_RUN: AtomicU64 = AtomicU64::new(1);
 
 /// What one private output-set adoption did.
 ///

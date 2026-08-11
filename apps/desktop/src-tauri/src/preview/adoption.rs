@@ -34,17 +34,15 @@ use std::sync::Arc;
 
 use mscanvas_proteowizard::{FinalizedOutput, OutputDrift};
 #[cfg(test)]
-use mscanvas_proteowizard::{
-    FinalizedOutputSet, MAX_CONVERSION_OUTPUTS_PER_SOURCE, SciexSampleCompleteness,
-};
+use mscanvas_proteowizard::{MAX_CONVERSION_OUTPUTS_PER_SOURCE, SciexSampleCompleteness};
 
-#[cfg(test)]
-use super::conversion::WorkspaceMultiOutputConversionReport;
 use super::destination::{DestinationHold, admit_destination_root};
 use super::operation::AdmittedDestination;
 #[cfg(test)]
 use super::selection::DatasetSourceKind;
 use super::selection::{AcceptedFile, DatasetId, accept_mzml_file};
+#[cfg(test)]
+use super::service::SciexConversion;
 
 /// The group outcome a set must have to be adoptable, by the lifecycle's own
 /// name for it.
@@ -356,10 +354,12 @@ impl fmt::Debug for FinalizedOutputSetAdoptionTicket {
 impl FinalizedOutputSetAdoptionTicket {
     /// Builds a ticket from a conversion that really happened, or refuses.
     ///
-    /// Takes the retained objects by value, because that is the whole point:
-    /// there is no path here from which the outputs could be found again, and
-    /// a ticket assembled from names and a report would be trusting exactly
-    /// what the adoption boundary exists not to trust.
+    /// Takes the whole conversion by value, because that is the whole point
+    /// twice over. There is no path here from which the outputs could be found
+    /// again, so a ticket assembled from names and a report would be trusting
+    /// exactly what this boundary exists not to trust — and a report handed in
+    /// beside *someone else's* objects would describe a run whose files it was
+    /// not adopting, which counting members cannot detect.
     ///
     /// # Errors
     ///
@@ -370,11 +370,14 @@ impl FinalizedOutputSetAdoptionTicket {
         source: DatasetId,
         source_display_name: String,
         source_kind: DatasetSourceKind,
-        run: u64,
-        report: &WorkspaceMultiOutputConversionReport,
         destination: AdmittedDestination,
-        retained: FinalizedOutputSet,
+        conversion: SciexConversion,
     ) -> Result<Self, OutputSetNotAdoptable> {
+        let run = conversion.run();
+        let SciexConversion {
+            report, retained, ..
+        } = conversion;
+        let report = &report;
         if report.group_outcome() != FULLY_FINALIZED {
             return Err(OutputSetNotAdoptable::NotFullyFinalized);
         }
