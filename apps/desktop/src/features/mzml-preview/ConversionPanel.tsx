@@ -727,99 +727,101 @@ function QueueState({
       )}
 
       <ol className="conversion-queue-list">
-        {queue.items.map((item, index) => (
-          <li key={item.datasetHandle} data-item-state={item.state}>
-            <span className="conversion-queue-order">{index + 1}</span>
-            <span className="conversion-queue-name" title={item.fileName}>
-              {item.fileName}
-            </span>
-            <span aria-hidden="true">→</span>
-            <span className="visually-hidden">converts to </span>
-            {item.output.kind === "knownSingle" ? (
-              <span className="conversion-queue-output" title={item.output.fileName}>
-                {item.output.fileName}
+        {queue.items.map((item, index) => {
+          // Read once per item. Which of the two an item has is the whole of
+          // what tells these branches apart, and asking the same question at
+          // every use would invite one of them to be answered differently.
+          const single = singleReportOf(item);
+          const set = setReportOf(item);
+          return (
+            <li key={item.datasetHandle} data-item-state={item.state}>
+              <span className="conversion-queue-order">{index + 1}</span>
+              <span className="conversion-queue-name" title={item.fileName}>
+                {item.fileName}
               </span>
-            ) : (
-              <span
-                className="conversion-queue-output conversion-queue-output-set"
-                data-output-topology="backendNamedSet"
-              >
-                {itemOutputSummary(item)}
-              </span>
-            )}
-            <span className="visually-hidden">, </span>
-            <span className="conversion-queue-status">{ITEM_STATE_LABEL[item.state]}</span>
-            {item.attempts > 1 ? (
-              <>
-                <span className="visually-hidden">, </span>
-                <span className="conversion-queue-attempts">
-                  {`attempt ${String(item.attempts)}`}
+              <span aria-hidden="true">→</span>
+              <span className="visually-hidden">converts to </span>
+              {item.output.kind === "knownSingle" ? (
+                <span className="conversion-queue-output" title={item.output.fileName}>
+                  {item.output.fileName}
                 </span>
-              </>
-            ) : null}
-            {item.state === "failed" ? (
-              <>
-                <span className="visually-hidden">, </span>
-                <span className="conversion-queue-reason">{itemFailureSentence(item)}</span>
-              </>
-            ) : null}
-            {/* What was actually produced, per item. A queue that said only
-                `Converted` would have taken away the one thing that lets a user
-                tell a real conversion from an empty one. */}
-            {singleReportOf(item)?.output == null ? null : (
-              <>
-                <span className="visually-hidden">, </span>
-                <span className="conversion-queue-facts">
-                  {`${formatByteLength(singleReportOf(item)!.output!.byteLength)}, ${formatCount(
-                    singleReportOf(item)!.output!.spectrumCount,
-                  )} spectra, ${formatCount(singleReportOf(item)!.output!.chromatogramCount)} chromatograms`}
-                  {singleReportOf(item)!.backend === null
-                    ? ""
-                    : `, ${formatDuration(singleReportOf(item)!.backend!.elapsedMilliseconds)}`}
+              ) : (
+                <span
+                  className="conversion-queue-output conversion-queue-output-set"
+                  data-output-topology="backendNamedSet"
+                >
+                  {itemOutputSummary(item, set)}
                 </span>
-              </>
-            )}
-            {/* What a set actually produced, and the exact limits of the claim.
-                Three separate sentences on purpose: the count is a fact, the
-                completeness is narrower than it sounds, and the validation is
-                narrower again. Collapsing them would read as one broad
-                guarantee that none of them makes. */}
-            {setReportOf(item) === null ? null : (
-              <>
-                <span className="visually-hidden">, </span>
-                <span className="conversion-queue-set-result">
-                  {setResultSentence(setReportOf(item)!)}
-                </span>
-                {setReportOf(item)!.completeness.kind === "established" ? (
-                  <span className="conversion-queue-set-completeness">
-                    {SAMPLE_COMPLETENESS_CLAIM}
+              )}
+              <span className="visually-hidden">, </span>
+              <span className="conversion-queue-status">{ITEM_STATE_LABEL[item.state]}</span>
+              {item.attempts > 1 ? (
+                <>
+                  <span className="visually-hidden">, </span>
+                  <span className="conversion-queue-attempts">
+                    {`attempt ${String(item.attempts)}`}
                   </span>
-                ) : null}
-                {setReportOf(item)!.partial === null ? null : (
-                  <span
-                    className="conversion-queue-set-partial notice notice-warning"
-                    role="note"
-                  >
-                    {PARTIAL_FINALIZATION_EXPLANATION}
+                </>
+              ) : null}
+              {item.state === "failed" ? (
+                <>
+                  <span className="visually-hidden">, </span>
+                  <span className="conversion-queue-reason">{itemFailureSentence(item)}</span>
+                </>
+              ) : null}
+              {/* What was actually produced, per item. A queue that said only
+                  `Converted` would have taken away the one thing that lets a user
+                  tell a real conversion from an empty one. */}
+              {single?.output == null ? null : (
+                <>
+                  <span className="visually-hidden">, </span>
+                  <span className="conversion-queue-facts">
+                    {`${formatByteLength(single.output.byteLength)}, ${formatCount(
+                      single.output.spectrumCount,
+                    )} spectra, ${formatCount(single.output.chromatogramCount)} chromatograms`}
+                    {single.backend === null
+                      ? ""
+                      : `, ${formatDuration(single.backend.elapsedMilliseconds)}`}
                   </span>
-                )}
-              </>
-            )}
-            {/* Cleanup failing is the user's problem, not only MSCanvas', because
-                what is left behind is in the folder they chose. Read from both
-                places it can be recorded: a cancelled item has no report by
-                construction, so a residue it left would otherwise be knowable
-                to MSCanvas and invisible to the person whose folder it is in. */}
-            {(singleReportOf(item)?.stagingResidue ??
-              setReportOf(item)?.stagingResidue ??
-              item.cancellation?.stagingResidue) == null ? null : (
-              <>
-                <span className="visually-hidden">, </span>
-                <span className="conversion-queue-residue">{RESIDUE_EXPLANATION}</span>
-              </>
-            )}
-          </li>
-        ))}
+                </>
+              )}
+              {/* What a set actually produced, and the exact limits of the claim.
+                  Three separate sentences on purpose: the count is a fact, the
+                  completeness is narrower than it sounds, and the validation is
+                  narrower again. Collapsing them would read as one broad
+                  guarantee that none of them makes. */}
+              {set === null ? null : (
+                <>
+                  <span className="visually-hidden">, </span>
+                  <span className="conversion-queue-set-result">{setResultSentence(set)}</span>
+                  {set.completeness.kind === "established" ? (
+                    <span className="conversion-queue-set-completeness">
+                      {SAMPLE_COMPLETENESS_CLAIM}
+                    </span>
+                  ) : null}
+                  {set.partial === null ? null : (
+                    <span className="conversion-queue-set-partial notice notice-warning" role="note">
+                      {PARTIAL_FINALIZATION_EXPLANATION}
+                    </span>
+                  )}
+                </>
+              )}
+              {/* Cleanup failing is the user's problem, not only MSCanvas', because
+                  what is left behind is in the folder they chose. Read from both
+                  places it can be recorded: a cancelled item has no report by
+                  construction, so a residue it left would otherwise be knowable
+                  to MSCanvas and invisible to the person whose folder it is in. */}
+              {(single?.stagingResidue ??
+                set?.stagingResidue ??
+                item.cancellation?.stagingResidue) == null ? null : (
+                <>
+                  <span className="visually-hidden">, </span>
+                  <span className="conversion-queue-residue">{RESIDUE_EXPLANATION}</span>
+                </>
+              )}
+            </li>
+          );
+        })}
       </ol>
 
       {state.status === "terminal" && !retrying ? (
@@ -829,9 +831,7 @@ function QueueState({
               existing file was explicitly not inspected, so claiming
               output-only validation over it would claim a check nobody ran. */}
           {queue.items.some(
-            (item) =>
-              singleReportOf(item)?.validation != null ||
-              setReportOf(item) !== null,
+            (item) => singleReportOf(item)?.validation != null || setReportOf(item) !== null,
           ) ? (
             <p className="quiet-text" role="note">
               {OUTPUT_ONLY_DISCLOSURE}
@@ -970,8 +970,10 @@ function setReportOf(item: ConversionQueueItem): ConversionOutputSetReport | nul
  * answer is still the range: no filename exists. Once members are finalized the
  * count is real and is worth more than the bound.
  */
-function itemOutputSummary(item: ConversionQueueItem): string {
-  const report = setReportOf(item);
+function itemOutputSummary(
+  item: ConversionQueueItem,
+  report: ConversionOutputSetReport | null,
+): string {
   const maxMembers =
     item.output.kind === "backendNamedSet" ? item.output.maxMembers : 1;
   if (report === null || report.finalizedCount === 0) {
