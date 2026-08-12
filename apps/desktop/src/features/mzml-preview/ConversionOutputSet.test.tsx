@@ -209,6 +209,12 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     expect(document.body.textContent).not.toMatch(/source samples converted/i);
     expect(document.body.textContent).not.toMatch(/fully verified/i);
 
+    // Which ten, not only how many. A count alone leaves the user unable to
+    // tell one of these files from another in the folder they chose.
+    for (const member of TEN_MEMBERS) {
+      expect(within(result).getByText(member)).toBeVisible();
+    }
+
     // The offer is a count of files, not of items.
     expect(
       screen.getByText("10 converted mzML outputs are ready to add to this workspace.", VISIBLE),
@@ -341,6 +347,14 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     expect(result.querySelector(".conversion-queue-set-partial")?.getAttribute("role")).toBe(
       "note",
     );
+
+    // The finalized prefix is named. The copy above tells the user to add these
+    // files individually, which is not something anyone can act on without
+    // their names -- and the members that were *not* published must not be
+    // listed, because they are not in the folder.
+    expect(within(result).getByText(TEN_MEMBERS[0])).toBeVisible();
+    expect(within(result).queryByText(TEN_MEMBERS[1])).toBeNull();
+    expect(within(result).queryByText(TEN_MEMBERS[2])).toBeNull();
   });
 
   it("keeps other complete items in the same queue adoptable", async () => {

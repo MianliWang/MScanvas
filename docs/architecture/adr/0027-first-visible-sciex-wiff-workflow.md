@@ -108,11 +108,19 @@ under its arm, which the contract pin asserts.
 ### The group report carries member basenames; the export does not
 
 The visible result carries the names the backend chose, bounded by the
-lifecycle's own bound, path-free, directory-free. That is the one judgement call
-in this shape and it is deliberate: a user told "ten outputs finalized" who
-cannot see which ten has been given a number rather than an answer, and the
-roster beside them will spell every one out the moment the set is adopted.
-Redacting them in one rendering while doing that would be theatre.
+lifecycle's own bound, path-free, directory-free — **and renders them**. That is
+the one judgement call in this shape and it is deliberate: a user told "ten
+outputs finalized" who cannot see which ten has been given a number rather than
+an answer, and the roster beside them will spell every one out the moment the
+set is adopted. Redacting them in one rendering while doing that would be
+theatre.
+
+Carrying them and not showing them would have been worse than either: the
+partial-finalization copy sends the user to `Add files…` for the prefix that
+survived, which is not something anyone can act on without knowing what it is
+called. So the finalized members are listed, read from the member *states*
+rather than from the count — for a partial publication those differ, and what
+belongs on screen is what is actually in the folder.
 
 The **export** is a different document with a different reader — it is reviewed
 before being sent somewhere — and ADR 0026's answer stands unchanged: no member

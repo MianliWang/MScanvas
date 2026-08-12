@@ -804,6 +804,22 @@ function QueueState({
                       {PARTIAL_FINALIZATION_EXPLANATION}
                     </span>
                   )}
+                  {/* Which files, not only how many. A result that says "ten
+                      outputs finalized" and cannot say which ten has given the
+                      user a number rather than an answer -- and after a partial
+                      publication the copy above tells them to add the finalized
+                      files individually, which is not something anyone can act
+                      on without their names. Bounded at twenty-four by the
+                      lifecycle that produced them. */}
+                  {finalizedMemberNames(set).length === 0 ? null : (
+                    <ul className="conversion-queue-set-members">
+                      {finalizedMemberNames(set).map((name) => (
+                        <li key={name} title={name}>
+                          {name}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </>
               )}
               {/* Cleanup failing is the user's problem, not only MSCanvas', because
@@ -982,6 +998,17 @@ function itemOutputSummary(
   return report.finalizedCount === 1
     ? "1 mzML output"
     : `${String(report.finalizedCount)} mzML outputs`;
+}
+
+/**
+ * The members that reached their final names, in publication order.
+ *
+ * Read from the states rather than from the count, because the two answer
+ * different questions for a partial publication: the count says how many were
+ * finalized, and this says *which* — which is the prefix that is on disk.
+ */
+function finalizedMemberNames(report: ConversionOutputSetReport): readonly string[] {
+  return report.memberFileNames.filter((_, index) => report.memberStates[index] === "finalized");
 }
 
 /** What one settled set produced, counted rather than claimed. */

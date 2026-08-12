@@ -447,6 +447,26 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+/* The finalized members, by name. Its own full-width block for the reason the
+   status lines have one, and its names wrap rather than ellipsize: a truncated
+   filename is not one a user can find in a folder, which is the whole reason
+   they are shown. Bounded at twenty-four by what produced them, so the block
+   cannot grow without bound. */
+.conversion-queue-set-members {
+  min-width: 0;
+  flex: 1 0 100%;
+  margin: 2px 0 0;
+  padding-left: 2.2em;
+  color: var(--color-text-secondary);
+  font-size: 0.95em;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.conversion-queue-set-members > li {
+  min-width: 0;
+}
+
 /* The completeness claim is a sentence about what was established, so it reads
    as one rather than as a status chip. Deliberately not coloured: what it says
    is narrow, and a green tint would say something broader than the words. */

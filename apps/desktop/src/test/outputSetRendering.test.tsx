@@ -155,6 +155,13 @@ describe("rendered QA for the one-to-many output topology", () => {
     // that explains the missing filename is the part that would be clipped --
     // so it wraps instead, and its own `min-width: 0` keeps it from forcing the
     // row wider than the panel.
+    // The member list wraps rather than ellipsizing: a truncated filename is
+    // not one anybody can find in a folder.
+    const memberList = ruleFor(style, ".conversion-queue-set-members");
+    expect(memberList.style.getPropertyValue("overflow-wrap")).toBe("anywhere");
+    expect(memberList.style.getPropertyValue("min-width")).toBe("0px");
+    expect(memberList.style.getPropertyValue("flex")).toContain("100%");
+
     const set = ruleFor(style, ".conversion-queue-output-set");
     expect(set.style.getPropertyValue("white-space")).toBe("normal");
     expect(set.style.getPropertyValue("overflow-wrap")).toBe("anywhere");
@@ -272,6 +279,14 @@ describe("rendered QA for the one-to-many output topology", () => {
     }
     // The status is in words, not only in colour.
     expect(queue.querySelector(".conversion-queue-status")?.textContent).toBe("Converted");
+
+    // Every finalized member is named, so the count is an answer rather than a
+    // number, and the block that holds them is bounded by what produced them.
+    const members = [...queue.querySelectorAll(".conversion-queue-set-members > li")].map(
+      (node) => node.textContent,
+    );
+    expect(members).toEqual(TEN_MEMBERS);
+    expect(members.length).toBeLessThanOrEqual(fullSet.maxMembers);
   });
 
   it("renders a partial finalization as a warning rather than an ordinary success", async () => {
@@ -295,6 +310,13 @@ describe("rendered QA for the one-to-many output topology", () => {
     // Carried by a note and by the item's own state attribute, not by colour.
     const partial = queue.querySelector(".conversion-queue-set-partial");
     expect(partial?.getAttribute("role")).toBe("note");
+
+    // The prefix is named and the unpublished members are not: the list is what
+    // is in the folder, which is what the copy beside it sends the user to.
+    const kept = [...queue.querySelectorAll(".conversion-queue-set-members > li")].map(
+      (node) => node.textContent,
+    );
+    expect(kept).toEqual(TEN_MEMBERS.slice(0, 2));
     expect(queue.querySelector("li")?.getAttribute("data-item-state")).toBe("failed");
     expect(queue.querySelector(".conversion-queue-status")?.textContent).toBe("Failed");
     // Not an ordinary success, and no completeness claim at all.
