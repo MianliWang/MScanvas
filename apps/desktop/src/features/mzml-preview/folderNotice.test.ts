@@ -168,9 +168,7 @@ describe("accounting for one folder import", () => {
           limitsReached: [limit as keyof typeof limits],
         }),
       );
-      expect(notice.message).toContain(
-        `The scan stopped short of the whole folder because ${said}.`,
-      );
+      expect(notice.message).toContain(`The scan stopped short of the whole folder because ${said}.`);
     }
     // And the counters themselves are never repeated: how many entries a folder
     // holds is the shape of the user's tree.

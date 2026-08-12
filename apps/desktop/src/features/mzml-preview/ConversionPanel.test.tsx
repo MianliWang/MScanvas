@@ -225,7 +225,9 @@ describe("queueing selected Thermo RAW conversions", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
-      expect(within(panel).getByText(/One Thermo RAW acquisition will be converted/)).toBeVisible();
+      expect(
+        within(panel).getByText(/One Thermo RAW acquisition will be converted/),
+      ).toBeVisible();
     });
 
     fireEvent.click(within(panel).getByRole("button", { name: "Convert focused…" }));
@@ -378,7 +380,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
-        reason: "completed" as const,
+      reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", {
@@ -431,7 +433,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
-        reason: "completed" as const,
+      reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", { state: "finalized", attempts: 1 }),
@@ -451,7 +453,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       retry: () =>
         Promise.resolve({
           status: "terminal",
-          reason: "completed" as const,
+      reason: "completed" as const,
           operationId: "1",
           queue: {
             ...queueOf([
@@ -489,7 +491,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
-        reason: "completed" as const,
+      reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", {
@@ -554,7 +556,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
-        reason: "completed" as const,
+      reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", {
@@ -608,7 +610,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
-        reason: "completed" as const,
+      reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", { state: "failed", attempts: 1, retryable: true }),
@@ -619,7 +621,7 @@ describe("queueing selected Thermo RAW conversions", () => {
           releaseRetry = () => {
             resolve({
               status: "terminal",
-              reason: "completed" as const,
+      reason: "completed" as const,
               operationId: "1",
               queue: queueOf([
                 queueItem("file-1", "run-1.raw", { state: "finalized", attempts: 2 }),
@@ -665,7 +667,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: unavailableBackend,
       initialConversion: {
         status: "terminal",
-        reason: "completed" as const,
+      reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", { state: "failed", attempts: 1, retryable: true }),
@@ -680,9 +682,9 @@ describe("queueing selected Thermo RAW conversions", () => {
     });
     // And it still says what it would do, so the reason it is unavailable is
     // the backend rather than the control having quietly changed meaning.
-    expect(
-      within(panel).getByRole("button", { name: "Retry 1 failed" }),
-    ).toHaveAccessibleDescription(/Reruns only the failures another attempt could change/);
+    expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toHaveAccessibleDescription(
+      /Reruns only the failures another attempt could change/,
+    );
   });
 
   it("recovers a queue this document did not start", async () => {
@@ -782,7 +784,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       conversion: () =>
         Promise.resolve({
           status: "terminal",
-          reason: "completed" as const,
+      reason: "completed" as const,
           operationId: "1",
           queue: {
             ...queueOf([queueItem("file-1", "run-1.raw"), queueItem("file-2", "run-2.raw")]),
@@ -822,7 +824,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
-        reason: "completed" as const,
+      reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", { state: "finalized", attempts: 1 }),
@@ -843,9 +845,9 @@ describe("queueing selected Thermo RAW conversions", () => {
       expect(rendered).not.toContain(separator);
     }
     // A skipped item is never described as validated.
-    expect(
-      within(panel).getAllByText(/a file of that name was already there/i).length,
-    ).toBeGreaterThan(0);
+    expect(within(panel).getAllByText(/a file of that name was already there/i).length).toBeGreaterThan(
+      0,
+    );
   });
 
   it("offers converted outputs to the workspace rather than adding them", async () => {

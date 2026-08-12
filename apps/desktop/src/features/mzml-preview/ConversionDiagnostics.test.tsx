@@ -13,7 +13,11 @@ import {
   queueOf,
 } from "../../test/previewFixtures";
 import type { FakePreviewApi } from "../../test/previewFixtures";
-import type { ConversionQueueItem, SelectedFile, WorkspaceConversionState } from "./contracts";
+import type {
+  ConversionQueueItem,
+  SelectedFile,
+  WorkspaceConversionState,
+} from "./contracts";
 
 /**
  * Saving one local, redacted diagnostics file, from the interface a user
@@ -472,7 +476,8 @@ describe("saving conversion diagnostics", () => {
       },
     ]) {
       const api = apiWith(terminal([failed("file-1", "run-1.raw")]), {
-        diagnosticsExport: () => Promise.reject({ ...failure, detail: null, retryable: false }),
+        diagnosticsExport: () =>
+          Promise.reject({ ...failure, detail: null, retryable: false }),
       });
       const { unmount } = render(
         <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>

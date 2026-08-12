@@ -66,9 +66,7 @@ describe("spectrum table at acquisition scale", () => {
     // The final spectrum is reachable and is the one the file actually ends on.
     expect(rows.at(-1)).toHaveAttribute("aria-rowindex", String(REPRESENTATIVE_ROW_COUNT + 1));
     expect(
-      within(grid).getByText(
-        `controllerType=0 controllerNumber=1 scan=${REPRESENTATIVE_ROW_COUNT}`,
-      ),
+      within(grid).getByText(`controllerType=0 controllerNumber=1 scan=${REPRESENTATIVE_ROW_COUNT}`),
     ).toBeVisible();
     // Nothing from the top of the run is still mounted.
     expect(

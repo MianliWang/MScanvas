@@ -52,7 +52,11 @@ export interface BackendAvailability {
  * `sciex_wiff` names a bundle: a `.wiff` primary and the `.wiff.scan` beside
  * it, admitted together as one row. The companion is never a row of its own.
  */
-export type DatasetSourceKind = "mzml" | "thermo_raw" | "shimadzu_lcd" | "sciex_wiff";
+export type DatasetSourceKind =
+  | "mzml"
+  | "thermo_raw"
+  | "shimadzu_lcd"
+  | "sciex_wiff";
 
 /**
  * The exact visible name of each family.
@@ -77,7 +81,9 @@ export const SOURCE_KIND_LABEL: Record<DatasetSourceKind, string> = {
  * disagreed would still be refused by the boundary itself.
  */
 export function isConvertibleSourceKind(kind: DatasetSourceKind): boolean {
-  return kind === "thermo_raw" || kind === "shimadzu_lcd" || kind === "sciex_wiff";
+  return (
+    kind === "thermo_raw" || kind === "shimadzu_lcd" || kind === "sciex_wiff"
+  );
 }
 
 export interface SelectedFile {

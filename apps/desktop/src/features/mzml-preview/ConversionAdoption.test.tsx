@@ -138,9 +138,7 @@ describe("adding converted outputs to the workspace", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     expect(
-      await within(panel).findByText(
-        "2 converted mzML outputs are ready to add to this workspace.",
-      ),
+      await within(panel).findByText("2 converted mzML outputs are ready to add to this workspace."),
     ).toBeVisible();
     const adopt = within(panel).getByRole("button", {
       name: "Add converted outputs to workspace",

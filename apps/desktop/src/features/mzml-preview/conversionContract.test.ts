@@ -495,10 +495,7 @@ describe("the conversion wire contract", () => {
     // the string values rather than the serialization, whose own punctuation
     // would answer for itself.
     expect(serialized).toContain("FT-HCD-MSX.raw");
-    for (const value of stringsWithin({
-      sequence: 3,
-      state: { status: "terminal", queue: QUEUE },
-    })) {
+    for (const value of stringsWithin({ sequence: 3, state: { status: "terminal", queue: QUEUE } })) {
       expect(value).not.toMatch(/[\\/]/);
       expect(value).not.toMatch(/^[A-Za-z]:/);
     }

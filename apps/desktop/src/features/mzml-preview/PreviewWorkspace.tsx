@@ -75,7 +75,8 @@ export function PreviewWorkspace() {
   // the response is a defensive fallback when no matching live row is
   // available, rather than the source of display identity.
   const previewFile =
-    preview.status === "loaded" && workspace.activeDataset?.handle === preview.preview.file.handle
+    preview.status === "loaded" &&
+    workspace.activeDataset?.handle === preview.preview.file.handle
       ? workspace.activeDataset
       : preview.status === "loaded"
         ? preview.preview.file
@@ -95,7 +96,8 @@ export function PreviewWorkspace() {
   // nothing about it either. Offering an action whose only outcome is another
   // failure is worse than not offering it.
   const backendUsable =
-    workspace.backend.status === "resolved" && workspace.backend.availability.state === "available";
+    workspace.backend.status === "resolved" &&
+    workspace.backend.availability.state === "available";
   // Deliberately not the negation of the above. This is the one state that has
   // something specific to tell the user about installing ProteoWizard, and
   // saying it while a check is still running would be a guess.
@@ -150,7 +152,9 @@ export function PreviewWorkspace() {
   // claim it supersedes the eventual commit. A late folder reply is never
   // allowed to overwrite the later answer.
   const canMutate =
-    !workspace.workspaceBusy && !workspace.pickerBusy && !workspace.folderReservationPending;
+    !workspace.workspaceBusy &&
+    !workspace.pickerBusy &&
+    !workspace.folderReservationPending;
   // Emptying the list would revoke the row a conversion is reading. Stopping
   // the queue is the way out of that, and it is the user's to take -- clearing
   // the list is not a way to take it, so Rust refuses it outright.
@@ -195,7 +199,8 @@ export function PreviewWorkspace() {
     !workspace.conversion.backendQuarantined;
   // Converting needs the same backend a preview does, and the same free lane --
   // plus the terminal queue an adoption is reading, which it would replace.
-  const canConvert = canPreview && !workspace.workspaceBusy && !workspace.conversion.adopting;
+  const canConvert =
+    canPreview && !workspace.workspaceBusy && !workspace.conversion.adopting;
 
   // The row the keyboard is on. Deliberately not `activeDataset`: the preview
   // and the conversion panel may describe different rows, and this slice's whole
@@ -501,11 +506,7 @@ export function PreviewWorkspace() {
                 )}
               </ul>
             )}
-            <button
-              className="link-button"
-              onClick={workspace.dismissWorkspaceNotice}
-              type="button"
-            >
+            <button className="link-button" onClick={workspace.dismissWorkspaceNotice} type="button">
               Dismiss
             </button>
           </div>
@@ -679,9 +680,7 @@ export function PreviewWorkspace() {
               </div>
             ) : (
               <div className="empty-state">
-                <strong>
-                  {roster.datasets.length === 0 ? "Add mzML files" : "Preview a file"}
-                </strong>
+                <strong>{roster.datasets.length === 0 ? "Add mzML files" : "Preview a file"}</strong>
                 <span>
                   MSCanvas reads local .mzML files from this computer and never writes to them.
                   Nothing is uploaded and nothing leaves this machine.
@@ -702,7 +701,9 @@ export function PreviewWorkspace() {
                         what changing the installation costs: the readings go,
                         the workspace does not. */}
                     {workspace.activeDataset === null ? (
-                      <span>Select a file in the workspace list, then choose Preview focused.</span>
+                      <span>
+                        Select a file in the workspace list, then choose Preview focused.
+                      </span>
                     ) : (
                       <button
                         className="primary-button"

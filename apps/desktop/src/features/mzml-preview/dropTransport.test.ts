@@ -13,7 +13,9 @@ vi.mock("@tauri-apps/api/core", () => ({
     onmessage = (_message: T) => undefined;
 
     constructor() {
-      core.channels.push(this as unknown as { onmessage: (update: WorkspaceDropUpdate) => void });
+      core.channels.push(
+        this as unknown as { onmessage: (update: WorkspaceDropUpdate) => void },
+      );
     }
   },
   invoke: core.invoke,

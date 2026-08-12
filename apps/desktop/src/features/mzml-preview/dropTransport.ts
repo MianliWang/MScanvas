@@ -28,7 +28,9 @@ function currentDropDocumentAuthority(): string {
  * lifetime without depending on a WebView.
  */
 export interface WorkspaceDropTransport {
-  subscribe(onUpdate: (update: WorkspaceDropUpdate) => void): Promise<UnsubscribeWorkspaceDrop>;
+  subscribe(
+    onUpdate: (update: WorkspaceDropUpdate) => void,
+  ): Promise<UnsubscribeWorkspaceDrop>;
 }
 
 // React StrictMode deliberately sets an effect up, tears it down and sets it
@@ -67,17 +69,13 @@ export const tauriWorkspaceDropTransport: WorkspaceDropTransport = {
       silenceChannel = () => {
         claimedChannel.onmessage = () => undefined;
       };
-      await invoke<null>(
-        "subscribe_workspace_drop_updates",
-        {
-          request: {
-            phase: "claim",
-            reservationId: reservation.reservationId,
-            channel: claimedChannel,
-          },
+      await invoke<null>("subscribe_workspace_drop_updates", {
+        request: {
+          phase: "claim",
+          reservationId: reservation.reservationId,
+          channel: claimedChannel,
         },
-        invokeOptions,
-      );
+      }, invokeOptions);
     });
     registrationTail = registration.catch(() => undefined);
     try {

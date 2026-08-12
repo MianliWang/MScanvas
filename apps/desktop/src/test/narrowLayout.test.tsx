@@ -192,7 +192,9 @@ describe("narrow desktop layout rules", () => {
     expect(overlay.getPropertyValue("position")).toBe("absolute");
     expect(overlay.getPropertyValue("inset")).toBe("0px");
     expect(overlay.getPropertyValue("pointer-events")).toBe("none");
-    expect(shell.getPropertyValue("grid-template-rows")).toBe("auto auto minmax(0, 1fr)");
+    expect(shell.getPropertyValue("grid-template-rows")).toBe(
+      "auto auto minmax(0, 1fr)",
+    );
   });
 });
 
@@ -235,7 +237,10 @@ describe("narrow desktop layout markup", () => {
 
     // Both names shrink on the same terms, so a long acquisition name cannot
     // take the whole line from the name it converts to.
-    const names = requireStyleRule(app, ".conversion-queue-name, .conversion-queue-output").style;
+    const names = requireStyleRule(
+      app,
+      ".conversion-queue-name, .conversion-queue-output",
+    ).style;
     expect(names.getPropertyValue("min-width")).toBe("0px");
     expect(names.getPropertyValue("flex")).toBe("1 1 6em");
     expect(names.getPropertyValue("overflow")).toBe("hidden");
@@ -255,9 +260,9 @@ describe("narrow desktop layout markup", () => {
     expect(status.getPropertyValue("flex")).toBe("1 0 100%");
     expect(status.getPropertyValue("overflow-wrap")).toBe("anywhere");
     // Two digits' worth, so item 10 does not shift the column item 9 set.
-    expect(
-      requireStyleRule(app, ".conversion-queue-order").style.getPropertyValue("min-width"),
-    ).toBe("1.6em");
+    expect(requireStyleRule(app, ".conversion-queue-order").style.getPropertyValue("min-width")).toBe(
+      "1.6em",
+    );
   });
 
   it("says an item's state in a colour that can be read, having already said it in words", () => {
@@ -301,6 +306,7 @@ describe("narrow desktop layout markup", () => {
     expect(kind.getPropertyValue("white-space")).toBe("nowrap");
     expect(kind.getPropertyValue("min-width")).toBe("0px");
   });
+
 
   it("keeps one set of actions, whatever the width", async () => {
     // A narrow layout that duplicates the actions would pass a screenshot and
@@ -356,9 +362,9 @@ describe("narrow desktop layout markup", () => {
     // route.
     const app = mountStyles(appStyles);
 
-    expect(
-      requireStyleRule(app, ".dataset-roster-panel").style.getPropertyValue("min-height"),
-    ).toBe("280px");
+    expect(requireStyleRule(app, ".dataset-roster-panel").style.getPropertyValue("min-height")).toBe(
+      "280px",
+    );
     expect(
       requireMediaRule(app, "(max-width: 1120px)", ".workspace-layout").style.getPropertyValue(
         "grid-template-rows",
@@ -378,7 +384,9 @@ describe("narrow desktop layout markup", () => {
     // the acquisition identity even though its header still has a layout rect.
     const app = mountStyles(appStyles);
 
-    expect(requireStyleRule(app, ".workspace-sidebar").style.getPropertyValue("gap")).toBe("8px");
+    expect(requireStyleRule(app, ".workspace-sidebar").style.getPropertyValue("gap")).toBe(
+      "8px",
+    );
     expect(requireStyleRule(app, ".panel-header").style.getPropertyValue("min-height")).toBe(
       "52px",
     );
@@ -410,7 +418,11 @@ describe("narrow desktop layout markup", () => {
     // scroll, so the narrow workspace must both reserve the complete viewer
     // stack and own the resulting small vertical overflow.
     const app = mountStyles(appStyles);
-    const workspace = requireMediaRule(app, "(max-width: 1120px)", ".workspace-layout").style;
+    const workspace = requireMediaRule(
+      app,
+      "(max-width: 1120px)",
+      ".workspace-layout",
+    ).style;
 
     expect(workspace.getPropertyValue("grid-template-rows")).toBe(
       "minmax(342px, 0.9fr) minmax(178px, 1.6fr)",
@@ -436,9 +448,9 @@ describe("narrow desktop layout markup", () => {
     // flexible one gets any, and measured in a rendered window a row carrying
     // both `Could not be read` and `Selected — outside search` left the name
     // exactly 0px wide.
-    expect(
-      requireStyleRule(app, ".dataset-row").style.getPropertyValue("grid-template-columns"),
-    ).toBe("12px 12px minmax(72px, 1fr) auto auto minmax(0, auto)");
+    expect(requireStyleRule(app, ".dataset-row").style.getPropertyValue("grid-template-columns")).toBe(
+      "12px 12px minmax(72px, 1fr) auto auto minmax(0, auto)",
+    );
     const notes = requireStyleRule(app, ".dataset-row-notes").style;
     expect(notes.getPropertyValue("min-width")).toBe("0px");
     expect(notes.getPropertyValue("overflow")).toBe("hidden");

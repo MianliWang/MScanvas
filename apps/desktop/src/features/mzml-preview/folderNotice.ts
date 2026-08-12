@@ -72,7 +72,9 @@ export function describeFolderResult(result: FolderIngestionResult): WorkspaceNo
   const { discovery, outcomes } = result;
   const added = outcomes.filter((outcome) => outcome.outcome === "added").length;
   const duplicates = outcomes.filter((outcome) => outcome.outcome === "duplicate").length;
-  const rejected = outcomes.flatMap((outcome) => (outcome.outcome === "rejected" ? [outcome] : []));
+  const rejected = outcomes.flatMap((outcome) =>
+    outcome.outcome === "rejected" ? [outcome] : [],
+  );
   const full = rejected.filter((outcome) => outcome.error.kind === "workspace_full").length;
   const unreadable = rejected.length - full;
 

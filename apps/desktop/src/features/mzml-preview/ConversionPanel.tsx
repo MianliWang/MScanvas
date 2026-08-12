@@ -558,7 +558,9 @@ function PlanState({
               >
                 {outputSetSummary(item.output.maxMembers)}
                 <span className="visually-hidden">. </span>
-                <span className="conversion-queue-output-naming">{OUTPUT_SET_NAMING}</span>
+                <span className="conversion-queue-output-naming">
+                  {OUTPUT_SET_NAMING}
+                </span>
               </span>
             )}
           </li>
@@ -794,7 +796,10 @@ function QueueState({
                   </span>
                 ) : null}
                 {setReportOf(item)!.partial === null ? null : (
-                  <span className="conversion-queue-set-partial notice notice-warning" role="note">
+                  <span
+                    className="conversion-queue-set-partial notice notice-warning"
+                    role="note"
+                  >
                     {PARTIAL_FINALIZATION_EXPLANATION}
                   </span>
                 )}
@@ -824,7 +829,9 @@ function QueueState({
               existing file was explicitly not inspected, so claiming
               output-only validation over it would claim a check nobody ran. */}
           {queue.items.some(
-            (item) => singleReportOf(item)?.validation != null || setReportOf(item) !== null,
+            (item) =>
+              singleReportOf(item)?.validation != null ||
+              setReportOf(item) !== null,
           ) ? (
             <p className="quiet-text" role="note">
               {OUTPUT_ONLY_DISCLOSURE}
@@ -965,7 +972,8 @@ function setReportOf(item: ConversionQueueItem): ConversionOutputSetReport | nul
  */
 function itemOutputSummary(item: ConversionQueueItem): string {
   const report = setReportOf(item);
-  const maxMembers = item.output.kind === "backendNamedSet" ? item.output.maxMembers : 1;
+  const maxMembers =
+    item.output.kind === "backendNamedSet" ? item.output.maxMembers : 1;
   if (report === null || report.finalizedCount === 0) {
     return outputSetSummary(maxMembers);
   }
@@ -979,7 +987,9 @@ function setResultSentence(report: ConversionOutputSetReport): string {
   if (report.partial !== null) {
     return `${String(report.partial.finalizedCount)} of ${String(
       report.memberCount,
-    )} mzML outputs finalized; ${String(report.partial.notPublishedCount)} not published.`;
+    )} mzML outputs finalized; ${String(
+      report.partial.notPublishedCount,
+    )} not published.`;
   }
   if (report.finalizedCount === 0) {
     return "No mzML outputs were finalized.";

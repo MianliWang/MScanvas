@@ -638,7 +638,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         if (mounted.current && token === rosterToken.current) {
           const hadRows = rosterRef.current.datasets.length > 0;
           const showing = openHandle.current;
-          if (showing !== null && !loaded.datasets.some((dataset) => dataset.handle === showing)) {
+          if (
+            showing !== null &&
+            !loaded.datasets.some((dataset) => dataset.handle === showing)
+          ) {
             // A failed mutation can still have changed Rust before its reply
             // was lost. If reconciliation says the shown row no longer exists,
             // every reading derived from it has to leave with it.
@@ -936,7 +939,13 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           endViewerRequest();
         });
     },
-    [api, beginViewerRequest, checkBackend, discardBackendDerivedState, endViewerRequest],
+    [
+      api,
+      beginViewerRequest,
+      checkBackend,
+      discardBackendDerivedState,
+      endViewerRequest,
+    ],
   );
 
   /** Clears only the UI ownership of a native drop; it never cancels Rust. */
@@ -1314,7 +1323,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         // Reservation replies, terminal settlement and a later invocation can
         // overtake one another. Only the request that still owns folder busy
         // may release the current barrier.
-        if (!mounted.current || token !== folderToken.current || !folderBusyRef.current) {
+        if (
+          !mounted.current ||
+          token !== folderToken.current ||
+          !folderBusyRef.current
+        ) {
           return;
         }
         folderReservationPendingRef.current = false;
@@ -1421,7 +1434,13 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           drainWorkspaceReconciliation();
         }
       });
-  }, [api, drainWorkspaceReconciliation, loadPreview, rosterSettled, showWorkspaceNotice]);
+  }, [
+    api,
+    drainWorkspaceReconciliation,
+    loadPreview,
+    rosterSettled,
+    showWorkspaceNotice,
+  ]);
 
   const removeSelected = useCallback(() => {
     const handles = [...rosterRef.current.selected];
@@ -1557,7 +1576,9 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         }
         dispatchRoster({ type: "workspaceCleared", roster: loaded });
         rosterSettled();
-        showWorkspaceNotice(describeClear(removed, folderImportPending, dropImportPending));
+        showWorkspaceNotice(
+          describeClear(removed, folderImportPending, dropImportPending),
+        );
         setFocusAddFilesToken((token) => token + 1);
       })
       .catch((cause: unknown) => {

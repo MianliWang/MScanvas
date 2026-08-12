@@ -333,7 +333,8 @@ export function deferred<T>(): Deferred<T> {
  * could not tell a correct duplicate rule from an incorrect one.
  */
 export type PickedFile =
-  SelectedFile | { readonly rejected: string; readonly error?: PreviewError };
+  | SelectedFile
+  | { readonly rejected: string; readonly error?: PreviewError };
 
 /**
  * Where a row was found, which is what a collision context is derived from.
@@ -347,7 +348,8 @@ export type DatasetOrigin = readonly string[] | null;
 
 /** A row the session already holds, with where it came from when that matters. */
 export type HeldFile =
-  SelectedFile | { readonly file: SelectedFile; readonly parents: readonly string[] };
+  | SelectedFile
+  | { readonly file: SelectedFile; readonly parents: readonly string[] };
 
 /** One thing a folder scan proposed: a file to add, or a candidate Rust refused. */
 export type ScannedFile =
@@ -443,7 +445,9 @@ export interface FakePreviewApiOptions {
   readonly availability?: BackendAvailability | (() => Promise<BackendAvailability>);
   /** What the folder picker resolves to. `null` stands for a dismissed picker. */
   readonly chosenInstallation?:
-    BackendAvailability | null | (() => Promise<BackendAvailability | null>);
+    | BackendAvailability
+    | null
+    | (() => Promise<BackendAvailability | null>);
   /** What the session already holds when the webview mounts. */
   readonly initialDatasets?: readonly HeldFile[];
   /** What the conversion slot holds when the webview mounts. */
@@ -492,7 +496,9 @@ export interface FakePreviewApiOptions {
    * nothing was created and the last export -- if there was one -- is untouched.
    * Rejecting models a refusal Rust answered with.
    */
-  readonly diagnosticsExport?: (operationId: string) => Promise<ConversionDiagnosticsExport | null>;
+  readonly diagnosticsExport?: (
+    operationId: string,
+  ) => Promise<ConversionDiagnosticsExport | null>;
   readonly retry?: (
     publish: (state: WorkspaceConversionState) => void,
   ) => Promise<WorkspaceConversionState>;
@@ -510,7 +516,9 @@ export interface FakePreviewApiOptions {
    * is deliberately not the same as an empty list.
    */
   readonly pickedFiles?:
-    readonly PickedFile[] | null | (() => Promise<readonly PickedFile[] | null>);
+    | readonly PickedFile[]
+    | null
+    | (() => Promise<readonly PickedFile[] | null>);
   /**
    * What the folder picker and the scan behind it hand back. `null` is a
    * dismissed picker, which is deliberately not the same as a folder that held
@@ -690,12 +698,13 @@ export function outputSetReport(
  * published, and only when the complete-set authority exists. A partially
  * finalized prefix offers none, which is the whole of the product policy.
  */
-export function outputFileNamesOf(item: ConversionQueueItem): readonly string[] {
+export function outputFileNamesOf(
+  item: ConversionQueueItem,
+): readonly string[] {
   if (item.result?.kind === "outputSet") {
     return item.result.report.completeSetAdoptable
       ? item.result.report.memberFileNames.filter(
-          (_, index) =>
-            item.result?.kind === "outputSet" &&
+          (_, index) => item.result?.kind === "outputSet" &&
             item.result.report.memberStates[index] === "finalized",
         )
       : [];
@@ -867,27 +876,27 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
           result: {
             kind: "single",
             report: {
-              datasetHandle: handle,
-              sourceKind: "thermo_raw",
-              outcome: "finalized",
-              detailedOutcome: null,
-              outputFileName: `acquisition-${String(index)}.mzML`,
-              output: {
-                byteLength: 28_655,
-                sha256: "6CE2ACE65485488F4A337EE17B71559E737C1944B641F279744932C3C3D8648C",
-                spectrumCount: 1,
-                chromatogramCount: 1,
-              },
-              validation: {
-                mode: "output_only",
-                fullyVerified: false,
-                verified: ["source_unchanged"],
-                unverified: [],
-                inapplicable: ["spectrum_count"],
-              },
-              backend: { exitCode: 0, elapsedMilliseconds: 663 },
-              stagingResidue: null,
-              installationGeneration: 0,
+            datasetHandle: handle,
+            sourceKind: "thermo_raw",
+            outcome: "finalized",
+            detailedOutcome: null,
+            outputFileName: `acquisition-${String(index)}.mzML`,
+            output: {
+              byteLength: 28_655,
+              sha256: "6CE2ACE65485488F4A337EE17B71559E737C1944B641F279744932C3C3D8648C",
+              spectrumCount: 1,
+              chromatogramCount: 1,
+            },
+            validation: {
+              mode: "output_only",
+              fullyVerified: false,
+              verified: ["source_unchanged"],
+              unverified: [],
+              inapplicable: ["spectrum_count"],
+            },
+            backend: { exitCode: 0, elapsedMilliseconds: 663 },
+            stagingResidue: null,
+            installationGeneration: 0,
             },
           },
         }),
@@ -942,7 +951,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       ? {
           kind: "rejected",
           candidateName: picked.rejected,
-          error: picked.error ?? previewError({ kind: "unsupported_extension", retryable: false }),
+          error:
+            picked.error ?? previewError({ kind: "unsupported_extension", retryable: false }),
         }
       : acceptOne(picked, null);
 
@@ -951,7 +961,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       ? {
           kind: "rejected",
           candidateName: scanned.rejected,
-          error: scanned.error ?? previewError({ kind: "unsupported_extension", retryable: false }),
+          error:
+            scanned.error ?? previewError({ kind: "unsupported_extension", retryable: false }),
         }
       : acceptOne(scanned.file, scanned.parents ?? []);
 
@@ -1024,7 +1035,9 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     chooseFiles: () =>
       (typeof options.pickedFiles === "function"
         ? options.pickedFiles()
-        : Promise.resolve(options.pickedFiles === undefined ? [selectedFile] : options.pickedFiles)
+        : Promise.resolve(
+            options.pickedFiles === undefined ? [selectedFile] : options.pickedFiles,
+          )
       ).then((picked) => {
         if (picked === null) {
           return null;
@@ -1124,12 +1137,12 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
           fileName: row!.fileName,
           sourceKind: row!.sourceKind,
           output:
-            row!.sourceKind === "sciex_wiff"
-              ? { kind: "backendNamedSet" as const, maxMembers: 24 }
-              : {
-                  kind: "knownSingle" as const,
-                  fileName: plannedOutputName(row!.fileName),
-                },
+      row!.sourceKind === "sciex_wiff"
+        ? { kind: "backendNamedSet" as const, maxMembers: 24 }
+        : {
+            kind: "knownSingle" as const,
+            fileName: plannedOutputName(row!.fileName),
+          },
         })),
         outputFormat: "mzML",
         compression: "zlib",
@@ -1147,8 +1160,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       return conversionUpdate();
     },
     retryConversions: async () => {
-      const settled =
-        options.retry === undefined ? conversion : await options.retry(publishConversion);
+      const settled = options.retry === undefined ? conversion : await options.retry(publishConversion);
       publishConversion(settled);
       return conversionUpdate();
     },
@@ -1197,47 +1209,52 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
           outputFileName,
         })),
       );
-      const outcomes = candidates.map(({ item, itemIndex, memberIndex, outputFileName }) => {
-        const existing = held.find((entry) => entry.file.fileName === outputFileName);
-        if (existing !== undefined) {
+      const outcomes = candidates.map(
+        ({ item, itemIndex, memberIndex, outputFileName }) => {
+          const existing = held.find(
+            (entry) => entry.file.fileName === outputFileName,
+          );
+          if (existing !== undefined) {
+            return {
+              kind: "alreadyInWorkspace" as const,
+              itemIndex,
+              memberIndex,
+              sourceHandle: item.datasetHandle,
+              outputFileName,
+              dataset: existing.file,
+            };
+          }
+          if (held.length >= capacity) {
+            return {
+              kind: "refused" as const,
+              itemIndex,
+              memberIndex,
+              sourceHandle: item.datasetHandle,
+              outputFileName,
+              reason: "workspace_full",
+            };
+          }
+          const file: SelectedFile = {
+            handle: `converted-${outputFileName}`,
+            fileName: outputFileName,
+            byteLength:
+              (item.result?.kind === "single"
+                ? item.result.report.output?.byteLength
+                : undefined) ?? 1_024,
+            sourceKind: "mzml",
+            relativeContext: null,
+          };
+          held = [...held, hold(file, null)];
           return {
-            kind: "alreadyInWorkspace" as const,
+            kind: "added" as const,
             itemIndex,
             memberIndex,
             sourceHandle: item.datasetHandle,
             outputFileName,
-            dataset: existing.file,
+            dataset: file,
           };
-        }
-        if (held.length >= capacity) {
-          return {
-            kind: "refused" as const,
-            itemIndex,
-            memberIndex,
-            sourceHandle: item.datasetHandle,
-            outputFileName,
-            reason: "workspace_full",
-          };
-        }
-        const file: SelectedFile = {
-          handle: `converted-${outputFileName}`,
-          fileName: outputFileName,
-          byteLength:
-            (item.result?.kind === "single" ? item.result.report.output?.byteLength : undefined) ??
-            1_024,
-          sourceKind: "mzml",
-          relativeContext: null,
-        };
-        held = [...held, hold(file, null)];
-        return {
-          kind: "added" as const,
-          itemIndex,
-          memberIndex,
-          sourceHandle: item.datasetHandle,
-          outputFileName,
-          dataset: file,
-        };
-      });
+        },
+      );
       return {
         operationId,
         retryRound: conversion.status === "terminal" ? conversion.queue.retryRound : 0,
@@ -1251,9 +1268,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       // authoritative state is answered with. A test that wants the queue to
       // settle differently publishes that itself.
       const settled =
-        options.stop === undefined
-          ? conversion
-          : await options.stop(operationId, publishConversion);
+        options.stop === undefined ? conversion : await options.stop(operationId, publishConversion);
       publishConversion(settled);
       return conversionUpdate();
     },

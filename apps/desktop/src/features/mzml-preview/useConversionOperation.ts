@@ -65,11 +65,7 @@ export type ConversionPlanState =
   | { readonly status: "none" }
   | { readonly status: "loading"; readonly handles: readonly string[] }
   | { readonly status: "loaded"; readonly plan: ConversionQueuePlan }
-  | {
-      readonly status: "failed";
-      readonly handles: readonly string[];
-      readonly error: PreviewError;
-    };
+  | { readonly status: "failed"; readonly handles: readonly string[]; readonly error: PreviewError };
 
 export interface ConversionOperation {
   /** The authoritative slot, as Rust last reported it. */
@@ -289,74 +285,69 @@ export function useConversionOperation(
     };
   }, []);
 
-  const applyUpdate = useCallback(
-    (update: WorkspaceConversionUpdate) => {
-      if (!mounted.current || update.sequence <= installedSequence.current) {
-        return;
-      }
-      // A result belongs to one settling of one queue. Anything that produces a
-      // different one takes it with it: a queue that is no longer terminal, a
-      // different operation, or the same operation settled again by a retry --
-      // which can finish fast enough that no running state is ever polled, so
-      // "not terminal any more" is not a test that catches it.
-      setAdoption((previous) =>
-        previous === null || describes(previous, update) ? previous : null,
-      );
-      installedSequence.current = update.sequence;
-      busyRef.current =
-        update.state.status === "awaitingDestination" ||
-        update.state.status === "running" ||
-        update.state.status === "stopping";
-      setState(update.state);
-      setDiagnostics(update.diagnostics);
-      // Cleared from the authoritative state rather than from the reply, because
-      // a reload has no reply to read. Rust is the one that knows an export has
-      // finished, whichever document asked for it.
-      if (!update.diagnostics.exporting) {
-        exportRequestedRef.current = false;
-        setExportRequested(false);
-      }
-      // Never cleared here. Rust sets it once and cannot unset it, so a document
-      // that lowered it on a later read would be claiming something the session
-      // does not know.
-      if (update.backendQuarantined) {
-        setBackendQuarantined(true);
-      }
-      // The queue is over, so this document is no longer inside a stop it asked
-      // for. Cleared from the authoritative state rather than from the reply to
-      // the stop command, because a reload has no reply to read.
-      if (update.state.status === "terminal" || update.state.status === "idle") {
-        setStopRequested(false);
-      }
-      // A conversion is a backend operation like any other, and it can be the
-      // first to notice that the installed ProteoWizard changed. Without this the
-      // banner and a preview read from the replaced installation would stay on
-      // screen beside a conversion done by its successor, until some later
-      // backend operation happened to reconcile them.
-      if (update.state.status === "terminal") {
-        // Once for the queue, not once per item. Every item of one queue ran on
-        // one installation, so their generations agree -- and reporting each of
-        // them separately would start a backend probe per item before any of them
-        // had answered, which for a full queue is sixteen serial help probes with
-        // preview and conversion disabled throughout.
-        const generations = [
-          // The queue's own reading first. A pass refused for running on a
-          // different installation produced no item, so the reports alone would
-          // leave the banner naming the installation the earlier results came
-          // from until the user rechecked by hand.
-          update.state.queue.installationGeneration,
-          // Whichever cardinality the item's latest attempt had. Both
-          // reports carry the sequence they ran under, and an item is never
-          // described by both.
-          ...update.state.queue.items
-            .map((item) => item.result?.report.installationGeneration)
-            .filter((generation): generation is number => generation !== undefined),
-        ];
-        onInstallationGeneration(Math.max(...generations));
-      }
-    },
-    [onInstallationGeneration],
-  );
+  const applyUpdate = useCallback((update: WorkspaceConversionUpdate) => {
+    if (!mounted.current || update.sequence <= installedSequence.current) {
+      return;
+    }
+    // A result belongs to one settling of one queue. Anything that produces a
+    // different one takes it with it: a queue that is no longer terminal, a
+    // different operation, or the same operation settled again by a retry --
+    // which can finish fast enough that no running state is ever polled, so
+    // "not terminal any more" is not a test that catches it.
+    setAdoption((previous) => (previous === null || describes(previous, update) ? previous : null));
+    installedSequence.current = update.sequence;
+    busyRef.current =
+      update.state.status === "awaitingDestination" ||
+      update.state.status === "running" ||
+      update.state.status === "stopping";
+    setState(update.state);
+    setDiagnostics(update.diagnostics);
+    // Cleared from the authoritative state rather than from the reply, because
+    // a reload has no reply to read. Rust is the one that knows an export has
+    // finished, whichever document asked for it.
+    if (!update.diagnostics.exporting) {
+      exportRequestedRef.current = false;
+      setExportRequested(false);
+    }
+    // Never cleared here. Rust sets it once and cannot unset it, so a document
+    // that lowered it on a later read would be claiming something the session
+    // does not know.
+    if (update.backendQuarantined) {
+      setBackendQuarantined(true);
+    }
+    // The queue is over, so this document is no longer inside a stop it asked
+    // for. Cleared from the authoritative state rather than from the reply to
+    // the stop command, because a reload has no reply to read.
+    if (update.state.status === "terminal" || update.state.status === "idle") {
+      setStopRequested(false);
+    }
+    // A conversion is a backend operation like any other, and it can be the
+    // first to notice that the installed ProteoWizard changed. Without this the
+    // banner and a preview read from the replaced installation would stay on
+    // screen beside a conversion done by its successor, until some later
+    // backend operation happened to reconcile them.
+    if (update.state.status === "terminal") {
+      // Once for the queue, not once per item. Every item of one queue ran on
+      // one installation, so their generations agree -- and reporting each of
+      // them separately would start a backend probe per item before any of them
+      // had answered, which for a full queue is sixteen serial help probes with
+      // preview and conversion disabled throughout.
+      const generations = [
+        // The queue's own reading first. A pass refused for running on a
+        // different installation produced no item, so the reports alone would
+        // leave the banner naming the installation the earlier results came
+        // from until the user rechecked by hand.
+        update.state.queue.installationGeneration,
+        // Whichever cardinality the item's latest attempt had. Both reports
+        // carry the sequence they ran under, and an item is never described by
+        // both at once.
+        ...update.state.queue.items
+          .map((item) => item.result?.report.installationGeneration)
+          .filter((generation): generation is number => generation !== undefined),
+      ];
+      onInstallationGeneration(Math.max(...generations));
+    }
+  }, [onInstallationGeneration]);
 
   const readState = useCallback(() => {
     // One at a time. The token below lets only the newest read install, so two
@@ -656,7 +647,8 @@ export function useConversionOperation(
   // while calling them one -- then receive ten outcomes it had not planned to
   // render. Rust derives it from the very authorities the adoption expands, so
   // the number shown and the outcomes returned cannot disagree.
-  const eligibleOutputCount = state.status === "terminal" ? state.queue.adoptableOutputCount : 0;
+  const eligibleOutputCount =
+    state.status === "terminal" ? state.queue.adoptableOutputCount : 0;
 
   // Whether some acquisition converted files this queue will not offer as a
   // complete set.
@@ -667,7 +659,8 @@ export function useConversionOperation(
   const hasIncompleteOutputSet =
     state.status === "terminal" &&
     state.queue.items.some(
-      (item) => item.result?.kind === "outputSet" && item.result.report.partial !== null,
+      (item) =>
+        item.result?.kind === "outputSet" && item.result.report.partial !== null,
     );
 
   // Only a terminal queue, and only one that finalized something. A running or

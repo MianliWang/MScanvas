@@ -38,7 +38,12 @@ import type {
   WorkspaceRoster,
 } from "./contracts";
 import { formatDatasetLabel } from "./format";
-import { matchesQuery, projectRoster, type RosterProjection, type SortMode } from "./rosterView";
+import {
+  matchesQuery,
+  projectRoster,
+  type RosterProjection,
+  type SortMode,
+} from "./rosterView";
 
 /**
  * What a row is currently known to be.
@@ -286,7 +291,11 @@ function indexOf(datasets: readonly SelectedFile[], handle: string | null): numb
 }
 
 /** The inclusive insertion-order range between two rows, in roster order. */
-function rangeBetween(datasets: readonly SelectedFile[], from: string, to: string): string[] {
+function rangeBetween(
+  datasets: readonly SelectedFile[],
+  from: string,
+  to: string,
+): string[] {
   const start = indexOf(datasets, from);
   const end = indexOf(datasets, to);
   if (start < 0 || end < 0) {
@@ -430,7 +439,9 @@ function reconciled(
   if (next.focused === null || live.has(next.focused)) {
     // Nothing was lost. A hidden anchor still has to go: kept, the next Shift
     // action would measure a range from a row that is not on screen.
-    return anchorSurvives || next.anchor === null ? next : { ...next, anchor: next.focused };
+    return anchorSurvives || next.anchor === null
+      ? next
+      : { ...next, anchor: next.focused };
   }
   const focused =
     prefer === "first"
@@ -676,7 +687,9 @@ function transition(state: RosterState, action: RosterAction): RosterState {
         // establishes the tab stop when the import filled an empty workspace.
         focused,
         anchor:
-          survivingFocus === null ? focused : (survivingHandle(state.anchor, live) ?? focused),
+          survivingFocus === null
+            ? focused
+            : (survivingHandle(state.anchor, live) ?? focused),
         // Both, and in this order. What the user picked while waiting is still
         // picked, and what arrived is picked too -- so the batch can be acted
         // on as a batch without discarding the work they did meanwhile.
@@ -771,7 +784,9 @@ function transition(state: RosterState, action: RosterAction): RosterState {
           ...state,
           focused: handle,
           anchor: from,
-          selected: modifiers.ctrl ? new Set([...state.selected, ...range]) : new Set(range),
+          selected: modifiers.ctrl
+            ? new Set([...state.selected, ...range])
+            : new Set(range),
         };
       }
       if (modifiers.ctrl) {
@@ -828,7 +843,7 @@ function transition(state: RosterState, action: RosterAction): RosterState {
       if (visible.length === 0) {
         return state;
       }
-      const focused = state.focused ?? visible[0]?.handle ?? null;
+      const focused = state.focused ?? (visible[0]?.handle ?? null);
       return {
         ...state,
         focused,
