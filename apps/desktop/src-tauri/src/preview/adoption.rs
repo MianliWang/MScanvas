@@ -25,44 +25,33 @@
 //! nothing else. The output stays exactly where it is, and `Add files…` remains
 //! the ordinary way to reach it afterwards.
 
-#[cfg(test)]
 use std::fmt;
 use std::fs::File;
 use std::path::Path;
-#[cfg(test)]
 use std::sync::Arc;
 
 use mscanvas_proteowizard::{FinalizedOutput, OutputDrift};
-#[cfg(test)]
 use mscanvas_proteowizard::{MAX_CONVERSION_OUTPUTS_PER_SOURCE, SciexSampleCompleteness};
 
-#[cfg(test)]
 use mscanvas_proteowizard::{BackendDiagnosticText, FinalizedOutputSet};
 
-#[cfg(test)]
 use super::conversion::WorkspaceMultiOutputConversionReport;
 use super::destination::{DestinationHold, admit_destination_root};
 use super::operation::AdmittedDestination;
-#[cfg(test)]
 use super::operation::ItemState;
-#[cfg(test)]
 use super::selection::DatasetSourceKind;
 use super::selection::{AcceptedFile, DatasetId, accept_mzml_file};
-#[cfg(test)]
 use super::service::SciexConversion;
 
 /// The group outcome a set must have to be adoptable, by the lifecycle's own
 /// name for it.
-#[cfg(test)]
 const FULLY_FINALIZED: &str = "fully_finalized";
 
 /// The member state every member of such a set must be in.
-#[cfg(test)]
 const FINALIZED: &str = "finalized";
 
 /// The group outcome of a set that stepped aside because every one of its
 /// destination names was already occupied by something it did not write.
-#[cfg(test)]
 const SKIPPED_EXISTING_DESTINATIONS: &str = "skipped_existing_destinations";
 
 /// Why one finalized output cannot be taken into the workspace.
@@ -267,7 +256,6 @@ impl FinalizedOutputAdoptionTicket {
 /// Path-free and count-free beyond what a caller needs to tell the cases apart.
 /// Every member is the same decision — there is no set to adopt — differing
 /// only in what it can honestly say about why.
-#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum OutputSetNotAdoptable {
     /// The conversion did not publish its whole output set. Deliberately not
@@ -282,7 +270,6 @@ pub(super) enum OutputSetNotAdoptable {
     MembersDoNotPair,
 }
 
-#[cfg(test)]
 impl OutputSetNotAdoptable {
     pub(super) const fn stable_id(self) -> &'static str {
         match self {
@@ -323,7 +310,6 @@ impl OutputSetNotAdoptable {
 /// Bounded by the lifecycle's own output bound, so the vector cannot grow past
 /// what one conversion may produce.
 ///
-#[cfg(test)]
 /// Dropping this closes the retained handles and deletes nothing.
 pub(super) struct FinalizedOutputSetAdoptionTicket {
     /// The session that minted this, because the row below is named by an id
@@ -351,7 +337,6 @@ pub(super) struct FinalizedOutputSetAdoptionTicket {
     members: Vec<Arc<FinalizedOutputAdoptionTicket>>,
 }
 
-#[cfg(test)]
 impl fmt::Debug for FinalizedOutputSetAdoptionTicket {
     /// Opaque but for its shape. The member tickets hold open handles and the
     /// names are the backend's; what a reader of a log needs is how many there
@@ -361,11 +346,18 @@ impl fmt::Debug for FinalizedOutputSetAdoptionTicket {
             .debug_struct("FinalizedOutputSetAdoptionTicket")
             .field("members", &self.members.len())
             .field("sample_count", &self.sample_count)
+            // Both safe to render and both worth having in a log: a family name
+            // is this application's own vocabulary, and the run is a
+            // session-scoped counter that names an event and never reaches
+            // disk. The row is the opaque handle every other answer already
+            // carries.
+            .field("source", &self.source)
+            .field("source_kind", &self.source_kind)
+            .field("run", &self.run)
             .finish_non_exhaustive()
     }
 }
 
-#[cfg(test)]
 impl FinalizedOutputSetAdoptionTicket {
     /// Builds a ticket from a conversion that really happened, or refuses.
     ///
@@ -379,22 +371,33 @@ impl FinalizedOutputSetAdoptionTicket {
     /// # Errors
     ///
     /// Refuses every run that is not a complete, sample-complete publication,
-    /// and refuses a run whose retained objects cannot be paired one-to-one
-    /// with the members the report says were finalized.
+    /// a run of another session, and a run whose retained objects cannot be
+    /// paired one-to-one with the members the report says were finalized.
     pub(super) fn of(
         session: u64,
         source_display_name: String,
         conversion: SciexConversion,
     ) -> JudgedOutputSet {
+        // Before the row is looked up, because the lookup is the crossing: the
+        // report names its source by an id every session allocates from zero,
+        // so another session's conversion would resolve a row of *this*
+        // session's and mint a perfectly self-consistent ticket for the wrong
+        // acquisition. A check made afterwards would be checking a ticket that
+        // is already internally consistent and already wrong.
+        let ran_here = conversion.session() == session;
         let (report, retained, destination, run) = conversion.into_parts();
-        let ticket = Self::judge(
-            session,
-            source_display_name,
-            &report,
-            retained,
-            destination,
-            run,
-        );
+        let ticket = if ran_here {
+            Self::judge(
+                session,
+                source_display_name,
+                &report,
+                retained,
+                destination,
+                run,
+            )
+        } else {
+            Err(OutputSetNotAdoptable::MembersDoNotPair)
+        };
         JudgedOutputSet {
             report,
             run,
@@ -481,23 +484,32 @@ impl FinalizedOutputSetAdoptionTicket {
         })
     }
 
+    #[cfg(test)]
     pub(super) const fn source(&self) -> DatasetId {
         self.source
     }
 
     /// The session that minted this ticket.
+    ///
+    /// Asked by the queue before it will expand this authority into member
+    /// candidates: a `DatasetId` is allocated per session from zero, so a
+    /// ticket of another session would commit its outputs against whatever row
+    /// happens to hold that number here.
     pub(super) const fn session(&self) -> u64 {
         self.session
     }
 
+    #[cfg(test)]
     pub(super) const fn source_kind(&self) -> DatasetSourceKind {
         self.source_kind
     }
 
+    #[cfg(test)]
     pub(super) const fn run(&self) -> u64 {
         self.run
     }
 
+    #[cfg(test)]
     pub(super) const fn sample_count(&self) -> usize {
         self.sample_count
     }
@@ -635,7 +647,6 @@ fn refusal_of(kind: &str) -> AdoptionRefusal {
 /// answer of "no ticket" is only meaningful beside the outcome that explains
 /// it, and a caller holding one without the other could describe a refusal with
 /// somebody else's report.
-#[cfg(test)]
 pub(super) struct JudgedOutputSet {
     pub(super) report: WorkspaceMultiOutputConversionReport,
     /// The exact attempt this is about.
@@ -655,7 +666,6 @@ pub(super) struct JudgedOutputSet {
 /// So one owned [`SciexConversion`] goes in and one settlement comes out. The
 /// eligibility judgement happens once, here, and the ticket either exists or
 /// the reason it does not is recorded beside the report that explains it.
-#[cfg(test)]
 pub(super) struct SciexAttemptSettlement {
     state: ItemState,
     retryable: bool,
@@ -671,7 +681,6 @@ pub(super) struct SciexAttemptSettlement {
     diagnostics: Option<Box<BackendDiagnosticText>>,
 }
 
-#[cfg(test)]
 impl SciexAttemptSettlement {
     /// Settles one conversion, whole and by value.
     ///
@@ -768,7 +777,6 @@ impl SciexAttemptSettlement {
     }
 }
 
-#[cfg(test)]
 impl fmt::Debug for SciexAttemptSettlement {
     /// Shape and stable identifiers. No member name, no path, no handle.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -797,7 +805,6 @@ impl fmt::Debug for SciexAttemptSettlement {
 /// backend was launched and that the single-output classifier already calls
 /// retryable for the same physical reason: the destination folder could not be
 /// opened or inspected. Nothing was created and the user can fix the folder.
-#[cfg(test)]
 fn set_outcome_is_retryable(report: &WorkspaceMultiOutputConversionReport) -> bool {
     // Residue disqualifies a retry for the reason it does on the single path: a
     // staging directory this session could not reclaim is still inside the

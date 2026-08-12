@@ -337,22 +337,72 @@ fn has_shimadzu_lcd_extension(path: &Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("lcd"))
 }
 
+/// Whether a name proposes the SCIEX WIFF family.
+///
+/// A routing question and only that, exactly like the two above. It chooses
+/// which admission is asked; it never admits anything, and the crate re-applies
+/// its whole rule -- the compound-file structure, the four required directory
+/// entries, the companion's own signature -- to whatever this routes to it.
+///
+/// Deliberately the *primary's* extension and nothing else. `.wiff.scan` has
+/// extension `scan`, so a companion selected on its own does not reach here;
+/// `.wiff2` is a different container read by a different vendor assembly, and
+/// this boundary has no acquisition, no measurement and therefore no admission
+/// for it.
+fn has_sciex_wiff_extension(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("wiff"))
+}
+
+/// Whether a name is a SCIEX companion the user selected on its own.
+///
+/// Its own answer rather than a fall-through to mzML, because the mzML refusal
+/// would say this product opens `.mzML` files -- true, and not what went wrong.
+/// The user selected half of an acquisition, and what they can do about it is
+/// select the other half.
+///
+/// Matched on the whole file name rather than on an extension, because the
+/// suffix is appended to the primary's *whole* name: the companion of `a.wiff`
+/// is `a.wiff.scan`. A file merely called `notes.scan` is not this and is left
+/// to the ordinary refusal.
+fn is_sciex_wiff_companion_name(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            let lowered = name.to_ascii_lowercase();
+            lowered.len() > SCIEX_WIFF_COMPANION_SUFFIX.len()
+                && lowered.ends_with(SCIEX_WIFF_COMPANION_SUFFIX)
+        })
+}
+
+/// The whole suffix a SCIEX companion's name ends in, lowercased.
+const SCIEX_WIFF_COMPANION_SUFFIX: &str = ".wiff.scan";
+
 /// Admits one file the user named, under the rule its name proposes.
 ///
 /// The single entry point for the picker, and the only place the product widens
 /// what it accepts. The extension chooses *which admission runs*; it never
 /// admits anything itself. A `.raw` candidate is put to the Thermo signature
-/// rule and a `.lcd` candidate to the Shimadzu compound-file rule, and each is
-/// refused when its bytes are not an acquisition of that family; everything
-/// else is put to mzML admission, which refuses an unsupported name with the
-/// error it always has, so a candidate the product does not open reads the same
-/// as before.
+/// rule, a `.lcd` candidate to the Shimadzu compound-file rule and a `.wiff`
+/// candidate to the SCIEX bundle rule, and each is refused when its bytes are
+/// not an acquisition of that family; everything else is put to mzML admission,
+/// which refuses an unsupported name with the error it always has, so a
+/// candidate the product does not open reads the same as before.
+///
+/// **The extension is routing, not recognition.** A `.wiff` holding a
+/// LabSolutions container is refused by the SCIEX rule, a `.lcd` holding SCIEX
+/// bytes is refused by the LabSolutions rule, and neither falls through to the
+/// other: a name that proposed a family and failed it is a refusal, not a
+/// second guess. Renaming an acquisition does not change what it is, and this
+/// boundary's answer to a renamed one is no.
 ///
 /// Folder discovery and the Explorer drop do not call this. Both walk or
 /// classify a filesystem surface the user did not enumerate file by file, and
 /// they stay regular-mzML-only on purpose -- admitting a vendor family from a
-/// walk is a wider claim than admitting one the user named. ADR 0020 records
-/// the distinction.
+/// walk is a wider claim than admitting one the user named, and for a bundle it
+/// is wider again, because pairing an object with a neighbour it was not
+/// selected with is a decision no traversal has the evidence to make. ADR 0020
+/// records the distinction and ADR 0027 keeps it for this family.
 ///
 /// No backend process is launched here, for any family. Admission is filesystem
 /// work and stays filesystem work.
@@ -363,7 +413,29 @@ pub(super) fn accept_workspace_file(path: &Path) -> Result<AcceptedFile, Preview
     if has_shimadzu_lcd_extension(path) {
         return accept_shimadzu_lcd_file(path);
     }
+    if has_sciex_wiff_extension(path) {
+        return accept_sciex_wiff_bundle(path);
+    }
+    // Before mzML admission, so the half-an-acquisition case gets the answer
+    // that tells the user what to do instead of the one about file types.
+    if is_sciex_wiff_companion_name(path) {
+        return Err(sciex_companion_selected_alone());
+    }
     accept_mzml_file(path)
+}
+
+/// What selecting a `.wiff.scan` on its own answers with.
+///
+/// The companion is never a dataset. It is admitted only as part of the bundle
+/// its primary names, and the primary is what the user has to select -- so this
+/// says that, without naming a path and without implying the file is broken.
+fn sciex_companion_selected_alone() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "sciex_companion_selected_alone",
+        "That is the companion half of a SCIEX WIFF acquisition. Select the .wiff file instead; \
+         MSCanvas adds its matching .wiff.scan with it.",
+        false,
+    )
 }
 
 /// Validates a caller-supplied path and describes it without leaking it.
@@ -518,9 +590,15 @@ pub(super) fn accept_shimadzu_lcd_file(path: &Path) -> Result<AcceptedFile, Prev
 /// Accepts a SCIEX WIFF acquisition -- the `.wiff` and its `.wiff.scan` -- as
 /// one dataset.
 ///
-/// Reachable from nothing a user can do. No picker route, no folder walk, no
-/// drop and no command reaches this; it exists so that a dataset which is going
-/// to be *converted* can be admitted under the rule its family actually needs.
+/// Reachable from the file picker through [`accept_workspace_file`]'s routing,
+/// and from nowhere else: folder discovery and the Explorer drop remain
+/// regular-mzML-only. ADR 0023 landed this privately; ADR 0027 gives it the
+/// picker.
+///
+/// **One selected primary is one dataset.** The companion is admitted with it
+/// and never becomes a second row -- it is not a dataset, it is half of this
+/// one -- so selecting both paths in one batch yields one acquisition and one
+/// refusal that says so, rather than two acquisitions.
 ///
 /// **What is different here, and why the order is what it is.** Every other
 /// family in this module leases one object and then asks the crate to admit it.
@@ -768,24 +846,37 @@ fn source_not_admitted(rejection: ConversionSourceRejection) -> PreviewErrorDto 
             "unrecognized_acquisition",
             "That file does not carry the signature its family requires.",
         ),
-        // Answered here because the match is exhaustive, and answered as the
-        // one above it because they are one thing to a user: the file is not
-        // what its name says. No workspace path can produce these today — the
-        // families that raise them are private to the conversion crate — so
-        // this adds compiled arms, an existing message and no surface.
-        //
-        // The three companion refusals belong to a family whose acquisition is
-        // a bundle: the object named is right and something it depends on is
-        // missing, is not a file, or is not what it should be. A user-facing
-        // surface for that family would owe each of them its own sentence; it
-        // does not exist, and inventing the copy here would be inventing the
-        // surface.
-        ConversionSourceRejection::FamilyStructureMismatch
-        | ConversionSourceRejection::CompanionMissing
-        | ConversionSourceRejection::CompanionNotARegularFile
-        | ConversionSourceRejection::CompanionSignatureMismatch => (
+        // The object named is right and its container is not what the family
+        // requires. Said as one thing to a user, because "the four entries a
+        // SCIEX container must carry are not all there" is a fact about a
+        // format, and what it means is that this is not that acquisition.
+        ConversionSourceRejection::FamilyStructureMismatch => (
             "unrecognized_acquisition",
             "That file does not hold the structure its family requires.",
+        ),
+        // The three companion refusals each get their own sentence now that
+        // this family has a surface. They are genuinely different situations
+        // and, unlike most refusals, the first two are ones the user can fix —
+        // so collapsing them would cost the only actionable answer this
+        // boundary has for a bundle.
+        //
+        // None of them names a path. What the user needs is which file is
+        // missing relative to the one they chose, and they already know where
+        // they chose it from.
+        ConversionSourceRejection::CompanionMissing => (
+            "sciex_companion_missing",
+            "This SCIEX WIFF acquisition needs its matching .wiff.scan file beside the .wiff \
+             file. Copy both files together and add the .wiff again.",
+        ),
+        ConversionSourceRejection::CompanionNotARegularFile => (
+            "sciex_companion_not_a_file",
+            "The matching .wiff.scan beside this acquisition is a folder or a link rather than a \
+             file, so MSCanvas will not read it.",
+        ),
+        ConversionSourceRejection::CompanionSignatureMismatch => (
+            "sciex_companion_unrecognized",
+            "The matching .wiff.scan beside this acquisition is not the companion MSCanvas \
+             expects, so the acquisition was not added.",
         ),
         ConversionSourceRejection::NotARegularFile => (
             "not_a_regular_file",

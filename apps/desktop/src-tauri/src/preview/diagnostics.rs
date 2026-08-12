@@ -35,7 +35,6 @@ use std::sync::Arc;
 use mscanvas_proteowizard::{
     BackendDiagnosticText, BackendRunFacts, StagingResidue, ValidationMode,
 };
-#[cfg(test)]
 use mscanvas_proteowizard::{MAX_CONVERSION_OUTPUTS_PER_SOURCE, SciexSampleCompleteness};
 
 use super::conversion::{ValidationFacts, WorkspaceConversionReport};
@@ -146,7 +145,6 @@ pub(super) struct ConversionFailureDiagnosticTicket {
     ///
     /// Present only for a set item, which is why an export of an ordinary queue
     /// is byte-identical to what it was before this existed.
-    #[cfg(test)]
     output_set: Option<OutputSetDiagnosticFacts>,
 }
 
@@ -156,7 +154,6 @@ pub(super) struct ConversionFailureDiagnosticTicket {
 /// backend derives those from sample identifiers inside the acquisition, so
 /// they are the user's data rather than this application's vocabulary — and
 /// every failure class this has to tell apart is distinguishable without them.
-#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct OutputSetDiagnosticFacts {
     /// The lifecycle's own bound, so a reader can see the counts are bounded
@@ -181,7 +178,6 @@ pub(super) struct OutputSetDiagnosticFacts {
     pub(super) not_adoptable: Option<&'static str>,
 }
 
-#[cfg(test)]
 impl OutputSetDiagnosticFacts {
     /// The shape of a set item that never reached the lifecycle.
     ///
@@ -209,7 +205,6 @@ impl OutputSetDiagnosticFacts {
 }
 
 /// A partial publication, in counts.
-#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct PartialFinalizationFacts {
     pub(super) finalized_count: usize,
@@ -272,7 +267,6 @@ impl ConversionFailureDiagnosticTicket {
             // finalized item with cleanup residue is a run whose backend did
             // its job, and the run itself already declined to retain its text.
             text: (state == ItemState::Failed).then_some(text).flatten(),
-            #[cfg(test)]
             output_set: None,
         })
     }
@@ -282,7 +276,6 @@ impl ConversionFailureDiagnosticTicket {
     /// The same rule the single-output constructor follows: a ticket exists
     /// only where there is something to diagnose. A finalized set with no
     /// residue is a run that worked.
-    #[cfg(test)]
     pub(super) fn of_set(
         identity: DiagnosticItemIdentity,
         settlement: &mut super::adoption::SciexAttemptSettlement,
@@ -347,7 +340,6 @@ impl ConversionFailureDiagnosticTicket {
         retryable: bool,
         error: &PreviewErrorDto,
     ) -> Self {
-        #[cfg(test)]
         let output_set = identity.output.diagnostic_shape();
         Self {
             identity,
@@ -364,7 +356,6 @@ impl ConversionFailureDiagnosticTicket {
             text: None,
             // A refusal reaches every family, so the shape comes from the item
             // rather than from the run it never made.
-            #[cfg(test)]
             output_set,
         }
     }
@@ -381,7 +372,7 @@ impl ConversionFailureDiagnosticTicket {
         state: ItemState,
         facts: CancellationFacts,
         text: Option<Box<BackendDiagnosticText>>,
-        #[cfg(test)] output_set: Option<OutputSetDiagnosticFacts>,
+        output_set: Option<OutputSetDiagnosticFacts>,
     ) -> Option<Self> {
         if state != ItemState::CancellationFailed && facts.staging_residue.is_none() {
             return None;
@@ -409,7 +400,6 @@ impl ConversionFailureDiagnosticTicket {
             // Kept, so a stopped set item is still recognisably one. A stop
             // reaches the run before it settles, so these are the shape and
             // nothing else -- see `SetStopFacts::bound_source_objects`.
-            #[cfg(test)]
             output_set,
         })
     }
@@ -754,13 +744,11 @@ pub(super) const fn validation_mode_id(mode: ValidationMode) -> &'static str {
 ///
 /// The lifecycle's own spelling, passed through rather than re-derived, so the
 /// export and the report cannot drift apart.
-#[cfg(test)]
 const fn set_group_outcome_id(group_outcome: &'static str) -> &'static str {
     group_outcome
 }
 
 /// How many of a set's members are in one state.
-#[cfg(test)]
 fn member_count_in(
     report: &super::conversion::WorkspaceMultiOutputConversionReport,
     state: &str,
@@ -777,7 +765,6 @@ fn member_count_in(
 /// Closed rather than `{:?}` over `io::ErrorKind`, because that rendering is
 /// not a stable contract and an unknown kind must not become unbounded text in
 /// an exported document.
-#[cfg(test)]
 const fn io_error_kind_id(kind: std::io::ErrorKind) -> &'static str {
     match kind {
         std::io::ErrorKind::AlreadyExists => "already_exists",

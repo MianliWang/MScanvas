@@ -164,18 +164,25 @@ mod windows_dialog {
         owner: Option<isize>,
     ) -> Result<Option<Vec<PathBuf>>, PreviewErrorDto> {
         // A double-NUL terminated pair list: display label, then pattern. One
-        // combined entry rather than three, because the three families are one
+        // combined entry rather than four, because the four families are one
         // workspace and a user choosing an acquisition should not have to know
         // which filter row it is under.
         //
         // Candidate filtering only. What a file is is decided by opening it:
         // an mzML candidate goes to mzML admission, a `.raw` candidate to the
-        // signature rule, and a `.lcd` candidate to the compound-file rule --
-        // each of which refuses a name whose bytes are not an acquisition of
-        // that family.
+        // signature rule, a `.lcd` candidate to the compound-file rule and a
+        // `.wiff` candidate to the SCIEX bundle rule -- each of which refuses a
+        // name whose bytes are not an acquisition of that family.
+        //
+        // `*.wiff.scan` is deliberately **not** offered. The companion is not a
+        // separately selectable acquisition: it is admitted with the primary
+        // that names it, and proposing it here would invite the user to select
+        // half of one. Selecting it anyway is refused by name in
+        // `accept_workspace_file`, with the sentence that says what to select
+        // instead.
         let mut filter = Vec::new();
-        filter.extend_from_slice(&wide("Acquisitions (*.mzML;*.raw;*.lcd)"));
-        filter.extend_from_slice(&wide("*.mzML;*.raw;*.lcd"));
+        filter.extend_from_slice(&wide("Acquisitions (*.mzML;*.raw;*.lcd;*.wiff)"));
+        filter.extend_from_slice(&wide("*.mzML;*.raw;*.lcd;*.wiff"));
         filter.push(0);
         let title = wide("Open acquisitions");
         let default_extension = wide("mzML");

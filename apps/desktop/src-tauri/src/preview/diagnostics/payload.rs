@@ -167,7 +167,6 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
     );
     // Emitted only for a backend-named set, so an ordinary queue's export is
     // exactly the document it was before this member existed.
-    #[cfg(test)]
     if let Some(facts) = ticket.output_set {
         item.object("outputSet", |written| {
             written.count("maxMembers", facts.max_members);
@@ -359,7 +358,6 @@ impl<'a> Members<'a> {
     }
 
     /// A count, or `null` where there is none to report.
-    #[cfg(test)]
     fn optional_count(&mut self, name: &str, value: Option<usize>) {
         match value {
             Some(value) => self.count(name, value),
