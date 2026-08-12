@@ -72,6 +72,12 @@ separate parameter — and each was a way to pair two conversions wrongly:
   so every per-member proof would pass and the rows would be registered under a
   directory the conversion never wrote to.
 
+The ticket also names the **session** that minted it, and adoption refuses one
+from any other. `DatasetId`s are allocated per session from zero, so the same
+number names different rows in two of them: adopting one session's ticket in
+another would commit its outputs against whatever row happened to hold that
+number, carrying the wrong display name and family with them.
+
 All of them are closed by removal rather than by a check, because a check leaves
 the wrong call expressible.
 

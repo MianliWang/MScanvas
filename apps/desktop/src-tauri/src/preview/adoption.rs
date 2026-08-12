@@ -314,6 +314,9 @@ impl OutputSetNotAdoptable {
 #[cfg(test)]
 /// Dropping this closes the retained handles and deletes nothing.
 pub(super) struct FinalizedOutputSetAdoptionTicket {
+    /// The session that minted this, because the row below is named by an id
+    /// only that session allocates.
+    session: u64,
     /// The workspace row the acquisition was converted from.
     ///
     /// The acquisition's *display name* is not kept here: every member ticket
@@ -367,6 +370,7 @@ impl FinalizedOutputSetAdoptionTicket {
     /// and refuses a run whose retained objects cannot be paired one-to-one
     /// with the members the report says were finalized.
     pub(super) fn of(
+        session: u64,
         source: DatasetId,
         source_display_name: String,
         source_kind: DatasetSourceKind,
@@ -426,6 +430,7 @@ impl FinalizedOutputSetAdoptionTicket {
             .collect();
 
         Ok(Self {
+            session,
             source,
             source_kind,
             run,
@@ -436,6 +441,11 @@ impl FinalizedOutputSetAdoptionTicket {
 
     pub(super) const fn source(&self) -> DatasetId {
         self.source
+    }
+
+    /// The session that minted this ticket.
+    pub(super) const fn session(&self) -> u64 {
+        self.session
     }
 
     pub(super) const fn source_kind(&self) -> DatasetSourceKind {

@@ -110,6 +110,7 @@ Vendor-free and backend-free, over synthetic bundles and a substituted backend.
 | skipped set | retained nothing of its own; `output_set_not_fully_finalized` |
 | fully finalized, completeness stripped | `output_set_completeness_not_established` |
 | report and objects that do not pair | `output_set_members_do_not_pair` |
+| a ticket minted by another session | `outputs_not_adoptable`, no row added, and it still adopts where it belongs |
 | adoption twice over | the backend ran once; no row holds preview state |
 
 ## Mutations

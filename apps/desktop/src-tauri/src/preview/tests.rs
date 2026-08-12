@@ -16997,3 +16997,35 @@ fn a_set_whose_members_do_not_pair_mints_no_ticket() {
     assert_eq!(refused.kind, "output_set_members_do_not_pair");
     assert_eq!(service.dataset_count(), 1);
 }
+
+/// A ticket minted by one session cannot be adopted by another.
+///
+/// `DatasetId`s are allocated per service from zero, so the same number names
+/// different rows in two of them. Adopting A's ticket in B would commit A's
+/// outputs against whatever row happens to hold that number in B, carrying A's
+/// display name and family with them.
+#[test]
+fn a_ticket_from_another_session_is_refused() {
+    let (_fixture, converted) = converted_output_set("set-other-session", &["a-S1.mzML"]);
+
+    // A second session that holds a row of its own, so the numbering collides.
+    let elsewhere = TestFile::new("set-other-session-b");
+    let other = output_set_service(FakeOutputSetRunner::writing(&["unused.mzML"]));
+    other
+        .add_files(&[elsewhere.readable_mzml("unrelated.mzML")])
+        .expect("an ordinary mzML is admitted");
+    let before = other.dataset_count();
+
+    let refused = other
+        .adopt_output_set(&converted.ticket)
+        .expect_err("another session's ticket is not this workspace's to adopt");
+    assert_eq!(refused.kind, "outputs_not_adoptable");
+    assert_eq!(other.dataset_count(), before, "it added a row anyway");
+
+    // And the ticket still works where it belongs.
+    let result = converted
+        .service
+        .adopt_output_set(&converted.ticket)
+        .expect("the minting session adopts it");
+    assert_eq!(set_adoption_kinds(&result), vec!["added"]);
+}

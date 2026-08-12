@@ -502,6 +502,15 @@ pub struct PreviewService {
     /// same reason -- the paths that consult it must not take a lock that the
     /// adoption itself will want back.
     adopting_outputs: AtomicBool,
+    /// Which session this is.
+    ///
+    /// `DatasetId`s are allocated per service, from zero, so the same number
+    /// names different rows in two of them. A ticket carries the id of the row
+    /// it was converted from; adopting it in the session that did not mint it
+    /// would commit one session's outputs against another's row. The number is
+    /// what lets that be refused rather than merely be unlikely.
+    #[cfg(test)]
+    session: u64,
     /// The session's one diagnostics export.
     ///
     /// A leaf beside the conversion slot rather than a field inside it. What it
@@ -559,6 +568,8 @@ impl PreviewService {
             conversion_busy: AtomicBool::new(false),
             backend_quarantined: AtomicBool::new(false),
             adopting_outputs: AtomicBool::new(false),
+            #[cfg(test)]
+            session: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
             diagnostics_export: Mutex::new(DiagnosticsExportSlot::default()),
             diagnostics_exporting: AtomicBool::new(false),
             installation_generation: AtomicU64::new(0),
@@ -1712,14 +1723,20 @@ impl PreviewService {
             let dataset = workspace.registry.get(id).ok_or_else(unknown_dataset)?;
             dataset.file().file_name().to_owned()
         };
-        FinalizedOutputSetAdoptionTicket::of(id, source_display_name, source_kind, conversion)
-            .map_err(|refusal| {
-                PreviewErrorDto::new(
-                    refusal.stable_id(),
-                    "That conversion did not produce a complete output set to adopt.",
-                    false,
-                )
-            })
+        FinalizedOutputSetAdoptionTicket::of(
+            self.session,
+            id,
+            source_display_name,
+            source_kind,
+            conversion,
+        )
+        .map_err(|refusal| {
+            PreviewErrorDto::new(
+                refusal.stable_id(),
+                "That conversion did not produce a complete output set to adopt.",
+                false,
+            )
+        })
     }
 
     /// Adopts one fully finalized, sample-complete output set into this
@@ -1749,6 +1766,15 @@ impl PreviewService {
         &self,
         ticket: &FinalizedOutputSetAdoptionTicket,
     ) -> Result<WorkspaceOutputSetAdoptionResult, PreviewErrorDto> {
+        // Before anything is claimed. A ticket names the row it was converted
+        // from by an id this session allocates from zero, so another session's
+        // ticket would commit its outputs against whatever row happens to hold
+        // that number here -- with the display name and family of a row that is
+        // not it. Refused rather than validated field by field: the ticket
+        // simply does not belong to this workspace.
+        if ticket.session() != self.session {
+            return Err(outputs_not_adoptable());
+        }
         let reserved = {
             // The same gate the visible adoption reserves under, waiting out a
             // native drop that has claimed the workspace. Reserving in front of
@@ -5023,6 +5049,10 @@ impl SciexConversion {
 /// run — which is the one thing this identity exists to prevent.
 #[cfg(test)]
 static NEXT_CONVERSION_RUN: AtomicU64 = AtomicU64::new(1);
+
+/// Hands out one identity per session.
+#[cfg(test)]
+static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 
 /// What one private output-set adoption did.
 ///
