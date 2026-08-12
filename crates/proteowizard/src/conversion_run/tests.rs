@@ -4683,7 +4683,7 @@ impl SetFixture {
 
     fn settle(&self, conflict: ConflictPolicy) -> output_set::SettledOutputSet {
         let destination = self.destination();
-        output_set::settle_staged_output_set(
+        output_set::settle_staged_output_set_seamed(
             output_set::StagedOutputSet {
                 source: &self.source_facts,
                 directory: &self.staged,
@@ -4693,6 +4693,10 @@ impl SetFixture {
             conflict,
             ConversionPolicy::default(),
             MzmlScanLimits::default(),
+            output_set::SetRunSeam {
+                names_claimed: &mut |_| output_set::OutputNamesClaimed::None,
+                before_member_publication: &mut |_| {},
+            },
         )
     }
 }
@@ -5006,18 +5010,21 @@ fn publication_moves_the_validated_object_not_whatever_the_name_holds() {
         ConflictPolicy::Fail,
         ConversionPolicy::default(),
         MzmlScanLimits::default(),
-        |_| {
-            // Between validation and publication, the validated object is
-            // moved aside and a different file is put at the staged name. The
-            // rename acts on the validated handle, so the impostor must not be
-            // what arrives at the destination.
-            let staged_name = fixture.staged.join("sample_01.mzML");
-            fs::rename(
-                &staged_name,
-                fixture.directory.path().join("moved-aside.mzML"),
-            )
-            .expect("move the validated object aside");
-            fs::write(&staged_name, b"<mzML>impostor</mzML>").expect("replace the staged name");
+        output_set::SetRunSeam {
+            names_claimed: &mut |_| output_set::OutputNamesClaimed::None,
+            before_member_publication: &mut |_| {
+                // Between validation and publication, the validated object is
+                // moved aside and a different file is put at the staged name. The
+                // rename acts on the validated handle, so the impostor must not be
+                // what arrives at the destination.
+                let staged_name = fixture.staged.join("sample_01.mzML");
+                fs::rename(
+                    &staged_name,
+                    fixture.directory.path().join("moved-aside.mzML"),
+                )
+                .expect("move the validated object aside");
+                fs::write(&staged_name, b"<mzML>impostor</mzML>").expect("replace the staged name");
+            },
         },
     );
 
@@ -5136,13 +5143,16 @@ fn a_mid_set_publication_failure_is_reported_as_partially_finalized() {
         ConflictPolicy::Fail,
         ConversionPolicy::default(),
         MzmlScanLimits::default(),
-        |position| {
-            if position == 1 {
-                // The race: after the set preflight passed, the second name is
-                // taken by someone else.
-                fs::write(fixture.destination_root.join("sample_02.mzML"), b"raced in")
-                    .expect("occupy the second name mid-set");
-            }
+        output_set::SetRunSeam {
+            names_claimed: &mut |_| output_set::OutputNamesClaimed::None,
+            before_member_publication: &mut |position| {
+                if position == 1 {
+                    // The race: after the set preflight passed, the second name is
+                    // taken by someone else.
+                    fs::write(fixture.destination_root.join("sample_02.mzML"), b"raced in")
+                        .expect("occupy the second name mid-set");
+                }
+            },
         },
     );
 
@@ -5230,11 +5240,14 @@ fn a_first_member_publication_failure_is_a_refusal_not_a_partial_state() {
         ConflictPolicy::Fail,
         ConversionPolicy::default(),
         MzmlScanLimits::default(),
-        |position| {
-            if position == 0 {
-                fs::write(fixture.destination_root.join("sample_01.mzML"), b"raced in")
-                    .expect("occupy the first name mid-set");
-            }
+        output_set::SetRunSeam {
+            names_claimed: &mut |_| output_set::OutputNamesClaimed::None,
+            before_member_publication: &mut |position| {
+                if position == 0 {
+                    fs::write(fixture.destination_root.join("sample_01.mzML"), b"raced in")
+                        .expect("occupy the first name mid-set");
+                }
+            },
         },
     );
 

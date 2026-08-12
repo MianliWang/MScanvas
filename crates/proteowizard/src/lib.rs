@@ -61,8 +61,9 @@ pub use conversion_run::artifact::{
 pub use conversion_run::output_set::{
     FinalizedOutputSet, MAX_CONVERSION_OUTPUTS_PER_SOURCE, MultiOutputConversionReport,
     MultiOutputConversionRun, MultiOutputFailure, MultiOutputOutcome, OutputMemberReport,
-    OutputMemberState, OutputMemberValidation, OutputSetRejection,
-    run_admitted_multi_output_conversion, run_multi_output_conversion_evidence,
+    OutputMemberState, OutputMemberValidation, OutputNamesClaimed, OutputSetRejection, SetRunSeam,
+    run_admitted_multi_output_conversion, run_admitted_multi_output_conversion_seamed,
+    run_multi_output_conversion_evidence,
 };
 pub use conversion_run::{
     BackendDiagnosticText, BackendExecutionFailure, BackendRunFacts, BackendStream,

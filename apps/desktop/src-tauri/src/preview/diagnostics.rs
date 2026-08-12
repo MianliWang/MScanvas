@@ -35,13 +35,15 @@ use std::sync::Arc;
 use mscanvas_proteowizard::{
     BackendDiagnosticText, BackendRunFacts, StagingResidue, ValidationMode,
 };
+#[cfg(test)]
+use mscanvas_proteowizard::{MAX_CONVERSION_OUTPUTS_PER_SOURCE, SciexSampleCompleteness};
 
 use super::conversion::{ValidationFacts, WorkspaceConversionReport};
 use super::dto::{
     ConversionConflictPolicyDto, ConversionDiagnosticsExportDto, MAX_ERROR_DETAIL_CHARS,
     PreviewErrorDto, bounded_text, invalid_diagnostics_reservation, redact_absolute_paths,
 };
-use super::operation::{CancellationFacts, ItemState};
+use super::operation::{CancellationFacts, ItemOutputTopology, ItemState};
 use super::selection::DatasetSourceKind;
 
 pub(super) mod payload;
@@ -140,6 +142,50 @@ pub(super) struct ConversionFailureDiagnosticTicket {
     /// finalized item whose only trouble was cleanup — the backend succeeded
     /// there and repeating what it printed would diagnose nothing.
     text: Option<Box<BackendDiagnosticText>>,
+    /// Counts and stable identifiers for a backend-named set's attempt.
+    ///
+    /// Present only for a set item, which is why an export of an ordinary queue
+    /// is byte-identical to what it was before this existed.
+    #[cfg(test)]
+    output_set: Option<OutputSetDiagnosticFacts>,
+}
+
+/// What an export says about one backend-named set's attempt.
+///
+/// Counts and stable identifiers, and deliberately no member names. The
+/// backend derives those from sample identifiers inside the acquisition, so
+/// they are the user's data rather than this application's vocabulary — and
+/// every failure class this has to tell apart is distinguishable without them.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct OutputSetDiagnosticFacts {
+    /// The lifecycle's own bound, so a reader can see the counts are bounded
+    /// rather than having to know the constant.
+    pub(super) max_members: usize,
+    pub(super) member_count: usize,
+    pub(super) finalized_count: usize,
+    pub(super) validated_not_published_count: usize,
+    pub(super) not_published_count: usize,
+    /// How many objects the acquisition was bound to for the run.
+    pub(super) bound_source_objects: usize,
+    /// The completeness judgement's stable identifier, or none where the
+    /// question was never posed.
+    pub(super) completeness: Option<&'static str>,
+    /// Present exactly for a partial publication.
+    pub(super) partial: Option<PartialFinalizationFacts>,
+    /// Why no complete-set adoption authority exists, where a reader might
+    /// otherwise expect one.
+    pub(super) not_adoptable: Option<&'static str>,
+}
+
+/// A partial publication, in counts.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct PartialFinalizationFacts {
+    pub(super) finalized_count: usize,
+    pub(super) not_published_count: usize,
+    /// What the filesystem said about the member that failed.
+    pub(super) failure_kind: &'static str,
 }
 
 /// Which queue item a diagnostic is about, and what it is called.
@@ -154,7 +200,9 @@ pub(super) struct DiagnosticItemIdentity {
     pub(super) operation: u64,
     pub(super) item_index: usize,
     pub(super) source_file_name: String,
-    pub(super) output_file_name: String,
+    /// What this item's outputs look like. A known single output names itself;
+    /// a backend-named set has no single name and does not pretend to one.
+    pub(super) output: ItemOutputTopology,
     pub(super) source_kind: DatasetSourceKind,
     pub(super) attempt: u64,
 }
@@ -194,6 +242,68 @@ impl ConversionFailureDiagnosticTicket {
             // finalized item with cleanup residue is a run whose backend did
             // its job, and the run itself already declined to retain its text.
             text: (state == ItemState::Failed).then_some(text).flatten(),
+            #[cfg(test)]
+            output_set: None,
+        })
+    }
+
+    /// Builds a ticket for one backend-named set attempt.
+    ///
+    /// The same rule the single-output constructor follows: a ticket exists
+    /// only where there is something to diagnose. A finalized set with no
+    /// residue is a run that worked.
+    #[cfg(test)]
+    pub(super) fn of_set(
+        identity: DiagnosticItemIdentity,
+        settlement: &mut super::adoption::SciexAttemptSettlement,
+    ) -> Option<Self> {
+        let state = settlement.state();
+        let retryable = settlement.is_retryable();
+        let report = settlement.report();
+        let residue = report.residue();
+        if state != ItemState::Failed && residue.is_none() {
+            return None;
+        }
+        let outcome = report.group_outcome();
+        let detailed_outcome = report.refusal_id();
+        let backend = report.backend_facts();
+        let facts = OutputSetDiagnosticFacts {
+            max_members: MAX_CONVERSION_OUTPUTS_PER_SOURCE,
+            member_count: report.members().len(),
+            finalized_count: member_count_in(report, "finalized"),
+            validated_not_published_count: member_count_in(report, "validated_not_published"),
+            not_published_count: member_count_in(report, "not_published"),
+            bound_source_objects: report.bound_source_objects(),
+            completeness: report
+                .completeness()
+                .map(SciexSampleCompleteness::stable_id),
+            partial: report
+                .partial_finalization()
+                .map(|partial| PartialFinalizationFacts {
+                    finalized_count: partial.finalized().len(),
+                    not_published_count: partial.not_published().len(),
+                    failure_kind: io_error_kind_id(partial.kind()),
+                }),
+            not_adoptable: settlement.not_adoptable(),
+        };
+        // Taken here rather than borrowed, for the reason the single path takes
+        // it: the redacted text is the largest thing on the attempt and two
+        // copies of it would be two things to bound.
+        let text = settlement.diagnostics();
+        Some(Self {
+            identity,
+            state,
+            retryable,
+            outcome: Some(set_group_outcome_id(outcome)),
+            detailed_outcome,
+            refusal: None,
+            refusal_detail: None,
+            validation: None,
+            backend,
+            cancellation: None,
+            residue,
+            text: (state == ItemState::Failed).then_some(text).flatten(),
+            output_set: Some(facts),
         })
     }
 
@@ -220,6 +330,8 @@ impl ConversionFailureDiagnosticTicket {
             cancellation: None,
             residue: None,
             text: None,
+            #[cfg(test)]
+            output_set: None,
         }
     }
 
@@ -259,6 +371,8 @@ impl ConversionFailureDiagnosticTicket {
             text: (state == ItemState::CancellationFailed)
                 .then_some(text)
                 .flatten(),
+            #[cfg(test)]
+            output_set: None,
         })
     }
 
@@ -595,5 +709,44 @@ pub(super) const fn validation_mode_id(mode: ValidationMode) -> &'static str {
     match mode {
         ValidationMode::SourceComparison => "source_comparison",
         ValidationMode::OutputOnly => "output_only",
+    }
+}
+
+/// The identifier an export writes for one set's group outcome.
+///
+/// The lifecycle's own spelling, passed through rather than re-derived, so the
+/// export and the report cannot drift apart.
+#[cfg(test)]
+const fn set_group_outcome_id(group_outcome: &'static str) -> &'static str {
+    group_outcome
+}
+
+/// How many of a set's members are in one state.
+#[cfg(test)]
+fn member_count_in(
+    report: &super::conversion::WorkspaceMultiOutputConversionReport,
+    state: &str,
+) -> usize {
+    report
+        .members()
+        .iter()
+        .filter(|member| member.state() == state)
+        .count()
+}
+
+/// A bounded, stable spelling of what the filesystem said.
+///
+/// Closed rather than `{:?}` over `io::ErrorKind`, because that rendering is
+/// not a stable contract and an unknown kind must not become unbounded text in
+/// an exported document.
+#[cfg(test)]
+const fn io_error_kind_id(kind: std::io::ErrorKind) -> &'static str {
+    match kind {
+        std::io::ErrorKind::AlreadyExists => "already_exists",
+        std::io::ErrorKind::PermissionDenied => "permission_denied",
+        std::io::ErrorKind::NotFound => "not_found",
+        std::io::ErrorKind::InvalidInput => "invalid_input",
+        std::io::ErrorKind::StorageFull => "storage_full",
+        _ => "other",
     }
 }

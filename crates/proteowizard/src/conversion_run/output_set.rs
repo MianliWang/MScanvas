@@ -58,7 +58,7 @@ use crate::{ConversionCancellation, fs_guard};
 
 use super::{
     BackendExecutionFailure, BackendRunFacts, ConflictPolicy, ConversionSource,
-    ConversionSourceKind, OwnedStagingArea, StagingResidue, finalize,
+    ConversionSourceKind, OwnedStagingArea, StagedContentObservation, StagingResidue, finalize,
 };
 use crate::BackendDiagnosticText;
 use crate::diagnostics::Redactor;
@@ -628,6 +628,14 @@ pub enum MultiOutputFailure {
     /// The acquisition's objects could not be bound to the command — more
     /// members than the bound allows, or a command with no source at all.
     SourceBundleNotBound,
+    /// One of the names this set discovered is already owned by something
+    /// outside this run -- in practice, another item of the same queue.
+    ///
+    /// Not a destination conflict. The destination may well be empty at that
+    /// name; what is occupied is the *plan*, and no conflict policy has an
+    /// opinion about which of two acquisitions should win a name neither of
+    /// them has written yet.
+    OutputNameClaimedElsewhere { name: String },
     /// The run could not be shown to have converted every sample the reader
     /// identified, so nothing was published.
     ///
@@ -664,6 +672,7 @@ impl MultiOutputFailure {
             Self::ProviderBuildNotEvidenced => "multi_output_provider_build_not_evidenced",
             Self::SourceNotStillAdmitted(_) => "multi_output_source_not_still_admitted",
             Self::SourceBundleNotBound => "multi_output_source_bundle_not_bound",
+            Self::OutputNameClaimedElsewhere { .. } => "multi_output_output_name_claimed_elsewhere",
             Self::SampleCompletenessNotEstablished(refusal) => refusal.stable_id(),
         }
     }
@@ -742,6 +751,12 @@ impl std::fmt::Debug for MultiOutputFailure {
                 .field(failure)
                 .finish(),
             Self::SourceBundleNotBound => formatter.write_str("SourceBundleNotBound"),
+            // The name stays out, like every other member basename here. It is
+            // in the report, through an accessor, because a refusal has to say
+            // which name it was about; a debug string is not a report.
+            Self::OutputNameClaimedElsewhere { .. } => {
+                formatter.write_str("OutputNameClaimedElsewhere")
+            }
             Self::SampleCompletenessNotEstablished(refusal) => formatter
                 .debug_tuple("SampleCompletenessNotEstablished")
                 .field(refusal)
@@ -831,6 +846,12 @@ impl MultiOutputOutcome {
 /// What one multi-output run established. Path-free by construction.
 pub struct MultiOutputConversionReport {
     outcome: MultiOutputOutcome,
+    /// What was in the staging directory when a stop reached this run.
+    ///
+    /// Taken only on the cancellation paths, because it is the one
+    /// partial-output claim a run makes about itself and a run that reached its
+    /// own end has already said what it published.
+    staged: Option<StagedContentObservation>,
     members: Vec<OutputMemberReport>,
     backend: Option<BackendRunFacts>,
     residue: Option<StagingResidue>,
@@ -875,6 +896,23 @@ impl MultiOutputConversionReport {
     #[must_use]
     pub const fn residue(&self) -> Option<StagingResidue> {
         self.residue
+    }
+
+    /// What was staged when a stop reached this run, where one did.
+    #[must_use]
+    pub const fn staged_content(&self) -> Option<StagedContentObservation> {
+        self.staged
+    }
+
+    /// Takes the redacted backend text out of the report.
+    ///
+    /// The same move the single-output report offers, for the same reason: a
+    /// caller that keeps the report for display must be able to put the largest
+    /// thing on it somewhere with a shorter life, and copying it would leave two
+    /// of it.
+    #[must_use]
+    pub fn take_backend_text(&mut self) -> Option<Box<BackendDiagnosticText>> {
+        self.diagnostics.take()
     }
 
     /// Bounded, redacted backend text for a diagnosis-worthy run.
@@ -936,6 +974,49 @@ impl std::fmt::Debug for FinalizedOutputSet {
             .field("outputs", &self.outputs.len())
             .finish()
     }
+}
+
+/// Whether anything outside this run already owns the names it wants.
+///
+/// This lifecycle knows about staged files and destination entries. It does not
+/// know that another item of the same queue has already promised one of these
+/// names to a different acquisition, and it must not learn -- a queue is not a
+/// concept a conversion boundary should carry. So the question is asked
+/// outward, once, with the complete discovered set, after every member is known
+/// good and **before** the destination is inspected.
+///
+/// Before the destination inspection deliberately, and that ordering is the
+/// whole point of asking. A name an earlier item of the same queue already
+/// published is an ordinary file by then, so the conflict policy would answer
+/// for it: under `Fail` a refusal blaming something that was already there, and
+/// under `Skip` the far worse answer that this acquisition is already
+/// converted -- when what sits at that name is somebody else's output.
+pub enum OutputNamesClaimed {
+    /// Nothing outside this run owns any of them.
+    None,
+    /// One of them is already owned. One basename, because that is what the
+    /// caller knows and all the refusal needs.
+    Already { name: String },
+}
+
+/// What a caller may contribute to one set run beyond its inputs.
+///
+/// Two powers, kept apart because they are not the same kind of thing.
+pub struct SetRunSeam<'a> {
+    /// The claim gate: asked once, with the complete discovered set, and able
+    /// to refuse the whole run before any name is taken. Production's queue is
+    /// the caller this exists for. See [`OutputNamesClaimed`].
+    pub names_claimed: &'a mut dyn FnMut(&[String]) -> OutputNamesClaimed,
+    /// Asked before each member's rename, and unable to refuse anything.
+    ///
+    /// The deterministic suite's, for the one interval this lifecycle's central
+    /// claims are about: a name taken between the preflight that found it free
+    /// and the rename that wanted it is the only way a real filesystem produces
+    /// [`MultiOutputOutcome::PartiallyFinalized`], and a test must not have to
+    /// win that race. The hook is handed a position and nothing else -- no
+    /// object, no handle, no name -- so all it can do is act on the world,
+    /// exactly as another process could.
+    pub before_member_publication: &'a mut dyn FnMut(usize),
 }
 
 /// What, beyond the lifecycle's own rules, must hold before a set may publish.
@@ -1031,6 +1112,10 @@ pub fn run_multi_output_conversion_evidence(
             cancellation,
             requirement: &PrePublicationRequirement::None,
         },
+        SetRunSeam {
+            names_claimed: &mut |_: &[String]| OutputNamesClaimed::None,
+            before_member_publication: &mut |_: usize| {},
+        },
     )
 }
 
@@ -1065,6 +1150,40 @@ pub fn run_admitted_multi_output_conversion(
     capabilities: &InstalledHelpCapabilities,
     runner: &dyn ProcessRunner,
     cancellation: Option<&ConversionCancellation>,
+) -> MultiOutputConversionRun {
+    // Nobody outside owns a name, and nothing happens between members. Bound to
+    // locals rather than offered as a constructor, because a seam of borrowed
+    // closures cannot outlive the call it is for.
+    let mut names_claimed = |_: &[String]| OutputNamesClaimed::None;
+    let mut before_member_publication = |_: usize| {};
+    run_admitted_multi_output_conversion_seamed(
+        source,
+        destination_root,
+        conflict,
+        capabilities,
+        runner,
+        cancellation,
+        SetRunSeam {
+            names_claimed: &mut names_claimed,
+            before_member_publication: &mut before_member_publication,
+        },
+    )
+}
+
+/// The same admitted run, carrying the caller's [`SetRunSeam`] into the
+/// lifecycle it cannot reach directly.
+///
+/// This is the entry point a queue uses, because a queue is the one caller that
+/// knows something the lifecycle must not: that another item has already
+/// promised one of these names to a different acquisition.
+pub fn run_admitted_multi_output_conversion_seamed(
+    source: &ConversionSource,
+    destination_root: &Path,
+    conflict: ConflictPolicy,
+    capabilities: &InstalledHelpCapabilities,
+    runner: &dyn ProcessRunner,
+    cancellation: Option<&ConversionCancellation>,
+    seam: SetRunSeam<'_>,
 ) -> MultiOutputConversionRun {
     if let Some(cancellation) = cancellation
         && cancellation.is_requested()
@@ -1128,6 +1247,7 @@ pub fn run_admitted_multi_output_conversion(
             // family's run answer a question that is not about it.
             requirement: &completeness_requirement(source.kind(), capabilities),
         },
+        seam,
     )
 }
 
@@ -1194,6 +1314,7 @@ struct BoundSource {
 fn run_bound_multi_output(
     bound: BoundSource,
     request: SetRunRequest<'_>,
+    seam: SetRunSeam<'_>,
 ) -> MultiOutputConversionRun {
     let SetRunRequest {
         destination_root,
@@ -1282,8 +1403,19 @@ fn run_bound_multi_output(
     };
     if let Some(failure) = process_failure {
         let diagnostics = diagnostics_of(&process_output);
+        // Read before the staging area is taken down, and only where a stop is
+        // what ended the run: this is the run's own account of what it had
+        // written when it was interrupted, and it is the only partial-output
+        // claim it makes.
+        let stopped = matches!(
+            failure,
+            MultiOutputFailure::Cancelled { .. } | MultiOutputFailure::CancellationNotConfirmed(_)
+        );
+        let staged = stopped
+            .then(|| super::observe_staged_content(&staging_output))
+            .flatten();
         let residue = staging.discard();
-        return refused_diagnosable(failure, backend, residue, diagnostics);
+        return refused_after_stop(failure, backend, residue, diagnostics, staged);
     }
 
     // Before discovery, before validation, before any destination name is
@@ -1308,7 +1440,7 @@ fn run_bound_multi_output(
         || DeclaredOutputSet::from_backend_stdout(&[], true),
         |output| DeclaredOutputSet::from_backend_stdout(&output.stdout, output.stdout_truncated),
     );
-    let settled = settle_staged_output_set(
+    let settled = settle_staged_output_set_seamed(
         StagedOutputSet {
             source: &facts,
             directory: &staging_output,
@@ -1318,6 +1450,7 @@ fn run_bound_multi_output(
         conflict,
         policy,
         limits,
+        seam,
     );
     drop(pins);
     // Retained only where the run is worth diagnosing. A finalized or skipped
@@ -1346,6 +1479,9 @@ fn run_bound_multi_output(
         report: MultiOutputConversionReport {
             outcome: settled.outcome,
             members: settled.members,
+            // A run that reached settlement was not stopped inside the backend,
+            // so there is no interrupted staging directory to describe.
+            staged: None,
             backend,
             residue,
             diagnostics,
@@ -1400,6 +1536,23 @@ fn refused_diagnosable(
     run
 }
 
+/// The same refusal, carrying what was staged when a stop reached the run.
+///
+/// Only the cancellation paths take this observation, and only they should: it
+/// is the one partial-output claim a run makes about itself, and a run that
+/// reached its own end has already said what it published.
+fn refused_after_stop(
+    failure: MultiOutputFailure,
+    backend: Option<BackendRunFacts>,
+    residue: Option<StagingResidue>,
+    diagnostics: Option<Box<BackendDiagnosticText>>,
+    staged: Option<StagedContentObservation>,
+) -> MultiOutputConversionRun {
+    let mut run = refused_diagnosable(failure, backend, residue, diagnostics);
+    run.report.staged = staged;
+    run
+}
+
 /// A refusal that produced no members.
 fn refused(
     failure: MultiOutputFailure,
@@ -1410,6 +1563,7 @@ fn refused(
         report: MultiOutputConversionReport {
             outcome: MultiOutputOutcome::RefusedBeforePublication(failure),
             members: Vec::new(),
+            staged: None,
             backend,
             residue,
             diagnostics: None,
@@ -1588,29 +1742,6 @@ pub(crate) struct SettledOutputSet {
     pub(crate) retained: Vec<FinalizedOutput>,
 }
 
-/// Discovers, validates, preflights and publishes one staged output set.
-///
-/// This is the lifecycle itself, separable from the backend so the
-/// deterministic suite can drive every branch of it over synthetic staging
-/// content. The order is the contract:
-///
-/// 1. the staging directory is read as a bounded set of ordinary mzML members;
-/// 2. **every** member is validated — opened no-follow with writers denied,
-///    scanned fail-closed, hashed through the held object — before any member
-///    is published;
-/// 3. the destination is inspected for the complete planned name set;
-/// 4. only then are members published, one at a time, in the deterministic
-///    order, each through the handle-bound no-clobber rename.
-pub(crate) fn settle_staged_output_set(
-    staged: StagedOutputSet<'_>,
-    destination: &finalize::DestinationDirectory,
-    conflict: ConflictPolicy,
-    policy: ConversionPolicy,
-    limits: MzmlScanLimits,
-) -> SettledOutputSet {
-    settle_staged_output_set_seamed(staged, destination, conflict, policy, limits, |_| {})
-}
-
 /// What one settlement is about: the acquisition it is attributed to, the
 /// private directory the backend wrote into, and the backend's own account of
 /// what it put there.
@@ -1624,21 +1755,40 @@ pub(crate) struct StagedOutputSet<'a> {
     pub(crate) declared: &'a DeclaredOutputSet,
 }
 
-/// The same lifecycle, with a seam at the one interval its central claims are
-/// about: after the whole-set destination preflight and before each member's
-/// publication. Production passes an empty hook; the deterministic suite uses
-/// it to occupy a destination name mid-set — the race a real filesystem can
-/// produce and a test must not have to win probabilistically.
+/// Discovers, validates, preflights and publishes one staged output set.
 ///
-/// The hook receives the zero-based index of the member about to be published.
+/// This is the lifecycle itself, separable from the backend so the
+/// deterministic suite can drive every branch of it over synthetic staging
+/// content. The order is the contract:
+///
+/// 1. the staging directory is read as a bounded set of ordinary mzML members;
+/// 2. **every** member is validated — opened no-follow with writers denied,
+///    scanned fail-closed, hashed through the held object — before any member
+///    is published;
+/// 3. the destination is inspected for the complete planned name set;
+/// 4. only then are members published, one at a time, in the deterministic
+///    order, each through the handle-bound no-clobber rename.
+///
+/// The seam sits at the one interval those claims are about: after the
+/// whole-set preflight and before each member's publication. Production passes
+/// an empty hook; the deterministic suite uses it to occupy a destination name
+/// mid-set — the race a real filesystem can produce and a test must not have
+/// to win probabilistically. The hook is handed the zero-based position of the
+/// member about to be published and nothing else: it cannot fail a rename,
+/// choose a name, see a handle or touch a staged object. It can only act on the
+/// world, exactly as another process could.
 pub(crate) fn settle_staged_output_set_seamed(
     staged: StagedOutputSet<'_>,
     destination: &finalize::DestinationDirectory,
     conflict: ConflictPolicy,
     policy: ConversionPolicy,
     limits: MzmlScanLimits,
-    mut before_member_publication: impl FnMut(usize),
+    seam: SetRunSeam<'_>,
 ) -> SettledOutputSet {
+    let SetRunSeam {
+        names_claimed,
+        before_member_publication,
+    } = seam;
     let StagedOutputSet {
         source,
         directory: staged_output_directory,
@@ -1717,6 +1867,25 @@ pub(crate) fn settle_staged_output_set_seamed(
                 };
             }
         }
+    }
+
+    // 2b. The claim gate. Everything is known good and nothing has been
+    // written, so this is the last moment at which refusing costs nobody a
+    // file -- and it is deliberately ahead of the destination inspection, so a
+    // name an earlier queue item already published is answered as a queue
+    // collision rather than as this acquisition being already converted.
+    let discovered_names: Vec<String> = discovered
+        .iter()
+        .map(DiscoveredMember::display_name)
+        .collect();
+    if let OutputNamesClaimed::Already { name } = names_claimed(&discovered_names) {
+        return SettledOutputSet {
+            outcome: MultiOutputOutcome::RefusedBeforePublication(
+                MultiOutputFailure::OutputNameClaimedElsewhere { name },
+            ),
+            members: build_member_reports(&discovered, &facts, &[]),
+            retained: Vec::new(),
+        };
     }
 
     // 3. The destination preflight, over the complete name set, only now that

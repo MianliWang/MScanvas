@@ -1908,7 +1908,7 @@ impl StagedContentObservation {
 /// A failure to read it produces `None` rather than an error: a run that has
 /// already confirmed its process tree is gone does not become a different
 /// outcome because an observation for the record could not be taken.
-fn observe_staged_content(staging: &Path) -> Option<StagedContentObservation> {
+pub(crate) fn observe_staged_content(staging: &Path) -> Option<StagedContentObservation> {
     let snapshot = snapshot_output_directory(staging).ok()?;
     let mut directory_count = 0;
     let mut non_empty_file_observed = false;

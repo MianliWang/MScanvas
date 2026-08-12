@@ -1637,6 +1637,17 @@ impl fmt::Debug for DatasetRegistry {
 }
 
 impl DatasetRegistry {
+    /// The identifier the next added row would receive.
+    ///
+    /// Only ever read by tests, and only to prove a negative: an outcome that
+    /// must spend no identifier is one after which this has not moved. Counting
+    /// rows cannot show that -- a duplicate and a refusal both leave the row
+    /// count alone while one of them could still have burned a number.
+    #[cfg(test)]
+    pub(super) const fn next_identifier(&self) -> u64 {
+        self.next_id
+    }
+
     /// Adds an accepted file, or reports the dataset it already is, or refuses
     /// it because the workspace is full.
     ///

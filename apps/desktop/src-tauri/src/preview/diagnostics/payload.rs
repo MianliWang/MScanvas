@@ -105,7 +105,13 @@ pub(in crate::preview) fn render(request: &DiagnosticsExportRequest) -> Rendered
 fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket) {
     item.count("queueIndex", ticket.identity.item_index);
     item.string("sourceFileName", &ticket.identity.source_file_name);
-    item.string("outputFileName", &ticket.identity.output_file_name);
+    match ticket.identity.output.planned_name() {
+        Some(name) => item.string("outputFileName", name),
+        // A backend-named set has no single output name and must not be given
+        // one. `null` rather than a placeholder, and rather than the empty
+        // string a reader could mistake for a name.
+        None => item.null("outputFileName"),
+    }
     item.string("sourceKind", source_kind_id(ticket.identity.source_kind));
     item.number("attempt", ticket.identity.attempt);
     item.string("state", item_state_id(ticket.state));
@@ -159,6 +165,32 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
             .residue
             .map(mscanvas_proteowizard::StagingResidue::stable_id),
     );
+    // Emitted only for a backend-named set, so an ordinary queue's export is
+    // exactly the document it was before this member existed.
+    #[cfg(test)]
+    if let Some(facts) = ticket.output_set {
+        item.object("outputSet", |written| {
+            written.count("maxMembers", facts.max_members);
+            written.count("memberCount", facts.member_count);
+            written.count("finalizedCount", facts.finalized_count);
+            written.count(
+                "validatedNotPublishedCount",
+                facts.validated_not_published_count,
+            );
+            written.count("notPublishedCount", facts.not_published_count);
+            written.count("boundSourceObjects", facts.bound_source_objects);
+            written.optional_string("sampleCompleteness", facts.completeness);
+            written.optional_string("notAdoptable", facts.not_adoptable);
+            match facts.partial {
+                Some(partial) => written.object("partialFinalization", |partial_written| {
+                    partial_written.count("finalizedCount", partial.finalized_count);
+                    partial_written.count("notPublishedCount", partial.not_published_count);
+                    partial_written.string("failureKind", partial.failure_kind);
+                }),
+                None => written.null("partialFinalization"),
+            }
+        });
+    }
     let text = ticket.text.as_deref();
     item.object("stdout", |written| {
         write_excerpt(
