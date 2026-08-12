@@ -495,6 +495,120 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     );
   });
 
+  it("tells apart the set refusals that need different things from the user", async () => {
+    // Three refusals with three different recoveries. One sentence for all of
+    // them would tell the user to do nothing in particular.
+    const cases = [
+      {
+        detail: "multi_output_destination_occupied",
+        says: /already in that folder/i,
+      },
+      {
+        detail: "multi_output_provider_build_not_evidenced",
+        says: /no conversion evidence for this acquisition format/i,
+      },
+      {
+        detail: "source_sample_failure_observed",
+        says: /reported a problem with at least one sample/i,
+      },
+    ];
+
+    for (const { detail, says } of cases) {
+      const report = outputSetReport("file-9", [], {
+        groupOutcome: "refused_before_publication",
+        detailedOutcome: detail,
+        memberCount: 0,
+        finalizedCount: 0,
+        validatedNotPublishedCount: 0,
+        notPublishedCount: 0,
+        memberStates: [],
+        completeness: { kind: "notPosed" },
+        completeSetAdoptable: false,
+      });
+      const api = createFakePreviewApi({
+        initialDatasets: [bundle],
+        availability: availableBackend,
+        initialConversion: {
+          status: "terminal",
+          reason: "completed",
+          operationId: "1",
+          queue: queueOf([
+            sciexQueueItem("file-9", "Enolase_repeats.wiff", {
+              state: "failed",
+              attempts: 1,
+              result: { kind: "outputSet", report },
+            }),
+          ]),
+        },
+      });
+      const view = render(
+        <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+          <PreviewApiProvider value={api}>
+            <App />
+          </PreviewApiProvider>
+        </WorkspaceDropTransportProvider>,
+      );
+      const reason = await waitFor(() => {
+        const node = document.querySelector(".conversion-queue-reason");
+        if (node === null) {
+          throw new Error("expected a failure sentence on screen");
+        }
+        return node as HTMLElement;
+      });
+      expect(reason.textContent ?? "").toMatch(says);
+      // And never the sentence that says only that something went wrong.
+      expect(reason.textContent ?? "").not.toContain(
+        "The conversion did not finish, so no output set was published.",
+      );
+      view.unmount();
+    }
+  });
+
+  it("falls back honestly for a set refusal this build has no sentence for", async () => {
+    const report = outputSetReport("file-9", [], {
+      groupOutcome: "refused_before_publication",
+      // A real identifier, deliberately one with no distinct recovery.
+      detailedOutcome: "multi_output_staging_not_created",
+      memberCount: 0,
+      finalizedCount: 0,
+      validatedNotPublishedCount: 0,
+      notPublishedCount: 0,
+      memberStates: [],
+      completeness: { kind: "notPosed" },
+      completeSetAdoptable: false,
+    });
+    const api = createFakePreviewApi({
+      initialDatasets: [bundle],
+      availability: availableBackend,
+      initialConversion: {
+        status: "terminal",
+        reason: "completed",
+        operationId: "1",
+        queue: queueOf([
+          sciexQueueItem("file-9", "Enolase_repeats.wiff", {
+            state: "failed",
+            attempts: 1,
+            result: { kind: "outputSet", report },
+          }),
+        ]),
+      },
+    });
+    renderApp(api);
+    const reason = await waitFor(() => {
+      const node = document.querySelector(".conversion-queue-reason");
+      if (node === null) {
+        throw new Error("expected a failure sentence on screen");
+      }
+      return node as HTMLElement;
+    });
+
+    // Honest rather than specific. Inventing prose for an identifier this build
+    // has no sentence for would be inventing a diagnosis.
+    expect(reason.textContent).toBe(
+      "The conversion did not finish, so no output set was published.",
+    );
+  });
+
   it("says nothing about SCIEX in the folder or drop copy", async () => {
     const api = createFakePreviewApi({
       initialDatasets: [selectedFile],

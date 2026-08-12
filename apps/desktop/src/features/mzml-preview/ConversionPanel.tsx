@@ -1060,18 +1060,84 @@ function itemFailureSentence(item: ConversionQueueItem): string {
   }
   const set = setReportOf(item);
   if (set !== null) {
-    // A set says what it produced beside this, so the failure sentence carries
-    // only the reason -- and a partial publication has its own explanation,
-    // which must not be preceded by "nothing was written".
-    return set.partial !== null
-      ? "The complete output set was not produced."
-      : "The conversion did not finish, so no output set was published.";
+    return setFailureSentence(set);
   }
   const report = singleReportOf(item);
   if (report === null) {
     return "The conversion did not finish, so no file was written.";
   }
   return failureSentence(report);
+}
+
+/**
+ * Why one output set failed, in the user's terms rather than the boundary's.
+ *
+ * The single-output path has explained itself by `detailedOutcome` since ADR
+ * 0012, and a set discarding its own would be the worse half of the same
+ * screen: a destination conflict, an unevidenced build and a sample the reader
+ * lost need three different things from the user, and one sentence for all of
+ * them tells them to do nothing in particular.
+ *
+ * Only identifiers with a *different* recovery get their own sentence. The
+ * fallback is honest rather than specific — an identifier this build has no
+ * sentence for is still a failure, and inventing prose for one would be
+ * inventing a diagnosis.
+ */
+const SET_REFUSAL_SENTENCE: Record<string, string> = {
+  // The destination. Actionable, and the two are genuinely different: one name
+  // was taken, or some were taken and some were not.
+  multi_output_destination_occupied:
+    "Files of these output names are already in that folder, so nothing was converted.",
+  multi_output_mixed_destination_conflict:
+    "Some of these output names are already taken in that folder and some are not, so nothing was converted.",
+  multi_output_output_name_claimed_elsewhere:
+    "Another acquisition in this queue produced one of these output names, so nothing was converted.",
+  multi_output_destination_not_inspectable:
+    "That folder could not be inspected, so nothing was converted.",
+  multi_output_destination_root_not_opened:
+    "That folder could not be opened, so nothing was converted.",
+
+  // The build. Actionable by choosing a different ProteoWizard installation.
+  multi_output_provider_build_not_evidenced:
+    "MSCanvas has no conversion evidence for this acquisition format on the installed ProteoWizard build.",
+
+  // The acquisition. Actionable by opening it again.
+  multi_output_source_not_still_admitted:
+    "The acquisition changed since it was added, so nothing was converted. Add it again to continue.",
+  multi_output_source_bundle_not_bound:
+    "MSCanvas could not hold every file of this acquisition for the run, so nothing was converted.",
+
+  // What the reader said about samples. Not actionable in the app, and that is
+  // the point: it is what stops the outputs being called this acquisition.
+  source_sample_failure_observed:
+    "The SCIEX reader reported a problem with at least one sample, so no output was published.",
+  source_sample_audit_truncated:
+    "MSCanvas could not read enough of the converter's output to establish that no sample was lost, so nothing was published.",
+  source_sample_output_filtering_requested:
+    "The run asked for only some of the acquisition's samples, so its outputs are not this acquisition's complete set.",
+
+  // What was produced. Not actionable, and reported rather than smoothed over.
+  multi_output_set_not_as_declared:
+    "The converter wrote a different set of files than it declared, so none of them was published.",
+  multi_output_member_rejected:
+    "At least one converted file did not pass MSCanvas' integrity checks, so none of them was published.",
+};
+
+/** What a failed output set says. */
+function setFailureSentence(report: ConversionOutputSetReport): string {
+  // A partial publication is explained in full beside this, and must not be
+  // preceded by a sentence saying nothing was written.
+  if (report.partial !== null) {
+    return "The complete output set was not produced.";
+  }
+  const detailed = report.detailedOutcome;
+  if (detailed !== null) {
+    const sentence = SET_REFUSAL_SENTENCE[detailed];
+    if (sentence !== undefined) {
+      return sentence;
+    }
+  }
+  return "The conversion did not finish, so no output set was published.";
 }
 
 /**
