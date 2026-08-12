@@ -19988,6 +19988,72 @@ fn a_single_output_export_gains_no_member_and_keeps_its_name() {
     );
 }
 
+/// No member basename reaches the diagnostics export, at any depth.
+///
+/// The boundary ADR 0026 drew and this milestone deliberately keeps: the
+/// product *result* carries the backend's chosen basenames, because a user
+/// looking at "ten outputs finalized" is owed which ten and the roster will
+/// spell every one of them out the moment the set is adopted. The **export** is
+/// a different document with a different reader — it is reviewed before being
+/// sent somewhere — and those names are the backend's reading of sample
+/// identifiers inside the acquisition, which is the user's data rather than
+/// this application's vocabulary.
+///
+/// Asserted over the whole serialized document rather than over the members it
+/// happens to know about, so a field added later cannot carry one in.
+#[cfg(windows)]
+#[test]
+fn no_member_basename_reaches_the_diagnostics_export() {
+    // Distinctive enough that a match cannot be coincidence, and shaped like
+    // the sample identifiers a real acquisition carries.
+    let names = ["Patient-042-S1.mzML", "Patient-042-S2.mzML"];
+    let fixture = TestFile::new("diag-member-privacy");
+    let destination = fixture.destination("out");
+    let service = Arc::new(output_set_service(
+        // Refused before publication, so the item is worth diagnosing at all:
+        // a run that finalized everything has nothing to export.
+        FakeOutputSetRunner::writing(&names).also_injecting("uninvited.mzML"),
+    ));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+    let update = run_visible_queue(
+        &service,
+        std::slice::from_ref(&sciex.handle),
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    assert_eq!(
+        item_states(terminal_queue(&update)),
+        vec![ConversionQueueItemStateDto::Failed],
+        "the run must have something to diagnose"
+    );
+
+    let export = export_private_diagnostics(&service, &fixture, "diag", &update);
+    let document = serde_json::to_string(&export).expect("the export serializes");
+    // The set shape is there, so this is not passing by describing nothing.
+    assert!(export["items"][0]["outputSet"].is_object());
+
+    for forbidden in [
+        names[0],
+        names[1],
+        "Patient-042",
+        "uninvited.mzML",
+        // And the companion, which is never named anywhere.
+        ".wiff.scan",
+    ] {
+        assert!(
+            !document.contains(forbidden),
+            "{forbidden} reached the diagnostics export: {document}"
+        );
+    }
+
+    // The acquisition's own display name is deliberately there: it is the row
+    // the user chose, and a document that would not say which item it is about
+    // is not a diagnosis.
+    assert_eq!(export["items"][0]["sourceFileName"], "acquisition.wiff");
+}
+
 /// Nothing that carries a set as a *set* renders a member name or a location.
 ///
 /// The boundary this pins is where a member stops being a member. Before
