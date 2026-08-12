@@ -23,7 +23,8 @@ use super::conversion::conversion_source_kind;
 use mscanvas_proteowizard::{BackendRunFacts, ConversionAttempt, ConversionCancellation};
 #[cfg(test)]
 use mscanvas_proteowizard::{
-    ConflictPolicy, OutputNamesClaimed, SetRunSeam, run_admitted_multi_output_conversion_seamed,
+    ConflictPolicy, MAX_CONVERSION_OUTPUTS_PER_SOURCE, OutputNamesClaimed, SetRunSeam,
+    run_admitted_multi_output_conversion_seamed,
 };
 
 use super::adoption::{AdmittedOutput, AdoptionRefusal, FinalizedOutputAdoptionTicket};
@@ -42,6 +43,8 @@ use super::conversion::{
     refusal_is_retryable, refuse_unevidenced_build, run_planned_conversion_cancellable,
 };
 use super::destination::admit_destination_root;
+#[cfg(test)]
+use super::diagnostics::OutputSetDiagnosticFacts;
 use super::diagnostics::payload;
 use super::diagnostics::{
     DIAGNOSTICS_FILE_NAME, DiagnosticsExportRequest, DiagnosticsExportSlot,
@@ -2600,6 +2603,10 @@ impl PreviewService {
             // in which anything of this application's may still be running.
             QueueItemAttempt::Cancelled(report) => ItemOutcome::Stopped {
                 state: ItemState::Cancelled,
+                // The single-output boundary's own cancellation, so there is no
+                // set here to describe.
+                #[cfg(test)]
+                set: None,
                 // Nothing to diagnose. The user asked for it to stop and the
                 // owned tree is confirmed gone, so there is no failure here for
                 // backend text to be an account of.
@@ -2627,6 +2634,19 @@ impl PreviewService {
                     } else {
                         ItemState::CancellationFailed
                     },
+                    // Zero counts, and they are true: the two cancellation
+                    // refusals this was translated from publish nothing.
+                    set: Some(OutputSetDiagnosticFacts {
+                        max_members: MAX_CONVERSION_OUTPUTS_PER_SOURCE,
+                        member_count: 0,
+                        finalized_count: 0,
+                        validated_not_published_count: 0,
+                        not_published_count: 0,
+                        bound_source_objects: facts.bound_source_objects,
+                        completeness: None,
+                        partial: None,
+                        not_adoptable: None,
+                    }),
                     diagnostics: facts.diagnostics,
                     facts: CancellationFacts {
                         process_launched: facts.process_launched,
@@ -2640,6 +2660,8 @@ impl PreviewService {
             }
             QueueItemAttempt::CancellationFailed(mut failure) => ItemOutcome::Stopped {
                 state: ItemState::CancellationFailed,
+                #[cfg(test)]
+                set: None,
                 // Taken here, at the one place this failure is turned into what
                 // the queue records. It is already redacted and already bounded;
                 // this side has no access to the raw streams and no paths with
@@ -3837,6 +3859,7 @@ fn set_stop_facts(conversion: &mut SciexConversion) -> Option<SetStopFacts> {
     };
     let backend = report.backend_facts();
     Some(SetStopFacts {
+        bound_source_objects: report.bound_source_objects(),
         confirmed,
         process_launched: backend.is_some(),
         termination: backend.map(BackendRunFacts::termination),

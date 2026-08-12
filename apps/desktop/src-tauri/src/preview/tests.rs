@@ -14805,6 +14805,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
         operation,
         1,
         ItemOutcome::Stopped {
+            set: None,
             state: ItemState::Cancelled,
             facts: CancellationFacts {
                 process_launched: true,
@@ -14859,6 +14860,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
         operation,
         0,
         ItemOutcome::Stopped {
+            set: None,
             state: ItemState::CancellationFailed,
             facts: CancellationFacts {
                 process_launched: true,
@@ -19109,6 +19111,48 @@ fn every_private_sciex_failure_is_diagnosable_and_path_free() {
             case.label
         );
     }
+}
+
+/// A stopped set item is still recognisably a set in the export.
+///
+/// An unconfirmed stop is the one cancellation worth diagnosing, and the ticket
+/// it produces used to be built exactly as a single-output stop's — so the
+/// document lost the set marker, the member bound and the acquisition's object
+/// count, and a reader could not tell which kind of item had been stopped.
+///
+/// The counts are zero and that is a fact, not a gap: the two cancellation
+/// refusals this is translated from publish nothing.
+#[test]
+fn a_stopped_set_item_keeps_its_shape_in_the_export() {
+    let (fixture, _destination, service, update, _launches) =
+        stop_mid_sciex_item("queue-diag-stopped", StopEnding::Unterminated);
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::StopFailed
+    );
+
+    let export = export_private_diagnostics(&service, &fixture, "diag", &update);
+    let item = &export["items"][0];
+    assert_eq!(item["sourceKind"], "sciex_wiff");
+    assert_eq!(item["state"], "cancellation_failed");
+    assert!(item["outputFileName"].is_null());
+    assert!(item["cancellation"].is_object());
+
+    let set = &item["outputSet"];
+    assert!(
+        set.is_object(),
+        "a stopped set item must not be described as a single output"
+    );
+    assert_eq!(set["maxMembers"], 24);
+    assert_eq!(set["boundSourceObjects"], 2, "primary and companion");
+    assert_eq!(set["memberCount"], 0);
+    assert_eq!(set["finalizedCount"], 0);
+    assert!(set["partialFinalization"].is_null());
+    assert!(set["sampleCompleteness"].is_null());
+
+    let rendered = serde_json::to_string(&export).expect("re-render");
+    assert!(!rendered.contains("a-S1.mzML") && !rendered.contains(".wiff.scan"));
+    assert!(!rendered.contains(&fixture.directory.display().to_string()));
 }
 
 /// A partially finalized item exports its partial facts as counts.

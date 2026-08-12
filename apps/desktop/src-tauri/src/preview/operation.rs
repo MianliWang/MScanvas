@@ -1590,6 +1590,8 @@ impl ConversionSlot {
             ItemOutcome::Stopped {
                 state,
                 facts,
+                #[cfg(test)]
+                    set: stopped_set,
                 diagnostics,
             } => {
                 item.state = state;
@@ -1602,6 +1604,8 @@ impl ConversionSlot {
                     state,
                     facts,
                     diagnostics,
+                    #[cfg(test)]
+                    stopped_set,
                 )
                 .map(Arc::new);
                 item.report = None;
@@ -2111,6 +2115,13 @@ pub(super) enum QueueItemAttempt {
 #[cfg(test)]
 #[derive(Debug)]
 pub(super) struct SetStopFacts {
+    /// How many objects the acquisition was bound to for the run.
+    ///
+    /// The one set-shaped fact a stop knows, and the reason it is carried: a
+    /// stopped set item is still a set item, and an export that dropped every
+    /// trace of that would leave a reader unable to tell one from a stopped
+    /// single-output item.
+    pub(super) bound_source_objects: usize,
     /// Whether the owned process tree was confirmed gone. `false` is the
     /// admission that it was not, and it quarantines the backend exactly as the
     /// single-output path's does.
@@ -2164,6 +2175,15 @@ pub(super) enum ItemOutcome {
     Stopped {
         state: ItemState,
         facts: CancellationFacts,
+        /// Present exactly when the attempt was a backend-named set's.
+        ///
+        /// A stop reaches the run before it settles, so there are no member
+        /// facts to report — the counts are zero by construction, because the
+        /// two cancellation refusals this is translated from publish nothing.
+        /// What it carries is the shape: this was a set, of at most this many
+        /// members, of an acquisition bound to this many objects.
+        #[cfg(test)]
+        set: Option<super::diagnostics::OutputSetDiagnosticFacts>,
         /// Present only where the stop could not be confirmed, which is the
         /// outcome that most needs an account of what the backend was saying.
         diagnostics: Option<Box<BackendDiagnosticText>>,

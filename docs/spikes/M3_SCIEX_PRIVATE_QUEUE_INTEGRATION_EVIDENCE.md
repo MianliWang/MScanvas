@@ -157,6 +157,13 @@ A partial publication exports `finalizedCount` 1, `notPublishedCount` 2,
 `failureKind: "already_exists"` and
 `sampleCompleteness: "source_sample_set_not_fully_published"`.
 
+A **stopped** set item keeps its shape: `outputSet` with `maxMembers` 24 and
+`boundSourceObjects` 2, and zero counts — which is a fact rather than a gap,
+because the two cancellation refusals a stop is translated from publish nothing.
+The first version of this slice built that ticket exactly as a single-output
+stop's, so the document lost the set marker, the member bound and the object
+count, and a reader could not tell which kind of item had been stopped.
+
 An ordinary Thermo export is unchanged: `outputFileName: "one.mzML"`, and **no**
 `outputSet` member at all.
 

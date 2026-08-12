@@ -347,6 +347,7 @@ impl ConversionFailureDiagnosticTicket {
         state: ItemState,
         facts: CancellationFacts,
         text: Option<Box<BackendDiagnosticText>>,
+        #[cfg(test)] output_set: Option<OutputSetDiagnosticFacts>,
     ) -> Option<Self> {
         if state != ItemState::CancellationFailed && facts.staging_residue.is_none() {
             return None;
@@ -371,8 +372,11 @@ impl ConversionFailureDiagnosticTicket {
             text: (state == ItemState::CancellationFailed)
                 .then_some(text)
                 .flatten(),
+            // Kept, so a stopped set item is still recognisably one. A stop
+            // reaches the run before it settles, so these are the shape and
+            // nothing else -- see `SetStopFacts::bound_source_objects`.
             #[cfg(test)]
-            output_set: None,
+            output_set,
         })
     }
 
