@@ -270,3 +270,19 @@ interval they overlap is already held by the crate's `pin_source_bundle`.
 - Output-set adoption remains unbuilt and is now the only structural piece
   missing between this path and a visible one. It is not the *first* thing
   missing: the completeness gate is.
+
+
+## Amendment, 2026-08-12 — the same conversion, now reachable from the queue
+
+[ADR 0026](0026-private-sciex-serial-queue-integration.md) gave this conversion
+a second caller: one item of the existing serial queue. Everything this ADR
+establishes is what that caller does — the bundle is one logical source, one
+`DatasetId` and now one queue item; every member is revalidated and pinned for
+the whole run; the companion never appears in any argv and is bound to the
+command anyway.
+
+`SciexConversion` now has exactly one constructor, so the direct path and the
+queue assemble the same value the same way and the run identity is allocated in
+one place. It also carries the run's redacted backend text, taken out of the
+crate's report at construction for the reason the single-output path takes its
+own.

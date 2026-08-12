@@ -4683,7 +4683,7 @@ impl SetFixture {
 
     fn settle(&self, conflict: ConflictPolicy) -> output_set::SettledOutputSet {
         let destination = self.destination();
-        output_set::settle_staged_output_set(
+        output_set::settle_staged_output_set_seamed(
             output_set::StagedOutputSet {
                 source: &self.source_facts,
                 directory: &self.staged,
@@ -4693,7 +4693,73 @@ impl SetFixture {
             conflict,
             ConversionPolicy::default(),
             MzmlScanLimits::default(),
+            output_set::SetRunSeam {
+                names_claimed: &mut |_| output_set::OutputNamesClaimed::None,
+                before_member_publication: &mut |_| {},
+            },
         )
+    }
+}
+
+/// The claim gate names the member from this lifecycle's own list.
+///
+/// Every failure in this vocabulary is path-free by construction, and a gate
+/// that accepted a string from its caller would make this one path-free only by
+/// that caller's good behaviour. So the answer is a position, and the two
+/// halves of that are worth measuring separately: an honest position reports
+/// the member it points at, and a position nobody could have meant still
+/// refuses -- the answer was that *something* here is owned, and publishing on
+/// the strength of a bad index is the one reading of it that cannot be right.
+#[test]
+fn a_claimed_output_name_is_reported_from_the_discovered_set() {
+    for (answered, expected) in [
+        (1_usize, "sample_02.mzML"),
+        (0, "sample_01.mzML"),
+        (usize::MAX, "sample_01.mzML"),
+    ] {
+        let fixture = SetFixture::new(&format!("claimed-{answered}"));
+        for index in 1..=3 {
+            fixture.member(&format!("sample_{index:02}.mzML"));
+        }
+        let destination = fixture.destination();
+        let settled = output_set::settle_staged_output_set_seamed(
+            output_set::StagedOutputSet {
+                source: &fixture.source_facts,
+                directory: &fixture.staged,
+                declared: &fixture.declaration(),
+            },
+            &destination,
+            ConflictPolicy::Fail,
+            ConversionPolicy::default(),
+            MzmlScanLimits::default(),
+            output_set::SetRunSeam {
+                names_claimed: &mut |_| output_set::OutputNamesClaimed::Already { index: answered },
+                before_member_publication: &mut |_| {},
+            },
+        );
+
+        let MultiOutputOutcome::RefusedBeforePublication(
+            MultiOutputFailure::OutputNameClaimedElsewhere { name },
+        ) = &settled.outcome
+        else {
+            panic!("a claimed name refuses the set: {:?}", settled.outcome);
+        };
+        assert_eq!(name, expected, "answered {answered}");
+        assert!(settled.retained.is_empty(), "nothing may publish");
+        assert!(
+            entry_names(&fixture.destination_root).is_empty(),
+            "the destination is untouched"
+        );
+        // Every member was validated before the gate was asked, and none was
+        // published -- which is what makes this a refusal rather than a
+        // discovery failure.
+        assert!(
+            settled
+                .members
+                .iter()
+                .all(|member| member.state() == OutputMemberState::ValidatedNotPublished),
+            "answered {answered}"
+        );
     }
 }
 
@@ -5006,18 +5072,21 @@ fn publication_moves_the_validated_object_not_whatever_the_name_holds() {
         ConflictPolicy::Fail,
         ConversionPolicy::default(),
         MzmlScanLimits::default(),
-        |_| {
-            // Between validation and publication, the validated object is
-            // moved aside and a different file is put at the staged name. The
-            // rename acts on the validated handle, so the impostor must not be
-            // what arrives at the destination.
-            let staged_name = fixture.staged.join("sample_01.mzML");
-            fs::rename(
-                &staged_name,
-                fixture.directory.path().join("moved-aside.mzML"),
-            )
-            .expect("move the validated object aside");
-            fs::write(&staged_name, b"<mzML>impostor</mzML>").expect("replace the staged name");
+        output_set::SetRunSeam {
+            names_claimed: &mut |_| output_set::OutputNamesClaimed::None,
+            before_member_publication: &mut |_| {
+                // Between validation and publication, the validated object is
+                // moved aside and a different file is put at the staged name. The
+                // rename acts on the validated handle, so the impostor must not be
+                // what arrives at the destination.
+                let staged_name = fixture.staged.join("sample_01.mzML");
+                fs::rename(
+                    &staged_name,
+                    fixture.directory.path().join("moved-aside.mzML"),
+                )
+                .expect("move the validated object aside");
+                fs::write(&staged_name, b"<mzML>impostor</mzML>").expect("replace the staged name");
+            },
         },
     );
 
@@ -5136,13 +5205,16 @@ fn a_mid_set_publication_failure_is_reported_as_partially_finalized() {
         ConflictPolicy::Fail,
         ConversionPolicy::default(),
         MzmlScanLimits::default(),
-        |position| {
-            if position == 1 {
-                // The race: after the set preflight passed, the second name is
-                // taken by someone else.
-                fs::write(fixture.destination_root.join("sample_02.mzML"), b"raced in")
-                    .expect("occupy the second name mid-set");
-            }
+        output_set::SetRunSeam {
+            names_claimed: &mut |_| output_set::OutputNamesClaimed::None,
+            before_member_publication: &mut |position| {
+                if position == 1 {
+                    // The race: after the set preflight passed, the second name is
+                    // taken by someone else.
+                    fs::write(fixture.destination_root.join("sample_02.mzML"), b"raced in")
+                        .expect("occupy the second name mid-set");
+                }
+            },
         },
     );
 
@@ -5230,11 +5302,14 @@ fn a_first_member_publication_failure_is_a_refusal_not_a_partial_state() {
         ConflictPolicy::Fail,
         ConversionPolicy::default(),
         MzmlScanLimits::default(),
-        |position| {
-            if position == 0 {
-                fs::write(fixture.destination_root.join("sample_01.mzML"), b"raced in")
-                    .expect("occupy the first name mid-set");
-            }
+        output_set::SetRunSeam {
+            names_claimed: &mut |_| output_set::OutputNamesClaimed::None,
+            before_member_publication: &mut |position| {
+                if position == 0 {
+                    fs::write(fixture.destination_root.join("sample_01.mzML"), b"raced in")
+                        .expect("occupy the first name mid-set");
+                }
+            },
         },
     );
 

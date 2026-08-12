@@ -299,3 +299,37 @@ recorded above.
 - The partial-finalization vocabulary exists now, before any user can reach
   it, so the later product surface inherits an honest result model rather than
   retrofitting one.
+
+
+## Amendment, 2026-08-12 — the lifecycle asks one question outward
+
+[ADR 0026](0026-private-sciex-serial-queue-integration.md) made this lifecycle
+callable from the serial queue, and gave it one new input:
+`SetRunSeam::names_claimed`, asked once with the complete discovered name set
+after every member is validated and **before** the destination is inspected.
+
+It exists because this lifecycle knows about staged files and destination
+entries and must not learn about queues — but a queue knows something it cannot:
+that another item has already promised one of these names to a different
+acquisition. Refusing there rather than at the preflight is the whole point. By
+preflight time such a name is an ordinary file, so the conflict policy would
+answer for it, and under `Skip` it would call somebody else's output this
+acquisition's own already-converted result.
+
+The refusal is `MultiOutputFailure::OutputNameClaimedElsewhere`, and it publishes
+nothing. Production passes an inert seam, so the direct conversion path is
+exactly what it was.
+
+The gate answers with a **position**, not a name. Every failure in this
+vocabulary is path-free by construction, and a gate that accepted a string from
+its caller would make this one path-free only by that caller's good behaviour —
+the refusal would carry whatever it was handed. The lifecycle names the member
+from its own validated list instead, and a position nobody could have meant
+still refuses: the answer was that *something* here is owned, and publishing on
+the strength of a bad index is the one reading of it that cannot be right.
+
+The same seam carries the publication hook the deterministic suite uses to reach
+`PartiallyFinalized` — a name taken between the whole-set preflight and one
+member's rename. The hook is handed a position and nothing else: no object, no
+handle, no name. It cannot fail a rename; it can only act on the world, as
+another process could.

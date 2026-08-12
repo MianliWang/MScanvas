@@ -33,7 +33,7 @@ use mscanvas_proteowizard::{
 #[cfg(test)]
 use mscanvas_proteowizard::{
     MultiOutputConversionReport, MultiOutputOutcome, OutputMemberReport, OutputMemberValidation,
-    SciexSampleCompleteness,
+    SciexSampleCompleteness, StagedContentObservation,
 };
 
 use super::backend::ConversionBackend;
@@ -250,7 +250,7 @@ impl WorkspaceConversionReport {
 /// it say something else. What this type reports is publication state, and the
 /// name of every accessor says so.
 #[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct WorkspaceMultiOutputConversionReport {
     /// The handle of the dataset that was converted. The opaque name the
     /// session already uses, not a location.
@@ -277,6 +277,11 @@ pub(super) struct WorkspaceMultiOutputConversionReport {
     /// The installation sequence this run was stamped with, read at the moment
     /// the backend gate was taken.
     installation_generation: u64,
+    /// What was in the staging area when a stop reached the run.
+    ///
+    /// Present only for a run a stop ended, because it is the only
+    /// partial-output claim a run makes about itself. Counts, never names.
+    staged: Option<StagedContentObservation>,
     /// Whether every sample the reader identified became one of these members.
     ///
     /// A judgement carried beside the publication state, never folded into it.
@@ -291,9 +296,42 @@ pub(super) struct WorkspaceMultiOutputConversionReport {
     completeness: Option<SciexSampleCompleteness>,
 }
 
+#[cfg(test)]
+impl std::fmt::Debug for WorkspaceMultiOutputConversionReport {
+    /// Shape and stable identifiers. Never a member name.
+    ///
+    /// The crate's own failure type renders itself the same way and for the
+    /// same reason: a backend chooses these names from sample identifiers
+    /// inside the acquisition, so they are the user's data rather than this
+    /// application's vocabulary. The report carries them deliberately, through
+    /// accessors, for a caller that has decided to look; a debug string is not
+    /// that decision, and it is the one rendering that ends up in a log.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WorkspaceMultiOutputConversionReport")
+            .field("dataset", &self.dataset)
+            .field("source_kind", &self.source_kind)
+            .field("bound_source_objects", &self.bound_source_objects)
+            .field("group_outcome", &self.group_outcome)
+            .field("members", &self.members.len())
+            .field("published", &self.published_count())
+            .field("partial", &self.partial.is_some())
+            .field("refusal", &self.refusal)
+            .field("residue", &self.residue)
+            .field(
+                "completeness",
+                &self
+                    .completeness
+                    .as_ref()
+                    .map(SciexSampleCompleteness::stable_id),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
 /// One published-or-not member of an output set.
 #[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct MultiOutputMemberFacts {
     /// The name the backend chose. A display fact, not a location -- the same
     /// one the lifecycle's own report carries.
@@ -322,7 +360,19 @@ pub(super) struct MultiOutputMemberFacts {
 /// as an ordinary failure would tell the user nothing was written when five
 /// things were.
 #[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl std::fmt::Debug for MultiOutputMemberFacts {
+    /// The state, and nothing that names the member or its bytes.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MultiOutputMemberFacts")
+            .field("state", &self.state)
+            .field("validated", &self.validation.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct PartialFinalization {
     /// Members that received their final names, in publication order.
     finalized: Vec<String>,
@@ -332,6 +382,43 @@ pub(super) struct PartialFinalization {
     kind: std::io::ErrorKind,
     /// Members never published: the failed one first, then the remainder.
     not_published: Vec<String>,
+}
+
+#[cfg(test)]
+impl std::fmt::Debug for PartialFinalization {
+    /// Counts and the filesystem's own kind. The prefix that was published is
+    /// still the user's files, and how many there were says what happened
+    /// without saying what they are called.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PartialFinalization")
+            .field("finalized", &self.finalized.len())
+            .field("not_published", &self.not_published.len())
+            .field("kind", &self.kind)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+impl PartialFinalization {
+    /// Members that reached their final names, in publication order. They are
+    /// the user's files: nothing here removes, hides or supersedes them.
+    pub(super) fn finalized(&self) -> &[String] {
+        &self.finalized
+    }
+
+    pub(super) fn failed_member(&self) -> &str {
+        &self.failed_member
+    }
+
+    pub(super) const fn kind(&self) -> std::io::ErrorKind {
+        self.kind
+    }
+
+    /// The failed member first, then every member after it.
+    pub(super) fn not_published(&self) -> &[String] {
+        &self.not_published
+    }
 }
 
 #[cfg(test)]
@@ -384,6 +471,7 @@ impl WorkspaceMultiOutputConversionReport {
             backend: run.backend(),
             residue: run.residue(),
             installation_generation,
+            staged: run.staged_content(),
             completeness,
         }
     }
@@ -480,6 +568,11 @@ impl WorkspaceMultiOutputConversionReport {
 
     pub(super) const fn installation_generation(&self) -> u64 {
         self.installation_generation
+    }
+
+    /// What was staged when a stop reached this run, where one did.
+    pub(super) const fn staged_content(&self) -> Option<StagedContentObservation> {
+        self.staged
     }
 }
 

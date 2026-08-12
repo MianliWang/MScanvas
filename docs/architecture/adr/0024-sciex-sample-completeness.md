@@ -207,3 +207,17 @@ It is an upstream defect, not one this boundary can measure around.
 - The declared-set comparison ADR 0022 added against injected members turns out
   to be load-bearing for a completely different failure. Removing it would now
   break two claims, and the mutation suite holds both.
+
+
+## Amendment, 2026-08-12 — the gate is where it was
+
+[ADR 0026](0026-private-sciex-serial-queue-integration.md) changed nothing about
+what completeness is, how it is proved or when it is asked. A queued SCIEX item
+reaches this gate through the same lifecycle, before any output is published,
+and a refusal is still a refusal with zero publication.
+
+What the queue adds is where the answer goes: a finalized item is `Finalized`
+only if the outcome is full **and** the authority to adopt it exists, and the
+two conditions of that authority are this proof and full publication. A fully
+finalized group with no proof is therefore a failed item rather than a success
+with nothing to take.

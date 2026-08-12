@@ -269,3 +269,16 @@ output. The reopen costs one call and takes nothing away.
 a different question — whether the conversion was faithful — which was already
 answered when the file was made, and it would not establish which object is being
 admitted.
+
+
+## Amendment, 2026-08-12 — queue-held authority is cardinality-aware
+
+[ADR 0026](0026-private-sciex-serial-queue-integration.md) made a queue item's
+adoption authority an enum: one single-output ticket, or one output-set ticket.
+The visible action is unchanged in every respect — its transfer object, its
+stable identifiers, its copy and its behaviour — and it deliberately does not
+project a set, because it adopts one output per finalized item and a set would
+have to be flattened into members to fit.
+
+The set is reached through a separate private entry point naming the exact
+operation and the exact item, and then runs this engine unchanged.

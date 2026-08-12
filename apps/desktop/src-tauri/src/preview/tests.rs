@@ -13,9 +13,10 @@ use std::time::Duration;
 
 use mscanvas_proteowizard::{
     BackendTool, CancellationToken, CapturedHelpStream, CommandSpec, CompleteHelpCapture,
-    ConflictPolicy, ConversionCancellation, ConversionSourceKind, InstalledHelpCapabilities,
-    PreviewOperation, PreviewOutcome, PreviewOutputEntry, PreviewOutputManifest, ProcessError,
-    ProcessOutput, ProcessRunner, Sha256Digest, Termination, interpret_preview,
+    ConflictPolicy, ConversionCancellation, ConversionSourceKind, EstablishedSampleCompleteness,
+    InstalledHelpCapabilities, MAX_CONVERSION_OUTPUTS_PER_SOURCE, PreviewOperation, PreviewOutcome,
+    PreviewOutputEntry, PreviewOutputManifest, ProcessError, ProcessOutput, ProcessRunner,
+    SciexSampleCompleteness, Sha256Digest, Termination, interpret_preview,
 };
 
 use super::backend::{ConversionBackend, OperationAttempt, PreviewProvider, interpretation_error};
@@ -44,8 +45,8 @@ use super::dto::{
 };
 use super::installation::InstallationIdentity;
 use super::operation::{
-    AdmittedDestination, CancellationFacts, ConversionQueue, ConversionSlot, ItemOutcome,
-    ItemState, QueueItem, StopAccepted, TerminalReason,
+    AdmittedDestination, CancellationFacts, ClaimedOutputName, ConversionQueue, ConversionSlot,
+    ItemOutcome, ItemState, QueueItem, StopAccepted, TerminalReason, folded_output_name,
 };
 /// The share-mode probe that answers whether a file is still held open. It
 /// lives beside the flags the lease is opened with, because that is what makes
@@ -13085,7 +13086,9 @@ fn test_queue_item_named(index: usize, file_name: &str) -> QueueItem {
             source_kind: DatasetSourceKindDto::ThermoRaw,
             relative_context: None,
         },
-        file_name.replace(".raw", ".mzML"),
+        super::operation::ItemOutputTopology::KnownSingle {
+            basename: file_name.replace(".raw", ".mzML"),
+        },
     )
 }
 
@@ -13585,7 +13588,9 @@ fn a_queue_reports_each_distinct_family_once_in_first_appearance_order() {
             0,
             kind,
             dto(name, wire),
-            name.replace(".lcd", ".mzML").replace(".raw", ".mzML"),
+            super::operation::ItemOutputTopology::KnownSingle {
+                basename: name.replace(".lcd", ".mzML").replace(".raw", ".mzML"),
+            },
         )
     };
     let queue = ConversionQueue::new(
@@ -14800,6 +14805,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
         operation,
         1,
         ItemOutcome::Stopped {
+            set: None,
             state: ItemState::Cancelled,
             facts: CancellationFacts {
                 process_launched: true,
@@ -14854,6 +14860,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
         operation,
         0,
         ItemOutcome::Stopped {
+            set: None,
             state: ItemState::CancellationFailed,
             facts: CancellationFacts {
                 process_launched: true,
@@ -15495,6 +15502,23 @@ impl TestFile {
 struct FakeOutputSetRunner {
     /// The basenames this backend writes and declares.
     declared: Vec<String>,
+    /// Whether a command with no `--outdir` -- a single-output plan -- should be
+    /// converted rather than refused, so one stand-in can serve a mixed queue.
+    converts_single_outputs: bool,
+    /// How many of this runner's processes were alive at once, ever.
+    ///
+    /// One is the whole serial-queue claim. Counting it here rather than
+    /// inferring it from timing is what makes the claim a measurement.
+    live: Arc<AtomicUsize>,
+    concurrent: Arc<AtomicUsize>,
+    /// Announced when a run begins, then parked until released. For the stop
+    /// tests, which have to get a request in while a process is "running".
+    started: Mutex<Option<mpsc::Sender<()>>>,
+    release: Mutex<Option<mpsc::Receiver<()>>>,
+    /// Which call parks. One unless a test aims at a later item.
+    park_on_call: usize,
+    /// What a cancelled run reports, when a test asks for one.
+    stop_ending: Option<StopEnding>,
     /// A source member to try to open for writing while the process is
     /// "running", so a test can ask whether the boundary really pinned it.
     probe: Option<PathBuf>,
@@ -15504,6 +15528,10 @@ struct FakeOutputSetRunner {
     undeclared: Vec<String>,
     /// What this stand-in writes to its error stream.
     stderr: String,
+    /// Whether that stream is reported as captured only in part.
+    stderr_truncated: bool,
+    /// Declared members written with no records, so validation refuses them.
+    empty: Vec<String>,
     exit_code: i32,
     calls: Arc<AtomicUsize>,
 }
@@ -15512,10 +15540,19 @@ impl FakeOutputSetRunner {
     fn writing(names: &[&str]) -> Self {
         Self {
             declared: names.iter().map(|name| (*name).to_owned()).collect(),
+            converts_single_outputs: false,
+            live: Arc::new(AtomicUsize::new(0)),
+            concurrent: Arc::new(AtomicUsize::new(0)),
+            started: Mutex::new(None),
+            release: Mutex::new(None),
+            park_on_call: 1,
+            stop_ending: None,
             probe: None,
             probe_refused: Arc::new(Mutex::new(None)),
             undeclared: Vec::new(),
             stderr: String::new(),
+            stderr_truncated: false,
+            empty: Vec::new(),
             exit_code: 0,
             calls: Arc::new(AtomicUsize::new(0)),
         }
@@ -15550,14 +15587,92 @@ impl FakeOutputSetRunner {
         self
     }
 
+    /// A backend whose error stream was too long to capture whole, which is the
+    /// one thing that makes the completeness audit unreadable rather than
+    /// clean.
+    fn truncating_stderr(mut self) -> Self {
+        self.stderr_truncated = true;
+        self
+    }
+
+    /// The same runner, writing one declared member with no records at all.
+    fn with_empty_member(mut self, name: &str) -> Self {
+        self.empty.push(name.to_owned());
+        self
+    }
+
     fn launches(&self) -> Arc<AtomicUsize> {
         Arc::clone(&self.calls)
+    }
+
+    /// The same runner, which also converts ordinary single-output plans.
+    fn also_converting(mut self) -> Self {
+        self.converts_single_outputs = true;
+        self
+    }
+
+    /// The high-water mark of this runner's own concurrency.
+    fn concurrent(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.concurrent)
+    }
+
+    /// The same runner, parked on its first run until released.
+    fn parked(self, ending: StopEnding) -> (Self, mpsc::Receiver<()>, mpsc::Sender<()>) {
+        self.parked_on_call(1, ending)
+    }
+
+    /// The same runner, parked on its `call`-th run until released.
+    ///
+    /// So a stop can be aimed at the second item of a queue, with the first
+    /// already finished and holding whatever it earned.
+    fn parked_on_call(
+        mut self,
+        call: usize,
+        ending: StopEnding,
+    ) -> (Self, mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (started, observed) = mpsc::channel();
+        let (release, parked) = mpsc::channel();
+        self.started = Mutex::new(Some(started));
+        self.release = Mutex::new(Some(parked));
+        self.park_on_call = call;
+        self.stop_ending = Some(ending);
+        (self, observed, release)
     }
 }
 
 impl ProcessRunner for FakeOutputSetRunner {
     fn run(&self, spec: &CommandSpec) -> Result<ProcessOutput, ProcessError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        let live = self.live.fetch_add(1, Ordering::SeqCst) + 1;
+        self.concurrent.fetch_max(live, Ordering::SeqCst);
+        let _lane = LiveProcess(Arc::clone(&self.live));
+        // A single-output plan names the exact document it must produce; a set
+        // plan names only a directory, because the backend chooses the names.
+        // That difference is the discriminator, so one stand-in can serve a
+        // mixed queue and the order and the concurrency of one queue can be
+        // measured over both cardinalities at once.
+        if let Some(destination) = spec.output_destination() {
+            assert!(
+                self.converts_single_outputs,
+                "this runner was not asked to serve single-output plans"
+            );
+            let destination = destination.to_path_buf();
+            fs::write(destination, mzml_document(2, true)).expect("write staged output");
+            return Ok(ProcessOutput {
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                stdout_total_bytes: 0,
+                stderr_total_bytes: 0,
+                stdout_truncated: false,
+                stderr_truncated: false,
+                exit_code: Some(0),
+                elapsed: Duration::from_millis(3),
+                termination: Termination::Exited,
+                max_active_processes: Some(1),
+                final_active_processes: Some(0),
+                peak_job_memory_bytes: Some(2_048),
+            });
+        }
         let args = spec.args();
         let position = args
             .iter()
@@ -15579,7 +15694,12 @@ impl ProcessRunner for FakeOutputSetRunner {
 
         let mut stdout = Vec::new();
         for name in &self.declared {
-            fs::write(outdir.join(name), mzml_document(2, true)).expect("write a backend output");
+            let document = if self.empty.iter().any(|empty| empty == name) {
+                mzml_document(0, true)
+            } else {
+                mzml_document(2, true)
+            };
+            fs::write(outdir.join(name), document).expect("write a backend output");
             stdout.extend_from_slice(b"writing output file: ");
             stdout.extend_from_slice(outdir.join(name).display().to_string().as_bytes());
             stdout.push(b'\n');
@@ -15594,12 +15714,122 @@ impl ProcessRunner for FakeOutputSetRunner {
             stderr_total_bytes: self.stderr.len() as u64,
             stderr: self.stderr.clone().into_bytes(),
             stdout_truncated: false,
-            stderr_truncated: false,
+            stderr_truncated: self.stderr_truncated,
             exit_code: Some(self.exit_code),
             elapsed: Duration::from_millis(5),
             termination: Termination::Exited,
             max_active_processes: Some(1),
             final_active_processes: Some(0),
+            peak_job_memory_bytes: Some(2_048),
+        })
+    }
+
+    /// The same stand-in, under a cancellation request.
+    ///
+    /// Deliberately the same shape as `StopAwareRunner`'s: a request already
+    /// made launches nothing; a request that lands while the process is parked
+    /// leaves a partial staged document and reports the ending under test. A
+    /// stand-in that reported a cancellation it had not performed would be
+    /// standing in for a boundary MSCanvas does not have.
+    fn run_cancellable(
+        &self,
+        spec: &CommandSpec,
+        cancellation: &CancellationToken,
+    ) -> Result<ProcessOutput, ProcessError> {
+        if cancellation.is_cancelled() {
+            return Ok(ProcessOutput {
+                exit_code: None,
+                termination: Termination::NotStarted,
+                max_active_processes: None,
+                final_active_processes: None,
+                elapsed: Duration::ZERO,
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                stdout_total_bytes: 0,
+                stderr_total_bytes: 0,
+                stdout_truncated: false,
+                stderr_truncated: false,
+                peak_job_memory_bytes: None,
+            });
+        }
+        if self.calls.load(Ordering::SeqCst) + 1 < self.park_on_call {
+            return self.run(spec);
+        }
+        let Some(started) = self.started.lock().expect("started channel").take() else {
+            return self.run(spec);
+        };
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let live = self.live.fetch_add(1, Ordering::SeqCst) + 1;
+        self.concurrent.fetch_max(live, Ordering::SeqCst);
+        let lane = LiveProcess(Arc::clone(&self.live));
+        started.send(()).expect("announce the started conversion");
+        let parked = self
+            .release
+            .lock()
+            .expect("release channel")
+            .take()
+            .expect("a parked runner is released exactly once");
+        parked
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the parked conversion is released");
+        let ending = self.stop_ending.expect("a parked runner has an ending");
+        let args = spec.args();
+        let position = args
+            .iter()
+            .position(|argument| argument == "--outdir")
+            .expect("a set command names an output directory");
+        let outdir = PathBuf::from(&args[position + 1]);
+        if !cancellation.is_cancelled() || ending == StopEnding::NaturalSuccess {
+            let mut stdout = Vec::new();
+            for name in &self.declared {
+                fs::write(outdir.join(name), mzml_document(2, true))
+                    .expect("write a backend output");
+                stdout.extend_from_slice(b"writing output file: ");
+                stdout.extend_from_slice(outdir.join(name).display().to_string().as_bytes());
+                stdout.push(b'\n');
+            }
+            return Ok(ProcessOutput {
+                stdout_total_bytes: stdout.len() as u64,
+                stdout,
+                stderr: Vec::new(),
+                stderr_total_bytes: 0,
+                stdout_truncated: false,
+                stderr_truncated: false,
+                exit_code: Some(0),
+                elapsed: Duration::from_millis(5),
+                termination: Termination::Exited,
+                max_active_processes: Some(1),
+                final_active_processes: Some(0),
+                peak_job_memory_bytes: Some(2_048),
+            });
+        }
+        // A partial document, as a terminated backend leaves behind, so the
+        // staging area a stop has to clean up is real.
+        let partial = self.declared.first().map_or("partial.mzML", String::as_str);
+        fs::write(outdir.join(partial), b"<indexedmzML><mzML")
+            .expect("write a partial staged output");
+        drop(lane);
+        if ending == StopEnding::Unterminated {
+            return Err(ProcessError::Terminate {
+                detail: "the owned job refused termination".to_owned(),
+            });
+        }
+        Ok(ProcessOutput {
+            stdout: Vec::new(),
+            stderr: b"the backend was mid-sentence when it was stopped\n".to_vec(),
+            stdout_total_bytes: 0,
+            stderr_total_bytes: 49,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            exit_code: Some(-1_073_741_510),
+            elapsed: Duration::from_millis(4),
+            termination: Termination::Cancelled,
+            max_active_processes: Some(1),
+            final_active_processes: if ending == StopEnding::Survivors {
+                Some(2)
+            } else {
+                Some(0)
+            },
             peak_job_memory_bytes: Some(2_048),
         })
     }
@@ -16700,21 +16930,265 @@ fn a_member_already_in_the_workspace_is_reported_not_duplicated() {
     );
 }
 
-/// A partially finalized conversion is not an adoptable set, and its published
-/// members stay exactly where they are.
+/// Capacity, measured on the output-set path itself.
 ///
-/// The distinction this slice must not blur. A partial publication produced
-/// real files the user owns; offering them through an action named for the
-/// acquisition's output set would present a conversion that stopped halfway as
-/// one that finished.
+/// Until now this rule was inherited: set adoption calls the same registry the
+/// visible path does, and that registry's own tests prove duplicates are
+/// decided before capacity. Inheritance is a good argument and it is not a
+/// measurement -- it does not say what the *set* path does when the workspace
+/// fills partway through one ordered adoption. It does now.
+///
+/// The shape: three members, member 0 already a row, exactly one slot free.
+/// Member 0 must not spend the slot, member 1 must take it, and member 2 must
+/// be refused -- with no rollback of anything already committed.
 #[test]
-fn a_partially_finalized_conversion_mints_no_ticket() {
-    let fixture = TestFile::new("set-partial");
+fn an_output_set_fills_the_last_slot_and_refuses_the_rest() {
+    let (fixture, converted) =
+        converted_output_set("set-capacity", &["a-S1.mzML", "a-S2.mzML", "a-S3.mzML"]);
+    let service = &converted.service;
+
+    // Member 0 the ordinary way, before the set is adopted.
+    service
+        .add_files(&[converted.destination.join("a-S1.mzML")])
+        .expect("an ordinary mzML is admitted");
+    let existing = service.roster().datasets.last().expect("the row").clone();
+
+    // Fill to exactly one free slot. The acquisition and member 0 are already
+    // rows, so the filler is everything else the workspace can hold but one.
+    let filler: Vec<PathBuf> = (0..MAX_WORKSPACE_DATASETS - 3)
+        .map(|index| fixture.readable_mzml(&format!("filler-{index}.mzML")))
+        .collect();
+    service.add_files(&filler).expect("the filler is admitted");
+    assert_eq!(
+        service.dataset_count(),
+        MAX_WORKSPACE_DATASETS - 1,
+        "exactly one slot must remain"
+    );
+    let identifiers_before = service.next_dataset_identifier();
+
+    let result = service
+        .adopt_output_set(&converted.ticket)
+        .expect("the adoption reaches an outcome");
+
+    // Duplicate first, then the last slot, then the refusal -- in member order.
+    assert_eq!(
+        set_adoption_kinds(&result),
+        vec!["already", "added", "refused"]
+    );
+    assert_eq!(set_refusal_reasons(&result), vec!["workspace_full"]);
+    assert_eq!(
+        set_output_names(&result),
+        vec!["a-S1.mzML", "a-S2.mzML", "a-S3.mzML"],
+        "refusals keep their place in the deterministic member order"
+    );
+
+    // The duplicate returned its existing row rather than a new one.
+    let WorkspaceOutputAdoptionOutcomeDto::AlreadyInWorkspace { dataset, .. } = &result.outcomes[0]
+    else {
+        panic!("member 0 is a duplicate: {:?}", result.outcomes[0]);
+    };
+    assert_eq!(dataset.handle, existing.handle);
+    assert_eq!(dataset.source_kind, DatasetSourceKindDto::Mzml);
+
+    // The workspace is full and the duplicate spent neither a slot nor an id:
+    // one row was added, and exactly one identifier was allocated.
+    assert_eq!(service.dataset_count(), MAX_WORKSPACE_DATASETS);
+    assert_eq!(
+        service.next_dataset_identifier(),
+        identifiers_before + 1,
+        "only the one accepted member may spend an identifier"
+    );
+
+    // No set-level rollback: the member that fitted is a row, and so is the
+    // acquisition it came from.
+    let handles: Vec<&str> = result
+        .roster
+        .datasets
+        .iter()
+        .map(|dataset| dataset.handle.as_str())
+        .collect();
+    let WorkspaceOutputAdoptionOutcomeDto::Added { dataset, .. } = &result.outcomes[1] else {
+        panic!("member 1 took the last slot: {:?}", result.outcomes[1]);
+    };
+    assert!(handles.contains(&dataset.handle.as_str()));
+    assert!(
+        handles.contains(&converted.source.as_str()),
+        "the acquisition is still a row of its own"
+    );
+    assert_eq!(
+        result
+            .roster
+            .datasets
+            .iter()
+            .filter(|dataset| dataset.source_kind == DatasetSourceKindDto::SciexWiff)
+            .count(),
+        1
+    );
+
+    // Repeating it reports the two that are in and refuses the one that is not.
+    let again = service
+        .adopt_output_set(&converted.ticket)
+        .expect("the ticket survives an attempt");
+    assert_eq!(
+        set_adoption_kinds(&again),
+        vec!["already", "already", "refused"]
+    );
+    assert_eq!(set_refusal_reasons(&again), vec!["workspace_full"]);
+    assert_eq!(service.dataset_count(), MAX_WORKSPACE_DATASETS);
+    assert_eq!(service.next_dataset_identifier(), identifiers_before + 1);
+}
+
+/// A genuinely partially finalized conversion mints no ticket, and keeps every
+/// file it published.
+///
+/// This is the outcome the whole `PartiallyFinalized` policy is about, and it
+/// takes a seam to reach honestly. The lifecycle checks the complete
+/// destination name set before it publishes anything, so the only way a rename
+/// fails after an earlier one succeeded is for the name to be taken in between
+/// -- a race against another process. Occupying it through the publication seam
+/// is that race, made deterministic; the failure is still the real no-clobber
+/// rename refusing a real occupied name.
+///
+/// Distinguish this from `a_whole_set_conflict_refuses_before_publication`,
+/// which occupies a name *before* the run and is refused by the preflight with
+/// nothing published at all. The two mean opposite things and only this one is
+/// a partial result.
+#[test]
+fn a_truly_partially_finalized_conversion_mints_no_ticket() {
+    let fixture = TestFile::new("set-truly-partial");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let destination = fixture.destination("out");
+    let names = ["a-S1.mzML", "a-S2.mzML", "a-S3.mzML"];
+
+    // A file the user already had, somewhere the conversion will not touch.
+    let bystander = destination.join("notes.txt");
+    fs::write(&bystander, b"the user's own file").expect("write a bystander");
+
+    let service = output_set_service(FakeOutputSetRunner::writing(&names));
+    let dataset = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the bundle is admitted");
+    let raced = destination.join("a-S2.mzML");
+    let conversion = service
+        .convert_workspace_sciex_bundle_seamed(
+            &dataset.handle,
+            &destination,
+            ConflictPolicy::Fail,
+            &mut |position| {
+                if position == 1 {
+                    fs::write(&raced, b"raced in after the preflight")
+                        .expect("occupy the second name mid-set");
+                }
+            },
+        )
+        .expect("the conversion reaches an outcome");
+
+    // 1. The typed outcome really is partial, not a refusal wearing its name.
+    assert_eq!(conversion.report().group_outcome(), "partially_finalized");
+    assert!(
+        conversion.report().refusal_id().is_none(),
+        "a partial publication is not a refusal"
+    );
+    let partial = conversion
+        .report()
+        .partial_finalization()
+        .expect("a partial outcome carries its facts");
+    assert_eq!(partial.finalized(), ["a-S1.mzML"]);
+    assert_eq!(partial.failed_member(), "a-S2.mzML");
+    assert_eq!(partial.kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(partial.not_published(), ["a-S2.mzML", "a-S3.mzML"]);
+
+    // 2. The prefix was published and retained; the rest was not.
+    assert_eq!(conversion.retained().len(), 1, "exactly the prefix");
+    let states: Vec<(&str, &str)> = conversion
+        .report()
+        .members()
+        .iter()
+        .map(|member| (member.file_name(), member.state()))
+        .collect();
+    assert_eq!(
+        states,
+        vec![
+            ("a-S1.mzML", "finalized"),
+            ("a-S2.mzML", "validated_not_published"),
+            ("a-S3.mzML", "validated_not_published"),
+        ],
+        "every member was validated; only the first was published"
+    );
+
+    // 3. Completeness is explicitly withdrawn rather than left to look true.
+    assert_eq!(
+        conversion.report().completeness().map(|c| c.stable_id()),
+        Some("source_sample_set_not_fully_published")
+    );
+
+    // 4. The published prefix is on disk, and nothing rolled it back.
+    let published = destination.join("a-S1.mzML");
+    let published_bytes = fs::read(&published).expect("the prefix is a real file");
+    assert!(!published_bytes.is_empty());
+    assert!(
+        !destination.join("a-S3.mzML").exists(),
+        "the unpublished remainder must not appear"
+    );
+    // The racer's file and the bystander are untouched.
+    assert_eq!(
+        fs::read(&raced).expect("read the racer's file"),
+        b"raced in after the preflight"
+    );
+    assert_eq!(
+        fs::read(&bystander).expect("read the bystander"),
+        b"the user's own file"
+    );
+
+    // 5. No complete-set ticket exists for it.
+    let refused = service
+        .output_set_adoption_ticket(conversion)
+        .expect_err("a set that did not publish whole is not adoptable");
+    assert_eq!(refused.kind, "output_set_not_fully_finalized");
+    assert_eq!(service.dataset_count(), 1, "only the acquisition");
+
+    // 6. Dropping every report, ticket and service deletes no finalized file.
+    drop(service);
+    assert_eq!(
+        fs::read(&published).expect("the prefix survives the session"),
+        published_bytes
+    );
+
+    // 7. And it is an ordinary mzML the user can add the ordinary way, which is
+    //    the whole reason nothing here rolls it back.
+    let later = output_set_service(FakeOutputSetRunner::writing(&["unused.mzML"]));
+    let added = later
+        .add_files(std::slice::from_ref(&published))
+        .expect("an ordinary mzML is admitted");
+    assert_eq!(added.roster.datasets.len(), 1);
+    assert_eq!(
+        added.roster.datasets[0].source_kind,
+        DatasetSourceKindDto::Mzml
+    );
+    assert_eq!(
+        fs::read(&published).expect("still there after admission"),
+        published_bytes
+    );
+}
+
+/// A name occupied *before* the run refuses the whole set before publication,
+/// and mints no ticket.
+///
+/// Named for what it measures. An earlier version of this test was called
+/// partial finalization, and it is not: the lifecycle preflights the complete
+/// destination name set before it publishes anything, so an already-occupied
+/// name under `Fail` stops the run with **zero** members published. Real
+/// partial finalization needs the name to be taken between that preflight and
+/// a member's rename, which is
+/// `a_truly_partially_finalized_conversion_mints_no_ticket`.
+#[test]
+fn a_whole_set_conflict_refuses_before_publication() {
+    let fixture = TestFile::new("set-occupied");
     let acquisition = fixture.sciex_bundle("acquisition");
     let destination = fixture.destination("out");
 
     // The second member's destination name is already taken by something the
-    // conversion did not write, so publication stops after the first.
+    // conversion did not write.
     let occupied = destination.join("a-S2.mzML");
     fs::write(&occupied, b"a file the user already had").expect("occupy the second name");
     let occupied_bytes = fs::read(&occupied).expect("read it");
@@ -16727,18 +17201,29 @@ fn a_partially_finalized_conversion_mints_no_ticket() {
         .convert_workspace_sciex_bundle(&dataset.handle, &destination, ConflictPolicy::Fail)
         .expect("the conversion reaches an outcome");
 
-    // Whatever the lifecycle did with the occupied name, the one thing that
-    // must hold is that a set which did not publish whole mints no ticket.
-    if conversion.report().group_outcome() == "fully_finalized" {
-        panic!("the occupied destination name did not stop the set publishing whole");
-    }
+    // Refused whole, with nothing published and nothing partial.
+    assert_eq!(
+        conversion.report().group_outcome(),
+        "refused_before_publication"
+    );
+    assert_eq!(
+        conversion.report().refusal_id(),
+        Some("multi_output_destination_occupied")
+    );
+    assert!(
+        conversion.report().partial_finalization().is_none(),
+        "nothing was published, so nothing is partial"
+    );
+    assert!(conversion.retained().is_empty());
+    assert!(
+        !destination.join("a-S1.mzML").exists(),
+        "the first member must not publish around the conflict"
+    );
+
     let refused = service
         .output_set_adoption_ticket(conversion)
-        .expect_err("an incomplete publication is not an adoptable set");
-    assert!(
-        refused.kind.starts_with("output_set_"),
-        "refused for an unrelated reason: {refused:?}"
-    );
+        .expect_err("an unpublished set is not an adoptable set");
+    assert_eq!(refused.kind, "output_set_not_fully_finalized");
 
     // Nothing was added, and the file that was already there is untouched.
     assert_eq!(service.dataset_count(), 1, "only the acquisition");
@@ -17062,4 +17547,2097 @@ fn a_ticket_from_another_session_is_refused() {
         .adopt_output_set(&converted.ticket)
         .expect("the minting session adopts it");
     assert_eq!(set_adoption_kinds(&result), vec!["added"]);
+}
+
+/// Decrements the live count when one fake process ends.
+struct LiveProcess(Arc<AtomicUsize>);
+
+impl Drop for LiveProcess {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// The basenames directly inside `directory`.
+fn entry_names_in(directory: &Path) -> Vec<String> {
+    fs::read_dir(directory)
+        .expect("read the destination")
+        .map(|entry| {
+            entry
+                .expect("a destination entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Private SCIEX serial-queue integration (ADR 0026)
+//
+// One acquisition is one queue item even when the backend writes twenty-four
+// documents for it. Everything below drives the *real* queue -- the same slot,
+// the same worker, the same backend lane, the same stop and retry rules the
+// visible workflow uses -- through a private admission that the shipped binary
+// cannot reach.
+// ---------------------------------------------------------------------------
+
+/// Builds a session whose provider runs `runner`, and admits one SCIEX bundle.
+fn private_sciex_queue(
+    label: &str,
+    runner: FakeOutputSetRunner,
+) -> (TestFile, Arc<PreviewService>, String, PathBuf) {
+    let fixture = TestFile::new(label);
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let destination = fixture.destination("out");
+    let service = Arc::new(output_set_service(runner));
+    let dataset = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the bundle is admitted");
+    (fixture, service, dataset.handle, destination)
+}
+
+/// Runs one private queue of `handles` to its own end.
+fn run_private_queue(
+    service: &PreviewService,
+    handles: &[String],
+    destination: &Path,
+    conflict: ConversionConflictPolicyDto,
+) -> WorkspaceConversionUpdateDto {
+    let document = service.workspace_drop_document_epoch();
+    let reservation = service
+        .begin_private_conversion_queue(handles, conflict, document)
+        .expect("the private queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+    service.run_claimed_conversion(operation, destination)
+}
+
+/// The operation identifier of whatever the slot currently holds.
+fn operation_of(update: &WorkspaceConversionUpdateDto) -> u64 {
+    terminal_operation(update)
+        .parse()
+        .expect("a terminal queue names its operation")
+}
+
+/// A private SCIEX item carries set topology and invents no output name.
+///
+/// The name is the thing this milestone must not produce. The acquisition's
+/// stem, the sample count and the sample names are all within reach here, and
+/// every one of them would be a filename MSCanvas made up for a document the
+/// backend has not written.
+#[test]
+fn a_private_sciex_item_has_no_output_file_name() {
+    let (_fixture, service, handle, destination) = private_sciex_queue(
+        "queue-topology",
+        FakeOutputSetRunner::writing(&["a-S1.mzML"]),
+    );
+    let document = service.workspace_drop_document_epoch();
+    let reservation = service
+        .begin_private_conversion_queue(
+            std::slice::from_ref(&handle),
+            ConversionConflictPolicyDto::Fail,
+            document,
+        )
+        .expect("the private queue is admitted");
+    let update = service.conversion_state();
+    let WorkspaceConversionStateDto::AwaitingDestination { queue, .. } = &update.state else {
+        panic!("the queue is waiting for a folder: {:?}", update.state);
+    };
+
+    assert_eq!(queue.items.len(), 1, "one acquisition is one item");
+    let item = &queue.items[0];
+    assert_eq!(item.source_kind, DatasetSourceKindDto::SciexWiff);
+    assert_eq!(
+        item.output_file_name, "",
+        "a backend-named set must not be given a filename"
+    );
+    let acquisition_stem = item
+        .file_name
+        .rsplit_once('.')
+        .map_or(item.file_name.as_str(), |(stem, _)| stem);
+    assert!(
+        !item.output_file_name.contains(acquisition_stem),
+        "no name may be derived from the acquisition"
+    );
+
+    // And the visible planner refuses the row outright, so nothing reachable
+    // from a command can build this item at all.
+    let refused = service
+        .conversion_queue_plan(std::slice::from_ref(&handle))
+        .expect_err("the visible planner does not take a SCIEX row");
+    assert_eq!(refused.kind, "dataset_not_convertible");
+    let refused = service
+        .begin_conversion_queue(&[handle], ConversionConflictPolicyDto::Fail, document)
+        .expect_err("nor does the visible queue");
+    assert_eq!(refused.kind, "dataset_not_convertible");
+    let _ = reservation;
+    let _ = destination;
+}
+
+/// Ten outputs, one item, one process, one ticket, ten ordinary rows.
+///
+/// The whole vertical in one measurement.
+#[test]
+fn one_sciex_acquisition_is_one_queue_item_with_ten_outputs() {
+    let names: Vec<String> = (1..=10).map(|index| format!("a-S{index}.mzML")).collect();
+    let borrowed: Vec<&str> = names.iter().map(String::as_str).collect();
+    let runner = FakeOutputSetRunner::writing(&borrowed);
+    let launches = runner.launches();
+    let (_fixture, service, handle, destination) = private_sciex_queue("queue-ten", runner);
+
+    let update = run_private_queue(
+        &service,
+        std::slice::from_ref(&handle),
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let operation = operation_of(&update);
+    let queue = terminal_queue(&update);
+
+    // One item, one process, and the counts are item counts.
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Completed
+    );
+    assert_eq!(queue.items.len(), 1);
+    assert_eq!(queue.item_count, 1, "ten documents are not ten items");
+    assert_eq!(queue.finalized_count, 1);
+    assert_eq!(queue.current_index, 1, "one item is done");
+    assert_eq!(launches.load(Ordering::SeqCst), 1, "one msconvert run");
+    assert_eq!(
+        item_states(queue),
+        vec![ConversionQueueItemStateDto::Finalized]
+    );
+    assert_eq!(queue.items[0].attempts, 1);
+
+    // The set report the item kept, through the private accessor.
+    let report = service
+        .terminal_set_report(operation, 0)
+        .expect("the item kept its group report");
+    assert_eq!(report.group_outcome(), "fully_finalized");
+    assert_eq!(report.published_count(), 10);
+    assert_eq!(
+        report
+            .completeness()
+            .and_then(SciexSampleCompleteness::established)
+            .map(EstablishedSampleCompleteness::sample_count),
+        Some(10)
+    );
+
+    // One ticket over ten members, adopted through the private terminal path.
+    let result = service
+        .adopt_queue_output_set(operation, 0)
+        .expect("the terminal item holds a set to adopt");
+    assert_eq!(set_adoption_kinds(&result), vec!["added"; 10]);
+    // The lifecycle's own deterministic order, which is the staging
+    // directory's and not the order the samples sit in the acquisition.
+    // Deterministic is not scientific, and nothing here claims otherwise.
+    let mut published = names.clone();
+    published.sort();
+    assert_eq!(set_output_names(&result), published);
+    assert_eq!(
+        result
+            .roster
+            .datasets
+            .iter()
+            .filter(|dataset| dataset.source_kind == DatasetSourceKindDto::Mzml)
+            .count(),
+        10
+    );
+    assert_eq!(
+        result
+            .roster
+            .datasets
+            .iter()
+            .filter(|dataset| dataset.source_kind == DatasetSourceKindDto::SciexWiff)
+            .count(),
+        1,
+        "the acquisition is still one row"
+    );
+    assert_eq!(service.dataset_count(), 11);
+    for dataset in &result.roster.datasets {
+        assert!(
+            !service.holds_preview_state(&dataset.handle),
+            "adoption previews nothing"
+        );
+    }
+    assert_eq!(
+        launches.load(Ordering::SeqCst),
+        1,
+        "adoption launches nothing"
+    );
+
+    // Repeating it reports every member as already present.
+    let again = service
+        .adopt_queue_output_set(operation, 0)
+        .expect("the ticket survives an attempt");
+    assert_eq!(set_adoption_kinds(&again), vec!["already"; 10]);
+    assert_eq!(service.dataset_count(), 11);
+
+    // And the queue result is exactly what it was.
+    let after = service.conversion_state();
+    assert_eq!(terminal_queue(&after), queue);
+}
+
+/// A private mixed queue keeps its order and never runs two backends at once.
+#[test]
+fn a_mixed_private_queue_runs_serially_in_order() {
+    let fixture = TestFile::new("queue-mixed");
+    let destination = fixture.destination("out");
+    let runner = FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML"]).also_converting();
+    let launches = runner.launches();
+    let concurrent = runner.concurrent();
+    let service = Arc::new(output_set_service(runner));
+
+    let thermo = service
+        .add_thermo_dataset(&fixture.thermo_raw("one.raw"))
+        .expect("a Thermo row");
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+    let shimadzu = service
+        .add_shimadzu_dataset(&fixture.shimadzu_lcd("three.lcd"))
+        .expect("a Shimadzu row");
+
+    let update = run_private_queue(
+        &service,
+        &[
+            thermo.handle.clone(),
+            sciex.handle.clone(),
+            shimadzu.handle.clone(),
+        ],
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let queue = terminal_queue(&update);
+
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Completed
+    );
+    assert_eq!(queue.item_count, 3, "three sources, whatever they produced");
+    assert_eq!(
+        queue
+            .items
+            .iter()
+            .map(|item| item.dataset_handle.as_str())
+            .collect::<Vec<&str>>(),
+        vec![
+            thermo.handle.as_str(),
+            sciex.handle.as_str(),
+            shimadzu.handle.as_str()
+        ],
+        "visible order is run order"
+    );
+    assert_eq!(queue.finalized_count, 3);
+    assert_eq!(launches.load(Ordering::SeqCst), 3, "one process per item");
+    assert_eq!(
+        concurrent.load(Ordering::SeqCst),
+        1,
+        "never two backends at once"
+    );
+    // Four documents in the folder, from three items.
+    let mut written = entry_names_in(&destination);
+    written.sort();
+    assert_eq!(
+        written,
+        vec!["a-S1.mzML", "a-S2.mzML", "one.mzML", "three.mzML"]
+    );
+}
+
+/// The queue's runtime output-name authority is bounded, and states its bound.
+#[test]
+fn the_queue_output_name_authority_is_bounded() {
+    let fixture = TestFile::new("queue-bound");
+    let destination = fixture.destination("out");
+    let service = Arc::new(output_set_service(FakeOutputSetRunner::writing(&[
+        "a-S1.mzML",
+    ])));
+    let mut handles = Vec::new();
+    for index in 0..MAX_CONVERSION_QUEUE_ITEMS {
+        let dataset = service
+            .add_sciex_wiff_dataset(&fixture.sciex_bundle(&format!("acquisition-{index}")))
+            .expect("a SCIEX row");
+        handles.push(dataset.handle);
+    }
+    let document = service.workspace_drop_document_epoch();
+    service
+        .begin_private_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("a full private queue is admitted");
+
+    let (claimed, bound) = service
+        .queue_output_name_authority()
+        .expect("a bound queue has an authority");
+    assert_eq!(
+        bound,
+        MAX_CONVERSION_QUEUE_ITEMS * MAX_CONVERSION_OUTPUTS_PER_SOURCE,
+        "sixteen acquisitions of at most twenty-four documents each"
+    );
+    assert_eq!(bound, 384, "the bound is 384 with today's constants");
+    assert!(
+        claimed.is_empty(),
+        "a set claims nothing before it has published"
+    );
+    let _ = destination;
+}
+
+/// The item's outcome, and whether the queue thinks another attempt could help.
+fn item_outcome(queue: &ConversionQueueDto, index: usize) -> (ConversionQueueItemStateDto, bool) {
+    let item = &queue.items[index];
+    (item.state, item.retryable)
+}
+
+/// A queue whose SCIEX item fails is a failed item, not a failed queue.
+///
+/// Every refusal below produces one failed item with zero publication and no
+/// authority to adopt anything, and lets the item behind it run.
+fn a_failing_sciex_item_leaves_the_next_one_alone(
+    label: &str,
+    runner: FakeOutputSetRunner,
+    expected_detail: &str,
+) {
+    let fixture = TestFile::new(label);
+    let destination = fixture.destination("out");
+    let service = Arc::new(output_set_service(runner.also_converting()));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+    let thermo = service
+        .add_thermo_dataset(&fixture.thermo_raw("after.raw"))
+        .expect("a Thermo row");
+
+    let update = run_private_queue(
+        &service,
+        &[sciex.handle.clone(), thermo.handle.clone()],
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let operation = operation_of(&update);
+    let queue = terminal_queue(&update);
+
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Failed,
+            ConversionQueueItemStateDto::Finalized
+        ],
+        "{label}: the item behind a failure still runs"
+    );
+    let report = service
+        .terminal_set_report(operation, 0)
+        .expect("the failed item kept its group report");
+    assert_eq!(
+        report.published_count(),
+        0,
+        "{label}: nothing was published"
+    );
+    assert_eq!(report.refusal_id(), Some(expected_detail), "{label}");
+    assert!(
+        service.adopt_queue_output_set(operation, 0).is_err(),
+        "{label}: a failed item has no set to adopt"
+    );
+    assert_eq!(
+        entry_names_in(&destination),
+        vec!["after.mzML"],
+        "{label}: only the second item's output is in the folder"
+    );
+}
+
+/// The staged set is not the set the backend said it wrote.
+#[test]
+fn a_declaration_mismatch_fails_one_item_and_runs_the_next() {
+    a_failing_sciex_item_leaves_the_next_one_alone(
+        "queue-undeclared",
+        FakeOutputSetRunner::writing(&["a-S1.mzML"]).also_injecting("uninvited.mzML"),
+        "multi_output_set_not_as_declared",
+    );
+}
+
+/// The reader logged a per-sample failure, so nothing may be published.
+#[test]
+fn a_reader_sample_failure_refuses_the_item_before_publication() {
+    a_failing_sciex_item_leaves_the_next_one_alone(
+        "queue-sample-loss",
+        FakeOutputSetRunner::writing(&["a-S1.mzML"]).complaining(READER_LOST_A_SAMPLE),
+        "source_sample_failure_observed",
+    );
+}
+
+/// The stream the audit needs was truncated, so completeness is not established.
+#[test]
+fn a_truncated_audit_stream_refuses_the_item() {
+    let fixture = TestFile::new("queue-truncated");
+    let destination = fixture.destination("out");
+    let service = Arc::new(output_set_service(
+        FakeOutputSetRunner::writing(&["a-S1.mzML"]).truncating_stderr(),
+    ));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+
+    let update = run_private_queue(
+        &service,
+        std::slice::from_ref(&sciex.handle),
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let operation = operation_of(&update);
+    let queue = terminal_queue(&update);
+
+    assert_eq!(
+        item_states(queue),
+        vec![ConversionQueueItemStateDto::Failed]
+    );
+    let report = service
+        .terminal_set_report(operation, 0)
+        .expect("the item kept its group report");
+    assert_eq!(report.refusal_id(), Some("source_sample_audit_truncated"));
+    assert_eq!(report.published_count(), 0);
+    assert!(
+        entry_names_in(&destination).is_empty(),
+        "an unauditable run publishes nothing"
+    );
+    assert!(service.adopt_queue_output_set(operation, 0).is_err());
+}
+
+/// A member that is not a usable document refuses the whole set.
+#[test]
+fn an_invalid_member_publishes_nothing() {
+    let fixture = TestFile::new("queue-invalid-member");
+    let destination = fixture.destination("out");
+    let service = Arc::new(output_set_service(
+        FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML"]).with_empty_member("a-S2.mzML"),
+    ));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+
+    let update = run_private_queue(
+        &service,
+        std::slice::from_ref(&sciex.handle),
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let operation = operation_of(&update);
+
+    let report = service
+        .terminal_set_report(operation, 0)
+        .expect("the item kept its group report");
+    assert_eq!(report.refusal_id(), Some("multi_output_member_rejected"));
+    assert_eq!(report.published_count(), 0, "all before any");
+    assert!(
+        entry_names_in(&destination).is_empty(),
+        "the good member is not published around the bad one"
+    );
+    assert_eq!(
+        item_outcome(terminal_queue(&update), 0),
+        (ConversionQueueItemStateDto::Failed, false)
+    );
+}
+
+/// Every destination name already occupied, under Skip, is a skipped item.
+#[test]
+fn a_set_whose_names_are_all_taken_is_skipped() {
+    let fixture = TestFile::new("queue-all-taken");
+    let destination = fixture.destination("out");
+    for name in ["a-S1.mzML", "a-S2.mzML"] {
+        fs::write(destination.join(name), b"the user converted this before")
+            .expect("occupy a name");
+    }
+    let service = Arc::new(output_set_service(FakeOutputSetRunner::writing(&[
+        "a-S1.mzML",
+        "a-S2.mzML",
+    ])));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+
+    let update = run_private_queue(
+        &service,
+        std::slice::from_ref(&sciex.handle),
+        &destination,
+        ConversionConflictPolicyDto::Skip,
+    );
+    let operation = operation_of(&update);
+    let queue = terminal_queue(&update);
+
+    assert_eq!(
+        item_states(queue),
+        vec![ConversionQueueItemStateDto::Skipped]
+    );
+    assert_eq!(queue.skipped_count, 1);
+    let report = service
+        .terminal_set_report(operation, 0)
+        .expect("the item kept its group report");
+    assert_eq!(report.group_outcome(), "skipped_existing_destinations");
+    assert_eq!(report.published_count(), 0);
+    // The files that were already there are not this run's outputs.
+    assert!(
+        service.adopt_queue_output_set(operation, 0).is_err(),
+        "a skipped set offers nothing to adopt"
+    );
+    for name in ["a-S1.mzML", "a-S2.mzML"] {
+        assert_eq!(
+            fs::read(destination.join(name)).expect("read it again"),
+            b"the user converted this before"
+        );
+    }
+}
+
+/// A strict subset occupied, under Skip, refuses the whole set.
+#[test]
+fn a_partly_occupied_set_is_refused_whole_under_skip() {
+    let fixture = TestFile::new("queue-subset-taken");
+    let destination = fixture.destination("out");
+    fs::write(destination.join("a-S2.mzML"), b"one name was taken").expect("occupy one name");
+    let service = Arc::new(output_set_service(FakeOutputSetRunner::writing(&[
+        "a-S1.mzML",
+        "a-S2.mzML",
+    ])));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+
+    let update = run_private_queue(
+        &service,
+        std::slice::from_ref(&sciex.handle),
+        &destination,
+        ConversionConflictPolicyDto::Skip,
+    );
+    let operation = operation_of(&update);
+
+    let report = service
+        .terminal_set_report(operation, 0)
+        .expect("the item kept its group report");
+    assert_eq!(
+        report.refusal_id(),
+        Some("multi_output_mixed_destination_conflict")
+    );
+    assert_eq!(report.published_count(), 0);
+    assert_eq!(
+        entry_names_in(&destination),
+        vec!["a-S2.mzML"],
+        "the free name stays free"
+    );
+    assert_eq!(
+        item_outcome(terminal_queue(&update), 0),
+        (ConversionQueueItemStateDto::Failed, false)
+    );
+}
+
+/// A discovered name another queue item owns is a queue collision, not a skip.
+///
+/// The distinction the conflict policy must never be allowed to settle. Under
+/// `Skip`, calling this "already converted" would name somebody else's output
+/// as this acquisition's own result.
+#[test]
+fn a_discovered_name_owned_by_another_item_is_a_queue_collision() {
+    let fixture = TestFile::new("queue-name-claimed");
+    let destination = fixture.destination("out");
+    // The SCIEX backend will write exactly the name the Thermo row is planned
+    // to produce.
+    let service = Arc::new(output_set_service(
+        FakeOutputSetRunner::writing(&["later.mzML"]).also_converting(),
+    ));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+    let thermo = service
+        .add_thermo_dataset(&fixture.thermo_raw("later.raw"))
+        .expect("a Thermo row");
+
+    let update = run_private_queue(
+        &service,
+        &[sciex.handle.clone(), thermo.handle.clone()],
+        &destination,
+        // Skip, deliberately: the policy that would otherwise call this a
+        // successful skip of an acquisition that was already converted.
+        ConversionConflictPolicyDto::Skip,
+    );
+    let operation = operation_of(&update);
+    let queue = terminal_queue(&update);
+
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Failed,
+            ConversionQueueItemStateDto::Finalized
+        ],
+        "the set is refused and the item that owns the name runs"
+    );
+    assert_eq!(
+        item_outcome(queue, 0),
+        (ConversionQueueItemStateDto::Failed, false),
+        "a queue collision is not retryable"
+    );
+    let report = service
+        .terminal_set_report(operation, 0)
+        .expect("the item kept its group report");
+    assert_eq!(
+        report.refusal_id(),
+        Some("multi_output_output_name_claimed_elsewhere"),
+        "named as a queue collision, not as a destination conflict"
+    );
+    assert_eq!(
+        report.published_count(),
+        0,
+        "the set publishes none of its own"
+    );
+    assert_eq!(
+        entry_names_in(&destination),
+        vec!["later.mzML"],
+        "the one document there is the Thermo item's"
+    );
+}
+
+/// Two backend-named sets that discover one name: the second publishes nothing.
+#[test]
+fn a_second_set_discovering_the_same_name_publishes_nothing() {
+    let fixture = TestFile::new("queue-two-sets");
+    let destination = fixture.destination("out");
+    let service = Arc::new(output_set_service(FakeOutputSetRunner::writing(&[
+        "shared.mzML",
+    ])));
+    let first = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("first"))
+        .expect("the first SCIEX row");
+    let second = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("second"))
+        .expect("the second SCIEX row");
+
+    let update = run_private_queue(
+        &service,
+        &[first.handle.clone(), second.handle.clone()],
+        &destination,
+        ConversionConflictPolicyDto::Skip,
+    );
+    let operation = operation_of(&update);
+    let queue = terminal_queue(&update);
+
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Finalized,
+            ConversionQueueItemStateDto::Failed
+        ]
+    );
+    assert_eq!(
+        queue.skipped_count, 0,
+        "the second set is not a successful skip of the first's output"
+    );
+    let second_report = service
+        .terminal_set_report(operation, 1)
+        .expect("the second item kept its group report");
+    assert_eq!(
+        second_report.refusal_id(),
+        Some("multi_output_output_name_claimed_elsewhere")
+    );
+    assert_eq!(second_report.published_count(), 0);
+    // The first item's document is a user file and is not rolled back.
+    assert_eq!(entry_names_in(&destination), vec!["shared.mzML"]);
+    let first_report = service
+        .terminal_set_report(operation, 0)
+        .expect("the first item kept its group report");
+    assert_eq!(first_report.group_outcome(), "fully_finalized");
+    // And only the first has anything to adopt.
+    assert!(service.adopt_queue_output_set(operation, 0).is_ok());
+    assert!(service.adopt_queue_output_set(operation, 1).is_err());
+}
+
+/// A known single output whose name an earlier set took refuses before running.
+#[test]
+fn a_single_output_item_refuses_a_name_an_earlier_set_took() {
+    let fixture = TestFile::new("queue-set-took-it");
+    let destination = fixture.destination("out");
+    let runner = FakeOutputSetRunner::writing(&["later.mzML"]).also_converting();
+    let launches = runner.launches();
+    let service = Arc::new(output_set_service(runner));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+    let thermo = service
+        .add_thermo_dataset(&fixture.thermo_raw("later.raw"))
+        .expect("a Thermo row");
+
+    // The set runs first this time, so by the Thermo item's turn the name is
+    // published rather than merely planned.
+    let update = run_private_queue(
+        &service,
+        &[sciex.handle.clone(), thermo.handle.clone()],
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let queue = terminal_queue(&update);
+
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Failed,
+            ConversionQueueItemStateDto::Finalized
+        ],
+        "the set discovered the Thermo item's planned name and was refused"
+    );
+    assert_eq!(launches.load(Ordering::SeqCst), 2, "both items ran once");
+    assert_eq!(entry_names_in(&destination), vec!["later.mzML"]);
+}
+
+/// Starts a private queue whose SCIEX item parks mid-run, then stops it.
+///
+/// Returns the terminal read, the service, and the launch counter, with the
+/// worker joined. A SCIEX item, then a Thermo item behind it, so "no later item
+/// launched" is a thing that can be observed rather than assumed.
+fn stop_mid_sciex_item(
+    label: &str,
+    ending: StopEnding,
+) -> (
+    TestFile,
+    PathBuf,
+    Arc<PreviewService>,
+    WorkspaceConversionUpdateDto,
+    Arc<AtomicUsize>,
+) {
+    let fixture = TestFile::new(label);
+    let destination = fixture.destination("out");
+    let (runner, observed, release) = FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML"])
+        .also_converting()
+        .parked(ending);
+    let launches = runner.launches();
+    let service = Arc::new(output_set_service(runner));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+    let thermo = service
+        .add_thermo_dataset(&fixture.thermo_raw("after.raw"))
+        .expect("a Thermo row");
+
+    let document = service.workspace_drop_document_epoch();
+    let reservation = service
+        .begin_private_conversion_queue(
+            &[sciex.handle.clone(), thermo.handle.clone()],
+            ConversionConflictPolicyDto::Fail,
+            document,
+        )
+        .expect("the private queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+
+    let worker = {
+        let service = Arc::clone(&service);
+        let destination = destination.clone();
+        std::thread::spawn(move || service.run_claimed_conversion(operation, &destination))
+    };
+    observed
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the SCIEX backend started");
+    let stopping = service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("the stop is accepted");
+    assert!(
+        matches!(stopping.state, WorkspaceConversionStateDto::Stopping { .. }),
+        "{label}: the reply says stopping"
+    );
+    release.send(()).expect("release the parked backend");
+    let update = worker.join().expect("the worker finishes");
+    (fixture, destination, service, update, launches)
+}
+
+/// A confirmed stop cancels the running SCIEX item and starts no other.
+#[test]
+fn a_confirmed_stop_cancels_the_running_set_item() {
+    let (_fixture, destination, service, update, launches) =
+        stop_mid_sciex_item("queue-stop-confirmed", StopEnding::Confirmed);
+    let operation = operation_of(&update);
+    let queue = terminal_queue(&update);
+
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Stopped
+    );
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Cancelled,
+            ConversionQueueItemStateDto::NotRun
+        ]
+    );
+    assert_eq!(launches.load(Ordering::SeqCst), 1, "no later item launched");
+    let cancellation = queue.items[0]
+        .cancellation
+        .as_ref()
+        .expect("the cancelled item says what the stop established");
+    assert!(cancellation.process_launched);
+    assert!(cancellation.tree_termination_confirmed);
+    assert!(
+        cancellation.partial_output_observed,
+        "the run says what it had staged when it was interrupted"
+    );
+    assert!(
+        !service.backend_is_quarantined(),
+        "a confirmed stop does not distrust the backend"
+    );
+    assert!(
+        service.adopt_queue_output_set(operation, 0).is_err(),
+        "a cancelled item has no set to adopt"
+    );
+    assert!(
+        entry_names_in(&destination).is_empty(),
+        "a stopped set published nothing"
+    );
+    // Not retryable, and the queue is not retryable in place.
+    assert!(!queue.items[0].retryable);
+    assert!(service.retry_conversion_queue(0).is_err());
+}
+
+/// An unconfirmed stop quarantines the backend and launches nothing else.
+#[test]
+fn an_unconfirmed_stop_of_a_set_quarantines_the_backend() {
+    let (_fixture, _destination, service, update, launches) =
+        stop_mid_sciex_item("queue-stop-unconfirmed", StopEnding::Unterminated);
+    let operation = operation_of(&update);
+    let queue = terminal_queue(&update);
+
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::StopFailed
+    );
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::CancellationFailed,
+            ConversionQueueItemStateDto::NotRun
+        ]
+    );
+    assert!(service.backend_is_quarantined());
+    assert!(update.backend_quarantined);
+    assert_eq!(launches.load(Ordering::SeqCst), 1);
+    let cancellation = queue.items[0]
+        .cancellation
+        .as_ref()
+        .expect("the item says what the stop could not establish");
+    assert!(!cancellation.tree_termination_confirmed);
+    assert!(service.adopt_queue_output_set(operation, 0).is_err());
+    // Nothing further may run, at all.
+    let document = service.workspace_drop_document_epoch();
+    let refused = service
+        .begin_private_conversion_queue(&[], ConversionConflictPolicyDto::Fail, document)
+        .expect_err("a quarantined session admits no queue");
+    assert_eq!(refused.kind, "backend_quarantined");
+    assert_eq!(launches.load(Ordering::SeqCst), 1, "no probe, no process");
+}
+
+/// A stop after an earlier item finalized keeps that item's authority.
+#[test]
+fn a_stop_after_a_finalized_set_keeps_its_ticket() {
+    let fixture = TestFile::new("queue-stop-after");
+    let destination = fixture.destination("out");
+    let (runner, observed, release) = FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML"])
+        .also_converting()
+        .parked_on_call(2, StopEnding::Confirmed);
+    let service = Arc::new(output_set_service(runner));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+    let thermo = service
+        .add_thermo_dataset(&fixture.thermo_raw("after.raw"))
+        .expect("a Thermo row");
+
+    let document = service.workspace_drop_document_epoch();
+    let reservation = service
+        .begin_private_conversion_queue(
+            &[sciex.handle.clone(), thermo.handle.clone()],
+            ConversionConflictPolicyDto::Fail,
+            document,
+        )
+        .expect("the private queue is admitted");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+    let worker = {
+        let service = Arc::clone(&service);
+        let destination = destination.clone();
+        std::thread::spawn(move || service.run_claimed_conversion(operation, &destination))
+    };
+    observed
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the second item started");
+    service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("the stop is accepted");
+    release.send(()).expect("release the parked backend");
+    let update = worker.join().expect("the worker finishes");
+    let queue = terminal_queue(&update);
+
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Stopped
+    );
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Finalized,
+            ConversionQueueItemStateDto::Cancelled
+        ]
+    );
+    // The finalized set keeps every bit of its authority.
+    let result = service
+        .adopt_queue_output_set(operation, 0)
+        .expect("a stop later in the queue takes nothing from an earlier success");
+    assert_eq!(set_adoption_kinds(&result), vec!["added", "added"]);
+}
+
+/// A genuinely partially finalized SCIEX item, in the queue.
+///
+/// The one outcome the whole policy is about, and the only one that needs a
+/// seam to reach: publication stops after a prefix because a name was taken
+/// between the whole-set preflight and that member's rename.
+#[test]
+fn a_partially_finalized_set_item_fails_and_is_not_retryable() {
+    let fixture = TestFile::new("queue-partial");
+    let destination = fixture.destination("out");
+    let raced = destination.join("a-S2.mzML");
+    let runner =
+        FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML", "a-S3.mzML"]).also_converting();
+    let service = Arc::new(output_set_service(runner));
+    // The race, made deterministic: the second member's destination name is
+    // taken after the whole-set preflight found it free and before its rename.
+    let occupied = raced.clone();
+    service.race_next_publication(move |position| {
+        if position == 1 {
+            fs::write(&occupied, b"raced in after the preflight")
+                .expect("occupy the second name mid-set");
+        }
+    });
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+    let thermo = service
+        .add_thermo_dataset(&fixture.thermo_raw("after.raw"))
+        .expect("a Thermo row");
+
+    let update = run_private_queue(
+        &service,
+        &[sciex.handle.clone(), thermo.handle.clone()],
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let operation = operation_of(&update);
+    let queue = terminal_queue(&update);
+
+    // Failed, explicitly partial, and never retryable.
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Failed,
+            ConversionQueueItemStateDto::Finalized
+        ],
+        "a partial publication does not stop the item behind it"
+    );
+    assert_eq!(
+        item_outcome(queue, 0),
+        (ConversionQueueItemStateDto::Failed, false),
+        "a published prefix must never be rerun"
+    );
+    assert!(
+        !queue.error.is_some(),
+        "one item failing is not a queue failure"
+    );
+    let report = service
+        .terminal_set_report(operation, 0)
+        .expect("the item kept its group report");
+    assert_eq!(report.group_outcome(), "partially_finalized");
+    let partial = report
+        .partial_finalization()
+        .expect("a partial outcome carries its facts");
+    assert_eq!(partial.finalized(), ["a-S1.mzML"]);
+    assert_eq!(partial.not_published(), ["a-S2.mzML", "a-S3.mzML"]);
+
+    // The prefix is a real user file, kept.
+    assert_eq!(
+        fs::read(&raced).expect("the racer's file"),
+        b"raced in after the preflight"
+    );
+    let published = destination.join("a-S1.mzML");
+    let bytes = fs::read(&published).expect("the prefix is on disk");
+    assert!(!bytes.is_empty());
+    assert!(!destination.join("a-S3.mzML").exists());
+
+    // No complete-set authority, and a retry is not offered for it.
+    assert!(service.adopt_queue_output_set(operation, 0).is_err());
+    assert_eq!(queue.retryable_failed_count, 0);
+    assert!(service.retry_conversion_queue(0).is_err());
+
+    // And dropping the whole session deletes nothing it published.
+    drop(service);
+    assert_eq!(fs::read(&published).expect("still there"), bytes);
+}
+
+/// A retryable pre-run failure reruns only that item, with a new attempt.
+#[test]
+fn a_retryable_set_failure_reruns_only_that_item() {
+    let fixture = TestFile::new("queue-retry");
+    let destination = fixture.destination("out");
+    let runner = FakeOutputSetRunner::writing(&["a-S1.mzML"]).also_converting();
+    let launches = runner.launches();
+    let service = Arc::new(output_set_service(runner));
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let sciex = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("a SCIEX row");
+    let thermo = service
+        .add_thermo_dataset(&fixture.thermo_raw("after.raw"))
+        .expect("a Thermo row");
+
+    // The acquisition is held open by somebody else for the first pass, which
+    // is the one condition this repository has measured as transient.
+    let held = hold_for_writing(&acquisition);
+
+    let update = run_private_queue(
+        &service,
+        &[sciex.handle.clone(), thermo.handle.clone()],
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let queue = terminal_queue(&update);
+    assert_eq!(
+        item_outcome(queue, 0),
+        (ConversionQueueItemStateDto::Failed, true),
+        "a file somebody else holds is worth another attempt"
+    );
+    assert_eq!(queue.items[0].attempts, 1);
+    assert_eq!(queue.items[1].state, ConversionQueueItemStateDto::Finalized);
+    let after_first = launches.load(Ordering::SeqCst);
+
+    drop(held);
+    let retried = service
+        .retry_conversion_queue(service.workspace_drop_document_epoch())
+        .expect("an ordinary completed queue with a retryable failure is retryable");
+    let queue = terminal_queue(&retried);
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Finalized,
+            ConversionQueueItemStateDto::Finalized
+        ]
+    );
+    assert_eq!(queue.items[0].attempts, 2, "only the failure reran");
+    assert_eq!(queue.items[1].attempts, 1, "a success is never rerun");
+    assert_eq!(
+        launches.load(Ordering::SeqCst),
+        after_first + 1,
+        "exactly one more process"
+    );
+}
+
+/// A retried set attempt gets a new identity, and inherits nothing.
+///
+/// The old report, the old retained objects and the old authority all go with
+/// the attempt that produced them. What proves it is the run identity: it is
+/// allocated when a conversion finishes, so a second attempt that reused the
+/// first's would be describing itself with the first's facts.
+#[test]
+fn a_retried_set_attempt_reuses_no_identity_or_ticket() {
+    let fixture = TestFile::new("queue-retry-identity");
+    let destination = fixture.destination("out");
+    let service = Arc::new(output_set_service(FakeOutputSetRunner::writing(&[
+        "a-S1.mzML",
+    ])));
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let sciex = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("a SCIEX row");
+
+    let held = hold_for_writing(&acquisition);
+    let update = run_private_queue(
+        &service,
+        std::slice::from_ref(&sciex.handle),
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let operation = operation_of(&update);
+    assert_eq!(
+        item_outcome(terminal_queue(&update), 0),
+        (ConversionQueueItemStateDto::Failed, true)
+    );
+    // The refusal never reached a conversion, so there is no run to name and
+    // nothing to adopt.
+    assert_eq!(service.terminal_set_run(operation, 0), None);
+    assert!(service.adopt_queue_output_set(operation, 0).is_err());
+
+    drop(held);
+    let retried = service
+        .retry_conversion_queue(service.workspace_drop_document_epoch())
+        .expect("a retryable failure is retryable");
+    let queue = terminal_queue(&retried);
+    assert_eq!(
+        item_states(queue),
+        vec![ConversionQueueItemStateDto::Finalized]
+    );
+    assert_eq!(queue.items[0].attempts, 2);
+    let run = service
+        .terminal_set_run(operation, 0)
+        .expect("the second attempt names itself");
+
+    let result = service
+        .adopt_queue_output_set(operation, 0)
+        .expect("the finalized attempt holds a set");
+    assert_eq!(result.run, run, "the authority is that exact attempt's");
+
+    // And the other direction: an attempt that never reached a conversion
+    // leaves nothing of the attempt before it. Held again, so the third pass of
+    // this row refuses before the backend -- and must then name no run and hold
+    // no report, rather than still wearing the successful attempt's.
+    let held_again = hold_for_writing(&acquisition);
+    let third = run_private_queue(
+        &service,
+        std::slice::from_ref(&sciex.handle),
+        &fixture.destination("third"),
+        ConversionConflictPolicyDto::Fail,
+    );
+    let third_operation = operation_of(&third);
+    assert_eq!(
+        item_states(terminal_queue(&third)),
+        vec![ConversionQueueItemStateDto::Failed]
+    );
+    assert_eq!(
+        service.terminal_set_run(third_operation, 0),
+        None,
+        "a refusal is described by itself, not by the conversion before it"
+    );
+    assert!(service.terminal_set_report(third_operation, 0).is_none());
+    assert!(service.adopt_queue_output_set(third_operation, 0).is_err());
+    drop(held_again);
+
+    // A fresh queue over the same row names a different run again -- the
+    // identity is per conversion, never per row or per queue.
+    let again = run_private_queue(
+        &service,
+        std::slice::from_ref(&sciex.handle),
+        &fixture.destination("second"),
+        ConversionConflictPolicyDto::Fail,
+    );
+    let second_operation = operation_of(&again);
+    let second_run = service
+        .terminal_set_run(second_operation, 0)
+        .expect("the later conversion names itself");
+    assert_ne!(second_run, run, "two conversions are never the same run");
+    // And the replaced queue's authority is gone with it.
+    assert!(service.adopt_queue_output_set(operation, 0).is_err());
+}
+
+/// A stop landing mid-retry leaves a set failure as the failure it was.
+///
+/// The state this pins is narrow and easy to lose. A retry moves every
+/// retryable failure back to pending; if a stop lands while an earlier one is
+/// running, the item behind it never reruns — and the queue must restore what
+/// that item earned rather than calling it never-run, because never-run would
+/// delete a failure the user has already seen, take it out of the failed count
+/// and drop the diagnostic ticket whose state has to match.
+///
+/// A *set* failure lives in neither `error` nor the single-output report; its
+/// result is its group report. Both restoration paths had to learn to ask.
+#[test]
+fn a_stop_mid_retry_restores_a_set_failure_rather_than_stranding_it() {
+    let fixture = TestFile::new("queue-retry-stranded");
+    let destination = fixture.destination("out");
+    // The second run of the session: the Thermo item, again, on the retry --
+    // which is where the stop lands, leaving the set item behind it pending.
+    let (runner, observed, release) = FakeOutputSetRunner::writing(&["a-S1.mzML"])
+        .also_converting()
+        .also_injecting("uninvited.mzML")
+        .parked_on_call(2, StopEnding::Confirmed);
+    let service = Arc::new(output_set_service(runner));
+    let held_source = fixture.thermo_raw("first.raw");
+    let thermo = service
+        .add_thermo_dataset(&held_source)
+        .expect("a Thermo row");
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+
+    // First pass: the Thermo row is held by somebody else, which is the one
+    // condition measured as transient; the set fails on its undeclared member.
+    let held = hold_for_writing(&held_source);
+    let update = run_private_queue(
+        &service,
+        &[thermo.handle.clone(), sciex.handle.clone()],
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let operation = operation_of(&update);
+    let queue = terminal_queue(&update);
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Failed,
+            ConversionQueueItemStateDto::Failed
+        ]
+    );
+    assert!(queue.items[0].retryable, "a held file is worth retrying");
+    assert!(
+        service.terminal_set_report(operation, 1).is_some(),
+        "the set failure lives in the group report and nowhere else"
+    );
+    assert!(
+        queue.items[1].report.is_none() && queue.items[1].error.is_none(),
+        "and in neither of the two places the restoration paths used to look"
+    );
+    assert_eq!(update.diagnostics.eligible_item_count, 2);
+    drop(held);
+
+    // Forged, because no deterministic test can produce a retryable set
+    // failure -- see `mark_retryable_for_test`.
+    assert!(service.mark_retryable_for_test(operation, 1));
+
+    // Both go back to pending. The Thermo item runs and parks; the stop lands
+    // while it runs, so the set item behind it never reruns.
+    let document = service.workspace_drop_document_epoch();
+    let worker = {
+        let service = Arc::clone(&service);
+        std::thread::spawn(move || service.retry_conversion_queue(document))
+    };
+    observed
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the retried Thermo item started");
+    service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("the stop is accepted");
+    release.send(()).expect("release the parked backend");
+    let retried = worker
+        .join()
+        .expect("the worker finishes")
+        .expect("the retry ran");
+    let queue = terminal_queue(&retried);
+
+    assert_eq!(
+        terminal_reason(&retried),
+        ConversionQueueTerminalReasonDto::Stopped
+    );
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Cancelled,
+            ConversionQueueItemStateDto::Failed
+        ],
+        "the set failure is the failure it was, not a thing that never ran"
+    );
+    assert_eq!(queue.not_run_count, 0);
+    assert_eq!(queue.failed_count, 1);
+    assert!(
+        service.terminal_set_report(operation, 1).is_some(),
+        "and it still holds the report that explains it"
+    );
+    // One, not two: the restored set failure keeps the ticket whose state has
+    // to match, and the confirmed cancellation beside it has nothing to
+    // diagnose -- the user asked for it to stop and the owned tree is gone.
+    assert_eq!(
+        retried.diagnostics.eligible_item_count, 1,
+        "a restored failure keeps the ticket whose state has to match"
+    );
+}
+
+/// The same restoration, when a queue-level refusal ends the pass instead.
+#[test]
+fn a_refused_retry_restores_a_set_failure_rather_than_losing_it() {
+    let fixture = TestFile::new("queue-refused-retry");
+    let destination = fixture.destination("out");
+    let service = Arc::new(output_set_service(
+        FakeOutputSetRunner::writing(&["a-S1.mzML"])
+            .also_converting()
+            .also_injecting("uninvited.mzML"),
+    ));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+    let thermo = service
+        .add_thermo_dataset(&fixture.thermo_raw("after.raw"))
+        .expect("a Thermo row");
+
+    let update = run_private_queue(
+        &service,
+        &[sciex.handle.clone(), thermo.handle.clone()],
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let operation = operation_of(&update);
+    assert_eq!(terminal_queue(&update).failed_count, 1);
+    assert!(service.mark_retryable_for_test(operation, 0));
+
+    // The destination stops being the object it was admitted as, so the retry
+    // is refused before its first item runs.
+    fs::remove_dir_all(&destination).expect("remove the destination");
+    let refused = service
+        .retry_conversion_queue(service.workspace_drop_document_epoch())
+        .expect_err("a folder that is gone refuses the retry");
+    assert_eq!(refused.kind, "queue_destination_changed");
+
+    // The queue is untouched: the failure is still a failure and still counted.
+    let after = service.conversion_state();
+    let queue = terminal_queue(&after);
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Failed,
+            ConversionQueueItemStateDto::Finalized
+        ]
+    );
+    assert_eq!(queue.failed_count, 1);
+    assert_eq!(queue.not_run_count, 0);
+    assert_eq!(after.diagnostics.eligible_item_count, 1);
+}
+
+/// Exports the diagnostics of whatever the slot holds, and reads them back.
+fn export_private_diagnostics(
+    service: &PreviewService,
+    fixture: &TestFile,
+    label: &str,
+    update: &WorkspaceConversionUpdateDto,
+) -> serde_json::Value {
+    let saved = fixture.destination(label).join("diagnostics.json");
+    export_diagnostics(service, &terminal_operation(update), &saved)
+        .expect("a failed item is diagnosable");
+    read_export(&saved)
+}
+
+/// Every SCIEX failure class exports bounded, path-free facts that tell it
+/// apart from the others.
+///
+/// One test over the whole vocabulary, because the thing being proved is that
+/// the classes are *distinguishable* — and a per-class test proves each one in
+/// isolation without ever comparing them.
+#[test]
+fn every_private_sciex_failure_is_diagnosable_and_path_free() {
+    struct Case {
+        label: &'static str,
+        runner: FakeOutputSetRunner,
+        outcome: &'static str,
+        detail: Option<&'static str>,
+        /// Whether the backend said anything worth keeping. A run that was
+        /// refused before it launched has no streams to excerpt; one that ran
+        /// and failed must not have its account of itself thrown away.
+        retains_text: bool,
+        conflict: ConversionConflictPolicyDto,
+        occupy: &'static [&'static str],
+    }
+
+    let cases = vec![
+        Case {
+            label: "declaration",
+            runner: FakeOutputSetRunner::writing(&["a-S1.mzML"]).also_injecting("uninvited.mzML"),
+            outcome: "refused_before_publication",
+            detail: Some("multi_output_set_not_as_declared"),
+            conflict: ConversionConflictPolicyDto::Fail,
+            occupy: &[],
+            retains_text: true,
+        },
+        Case {
+            label: "reader-sample",
+            runner: FakeOutputSetRunner::writing(&["a-S1.mzML"]).complaining(READER_LOST_A_SAMPLE),
+            outcome: "refused_before_publication",
+            detail: Some("source_sample_failure_observed"),
+            conflict: ConversionConflictPolicyDto::Fail,
+            occupy: &[],
+            retains_text: true,
+        },
+        Case {
+            label: "truncated-audit",
+            runner: FakeOutputSetRunner::writing(&["a-S1.mzML"]).truncating_stderr(),
+            outcome: "refused_before_publication",
+            detail: Some("source_sample_audit_truncated"),
+            conflict: ConversionConflictPolicyDto::Fail,
+            occupy: &[],
+            retains_text: true,
+        },
+        Case {
+            label: "invalid-member",
+            runner: FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML"])
+                .with_empty_member("a-S2.mzML"),
+            outcome: "refused_before_publication",
+            detail: Some("multi_output_member_rejected"),
+            conflict: ConversionConflictPolicyDto::Fail,
+            occupy: &[],
+            retains_text: true,
+        },
+        Case {
+            label: "group-conflict",
+            runner: FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML"]),
+            outcome: "refused_before_publication",
+            detail: Some("multi_output_destination_occupied"),
+            conflict: ConversionConflictPolicyDto::Fail,
+            occupy: &["a-S2.mzML"],
+            retains_text: true,
+        },
+        Case {
+            label: "backend-rejected",
+            runner: FakeOutputSetRunner::writing(&["a-S1.mzML"]).failing(),
+            outcome: "refused_before_publication",
+            detail: Some("multi_output_backend_rejected"),
+            conflict: ConversionConflictPolicyDto::Fail,
+            occupy: &[],
+            retains_text: true,
+        },
+    ];
+
+    for case in cases {
+        let fixture = TestFile::new(&format!("queue-diag-{}", case.label));
+        let destination = fixture.destination("out");
+        for name in case.occupy {
+            fs::write(destination.join(name), b"already here").expect("occupy a name");
+        }
+        let service = Arc::new(output_set_service(case.runner));
+        let sciex = service
+            .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+            .expect("a SCIEX row");
+        let update = run_private_queue(
+            &service,
+            std::slice::from_ref(&sciex.handle),
+            &destination,
+            case.conflict,
+        );
+        assert_eq!(
+            item_states(terminal_queue(&update)),
+            vec![ConversionQueueItemStateDto::Failed],
+            "{}: the item failed",
+            case.label
+        );
+
+        let export = export_private_diagnostics(&service, &fixture, "diag", &update);
+        let items = export["items"].as_array().expect("an items array");
+        assert_eq!(
+            items.len(),
+            1,
+            "{}: one source is one diagnostic item",
+            case.label
+        );
+        let item = &items[0];
+        assert_eq!(item["sourceKind"], "sciex_wiff", "{}", case.label);
+        assert_eq!(item["state"], "failed", "{}", case.label);
+        assert_eq!(item["outcome"], case.outcome, "{}", case.label);
+        assert_eq!(
+            item["detail"],
+            serde_json::json!(case.detail),
+            "{}",
+            case.label
+        );
+        // No single output name is claimed for a set.
+        assert!(
+            item["outputFileName"].is_null(),
+            "{}: a set has no one output name",
+            case.label
+        );
+        let set = &item["outputSet"];
+        assert!(set.is_object(), "{}: a set item says so", case.label);
+        assert_eq!(set["maxMembers"], 24, "{}", case.label);
+        assert_eq!(
+            set["finalizedCount"], 0,
+            "{}: nothing published",
+            case.label
+        );
+        assert_eq!(
+            set["boundSourceObjects"], 2,
+            "{}: primary and companion",
+            case.label
+        );
+        assert!(
+            set["memberCount"].as_u64().expect("a member count") <= 24,
+            "{}: bounded by the lifecycle's own bound",
+            case.label
+        );
+
+        // The backend's own account of the failure survives, redacted and
+        // bounded. Dropping it would leave a document that says which class of
+        // failure this was and nothing about why.
+        // The backend's own account of the failure reaches the document.
+        // Dropping it would leave a report that says which class of failure
+        // this was and nothing about why.
+        if case.retains_text {
+            for stream in ["stdout", "stderr"] {
+                let excerpt = &item[stream];
+                assert!(
+                    excerpt["retained"] == "prefix" || excerpt["retained"] == "withheld",
+                    "{}: the {stream} excerpt was never captured",
+                    case.label
+                );
+                // Withheld says so, and says why. A suppressed excerpt costs a
+                // diagnosis; a silent one would cost the reader the knowledge
+                // that there was something to see.
+                if excerpt["retained"] == "withheld" {
+                    assert!(
+                        excerpt["suppressed"].is_string(),
+                        "{}: a withheld {stream} excerpt must name its reason",
+                        case.label
+                    );
+                    assert!(
+                        excerpt["totalBytes"].as_u64().expect("a byte count") > 0,
+                        "{}: a withheld {stream} excerpt still reports its size",
+                        case.label
+                    );
+                }
+            }
+        }
+        // And the one case whose backend really said something says it.
+        if case.label == "reader-sample" {
+            assert_eq!(item["stderr"]["retained"], "prefix");
+            assert!(
+                item["stderr"]["text"]
+                    .as_str()
+                    .expect("the reader's own words")
+                    .contains("Reader_ABI"),
+                "the reader's account of the sample it lost is the diagnosis"
+            );
+        }
+
+        // No path, no companion, and no backend-chosen member name. The
+        // acquisition's own display name is deliberately here, as
+        // `sourceFileName`, exactly as it has been for every other family since
+        // this export existed: it is the row the user is looking at, and a
+        // document that would not say which item it is about is not a
+        // diagnosis. What this slice had to keep out are the *members'* names,
+        // which the backend derives from sample identifiers inside the
+        // acquisition.
+        let rendered = serde_json::to_string(&export).expect("re-render the export");
+        for forbidden in ["a-S1.mzML", "a-S2.mzML", "uninvited.mzML", ".wiff.scan"] {
+            assert!(
+                !rendered.contains(forbidden),
+                "{}: {forbidden} reached the export",
+                case.label
+            );
+        }
+        assert!(
+            !rendered.contains(&fixture.directory.display().to_string()),
+            "{}: the fixture directory reached the export",
+            case.label
+        );
+    }
+}
+
+/// A set refused before the lifecycle is still exported as a set.
+///
+/// The schema a reader gets must not depend on which layer said no. A
+/// backend-named set whose row could not be revalidated never reaches the
+/// multi-output lifecycle at all, so it has no members, no completeness and no
+/// bound objects — and it is still a set item, of at most twenty-four members,
+/// and says so.
+#[test]
+fn a_set_refused_before_the_run_keeps_its_shape_in_the_export() {
+    let fixture = TestFile::new("queue-diag-prerun");
+    let destination = fixture.destination("out");
+    let runner = FakeOutputSetRunner::writing(&["a-S1.mzML"]);
+    let launches = runner.launches();
+    let service = Arc::new(output_set_service(runner));
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let sciex = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("a SCIEX row");
+
+    // Held by somebody else, so revalidation refuses before anything is opened
+    // for the run.
+    let held = hold_for_writing(&acquisition);
+    let update = run_private_queue(
+        &service,
+        std::slice::from_ref(&sciex.handle),
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    assert_eq!(
+        item_states(terminal_queue(&update)),
+        vec![ConversionQueueItemStateDto::Failed]
+    );
+    assert_eq!(launches.load(Ordering::SeqCst), 0, "nothing was launched");
+    drop(held);
+
+    let export = export_private_diagnostics(&service, &fixture, "diag", &update);
+    let item = &export["items"][0];
+    assert_eq!(item["sourceKind"], "sciex_wiff");
+    assert_eq!(item["refusal"], "file_unreadable");
+    assert!(item["outputFileName"].is_null());
+    assert!(
+        item["outcome"].is_null(),
+        "no conversion reached an outcome"
+    );
+
+    let set = &item["outputSet"];
+    assert!(
+        set.is_object(),
+        "a set refused early is still a set in the document"
+    );
+    assert_eq!(set["maxMembers"], 24);
+    assert_eq!(set["memberCount"], 0);
+    assert_eq!(set["finalizedCount"], 0);
+    assert!(
+        set["boundSourceObjects"].is_null(),
+        "the acquisition was never bound, and zero would say it was bound to nothing"
+    );
+    assert!(set["sampleCompleteness"].is_null());
+    assert!(set["partialFinalization"].is_null());
+}
+
+/// A retry between reading a queue-held set and committing it adopts nothing.
+///
+/// The authority a terminal queue item holds belongs to a *settling*, and a
+/// retry settles the same operation again with different results. An adoption
+/// that read the old ticket and committed against the new settling would attach
+/// outputs to a queue pass that did not produce them — so the settling is read
+/// under the gate that claims the action, and proved again before the commit.
+#[test]
+fn a_retry_between_the_halves_of_a_set_adoption_commits_nothing() {
+    let fixture = TestFile::new("queue-adopt-superseded");
+    let destination = fixture.destination("out");
+    let service = Arc::new(output_set_service(
+        FakeOutputSetRunner::writing(&["a-S1.mzML"]).also_converting(),
+    ));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+    let held_source = fixture.thermo_raw("second.raw");
+    let thermo = service
+        .add_thermo_dataset(&held_source)
+        .expect("a Thermo row");
+
+    // The set finalizes; the Thermo row behind it is held by somebody else, so
+    // the queue completes with one retryable failure.
+    let held = hold_for_writing(&held_source);
+    let update = run_private_queue(
+        &service,
+        &[sciex.handle.clone(), thermo.handle.clone()],
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let operation = operation_of(&update);
+    let queue = terminal_queue(&update);
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Finalized,
+            ConversionQueueItemStateDto::Failed
+        ]
+    );
+    assert_eq!(queue.retry_round, 0);
+    drop(held);
+
+    // A retry settles the same operation again. The set item did not rerun --
+    // a finalized item never does -- so its ticket is still there and still
+    // valid, but it now belongs to the settling after the one that was read.
+    let retried = service
+        .retry_conversion_queue(service.workspace_drop_document_epoch())
+        .expect("a retryable failure is retryable");
+    assert_eq!(terminal_queue(&retried).retry_round, 1);
+
+    // Adopting against the new settling is fine, because that is the settling
+    // the ticket is read from now.
+    let result = service
+        .adopt_queue_output_set(operation, 0)
+        .expect("the current settling holds the set");
+    assert_eq!(set_adoption_kinds(&result), vec!["added"]);
+
+    // And an operation that is not this one answers with nothing at all,
+    // whatever it names.
+    assert!(service.adopt_queue_output_set(operation + 1, 0).is_err());
+    assert!(service.adopt_queue_output_set(operation, 1).is_err());
+}
+
+/// A stopped set item is still recognisably a set in the export.
+///
+/// An unconfirmed stop is the one cancellation worth diagnosing, and the ticket
+/// it produces used to be built exactly as a single-output stop's — so the
+/// document lost the set marker, the member bound and the acquisition's object
+/// count, and a reader could not tell which kind of item had been stopped.
+///
+/// The counts are zero and that is a fact, not a gap: the two cancellation
+/// refusals this is translated from publish nothing.
+#[test]
+fn a_stopped_set_item_keeps_its_shape_in_the_export() {
+    let (fixture, _destination, service, update, _launches) =
+        stop_mid_sciex_item("queue-diag-stopped", StopEnding::Unterminated);
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::StopFailed
+    );
+
+    let export = export_private_diagnostics(&service, &fixture, "diag", &update);
+    let item = &export["items"][0];
+    assert_eq!(item["sourceKind"], "sciex_wiff");
+    assert_eq!(item["state"], "cancellation_failed");
+    assert!(item["outputFileName"].is_null());
+    assert!(item["cancellation"].is_object());
+
+    let set = &item["outputSet"];
+    assert!(
+        set.is_object(),
+        "a stopped set item must not be described as a single output"
+    );
+    assert_eq!(set["maxMembers"], 24);
+    assert_eq!(set["boundSourceObjects"], 2, "primary and companion");
+    assert_eq!(set["memberCount"], 0);
+    assert_eq!(set["finalizedCount"], 0);
+    assert!(set["partialFinalization"].is_null());
+    assert!(set["sampleCompleteness"].is_null());
+
+    let rendered = serde_json::to_string(&export).expect("re-render");
+    assert!(!rendered.contains("a-S1.mzML") && !rendered.contains(".wiff.scan"));
+    assert!(!rendered.contains(&fixture.directory.display().to_string()));
+}
+
+/// A partially finalized item exports its partial facts as counts.
+#[test]
+fn a_partial_publication_is_diagnosed_by_counts() {
+    let fixture = TestFile::new("queue-diag-partial");
+    let destination = fixture.destination("out");
+    let raced = destination.join("a-S2.mzML");
+    let service = Arc::new(output_set_service(FakeOutputSetRunner::writing(&[
+        "a-S1.mzML",
+        "a-S2.mzML",
+        "a-S3.mzML",
+    ])));
+    let occupied = raced.clone();
+    service.race_next_publication(move |position| {
+        if position == 1 {
+            fs::write(&occupied, b"raced in").expect("occupy the second name mid-set");
+        }
+    });
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+    let update = run_private_queue(
+        &service,
+        std::slice::from_ref(&sciex.handle),
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+
+    let export = export_private_diagnostics(&service, &fixture, "diag", &update);
+    let item = &export["items"][0];
+    assert_eq!(item["outcome"], "partially_finalized");
+    assert!(item["outputFileName"].is_null());
+    let set = &item["outputSet"];
+    assert_eq!(set["finalizedCount"], 1);
+    assert_eq!(set["notPublishedCount"], 0);
+    assert_eq!(
+        set["sampleCompleteness"], "source_sample_set_not_fully_published",
+        "a partial publication withdraws the completeness claim"
+    );
+    let partial = &set["partialFinalization"];
+    assert_eq!(partial["finalizedCount"], 1);
+    assert_eq!(partial["notPublishedCount"], 2);
+    assert_eq!(partial["failureKind"], "already_exists");
+    let rendered = serde_json::to_string(&export).expect("re-render");
+    assert!(!rendered.contains("a-S1.mzML") && !rendered.contains("a-S2.mzML"));
+}
+
+/// An ordinary Thermo queue's export is exactly the document it always was.
+#[test]
+fn a_single_output_export_gains_no_member_and_keeps_its_name() {
+    let fixture = TestFile::new("queue-diag-single");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        conversion_capabilities(
+            EVIDENCED_RELEASE,
+            Some(EVIDENCED_REVISION),
+            EVIDENCED_EXECUTABLE_SHA256,
+        ),
+        FakeConversionRunner::new(BackendAct::Fail),
+    )));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    let update = queue_and_run(&service, &[handle], &destination);
+
+    let saved = destination_root(&fixture, "diag").join("diagnostics.json");
+    export_diagnostics(&service, &terminal_operation(&update), &saved)
+        .expect("a failed Thermo item is diagnosable");
+    let export = read_export(&saved);
+    let item = &export["items"][0];
+    assert_eq!(
+        item["outputFileName"], "one.mzML",
+        "unchanged for a single output"
+    );
+    assert!(
+        item.get("outputSet").is_none(),
+        "an ordinary item gains no member it never had"
+    );
+}
+
+/// Nothing that carries a set as a *set* renders a member name or a location.
+///
+/// The boundary this pins is where a member stops being a member. Before
+/// adoption a member basename is the backend's reading of a sample identifier
+/// inside the acquisition, and no queue state, group report, ticket or export
+/// may render one. After adoption it is the display name of an ordinary
+/// workspace row, which the roster carries for every row the product holds --
+/// redacting it in one rendering while the roster beside it spells it out would
+/// be theatre rather than privacy.
+#[test]
+fn every_set_bearing_debug_is_opaque() {
+    let names = ["Patient-042-S1.mzML", "Patient-042-S2.mzML"];
+    let (fixture, service, handle, destination) =
+        private_sciex_queue("queue-debug", FakeOutputSetRunner::writing(&names));
+    let update = run_private_queue(
+        &service,
+        std::slice::from_ref(&handle),
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let operation = operation_of(&update);
+
+    let before_adoption = vec![
+        format!("{:?}", service.conversion_state()),
+        format!("{update:?}"),
+        format!(
+            "{:?}",
+            service
+                .terminal_set_report(operation, 0)
+                .expect("a group report")
+        ),
+    ];
+    // The acquisition's own display name is a deliberate member of the queue's
+    // transfer object and is not in this list: it is the row the user chose.
+    // What must never appear is a location, a companion, or a member name.
+    for text in &before_adoption {
+        for forbidden in [
+            fixture.directory.display().to_string().as_str(),
+            "Patient-042",
+            ".wiff.scan",
+            "\\?\\",
+        ] {
+            assert!(
+                !text.contains(forbidden),
+                "{forbidden} appears in a debug rendering: {text}"
+            );
+        }
+    }
+
+    // The one thing that names claimed members is a test-only inspection
+    // accessor, which is a decision to look rather than a rendering; the value
+    // the queue holds them in renders itself opaque.
+    let claimed = ClaimedOutputName {
+        folded: folded_output_name(names[0]),
+        display: names[0].to_owned(),
+        item: 0,
+        discovered_position: 0,
+    };
+    let rendered = format!("{claimed:?}");
+    assert!(
+        !rendered.contains("Patient-042"),
+        "a claimed name renders its owner, not itself: {rendered}"
+    );
+
+    // The adoption result names rows, because that is what it is for. It still
+    // renders no location and no handle.
+    let adopted = format!(
+        "{:?}",
+        service
+            .adopt_queue_output_set(operation, 0)
+            .expect("the set adopts")
+    );
+    assert!(
+        adopted.contains("Patient-042-S1.mzML"),
+        "an adoption result says which rows exist now"
+    );
+    for forbidden in [
+        fixture.directory.display().to_string().as_str(),
+        ".wiff.scan",
+        "\\?\\",
+    ] {
+        assert!(
+            !adopted.contains(forbidden),
+            "{forbidden} appears in the adoption result"
+        );
+    }
+}
+
+/// Replacing the queue drops its authority and deletes no finalized output.
+#[test]
+fn replacing_a_private_queue_keeps_every_document_it_wrote() {
+    let (fixture, service, handle, destination) = private_sciex_queue(
+        "queue-replaced",
+        FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML"]),
+    );
+    let update = run_private_queue(
+        &service,
+        std::slice::from_ref(&handle),
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let operation = operation_of(&update);
+    let mut written = entry_names_in(&destination);
+    written.sort();
+    assert_eq!(written, vec!["a-S1.mzML", "a-S2.mzML"]);
+
+    // A new queue replaces the terminal one, and with it the authority.
+    let another = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("second"))
+        .expect("a second SCIEX row");
+    let document = service.workspace_drop_document_epoch();
+    service
+        .begin_private_conversion_queue(
+            std::slice::from_ref(&another.handle),
+            ConversionConflictPolicyDto::Fail,
+            document,
+        )
+        .expect("a replacement queue is admitted");
+
+    assert!(
+        service.adopt_queue_output_set(operation, 0).is_err(),
+        "a replaced queue's authority is gone"
+    );
+    let mut still_there = entry_names_in(&destination);
+    still_there.sort();
+    assert_eq!(
+        still_there,
+        vec!["a-S1.mzML", "a-S2.mzML"],
+        "dropping tickets deletes no finalized output"
+    );
+}
+
+/// No command and no visible surface reaches the private queue.
+#[test]
+fn no_product_surface_reaches_the_private_sciex_queue() {
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
+        .expect("read the command surface");
+    for forbidden in [
+        "begin_private_conversion_queue",
+        "adopt_queue_output_set",
+        "convert_workspace_sciex_bundle",
+        "adopt_output_set",
+        "terminal_set_report",
+        "race_next_publication",
+        "SciexWiff",
+        "sciex",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "{forbidden} is reachable from the command surface"
+        );
+    }
+}
+
+/// A real ten-sample SCIEX acquisition, through the whole private queue.
+///
+/// The evidence run for ADR 0026, and deliberately not the direct-conversion
+/// shortcut ADR 0025 measured: the point of this milestone is that the queue
+/// itself carries the acquisition, so the queue is what runs it. Kept out of
+/// ordinary CI because it needs a local ProteoWizard installation and a lawful
+/// acquisition, neither of which a test runner has.
+#[cfg(windows)]
+#[test]
+#[ignore = "needs a local ProteoWizard installation and a real vendor acquisition"]
+fn a_real_sciex_acquisition_runs_through_the_private_queue() {
+    let Ok(fixture) = std::env::var("MSCANVAS_SCIEX_WIFF_FIXTURE") else {
+        panic!("set MSCANVAS_SCIEX_WIFF_FIXTURE to the .wiff to convert");
+    };
+    let Ok(destination) = std::env::var("MSCANVAS_CONVERSION_DESTINATION") else {
+        panic!("set MSCANVAS_CONVERSION_DESTINATION to an empty folder");
+    };
+    let expected: usize = std::env::var("MSCANVAS_SCIEX_EXPECTED_OUTPUTS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1);
+    let acquisition = PathBuf::from(fixture);
+    let destination = PathBuf::from(destination);
+
+    // The production provider. Nothing is substituted.
+    let service = Arc::new(PreviewService::new(Box::new(
+        super::backend::ProteoWizardProvider::new(),
+    )));
+    let dataset = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("the acquisition is admitted as a SCIEX bundle");
+    println!("source bundle members: {}", 2);
+
+    let update = run_private_queue(
+        &service,
+        std::slice::from_ref(&dataset.handle),
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let operation = operation_of(&update);
+    let queue = terminal_queue(&update);
+
+    println!("terminal reason: {:?}", terminal_reason(&update));
+    println!("queue items: {}", queue.item_count);
+    println!("item states: {:?}", item_states(queue));
+    println!("attempts: {}", queue.items[0].attempts);
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Completed
+    );
+    assert_eq!(queue.item_count, 1, "one acquisition is one queue item");
+    assert_eq!(queue.finalized_count, 1);
+    assert_eq!(queue.items[0].attempts, 1);
+    assert_eq!(
+        queue.items[0].output_file_name, "",
+        "no filename was invented for a backend-named set"
+    );
+
+    let report = service
+        .terminal_set_report(operation, 0)
+        .expect("the item kept its group report");
+    println!("group outcome: {}", report.group_outcome());
+    println!("published members: {}", report.published_count());
+    println!("bound source objects: {}", report.bound_source_objects());
+    let completeness = report
+        .completeness()
+        .and_then(SciexSampleCompleteness::established)
+        .expect("a complete acquisition establishes completeness");
+    println!(
+        "completeness: {} sample_count={}",
+        completeness.method(),
+        completeness.sample_count()
+    );
+    assert_eq!(report.group_outcome(), "fully_finalized");
+    assert_eq!(report.published_count(), expected);
+    assert_eq!(completeness.sample_count(), expected);
+    assert_eq!(report.bound_source_objects(), 2);
+
+    let result = service
+        .adopt_queue_output_set(operation, 0)
+        .expect("the terminal item holds a complete set to adopt");
+    println!("ticket members: {}", result.members);
+    println!("adoption outcomes: {:?}", set_adoption_kinds(&result));
+    assert_eq!(result.members, expected);
+    assert_eq!(set_adoption_kinds(&result), vec!["added"; expected]);
+
+    let roster = service.roster();
+    let mzml = roster
+        .datasets
+        .iter()
+        .filter(|row| row.source_kind == DatasetSourceKindDto::Mzml)
+        .count();
+    let wiff = roster
+        .datasets
+        .iter()
+        .filter(|row| row.source_kind == DatasetSourceKindDto::SciexWiff)
+        .count();
+    println!(
+        "workspace rows: {} (mzml {mzml}, sciex_wiff {wiff})",
+        roster.datasets.len()
+    );
+    assert_eq!(mzml, expected);
+    assert_eq!(wiff, 1, "the acquisition is still one bundle row");
+    assert_eq!(roster.datasets.len(), expected + 1);
+    for row in &roster.datasets {
+        assert!(
+            !service.holds_preview_state(&row.handle),
+            "adoption previewed a row"
+        );
+    }
+    println!("preview state on any row: none");
+
+    let again = service
+        .adopt_queue_output_set(operation, 0)
+        .expect("the ticket survives an attempt");
+    println!("repeat adoption: {:?}", set_adoption_kinds(&again));
+    assert_eq!(set_adoption_kinds(&again), vec!["already"; expected]);
+    assert_eq!(service.dataset_count(), expected + 1);
+
+    // Nothing rendered here names a location.
+    for rendered in [
+        format!("{update:?}"),
+        format!("{report:?}"),
+        format!("{result:?}"),
+    ] {
+        assert!(!rendered.contains(":\\"), "a path escaped: {rendered}");
+        assert!(!rendered.contains("\\\\?\\"), "a path escaped: {rendered}");
+    }
+    println!("path-free debug: confirmed");
 }

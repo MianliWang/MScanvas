@@ -4075,3 +4075,72 @@ cannot move the workspace inside, and is recorded rather than papered over; two
 further mutations from the brief were considered and not run, with reasons. See
 [ADR 0025](docs/architecture/adr/0025-private-sciex-output-set-adoption.md) and
 [the M3.14 evidence record](docs/spikes/M3_SCIEX_OUTPUT_SET_ADOPTION_EVIDENCE.md).
+
+## Private SCIEX serial-queue integration, 2026-08-12
+
+One SCIEX acquisition now runs as one item of the *existing* serial conversion
+queue, whatever number of documents its backend writes. The queue could not
+represent it before, and the reason was one field: every item carried one output
+filename, derived from the row's own name before the destination picker opened.
+That is true of Thermo and Shimadzu and it is what the queue-internal collision
+rule is built on. It is false of SCIEX.
+
+**The cardinality is named rather than assumed.** `ItemOutputTopology` is
+`KnownSingle`, which owns its name from the moment the queue is planned, or
+`BackendNamedSet`, which owns nothing until it has published because until then
+nobody knows what it will be called. Two named cases, not `Option<String>`,
+because `None` would have to mean unknown, absent, failed and multi-output at
+once. **No name is derived for a set from anything** — not the acquisition's
+stem, not the sample count, not the sample names.
+
+**The set variant is compiled out of the shipped binary, and that is the privacy
+claim rather than a consequence of one.** No visible surface admits a SCIEX row,
+so none can build such an item, and a build without the variant cannot represent
+one at all. The visible transfer object, its stable identifiers and the frontend
+are untouched.
+
+**One queue, one slot, one backend lane, two cardinalities.** No SCIEX queue,
+worker, busy flag, retry slot, cancellation registry or diagnostics subsystem.
+`convert_queue_item` gained one arm chosen by topology and by nothing else, and
+it calls the existing multi-output lifecycle with the existing cancellation
+object. Ten documents are the item's *result*: one item, one process, one
+`Finalized` row, and every count the queue reports stays a count of sources.
+
+**A queue-internal name collision is not a destination conflict.** A set's
+discovered names meet the queue's own claims at a gate the lifecycle asks
+outward, after every member is validated and *before* the destination is
+inspected. That ordering is the decision: a name an earlier item already
+published is an ordinary file by the time the preflight looks, so the conflict
+policy would answer for it — under `Skip` by calling somebody else's output this
+acquisition's own already-converted result. It is now its own typed,
+non-retryable outcome that publishes none of the set's members, bounded at
+sixteen items × twenty-four documents = 384 names, over the repository's one
+Windows folding helper.
+
+**A partially finalized set is `Failed` and never retryable**, its prefix kept
+as the user's files. Stop, Retry, quarantine and the diagnostics export are the
+existing ones; one source stays one diagnostic item, a set's `outputFileName` is
+`null` rather than fabricated, and the extra facts it carries are counts and
+stable identifiers with no member basename anywhere.
+
+**Two M3.14 evidence repairs came with it.** The test named for partial
+finalization occupied a destination name *before* the run, which the whole-set
+preflight refuses with nothing published — the opposite of a partial result. It
+is renamed for what it measures, and a real `PartiallyFinalized` is now driven
+through a publication seam. Output-set capacity is measured directly rather than
+inherited from the shared registry's own tests.
+
+**Real evidence.** The ten-sample Enolase acquisition through the private queue,
+not the direct-conversion shortcut: one item, one launch, `fully_finalized`,
+completeness `sample_count` 10, one ticket over ten members, ten `added`, eleven
+workspace rows with the acquisition still one bundle row, no preview, path-free
+renderings, and a repeat adoption reporting all ten as already present.
+
+Eleven focused mutations, eight red. Three survivors are classified rather than
+worked around, and one of them found a real defect while it was being
+classified: a refusal or a stop cleared the single-output report but not the
+group report, so a later attempt could have been described by the set attempt
+before it. See
+[ADR 0026](docs/architecture/adr/0026-private-sciex-serial-queue-integration.md)
+and
+[the M3.15 evidence record](docs/spikes/M3_SCIEX_PRIVATE_QUEUE_INTEGRATION_EVIDENCE.md).

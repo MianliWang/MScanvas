@@ -22,11 +22,14 @@ use super::conversion::conversion_source_kind;
 #[allow(clippy::wildcard_imports)]
 use mscanvas_proteowizard::{BackendRunFacts, ConversionAttempt, ConversionCancellation};
 #[cfg(test)]
-use mscanvas_proteowizard::{ConflictPolicy, run_admitted_multi_output_conversion};
+use mscanvas_proteowizard::{
+    ConflictPolicy, MAX_CONVERSION_OUTPUTS_PER_SOURCE, OutputNamesClaimed, SetRunSeam,
+    run_admitted_multi_output_conversion_seamed,
+};
 
-#[cfg(test)]
-use super::adoption::FinalizedOutputSetAdoptionTicket;
 use super::adoption::{AdmittedOutput, AdoptionRefusal, FinalizedOutputAdoptionTicket};
+#[cfg(test)]
+use super::adoption::{FinalizedOutputSetAdoptionTicket, SciexAttemptSettlement};
 use super::backend::{
     ConversionBackend, PreviewProvider, open_operations, reporting_redactor,
     selected_spectrum_operation,
@@ -36,11 +39,12 @@ use super::conversion::WorkspaceMultiOutputConversionReport;
 #[cfg(test)]
 use super::conversion::run_planned_conversion;
 use super::conversion::{
-    ConvertedItem, WorkspaceConversionReport, conflict_policy, fixed_compression, is_convertible,
-    plan_conversion, planned_output_name, refusal_is_retryable, refuse_unevidenced_build,
-    run_planned_conversion_cancellable,
+    ConvertedItem, WorkspaceConversionReport, conflict_policy, fixed_compression, plan_conversion,
+    refusal_is_retryable, refuse_unevidenced_build, run_planned_conversion_cancellable,
 };
 use super::destination::admit_destination_root;
+#[cfg(test)]
+use super::diagnostics::OutputSetDiagnosticFacts;
 use super::diagnostics::payload;
 use super::diagnostics::{
     DIAGNOSTICS_FILE_NAME, DiagnosticsExportRequest, DiagnosticsExportSlot,
@@ -55,6 +59,8 @@ use super::drop_ingestion::{
     NativeDropDispatch, NativeDropSignal, NativeDropWork, conversion_busy_state, drop_busy_state,
     expand_drop_paths,
 };
+#[cfg(test)]
+use super::dto::queue_output_name_claimed;
 use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, ConversionConflictPolicyDto,
     ConversionOutputFormatDto, ConversionQueuePlanDto, ConversionQueuePlanItemDto,
@@ -66,10 +72,10 @@ use super::dto::{
     ValidationModeDto, WorkspaceAddOutcomeDto, WorkspaceAddResultDto,
     WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto, WorkspaceDropStateDto,
     WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto, WorkspaceRemoveResultDto,
-    WorkspaceRosterDto, bounded_text, conversion_busy, dataset_not_convertible,
-    dataset_not_previewable, invalid_conversion_reservation, queue_destination_changed,
-    queue_is_empty, queue_output_name_collision, queue_too_large, redact_absolute_paths,
-    require_finite, require_finite_option, workspace_full,
+    WorkspaceRosterDto, bounded_text, conversion_busy, dataset_not_previewable,
+    invalid_conversion_reservation, queue_destination_changed, queue_is_empty,
+    queue_output_name_collision, queue_too_large, redact_absolute_paths, require_finite,
+    require_finite_option, workspace_full,
 };
 use super::dto::{
     ConversionDiagnosticsExportDto, ConversionDiagnosticsReservationDto,
@@ -90,8 +96,11 @@ use super::dto::{
 use super::installation::InstallationIdentity;
 use super::operation::{
     AdmittedDestination, CancellationFacts, ConversionQueue, ConversionSlot, ItemOutcome,
-    ItemState, QueueItem, QueueItemAttempt, StopAccepted, TerminalReason, item_state_of,
+    ItemState, QueueItem, QueueItemAttempt, StopAccepted, TerminalReason, folded_output_name,
+    item_output_topology, item_state_of,
 };
+#[cfg(test)]
+use super::operation::{ItemOutputTopology, SetStopFacts};
 #[cfg(test)]
 use super::selection::DatasetSourceKind;
 use super::selection::{
@@ -511,6 +520,16 @@ pub struct PreviewService {
     /// what lets that be refused rather than merely be unlikely.
     #[cfg(test)]
     session: u64,
+    /// The publication seam the next backend-named set run will carry.
+    ///
+    /// Taken by the run that uses it, so it fires for exactly one attempt.
+    /// It exists for one outcome: `PartiallyFinalized` needs a destination name
+    /// taken between the whole-set preflight and one member's rename, which on
+    /// a real filesystem is a race against another process. Nothing in the run
+    /// is weakened — the hook is handed a position and can only act on the
+    /// world, exactly as another process could.
+    #[cfg(test)]
+    publication_seam: Mutex<Option<PublicationHook>>,
     /// The session's one diagnostics export.
     ///
     /// A leaf beside the conversion slot rather than a field inside it. What it
@@ -570,6 +589,8 @@ impl PreviewService {
             adopting_outputs: AtomicBool::new(false),
             #[cfg(test)]
             session: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
+            #[cfg(test)]
+            publication_seam: Mutex::new(None),
             diagnostics_export: Mutex::new(DiagnosticsExportSlot::default()),
             diagnostics_exporting: AtomicBool::new(false),
             installation_generation: AtomicU64::new(0),
@@ -1230,7 +1251,7 @@ impl PreviewService {
                     dataset_handle: item.handle().to_owned(),
                     file_name: item.file_name().to_owned(),
                     source_kind: source_kind_dto(item.kind()),
-                    output_file_name: item.output_file_name().to_owned(),
+                    output_file_name: item.output().planned_name().unwrap_or_default().to_owned(),
                 })
                 .collect(),
             output_format: ConversionOutputFormatDto::MzMl,
@@ -1252,6 +1273,20 @@ impl PreviewService {
     /// queue's own constructor; what this adds is that every handle names a
     /// live, convertible row, and that no two of them would write one name.
     fn plan_queue_items(&self, handles: &[String]) -> Result<Vec<QueueItem>, PreviewErrorDto> {
+        self.plan_items(handles, false)
+    }
+
+    /// Turns handles into queue items, admitting backend-named families or not.
+    ///
+    /// One implementation for both planners, so the bound, the duplicate rule,
+    /// the epochs and the collision rule cannot drift apart between the visible
+    /// queue and the private one. `admit_output_sets` is the only difference,
+    /// and only the private entry point sets it.
+    fn plan_items(
+        &self,
+        handles: &[String],
+        admit_output_sets: bool,
+    ) -> Result<Vec<QueueItem>, PreviewErrorDto> {
         // Refused before the workspace is even read. A list longer than a
         // session may run is not a queue whose rows are worth resolving.
         if handles.is_empty() {
@@ -1266,21 +1301,18 @@ impl PreviewService {
             let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
             let dataset = workspace.registry.get(id).ok_or_else(unknown_dataset)?;
             let kind = dataset.file().source_kind();
-            // mzML rows are refused rather than silently dropped. The interface
-            // states how many selected rows are excluded, and a boundary that
-            // quietly shortened the list would make that count a fiction.
-            if !is_convertible(kind) {
-                return Err(dataset_not_convertible());
-            }
             let epoch = workspace
                 .current_request_epoch(id)
                 .ok_or_else(unknown_dataset)?;
             let dto = dataset_dto(&workspace, id).ok_or_else(unknown_dataset)?;
-            // Derived from the display name the roster already carries, through
-            // the same function the plan itself uses. Nothing here touches a
-            // path: what an output is called is decided by what its source is
-            // called.
-            let output = planned_output_name(&dto.file_name).ok_or_else(dataset_not_convertible)?;
+            // What this row's outputs will look like. For a known single output
+            // the name is derived from the display name the roster already
+            // carries, through the same function the plan itself uses -- nothing
+            // here touches a path. mzML rows are refused rather than silently
+            // dropped: the interface states how many selected rows are
+            // excluded, and a boundary that quietly shortened the list would
+            // make that count a fiction.
+            let output = item_output_topology(kind, &dto.file_name, admit_output_sets)?;
             items.push(QueueItem::new(id, epoch, kind, dto, output));
         }
         drop(workspace);
@@ -1289,35 +1321,31 @@ impl PreviewService {
         // something that was already there, so the conflict policy cannot
         // settle it -- and letting queue order pick the winner would make the
         // result depend on a sort the user can change. Refused outright.
-        // Compared the way the destination will resolve them, not the way Rust
-        // compares strings. The folder is a local Windows directory by
-        // admission, and an ordinary one answers `Sample.mzML` and
-        // `sample.mzML` with the same file -- so a case-sensitive comparison
-        // would call that pair distinct here and then discover the conflict
-        // after the picker, as the second item failing or being skipped.
         //
-        // Upcased, because that is the direction Windows folds: a volume keeps
-        // an uppercase table and maps a name through it. Lowercasing is not the
-        // same relation and misses real collisions -- Greek final sigma is the
-        // plain example, since `to_lowercase` leaves `Σ` and `ς` as `σ` and
-        // `ς` while a volume upcases both to `Σ`.
+        // Only the names that exist yet. A backend-named set has none at
+        // planning time, and comparing a guess would be worse than comparing
+        // nothing; its discovered names meet this queue's claims at the
+        // publication gate instead, where they are real.
         //
-        // Rust's uppercasing is full Unicode rather than a volume's fixed
-        // table, so the two still disagree at the edges -- `ß` expands to `SS`
-        // here and does not there. Where they disagree this refuses a pair the
-        // volume might have kept apart, which is the safe direction for a rule
-        // whose whole purpose is to refuse, and the honest limit of comparing
-        // names without asking the volume itself.
-        let folded = |name: &str| name.to_uppercase();
+        // Folded the way the destination volume will resolve them -- see
+        // `folded_output_name`, which is the one implementation of that
+        // relation.
         let mut collisions: Vec<String> = Vec::new();
         for (index, item) in items.iter().enumerate() {
+            let Some(name) = item.output().planned_name() else {
+                continue;
+            };
+            let folded = folded_output_name(name);
             if items[..index].iter().any(|earlier| {
-                folded(earlier.output_file_name()) == folded(item.output_file_name())
+                earlier
+                    .output()
+                    .planned_name()
+                    .is_some_and(|earlier| folded_output_name(earlier) == folded)
             }) && !collisions
                 .iter()
-                .any(|name| folded(name) == folded(item.output_file_name()))
+                .any(|seen| folded_output_name(seen) == folded)
             {
-                collisions.push(item.output_file_name().to_owned());
+                collisions.push(name.to_owned());
             }
         }
         if !collisions.is_empty() {
@@ -1344,6 +1372,35 @@ impl PreviewService {
         conflict: ConversionConflictPolicyDto,
         document_epoch: u64,
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
+        self.begin_queue(handles, conflict, document_epoch, false)
+    }
+
+    /// Binds one private queue that may contain a backend-named set.
+    ///
+    /// The narrowest private entry point that can put a SCIEX row through the
+    /// existing queue. It differs from [`Self::begin_conversion_queue`] in one
+    /// respect -- which rows it will plan -- and shares the whole of the rest:
+    /// the same backend gate, the same family preflight, the same mutation
+    /// gate, the same slot, the same reservation. There is no Tauri command
+    /// behind it and no transfer object built from it, and the row it exists
+    /// for cannot enter a workspace the shipped binary can reach.
+    #[cfg(test)]
+    pub(super) fn begin_private_conversion_queue(
+        &self,
+        handles: &[String],
+        conflict: ConversionConflictPolicyDto,
+        document_epoch: u64,
+    ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
+        self.begin_queue(handles, conflict, document_epoch, true)
+    }
+
+    fn begin_queue(
+        &self,
+        handles: &[String],
+        conflict: ConversionConflictPolicyDto,
+        document_epoch: u64,
+        admit_output_sets: bool,
+    ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
         // Before the plan, so a quarantined session refuses a queue without
         // first describing one it will never run.
         self.require_usable_backend()?;
@@ -1360,7 +1417,7 @@ impl PreviewService {
         // is the plan the queue is actually bound from. This first pass also
         // keeps a batch of dead handles from costing a help probe.
         let preflight_families: Vec<ConversionSourceKind> = {
-            let items = self.plan_queue_items(handles)?;
+            let items = self.plan_items(handles, admit_output_sets)?;
             let mut families = Vec::new();
             for item in &items {
                 let kind = conversion_source_kind(item.kind());
@@ -1414,7 +1471,7 @@ impl PreviewService {
         // picker would open for a run guaranteed to end superseded. Planning
         // is lock-cheap and launches nothing, so it is simply done again where
         // it counts.
-        let items = self.plan_queue_items(handles)?;
+        let items = self.plan_items(handles, admit_output_sets)?;
         let mut slot = self.conversion_slot();
         // Under the slot lock, and immediately before the slot is taken. The
         // authority proof is awaited, so a reload can start any time after it
@@ -1724,26 +1781,93 @@ impl PreviewService {
             return Err(outputs_not_adoptable());
         }
         let id = DatasetId::parse(conversion.report().dataset()).ok_or_else(unknown_dataset)?;
-        let source_kind = conversion.report().source_kind();
-        let source_display_name = {
-            let workspace = self.workspace();
-            let dataset = workspace.registry.get(id).ok_or_else(unknown_dataset)?;
-            dataset.file().file_name().to_owned()
-        };
-        FinalizedOutputSetAdoptionTicket::of(
-            self.session,
-            id,
-            source_display_name,
-            source_kind,
-            conversion,
-        )
-        .map_err(|refusal| {
-            PreviewErrorDto::new(
-                refusal.stable_id(),
-                "That conversion did not produce a complete output set to adopt.",
-                false,
-            )
-        })
+        let source_display_name = self.source_display_name(id)?;
+        FinalizedOutputSetAdoptionTicket::of(self.session, source_display_name, conversion)
+            .ticket
+            .map_err(|refusal| {
+                PreviewErrorDto::new(
+                    refusal.stable_id(),
+                    "That conversion did not produce a complete output set to adopt.",
+                    false,
+                )
+            })
+    }
+
+    /// The group report one terminal queue item kept, for a private reader.
+    #[cfg(test)]
+    pub(super) fn terminal_set_report(
+        &self,
+        operation: u64,
+        index: usize,
+    ) -> Option<WorkspaceMultiOutputConversionReport> {
+        self.conversion_slot().terminal_set_report(operation, index)
+    }
+
+    /// Which conversion one terminal item's latest set attempt was.
+    #[cfg(test)]
+    pub(super) fn terminal_set_run(&self, operation: u64, index: usize) -> Option<u64> {
+        self.conversion_slot().terminal_set_run(operation, index)
+    }
+
+    /// Forges a retryable set failure. See
+    /// [`ConversionSlot::mark_retryable_for_test`].
+    #[cfg(test)]
+    pub(super) fn mark_retryable_for_test(&self, operation: u64, index: usize) -> bool {
+        self.conversion_slot()
+            .mark_retryable_for_test(operation, index)
+    }
+
+    /// What the live queue's runtime name authority currently owns, and the
+    /// most it ever could.
+    #[cfg(test)]
+    pub(super) fn queue_output_name_authority(&self) -> Option<(Vec<String>, usize)> {
+        self.conversion_slot().output_name_authority()
+    }
+
+    /// Arms the publication seam for the next backend-named set run.
+    #[cfg(test)]
+    pub(super) fn race_next_publication(&self, hook: impl FnMut(usize) + Send + 'static) {
+        *self
+            .publication_seam
+            .lock()
+            .expect("the publication seam is never poisoned") = Some(Box::new(hook));
+    }
+
+    /// The display name of one live row, as the roster spells it.
+    #[cfg(test)]
+    fn source_display_name(&self, id: DatasetId) -> Result<String, PreviewErrorDto> {
+        let workspace = self.workspace();
+        let dataset = workspace.registry.get(id).ok_or_else(unknown_dataset)?;
+        Ok(dataset.file().file_name().to_owned())
+    }
+
+    /// Adopts the output set one terminal queue item holds.
+    ///
+    /// The private counterpart of [`Self::adopt_conversion_outputs`], and
+    /// deliberately a second entry point rather than a widened one: the visible
+    /// action adopts one output per finalized item and says so in its transfer
+    /// object, and a set would have to be flattened into members to fit that
+    /// shape — which is the reconstruction the whole output-set boundary
+    /// refuses.
+    ///
+    /// It reaches the ticket the way a caller must: by naming the exact
+    /// operation and the exact item. The slot answers only for a terminal queue
+    /// of that operation whose item at that index finalized and holds a set
+    /// authority, so a stale operation, a running queue, another item or an
+    /// item whose retry replaced its ticket all answer with nothing.
+    ///
+    /// Adoption itself is [`Self::adopt_output_set`], unchanged: the same
+    /// engine, the same duplicate-before-capacity rule, the same generation
+    /// protocol, no process and no preview. The queue result and its retry
+    /// classification are untouched — adopting is not a thing that happened to
+    /// the conversion.
+    #[cfg(test)]
+    pub(super) fn adopt_queue_output_set(
+        &self,
+        operation: u64,
+        index: usize,
+    ) -> Result<WorkspaceOutputSetAdoptionResult, PreviewErrorDto> {
+        self.adopt_set(OutputSetToAdopt::TerminalItem { operation, index })
     }
 
     /// Adopts one fully finalized, sample-complete output set into this
@@ -1773,16 +1897,25 @@ impl PreviewService {
         &self,
         ticket: &FinalizedOutputSetAdoptionTicket,
     ) -> Result<WorkspaceOutputSetAdoptionResult, PreviewErrorDto> {
-        // Before anything is claimed. A ticket names the row it was converted
-        // from by an id this session allocates from zero, so another session's
-        // ticket would commit its outputs against whatever row happens to hold
-        // that number here -- with the display name and family of a row that is
-        // not it. Refused rather than validated field by field: the ticket
-        // simply does not belong to this workspace.
-        if ticket.session() != self.session {
-            return Err(outputs_not_adoptable());
-        }
-        let reserved = {
+        self.adopt_set(OutputSetToAdopt::Ticket(ticket))
+    }
+
+    /// The adoption both private callers run.
+    ///
+    /// Where the authority comes from is the only difference, and it is a
+    /// difference about *claiming order* rather than about the adoption. A
+    /// ticket the caller already holds owns its objects outright, so nothing
+    /// but the workspace can move underneath it. One held by a terminal queue
+    /// item belongs to a settling that a retry or a replacement can end, so it
+    /// is read under the same gate that claims the action -- exactly as the
+    /// visible adoption reads its tickets -- and the settling is re-proved
+    /// before the commit.
+    #[cfg(test)]
+    fn adopt_set(
+        &self,
+        source: OutputSetToAdopt<'_>,
+    ) -> Result<WorkspaceOutputSetAdoptionResult, PreviewErrorDto> {
+        let (adoptable, settling, reserved) = {
             // The same gate the visible adoption reserves under, waiting out a
             // native drop that has claimed the workspace. Reserving in front of
             // one would guarantee this adoption is superseded by a decision
@@ -1795,19 +1928,59 @@ impl PreviewService {
             if self.diagnostics_export_is_in_flight() {
                 return Err(adoption_in_progress());
             }
+            // Read under the gate that is about to claim the action, so a retry
+            // cannot start between the read and the claim and leave this
+            // holding an authority whose settling is over.
+            let (adoptable, settling) = match source {
+                OutputSetToAdopt::Ticket(ticket) => (AdoptableSet::Held(ticket), None),
+                OutputSetToAdopt::TerminalItem { operation, index } => {
+                    let slot = self.conversion_slot();
+                    let ticket = slot
+                        .terminal_output_set_ticket(operation, index)
+                        .ok_or_else(adoption_superseded)?;
+                    let round = slot
+                        .terminal_retry_round(operation)
+                        .ok_or_else(adoption_superseded)?;
+                    drop(slot);
+                    (
+                        AdoptableSet::FromQueue(ticket),
+                        Some(TerminalSettling { operation, round }),
+                    )
+                }
+            };
+            let ticket = adoptable.ticket();
+            // Before anything is claimed. A ticket names the row it was
+            // converted from by an id this session allocates from zero, so
+            // another session's ticket would commit its outputs against
+            // whatever row happens to hold that number here -- with the display
+            // name and family of a row that is not it. Refused rather than
+            // validated field by field: the ticket simply does not belong to
+            // this workspace.
+            if ticket.session() != self.session {
+                return Err(outputs_not_adoptable());
+            }
             if self.adopting_outputs.swap(true, Ordering::AcqRel) {
                 return Err(adoption_in_progress());
             }
-            self.reserve_adoption(gate)
+            (adoptable, settling, self.reserve_adoption(gate))
         };
         let adopting = AdoptionInFlight(self);
+        let ticket = adoptable.ticket();
 
         let inspected = self.inspect_adoption_candidates(reserved, ticket.candidates())?;
 
         let gate = self.enter_workspace_mutation();
-        // The reservation alone, because there is no queue here whose settling
-        // could have changed underneath: the ticket owns its objects outright.
+        // The reservation, which says no other workspace decision happened.
         if gate.generation != reserved {
+            return Err(adoption_superseded());
+        }
+        // And, for an authority the queue holds, the settling it came from. A
+        // retry between the two halves leaves the same operation terminal again
+        // with different results, and committing against that would attach
+        // these outputs to a settling that did not produce them.
+        if let Some(TerminalSettling { operation, round }) = settling
+            && self.conversion_slot().terminal_retry_round(operation) != Some(round)
+        {
             return Err(adoption_superseded());
         }
         let mut workspace = self.workspace();
@@ -2341,7 +2514,6 @@ impl PreviewService {
                     return self.refuse_queue(operation, queue_destination_changed());
                 }
             };
-            let root = admitted.root().to_path_buf();
             // Refuses once a stop has been accepted, whatever this worker
             // believed a moment ago. The check above narrows the window; this
             // closes it, because the transition and the refusal are the same
@@ -2372,9 +2544,15 @@ impl PreviewService {
             // it made is on the object this run is about to consume.
             let started_at = Instant::now();
             let outcome = self.convert_queue_item(
-                &item,
-                &root,
-                queue.conflict(),
+                QueuedItemRun {
+                    item: &item,
+                    #[cfg(test)]
+                    index,
+                    #[cfg(test)]
+                    queue: &queue,
+                    destination: &admitted,
+                    conflict: queue.conflict(),
+                },
                 &backend,
                 generation,
                 cancellation,
@@ -2470,6 +2648,10 @@ impl PreviewService {
             // in which anything of this application's may still be running.
             QueueItemAttempt::Cancelled(report) => ItemOutcome::Stopped {
                 state: ItemState::Cancelled,
+                // The single-output boundary's own cancellation, so there is no
+                // set here to describe.
+                #[cfg(test)]
+                set: None,
                 // Nothing to diagnose. The user asked for it to stop and the
                 // owned tree is confirmed gone, so there is no failure here for
                 // backend text to be an account of.
@@ -2485,8 +2667,46 @@ impl PreviewService {
                     staging_residue: report.residue(),
                 },
             },
+            // The same two states, from the multi-output lifecycle's own
+            // vocabulary. What the queue records must not depend on which
+            // lifecycle ran the item.
+            #[cfg(test)]
+            QueueItemAttempt::SetStopped(facts) => {
+                let facts = *facts;
+                ItemOutcome::Stopped {
+                    state: if facts.confirmed {
+                        ItemState::Cancelled
+                    } else {
+                        ItemState::CancellationFailed
+                    },
+                    // Zero counts, and they are true: the two cancellation
+                    // refusals this was translated from publish nothing.
+                    set: Some(OutputSetDiagnosticFacts {
+                        max_members: MAX_CONVERSION_OUTPUTS_PER_SOURCE,
+                        member_count: 0,
+                        finalized_count: 0,
+                        validated_not_published_count: 0,
+                        not_published_count: 0,
+                        bound_source_objects: Some(facts.bound_source_objects),
+                        completeness: None,
+                        partial: None,
+                        not_adoptable: None,
+                    }),
+                    diagnostics: facts.diagnostics,
+                    facts: CancellationFacts {
+                        process_launched: facts.process_launched,
+                        tree_termination_confirmed: facts.confirmed,
+                        elapsed,
+                        termination: facts.termination,
+                        partial_output_observed: facts.partial_output_observed,
+                        staging_residue: facts.staging_residue,
+                    },
+                }
+            }
             QueueItemAttempt::CancellationFailed(mut failure) => ItemOutcome::Stopped {
                 state: ItemState::CancellationFailed,
+                #[cfg(test)]
+                set: None,
                 // Taken here, at the one place this failure is turned into what
                 // the queue records. It is already redacted and already bounded;
                 // this side has no access to the raw streams and no paths with
@@ -2514,13 +2734,14 @@ impl PreviewService {
     /// whose object identity must match the one the session holds.
     fn convert_queue_item(
         &self,
-        item: &QueueItem,
-        root: &Path,
-        conflict: ConversionConflictPolicyDto,
+        run: QueuedItemRun<'_>,
         backend: &ConversionBackend<'_>,
         generation: u64,
         cancellation: ConversionCancellation,
     ) -> QueueItemAttempt {
+        let item = run.item;
+        let root = run.destination.root();
+        let conflict = run.conflict;
         let handle = item.handle().to_owned();
         let workspace = self.workspace();
         let still_bound = workspace.bound_request_is_current(item.dataset(), item.request_epoch())
@@ -2547,6 +2768,41 @@ impl PreviewService {
                 error: unknown_dataset(),
             });
         };
+
+        // What this item's outputs look like decides which lifecycle runs it,
+        // and nothing else does. There is no family name here and no second
+        // loop: one queue, one slot, one backend lane, two cardinalities.
+        #[cfg(test)]
+        if let ItemOutputTopology::BackendNamedSet { .. } = item.output() {
+            return self.convert_queue_output_set(
+                run,
+                backend,
+                generation,
+                &cancellation,
+                remembered,
+            );
+        }
+
+        // A known single output whose name an earlier backend-named set has
+        // since taken. Nothing could have caught this when the queue was
+        // planned, because that set had no names then; refused before the
+        // backend runs, so the item creates nothing and the earlier item's
+        // published file is not touched.
+        //
+        // Compiled out with the topology that makes it possible. In a build
+        // where every item's name is known before the queue exists, the
+        // planner has already refused every pair that could reach here.
+        #[cfg(test)]
+        if let Some(planned) = item.output().planned_name()
+            && let Some(owner) = run
+                .queue
+                .name_claimed_by_another(run.index, &[planned.to_owned()])
+        {
+            return QueueItemAttempt::Settled(ItemOutcome::Refused {
+                retryable: false,
+                error: queue_output_name_claimed(&owner.display),
+            });
+        }
 
         let outcome = (|| -> Result<ConvertedItem, PreviewErrorDto> {
             let file = revalidate(&remembered)?;
@@ -2606,6 +2862,129 @@ impl PreviewService {
                 QueueItemAttempt::Settled(ItemOutcome::Refused { retryable, error })
             }
         }
+    }
+
+    /// One backend-named set item, on the queue's binding and its gate.
+    ///
+    /// The multi-output half of the one execution path. Everything structural
+    /// is shared with the single-output half above -- the same queue, the same
+    /// slot, the same backend lane, the same revalidation posture, the same
+    /// cancellation object -- and what differs is only the lifecycle it hands
+    /// the bound source to, because that lifecycle is the one that expects the
+    /// backend to name its own outputs.
+    ///
+    /// One item, one process. The set is the item's *result*, never a set of
+    /// items.
+    #[cfg(test)]
+    fn convert_queue_output_set(
+        &self,
+        run: QueuedItemRun<'_>,
+        backend: &ConversionBackend<'_>,
+        generation: u64,
+        cancellation: &ConversionCancellation,
+        remembered: AcceptedFile,
+    ) -> QueueItemAttempt {
+        let QueuedItemRun {
+            item,
+            index,
+            queue,
+            destination,
+            conflict,
+        } = run;
+        let settled = (|| -> Result<SciexConversion, PreviewErrorDto> {
+            let file = revalidate(&remembered)?;
+            // Every member, held together for the whole run. A companion
+            // released early is a companion the backend could be reading while
+            // somebody else replaces it -- and the companion never appears in
+            // any argv, so nothing downstream would notice the swap.
+            let mut guards = vec![lock_against_replacement(file.path())?];
+            for companion in file.companions() {
+                guards.push(lock_against_replacement(companion.path())?);
+            }
+            let source = open_conversion_source(&file)?;
+            let bound_source_objects = source.bound_object_count();
+            // Taken rather than borrowed, so the lock is not held across the
+            // backend and the hook fires for exactly one attempt.
+            let mut armed = self
+                .publication_seam
+                .lock()
+                .expect("the publication seam is never poisoned")
+                .take();
+            // The queue's own knowledge, asked once with the complete
+            // discovered set and before any destination name is inspected. What
+            // it answers about is the *plan*: which names other items of this
+            // queue already own, whether because they were planned with them or
+            // because they published them. See `OutputNamesClaimed`.
+            // It answers with a position rather than a name. The lifecycle's
+            // failures are path-free by construction and must not depend on
+            // this adapter behaving; it names the member from its own list.
+            let mut names_claimed = |discovered: &[String]| {
+                queue.name_claimed_by_another(index, discovered).map_or(
+                    OutputNamesClaimed::None,
+                    |owner| OutputNamesClaimed::Already {
+                        index: owner.discovered_position,
+                    },
+                )
+            };
+            let run = run_admitted_multi_output_conversion_seamed(
+                &source,
+                destination.root(),
+                conflict_policy(conflict),
+                &backend.capabilities,
+                backend.runner,
+                Some(cancellation),
+                SetRunSeam {
+                    names_claimed: &mut names_claimed,
+                    before_member_publication: &mut |position: usize| {
+                        if let Some(hook) = armed.as_mut() {
+                            hook(position);
+                        }
+                    },
+                },
+            );
+            drop(guards);
+            Ok(SciexConversion::of(
+                self.session,
+                run,
+                SciexRunFacts {
+                    dataset: item.dataset(),
+                    source_kind: file.source_kind(),
+                    bound_source_objects,
+                    installation_generation: generation,
+                    destination: destination.clone(),
+                },
+            ))
+        })();
+
+        let mut conversion = match settled {
+            Ok(conversion) => conversion,
+            Err(error) => {
+                let retryable = refusal_is_retryable(&error.kind);
+                return QueueItemAttempt::Settled(ItemOutcome::Refused { retryable, error });
+            }
+        };
+        // A stop that reached the backend is a stop, whichever lifecycle ran
+        // it. Translated here rather than inside the settlement, because a
+        // cancelled attempt is not a conversion outcome the queue records: it
+        // has no report to show and can never name an output.
+        if let Some(facts) = set_stop_facts(&mut conversion) {
+            return QueueItemAttempt::SetStopped(Box::new(facts));
+        }
+        // Taken here, at the one place a settled set attempt is built. The run
+        // kept this text exactly where it is worth diagnosing -- anything
+        // refused or partial -- and it arrives already redacted and already
+        // bounded, because this side has no access to the raw streams and no
+        // paths with which to redact them. Dropping it would leave every
+        // non-cancellation failure exporting two empty excerpts.
+        let diagnostics = conversion.take_diagnostics();
+        QueueItemAttempt::Settled(ItemOutcome::ReportedSet(Box::new(
+            SciexAttemptSettlement::of(
+                self.session,
+                item.file_name().to_owned(),
+                conversion,
+                diagnostics,
+            ),
+        )))
     }
 
     fn refuse_queue(&self, operation: u64, error: PreviewErrorDto) -> WorkspaceConversionUpdateDto {
@@ -3487,6 +3866,104 @@ impl PreviewService {
     }
 }
 
+/// Where one private output-set adoption gets its authority.
+///
+/// Two cases because they have different lifetimes, not different adoptions. A
+/// ticket the caller holds is theirs for as long as they keep it; one a
+/// terminal queue item holds belongs to a settling that can end, so it must be
+/// read under the gate that claims the action and re-proved before the commit.
+#[cfg(test)]
+#[derive(Clone, Copy)]
+enum OutputSetToAdopt<'a> {
+    Ticket(&'a FinalizedOutputSetAdoptionTicket),
+    TerminalItem { operation: u64, index: usize },
+}
+
+/// One output-set authority, however this adoption came by it.
+#[cfg(test)]
+enum AdoptableSet<'a> {
+    /// The caller's own, from the direct private conversion.
+    Held(&'a FinalizedOutputSetAdoptionTicket),
+    /// One terminal queue item's, read under the gate that claimed the action.
+    FromQueue(std::sync::Arc<FinalizedOutputSetAdoptionTicket>),
+}
+
+#[cfg(test)]
+impl AdoptableSet<'_> {
+    fn ticket(&self) -> &FinalizedOutputSetAdoptionTicket {
+        match self {
+            Self::Held(ticket) => ticket,
+            Self::FromQueue(ticket) => ticket,
+        }
+    }
+}
+
+/// The exact settling a queue-held authority came from.
+///
+/// The operation alone is not it: a retry settles the same operation again.
+#[cfg(test)]
+#[derive(Clone, Copy)]
+struct TerminalSettling {
+    operation: u64,
+    round: u64,
+}
+
+/// Everything one queued item's attempt is about.
+///
+/// Gathered because the list had grown past what a reader can tell apart at a
+/// call site, and because the last three of them -- the item's place in its
+/// queue, the queue itself and the folder it was admitted to -- only mean
+/// anything together. An item index with another queue behind it names a
+/// different item.
+#[derive(Clone, Copy)]
+struct QueuedItemRun<'a> {
+    item: &'a QueueItem,
+    /// Where the item sits, and the queue it sits in. Read only by the
+    /// runtime name authority, which exists for the backend-named set — so in
+    /// a build without that topology there is nothing to ask and nothing to
+    /// carry.
+    #[cfg(test)]
+    index: usize,
+    #[cfg(test)]
+    queue: &'a ConversionQueue,
+    destination: &'a AdmittedDestination,
+    conflict: ConversionConflictPolicyDto,
+}
+
+/// What a stop established about one set attempt, if a stop is what ended it.
+///
+/// Reads the lifecycle's own two cancellation refusals and nothing else. A run
+/// that failed for any other reason is not a cancellation however close to one
+/// it looks, and a run that reached an outcome was never stopped inside the
+/// backend at all.
+#[cfg(test)]
+fn set_stop_facts(conversion: &mut SciexConversion) -> Option<SetStopFacts> {
+    let report = conversion.report();
+    let confirmed = match report.refusal_id()? {
+        "multi_output_cancelled" => true,
+        "multi_output_cancellation_not_confirmed" => false,
+        _ => return None,
+    };
+    let backend = report.backend_facts();
+    Some(SetStopFacts {
+        bound_source_objects: report.bound_source_objects(),
+        confirmed,
+        process_launched: backend.is_some(),
+        termination: backend.map(BackendRunFacts::termination),
+        partial_output_observed: report
+            .staged_content()
+            .is_some_and(|staged| staged.entry_count() > 0),
+        staging_residue: report.residue(),
+        // Only where the stop could not be confirmed, exactly as the
+        // single-output path decides it: a confirmed cancellation is the user
+        // getting what they asked for, and there is no failure for backend text
+        // to be an account of.
+        diagnostics: (!confirmed)
+            .then(|| conversion.take_diagnostics())
+            .flatten(),
+    })
+}
+
 const FOLDER_IMPORT_RESERVATION_PREFIX: &str = "folder-import-reservation-";
 
 /// Correlates a pending reservation with exactly one later picker command.
@@ -3764,6 +4241,29 @@ impl PreviewService {
         destination_root: &Path,
         conflict: ConflictPolicy,
     ) -> Result<SciexConversion, PreviewErrorDto> {
+        self.convert_workspace_sciex_bundle_seamed(handle, destination_root, conflict, &mut |_| {})
+    }
+
+    /// The same conversion, carrying the lifecycle's publication seam.
+    ///
+    /// The hook fires after the whole-set destination preflight and before each
+    /// member's rename, and it is here for one outcome that cannot otherwise be
+    /// produced from this layer: `PartiallyFinalized` requires a destination
+    /// name to be taken *between* the preflight that found it free and the
+    /// rename that wanted it, which is a race against another process. The
+    /// suite occupies the name instead of trying to win it.
+    ///
+    /// It changes nothing about the run. The hook sees a position, never an
+    /// object, a handle or a name, and cannot make a rename fail except by
+    /// doing to the filesystem what anything else with write access could do.
+    #[cfg(test)]
+    pub(super) fn convert_workspace_sciex_bundle_seamed(
+        &self,
+        handle: &str,
+        destination_root: &Path,
+        conflict: ConflictPolicy,
+        before_member_publication: &mut dyn FnMut(usize),
+    ) -> Result<SciexConversion, PreviewErrorDto> {
         let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
         let (epoch, remembered) = self
             .workspace()
@@ -3808,38 +4308,46 @@ impl PreviewService {
         // name that may mean something else by the time it is adopted.
         let (destination_root, destination_identity, _held) =
             admit_destination_root(destination_root)?;
-        let run = run_admitted_multi_output_conversion(
+        let run = run_admitted_multi_output_conversion_seamed(
             &source,
             &destination_root,
             conflict,
             &backend.capabilities,
             backend.runner,
             None,
+            SetRunSeam {
+                // Nothing outside this run owns a name: a direct conversion is
+                // not a queue and has no siblings to collide with.
+                names_claimed: &mut |_: &[String]| OutputNamesClaimed::None,
+                before_member_publication,
+            },
         );
         let generation = self.note_resolved(backend.installation.clone());
         drop(guards);
         drop(running);
-        Ok(SciexConversion {
-            session: self.session,
-            report: WorkspaceMultiOutputConversionReport::of(
-                id.handle(),
-                file.source_kind(),
+        Ok(SciexConversion::of(
+            self.session,
+            run,
+            SciexRunFacts {
+                dataset: id,
+                source_kind: file.source_kind(),
                 bound_source_objects,
-                generation,
-                &run.report,
-                run.completeness,
-            ),
-            retained: run.retained,
-            // Allocated here, once, for this conversion. Never read from the
-            // workspace generation: converting does not advance it.
-            run: NEXT_CONVERSION_RUN.fetch_add(1, Ordering::Relaxed),
-            destination: AdmittedDestination::new(destination_root, destination_identity),
-        })
+                installation_generation: generation,
+                destination: AdmittedDestination::new(destination_root, destination_identity),
+            },
+        ))
     }
 
     /// How many datasets the session holds.
     pub(super) fn dataset_count(&self) -> usize {
         self.workspace().registry.len()
+    }
+
+    /// The identifier the next added row would receive. See
+    /// [`DatasetRegistry::next_identifier`].
+    #[cfg(test)]
+    pub(super) fn next_dataset_identifier(&self) -> u64 {
+        self.workspace().registry.next_identifier()
     }
 
     /// A view of whether this dataset's identity lease is still open.
@@ -5012,6 +5520,12 @@ pub(super) struct SciexConversion {
     report: WorkspaceMultiOutputConversionReport,
     retained: mscanvas_proteowizard::FinalizedOutputSet,
     run: u64,
+    /// The redacted backend text of the run, where it kept any.
+    ///
+    /// Taken out of the crate's report at construction, for the reason the
+    /// single-output path takes its own: this is the largest thing an attempt
+    /// carries, and the report the session shows should not hold it.
+    diagnostics: Option<Box<mscanvas_proteowizard::BackendDiagnosticText>>,
     /// The folder this conversion wrote into, as the object it was admitted as.
     ///
     /// Carried rather than supplied again later, and that closes the last way
@@ -5023,11 +5537,64 @@ pub(super) struct SciexConversion {
     destination: AdmittedDestination,
 }
 
+/// What one private SCIEX run is attributed to.
+///
+/// Read once, from the row and the gate the run was started under, and carried
+/// into the conversion in one piece. Separately supplying any of them later is
+/// exactly the crossing this whole boundary keeps closing.
+#[cfg(test)]
+pub(super) struct SciexRunFacts {
+    pub(super) dataset: DatasetId,
+    pub(super) source_kind: DatasetSourceKind,
+    pub(super) bound_source_objects: usize,
+    pub(super) installation_generation: u64,
+    pub(super) destination: AdmittedDestination,
+}
+
 #[cfg(test)]
 impl SciexConversion {
+    /// Builds one conversion from one finished run.
+    ///
+    /// The only constructor, so both callers -- the direct private conversion
+    /// and the private queue -- assemble the same value the same way, and the
+    /// run identity is allocated in exactly one place.
+    pub(super) fn of(
+        session: u64,
+        mut run: mscanvas_proteowizard::MultiOutputConversionRun,
+        about: SciexRunFacts,
+    ) -> Self {
+        // Taken before the crate's report is consumed, so the report the
+        // session keeps and projects holds no backend text at all.
+        let diagnostics = run.report.take_backend_text();
+        Self {
+            session,
+            report: WorkspaceMultiOutputConversionReport::of(
+                about.dataset.handle(),
+                about.source_kind,
+                about.bound_source_objects,
+                about.installation_generation,
+                &run.report,
+                run.completeness,
+            ),
+            retained: run.retained,
+            // Allocated here, once, for this conversion. Never read from the
+            // workspace generation: converting does not advance it.
+            run: NEXT_CONVERSION_RUN.fetch_add(1, Ordering::Relaxed),
+            destination: about.destination,
+            diagnostics,
+        }
+    }
+
     /// The session that ran it.
     pub(super) const fn session(&self) -> u64 {
         self.session
+    }
+
+    /// Takes the redacted backend text, leaving none behind.
+    pub(super) fn take_diagnostics(
+        &mut self,
+    ) -> Option<Box<mscanvas_proteowizard::BackendDiagnosticText>> {
+        self.diagnostics.take()
     }
 
     /// What it reported, to read and not to replace.
@@ -5086,6 +5653,10 @@ impl SciexConversion {
 /// generation: converting does not advance that, so two conversions of one
 /// dataset into two folders would read the same value and claim to be the same
 /// run — which is the one thing this identity exists to prevent.
+/// A hook armed for one backend-named set run's publication seam.
+#[cfg(test)]
+type PublicationHook = Box<dyn FnMut(usize) + Send>;
+
 #[cfg(test)]
 static NEXT_CONVERSION_RUN: AtomicU64 = AtomicU64::new(1);
 

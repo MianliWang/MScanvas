@@ -282,3 +282,15 @@ Backend quarantine does not block adoption, because adoption launches no
 process. It does not clear it either. An adopted mzML row may enter a
 quarantined session's workspace and still not be previewable, which is the
 existing policy applying to a new row rather than an exception to it.
+
+
+## Amendment, 2026-08-12 — unchanged, and now measured over two cardinalities
+
+[ADR 0026](0026-private-sciex-serial-queue-integration.md) added no Stop
+behaviour and no Stop copy. What it added is a second kind of item for the
+existing Stop to reach, and the measurements say the same things: a confirmed
+stop leaves the running item cancelled and every later item not-run, an
+unconfirmed one quarantines the backend and launches nothing further including
+probes, and an item that fully finalized before the stop keeps the authority it
+earned. A stop is a decision about what happens next, not a withdrawal of what
+already happened.

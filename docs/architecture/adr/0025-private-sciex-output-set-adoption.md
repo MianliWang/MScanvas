@@ -227,3 +227,35 @@ an ordinary mzML dataset from the moment it exists.
   rather than an implementation gap: the files exist, the boundary refuses to
   package them as something they are not, and whoever adds a surface must decide
   what to offer for them.
+
+
+## Amendment, 2026-08-12 — two evidence corrections, and a queue-held ticket
+
+Two things this ADR's evidence claimed were measured were not, and
+[ADR 0026](0026-private-sciex-serial-queue-integration.md) repaired both.
+
+**The partial-finalization test was not one.** It occupied a destination name
+*before* the run. The lifecycle preflights the complete name set before
+publishing anything, so under `Fail` that is a refusal with **zero** members
+published — the opposite of a partial result, and the reason the test could only
+assert that the outcome was not full. It is renamed for what it measures, and a
+real `PartiallyFinalized` is now driven through the publication seam and asserted
+in full: the typed outcome, the retained prefix, the withdrawn completeness
+claim, the absent ticket, the prefix surviving the session, and the prefix being
+admissible later as an ordinary mzML. The policy this ADR states is unchanged;
+it is now measured.
+
+**Capacity was inherited, not measured.** Set adoption calls the same registry
+the visible path does, and that registry's own tests prove duplicates are
+decided before capacity — a good argument, and not a statement about what the
+*set* path does when the workspace fills partway through one ordered adoption.
+There is now a direct regression: member 0 already a row, one slot free, member
+1 added, member 2 refused, exactly one identifier spent, no rollback.
+
+**And the ticket now has a second holder.** A terminal queue item can hold one,
+through `QueueAdoptionAuthority::Set`, reached by naming the exact operation and
+the exact item. The adoption itself is this one, unchanged.
+
+`FinalizedOutputSetAdoptionTicket::of` also stopped taking the source row and
+the family as parameters: both are read from the report inside the conversion,
+which closes the last two crossings this ADR left as arguments.

@@ -1044,6 +1044,28 @@ pub fn queue_duplicate_dataset() -> PreviewErrorDto {
     )
 }
 
+/// One item's output name is already owned by another item of the same queue.
+///
+/// Distinct from a destination conflict, and deliberately so. What is at that
+/// name, if anything, was put there by this very queue moments ago; either way
+/// no conflict policy has an opinion about which of two acquisitions should win
+/// a name neither of them was promised. Not retryable: the other item owns it
+/// just as much on a second attempt.
+///
+/// Its own identifier rather than `queue_output_name_collision`, because that
+/// one is refused before a picker opens and this one can only be discovered
+/// while the queue runs -- a backend-named set has no names to compare until it
+/// has produced them.
+#[cfg(test)]
+pub(super) fn queue_output_name_claimed(name: &str) -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "queue_output_name_claimed",
+        "Another acquisition in this queue writes a document with that name.",
+        false,
+    )
+    .with_detail(name)
+}
+
 /// What a queue whose items would fight over one output name answers with.
 ///
 /// Refused before a picker opens, because conflict policy cannot settle it: two

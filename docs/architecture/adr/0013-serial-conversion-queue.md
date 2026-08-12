@@ -496,3 +496,25 @@ panel says so before it is needed.
 Each finalized item now retains one private, bounded ticket for as long as its
 queue does — sixteen at most, one per item, dropped with the queue. Dropping one
 closes a handle and does nothing else to the file.
+
+## Amendment, 2026-08-12 — an item's output is a topology, not a name
+
+This ADR was written when every queue item had exactly one output whose name was
+known before the destination picker opened, and the queue-internal collision
+rule above is built on that. It is still exactly true of every item a shipped
+build can hold.
+
+[ADR 0026](0026-private-sciex-serial-queue-integration.md) replaced the item's
+`output_file_name: String` with a named distinction — one known single output,
+or one to twenty-four documents the backend names itself. The second case is
+compiled out of the shipped binary, so nothing here changes for Thermo or
+Shimadzu, the visible transfer object is untouched, and the planning-time
+collision rule still refuses every pair of items whose names can be known that
+early.
+
+What is new is a second rule for the names that cannot: a set's discovered names
+are compared against the queue's own claims after every member is validated and
+before the destination is inspected, and a collision there is its own typed,
+non-retryable outcome rather than something the conflict policy settles. The
+Windows folding argument that lived inline in the planner is now one helper,
+`folded_output_name`, used by both rules.
