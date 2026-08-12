@@ -203,6 +203,17 @@ recorded digests verified before use.
 | Preview state on any row | none |
 | Path-free `Debug` | confirmed on the queue read, the group report and the result |
 
+Measured 2026-08-12 on the evidenced build. Both fixture digests were recomputed
+before use and matched the record exactly — the primary `C8BF5E3C…F390EA3` at
+2,801,664 bytes and the companion `CE872851…DDFD7350` at 1,143,140 — as did the
+executable's, `9BB6F5D5…D590BD`. The companion is spelled `…aqv1.4.2.wiff.scan`
+upstream while the primary is `…AQv1.4.2.wiff`; the boundary derives the
+companion's name from the primary's, which is the spelling used here.
+
+The ten documents the queue published are the acquisition's ten samples in the
+staging directory's deterministic order. That order is not a claim about the
+order the samples sit in the acquisition.
+
 ## Mutations
 
 Eleven, each removing one load-bearing guard.
