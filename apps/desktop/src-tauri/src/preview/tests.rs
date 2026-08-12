@@ -18751,6 +18751,10 @@ fn every_private_sciex_failure_is_diagnosable_and_path_free() {
         runner: FakeOutputSetRunner,
         outcome: &'static str,
         detail: Option<&'static str>,
+        /// Whether the backend said anything worth keeping. A run that was
+        /// refused before it launched has no streams to excerpt; one that ran
+        /// and failed must not have its account of itself thrown away.
+        retains_text: bool,
         conflict: ConversionConflictPolicyDto,
         occupy: &'static [&'static str],
     }
@@ -18763,6 +18767,7 @@ fn every_private_sciex_failure_is_diagnosable_and_path_free() {
             detail: Some("multi_output_set_not_as_declared"),
             conflict: ConversionConflictPolicyDto::Fail,
             occupy: &[],
+            retains_text: true,
         },
         Case {
             label: "reader-sample",
@@ -18771,6 +18776,7 @@ fn every_private_sciex_failure_is_diagnosable_and_path_free() {
             detail: Some("source_sample_failure_observed"),
             conflict: ConversionConflictPolicyDto::Fail,
             occupy: &[],
+            retains_text: true,
         },
         Case {
             label: "truncated-audit",
@@ -18779,6 +18785,7 @@ fn every_private_sciex_failure_is_diagnosable_and_path_free() {
             detail: Some("source_sample_audit_truncated"),
             conflict: ConversionConflictPolicyDto::Fail,
             occupy: &[],
+            retains_text: true,
         },
         Case {
             label: "invalid-member",
@@ -18788,6 +18795,7 @@ fn every_private_sciex_failure_is_diagnosable_and_path_free() {
             detail: Some("multi_output_member_rejected"),
             conflict: ConversionConflictPolicyDto::Fail,
             occupy: &[],
+            retains_text: true,
         },
         Case {
             label: "group-conflict",
@@ -18796,6 +18804,7 @@ fn every_private_sciex_failure_is_diagnosable_and_path_free() {
             detail: Some("multi_output_destination_occupied"),
             conflict: ConversionConflictPolicyDto::Fail,
             occupy: &["a-S2.mzML"],
+            retains_text: true,
         },
         Case {
             label: "backend-rejected",
@@ -18804,6 +18813,7 @@ fn every_private_sciex_failure_is_diagnosable_and_path_free() {
             detail: Some("multi_output_backend_rejected"),
             conflict: ConversionConflictPolicyDto::Fail,
             occupy: &[],
+            retains_text: true,
         },
     ];
 
@@ -18872,6 +18882,49 @@ fn every_private_sciex_failure_is_diagnosable_and_path_free() {
             "{}: bounded by the lifecycle's own bound",
             case.label
         );
+
+        // The backend's own account of the failure survives, redacted and
+        // bounded. Dropping it would leave a document that says which class of
+        // failure this was and nothing about why.
+        // The backend's own account of the failure reaches the document.
+        // Dropping it would leave a report that says which class of failure
+        // this was and nothing about why.
+        if case.retains_text {
+            for stream in ["stdout", "stderr"] {
+                let excerpt = &item[stream];
+                assert!(
+                    excerpt["retained"] == "prefix" || excerpt["retained"] == "withheld",
+                    "{}: the {stream} excerpt was never captured",
+                    case.label
+                );
+                // Withheld says so, and says why. A suppressed excerpt costs a
+                // diagnosis; a silent one would cost the reader the knowledge
+                // that there was something to see.
+                if excerpt["retained"] == "withheld" {
+                    assert!(
+                        excerpt["suppressed"].is_string(),
+                        "{}: a withheld {stream} excerpt must name its reason",
+                        case.label
+                    );
+                    assert!(
+                        excerpt["totalBytes"].as_u64().expect("a byte count") > 0,
+                        "{}: a withheld {stream} excerpt still reports its size",
+                        case.label
+                    );
+                }
+            }
+        }
+        // And the one case whose backend really said something says it.
+        if case.label == "reader-sample" {
+            assert_eq!(item["stderr"]["retained"], "prefix");
+            assert!(
+                item["stderr"]["text"]
+                    .as_str()
+                    .expect("the reader's own words")
+                    .contains("Reader_ABI"),
+                "the reader's account of the sample it lost is the diagnosis"
+            );
+        }
 
         // No path, no companion, and no backend-chosen member name. The
         // acquisition's own display name is deliberately here, as

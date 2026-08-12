@@ -157,9 +157,26 @@ A partial publication exports `finalizedCount` 1, `notPublishedCount` 2,
 An ordinary Thermo export is unchanged: `outputFileName: "one.mzML"`, and **no**
 `outputSet` member at all.
 
+**The backend's own account survives.** A settled set attempt hands its redacted,
+bounded text to the settlement, and the export carries it — the earliest version
+of this slice dropped it on every non-cancellation failure, and the test that
+was supposed to cover diagnosability checked the classification facts without
+ever checking that anything was retained. Both are fixed. The reader's complaint
+about the sample it lost reaches the document verbatim, which is the diagnosis.
+
 **Nothing in any export is a path, a companion name or a member basename.** The
 acquisition's own display name is there, as `sourceFileName`, exactly as it has
 been for every family since this export existed.
+
+A multi-output run's *stdout* is, by construction, a list of the paths it wrote,
+so the fail-closed redactor tends to suppress it whole and say so —
+`retained: "withheld"`, `suppressed: "residual_absolute_path"`, with the byte
+counts still reported. That is the existing rule doing its job rather than
+anything added here, and for this family it has a second effect worth naming: a
+suppressed stdout is one more thing keeping member basenames out of the
+document. A withheld excerpt costs a diagnosis; a *silent* one would cost the
+reader the knowledge that there was something to see, and the tests require the
+reason and the size either way.
 
 `Debug` was a real gap and is fixed. `WorkspaceMultiOutputConversionReport`,
 `MultiOutputMemberFacts` and `PartialFinalization` derived it, so any log that

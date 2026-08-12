@@ -2894,8 +2894,20 @@ impl PreviewService {
         if let Some(facts) = set_stop_facts(&mut conversion) {
             return QueueItemAttempt::SetStopped(Box::new(facts));
         }
+        // Taken here, at the one place a settled set attempt is built. The run
+        // kept this text exactly where it is worth diagnosing -- anything
+        // refused or partial -- and it arrives already redacted and already
+        // bounded, because this side has no access to the raw streams and no
+        // paths with which to redact them. Dropping it would leave every
+        // non-cancellation failure exporting two empty excerpts.
+        let diagnostics = conversion.take_diagnostics();
         QueueItemAttempt::Settled(ItemOutcome::ReportedSet(Box::new(
-            SciexAttemptSettlement::of(self.session, item.file_name().to_owned(), conversion, None),
+            SciexAttemptSettlement::of(
+                self.session,
+                item.file_name().to_owned(),
+                conversion,
+                diagnostics,
+            ),
         )))
     }
 
