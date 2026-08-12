@@ -1716,8 +1716,15 @@ impl PreviewService {
         // conversion of A, adopted with B's handle, would persist B as where
         // A's files came from. The conversion already knows which dataset it
         // was of; asking it is the only answer that cannot be paired wrongly.
-        let id = DatasetId::parse(conversion.report.dataset()).ok_or_else(unknown_dataset)?;
-        let source_kind = conversion.report.source_kind();
+        // Before the row is looked up, because the lookup is the crossing: the
+        // report names its source by an id this session allocates from zero
+        // too, so another session's conversion would resolve a row of ours and
+        // mint a perfectly self-consistent ticket for the wrong acquisition.
+        if conversion.session() != self.session {
+            return Err(outputs_not_adoptable());
+        }
+        let id = DatasetId::parse(conversion.report().dataset()).ok_or_else(unknown_dataset)?;
+        let source_kind = conversion.report().source_kind();
         let source_display_name = {
             let workspace = self.workspace();
             let dataset = workspace.registry.get(id).ok_or_else(unknown_dataset)?;
@@ -3813,6 +3820,7 @@ impl PreviewService {
         drop(guards);
         drop(running);
         Ok(SciexConversion {
+            session: self.session,
             report: WorkspaceMultiOutputConversionReport::of(
                 id.handle(),
                 file.source_kind(),
@@ -4993,8 +5001,16 @@ impl Drop for AdoptionInFlight<'_> {
 #[cfg(test)]
 #[derive(Debug)]
 pub(super) struct SciexConversion {
-    pub(super) report: WorkspaceMultiOutputConversionReport,
-    pub(super) retained: mscanvas_proteowizard::FinalizedOutputSet,
+    /// The session that ran it.
+    ///
+    /// Without this the ticket's own issuer check proves nothing: minting reads
+    /// the source row out of the report by id, and ids are allocated per
+    /// session from zero, so another session holding that number would resolve
+    /// its own unrelated row and then stamp the ticket with *itself*. The
+    /// crossing would be over before the ticket existed.
+    session: u64,
+    report: WorkspaceMultiOutputConversionReport,
+    retained: mscanvas_proteowizard::FinalizedOutputSet,
     run: u64,
     /// The folder this conversion wrote into, as the object it was admitted as.
     ///
@@ -5009,14 +5025,37 @@ pub(super) struct SciexConversion {
 
 #[cfg(test)]
 impl SciexConversion {
-    /// Which conversion this was.
-    pub(super) const fn run(&self) -> u64 {
-        self.run
+    /// The session that ran it.
+    pub(super) const fn session(&self) -> u64 {
+        self.session
     }
 
-    /// The folder it wrote into, as the object it was admitted as.
-    pub(super) const fn destination(&self) -> &AdmittedDestination {
-        &self.destination
+    /// What it reported, to read and not to replace.
+    pub(super) const fn report(&self) -> &WorkspaceMultiOutputConversionReport {
+        &self.report
+    }
+
+    /// What it retained, to read and not to replace.
+    pub(super) const fn retained(&self) -> &mscanvas_proteowizard::FinalizedOutputSet {
+        &self.retained
+    }
+
+    /// Everything at once, consuming the value.
+    ///
+    /// The only way out for the components, and it takes the whole conversion
+    /// with it. Two of these can be unpacked but not recombined: there is no
+    /// constructor outside this module and the ticket accepts nothing smaller
+    /// than a whole `SciexConversion`, so a report can never meet another run's
+    /// objects.
+    pub(super) fn into_parts(
+        self,
+    ) -> (
+        WorkspaceMultiOutputConversionReport,
+        mscanvas_proteowizard::FinalizedOutputSet,
+        AdmittedDestination,
+        u64,
+    ) {
+        (self.report, self.retained, self.destination, self.run)
     }
 
     /// The same conversion, remembering no completeness.

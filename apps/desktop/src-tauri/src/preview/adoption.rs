@@ -376,11 +376,7 @@ impl FinalizedOutputSetAdoptionTicket {
         source_kind: DatasetSourceKind,
         conversion: SciexConversion,
     ) -> Result<Self, OutputSetNotAdoptable> {
-        let run = conversion.run();
-        let destination = conversion.destination().clone();
-        let SciexConversion {
-            report, retained, ..
-        } = conversion;
+        let (report, retained, destination, run) = conversion.into_parts();
         let report = &report;
         if report.group_outcome() != FULLY_FINALIZED {
             return Err(OutputSetNotAdoptable::NotFullyFinalized);

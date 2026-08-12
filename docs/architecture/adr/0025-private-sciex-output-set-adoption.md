@@ -72,11 +72,24 @@ separate parameter — and each was a way to pair two conversions wrongly:
   so every per-member proof would pass and the rows would be registered under a
   directory the conversion never wrote to.
 
-The ticket also names the **session** that minted it, and adoption refuses one
-from any other. `DatasetId`s are allocated per session from zero, so the same
-number names different rows in two of them: adopting one session's ticket in
-another would commit its outputs against whatever row happened to hold that
-number, carrying the wrong display name and family with them.
+The same reasoning reaches the **session**, twice, because `DatasetId`s are
+allocated per session from zero and so the same number names different rows in
+two of them:
+
+- the conversion names the session that ran it, and minting refuses one from any
+  other — the crossing happens *at the lookup*, when a foreign report's source id
+  resolves to a row of this session's, so a check on the ticket afterwards would
+  be checking a ticket that is already internally consistent and wrong;
+- the ticket names the session that minted it, and adoption refuses one from any
+  other, which is the same crossing one step later.
+
+The conversion's report and retained objects are private. Exposing them as
+fields would have handed back exactly the two components that must not be
+pairable: a sibling module could put one run's report into another's value and
+mint mismatched member tickets that pass every count and state check. They leave
+only together, through a consuming `into_parts`, and nothing outside the service
+can build a `SciexConversion` — so two of them can be unpacked but not
+recombined.
 
 All of them are closed by removal rather than by a check, because a check leaves
 the wrong call expressible.
@@ -188,7 +201,7 @@ row `mzml`, the acquisition still one bundle row, no preview anywhere, no path
 in the ticket's or the result's `Debug`, and a second adoption reporting all ten
 as already present.
 
-Eight mutations, seven red. The survivor — a superseded adoption allowed to
+Ten mutations, nine red. The survivor — a superseded adoption allowed to
 commit — guards a window one file hash wide that a single-threaded suite cannot
 move the workspace inside; it is recorded rather than papered over.
 

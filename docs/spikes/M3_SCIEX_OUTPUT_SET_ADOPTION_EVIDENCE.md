@@ -39,6 +39,12 @@ finishes, not from the workspace mutation generation: converting does not
 advance that generation, so two conversions of one dataset into two folders
 would otherwise read the same value and claim to be the same run.
 
+The session rides along twice — on the conversion, so a foreign report cannot
+resolve a local row at the mint, and on the ticket, so a minted one cannot be
+adopted elsewhere. The report and the retained objects are private and leave only
+together, because two `pub(super)` fields are two things a sibling module can
+recombine.
+
 The destination folder rides along too, admitted as an object before the
 conversion wrote into it. Adoption proves each member is the exact object that
 was finalized, and a hard link in another folder is the *same object* — so a
@@ -110,12 +116,13 @@ Vendor-free and backend-free, over synthetic bundles and a substituted backend.
 | skipped set | retained nothing of its own; `output_set_not_fully_finalized` |
 | fully finalized, completeness stripped | `output_set_completeness_not_established` |
 | report and objects that do not pair | `output_set_members_do_not_pair` |
+| a conversion run by another session | `outputs_not_adoptable` at the mint, before any row is resolved |
 | a ticket minted by another session | `outputs_not_adoptable`, no row added, and it still adopts where it belongs |
 | adoption twice over | the backend ran once; no row holds preview state |
 
 ## Mutations
 
-Eight, each removing one guard.
+Ten, each removing one guard.
 
 | # | Guard removed | Result |
 | - | ------------- | ------ |
@@ -127,6 +134,8 @@ Eight, each removing one guard.
 | 6 | capacity evaluated before duplicates | red |
 | 7 | one refused member aborts every other valid member | red |
 | 8 | **a superseded output-set adoption may commit** | **survived** |
+| 9 | another session's conversion may be minted into a ticket | red |
+| 10 | another session's ticket may be adopted | red |
 
 **Mutation 8 survived, and the reason is recorded rather than worked around.**
 The generation is checked once per candidate during the reading half and once
