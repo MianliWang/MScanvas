@@ -393,6 +393,32 @@ button:disabled {
   color: var(--color-text-secondary);
 }
 
+/* A one-to-many output is two facts, not a name, so it takes the whole first
+   line rather than competing with the acquisition for half of one. Ellipsizing
+   it would clip the very sentence that explains why there is no filename, and
+   the range itself is short enough that a row wide enough for a filename is
+   wide enough for this. */
+.conversion-queue-output-set {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 12em;
+  flex-wrap: wrap;
+  gap: 0 6px;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Quieter than the range beside it and never on its own line's own terms: it
+   is the reason for the range, so it reads as an aside rather than as a second
+   claim. */
+.conversion-queue-output-naming {
+  color: var(--color-text-secondary);
+  font-size: 0.9em;
+  font-style: italic;
+}
+
 /* The family, quiet and unshrinkable. A truncated family name could read as a
    different family, and which family a row is must survive any width the two
    filenames fight over -- the row wraps before this ellipsizes. */
@@ -410,12 +436,35 @@ button:disabled {
 .conversion-queue-attempts,
 .conversion-queue-facts,
 .conversion-queue-reason,
-.conversion-queue-residue {
+.conversion-queue-residue,
+.conversion-queue-set-result,
+.conversion-queue-set-completeness,
+.conversion-queue-set-partial {
   min-width: 0;
   flex: 1 0 100%;
   padding-left: 2.2em;
   color: var(--color-text-secondary);
   overflow-wrap: anywhere;
+}
+
+/* The completeness claim is a sentence about what was established, so it reads
+   as one rather than as a status chip. Deliberately not coloured: what it says
+   is narrow, and a green tint would say something broader than the words. */
+.conversion-queue-set-completeness {
+  font-size: 0.95em;
+}
+
+/* A partial publication is not an ordinary failure and must not read as an
+   ordinary success. The border and the ground make it a block the eye stops
+   on; `role="note"` is what carries the same weight to a reader that cannot
+   see either. */
+.conversion-queue-set-partial {
+  margin-top: 2px;
+  border-left: 3px solid var(--color-warning-border, var(--color-text-secondary));
+  padding: 4px 8px 4px calc(2.2em - 3px);
+  border-radius: 2px;
+  background: var(--color-warning-surface, transparent);
+  color: var(--color-text-primary);
 }
 
 /* Weight and hue reinforce what `ITEM_STATE_LABEL` already says in words, so

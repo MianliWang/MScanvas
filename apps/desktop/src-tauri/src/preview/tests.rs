@@ -18050,7 +18050,7 @@ fn private_sciex_queue(
 }
 
 /// Runs one private queue of `handles` to its own end.
-fn run_private_queue(
+fn run_visible_queue(
     service: &PreviewService,
     handles: &[String],
     destination: &Path,
@@ -18059,7 +18059,7 @@ fn run_private_queue(
     let document = service.workspace_drop_document_epoch();
     let reservation = service
         .begin_conversion_queue(handles, conflict, document)
-        .expect("the private queue is admitted");
+        .expect("the queue is admitted");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
         .expect("the reservation is claimed");
@@ -18206,7 +18206,7 @@ fn a_settled_set_carries_bounded_facts_and_the_narrow_completeness_claim() {
         "queue-set-wire",
         FakeOutputSetRunner::writing(&borrowed).also_converting(),
     );
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&handle),
         &destination,
@@ -18296,7 +18296,7 @@ fn one_sciex_acquisition_is_one_queue_item_with_ten_outputs() {
     let launches = runner.launches();
     let (_fixture, service, handle, destination) = private_sciex_queue("queue-ten", runner);
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&handle),
         &destination,
@@ -18407,7 +18407,7 @@ fn a_mixed_private_queue_runs_serially_in_order() {
         .add_shimadzu_dataset(&fixture.shimadzu_lcd("three.lcd"))
         .expect("a Shimadzu row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[
             thermo.handle.clone(),
@@ -18514,7 +18514,7 @@ fn a_failing_sciex_item_leaves_the_next_one_alone(
         .add_thermo_dataset(&fixture.thermo_raw("after.raw"))
         .expect("a Thermo row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[sciex.handle.clone(), thermo.handle.clone()],
         &destination,
@@ -18588,7 +18588,7 @@ fn a_truncated_audit_stream_refuses_the_item() {
         .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
         .expect("a SCIEX row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &destination,
@@ -18625,7 +18625,7 @@ fn an_invalid_member_publishes_nothing() {
         .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
         .expect("a SCIEX row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &destination,
@@ -18665,7 +18665,7 @@ fn a_set_whose_names_are_all_taken_is_skipped() {
         .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
         .expect("a SCIEX row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &destination,
@@ -18711,7 +18711,7 @@ fn a_partly_occupied_set_is_refused_whole_under_skip() {
         .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
         .expect("a SCIEX row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &destination,
@@ -18759,7 +18759,7 @@ fn a_discovered_name_owned_by_another_item_is_a_queue_collision() {
         .add_thermo_dataset(&fixture.thermo_raw("later.raw"))
         .expect("a Thermo row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[sciex.handle.clone(), thermo.handle.clone()],
         &destination,
@@ -18818,7 +18818,7 @@ fn a_second_set_discovering_the_same_name_publishes_nothing() {
         .add_sciex_wiff_dataset(&fixture.sciex_bundle("second"))
         .expect("the second SCIEX row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[first.handle.clone(), second.handle.clone()],
         &destination,
@@ -18879,7 +18879,7 @@ fn a_single_output_item_refuses_a_name_an_earlier_set_took() {
 
     // The set runs first this time, so by the Thermo item's turn the name is
     // published rather than merely planned.
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[sciex.handle.clone(), thermo.handle.clone()],
         &destination,
@@ -19132,7 +19132,7 @@ fn a_partially_finalized_set_item_fails_and_is_not_retryable() {
         .add_thermo_dataset(&fixture.thermo_raw("after.raw"))
         .expect("a Thermo row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[sciex.handle.clone(), thermo.handle.clone()],
         &destination,
@@ -19221,7 +19221,7 @@ fn a_retryable_set_failure_reruns_only_that_item() {
     // is the one condition this repository has measured as transient.
     let held = hold_for_writing(&acquisition);
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[sciex.handle.clone(), thermo.handle.clone()],
         &destination,
@@ -19277,7 +19277,7 @@ fn a_retried_set_attempt_reuses_no_identity_or_ticket() {
         .expect("a SCIEX row");
 
     let held = hold_for_writing(&acquisition);
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &destination,
@@ -19322,7 +19322,7 @@ fn a_retried_set_attempt_reuses_no_identity_or_ticket() {
     // this row refuses before the backend -- and must then name no run and hold
     // no report, rather than still wearing the successful attempt's.
     let held_again = hold_for_writing(&acquisition);
-    let third = run_private_queue(
+    let third = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &fixture.destination("third"),
@@ -19344,7 +19344,7 @@ fn a_retried_set_attempt_reuses_no_identity_or_ticket() {
 
     // A fresh queue over the same row names a different run again -- the
     // identity is per conversion, never per row or per queue.
-    let again = run_private_queue(
+    let again = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &fixture.destination("second"),
@@ -19392,7 +19392,7 @@ fn a_stop_mid_retry_restores_a_set_failure_rather_than_stranding_it() {
     // First pass: the Thermo row is held by somebody else, which is the one
     // condition measured as transient; the set fails on its undeclared member.
     let held = hold_for_writing(&held_source);
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[thermo.handle.clone(), sciex.handle.clone()],
         &destination,
@@ -19487,7 +19487,7 @@ fn a_refused_retry_restores_a_set_failure_rather_than_losing_it() {
         .add_thermo_dataset(&fixture.thermo_raw("after.raw"))
         .expect("a Thermo row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[sciex.handle.clone(), thermo.handle.clone()],
         &destination,
@@ -19622,7 +19622,7 @@ fn every_private_sciex_failure_is_diagnosable_and_path_free() {
         let sciex = service
             .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
             .expect("a SCIEX row");
-        let update = run_private_queue(
+        let update = run_visible_queue(
             &service,
             std::slice::from_ref(&sciex.handle),
             &destination,
@@ -19767,7 +19767,7 @@ fn a_set_refused_before_the_run_keeps_its_shape_in_the_export() {
     // Held by somebody else, so revalidation refuses before anything is opened
     // for the run.
     let held = hold_for_writing(&acquisition);
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &destination,
@@ -19831,7 +19831,7 @@ fn a_retry_between_the_halves_of_a_set_adoption_commits_nothing() {
     // The set finalizes; the Thermo row behind it is held by somebody else, so
     // the queue completes with one retryable failure.
     let held = hold_for_writing(&held_source);
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[sciex.handle.clone(), thermo.handle.clone()],
         &destination,
@@ -19931,7 +19931,7 @@ fn a_partial_publication_is_diagnosed_by_counts() {
     let sciex = service
         .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
         .expect("a SCIEX row");
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &destination,
@@ -20002,7 +20002,7 @@ fn every_set_bearing_debug_is_opaque() {
     let names = ["Patient-042-S1.mzML", "Patient-042-S2.mzML"];
     let (fixture, service, handle, destination) =
         private_sciex_queue("queue-debug", FakeOutputSetRunner::writing(&names));
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&handle),
         &destination,
@@ -20081,7 +20081,7 @@ fn replacing_a_private_queue_keeps_every_document_it_wrote() {
         "queue-replaced",
         FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML"]),
     );
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&handle),
         &destination,
@@ -20140,17 +20140,20 @@ fn no_product_surface_reaches_the_private_sciex_queue() {
     }
 }
 
-/// A real ten-sample SCIEX acquisition, through the whole private queue.
+/// A real ten-sample SCIEX acquisition, through the whole *visible* workflow.
 ///
-/// The evidence run for ADR 0026, and deliberately not the direct-conversion
-/// shortcut ADR 0025 measured: the point of this milestone is that the queue
-/// itself carries the acquisition, so the queue is what runs it. Kept out of
-/// ordinary CI because it needs a local ProteoWizard installation and a lawful
-/// acquisition, neither of which a test runner has.
+/// The evidence run for ADR 0027, and deliberately not the private helper ADR
+/// 0026 measured: the point of this milestone is that a user can do this, so
+/// every step is the one a user reaches. `Add files…` admits the acquisition,
+/// the visible planner describes it, the visible queue runs it and the visible
+/// adoption takes its outputs. Nothing private is called anywhere in it.
+///
+/// Kept out of ordinary CI because it needs a local ProteoWizard installation
+/// and a lawful acquisition, neither of which a test runner has.
 #[cfg(windows)]
 #[test]
 #[ignore = "needs a local ProteoWizard installation and a real vendor acquisition"]
-fn a_real_sciex_acquisition_runs_through_the_private_queue() {
+fn a_real_sciex_acquisition_runs_through_the_visible_workflow() {
     let Ok(fixture) = std::env::var("MSCANVAS_SCIEX_WIFF_FIXTURE") else {
         panic!("set MSCANVAS_SCIEX_WIFF_FIXTURE to the .wiff to convert");
     };
@@ -20168,14 +20171,41 @@ fn a_real_sciex_acquisition_runs_through_the_private_queue() {
     let service = Arc::new(PreviewService::new(Box::new(
         super::backend::ProteoWizardProvider::new(),
     )));
-    let dataset = service
-        .add_sciex_wiff_dataset(&acquisition)
-        .expect("the acquisition is admitted as a SCIEX bundle");
-    println!("source bundle members: {}", 2);
 
-    let update = run_private_queue(
+    // 1. `Add files…`, the only route a user has. The picker hands Rust the
+    //    `.wiff` it chose and nothing else; the companion is found, admitted
+    //    and held by the boundary itself.
+    let added = service.add_files_now(std::slice::from_ref(&acquisition));
+    let [WorkspaceAddOutcomeDto::Added { dataset }] = added.outcomes.as_slice() else {
+        panic!("the picker admits the acquisition: {added:?}");
+    };
+    println!("picker candidate: 1 .wiff");
+    println!("workspace source rows: {}", service.dataset_count());
+    println!("source row family: {:?}", dataset.source_kind);
+    println!(
+        "source row bytes (whole acquisition): {}",
+        dataset.byte_length
+    );
+    assert_eq!(service.dataset_count(), 1, "one acquisition is one row");
+    assert_eq!(dataset.source_kind, DatasetSourceKindDto::SciexWiff);
+    let handle = dataset.handle.clone();
+
+    // 2. The visible plan. It states the cardinality and names nothing.
+    let plan = service
+        .conversion_queue_plan(std::slice::from_ref(&handle))
+        .expect("the visible planner takes the acquisition");
+    println!("plan topology: {:?}", plan.items[0].output);
+    assert_eq!(
+        plan.items[0].output,
+        super::dto::ConversionOutputPlanDto::BackendNamedSet {
+            max_members: MAX_CONVERSION_OUTPUTS_PER_SOURCE
+        }
+    );
+
+    // 3. The visible queue: reserve, admit the destination, run.
+    let update = run_visible_queue(
         &service,
-        std::slice::from_ref(&dataset.handle),
+        std::slice::from_ref(&handle),
         &destination,
         ConversionConflictPolicyDto::Fail,
     );
@@ -20193,11 +20223,32 @@ fn a_real_sciex_acquisition_runs_through_the_private_queue() {
     assert_eq!(queue.item_count, 1, "one acquisition is one queue item");
     assert_eq!(queue.finalized_count, 1);
     assert_eq!(queue.items[0].attempts, 1);
-    assert_eq!(
-        item_output_name(&queue.items[0]),
-        "",
+    assert!(
+        matches!(
+            queue.items[0].output,
+            super::dto::ConversionOutputPlanDto::BackendNamedSet { .. }
+        ),
         "no filename was invented for a backend-named set"
     );
+
+    // The visible result, in the facts the interface renders from.
+    let visible = item_set_report(&queue.items[0]).expect("the item carries its group report");
+    println!("visible group outcome: {}", visible.group_outcome);
+    println!("visible finalized members: {}", visible.finalized_count);
+    println!(
+        "visible bound source objects: {:?}",
+        visible.bound_source_objects
+    );
+    println!("visible completeness: {:?}", visible.completeness);
+    println!(
+        "visible complete-set adoptable: {}",
+        visible.complete_set_adoptable
+    );
+    println!("visible eligible outputs: {}", queue.adoptable_output_count);
+    assert_eq!(visible.finalized_count, expected);
+    assert_eq!(visible.bound_source_objects, Some(2));
+    assert!(visible.complete_set_adoptable);
+    assert_eq!(queue.adoptable_output_count, expected);
 
     let report = service
         .terminal_set_report(operation, 0)
@@ -20273,4 +20324,38 @@ fn a_real_sciex_acquisition_runs_through_the_private_queue() {
         assert!(!rendered.contains("\\\\?\\"), "a path escaped: {rendered}");
     }
     println!("path-free debug: confirmed");
+
+    // And nothing *serialized* names one either, which is the rendering that
+    // actually crosses to the webview. The member basenames are deliberately
+    // there -- the product displays them -- and the acquisition's directory,
+    // the destination and the companion are deliberately not.
+    let wire = serde_json::to_string(&update).expect("the queue serializes");
+    let adoption_wire = serde_json::to_string(&result).expect("the adoption serializes");
+    for rendered in [&wire, &adoption_wire] {
+        assert!(!rendered.contains(":\\\\"), "a path reached the wire");
+        assert!(
+            !rendered.contains(".wiff.scan"),
+            "the companion reached the wire"
+        );
+        for absent in [
+            acquisition
+                .parent()
+                .expect("the fixture has a parent")
+                .to_string_lossy()
+                .as_ref(),
+            destination.to_string_lossy().as_ref(),
+        ] {
+            assert!(!rendered.contains(absent), "a location reached the wire");
+        }
+    }
+    println!("path-free serialized wire: confirmed");
+
+    // What an export of this queue would describe: nothing. A run that
+    // finalized everything has no failure to diagnose, and the count is Rust's
+    // own rather than an interface's guess.
+    println!(
+        "diagnostic items: {}",
+        update.diagnostics.eligible_item_count
+    );
+    assert_eq!(update.diagnostics.eligible_item_count, 0);
 }
