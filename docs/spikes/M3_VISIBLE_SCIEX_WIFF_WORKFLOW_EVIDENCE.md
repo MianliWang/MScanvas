@@ -159,6 +159,9 @@ or a timeout was not counted as a kill.
 | 10 | a walking surface may reach SCIEX admission | red (1) |
 | 11 | a set authority is flattened into reconstructed member tickets | red (2) |
 | 12 | member basenames are added to the diagnostics export | **survived**, then red |
+| 13 | a set result shows a count and never its member names | red (8) |
+| 14 | any set report counts as evidence that something was validated | red (2) |
+| 15 | a skipped output set reads as a skipped single output | red (2) |
 
 **Mutation 12 found a real gap.** The privacy test pinned the `Debug` renderings
 and the queue state — which is where member names used to be able to leak from —
@@ -170,6 +173,38 @@ unnoticed. The mutation is red against that test.
 
 No survivors remain. Nothing was classified as equivalent, structurally
 unreachable or lacking a deterministic seam.
+
+Mutations 13–15 guard the three defects review found, and are recorded here
+because the tests that kill them were written *after* the code was, which is a
+weaker position than the rest of this record and worth saying so.
+
+## Review
+
+Three findings on the pull request, all valid, all fixed, each with a
+discriminating test:
+
+**The wire carried member basenames that nothing rendered.** ADR 0027's own
+justification for carrying them is that the product displays them, and it did
+not — which made the partial-finalization copy unusable, since it sends the user
+to `Add files…` for a prefix it would not name. The finalized members are now
+listed, read from the member *states* so the unpublished ones stay off a list
+that is meant to describe what is in the folder.
+
+**The output-only disclosure was claimed for runs that judged nothing.** A set
+refused before its outputs were discovered still reports, with no members and
+nothing validated, and the predicate treated any set report as a judgement —
+contradicting the comment directly above it. The predicate now asks what was
+actually finalized or validated, and moved into `contracts.ts`, because two
+surfaces make this claim and had been written differently.
+
+**A skipped output set said "a file of that name was already there".** It has no
+such name, and the multi-output lifecycle steps aside only when *every*
+discovered destination name is occupied. The label branches on cardinality now.
+
+All three were the shared single-output copy reaching a cardinality it was never
+written for — which is the failure mode this milestone should have expected
+most, and the reason the first fix's own ADR sentence had already described the
+behaviour it did not implement.
 
 ## Limits of this record
 
