@@ -237,7 +237,17 @@ finalized item, and a set would have to be flattened into members to fit —
 which is the reconstruction the output-set boundary exists to refuse.
 
 The set is reached through a separate private entry point that names the exact
-operation and the exact item, and then runs the M3.14 engine unchanged: the same
+operation and the exact item. Where the authority comes from is the only
+difference between the two private adoptions, and it is a difference about
+*claiming order* rather than about the adoption. A ticket the caller already
+holds owns its objects outright, so nothing but the workspace can move
+underneath it. One a terminal queue item holds belongs to a settling that a
+retry or a replacement can end — so it is read under the same gate that claims
+the action, exactly as the visible adoption reads its tickets, and the settling
+is proved again before the commit. The operation alone would not do: a retry
+settles the same operation again.
+
+From there it runs the M3.14 engine unchanged: the same
 per-member exact-object and exact-bytes proof, duplicate before capacity,
 per-member partial adoption, repeatable, no process, no preview state, the same
 generation protocol. Replacing the queue drops tickets and holds and deletes no

@@ -1867,11 +1867,7 @@ impl PreviewService {
         operation: u64,
         index: usize,
     ) -> Result<WorkspaceOutputSetAdoptionResult, PreviewErrorDto> {
-        let ticket = self
-            .conversion_slot()
-            .terminal_output_set_ticket(operation, index)
-            .ok_or_else(adoption_superseded)?;
-        self.adopt_output_set(&ticket)
+        self.adopt_set(OutputSetToAdopt::TerminalItem { operation, index })
     }
 
     /// Adopts one fully finalized, sample-complete output set into this
@@ -1901,16 +1897,25 @@ impl PreviewService {
         &self,
         ticket: &FinalizedOutputSetAdoptionTicket,
     ) -> Result<WorkspaceOutputSetAdoptionResult, PreviewErrorDto> {
-        // Before anything is claimed. A ticket names the row it was converted
-        // from by an id this session allocates from zero, so another session's
-        // ticket would commit its outputs against whatever row happens to hold
-        // that number here -- with the display name and family of a row that is
-        // not it. Refused rather than validated field by field: the ticket
-        // simply does not belong to this workspace.
-        if ticket.session() != self.session {
-            return Err(outputs_not_adoptable());
-        }
-        let reserved = {
+        self.adopt_set(OutputSetToAdopt::Ticket(ticket))
+    }
+
+    /// The adoption both private callers run.
+    ///
+    /// Where the authority comes from is the only difference, and it is a
+    /// difference about *claiming order* rather than about the adoption. A
+    /// ticket the caller already holds owns its objects outright, so nothing
+    /// but the workspace can move underneath it. One held by a terminal queue
+    /// item belongs to a settling that a retry or a replacement can end, so it
+    /// is read under the same gate that claims the action -- exactly as the
+    /// visible adoption reads its tickets -- and the settling is re-proved
+    /// before the commit.
+    #[cfg(test)]
+    fn adopt_set(
+        &self,
+        source: OutputSetToAdopt<'_>,
+    ) -> Result<WorkspaceOutputSetAdoptionResult, PreviewErrorDto> {
+        let (adoptable, settling, reserved) = {
             // The same gate the visible adoption reserves under, waiting out a
             // native drop that has claimed the workspace. Reserving in front of
             // one would guarantee this adoption is superseded by a decision
@@ -1923,19 +1928,59 @@ impl PreviewService {
             if self.diagnostics_export_is_in_flight() {
                 return Err(adoption_in_progress());
             }
+            // Read under the gate that is about to claim the action, so a retry
+            // cannot start between the read and the claim and leave this
+            // holding an authority whose settling is over.
+            let (adoptable, settling) = match source {
+                OutputSetToAdopt::Ticket(ticket) => (AdoptableSet::Held(ticket), None),
+                OutputSetToAdopt::TerminalItem { operation, index } => {
+                    let slot = self.conversion_slot();
+                    let ticket = slot
+                        .terminal_output_set_ticket(operation, index)
+                        .ok_or_else(adoption_superseded)?;
+                    let round = slot
+                        .terminal_retry_round(operation)
+                        .ok_or_else(adoption_superseded)?;
+                    drop(slot);
+                    (
+                        AdoptableSet::FromQueue(ticket),
+                        Some(TerminalSettling { operation, round }),
+                    )
+                }
+            };
+            let ticket = adoptable.ticket();
+            // Before anything is claimed. A ticket names the row it was
+            // converted from by an id this session allocates from zero, so
+            // another session's ticket would commit its outputs against
+            // whatever row happens to hold that number here -- with the display
+            // name and family of a row that is not it. Refused rather than
+            // validated field by field: the ticket simply does not belong to
+            // this workspace.
+            if ticket.session() != self.session {
+                return Err(outputs_not_adoptable());
+            }
             if self.adopting_outputs.swap(true, Ordering::AcqRel) {
                 return Err(adoption_in_progress());
             }
-            self.reserve_adoption(gate)
+            (adoptable, settling, self.reserve_adoption(gate))
         };
         let adopting = AdoptionInFlight(self);
+        let ticket = adoptable.ticket();
 
         let inspected = self.inspect_adoption_candidates(reserved, ticket.candidates())?;
 
         let gate = self.enter_workspace_mutation();
-        // The reservation alone, because there is no queue here whose settling
-        // could have changed underneath: the ticket owns its objects outright.
+        // The reservation, which says no other workspace decision happened.
         if gate.generation != reserved {
+            return Err(adoption_superseded());
+        }
+        // And, for an authority the queue holds, the settling it came from. A
+        // retry between the two halves leaves the same operation terminal again
+        // with different results, and committing against that would attach
+        // these outputs to a settling that did not produce them.
+        if let Some(TerminalSettling { operation, round }) = settling
+            && self.conversion_slot().terminal_retry_round(operation) != Some(round)
+        {
             return Err(adoption_superseded());
         }
         let mut workspace = self.workspace();
@@ -3819,6 +3864,48 @@ impl PreviewService {
         drop(workspace);
         drop(mutation);
     }
+}
+
+/// Where one private output-set adoption gets its authority.
+///
+/// Two cases because they have different lifetimes, not different adoptions. A
+/// ticket the caller holds is theirs for as long as they keep it; one a
+/// terminal queue item holds belongs to a settling that can end, so it must be
+/// read under the gate that claims the action and re-proved before the commit.
+#[cfg(test)]
+#[derive(Clone, Copy)]
+enum OutputSetToAdopt<'a> {
+    Ticket(&'a FinalizedOutputSetAdoptionTicket),
+    TerminalItem { operation: u64, index: usize },
+}
+
+/// One output-set authority, however this adoption came by it.
+#[cfg(test)]
+enum AdoptableSet<'a> {
+    /// The caller's own, from the direct private conversion.
+    Held(&'a FinalizedOutputSetAdoptionTicket),
+    /// One terminal queue item's, read under the gate that claimed the action.
+    FromQueue(std::sync::Arc<FinalizedOutputSetAdoptionTicket>),
+}
+
+#[cfg(test)]
+impl AdoptableSet<'_> {
+    fn ticket(&self) -> &FinalizedOutputSetAdoptionTicket {
+        match self {
+            Self::Held(ticket) => ticket,
+            Self::FromQueue(ticket) => ticket,
+        }
+    }
+}
+
+/// The exact settling a queue-held authority came from.
+///
+/// The operation alone is not it: a retry settles the same operation again.
+#[cfg(test)]
+#[derive(Clone, Copy)]
+struct TerminalSettling {
+    operation: u64,
+    round: u64,
 }
 
 /// Everything one queued item's attempt is about.

@@ -138,6 +138,7 @@ makes about itself.
 | a queue-internal name collision | non-retryable |
 | a success or a skip | never rerun |
 | a retried attempt | names a different run; a fresh conversion names another; a refusal names none and holds no report |
+| adopting a queue-held set | the ticket and its settling are read under the gate that claims the action, and the settling is proved again before the commit; another operation or another item answers with nothing |
 | a stop landing mid-retry | the set failure is restored as the failure it was, not stranded as never-run; `not_run_count` 0 |
 | a queue-level refusal ending the retry | the same, and the failure keeps its place in the counts and its diagnostic |
 

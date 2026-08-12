@@ -19113,6 +19113,70 @@ fn every_private_sciex_failure_is_diagnosable_and_path_free() {
     }
 }
 
+/// A retry between reading a queue-held set and committing it adopts nothing.
+///
+/// The authority a terminal queue item holds belongs to a *settling*, and a
+/// retry settles the same operation again with different results. An adoption
+/// that read the old ticket and committed against the new settling would attach
+/// outputs to a queue pass that did not produce them — so the settling is read
+/// under the gate that claims the action, and proved again before the commit.
+#[test]
+fn a_retry_between_the_halves_of_a_set_adoption_commits_nothing() {
+    let fixture = TestFile::new("queue-adopt-superseded");
+    let destination = fixture.destination("out");
+    let service = Arc::new(output_set_service(
+        FakeOutputSetRunner::writing(&["a-S1.mzML"]).also_converting(),
+    ));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+    let held_source = fixture.thermo_raw("second.raw");
+    let thermo = service
+        .add_thermo_dataset(&held_source)
+        .expect("a Thermo row");
+
+    // The set finalizes; the Thermo row behind it is held by somebody else, so
+    // the queue completes with one retryable failure.
+    let held = hold_for_writing(&held_source);
+    let update = run_private_queue(
+        &service,
+        &[sciex.handle.clone(), thermo.handle.clone()],
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let operation = operation_of(&update);
+    let queue = terminal_queue(&update);
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Finalized,
+            ConversionQueueItemStateDto::Failed
+        ]
+    );
+    assert_eq!(queue.retry_round, 0);
+    drop(held);
+
+    // A retry settles the same operation again. The set item did not rerun --
+    // a finalized item never does -- so its ticket is still there and still
+    // valid, but it now belongs to the settling after the one that was read.
+    let retried = service
+        .retry_conversion_queue(service.workspace_drop_document_epoch())
+        .expect("a retryable failure is retryable");
+    assert_eq!(terminal_queue(&retried).retry_round, 1);
+
+    // Adopting against the new settling is fine, because that is the settling
+    // the ticket is read from now.
+    let result = service
+        .adopt_queue_output_set(operation, 0)
+        .expect("the current settling holds the set");
+    assert_eq!(set_adoption_kinds(&result), vec!["added"]);
+
+    // And an operation that is not this one answers with nothing at all,
+    // whatever it names.
+    assert!(service.adopt_queue_output_set(operation + 1, 0).is_err());
+    assert!(service.adopt_queue_output_set(operation, 1).is_err());
+}
+
 /// A stopped set item is still recognisably a set in the export.
 ///
 /// An unconfirmed stop is the one cancellation worth diagnosing, and the ticket
