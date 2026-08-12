@@ -139,6 +139,11 @@ export interface ConversionOperation {
   /** How many of this queue's items finalized an output. */
   readonly eligibleOutputCount: number;
   /**
+   * Whether any acquisition finalized part of an output set without completing
+   * it. Read by the one sentence that must not say "nothing was converted".
+   */
+  readonly hasIncompleteOutputSet: boolean;
+  /**
    * What the last adoption of this queue did, until the queue is replaced.
    *
    * Kept so the panel can report counts beside the result it belongs to. It is
@@ -333,8 +338,11 @@ export function useConversionOperation(
         // leave the banner naming the installation the earlier results came
         // from until the user rechecked by hand.
         update.state.queue.installationGeneration,
+        // Whichever cardinality the item's latest attempt had. Both reports
+        // carry the sequence they ran under, and an item is never described by
+        // both at once.
         ...update.state.queue.items
-          .map((item) => item.report?.installationGeneration)
+          .map((item) => item.result?.report.installationGeneration)
           .filter((generation): generation is number => generation !== undefined),
       ];
       onInstallationGeneration(Math.max(...generations));
@@ -631,13 +639,29 @@ export function useConversionOperation(
       });
   }, [api, applyUpdate, readState]);
 
-  // How many of this terminal queue's items produced an output that could be
-  // added. Derived from the authoritative state rather than tracked, so it
-  // cannot come to disagree with the list the panel is drawing.
+  // How many output *files* this terminal queue would offer to add.
+  //
+  // Read from Rust rather than counted here, and that is the decision: one
+  // finalized item is not one output. A ten-member SCIEX acquisition offers
+  // ten, and an interface counting finalized items would offer to add ten files
+  // while calling them one -- then receive ten outcomes it had not planned to
+  // render. Rust derives it from the very authorities the adoption expands, so
+  // the number shown and the outcomes returned cannot disagree.
   const eligibleOutputCount =
-    state.status === "terminal"
-      ? state.queue.items.filter((item) => item.state === "finalized").length
-      : 0;
+    state.status === "terminal" ? state.queue.adoptableOutputCount : 0;
+
+  // Whether some acquisition converted files this queue will not offer as a
+  // complete set.
+  //
+  // The one case where "nothing was converted" would be false while the offer
+  // is still absent: a partially finalized publication leaves real files in the
+  // user's folder, and the panel owes them a different sentence.
+  const hasIncompleteOutputSet =
+    state.status === "terminal" &&
+    state.queue.items.some(
+      (item) =>
+        item.result?.kind === "outputSet" && item.result.report.partial !== null,
+    );
 
   // Only a terminal queue, and only one that finalized something. A running or
   // stopping queue's outputs are not all in yet, and a retry replaces the very
@@ -785,6 +809,7 @@ export function useConversionOperation(
     canAdopt,
     adopting,
     eligibleOutputCount,
+    hasIncompleteOutputSet,
     adoption,
     exportDiagnostics,
     diagnosticsAvailable: state.status === "terminal" && diagnostics.available,

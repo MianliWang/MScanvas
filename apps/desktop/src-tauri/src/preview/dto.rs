@@ -236,20 +236,35 @@ pub struct WorkspaceAddResultDto {
     pub outcomes: Vec<WorkspaceAddOutcomeDto>,
 }
 
+/// Which output one adoption outcome is about.
+///
+/// An item index alone stopped identifying an outcome the moment one item could
+/// hold ten of them. The member index is the position within that item's own
+/// output set, in publication order, and is zero for a known single output —
+/// which is a real position rather than a filler, because such an item has
+/// exactly one member and it is the first.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AdoptionCandidateIdentityDto {
+    pub item_index: usize,
+    pub member_index: usize,
+}
+
 /// What one finalized output did when the user asked to adopt it.
 ///
 /// Closed and path-free. Every member names a queue item by facts the webview
-/// already has -- its position and the row it was converted from -- plus the
-/// output name the queue displayed throughout. None of them carries where the
-/// file is, and only `added` and `alreadyInWorkspace` carry a workspace row,
-/// because they are the only two outcomes that have one.
+/// already has -- its position, its member position within that item and the
+/// row it was converted from -- plus the output name. None of them carries
+/// where the file is, and only `added` and `alreadyInWorkspace` carry a
+/// workspace row, because they are the only two outcomes that have one.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum WorkspaceOutputAdoptionOutcomeDto {
     /// A new row. The queue's own result is unchanged by this.
     #[serde(rename_all = "camelCase")]
     Added {
-        item_index: usize,
+        #[serde(flatten)]
+        candidate: AdoptionCandidateIdentityDto,
         source_handle: String,
         output_file_name: String,
         dataset: SelectedFileDto,
@@ -258,7 +273,8 @@ pub enum WorkspaceOutputAdoptionOutcomeDto {
     /// arrived. The existing row is returned as it stands.
     #[serde(rename_all = "camelCase")]
     AlreadyInWorkspace {
-        item_index: usize,
+        #[serde(flatten)]
+        candidate: AdoptionCandidateIdentityDto,
         source_handle: String,
         output_file_name: String,
         dataset: SelectedFileDto,
@@ -266,7 +282,8 @@ pub enum WorkspaceOutputAdoptionOutcomeDto {
     /// Nothing was added, and this says only which of the honest reasons it was.
     #[serde(rename_all = "camelCase")]
     Refused {
-        item_index: usize,
+        #[serde(flatten)]
+        candidate: AdoptionCandidateIdentityDto,
         source_handle: String,
         output_file_name: String,
         /// One of `output_missing`, `output_changed`, `output_unreadable`,
@@ -792,6 +809,17 @@ pub struct ConversionQueueDto {
     /// Items whose stop could not be confirmed. Apart from both of the above,
     /// because what is unknown here is whether a process survived.
     pub cancellation_failed_count: usize,
+    /// How many output **files** a complete-set adoption of this queue would
+    /// offer -- not how many items hold one.
+    ///
+    /// Counted by Rust from the authorities it actually holds, because that is
+    /// the only place the answer lives: one finalized Thermo item offers one,
+    /// one finalized ten-member SCIEX item offers ten, and an interface counting
+    /// finalized items would offer to add ten files and call it one. Zero unless
+    /// the queue is terminal, which is what makes the action's availability a
+    /// projection of Rust's own rule rather than a second one the interface
+    /// maintains.
+    pub adoptable_output_count: usize,
     /// A refusal that stopped the whole queue rather than one item -- a
     /// destination this boundary will not write to, a backend that cannot
     /// convert, a reservation that is no longer valid.
@@ -814,18 +842,20 @@ pub struct ConversionQueueItemDto {
     pub dataset_handle: String,
     pub file_name: String,
     pub source_kind: DatasetSourceKindDto,
-    /// The name this item's output will take, derived before the queue was
-    /// created. Two items that would produce the same name in one folder are
-    /// refused there rather than discovered here.
-    pub output_file_name: String,
+    /// What this item's outputs will look like. For a known single output the
+    /// name was derived before the queue was created, so two items that would
+    /// produce the same name in one folder are refused there rather than
+    /// discovered here. A backend-named set carries no name, because none
+    /// exists until the run has finished.
+    pub output: ConversionOutputPlanDto,
     pub state: ConversionQueueItemStateDto,
     /// How many times this item has been attempted. One after the first pass.
     pub attempts: u64,
     pub retryable: bool,
-    /// The latest attempt's report, when an attempt reached a conversion.
-    /// Only the latest: an attempt history would be an unbounded one, and
-    /// nothing in this workflow reads a second entry.
-    pub report: Option<ConversionReportDto>,
+    /// The latest attempt's result, in the cardinality it had, when an attempt
+    /// reached a conversion. Only the latest: an attempt history would be an
+    /// unbounded one, and nothing in this workflow reads a second entry.
+    pub result: Option<ConversionAttemptResultDto>,
     /// Why an attempt never reached a conversion at all. Distinct from a
     /// conversion that ran and failed, which is a `report`.
     pub error: Option<PreviewErrorDto>,
@@ -922,7 +952,8 @@ pub struct ConversionQueuePlanItemDto {
     /// here rather than rediscovering it from the live roster, so the plan it
     /// shows is the immutable one the queue will run.
     pub source_kind: DatasetSourceKindDto,
-    pub output_file_name: String,
+    /// What this row will produce, in the cardinality it will produce it.
+    pub output: ConversionOutputPlanDto,
 }
 
 /// What one conversion did, in facts that name no location.
@@ -993,6 +1024,182 @@ pub struct ConversionBackendFactsDto {
     pub elapsed_milliseconds: u64,
 }
 
+/// What one queue item's outputs will look like, before it runs.
+///
+/// Two named cases on the wire, for the reason the private topology has two:
+/// `None` would have to mean unknown, absent, failed and multi-output at once,
+/// and an empty string would be a filename that is not one. A reader must
+/// choose an arm to render anything at all, so a blank output column is
+/// unrepresentable rather than merely avoided.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ConversionOutputPlanDto {
+    /// One document, named before anything runs, from the source row's own
+    /// display name.
+    #[serde(rename_all = "camelCase")]
+    KnownSingle { file_name: String },
+    /// One to `max_members` documents the backend names itself.
+    ///
+    /// **No name is carried, because none exists.** Not the acquisition's stem,
+    /// not the sample count, not a placeholder ending in `.mzML`.
+    #[serde(rename_all = "camelCase")]
+    BackendNamedSet { max_members: usize },
+}
+
+/// The latest attempt's result, in the cardinality it actually had.
+///
+/// Absent means only "no attempt result exists". A queue item never carries a
+/// single report and a group report at once, and this is what makes that
+/// unrepresentable rather than a rule two nullable fields would have to keep.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ConversionAttemptResultDto {
+    #[serde(rename_all = "camelCase")]
+    Single { report: ConversionReportDto },
+    #[serde(rename_all = "camelCase")]
+    OutputSet {
+        report: ConversionOutputSetReportDto,
+    },
+}
+
+/// What one backend-named set's attempt did, in facts that name no location.
+///
+/// Counts, stable identifiers and the backend's chosen basenames. Bounded by
+/// the lifecycle's own output bound, so this cannot grow past what one
+/// conversion may produce.
+///
+/// The basenames are here deliberately and are the one judgement call in this
+/// shape. They are the user's data, so they stay out of generic `Debug` and out
+/// of the diagnostics export — but a user looking at a result that says "ten
+/// outputs finalized" and cannot see which ten has been told a number rather
+/// than an answer, and the roster beside it will spell every one of them out the
+/// moment the set is adopted. Redacting them here while doing that would be
+/// theatre. See ADR 0026 for why the export makes the opposite call.
+///
+/// `Debug` is written out rather than derived, and that is the whole of what
+/// keeps the sentence above true: this value is reachable from the queue
+/// transfer object, which is reachable from the update the session logs, so a
+/// derived one would print every member basename into any log that rendered a
+/// conversion. Serializing to the webview is a decision; a debug string is not.
+#[derive(Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionOutputSetReportDto {
+    pub dataset_handle: String,
+    pub source_kind: DatasetSourceKindDto,
+    /// What the run did to the set as a whole, by the conversion boundary's own
+    /// identifier.
+    pub group_outcome: String,
+    /// The precise refusal, when the set was refused before anything published.
+    pub detailed_outcome: Option<String>,
+    /// The lifecycle's bound, so a reader sees the counts are bounded rather
+    /// than having to know the constant.
+    pub max_members: usize,
+    pub member_count: usize,
+    pub finalized_count: usize,
+    /// Members that passed validation and were never published — the shape a
+    /// refusal after validation leaves.
+    pub validated_not_published_count: usize,
+    pub not_published_count: usize,
+    /// How many filesystem objects the acquisition was held to for the run.
+    ///
+    /// `None` where it never was, which is every refusal that happened before
+    /// the source was opened. Zero would say it was bound to nothing.
+    pub bound_source_objects: Option<usize>,
+    /// The basenames the backend chose, in publication order. Never a
+    /// directory, never a path, and bounded by `max_members`.
+    pub member_file_names: Vec<String>,
+    /// How each member ended, by the boundary's own identifier, positionally
+    /// matched to `member_file_names`.
+    pub member_states: Vec<String>,
+    pub backend: Option<ConversionBackendFactsDto>,
+    pub staging_residue: Option<String>,
+    /// Always `output_only` for this family, carried rather than implied: a
+    /// vendor acquisition has no mzML reading, so nothing about any output was
+    /// compared to the source.
+    pub validation_mode: ValidationModeDto,
+    /// Whether every sample the reader identified produced its output.
+    pub completeness: ConversionSampleCompletenessDto,
+    /// Present exactly for a partial publication.
+    pub partial: Option<ConversionPartialFinalizationDto>,
+    /// Whether a complete output-set adoption authority exists for this item.
+    ///
+    /// Carried rather than derived from the outcome, because the two are
+    /// deliberately not the same question: a fully finalized set whose
+    /// completeness was not established has no authority, and an interface
+    /// deriving one from the other would offer an action Rust will refuse.
+    pub complete_set_adoptable: bool,
+    pub installation_generation: u64,
+}
+
+impl std::fmt::Debug for ConversionOutputSetReportDto {
+    /// Shape, counts and stable identifiers. Never a member basename.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ConversionOutputSetReportDto")
+            .field("dataset_handle", &self.dataset_handle)
+            .field("source_kind", &self.source_kind)
+            .field("group_outcome", &self.group_outcome)
+            .field("detailed_outcome", &self.detailed_outcome)
+            .field("member_count", &self.member_count)
+            .field("finalized_count", &self.finalized_count)
+            .field(
+                "validated_not_published_count",
+                &self.validated_not_published_count,
+            )
+            .field("not_published_count", &self.not_published_count)
+            .field("bound_source_objects", &self.bound_source_objects)
+            // States, not names. Which member ended how is a fact about the
+            // run; what it is called is a fact about the acquisition.
+            .field("member_states", &self.member_states)
+            .field("staging_residue", &self.staging_residue)
+            .field("completeness", &self.completeness)
+            .field("partial", &self.partial)
+            .field("complete_set_adoptable", &self.complete_set_adoptable)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Whether every sample the SCIEX reader identified produced its output.
+///
+/// Deliberately not a boolean and deliberately narrow. `Established` says what
+/// it says and no more: it is a statement about the samples `Reader_ABI`
+/// identified, not about the samples in the acquisition, and not about how
+/// faithfully any document represents one.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ConversionSampleCompletenessDto {
+    /// The question was never posed, which is every run that never reached the
+    /// audit.
+    NotPosed,
+    /// The run did not support the claim. Not a statement that the acquisition
+    /// was incomplete.
+    #[serde(rename_all = "camelCase")]
+    NotEstablished { reason: String },
+    /// Proved, and by what.
+    #[serde(rename_all = "camelCase")]
+    Established {
+        /// The audit's stable identifier — the method, not a sentence.
+        method: String,
+        /// How many samples the reader identified and converted.
+        sample_count: usize,
+    },
+}
+
+/// Where a non-atomic publication stopped.
+///
+/// Counts and the filesystem's own kind. The finalized prefix is the user's
+/// files: nothing removes, hides or supersedes them, and this says how many
+/// there are without saying what they are called.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionPartialFinalizationDto {
+    pub finalized_count: usize,
+    pub not_published_count: usize,
+    /// What the filesystem said about the member that failed, by stable
+    /// identifier. Never an OS message.
+    pub failure_kind: String,
+}
+
 /// What a conversion reservation that names nothing answers with.
 pub fn invalid_conversion_reservation() -> PreviewErrorDto {
     PreviewErrorDto::new(
@@ -1056,7 +1263,6 @@ pub fn queue_duplicate_dataset() -> PreviewErrorDto {
 /// one is refused before a picker opens and this one can only be discovered
 /// while the queue runs -- a backend-named set has no names to compare until it
 /// has produced them.
-#[cfg(test)]
 pub(super) fn queue_output_name_claimed(name: &str) -> PreviewErrorDto {
     PreviewErrorDto::new(
         "queue_output_name_claimed",

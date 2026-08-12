@@ -2,8 +2,9 @@
 
 - Status: Accepted. The sample-completeness gate ADR 0022 opened is closed for
   the evidenced build, enforced before publication, and reported separately from
-  publication state. SCIEX remains invisible to the product; visible ingestion,
-  queue integration and output-set adoption stay separately gated
+  publication state. **SCIEX is now visible** — ADR 0027 — and the judgement
+  recorded here is what the interface states, in the narrow wording this record
+  argues for
 - Date: 2026-08-11
 - **Extended by [ADR 0025](0025-private-sciex-output-set-adoption.md),
   2026-08-11.** The completeness evidence is now also an eligibility condition:

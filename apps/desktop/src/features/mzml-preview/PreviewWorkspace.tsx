@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "reac
 
 import { BackendStatus } from "./BackendStatus";
 import type { WorkspaceDropRejectionReason } from "./contracts";
-import { isConvertibleSourceKind } from "./contracts";
+import { conversionJudgedAnyOutput, isConvertibleSourceKind } from "./contracts";
 import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
 import { PreviewSummary } from "./PreviewSummary";
@@ -824,7 +824,7 @@ function announceConversion(workspace: ReturnType<typeof usePreviewWorkspace>): 
   // The same condition the visible panel applies, because it is the same claim.
   // A queue whose items were all skipped judged nothing, and a skipped item's
   // existing file was explicitly not inspected.
-  const judged = queue.items.some((item) => item.report?.validation != null);
+  const judged = queue.items.some(conversionJudgedAnyOutput);
   return `${String(queue.finalizedCount)} converted, ${String(queue.skippedCount)} skipped, ${String(queue.failedCount)} failed.${
     judged ? " Output-only validation." : ""
   }`;

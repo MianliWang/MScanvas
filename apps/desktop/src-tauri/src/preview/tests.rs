@@ -8622,7 +8622,7 @@ fn the_picker_admits_the_shimadzu_family_and_no_walking_surface_does() {
         DatasetSourceKindDto::ShimadzuLcd,
         "the plan row says which family it is"
     );
-    assert_eq!(plan.items[0].output_file_name, "acquisition.mzML");
+    assert_eq!(plan_output_name(&plan.items[0]), "acquisition.mzML");
 
     // Folder discovery does not walk into this family. A scan of the fixture
     // folder proposes the mzML and never the acquisition beside it.
@@ -8744,7 +8744,7 @@ fn the_visible_workflow_converts_real_shimadzu_and_mixed_queues_end_to_end() {
     println!("mixed queue: {queue:?}");
     for item in &queue.items {
         assert_eq!(item.state, ConversionQueueItemStateDto::Finalized);
-        let report = item.report.as_ref().expect("finalized items report");
+        let report = item_report(item).expect("finalized items report");
         let validation = report.validation.as_ref().expect("judged");
         assert_eq!(validation.mode, ValidationModeDto::OutputOnly);
         assert!(!validation.fully_verified);
@@ -8754,15 +8754,13 @@ fn the_visible_workflow_converts_real_shimadzu_and_mixed_queues_end_to_end() {
         .items
         .iter()
         .find(|item| {
-            item.report
+            item_report(item)
                 .as_ref()
                 .and_then(|report| report.output.as_ref())
                 .is_some_and(|output| output.spectrum_count == 0)
         })
         .expect("the scheduled fixture converts to a chromatogram-only document");
-    let output = scheduled
-        .report
-        .as_ref()
+    let output = item_report(scheduled)
         .and_then(|report| report.output.as_ref())
         .expect("measured");
     assert_eq!(output.chromatogram_count, 144);
@@ -8997,12 +8995,63 @@ fn the_command_surface_does_not_grow_for_the_private_family() {
     );
 }
 
+/// The single-output report of one item's latest attempt, if it had one.
+///
+/// The wire carries the attempt result in the cardinality it had, so reading a
+/// single report is now asking for that arm rather than for a field. An item
+/// that ran a backend-named set answers `None` here and carries its group
+/// report under [`item_set_report`] instead.
+fn item_report(
+    item: &super::dto::ConversionQueueItemDto,
+) -> Option<&super::dto::ConversionReportDto> {
+    match item.result.as_ref()? {
+        super::dto::ConversionAttemptResultDto::Single { report } => Some(report),
+        super::dto::ConversionAttemptResultDto::OutputSet { .. } => None,
+    }
+}
+
+/// The group report of one item's latest attempt, if it ran a set.
+fn item_set_report(
+    item: &super::dto::ConversionQueueItemDto,
+) -> Option<&super::dto::ConversionOutputSetReportDto> {
+    match item.result.as_ref()? {
+        super::dto::ConversionAttemptResultDto::OutputSet { report } => Some(report),
+        super::dto::ConversionAttemptResultDto::Single { .. } => None,
+    }
+}
+
+/// The name a known-single queue item will produce.
+///
+/// Panics for a backend-named set, deliberately: a set has no such name, and a
+/// test asking for one is asking the wrong question.
+fn item_output_name(item: &super::dto::ConversionQueueItemDto) -> &str {
+    match &item.output {
+        super::dto::ConversionOutputPlanDto::KnownSingle { file_name } => file_name.as_str(),
+        super::dto::ConversionOutputPlanDto::BackendNamedSet { .. } => {
+            panic!("a backend-named set has no single output name")
+        }
+    }
+}
+
+/// The name a known-single plan row will produce.
+fn plan_output_name(item: &super::dto::ConversionQueuePlanItemDto) -> &str {
+    match &item.output {
+        super::dto::ConversionOutputPlanDto::KnownSingle { file_name } => file_name.as_str(),
+        super::dto::ConversionOutputPlanDto::BackendNamedSet { .. } => {
+            panic!("a backend-named set has no single output name")
+        }
+    }
+}
+
 /// The one report of a queue of one, whatever terminal shape it took.
 fn sole_report(state: &WorkspaceConversionStateDto) -> Option<super::dto::ConversionReportDto> {
     let WorkspaceConversionStateDto::Terminal { queue, .. } = state else {
         return None;
     };
-    queue.items.first().and_then(|item| item.report.clone())
+    queue
+        .items
+        .first()
+        .and_then(|item| item_report(item).cloned())
 }
 
 /// The queue-level refusal of a terminal queue, if it has one.
@@ -9212,7 +9261,7 @@ fn the_plan_summary_describes_the_fixed_plan_and_refuses_an_mzml_row() {
         .expect("a vendor row has a plan");
     assert_eq!(summary.items.len(), 1);
     assert_eq!(summary.items[0].dataset_handle, handle);
-    assert_eq!(summary.items[0].output_file_name, "acquisition.mzML");
+    assert_eq!(plan_output_name(&summary.items[0]), "acquisition.mzML");
     assert_eq!(summary.capacity, 16);
     assert_eq!(summary.output_format, ConversionOutputFormatDto::MzMl);
     assert_eq!(summary.compression, "zlib");
@@ -10097,7 +10146,7 @@ fn a_queue_runs_its_items_in_order_one_at_a_time() {
         queue
             .items
             .iter()
-            .map(|item| item.output_file_name.clone())
+            .map(|item| item_output_name(item).to_owned())
             .collect::<Vec<_>>(),
         vec!["c.mzML", "a.mzML", "b.mzML"],
         "the queue runs the order it was given, not the registry's or the alphabet's"
@@ -10109,7 +10158,7 @@ fn a_queue_runs_its_items_in_order_one_at_a_time() {
         "one output per finalized item, and no sidecars"
     );
     for item in &queue.items {
-        let report = item.report.as_ref().expect("a finalized item reports");
+        let report = item_report(item).expect("a finalized item reports");
         let validation = report.validation.as_ref().expect("and was judged");
         assert_eq!(validation.mode, ValidationModeDto::OutputOnly);
         assert!(!validation.fully_verified);
@@ -10143,9 +10192,9 @@ fn one_item_failing_neither_stops_the_queue_nor_rolls_back_what_came_before() {
         ConversionQueueItemStateDto::Finalized,
         "a later item runs after an earlier one failed"
     );
-    assert_eq!(queue.items[1].output_file_name, "broken.mzML");
+    assert_eq!(item_output_name(&queue.items[1]), "broken.mzML");
     assert!(
-        queue.items[1].report.is_none(),
+        item_report(&queue.items[1]).is_none(),
         "an item that never reached a conversion reports no run"
     );
     assert_eq!(
@@ -10641,6 +10690,7 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
     assert_eq!(
         sorted_keys(queue),
         vec![
+            "adoptableOutputCount",
             "cancellationFailedCount",
             "cancelledCount",
             "conflictPolicy",
@@ -10667,16 +10717,29 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "datasetHandle",
             "error",
             "fileName",
-            "outputFileName",
-            "report",
+            "output",
+            "result",
             "retryable",
             "sourceKind",
             "state",
         ],
         "one latest attempt per item, never a history of them"
     );
+    // A known single output states its one name, under the arm that has one.
     assert_eq!(
-        sorted_keys(&item["report"]),
+        sorted_keys(&item["output"]),
+        vec!["fileName", "kind"],
+        "a known single output names its document"
+    );
+    assert_eq!(item["output"]["kind"], "knownSingle");
+
+    // The latest attempt's result is discriminated by cardinality. A Thermo
+    // item is `single`, and its report is byte-for-byte the shape it always
+    // was -- the one thing this milestone must not disturb.
+    assert_eq!(item["result"]["kind"], "single");
+    let report = &item["result"]["report"];
+    assert_eq!(
+        sorted_keys(report),
         vec![
             "backend",
             "datasetHandle",
@@ -10691,7 +10754,7 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
         ]
     );
     assert_eq!(
-        sorted_keys(&item["report"]["backend"]),
+        sorted_keys(&report["backend"]),
         vec!["elapsedMilliseconds", "exitCode"]
     );
 
@@ -10721,6 +10784,50 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "the wire must not carry {absent:?}"
         );
     }
+}
+
+/// An adoption outcome names its item and its member, flat, on the wire.
+///
+/// Pinned because the identity is a nested value flattened into a tagged enum,
+/// which is the one serde arrangement where the shape a reader sees and the
+/// shape the type suggests can differ. The interface reads `itemIndex` and
+/// `memberIndex` as members of the outcome itself, and a nested `candidate`
+/// object would satisfy every Rust test here while giving the webview two
+/// fields it does not know about.
+#[test]
+fn an_adoption_outcome_carries_its_identity_flat_on_the_wire() {
+    let outcome = WorkspaceOutputAdoptionOutcomeDto::Refused {
+        candidate: super::dto::AdoptionCandidateIdentityDto {
+            item_index: 2,
+            member_index: 7,
+        },
+        source_handle: String::from("file-3"),
+        output_file_name: String::from("a-S8.mzML"),
+        reason: String::from("output_changed"),
+    };
+    let wire: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&outcome).expect("an outcome serializes"))
+            .expect("and parses back");
+
+    assert_eq!(
+        sorted_keys(&wire),
+        vec![
+            "itemIndex",
+            "kind",
+            "memberIndex",
+            "outputFileName",
+            "reason",
+            "sourceHandle",
+        ],
+        "the identity is flattened into the outcome, not nested beside it"
+    );
+    assert_eq!(wire["kind"], "refused");
+    assert_eq!(wire["itemIndex"], 2);
+    assert_eq!(wire["memberIndex"], 7);
+    assert!(
+        wire.get("candidate").is_none(),
+        "the identity has no wrapper of its own"
+    );
 }
 
 /// One JSON object's member names, sorted.
@@ -10836,7 +10943,7 @@ fn a_real_queue_converts_several_thermo_acquisitions_one_at_a_time() {
     assert_eq!(
         plan.items
             .iter()
-            .map(|item| item.output_file_name.clone())
+            .map(|item| plan_output_name(item).to_owned())
             .collect::<Vec<_>>(),
         expected_order
     );
@@ -10896,14 +11003,14 @@ fn a_real_queue_converts_several_thermo_acquisitions_one_at_a_time() {
         queue
             .items
             .iter()
-            .map(|item| item.output_file_name.clone())
+            .map(|item| item_output_name(item).to_owned())
             .collect::<Vec<_>>(),
         expected_order,
         "the outputs are named in the order the queue was given"
     );
     for item in &queue.items {
         assert_eq!(item.attempts, 1);
-        let report = item.report.as_ref().expect("each item reports");
+        let report = item_report(item).expect("each item reports");
         assert_eq!(report.outcome, "finalized");
         assert_eq!(report.staging_residue, None);
         let output = report.output.as_ref().expect("and produced a file");
@@ -10913,7 +11020,7 @@ fn a_real_queue_converts_several_thermo_acquisitions_one_at_a_time() {
         println!(
             "{} -> {} bytes {} sha256 {} spectra {} chromatograms {}, verified {:?}, unverified {:?}",
             item.file_name,
-            item.output_file_name,
+            item_output_name(item),
             output.byte_length,
             output.sha256,
             output.spectrum_count,
@@ -10930,7 +11037,7 @@ fn a_real_queue_converts_several_thermo_acquisitions_one_at_a_time() {
         .items
         .iter()
         .map(|item| {
-            item.report
+            item_report(item)
                 .as_ref()
                 .and_then(|report| report.backend.as_ref())
                 .map_or(0, |backend| backend.elapsed_milliseconds)
@@ -11064,7 +11171,7 @@ fn a_real_queue_isolates_one_failure_and_converts_the_rest() {
         queue
             .items
             .iter()
-            .map(|item| (item.output_file_name.clone(), item.state))
+            .map(|item| (item_output_name(item).to_owned(), item.state))
             .collect::<Vec<_>>(),
         vec![
             (
@@ -11083,10 +11190,8 @@ fn a_real_queue_isolates_one_failure_and_converts_the_rest() {
         "the item after the failure converted anyway"
     );
 
-    let failed = queue.items[1]
-        .report
-        .as_ref()
-        .expect("the middle item reached a run and reported it");
+    let failed =
+        item_report(&queue.items[1]).expect("the middle item reached a run and reported it");
     println!("failed item: {failed:?}");
     assert_eq!(
         failed.detailed_outcome.as_deref(),
@@ -11608,9 +11713,9 @@ fn a_confirmed_stop_cancels_the_running_item_and_runs_no_other() {
         "a stopped queue finalizes nothing and leaves no staging behind"
     );
     let cancelled = &queue.items[0];
-    assert!(cancelled.output_file_name.ends_with(".mzML"));
+    assert!(item_output_name(cancelled).ends_with(".mzML"));
     assert!(
-        cancelled.report.is_none(),
+        item_report(cancelled).is_none(),
         "a cancelled item produced nothing for a report to describe"
     );
     let facts = cancelled
@@ -11695,10 +11800,7 @@ fn a_stop_between_items_keeps_every_finished_output_and_starts_no_more() {
     assert_eq!(queue.not_run_count, 2);
     assert!(queue.items[0].cancellation.is_none());
     assert_eq!(
-        queue.items[0]
-            .report
-            .as_ref()
-            .map(|report| report.outcome.as_str()),
+        item_report(&queue.items[0]).map(|report| report.outcome.as_str()),
         Some("finalized")
     );
     // One process for one item, and the output it produced is in the folder.
@@ -13173,6 +13275,15 @@ fn folder_and_drop_ingestion_remain_mzml_only_for_vendor_files() {
     chosen.file("kept.mzML", b"<mzML>inside</mzML>");
     chosen.file("acquisition.lcd", &shimadzu_lcd_bytes());
     chosen.file("acquisition.raw", &thermo_raw_bytes());
+    // A complete SCIEX bundle, both halves, sitting in the walked folder. The
+    // pairing a picker selection would do must not happen here: a traversal
+    // that found a `.wiff` beside a `.wiff.scan` and admitted the two together
+    // would be deciding they are one acquisition from adjacency alone.
+    chosen.file("acquisition.wiff", &wiff_container_bytes(&SCIEX_MARKERS));
+    chosen.file(
+        "acquisition.wiff.scan",
+        &scan_companion_bytes("opaque spectral payload"),
+    );
     let service = PreviewService::new(Box::new(NoProcess));
 
     // A dropped folder discovers the mzML and never the acquisitions beside
@@ -13186,29 +13297,72 @@ fn folder_and_drop_ingestion_remain_mzml_only_for_vendor_files() {
         result.outcomes.iter().all(|outcome| !matches!(
             outcome,
             WorkspaceAddOutcomeDto::Rejected { candidate_name, .. }
-                if candidate_name.ends_with(".lcd") || candidate_name.ends_with(".raw")
+                if candidate_name.ends_with(".lcd")
+                    || candidate_name.ends_with(".raw")
+                    || candidate_name.ends_with(".wiff")
+                    || candidate_name.ends_with(".wiff.scan")
         )),
         "a walk neither admits nor names vendor files"
     );
+    assert_eq!(
+        service.dataset_count(),
+        1,
+        "no bundle was paired out of a folder's contents"
+    );
 
     // A vendor file dropped directly is refused by name -- the drop admits
-    // through mzML acceptance and never through the picker's routing.
+    // through mzML acceptance and never through the picker's routing. Both
+    // halves of a bundle are refused, and by the same reason: the drop does not
+    // know this family at all, which is the point.
     let direct = FolderTree::new("vendor-direct-drop");
     direct.file("direct.lcd", &shimadzu_lcd_bytes());
-    let work = reserve_drop_work(&service, &[direct.path().join("direct.lcd")]);
-    let result = service
-        .process_native_drop_with(work, expand_drop_paths)
-        .expect("the drop completes");
-    assert!(
-        matches!(
-            result.outcomes.first(),
-            Some(WorkspaceAddOutcomeDto::Rejected { error, .. })
-                if error.kind == "unsupported_extension"
-        ),
-        "a directly dropped vendor file stays unsupported; got {:?}",
-        result.outcomes.first()
+    direct.file("direct.wiff", &wiff_container_bytes(&SCIEX_MARKERS));
+    direct.file(
+        "direct.wiff.scan",
+        &scan_companion_bytes("opaque spectral payload"),
     );
-    assert_eq!(roster_names(&service), vec!["kept.mzML"]);
+    for dropped in ["direct.lcd", "direct.wiff", "direct.wiff.scan"] {
+        let work = reserve_drop_work(&service, &[direct.path().join(dropped)]);
+        let result = service
+            .process_native_drop_with(work, expand_drop_paths)
+            .expect("the drop completes");
+        assert!(
+            matches!(
+                result.outcomes.first(),
+                Some(WorkspaceAddOutcomeDto::Rejected { error, .. })
+                    if error.kind == "unsupported_extension"
+            ),
+            "a directly dropped {dropped} stays unsupported; got {:?}",
+            result.outcomes.first()
+        );
+        assert_eq!(roster_names(&service), vec!["kept.mzML"]);
+    }
+}
+
+/// No walking surface can reach the SCIEX admission at all.
+///
+/// The test above measures the behaviour; this one measures the *shape*, which
+/// is what keeps the behaviour from being restored by a well-meaning edit. The
+/// picker's routing function is the only caller of the bundle admission, and
+/// neither walking surface calls the picker's routing.
+#[test]
+fn no_walking_surface_routes_a_candidate_through_sciex_admission() {
+    for module in [
+        include_str!("discovery.rs"),
+        include_str!("drop_ingestion.rs"),
+    ] {
+        for forbidden in [
+            "accept_sciex_wiff_bundle",
+            "accept_workspace_file",
+            "sciex_wiff_companion_path",
+            "wiff",
+        ] {
+            assert!(
+                !module.to_ascii_lowercase().contains(forbidden),
+                "a walking surface names {forbidden}"
+            );
+        }
+    }
 }
 
 /// Stop queue reaches a running Shimadzu item exactly as it reaches a Thermo
@@ -13305,7 +13459,7 @@ fn one_focused_shimadzu_row_converts_through_the_product_path_and_reports_path_f
         .conversion_plan_summary(&handle)
         .expect("a vendor row has a plan");
     assert_eq!(plan.items[0].source_kind, DatasetSourceKindDto::ShimadzuLcd);
-    assert_eq!(plan.items[0].output_file_name, "10nmol.mzML");
+    assert_eq!(plan_output_name(&plan.items[0]), "10nmol.mzML");
     assert_eq!(plan.validation_mode, ValidationModeDto::OutputOnly);
 
     let reservation = service
@@ -13395,7 +13549,7 @@ fn a_mixed_family_queue_converts_serially_in_visible_order() {
     );
     for item in &queue.items {
         assert_eq!(item.state, ConversionQueueItemStateDto::Finalized);
-        let report = item.report.as_ref().expect("a finalized item has a report");
+        let report = item_report(item).expect("a finalized item has a report");
         assert_eq!(report.source_kind, item.source_kind);
         let validation = report.validation.as_ref().expect("judged");
         assert_eq!(validation.mode, ValidationModeDto::OutputOnly);
@@ -15985,10 +16139,24 @@ fn a_refused_bundle_consumes_no_dataset_id() {
     let error = service
         .add_sciex_wiff_dataset(&lonely)
         .expect_err("a bundle missing its companion is refused");
-    // The family's own reason, not "that path could not be resolved". A `.wiff`
-    // with nothing beside it is an incomplete acquisition, and saying so is the
-    // whole reason the crate owns this refusal.
-    assert_eq!(error.kind, "unrecognized_acquisition");
+    // The family's own reason, not "that path could not be resolved" and not
+    // the generic "not the structure its family requires". A `.wiff` with
+    // nothing beside it is an incomplete acquisition, the user can fix it, and
+    // now that this family has a surface the refusal says which file is
+    // missing relative to the one they chose.
+    assert_eq!(error.kind, "sciex_companion_missing");
+    assert!(
+        error.summary.contains(".wiff.scan"),
+        "the refusal says what to put beside it: {}",
+        error.summary
+    );
+    assert!(
+        !error
+            .summary
+            .contains(fixture.directory.to_string_lossy().as_ref()),
+        "and names no location: {}",
+        error.summary
+    );
 
     // The companion's name taken by something that is not one.
     let impostor = fixture.named_bytes("impostor.wiff", &wiff_container_bytes(&SCIEX_MARKERS));
@@ -16032,7 +16200,7 @@ fn bundle_revalidation_covers_every_member() {
     // The companion removed entirely.
     fs::remove_file(&companion).expect("remove the companion");
     let error = revalidate(&admitted).expect_err("a missing companion is refused");
-    assert_eq!(error.kind, "unrecognized_acquisition");
+    assert_eq!(error.kind, "sciex_companion_missing");
 
     // Put back, and then the primary rewritten instead.
     fixture.named_bytes("acquisition.wiff.scan", &scan_companion_bytes("restored"));
@@ -16464,46 +16632,352 @@ fn an_unevidenced_build_converts_no_bundle() {
     assert!(entry_names(&destination).is_empty());
 }
 
-/// Nothing a user can do puts a SCIEX acquisition into a workspace.
+/// `Add files…` admits a SCIEX acquisition, as exactly one row.
 ///
-/// Four independent barriers, asserted through the surfaces themselves rather
-/// than by reading the code that implements them.
+/// The claim ADR 0023 deliberately did not make, and the one this milestone
+/// does. Asserted through the surfaces themselves rather than by reading the
+/// code that implements them -- including the three that deliberately did
+/// **not** change.
 #[test]
-fn no_product_surface_admits_a_sciex_bundle() {
-    let fixture = TestFile::new("sciex-unreachable");
+fn add_files_admits_a_sciex_bundle_as_one_row() {
+    let fixture = TestFile::new("sciex-add-files");
     let acquisition = fixture.sciex_bundle("acquisition");
     let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
 
-    // The picker. `.wiff` is not routed to the bundle admission; it falls
-    // through to mzML, which refuses it by name.
-    let added = service.add_files(std::slice::from_ref(&acquisition));
-    assert_eq!(service.dataset_count(), 0, "the picker admitted a bundle");
-    assert!(
-        format!("{added:?}").contains("unsupported_extension"),
-        "the picker refused it for another reason: {added:?}"
-    );
+    // The picker. A `.wiff` is routed to the bundle admission, and the
+    // acquisition it admits is one dataset.
+    let added = service.add_files_now(std::slice::from_ref(&acquisition));
+    assert_eq!(service.dataset_count(), 1, "one acquisition is one row");
+    let [WorkspaceAddOutcomeDto::Added { dataset }] = added.outcomes.as_slice() else {
+        panic!("the picker admits a SCIEX bundle: {added:?}");
+    };
+    assert_eq!(dataset.source_kind, DatasetSourceKindDto::SciexWiff);
+    assert_eq!(dataset.file_name, "acquisition.wiff");
+    let handle = dataset.handle.clone();
 
-    // The companion is refused on its own terms too, and by its own name.
+    // The companion did not become a second row, and selecting it on its own is
+    // refused by a reason that says what to select instead.
     let companion = fixture.companion_of("acquisition");
-    let _ = service.add_files(&[companion]);
-    assert_eq!(service.dataset_count(), 0);
-
-    // The visible queue. Even a row that exists -- which only the private
-    // admission can produce -- is refused as a whole request.
-    let dataset = service
-        .add_sciex_wiff_dataset(&acquisition)
-        .expect("the private admission is the only way in");
-    assert!(!is_convertible(DatasetSourceKind::SciexWiff));
-    let plan = service.conversion_queue_plan(std::slice::from_ref(&dataset.handle));
+    let refused = service.add_files_now(std::slice::from_ref(&companion));
+    assert_eq!(
+        service.dataset_count(),
+        1,
+        "the companion is half of a row, never a row"
+    );
+    let [WorkspaceAddOutcomeDto::Rejected { error, .. }] = refused.outcomes.as_slice() else {
+        panic!("a lone companion is rejected: {refused:?}");
+    };
+    assert_eq!(error.kind, "sciex_companion_selected_alone");
     assert!(
-        plan.is_err(),
-        "the visible queue accepted a bundle: {plan:?}"
+        error.summary.contains(".wiff"),
+        "the refusal says what to select instead: {}",
+        error.summary
     );
 
-    // And it is not previewable either: nothing in this product reads a vendor
-    // container directly.
+    // The row's stated size is the whole acquisition, not the object it is
+    // named by. A row reporting only its `.wiff` would understate it by the
+    // part that carries the spectra.
+    let primary = fs::metadata(&acquisition).expect("the primary").len();
+    let companion_bytes = fs::metadata(&companion).expect("the companion").len();
+    assert_eq!(dataset.byte_length, primary + companion_bytes);
+
+    // The visible queue takes it, and plans it as a backend-named set.
+    assert!(is_convertible(DatasetSourceKind::SciexWiff));
+    let plan = service
+        .conversion_queue_plan(std::slice::from_ref(&handle))
+        .expect("the visible queue takes a bundle");
+    assert_eq!(
+        plan.items[0].output,
+        super::dto::ConversionOutputPlanDto::BackendNamedSet {
+            max_members: MAX_CONVERSION_OUTPUTS_PER_SOURCE
+        }
+    );
+
+    // And it is still not previewable: nothing in this product reads a vendor
+    // container directly, and Rust refuses the read whatever asks for it.
     assert!(!DatasetSourceKind::SciexWiff.is_previewable());
-    assert!(service.open_preview(&dataset.handle).is_err());
+    let refused = service
+        .open_preview(&handle)
+        .expect_err("a SCIEX row is not previewable");
+    assert_eq!(refused.kind, "dataset_not_previewable");
+    assert_eq!(
+        refused.summary,
+        "Convert to mzML before previewing this acquisition."
+    );
+}
+
+/// Selecting both halves of one acquisition still yields one acquisition.
+///
+/// The failure this guards is the one that would look most like success: two
+/// rows for one bundle, each holding half of it.
+#[test]
+fn selecting_both_bundle_members_adds_one_acquisition() {
+    let fixture = TestFile::new("sciex-both-halves");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let companion = fixture.companion_of("acquisition");
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+
+    let added = service.add_files_now(&[acquisition, companion]);
+    assert_eq!(service.dataset_count(), 1);
+    let kinds: Vec<&str> = added
+        .outcomes
+        .iter()
+        .map(|outcome| match outcome {
+            WorkspaceAddOutcomeDto::Added { .. } => "added",
+            WorkspaceAddOutcomeDto::Duplicate { .. } => "duplicate",
+            WorkspaceAddOutcomeDto::Rejected { .. } => "rejected",
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec!["added", "rejected"],
+        "the primary is the acquisition; the companion is not a second one"
+    );
+}
+
+/// A picker batch keeps its order and its per-item outcomes across families.
+///
+/// One rejected acquisition does not roll back the ones beside it, and the
+/// outcomes come back in the order the user chose, not in an order this
+/// boundary found convenient.
+#[test]
+fn a_mixed_picker_batch_stays_ordered_and_per_item() {
+    let fixture = TestFile::new("sciex-mixed-batch");
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+
+    let mzml = fixture.readable_mzml("first.mzML");
+    let thermo = fixture.thermo_raw("second.raw");
+    // A `.wiff` with no companion beside it: admitted by name, refused by the
+    // family, and refused on its own without touching anything else.
+    let lonely = fixture.named_bytes("lonely.wiff", &wiff_container_bytes(&SCIEX_MARKERS));
+    let sciex = fixture.sciex_bundle("fourth");
+    let shimadzu = fixture.shimadzu_lcd("fifth.lcd");
+
+    let added = service.add_files_now(&[mzml, thermo, lonely, sciex, shimadzu]);
+
+    let kinds: Vec<&str> = added
+        .outcomes
+        .iter()
+        .map(|outcome| match outcome {
+            WorkspaceAddOutcomeDto::Added { .. } => "added",
+            WorkspaceAddOutcomeDto::Duplicate { .. } => "duplicate",
+            WorkspaceAddOutcomeDto::Rejected { .. } => "rejected",
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec!["added", "added", "rejected", "added", "added"],
+        "one refusal does not roll back the rows beside it"
+    );
+    let WorkspaceAddOutcomeDto::Rejected { error, .. } = &added.outcomes[2] else {
+        panic!("the third candidate is the refusal");
+    };
+    assert_eq!(error.kind, "sciex_companion_missing");
+
+    assert_eq!(
+        roster_names(&service),
+        vec!["first.mzML", "second.raw", "fourth.wiff", "fifth.lcd"],
+        "the roster keeps the order the picker gave"
+    );
+    assert_eq!(
+        service
+            .roster()
+            .datasets
+            .iter()
+            .map(|row| row.source_kind)
+            .collect::<Vec<_>>(),
+        vec![
+            DatasetSourceKindDto::Mzml,
+            DatasetSourceKindDto::ThermoRaw,
+            DatasetSourceKindDto::SciexWiff,
+            DatasetSourceKindDto::ShimadzuLcd,
+        ]
+    );
+}
+
+/// The extension routes; it never recognises.
+///
+/// Three decoys, each of which a suffix-only rule would admit and a launched
+/// backend would then refuse. A name that proposed a family and failed it is a
+/// refusal rather than a second guess at another family.
+#[test]
+fn a_wiff_name_over_the_wrong_bytes_is_refused_rather_than_rerouted() {
+    let fixture = TestFile::new("sciex-decoys");
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+
+    // Another vendor's compound file under a `.wiff` name, with a genuine
+    // companion beside it so only the container rule can refuse it.
+    let impostor = fixture.named_bytes("impostor.wiff", &shimadzu_lcd_bytes());
+    fixture.named_bytes(
+        "impostor.wiff.scan",
+        &scan_companion_bytes("a real companion"),
+    );
+    // Not a compound file at all.
+    let archive = fixture.named_bytes("archive.wiff", b"PK this is a zip archive");
+    fixture.named_bytes("archive.wiff.scan", &scan_companion_bytes("also real"));
+    // A genuine SCIEX container under a name that proposes nothing.
+    let renamed = fixture.named_bytes("renamed-wiff.dat", &wiff_container_bytes(&SCIEX_MARKERS));
+
+    let added = service.add_files_now(&[impostor, archive, renamed]);
+    assert_eq!(service.dataset_count(), 0, "no decoy was admitted");
+    let reasons: Vec<&str> = added
+        .outcomes
+        .iter()
+        .map(|outcome| match outcome {
+            WorkspaceAddOutcomeDto::Rejected { error, .. } => error.kind.as_str(),
+            other => panic!("a decoy was admitted: {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        reasons,
+        vec![
+            // Routed to SCIEX by name and refused by the container rule --
+            // never handed on to the LabSolutions admission its bytes match.
+            "unrecognized_acquisition",
+            "unrecognized_acquisition",
+            // Proposed nothing, so it went to mzML and was refused by name.
+            "unsupported_extension",
+        ]
+    );
+}
+
+/// Adding one acquisition twice returns the row the user already has.
+#[test]
+fn adding_a_bundle_twice_returns_the_existing_row() {
+    let fixture = TestFile::new("sciex-duplicate");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
+
+    let first = service.add_files_now(std::slice::from_ref(&acquisition));
+    let handle = outcome_handle(&first.outcomes[0]).to_owned();
+
+    let again = service.add_files_now(std::slice::from_ref(&acquisition));
+    let WorkspaceAddOutcomeDto::Duplicate { existing } = &again.outcomes[0] else {
+        panic!("the second addition is a duplicate: {again:?}");
+    };
+    assert_eq!(existing.handle, handle);
+    assert_eq!(service.dataset_count(), 1);
+
+    // A duplicate spends no identifier: the next real addition is the next one.
+    let next = service.add_files_now(&[fixture.readable_mzml("next.mzML")]);
+    assert_eq!(outcome_handle(&next.outcomes[0]), "file-1");
+}
+
+/// A bundle rewritten in place rebinds its row through the picker itself.
+///
+/// The visible half of the rule ADR 0022 measured privately. "Open it again to
+/// continue" has to actually continue when the user opens it again the only way
+/// they can, which is `Add files`.
+#[test]
+fn reopening_a_rewritten_bundle_through_the_picker_rebinds_its_row() {
+    let fixture = TestFile::new("sciex-picker-rebind");
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let companion = fixture.companion_of("acquisition");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+
+    let first = service.add_files_now(std::slice::from_ref(&acquisition));
+    let handle = outcome_handle(&first.outcomes[0]).to_owned();
+
+    // Rewritten in place: same object, new bytes.
+    fs::write(&companion, scan_companion_bytes("rewritten in place"))
+        .expect("rewrite the companion");
+
+    let again = service.add_files_now(std::slice::from_ref(&acquisition));
+    assert_eq!(
+        outcome_handle(&again.outcomes[0]),
+        handle,
+        "one acquisition is one row, however many times it is opened"
+    );
+    assert_eq!(
+        service.dataset_count(),
+        1,
+        "the stale-digest loop must not create a second row"
+    );
+    // Bound to what is on disk now, which is what makes the instruction usable.
+    let planned = service.conversion_queue_plan(std::slice::from_ref(&handle));
+    assert!(planned.is_ok(), "the rebound row plans: {planned:?}");
+}
+
+/// A queue may hold all three visible convertible families at once.
+///
+/// Item count stays a count of sources, and each row carries the cardinality of
+/// its own family rather than the queue's first.
+#[test]
+fn a_mixed_family_queue_plans_every_visible_family() {
+    let fixture = TestFile::new("mixed-family-plan");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handles = vec![
+        add_one_acquisition(&service, &fixture.thermo_raw("one.raw")),
+        add_one_acquisition(&service, &fixture.sciex_bundle("two")),
+        add_one_acquisition(&service, &fixture.shimadzu_lcd("three.lcd")),
+    ];
+
+    let plan = service
+        .conversion_queue_plan(&handles)
+        .expect("every visible convertible family is planned together");
+    assert_eq!(plan.items.len(), 3, "item count is source count");
+    assert_eq!(
+        plan.items
+            .iter()
+            .map(|item| item.source_kind)
+            .collect::<Vec<_>>(),
+        vec![
+            DatasetSourceKindDto::ThermoRaw,
+            DatasetSourceKindDto::SciexWiff,
+            DatasetSourceKindDto::ShimadzuLcd,
+        ]
+    );
+    assert_eq!(
+        plan.items[0].output,
+        super::dto::ConversionOutputPlanDto::KnownSingle {
+            file_name: String::from("one.mzML")
+        }
+    );
+    assert_eq!(
+        plan.items[1].output,
+        super::dto::ConversionOutputPlanDto::BackendNamedSet {
+            max_members: MAX_CONVERSION_OUTPUTS_PER_SOURCE
+        }
+    );
+    assert_eq!(
+        plan.items[2].output,
+        super::dto::ConversionOutputPlanDto::KnownSingle {
+            file_name: String::from("three.mzML")
+        }
+    );
+    // And the plan's own bound is the queue's, not the outputs'.
+    assert_eq!(plan.capacity, MAX_CONVERSION_QUEUE_ITEMS);
+}
+
+/// Adding a SCIEX row creates no preview state of any kind.
+///
+/// Structural rather than checked: admission is filesystem work, and the one
+/// thing that could make a row previewable is a provider call this path does
+/// not make.
+#[test]
+fn adding_a_bundle_previews_nothing_and_disturbs_no_open_preview() {
+    let fixture = TestFile::new("sciex-no-preview");
+    // Two openings of one mzML row: the one before the bundle is added and the
+    // one after, which is what proves the first survived.
+    let mut responses = open_responses();
+    responses.extend(open_responses());
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+
+    let mzml = add_one_acquisition(&service, &fixture.readable_mzml("open.mzML"));
+    let preview = service.open_preview(&mzml).expect("an mzML row previews");
+    let opened = preview.file.handle.clone();
+
+    let sciex = service.add_files_now(&[fixture.sciex_bundle("acquisition")]);
+    let handle = outcome_handle(&sciex.outcomes[0]).to_owned();
+
+    // The SCIEX row itself has nothing to show, and asking is refused.
+    assert!(service.open_preview(&handle).is_err());
+    // And the preview that was open is still the one that is open: adding a row
+    // of a family that cannot be previewed does not close what can be.
+    let still = service
+        .open_preview(&opened)
+        .expect("the mzML row still previews");
+    assert_eq!(still.file.handle, opened);
 }
 
 /// The command surface is exactly what it was.
@@ -16675,11 +17149,8 @@ fn converted_output_set_with(label: &str, runner: FakeOutputSetRunner) -> (TestF
 }
 
 /// The kinds of every adoption outcome, in order.
-fn set_adoption_kinds(
-    result: &super::service::WorkspaceOutputSetAdoptionResult,
-) -> Vec<&'static str> {
-    result
-        .outcomes
+fn set_adoption_kinds(outcomes: &[WorkspaceOutputAdoptionOutcomeDto]) -> Vec<&'static str> {
+    outcomes
         .iter()
         .map(|outcome| match outcome {
             WorkspaceOutputAdoptionOutcomeDto::Added { .. } => "added",
@@ -16689,9 +17160,8 @@ fn set_adoption_kinds(
         .collect()
 }
 
-fn set_refusal_reasons(result: &super::service::WorkspaceOutputSetAdoptionResult) -> Vec<String> {
-    result
-        .outcomes
+fn set_refusal_reasons(outcomes: &[WorkspaceOutputAdoptionOutcomeDto]) -> Vec<String> {
+    outcomes
         .iter()
         .filter_map(|outcome| match outcome {
             WorkspaceOutputAdoptionOutcomeDto::Refused { reason, .. } => Some(reason.clone()),
@@ -16701,9 +17171,8 @@ fn set_refusal_reasons(result: &super::service::WorkspaceOutputSetAdoptionResult
 }
 
 /// The names an adoption result reports, in order.
-fn set_output_names(result: &super::service::WorkspaceOutputSetAdoptionResult) -> Vec<String> {
-    result
-        .outcomes
+fn set_output_names(outcomes: &[WorkspaceOutputAdoptionOutcomeDto]) -> Vec<String> {
+    outcomes
         .iter()
         .map(|outcome| match outcome {
             WorkspaceOutputAdoptionOutcomeDto::Added {
@@ -16751,9 +17220,9 @@ fn a_complete_output_set_is_adopted_as_ordinary_mzml_rows() {
     assert_eq!(result.members, 10);
     assert_eq!(result.source, converted.source);
     assert_eq!(result.source_kind, DatasetSourceKind::SciexWiff);
-    assert_eq!(set_adoption_kinds(&result), vec!["added"; 10]);
+    assert_eq!(set_adoption_kinds(&result.outcomes), vec!["added"; 10]);
     // Publication order, preserved through the whole handoff.
-    assert_eq!(set_output_names(&result), names);
+    assert_eq!(set_output_names(&result.outcomes), names);
 
     // Eleven rows: the acquisition, still one logical bundle row, and its ten
     // outputs as independent mzML datasets.
@@ -16804,7 +17273,7 @@ fn adopting_a_set_twice_adds_nothing_the_second_time() {
         .service
         .adopt_output_set(&converted.ticket)
         .expect("the first adoption succeeds");
-    assert_eq!(set_adoption_kinds(&first), vec!["added"; 3]);
+    assert_eq!(set_adoption_kinds(&first.outcomes), vec!["added"; 3]);
     let after_first = converted.service.dataset_count();
 
     // The ticket is not consumed: it still holds the same objects, so the same
@@ -16813,7 +17282,7 @@ fn adopting_a_set_twice_adds_nothing_the_second_time() {
         .service
         .adopt_output_set(&converted.ticket)
         .expect("the second adoption reaches an outcome");
-    assert_eq!(set_adoption_kinds(&second), vec!["already"; 3]);
+    assert_eq!(set_adoption_kinds(&second.outcomes), vec!["already"; 3]);
     assert_eq!(
         converted.service.dataset_count(),
         after_first,
@@ -16859,10 +17328,13 @@ fn a_replaced_member_is_refused_and_the_others_are_adopted() {
         .expect("the adoption reaches an outcome");
 
     assert_eq!(
-        set_adoption_kinds(&result),
+        set_adoption_kinds(&result.outcomes),
         vec!["added", "refused", "added"]
     );
-    assert_eq!(set_refusal_reasons(&result), vec!["output_changed"]);
+    assert_eq!(
+        set_refusal_reasons(&result.outcomes),
+        vec!["output_changed"]
+    );
     assert_eq!(
         converted.service.dataset_count(),
         3,
@@ -16888,8 +17360,14 @@ fn a_rewritten_member_is_refused() {
         .service
         .adopt_output_set(&converted.ticket)
         .expect("the adoption reaches an outcome");
-    assert_eq!(set_adoption_kinds(&result), vec!["refused", "added"]);
-    assert_eq!(set_refusal_reasons(&result), vec!["output_changed"]);
+    assert_eq!(
+        set_adoption_kinds(&result.outcomes),
+        vec!["refused", "added"]
+    );
+    assert_eq!(
+        set_refusal_reasons(&result.outcomes),
+        vec!["output_changed"]
+    );
 }
 
 /// A member whose final name is gone is refused; the rest are adopted.
@@ -16902,8 +17380,14 @@ fn a_missing_member_is_refused() {
         .service
         .adopt_output_set(&converted.ticket)
         .expect("the adoption reaches an outcome");
-    assert_eq!(set_adoption_kinds(&result), vec!["added", "refused"]);
-    assert_eq!(set_refusal_reasons(&result), vec!["output_missing"]);
+    assert_eq!(
+        set_adoption_kinds(&result.outcomes),
+        vec!["added", "refused"]
+    );
+    assert_eq!(
+        set_refusal_reasons(&result.outcomes),
+        vec!["output_missing"]
+    );
 }
 
 /// A member the workspace already holds is reported as such, not duplicated.
@@ -16922,7 +17406,10 @@ fn a_member_already_in_the_workspace_is_reported_not_duplicated() {
         .service
         .adopt_output_set(&converted.ticket)
         .expect("the adoption reaches an outcome");
-    assert_eq!(set_adoption_kinds(&result), vec!["already", "added"]);
+    assert_eq!(
+        set_adoption_kinds(&result.outcomes),
+        vec!["already", "added"]
+    );
     assert_eq!(
         converted.service.dataset_count(),
         before + 1,
@@ -16972,12 +17459,15 @@ fn an_output_set_fills_the_last_slot_and_refuses_the_rest() {
 
     // Duplicate first, then the last slot, then the refusal -- in member order.
     assert_eq!(
-        set_adoption_kinds(&result),
+        set_adoption_kinds(&result.outcomes),
         vec!["already", "added", "refused"]
     );
-    assert_eq!(set_refusal_reasons(&result), vec!["workspace_full"]);
     assert_eq!(
-        set_output_names(&result),
+        set_refusal_reasons(&result.outcomes),
+        vec!["workspace_full"]
+    );
+    assert_eq!(
+        set_output_names(&result.outcomes),
         vec!["a-S1.mzML", "a-S2.mzML", "a-S3.mzML"],
         "refusals keep their place in the deterministic member order"
     );
@@ -17030,10 +17520,10 @@ fn an_output_set_fills_the_last_slot_and_refuses_the_rest() {
         .adopt_output_set(&converted.ticket)
         .expect("the ticket survives an attempt");
     assert_eq!(
-        set_adoption_kinds(&again),
+        set_adoption_kinds(&again.outcomes),
         vec!["already", "already", "refused"]
     );
-    assert_eq!(set_refusal_reasons(&again), vec!["workspace_full"]);
+    assert_eq!(set_refusal_reasons(&again.outcomes), vec!["workspace_full"]);
     assert_eq!(service.dataset_count(), MAX_WORKSPACE_DATASETS);
     assert_eq!(service.next_dataset_identifier(), identifiers_before + 1);
 }
@@ -17395,7 +17885,10 @@ fn a_real_sciex_output_set_is_adopted_into_the_workspace() {
         result.outcomes.len(),
         result.members
     );
-    assert_eq!(set_adoption_kinds(&result), vec!["added"; expected]);
+    assert_eq!(
+        set_adoption_kinds(&result.outcomes),
+        vec!["added"; expected]
+    );
     assert_eq!(
         service.dataset_count(),
         expected + 1,
@@ -17425,7 +17918,10 @@ fn a_real_sciex_output_set_is_adopted_into_the_workspace() {
     let again = service
         .adopt_output_set(&ticket)
         .expect("a repeated adoption reaches an outcome");
-    assert_eq!(set_adoption_kinds(&again), vec!["already"; expected]);
+    assert_eq!(
+        set_adoption_kinds(&again.outcomes),
+        vec!["already"; expected]
+    );
     assert_eq!(service.dataset_count(), expected + 1);
     println!("repeat adoption reported every member as already in the workspace");
 }
@@ -17546,7 +18042,7 @@ fn a_ticket_from_another_session_is_refused() {
         .service
         .adopt_output_set(&converted.ticket)
         .expect("the minting session adopts it");
-    assert_eq!(set_adoption_kinds(&result), vec!["added"]);
+    assert_eq!(set_adoption_kinds(&result.outcomes), vec!["added"]);
 }
 
 /// Decrements the live count when one fake process ends.
@@ -17598,7 +18094,7 @@ fn private_sciex_queue(
 }
 
 /// Runs one private queue of `handles` to its own end.
-fn run_private_queue(
+fn run_visible_queue(
     service: &PreviewService,
     handles: &[String],
     destination: &Path,
@@ -17606,12 +18102,56 @@ fn run_private_queue(
 ) -> WorkspaceConversionUpdateDto {
     let document = service.workspace_drop_document_epoch();
     let reservation = service
-        .begin_private_conversion_queue(handles, conflict, document)
-        .expect("the private queue is admitted");
+        .begin_conversion_queue(handles, conflict, document)
+        .expect("the queue is admitted");
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
         .expect("the reservation is claimed");
     service.run_claimed_conversion(operation, destination)
+}
+
+/// Which queue item each adoption outcome belongs to, in order.
+fn adoption_item_indexes(outcomes: &[WorkspaceOutputAdoptionOutcomeDto]) -> Vec<usize> {
+    outcomes
+        .iter()
+        .map(|outcome| match outcome {
+            WorkspaceOutputAdoptionOutcomeDto::Added { candidate, .. }
+            | WorkspaceOutputAdoptionOutcomeDto::AlreadyInWorkspace { candidate, .. }
+            | WorkspaceOutputAdoptionOutcomeDto::Refused { candidate, .. } => candidate.item_index,
+        })
+        .collect()
+}
+
+/// The `(item, member)` identity of each adoption outcome, in order.
+fn adoption_identities(outcomes: &[WorkspaceOutputAdoptionOutcomeDto]) -> Vec<(usize, usize)> {
+    outcomes
+        .iter()
+        .map(|outcome| match outcome {
+            WorkspaceOutputAdoptionOutcomeDto::Added { candidate, .. }
+            | WorkspaceOutputAdoptionOutcomeDto::AlreadyInWorkspace { candidate, .. }
+            | WorkspaceOutputAdoptionOutcomeDto::Refused { candidate, .. } => {
+                (candidate.item_index, candidate.member_index)
+            }
+        })
+        .collect()
+}
+
+/// How many outputs one terminal queue offers to adopt, as the wire states it.
+fn adoptable_output_count(update: &WorkspaceConversionUpdateDto) -> usize {
+    terminal_queue(update).adoptable_output_count
+}
+
+/// Adopts a terminal queue's outputs through the visible action.
+///
+/// The same command the interface calls, named here so a test reads as what a
+/// user does. There is no queue-held private adoption any more: a set authority
+/// is expanded into member candidates inside this one.
+fn adopt_visible(
+    service: &PreviewService,
+    operation: u64,
+) -> Result<super::dto::WorkspaceOutputAdoptionResultDto, super::dto::PreviewErrorDto> {
+    let document = service.workspace_drop_document_epoch();
+    service.adopt_conversion_outputs(&operation.to_string(), document)
 }
 
 /// The operation identifier of whatever the slot currently holds.
@@ -17621,26 +18161,45 @@ fn operation_of(update: &WorkspaceConversionUpdateDto) -> u64 {
         .expect("a terminal queue names its operation")
 }
 
-/// A private SCIEX item carries set topology and invents no output name.
+/// A visible SCIEX item carries set topology and invents no output name.
 ///
 /// The name is the thing this milestone must not produce. The acquisition's
 /// stem, the sample count and the sample names are all within reach here, and
 /// every one of them would be a filename MSCanvas made up for a document the
-/// backend has not written.
+/// backend has not written. The wire has no field one could be put in.
 #[test]
-fn a_private_sciex_item_has_no_output_file_name() {
+fn a_visible_sciex_item_carries_set_topology_and_no_output_name() {
     let (_fixture, service, handle, destination) = private_sciex_queue(
         "queue-topology",
         FakeOutputSetRunner::writing(&["a-S1.mzML"]),
     );
     let document = service.workspace_drop_document_epoch();
+
+    // The visible planner takes the row, and says what it will produce.
+    let plan = service
+        .conversion_queue_plan(std::slice::from_ref(&handle))
+        .expect("the visible planner takes a SCIEX row");
+    assert_eq!(plan.items.len(), 1);
+    assert_eq!(plan.items[0].source_kind, DatasetSourceKindDto::SciexWiff);
+    assert_eq!(
+        plan.items[0].output,
+        super::dto::ConversionOutputPlanDto::BackendNamedSet {
+            max_members: MAX_CONVERSION_OUTPUTS_PER_SOURCE
+        },
+        "the plan states the cardinality and names nothing"
+    );
+    assert_eq!(
+        MAX_CONVERSION_OUTPUTS_PER_SOURCE, 24,
+        "the stated bound is the lifecycle's own"
+    );
+
     let reservation = service
-        .begin_private_conversion_queue(
+        .begin_conversion_queue(
             std::slice::from_ref(&handle),
             ConversionConflictPolicyDto::Fail,
             document,
         )
-        .expect("the private queue is admitted");
+        .expect("the visible queue is admitted");
     let update = service.conversion_state();
     let WorkspaceConversionStateDto::AwaitingDestination { queue, .. } = &update.state else {
         panic!("the queue is waiting for a folder: {:?}", update.state);
@@ -17649,31 +18208,125 @@ fn a_private_sciex_item_has_no_output_file_name() {
     assert_eq!(queue.items.len(), 1, "one acquisition is one item");
     let item = &queue.items[0];
     assert_eq!(item.source_kind, DatasetSourceKindDto::SciexWiff);
-    assert_eq!(
-        item.output_file_name, "",
-        "a backend-named set must not be given a filename"
-    );
+    let super::dto::ConversionOutputPlanDto::BackendNamedSet { max_members } = &item.output else {
+        panic!("a SCIEX item is a backend-named set: {:?}", item.output);
+    };
+    assert_eq!(*max_members, MAX_CONVERSION_OUTPUTS_PER_SOURCE);
+
+    // Serialized, because a name absent from the type but present in the JSON
+    // would be the same defect one layer down. The acquisition's stem must not
+    // appear anywhere in the item's own output plan.
     let acquisition_stem = item
         .file_name
         .rsplit_once('.')
         .map_or(item.file_name.as_str(), |(stem, _)| stem);
+    let wire = serde_json::to_string(&item.output).expect("the output plan serializes");
     assert!(
-        !item.output_file_name.contains(acquisition_stem),
-        "no name may be derived from the acquisition"
+        !wire.contains(acquisition_stem),
+        "no name may be derived from the acquisition: {wire}"
     );
-
-    // And the visible planner refuses the row outright, so nothing reachable
-    // from a command can build this item at all.
-    let refused = service
-        .conversion_queue_plan(std::slice::from_ref(&handle))
-        .expect_err("the visible planner does not take a SCIEX row");
-    assert_eq!(refused.kind, "dataset_not_convertible");
-    let refused = service
-        .begin_conversion_queue(&[handle], ConversionConflictPolicyDto::Fail, document)
-        .expect_err("nor does the visible queue");
-    assert_eq!(refused.kind, "dataset_not_convertible");
+    assert!(
+        !wire.contains(".mzML"),
+        "a set carries no filename at all: {wire}"
+    );
+    assert!(
+        !wire.contains("fileName"),
+        "and no field one could be put in: {wire}"
+    );
     let _ = reservation;
     let _ = destination;
+}
+
+/// A settled set states its cardinality, its counts and its narrow claim.
+///
+/// The wire contract a surface renders from. What must be there is enough for
+/// an honest sentence; what must not is any way to reach the acquisition, and
+/// any claim wider than the one the audit supports.
+#[test]
+fn a_settled_set_carries_bounded_facts_and_the_narrow_completeness_claim() {
+    let names: Vec<String> = (1..=3).map(|index| format!("a-S{index}.mzML")).collect();
+    let borrowed: Vec<&str> = names.iter().map(String::as_str).collect();
+    let (fixture, service, handle, destination) = private_sciex_queue(
+        "queue-set-wire",
+        FakeOutputSetRunner::writing(&borrowed).also_converting(),
+    );
+    let update = run_visible_queue(
+        &service,
+        std::slice::from_ref(&handle),
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let queue = terminal_queue(&update);
+    let item = &queue.items[0];
+
+    assert_eq!(item.state, ConversionQueueItemStateDto::Finalized);
+    assert!(
+        item_report(item).is_none(),
+        "a set item carries no single-output report"
+    );
+    let report = item_set_report(item).expect("a set item carries its group report");
+
+    assert_eq!(report.group_outcome, "fully_finalized");
+    assert_eq!(report.detailed_outcome, None);
+    assert_eq!(report.max_members, MAX_CONVERSION_OUTPUTS_PER_SOURCE);
+    assert_eq!(report.member_count, 3);
+    assert_eq!(report.finalized_count, 3);
+    assert_eq!(report.validated_not_published_count, 0);
+    assert_eq!(report.not_published_count, 0);
+    assert_eq!(
+        report.bound_source_objects,
+        Some(2),
+        "primary and companion"
+    );
+    assert_eq!(report.member_file_names, names);
+    assert_eq!(report.member_states, vec!["finalized"; 3]);
+    assert_eq!(report.partial, None);
+    assert!(report.complete_set_adoptable);
+    assert_eq!(report.validation_mode, ValidationModeDto::OutputOnly);
+
+    // The completeness claim is the narrow one, and it is not a boolean: it
+    // names the audit that proved it and the count that audit concluded.
+    let super::dto::ConversionSampleCompletenessDto::Established {
+        method,
+        sample_count,
+    } = &report.completeness
+    else {
+        panic!(
+            "a full run establishes completeness: {:?}",
+            report.completeness
+        );
+    };
+    assert_eq!(method, "reader_error_audit_v1");
+    assert_eq!(*sample_count, 3);
+
+    // The queue's own offer is a count of files, not of items.
+    assert_eq!(adoptable_output_count(&update), 3);
+    assert_eq!(queue.finalized_count, 1, "and its item counts stay sources");
+    assert_eq!(queue.item_count, 1);
+
+    // Serialized, the whole update names no location and no companion.
+    let rendered = serde_json::to_string(&update).expect("the update serializes");
+    for absent in [
+        destination.to_string_lossy().as_ref(),
+        fixture.directory.to_string_lossy().as_ref(),
+        ".wiff.scan",
+        "mscanvas-staging",
+    ] {
+        assert!(
+            !rendered.contains(absent),
+            "the wire must not carry {absent:?}"
+        );
+    }
+
+    // And the ten member basenames the product deliberately shows are absent
+    // from the debug rendering, which is the one that reaches a log.
+    let debugged = format!("{report:?}");
+    for name in &names {
+        assert!(
+            !debugged.contains(name.as_str()),
+            "a member basename reached a debug string: {debugged}"
+        );
+    }
 }
 
 /// Ten outputs, one item, one process, one ticket, ten ordinary rows.
@@ -17687,7 +18340,7 @@ fn one_sciex_acquisition_is_one_queue_item_with_ten_outputs() {
     let launches = runner.launches();
     let (_fixture, service, handle, destination) = private_sciex_queue("queue-ten", runner);
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&handle),
         &destination,
@@ -17726,17 +18379,29 @@ fn one_sciex_acquisition_is_one_queue_item_with_ten_outputs() {
         Some(10)
     );
 
-    // One ticket over ten members, adopted through the private terminal path.
-    let result = service
-        .adopt_queue_output_set(operation, 0)
-        .expect("the terminal item holds a set to adopt");
-    assert_eq!(set_adoption_kinds(&result), vec!["added"; 10]);
+    // What the queue *offered* before anything was adopted, which is the number
+    // the interface renders. Read here and compared with the outcomes below,
+    // because these are two readings of one authority and an interface that
+    // offered ten and received one would have promised the user work it could
+    // not do. There is deliberately only one predicate behind both.
+    let offered = adoptable_output_count(&update);
+    assert_eq!(offered, 10, "the offer counts output files, not items");
+
+    // One ticket over ten members, adopted through the visible action.
+    let result =
+        adopt_visible(&service, operation).expect("the terminal item holds a set to adopt");
+    assert_eq!(set_adoption_kinds(&result.outcomes), vec!["added"; 10]);
+    assert_eq!(
+        result.outcomes.len(),
+        offered,
+        "the count the interface showed and the outcomes it received must agree"
+    );
     // The lifecycle's own deterministic order, which is the staging
     // directory's and not the order the samples sit in the acquisition.
     // Deterministic is not scientific, and nothing here claims otherwise.
     let mut published = names.clone();
     published.sort();
-    assert_eq!(set_output_names(&result), published);
+    assert_eq!(set_output_names(&result.outcomes), published);
     assert_eq!(
         result
             .roster
@@ -17770,10 +18435,8 @@ fn one_sciex_acquisition_is_one_queue_item_with_ten_outputs() {
     );
 
     // Repeating it reports every member as already present.
-    let again = service
-        .adopt_queue_output_set(operation, 0)
-        .expect("the ticket survives an attempt");
-    assert_eq!(set_adoption_kinds(&again), vec!["already"; 10]);
+    let again = adopt_visible(&service, operation).expect("the ticket survives an attempt");
+    assert_eq!(set_adoption_kinds(&again.outcomes), vec!["already"; 10]);
     assert_eq!(service.dataset_count(), 11);
 
     // And the queue result is exactly what it was.
@@ -17801,7 +18464,7 @@ fn a_mixed_private_queue_runs_serially_in_order() {
         .add_shimadzu_dataset(&fixture.shimadzu_lcd("three.lcd"))
         .expect("a Shimadzu row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[
             thermo.handle.clone(),
@@ -17864,7 +18527,7 @@ fn the_queue_output_name_authority_is_bounded() {
     }
     let document = service.workspace_drop_document_epoch();
     service
-        .begin_private_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue(&handles, ConversionConflictPolicyDto::Fail, document)
         .expect("a full private queue is admitted");
 
     let (claimed, bound) = service
@@ -17908,7 +18571,7 @@ fn a_failing_sciex_item_leaves_the_next_one_alone(
         .add_thermo_dataset(&fixture.thermo_raw("after.raw"))
         .expect("a Thermo row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[sciex.handle.clone(), thermo.handle.clone()],
         &destination,
@@ -17934,8 +18597,13 @@ fn a_failing_sciex_item_leaves_the_next_one_alone(
         "{label}: nothing was published"
     );
     assert_eq!(report.refusal_id(), Some(expected_detail), "{label}");
-    assert!(
-        service.adopt_queue_output_set(operation, 0).is_err(),
+    // The item behind it is adoptable; this one contributes nothing. An
+    // adoption that refused outright would be the wrong assertion now, because
+    // the queue has a finalized item and the action is the queue's.
+    let adopted = adopt_visible(&service, operation).expect("the second item finalized");
+    assert_eq!(
+        adoption_item_indexes(&adopted.outcomes),
+        vec![1],
         "{label}: a failed item has no set to adopt"
     );
     assert_eq!(
@@ -17977,7 +18645,7 @@ fn a_truncated_audit_stream_refuses_the_item() {
         .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
         .expect("a SCIEX row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &destination,
@@ -17999,7 +18667,7 @@ fn a_truncated_audit_stream_refuses_the_item() {
         entry_names_in(&destination).is_empty(),
         "an unauditable run publishes nothing"
     );
-    assert!(service.adopt_queue_output_set(operation, 0).is_err());
+    assert!(adopt_visible(&service, operation).is_err());
 }
 
 /// A member that is not a usable document refuses the whole set.
@@ -18014,7 +18682,7 @@ fn an_invalid_member_publishes_nothing() {
         .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
         .expect("a SCIEX row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &destination,
@@ -18054,7 +18722,7 @@ fn a_set_whose_names_are_all_taken_is_skipped() {
         .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
         .expect("a SCIEX row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &destination,
@@ -18075,7 +18743,7 @@ fn a_set_whose_names_are_all_taken_is_skipped() {
     assert_eq!(report.published_count(), 0);
     // The files that were already there are not this run's outputs.
     assert!(
-        service.adopt_queue_output_set(operation, 0).is_err(),
+        adopt_visible(&service, operation).is_err(),
         "a skipped set offers nothing to adopt"
     );
     for name in ["a-S1.mzML", "a-S2.mzML"] {
@@ -18100,7 +18768,7 @@ fn a_partly_occupied_set_is_refused_whole_under_skip() {
         .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
         .expect("a SCIEX row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &destination,
@@ -18148,7 +18816,7 @@ fn a_discovered_name_owned_by_another_item_is_a_queue_collision() {
         .add_thermo_dataset(&fixture.thermo_raw("later.raw"))
         .expect("a Thermo row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[sciex.handle.clone(), thermo.handle.clone()],
         &destination,
@@ -18207,7 +18875,7 @@ fn a_second_set_discovering_the_same_name_publishes_nothing() {
         .add_sciex_wiff_dataset(&fixture.sciex_bundle("second"))
         .expect("the second SCIEX row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[first.handle.clone(), second.handle.clone()],
         &destination,
@@ -18241,9 +18909,14 @@ fn a_second_set_discovering_the_same_name_publishes_nothing() {
         .terminal_set_report(operation, 0)
         .expect("the first item kept its group report");
     assert_eq!(first_report.group_outcome(), "fully_finalized");
-    // And only the first has anything to adopt.
-    assert!(service.adopt_queue_output_set(operation, 0).is_ok());
-    assert!(service.adopt_queue_output_set(operation, 1).is_err());
+    // And only the first has anything to adopt: the colliding set published
+    // none of its own members, so it offers none.
+    let adopted = adopt_visible(&service, operation).expect("the first item finalized");
+    assert_eq!(
+        adoption_item_indexes(&adopted.outcomes),
+        vec![0],
+        "the colliding set contributes no adoption candidate"
+    );
 }
 
 /// A known single output whose name an earlier set took refuses before running.
@@ -18263,7 +18936,7 @@ fn a_single_output_item_refuses_a_name_an_earlier_set_took() {
 
     // The set runs first this time, so by the Thermo item's turn the name is
     // published rather than merely planned.
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[sciex.handle.clone(), thermo.handle.clone()],
         &destination,
@@ -18314,7 +18987,7 @@ fn stop_mid_sciex_item(
 
     let document = service.workspace_drop_document_epoch();
     let reservation = service
-        .begin_private_conversion_queue(
+        .begin_conversion_queue(
             &[sciex.handle.clone(), thermo.handle.clone()],
             ConversionConflictPolicyDto::Fail,
             document,
@@ -18379,7 +19052,7 @@ fn a_confirmed_stop_cancels_the_running_set_item() {
         "a confirmed stop does not distrust the backend"
     );
     assert!(
-        service.adopt_queue_output_set(operation, 0).is_err(),
+        adopt_visible(&service, operation).is_err(),
         "a cancelled item has no set to adopt"
     );
     assert!(
@@ -18418,11 +19091,11 @@ fn an_unconfirmed_stop_of_a_set_quarantines_the_backend() {
         .as_ref()
         .expect("the item says what the stop could not establish");
     assert!(!cancellation.tree_termination_confirmed);
-    assert!(service.adopt_queue_output_set(operation, 0).is_err());
+    assert!(adopt_visible(&service, operation).is_err());
     // Nothing further may run, at all.
     let document = service.workspace_drop_document_epoch();
     let refused = service
-        .begin_private_conversion_queue(&[], ConversionConflictPolicyDto::Fail, document)
+        .begin_conversion_queue(&[], ConversionConflictPolicyDto::Fail, document)
         .expect_err("a quarantined session admits no queue");
     assert_eq!(refused.kind, "backend_quarantined");
     assert_eq!(launches.load(Ordering::SeqCst), 1, "no probe, no process");
@@ -18446,7 +19119,7 @@ fn a_stop_after_a_finalized_set_keeps_its_ticket() {
 
     let document = service.workspace_drop_document_epoch();
     let reservation = service
-        .begin_private_conversion_queue(
+        .begin_conversion_queue(
             &[sciex.handle.clone(), thermo.handle.clone()],
             ConversionConflictPolicyDto::Fail,
             document,
@@ -18482,10 +19155,9 @@ fn a_stop_after_a_finalized_set_keeps_its_ticket() {
         ]
     );
     // The finalized set keeps every bit of its authority.
-    let result = service
-        .adopt_queue_output_set(operation, 0)
+    let result = adopt_visible(&service, operation)
         .expect("a stop later in the queue takes nothing from an earlier success");
-    assert_eq!(set_adoption_kinds(&result), vec!["added", "added"]);
+    assert_eq!(set_adoption_kinds(&result.outcomes), vec!["added", "added"]);
 }
 
 /// A genuinely partially finalized SCIEX item, in the queue.
@@ -18517,7 +19189,7 @@ fn a_partially_finalized_set_item_fails_and_is_not_retryable() {
         .add_thermo_dataset(&fixture.thermo_raw("after.raw"))
         .expect("a Thermo row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[sciex.handle.clone(), thermo.handle.clone()],
         &destination,
@@ -18564,8 +19236,20 @@ fn a_partially_finalized_set_item_fails_and_is_not_retryable() {
     assert!(!bytes.is_empty());
     assert!(!destination.join("a-S3.mzML").exists());
 
-    // No complete-set authority, and a retry is not offered for it.
-    assert!(service.adopt_queue_output_set(operation, 0).is_err());
+    // No complete-set authority for the prefix, and a retry is not offered for
+    // it. The Thermo item behind it is complete and stays adoptable: the
+    // partial acquisition is excluded from the offer, not the queue.
+    assert_eq!(
+        adoptable_output_count(&update),
+        1,
+        "the finalized prefix contributes no complete-set candidate"
+    );
+    let adopted = adopt_visible(&service, operation).expect("the Thermo item is complete");
+    assert_eq!(
+        adoption_identities(&adopted.outcomes),
+        vec![(1, 0)],
+        "only the complete item offers an output"
+    );
     assert_eq!(queue.retryable_failed_count, 0);
     assert!(service.retry_conversion_queue(0).is_err());
 
@@ -18594,7 +19278,7 @@ fn a_retryable_set_failure_reruns_only_that_item() {
     // is the one condition this repository has measured as transient.
     let held = hold_for_writing(&acquisition);
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[sciex.handle.clone(), thermo.handle.clone()],
         &destination,
@@ -18650,7 +19334,7 @@ fn a_retried_set_attempt_reuses_no_identity_or_ticket() {
         .expect("a SCIEX row");
 
     let held = hold_for_writing(&acquisition);
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &destination,
@@ -18664,7 +19348,7 @@ fn a_retried_set_attempt_reuses_no_identity_or_ticket() {
     // The refusal never reached a conversion, so there is no run to name and
     // nothing to adopt.
     assert_eq!(service.terminal_set_run(operation, 0), None);
-    assert!(service.adopt_queue_output_set(operation, 0).is_err());
+    assert!(adopt_visible(&service, operation).is_err());
 
     drop(held);
     let retried = service
@@ -18676,21 +19360,26 @@ fn a_retried_set_attempt_reuses_no_identity_or_ticket() {
         vec![ConversionQueueItemStateDto::Finalized]
     );
     assert_eq!(queue.items[0].attempts, 2);
+    // The second attempt names itself. The first never reached a conversion,
+    // so there was no identity for this one to inherit -- which is the half of
+    // the rule this arrangement can measure directly.
     let run = service
         .terminal_set_run(operation, 0)
         .expect("the second attempt names itself");
 
-    let result = service
-        .adopt_queue_output_set(operation, 0)
-        .expect("the finalized attempt holds a set");
-    assert_eq!(result.run, run, "the authority is that exact attempt's");
+    let result = adopt_visible(&service, operation).expect("the finalized attempt holds a set");
+    assert_eq!(
+        result.retry_round, 1,
+        "the result belongs to the settling that produced it"
+    );
+    assert_eq!(set_adoption_kinds(&result.outcomes), vec!["added"]);
 
     // And the other direction: an attempt that never reached a conversion
     // leaves nothing of the attempt before it. Held again, so the third pass of
     // this row refuses before the backend -- and must then name no run and hold
     // no report, rather than still wearing the successful attempt's.
     let held_again = hold_for_writing(&acquisition);
-    let third = run_private_queue(
+    let third = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &fixture.destination("third"),
@@ -18707,12 +19396,12 @@ fn a_retried_set_attempt_reuses_no_identity_or_ticket() {
         "a refusal is described by itself, not by the conversion before it"
     );
     assert!(service.terminal_set_report(third_operation, 0).is_none());
-    assert!(service.adopt_queue_output_set(third_operation, 0).is_err());
+    assert!(adopt_visible(&service, third_operation).is_err());
     drop(held_again);
 
     // A fresh queue over the same row names a different run again -- the
     // identity is per conversion, never per row or per queue.
-    let again = run_private_queue(
+    let again = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &fixture.destination("second"),
@@ -18724,7 +19413,7 @@ fn a_retried_set_attempt_reuses_no_identity_or_ticket() {
         .expect("the later conversion names itself");
     assert_ne!(second_run, run, "two conversions are never the same run");
     // And the replaced queue's authority is gone with it.
-    assert!(service.adopt_queue_output_set(operation, 0).is_err());
+    assert!(adopt_visible(&service, operation).is_err());
 }
 
 /// A stop landing mid-retry leaves a set failure as the failure it was.
@@ -18760,7 +19449,7 @@ fn a_stop_mid_retry_restores_a_set_failure_rather_than_stranding_it() {
     // First pass: the Thermo row is held by somebody else, which is the one
     // condition measured as transient; the set fails on its undeclared member.
     let held = hold_for_writing(&held_source);
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[thermo.handle.clone(), sciex.handle.clone()],
         &destination,
@@ -18781,7 +19470,7 @@ fn a_stop_mid_retry_restores_a_set_failure_rather_than_stranding_it() {
         "the set failure lives in the group report and nowhere else"
     );
     assert!(
-        queue.items[1].report.is_none() && queue.items[1].error.is_none(),
+        item_report(&queue.items[1]).is_none() && queue.items[1].error.is_none(),
         "and in neither of the two places the restoration paths used to look"
     );
     assert_eq!(update.diagnostics.eligible_item_count, 2);
@@ -18855,7 +19544,7 @@ fn a_refused_retry_restores_a_set_failure_rather_than_losing_it() {
         .add_thermo_dataset(&fixture.thermo_raw("after.raw"))
         .expect("a Thermo row");
 
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[sciex.handle.clone(), thermo.handle.clone()],
         &destination,
@@ -18990,7 +19679,7 @@ fn every_private_sciex_failure_is_diagnosable_and_path_free() {
         let sciex = service
             .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
             .expect("a SCIEX row");
-        let update = run_private_queue(
+        let update = run_visible_queue(
             &service,
             std::slice::from_ref(&sciex.handle),
             &destination,
@@ -19135,7 +19824,7 @@ fn a_set_refused_before_the_run_keeps_its_shape_in_the_export() {
     // Held by somebody else, so revalidation refuses before anything is opened
     // for the run.
     let held = hold_for_writing(&acquisition);
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &destination,
@@ -19199,7 +19888,7 @@ fn a_retry_between_the_halves_of_a_set_adoption_commits_nothing() {
     // The set finalizes; the Thermo row behind it is held by somebody else, so
     // the queue completes with one retryable failure.
     let held = hold_for_writing(&held_source);
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         &[sciex.handle.clone(), thermo.handle.clone()],
         &destination,
@@ -19226,16 +19915,15 @@ fn a_retry_between_the_halves_of_a_set_adoption_commits_nothing() {
     assert_eq!(terminal_queue(&retried).retry_round, 1);
 
     // Adopting against the new settling is fine, because that is the settling
-    // the ticket is read from now.
-    let result = service
-        .adopt_queue_output_set(operation, 0)
-        .expect("the current settling holds the set");
-    assert_eq!(set_adoption_kinds(&result), vec!["added"]);
+    // the ticket is read from now. The rerun item finalized too, so the offer
+    // is both of them -- and the result names the round it belongs to.
+    let result = adopt_visible(&service, operation).expect("the current settling holds the set");
+    assert_eq!(set_adoption_kinds(&result.outcomes), vec!["added", "added"]);
+    assert_eq!(adoption_identities(&result.outcomes), vec![(0, 0), (1, 0)]);
+    assert_eq!(result.retry_round, 1);
 
-    // And an operation that is not this one answers with nothing at all,
-    // whatever it names.
-    assert!(service.adopt_queue_output_set(operation + 1, 0).is_err());
-    assert!(service.adopt_queue_output_set(operation, 1).is_err());
+    // And an operation that is not this one answers with nothing at all.
+    assert!(adopt_visible(&service, operation + 1).is_err());
 }
 
 /// A stopped set item is still recognisably a set in the export.
@@ -19300,7 +19988,7 @@ fn a_partial_publication_is_diagnosed_by_counts() {
     let sciex = service
         .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
         .expect("a SCIEX row");
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&sciex.handle),
         &destination,
@@ -19357,6 +20045,72 @@ fn a_single_output_export_gains_no_member_and_keeps_its_name() {
     );
 }
 
+/// No member basename reaches the diagnostics export, at any depth.
+///
+/// The boundary ADR 0026 drew and this milestone deliberately keeps: the
+/// product *result* carries the backend's chosen basenames, because a user
+/// looking at "ten outputs finalized" is owed which ten and the roster will
+/// spell every one of them out the moment the set is adopted. The **export** is
+/// a different document with a different reader — it is reviewed before being
+/// sent somewhere — and those names are the backend's reading of sample
+/// identifiers inside the acquisition, which is the user's data rather than
+/// this application's vocabulary.
+///
+/// Asserted over the whole serialized document rather than over the members it
+/// happens to know about, so a field added later cannot carry one in.
+#[cfg(windows)]
+#[test]
+fn no_member_basename_reaches_the_diagnostics_export() {
+    // Distinctive enough that a match cannot be coincidence, and shaped like
+    // the sample identifiers a real acquisition carries.
+    let names = ["Patient-042-S1.mzML", "Patient-042-S2.mzML"];
+    let fixture = TestFile::new("diag-member-privacy");
+    let destination = fixture.destination("out");
+    let service = Arc::new(output_set_service(
+        // Refused before publication, so the item is worth diagnosing at all:
+        // a run that finalized everything has nothing to export.
+        FakeOutputSetRunner::writing(&names).also_injecting("uninvited.mzML"),
+    ));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+    let update = run_visible_queue(
+        &service,
+        std::slice::from_ref(&sciex.handle),
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    assert_eq!(
+        item_states(terminal_queue(&update)),
+        vec![ConversionQueueItemStateDto::Failed],
+        "the run must have something to diagnose"
+    );
+
+    let export = export_private_diagnostics(&service, &fixture, "diag", &update);
+    let document = serde_json::to_string(&export).expect("the export serializes");
+    // The set shape is there, so this is not passing by describing nothing.
+    assert!(export["items"][0]["outputSet"].is_object());
+
+    for forbidden in [
+        names[0],
+        names[1],
+        "Patient-042",
+        "uninvited.mzML",
+        // And the companion, which is never named anywhere.
+        ".wiff.scan",
+    ] {
+        assert!(
+            !document.contains(forbidden),
+            "{forbidden} reached the diagnostics export: {document}"
+        );
+    }
+
+    // The acquisition's own display name is deliberately there: it is the row
+    // the user chose, and a document that would not say which item it is about
+    // is not a diagnosis.
+    assert_eq!(export["items"][0]["sourceFileName"], "acquisition.wiff");
+}
+
 /// Nothing that carries a set as a *set* renders a member name or a location.
 ///
 /// The boundary this pins is where a member stops being a member. Before
@@ -19371,7 +20125,7 @@ fn every_set_bearing_debug_is_opaque() {
     let names = ["Patient-042-S1.mzML", "Patient-042-S2.mzML"];
     let (fixture, service, handle, destination) =
         private_sciex_queue("queue-debug", FakeOutputSetRunner::writing(&names));
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&handle),
         &destination,
@@ -19425,9 +20179,7 @@ fn every_set_bearing_debug_is_opaque() {
     // renders no location and no handle.
     let adopted = format!(
         "{:?}",
-        service
-            .adopt_queue_output_set(operation, 0)
-            .expect("the set adopts")
+        adopt_visible(&service, operation).expect("the set adopts")
     );
     assert!(
         adopted.contains("Patient-042-S1.mzML"),
@@ -19452,7 +20204,7 @@ fn replacing_a_private_queue_keeps_every_document_it_wrote() {
         "queue-replaced",
         FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML"]),
     );
-    let update = run_private_queue(
+    let update = run_visible_queue(
         &service,
         std::slice::from_ref(&handle),
         &destination,
@@ -19469,7 +20221,7 @@ fn replacing_a_private_queue_keeps_every_document_it_wrote() {
         .expect("a second SCIEX row");
     let document = service.workspace_drop_document_epoch();
     service
-        .begin_private_conversion_queue(
+        .begin_conversion_queue(
             std::slice::from_ref(&another.handle),
             ConversionConflictPolicyDto::Fail,
             document,
@@ -19477,7 +20229,7 @@ fn replacing_a_private_queue_keeps_every_document_it_wrote() {
         .expect("a replacement queue is admitted");
 
     assert!(
-        service.adopt_queue_output_set(operation, 0).is_err(),
+        adopt_visible(&service, operation).is_err(),
         "a replaced queue's authority is gone"
     );
     let mut still_there = entry_names_in(&destination);
@@ -19511,17 +20263,20 @@ fn no_product_surface_reaches_the_private_sciex_queue() {
     }
 }
 
-/// A real ten-sample SCIEX acquisition, through the whole private queue.
+/// A real ten-sample SCIEX acquisition, through the whole *visible* workflow.
 ///
-/// The evidence run for ADR 0026, and deliberately not the direct-conversion
-/// shortcut ADR 0025 measured: the point of this milestone is that the queue
-/// itself carries the acquisition, so the queue is what runs it. Kept out of
-/// ordinary CI because it needs a local ProteoWizard installation and a lawful
-/// acquisition, neither of which a test runner has.
+/// The evidence run for ADR 0027, and deliberately not the private helper ADR
+/// 0026 measured: the point of this milestone is that a user can do this, so
+/// every step is the one a user reaches. `Add files…` admits the acquisition,
+/// the visible planner describes it, the visible queue runs it and the visible
+/// adoption takes its outputs. Nothing private is called anywhere in it.
+///
+/// Kept out of ordinary CI because it needs a local ProteoWizard installation
+/// and a lawful acquisition, neither of which a test runner has.
 #[cfg(windows)]
 #[test]
 #[ignore = "needs a local ProteoWizard installation and a real vendor acquisition"]
-fn a_real_sciex_acquisition_runs_through_the_private_queue() {
+fn a_real_sciex_acquisition_runs_through_the_visible_workflow() {
     let Ok(fixture) = std::env::var("MSCANVAS_SCIEX_WIFF_FIXTURE") else {
         panic!("set MSCANVAS_SCIEX_WIFF_FIXTURE to the .wiff to convert");
     };
@@ -19539,14 +20294,41 @@ fn a_real_sciex_acquisition_runs_through_the_private_queue() {
     let service = Arc::new(PreviewService::new(Box::new(
         super::backend::ProteoWizardProvider::new(),
     )));
-    let dataset = service
-        .add_sciex_wiff_dataset(&acquisition)
-        .expect("the acquisition is admitted as a SCIEX bundle");
-    println!("source bundle members: {}", 2);
 
-    let update = run_private_queue(
+    // 1. `Add files…`, the only route a user has. The picker hands Rust the
+    //    `.wiff` it chose and nothing else; the companion is found, admitted
+    //    and held by the boundary itself.
+    let added = service.add_files_now(std::slice::from_ref(&acquisition));
+    let [WorkspaceAddOutcomeDto::Added { dataset }] = added.outcomes.as_slice() else {
+        panic!("the picker admits the acquisition: {added:?}");
+    };
+    println!("picker candidate: 1 .wiff");
+    println!("workspace source rows: {}", service.dataset_count());
+    println!("source row family: {:?}", dataset.source_kind);
+    println!(
+        "source row bytes (whole acquisition): {}",
+        dataset.byte_length
+    );
+    assert_eq!(service.dataset_count(), 1, "one acquisition is one row");
+    assert_eq!(dataset.source_kind, DatasetSourceKindDto::SciexWiff);
+    let handle = dataset.handle.clone();
+
+    // 2. The visible plan. It states the cardinality and names nothing.
+    let plan = service
+        .conversion_queue_plan(std::slice::from_ref(&handle))
+        .expect("the visible planner takes the acquisition");
+    println!("plan topology: {:?}", plan.items[0].output);
+    assert_eq!(
+        plan.items[0].output,
+        super::dto::ConversionOutputPlanDto::BackendNamedSet {
+            max_members: MAX_CONVERSION_OUTPUTS_PER_SOURCE
+        }
+    );
+
+    // 3. The visible queue: reserve, admit the destination, run.
+    let update = run_visible_queue(
         &service,
-        std::slice::from_ref(&dataset.handle),
+        std::slice::from_ref(&handle),
         &destination,
         ConversionConflictPolicyDto::Fail,
     );
@@ -19564,10 +20346,32 @@ fn a_real_sciex_acquisition_runs_through_the_private_queue() {
     assert_eq!(queue.item_count, 1, "one acquisition is one queue item");
     assert_eq!(queue.finalized_count, 1);
     assert_eq!(queue.items[0].attempts, 1);
-    assert_eq!(
-        queue.items[0].output_file_name, "",
+    assert!(
+        matches!(
+            queue.items[0].output,
+            super::dto::ConversionOutputPlanDto::BackendNamedSet { .. }
+        ),
         "no filename was invented for a backend-named set"
     );
+
+    // The visible result, in the facts the interface renders from.
+    let visible = item_set_report(&queue.items[0]).expect("the item carries its group report");
+    println!("visible group outcome: {}", visible.group_outcome);
+    println!("visible finalized members: {}", visible.finalized_count);
+    println!(
+        "visible bound source objects: {:?}",
+        visible.bound_source_objects
+    );
+    println!("visible completeness: {:?}", visible.completeness);
+    println!(
+        "visible complete-set adoptable: {}",
+        visible.complete_set_adoptable
+    );
+    println!("visible eligible outputs: {}", queue.adoptable_output_count);
+    assert_eq!(visible.finalized_count, expected);
+    assert_eq!(visible.bound_source_objects, Some(2));
+    assert!(visible.complete_set_adoptable);
+    assert_eq!(queue.adoptable_output_count, expected);
 
     let report = service
         .terminal_set_report(operation, 0)
@@ -19589,13 +20393,15 @@ fn a_real_sciex_acquisition_runs_through_the_private_queue() {
     assert_eq!(completeness.sample_count(), expected);
     assert_eq!(report.bound_source_objects(), 2);
 
-    let result = service
-        .adopt_queue_output_set(operation, 0)
+    let result = adopt_visible(&service, operation)
         .expect("the terminal item holds a complete set to adopt");
-    println!("ticket members: {}", result.members);
-    println!("adoption outcomes: {:?}", set_adoption_kinds(&result));
-    assert_eq!(result.members, expected);
-    assert_eq!(set_adoption_kinds(&result), vec!["added"; expected]);
+    println!("adoption outcomes: {}", result.outcomes.len());
+    println!("adoption kinds: {:?}", set_adoption_kinds(&result.outcomes));
+    assert_eq!(result.outcomes.len(), expected);
+    assert_eq!(
+        set_adoption_kinds(&result.outcomes),
+        vec!["added"; expected]
+    );
 
     let roster = service.roster();
     let mzml = roster
@@ -19623,11 +20429,12 @@ fn a_real_sciex_acquisition_runs_through_the_private_queue() {
     }
     println!("preview state on any row: none");
 
-    let again = service
-        .adopt_queue_output_set(operation, 0)
-        .expect("the ticket survives an attempt");
-    println!("repeat adoption: {:?}", set_adoption_kinds(&again));
-    assert_eq!(set_adoption_kinds(&again), vec!["already"; expected]);
+    let again = adopt_visible(&service, operation).expect("the ticket survives an attempt");
+    println!("repeat adoption: {:?}", set_adoption_kinds(&again.outcomes));
+    assert_eq!(
+        set_adoption_kinds(&again.outcomes),
+        vec!["already"; expected]
+    );
     assert_eq!(service.dataset_count(), expected + 1);
 
     // Nothing rendered here names a location.
@@ -19640,4 +20447,38 @@ fn a_real_sciex_acquisition_runs_through_the_private_queue() {
         assert!(!rendered.contains("\\\\?\\"), "a path escaped: {rendered}");
     }
     println!("path-free debug: confirmed");
+
+    // And nothing *serialized* names one either, which is the rendering that
+    // actually crosses to the webview. The member basenames are deliberately
+    // there -- the product displays them -- and the acquisition's directory,
+    // the destination and the companion are deliberately not.
+    let wire = serde_json::to_string(&update).expect("the queue serializes");
+    let adoption_wire = serde_json::to_string(&result).expect("the adoption serializes");
+    for rendered in [&wire, &adoption_wire] {
+        assert!(!rendered.contains(":\\\\"), "a path reached the wire");
+        assert!(
+            !rendered.contains(".wiff.scan"),
+            "the companion reached the wire"
+        );
+        for absent in [
+            acquisition
+                .parent()
+                .expect("the fixture has a parent")
+                .to_string_lossy()
+                .as_ref(),
+            destination.to_string_lossy().as_ref(),
+        ] {
+            assert!(!rendered.contains(absent), "a location reached the wire");
+        }
+    }
+    println!("path-free serialized wire: confirmed");
+
+    // What an export of this queue would describe: nothing. A run that
+    // finalized everything has no failure to diagnose, and the count is Rust's
+    // own rather than an interface's guess.
+    println!(
+        "diagnostic items: {}",
+        update.diagnostics.eligible_item_count
+    );
+    assert_eq!(update.diagnostics.eligible_item_count, 0);
 }

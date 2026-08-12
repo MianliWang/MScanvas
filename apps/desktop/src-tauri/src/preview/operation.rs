@@ -32,7 +32,6 @@ use mscanvas_proteowizard::{
 };
 
 use super::adoption::FinalizedOutputAdoptionTicket;
-#[cfg(test)]
 use super::adoption::FinalizedOutputSetAdoptionTicket;
 use super::destination::DestinationIdentity;
 use super::diagnostics::{
@@ -40,7 +39,8 @@ use super::diagnostics::{
     DiagnosticsQueueFacts,
 };
 use super::dto::{
-    ConversionCancellationDto, ConversionConflictPolicyDto, ConversionDiagnosticsStateDto,
+    AdoptionCandidateIdentityDto, ConversionAttemptResultDto, ConversionCancellationDto,
+    ConversionConflictPolicyDto, ConversionDiagnosticsStateDto, ConversionOutputPlanDto,
     ConversionQueueDto, ConversionQueueItemDto, ConversionQueueItemStateDto,
     ConversionQueueTerminalReasonDto, MAX_CONVERSION_QUEUE_ITEMS, PreviewErrorDto, SelectedFileDto,
     WorkspaceConversionReservationDto, WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
@@ -164,26 +164,28 @@ pub(super) enum ItemOutputTopology {
     KnownSingle { basename: String },
     /// One to `max_members` documents the backend names itself.
     ///
-    /// Compiled out of the shipped binary, and that is the privacy claim rather
-    /// than a consequence of one: no visible surface can admit a SCIEX row to a
-    /// workspace, so no visible surface can build a queue item of this shape,
-    /// and a build without this variant cannot represent one at all.
-    #[cfg(test)]
+    /// Reachable now, and only through explicit family admission. A row gets
+    /// this shape because it was admitted as a family whose conversion boundary
+    /// declares that its backend names its own outputs -- never because of an
+    /// extension, and never because a caller asked for it.
     BackendNamedSet { max_members: usize },
 }
 
 impl ItemOutputTopology {
-    /// The name a visible queue projects for this item.
+    /// What a visible queue projects for this item.
     ///
-    /// Empty for a backend-named set, and deliberately not a filename: a set
-    /// has no single output and inventing one would put a fabricated name onto
-    /// the wire contract. Unreachable in the shipped binary, where the variant
-    /// does not exist.
-    fn projected_name(&self) -> String {
+    /// A discriminated projection rather than a string, so there is no value to
+    /// choose for a set that has no name. The empty string this used to
+    /// project was not a filename, and a wire contract that carried one would
+    /// have made a blank output column the interface's problem to avoid.
+    pub(super) fn to_dto(&self) -> ConversionOutputPlanDto {
         match self {
-            Self::KnownSingle { basename } => basename.clone(),
-            #[cfg(test)]
-            Self::BackendNamedSet { .. } => String::new(),
+            Self::KnownSingle { basename } => ConversionOutputPlanDto::KnownSingle {
+                file_name: basename.clone(),
+            },
+            Self::BackendNamedSet { max_members } => ConversionOutputPlanDto::BackendNamedSet {
+                max_members: *max_members,
+            },
         }
     }
 
@@ -194,7 +196,6 @@ impl ItemOutputTopology {
     pub(super) fn planned_name(&self) -> Option<&str> {
         match self {
             Self::KnownSingle { basename } => Some(basename),
-            #[cfg(test)]
             Self::BackendNamedSet { .. } => None,
         }
     }
@@ -203,7 +204,6 @@ impl ItemOutputTopology {
     ///
     /// `None` for a known single output, which says all it needs to by naming
     /// its one document.
-    #[cfg(test)]
     pub(super) fn diagnostic_shape(&self) -> Option<super::diagnostics::OutputSetDiagnosticFacts> {
         match self {
             Self::KnownSingle { .. } => None,
@@ -216,11 +216,9 @@ impl ItemOutputTopology {
     /// How many names this item could ever own.
     ///
     /// The per-item half of the queue name authority's bound.
-    #[cfg(test)]
     pub(super) const fn max_names(&self) -> usize {
         match self {
             Self::KnownSingle { .. } => 1,
-            #[cfg(test)]
             Self::BackendNamedSet { max_members } => *max_members,
         }
     }
@@ -232,7 +230,6 @@ impl fmt::Debug for ItemOutputTopology {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::KnownSingle { .. } => formatter.write_str("<known-single-output>"),
-            #[cfg(test)]
             Self::BackendNamedSet { max_members } => formatter
                 .debug_struct("BackendNamedOutputSet")
                 .field("max_members", max_members)
@@ -249,7 +246,6 @@ impl fmt::Debug for ItemOutputTopology {
 /// `MAX_CONVERSION_OUTPUTS_PER_SOURCE` names -- 16 × 24 = 384 with today's
 /// numbers, and [`ConversionQueue::max_output_names`] states it from the
 /// constants rather than from a comment.
-#[cfg(test)]
 pub(super) struct ClaimedOutputName {
     /// Folded once, at derivation, because every use of it is a comparison.
     pub(super) folded: String,
@@ -263,7 +259,6 @@ pub(super) struct ClaimedOutputName {
     pub(super) discovered_position: usize,
 }
 
-#[cfg(test)]
 impl fmt::Debug for ClaimedOutputName {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -283,7 +278,6 @@ impl fmt::Debug for ClaimedOutputName {
 pub(super) enum QueueAdoptionAuthority {
     Single(Arc<FinalizedOutputAdoptionTicket>),
     /// Compiled out of the shipped binary, like the topology that produces it.
-    #[cfg(test)]
     Set(Arc<FinalizedOutputSetAdoptionTicket>),
 }
 
@@ -344,40 +338,25 @@ pub(super) const fn item_state_of(class: super::conversion::OutcomeClass) -> Ite
 
 /// What this row's outputs will look like, or why it cannot be queued.
 ///
-/// Two definitions of one function rather than a runtime branch, because the
-/// shipped build has no second answer to give: `ItemOutputTopology` has one
-/// variant there, and a row that would need the other cannot exist in a
-/// workspace it can reach.
-#[cfg(not(test))]
+/// One definition, asked of every visible planner. The two answers are the two
+/// cardinalities the queue can hold, and which one a row gets is decided by the
+/// family it was **admitted** as — never by its extension and never by a flag a
+/// caller passes in. A family reaches the set arm only by having been through
+/// its own evidenced admission and by declaring, at the conversion boundary,
+/// that its backend names its own outputs.
 pub(super) fn item_output_topology(
     kind: DatasetSourceKind,
     file_name: &str,
-    _admit_output_sets: bool,
 ) -> Result<ItemOutputTopology, PreviewErrorDto> {
+    // Convertibility first, and for both arms. Producing an output set is a
+    // statement about cardinality rather than a licence to convert: a family the
+    // visible queue does not accept must be refused whichever shape its outputs
+    // would have taken, or productionizing the set variant would quietly admit
+    // the next multi-output family the crate learns to name.
     if !super::conversion::is_convertible(kind) {
         return Err(super::dto::dataset_not_convertible());
     }
-    Ok(ItemOutputTopology::KnownSingle {
-        basename: super::conversion::planned_output_name(file_name)
-            .ok_or_else(super::dto::dataset_not_convertible)?,
-    })
-}
-
-/// What this row's outputs will look like, or why it cannot be queued.
-///
-/// `admit_output_sets` is the private queue's, and nothing else sets it. A
-/// family whose backend names its own outputs is refused by every visible
-/// planner, which is why the shipped build never needs to ask.
-#[cfg(test)]
-pub(super) fn item_output_topology(
-    kind: DatasetSourceKind,
-    file_name: &str,
-    admit_output_sets: bool,
-) -> Result<ItemOutputTopology, PreviewErrorDto> {
     if super::conversion::conversion_source_kind(kind).produces_output_set() {
-        if !admit_output_sets {
-            return Err(super::dto::dataset_not_convertible());
-        }
         // No name is derived, and that is the point. The stem of the
         // acquisition, the sample count and the sample names are all things
         // this could reach for, and every one of them would be a filename
@@ -385,9 +364,6 @@ pub(super) fn item_output_topology(
         return Ok(ItemOutputTopology::BackendNamedSet {
             max_members: mscanvas_proteowizard::MAX_CONVERSION_OUTPUTS_PER_SOURCE,
         });
-    }
-    if !super::conversion::is_convertible(kind) {
-        return Err(super::dto::dataset_not_convertible());
     }
     Ok(ItemOutputTopology::KnownSingle {
         basename: super::conversion::planned_output_name(file_name)
@@ -421,7 +397,6 @@ pub(super) struct QueueItem {
     /// Its own field rather than a variant of `report`, because the two
     /// describe different shapes and nothing reads both. Boxed because it is
     /// much the larger of the two and the queue is cloned on every read.
-    #[cfg(test)]
     set_report: Option<Box<super::conversion::WorkspaceMultiOutputConversionReport>>,
     /// What the latest set attempt settled into.
     ///
@@ -430,14 +405,12 @@ pub(super) struct QueueItem {
     /// report is its own field, so the two restoration paths below would
     /// otherwise see an item with no `error` and no single-output `report` and
     /// call it never-run.
-    #[cfg(test)]
     set_state: Option<ItemState>,
     /// Which conversion the latest set attempt was.
     ///
     /// Allocated when that attempt finished, so a retry cannot be described by
     /// the attempt before it and cannot inherit its authority. Never reaches
     /// disk and never reaches the wire.
-    #[cfg(test)]
     set_run: Option<u64>,
     /// An attempt that never reached a conversion at all.
     error: Option<PreviewErrorDto>,
@@ -458,7 +431,6 @@ pub(super) struct QueueItem {
     /// ran, so recording it again would count it twice — and a set owns nothing
     /// until it has published, because until then nobody knows what it will be
     /// called.
-    #[cfg(test)]
     published: Vec<String>,
     /// What an export may say about this item's latest attempt.
     ///
@@ -521,17 +493,13 @@ impl QueueItem {
             state: ItemState::Pending,
             attempts: 0,
             report: None,
-            #[cfg(test)]
             set_report: None,
-            #[cfg(test)]
             set_state: None,
-            #[cfg(test)]
             set_run: None,
             error: None,
             retryable: false,
             cancellation: None,
             adoption: None,
-            #[cfg(test)]
             published: Vec::new(),
             diagnostic: None,
         }
@@ -558,7 +526,6 @@ impl QueueItem {
     }
 
     /// The names this item has published, once it has published any.
-    #[cfg(test)]
     pub(super) fn published(&self) -> &[String] {
         &self.published
     }
@@ -595,7 +562,6 @@ impl QueueItem {
         if let Some(report) = self.report.as_ref() {
             return Some(item_state_of(report.outcome_class()));
         }
-        #[cfg(test)]
         if let Some(state) = self.set_state {
             return Some(state);
         }
@@ -618,19 +584,49 @@ impl QueueItem {
         }
     }
 
+    /// How many output files this item would contribute to an adoption.
+    ///
+    /// The same predicate the expansion applies, in the same order: finalized,
+    /// then whatever the authority holds. Written once here and read by both,
+    /// so the count the interface shows and the outcomes it later receives
+    /// cannot disagree about how many there were.
+    fn adoptable_output_count(&self) -> usize {
+        if self.state != ItemState::Finalized {
+            return 0;
+        }
+        match self.adoption.as_ref() {
+            Some(QueueAdoptionAuthority::Single(_)) => 1,
+            Some(QueueAdoptionAuthority::Set(ticket)) => ticket.len(),
+            None => 0,
+        }
+    }
+
     fn to_dto(&self) -> ConversionQueueItemDto {
         ConversionQueueItemDto {
             dataset_handle: self.dataset_dto.handle.clone(),
             file_name: self.dataset_dto.file_name.clone(),
             source_kind: self.dataset_dto.source_kind,
-            output_file_name: self.output.projected_name(),
+            output: self.output.to_dto(),
             state: self.state.to_dto(),
             attempts: self.attempts,
             retryable: self.retryable,
-            report: self
-                .report
-                .as_ref()
-                .map(super::conversion::WorkspaceConversionReport::to_dto),
+            // One arm or neither, never both. The two reports live in separate
+            // fields because they are separate shapes, and this is where that
+            // becomes a wire contract a reader cannot misread: an item with a
+            // group report is an `outputSet` result, and there is no
+            // combination of nullable fields for it to be confused with.
+            result: match (self.report.as_ref(), self.set_report.as_deref()) {
+                (Some(report), _) => Some(ConversionAttemptResultDto::Single {
+                    report: report.to_dto(),
+                }),
+                (None, Some(set)) => Some(ConversionAttemptResultDto::OutputSet {
+                    report: set.to_dto(matches!(
+                        self.adoption.as_ref(),
+                        Some(QueueAdoptionAuthority::Set(_))
+                    )),
+                }),
+                (None, None) => None,
+            },
             error: self.error.clone(),
             cancellation: self.cancellation.map(CancellationFacts::to_dto),
         }
@@ -753,7 +749,6 @@ impl ConversionQueue {
     /// Derived on demand rather than accumulated, so there is no second list to
     /// keep in step with the items, and bounded by
     /// [`Self::max_output_names`].
-    #[cfg(test)]
     pub(super) fn claimed_output_names(&self) -> Vec<ClaimedOutputName> {
         let mut claimed = Vec::new();
         for (index, item) in self.items.iter().enumerate() {
@@ -787,7 +782,6 @@ impl ConversionQueue {
     /// is 384 today; a known single output contributes one name and a
     /// backend-named set contributes its published members, never more than its
     /// own bound.
-    #[cfg(test)]
     pub(super) fn max_output_names(&self) -> usize {
         self.items
             .iter()
@@ -801,7 +795,6 @@ impl ConversionQueue {
     /// Its own claims are skipped: an item does not collide with itself, and a
     /// set republishing the names it published on an earlier attempt is a
     /// retry, not a conflict.
-    #[cfg(test)]
     pub(super) fn name_claimed_by_another(
         &self,
         item: usize,
@@ -930,7 +923,12 @@ impl ConversionQueue {
         }
     }
 
-    fn to_dto(&self) -> ConversionQueueDto {
+    /// This queue, as the webview reads it.
+    ///
+    /// `terminal` decides only the adoptable count, which is zero until the
+    /// queue is over for the reason the diagnostics count is: an offer to add
+    /// outputs from a queue still running would be an offer Rust refuses.
+    fn to_dto(&self, terminal: bool) -> ConversionQueueDto {
         let failed = self.count(ItemState::Failed);
         let retryable = self
             .items
@@ -951,6 +949,18 @@ impl ConversionQueue {
             cancelled_count: self.count(ItemState::Cancelled),
             not_run_count: self.count(ItemState::NotRun),
             cancellation_failed_count: self.count(ItemState::CancellationFailed),
+            // Output files, not finalized items. Summed from the authorities
+            // the items actually hold, which is the same source the adoption
+            // expands, so this count and the outcomes that follow it cannot
+            // disagree about how many there were.
+            adoptable_output_count: if terminal {
+                self.items
+                    .iter()
+                    .map(QueueItem::adoptable_output_count)
+                    .sum()
+            } else {
+                0
+            },
             error: self.error.clone(),
             installation_generation: self.installation_generation,
         }
@@ -1538,7 +1548,6 @@ impl ConversionSlot {
                 // its planned name from the moment the queue existed, whether
                 // or not it ran, so the claim is already derived from the
                 // topology and recording it again would count it twice.
-                #[cfg(test)]
                 {
                     item.set_report = None;
                     item.set_state = None;
@@ -1556,7 +1565,6 @@ impl ConversionSlot {
                     )))
                 });
             }
-            #[cfg(test)]
             ItemOutcome::ReportedSet(settlement) => {
                 let settlement = *settlement;
                 item.state = settlement.state();
@@ -1582,12 +1590,10 @@ impl ConversionSlot {
                 item.retryable = retryable;
                 // A refusal published nothing, so it releases whatever the
                 // previous attempt of this item had claimed.
-                #[cfg(test)]
                 item.published.clear();
                 // And it describes itself, not the attempt before it. The
                 // single-output report is cleared just below for the same
                 // reason: "the latest attempt" has to mean the latest one.
-                #[cfg(test)]
                 {
                     item.set_report = None;
                     item.set_state = None;
@@ -1604,8 +1610,7 @@ impl ConversionSlot {
             ItemOutcome::Stopped {
                 state,
                 facts,
-                #[cfg(test)]
-                    set: stopped_set,
+                set: stopped_set,
                 diagnostics,
             } => {
                 item.state = state;
@@ -1618,15 +1623,12 @@ impl ConversionSlot {
                     state,
                     facts,
                     diagnostics,
-                    #[cfg(test)]
                     stopped_set,
                 )
                 .map(Arc::new);
                 item.report = None;
                 item.error = None;
-                #[cfg(test)]
                 item.published.clear();
-                #[cfg(test)]
                 {
                     item.set_report = None;
                     item.set_state = None;
@@ -1863,34 +1865,6 @@ impl ConversionSlot {
         }
     }
 
-    /// The output-set authority one terminal item of this queue holds.
-    ///
-    /// Named by index rather than searched for, because the caller is asking
-    /// about one row of a result on screen. The ticket is the one that exact
-    /// item's last attempt minted; a retry replaces it, and there is no path
-    /// from here to a ticket assembled out of members.
-    #[cfg(test)]
-    pub(super) fn terminal_output_set_ticket(
-        &self,
-        operation: u64,
-        index: usize,
-    ) -> Option<Arc<FinalizedOutputSetAdoptionTicket>> {
-        if self.operation != operation {
-            return None;
-        }
-        let SlotState::Terminal { queue, .. } = &self.state else {
-            return None;
-        };
-        let item = queue.items.get(index)?;
-        if item.state != ItemState::Finalized {
-            return None;
-        }
-        match item.adoption.as_ref()? {
-            QueueAdoptionAuthority::Set(ticket) => Some(Arc::clone(ticket)),
-            QueueAdoptionAuthority::Single(_) => None,
-        }
-    }
-
     /// The group report one terminal item of this queue kept.
     #[cfg(test)]
     pub(super) fn terminal_set_report(
@@ -1944,10 +1918,28 @@ impl ConversionSlot {
         ))
     }
 
+    /// Every output this terminal queue offers to adopt, in the order it offers
+    /// them.
+    ///
+    /// Ordered by queue item, then by publication order within one item's set,
+    /// so a mixed queue's outcomes read down the screen the way the queue does.
+    ///
+    /// A set authority is **expanded here and only here**, from a ticket that
+    /// has already been authenticated as a set. That is the difference between
+    /// expanding an authority and reconstructing one: nothing is rebuilt from a
+    /// filename or a member report, the member tickets are the ones the set was
+    /// minted with, and the `Arc`s are cloned so the retained objects stay in
+    /// the set ticket. A second attempt asks the same objects the same
+    /// questions.
     pub(super) fn terminal_adoption_tickets(
         &self,
         operation: u64,
-    ) -> Option<Vec<(usize, Arc<FinalizedOutputAdoptionTicket>)>> {
+    ) -> Option<
+        Vec<(
+            AdoptionCandidateIdentityDto,
+            Arc<FinalizedOutputAdoptionTicket>,
+        )>,
+    > {
         if self.operation != operation {
             return None;
         }
@@ -1959,28 +1951,51 @@ impl ConversionSlot {
                 .items
                 .iter()
                 .enumerate()
-                .filter_map(|(index, item)| {
+                .filter(|(_, item)| {
                     // The state and the ticket agree by construction -- only a
                     // finalization builds one -- and the state is asked anyway,
                     // so a later member of `ItemState` cannot become adoptable
                     // by inheriting a ticket it was never given.
-                    // A set's authority is deliberately not projected here.
-                    // The visible action adopts one output per finalized item
-                    // and its DTO says so; a set would have to be flattened
-                    // into members to fit, which is the shape this boundary
-                    // refuses. It is reached through
-                    // `terminal_output_set_ticket` instead.
-                    (item.state == ItemState::Finalized)
-                        .then(|| match item.adoption.as_ref() {
+                    item.state == ItemState::Finalized
+                })
+                .flat_map(|(item_index, item)| {
+                    let members: Vec<Arc<FinalizedOutputAdoptionTicket>> =
+                        match item.adoption.as_ref() {
                             Some(QueueAdoptionAuthority::Single(ticket)) => {
-                                Some(Arc::clone(ticket))
+                                vec![Arc::clone(ticket)]
                             }
-                            #[cfg(test)]
-                            Some(QueueAdoptionAuthority::Set(_)) => None,
-                            None => None,
+                            // No session check here, deliberately. The crossing
+                            // it would guard is closed where it can actually be
+                            // established: a ticket is minted only from a
+                            // conversion of the minting session, so a queue
+                            // item cannot come to hold a foreign one. Checking
+                            // again here would make this predicate differ from
+                            // `adoptable_output_count`'s -- and two answers to
+                            // "how many outputs does this item offer" that can
+                            // disagree is precisely what the count exists not
+                            // to be.
+                            Some(QueueAdoptionAuthority::Set(ticket)) => ticket
+                                .candidates()
+                                .into_iter()
+                                .map(|(_, member)| member)
+                                .collect(),
+                            None => Vec::new(),
+                        };
+                    members
+                        .into_iter()
+                        .enumerate()
+                        .map(move |(member, ticket)| {
+                            (
+                                AdoptionCandidateIdentityDto {
+                                    item_index,
+                                    // Zero for a known single output, and a real
+                                    // position rather than a filler: such an item
+                                    // has exactly one member and it is the first.
+                                    member_index: member,
+                                },
+                                ticket,
+                            )
                         })
-                        .flatten()
-                        .map(|ticket| (index, ticket))
                 })
                 .collect(),
         )
@@ -2052,21 +2067,21 @@ impl ConversionSlot {
             SlotState::AwaitingDestination { queue, .. } => {
                 WorkspaceConversionStateDto::AwaitingDestination {
                     operation_id,
-                    queue: queue.to_dto(),
+                    queue: queue.to_dto(false),
                 }
             }
             SlotState::Running { queue } => WorkspaceConversionStateDto::Running {
                 operation_id,
-                queue: queue.to_dto(),
+                queue: queue.to_dto(false),
             },
             SlotState::Stopping { queue } => WorkspaceConversionStateDto::Stopping {
                 operation_id,
-                queue: queue.to_dto(),
+                queue: queue.to_dto(false),
             },
             SlotState::Terminal { reason, queue } => WorkspaceConversionStateDto::Terminal {
                 operation_id,
                 reason: reason.to_dto(),
-                queue: queue.to_dto(),
+                queue: queue.to_dto(true),
             },
         };
         let (eligible_item_count, available) = self.terminal_diagnostic_summary();
@@ -2117,7 +2132,6 @@ pub(super) enum QueueItemAttempt {
     /// in its own vocabulary rather than through the single-output boundary's
     /// two result types. What it means is identical, and `classify_attempt`
     /// turns both into the same two item states.
-    #[cfg(test)]
     SetStopped(Box<SetStopFacts>),
 }
 
@@ -2126,7 +2140,6 @@ pub(super) enum QueueItemAttempt {
 /// Everything [`CancellationFacts`] holds except the interval, which only the
 /// worker knows: it is measured from the moment the stop was accepted, and the
 /// run has no view of that.
-#[cfg(test)]
 #[derive(Debug)]
 pub(super) struct SetStopFacts {
     /// How many objects the acquisition was bound to for the run.
@@ -2179,7 +2192,6 @@ pub(super) enum ItemOutcome {
     /// Everything in it was derived together from one owned conversion, so
     /// nothing here can pair one attempt's report with another attempt's
     /// objects -- see [`super::adoption::SciexAttemptSettlement`].
-    #[cfg(test)]
     ReportedSet(Box<super::adoption::SciexAttemptSettlement>),
     /// A stop reached the attempt while it was running.
     ///
@@ -2196,7 +2208,6 @@ pub(super) enum ItemOutcome {
         /// two cancellation refusals this is translated from publish nothing.
         /// What it carries is the shape: this was a set, of at most this many
         /// members, of an acquisition bound to this many objects.
-        #[cfg(test)]
         set: Option<super::diagnostics::OutputSetDiagnosticFacts>,
         /// Present only where the stop could not be confirmed, which is the
         /// outcome that most needs an account of what the backend was saying.

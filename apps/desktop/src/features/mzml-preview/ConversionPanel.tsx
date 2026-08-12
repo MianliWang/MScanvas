@@ -2,13 +2,14 @@ import type { ReactElement } from "react";
 
 import type {
   ConversionConflictPolicy,
+  ConversionOutputSetReport,
   ConversionQueue,
   ConversionQueueItem,
   ConversionQueuePlanItem,
   ConversionReport,
   DatasetSourceKind,
 } from "./contracts";
-import { SOURCE_KIND_LABEL } from "./contracts";
+import { conversionJudgedAnyOutput, SOURCE_KIND_LABEL } from "./contracts";
 import { formatByteLength, formatCount, formatDuration } from "./format";
 import type { ConversionOperation } from "./useConversionOperation";
 
@@ -62,6 +63,50 @@ function describeQueueFamilies(items: readonly ConversionQueuePlanItem[]): strin
     .join(" · ");
   return `${String(count)} supported vendor acquisitions will be converted to mzML, one after another, in the order below. ${perFamily}.`;
 }
+
+/**
+ * What a backend-named set produces, said before it runs.
+ *
+ * A range and not a number, because the number is not known: the backend reads
+ * the acquisition and decides how many documents it writes. The bound is the
+ * lifecycle's own, carried on the plan so this states what Rust enforces rather
+ * than a constant of its own.
+ */
+function outputSetSummary(maxMembers: number): string {
+  return `1–${String(maxMembers)} mzML outputs`;
+}
+
+/**
+ * Why no filename is shown for a set.
+ *
+ * Said rather than left blank. A user who sees a name for every other row and
+ * nothing for this one is owed the reason, and the reason is not that MSCanvas
+ * does not know yet -- it is that the name is the backend's to choose.
+ */
+const OUTPUT_SET_NAMING = "Filenames determined during conversion";
+
+/**
+ * What a full set publication establishes, in the only words the evidence
+ * supports.
+ *
+ * Every clause is load-bearing. "Identified by the SCIEX reader" is narrower
+ * than "in the acquisition", and the difference is exactly what this milestone
+ * did not measure: the audit proves no sample the reader found was lost, not
+ * that the reader found them all.
+ */
+const SAMPLE_COMPLETENESS_CLAIM =
+  "Every sample identified by the SCIEX reader produced its output.";
+
+/**
+ * What a partially finalized acquisition means for the user.
+ *
+ * Deliberately not "nothing was converted", which is what a count-of-items
+ * reading would produce and which is false: the finalized prefix is real, it is
+ * in the folder they chose, and nothing here removes it. What it is not is the
+ * acquisition's output set, which is why MSCanvas will not offer it as one.
+ */
+const PARTIAL_FINALIZATION_EXPLANATION =
+  "Some mzML files were finalized, but the complete output set was not produced, so MSCanvas cannot add this acquisition's outputs as a complete set. The finalized files remain in the destination folder and can be added individually later with Add files….";
 
 /** What each staging residue means for the folder the user chose. */
 const RESIDUE_EXPLANATION = "MSCanvas could not remove its own temporary folder afterwards.";
@@ -251,11 +296,17 @@ function AdoptOutputs({ conversion }: { readonly conversion: ConversionOperation
   const refused = adoption?.outcomes.filter((outcome) => outcome.kind === "refused") ?? [];
 
   if (eligibleOutputCount === 0) {
-    // Nothing finalized, so there is nothing to offer and nothing to explain.
-    // The queue's own result already says what happened to each item.
+    // Nothing to offer -- but "nothing was converted" is only one of the two
+    // reasons for that, and the other one is false in exactly the case that
+    // needs the truth most. A partially finalized acquisition *did* convert
+    // files, they are in the user's folder, and what MSCanvas will not do is
+    // present the prefix as the acquisition's complete output set. Each item's
+    // own row explains itself; this says why the action is absent.
     return (
       <p className="quiet-text">
-        Nothing was converted, so there is nothing to add to the workspace.
+        {conversion.hasIncompleteOutputSet
+          ? "No complete output set is available to add to this workspace."
+          : "Nothing was converted, so there is nothing to add to the workspace."}
       </p>
     );
   }
@@ -284,7 +335,7 @@ function AdoptOutputs({ conversion }: { readonly conversion: ConversionOperation
           {refused.slice(0, 3).map((outcome) => (
             <p
               className="quiet-text"
-              key={`${String(outcome.itemIndex)}-${outcome.outputFileName}`}
+              key={`${String(outcome.itemIndex)}-${String(outcome.memberIndex)}`}
             >
               {`${outcome.outputFileName} was not added: ${
                 ADOPTION_REFUSAL_LABEL[outcome.kind === "refused" ? outcome.reason : ""] ??
@@ -496,9 +547,22 @@ function PlanState({
             <span className="conversion-queue-kind">{SOURCE_KIND_LABEL[item.sourceKind]}</span>
             <span aria-hidden="true">→</span>
             <span className="visually-hidden">converts to </span>
-            <span className="conversion-queue-output" title={item.outputFileName}>
-              {item.outputFileName}
-            </span>
+            {item.output.kind === "knownSingle" ? (
+              <span className="conversion-queue-output" title={item.output.fileName}>
+                {item.output.fileName}
+              </span>
+            ) : (
+              <span
+                className="conversion-queue-output conversion-queue-output-set"
+                data-output-topology="backendNamedSet"
+              >
+                {outputSetSummary(item.output.maxMembers)}
+                <span className="visually-hidden">. </span>
+                <span className="conversion-queue-output-naming">
+                  {OUTPUT_SET_NAMING}
+                </span>
+              </span>
+            )}
           </li>
         ))}
       </ol>
@@ -663,62 +727,117 @@ function QueueState({
       )}
 
       <ol className="conversion-queue-list">
-        {queue.items.map((item, index) => (
-          <li key={item.datasetHandle} data-item-state={item.state}>
-            <span className="conversion-queue-order">{index + 1}</span>
-            <span className="conversion-queue-name" title={item.fileName}>
-              {item.fileName}
-            </span>
-            <span aria-hidden="true">→</span>
-            <span className="visually-hidden">converts to </span>
-            <span className="conversion-queue-output" title={item.outputFileName}>
-              {item.outputFileName}
-            </span>
-            <span className="visually-hidden">, </span>
-            <span className="conversion-queue-status">{ITEM_STATE_LABEL[item.state]}</span>
-            {item.attempts > 1 ? (
-              <>
-                <span className="visually-hidden">, </span>
-                <span className="conversion-queue-attempts">
-                  {`attempt ${String(item.attempts)}`}
+        {queue.items.map((item, index) => {
+          // Read once per item. Which of the two an item has is the whole of
+          // what tells these branches apart, and asking the same question at
+          // every use would invite one of them to be answered differently.
+          const single = singleReportOf(item);
+          const set = setReportOf(item);
+          return (
+            <li key={item.datasetHandle} data-item-state={item.state}>
+              <span className="conversion-queue-order">{index + 1}</span>
+              <span className="conversion-queue-name" title={item.fileName}>
+                {item.fileName}
+              </span>
+              <span aria-hidden="true">→</span>
+              <span className="visually-hidden">converts to </span>
+              {item.output.kind === "knownSingle" ? (
+                <span className="conversion-queue-output" title={item.output.fileName}>
+                  {item.output.fileName}
                 </span>
-              </>
-            ) : null}
-            {item.state === "failed" ? (
-              <>
-                <span className="visually-hidden">, </span>
-                <span className="conversion-queue-reason">{itemFailureSentence(item)}</span>
-              </>
-            ) : null}
-            {/* What was actually produced, per item. A queue that said only
-                `Converted` would have taken away the one thing that lets a user
-                tell a real conversion from an empty one. */}
-            {item.report?.output == null ? null : (
-              <>
-                <span className="visually-hidden">, </span>
-                <span className="conversion-queue-facts">
-                  {`${formatByteLength(item.report.output.byteLength)}, ${formatCount(
-                    item.report.output.spectrumCount,
-                  )} spectra, ${formatCount(item.report.output.chromatogramCount)} chromatograms`}
-                  {item.report.backend === null
-                    ? ""
-                    : `, ${formatDuration(item.report.backend.elapsedMilliseconds)}`}
+              ) : (
+                <span
+                  className="conversion-queue-output conversion-queue-output-set"
+                  data-output-topology="backendNamedSet"
+                >
+                  {itemOutputSummary(item, set)}
                 </span>
-              </>
-            )}
-            {/* Cleanup failing is the user's problem, not only MSCanvas', because
-                what is left behind is in the folder they chose. Read from both
-                places it can be recorded: a cancelled item has no report by
-                construction, so a residue it left would otherwise be knowable
-                to MSCanvas and invisible to the person whose folder it is in. */}
-            {(item.report?.stagingResidue ?? item.cancellation?.stagingResidue) == null ? null : (
-              <>
-                <span className="visually-hidden">, </span>
-                <span className="conversion-queue-residue">{RESIDUE_EXPLANATION}</span>
-              </>
-            )}
-          </li>
-        ))}
+              )}
+              <span className="visually-hidden">, </span>
+              <span className="conversion-queue-status">{itemStateLabel(item)}</span>
+              {item.attempts > 1 ? (
+                <>
+                  <span className="visually-hidden">, </span>
+                  <span className="conversion-queue-attempts">
+                    {`attempt ${String(item.attempts)}`}
+                  </span>
+                </>
+              ) : null}
+              {item.state === "failed" ? (
+                <>
+                  <span className="visually-hidden">, </span>
+                  <span className="conversion-queue-reason">{itemFailureSentence(item)}</span>
+                </>
+              ) : null}
+              {/* What was actually produced, per item. A queue that said only
+                  `Converted` would have taken away the one thing that lets a user
+                  tell a real conversion from an empty one. */}
+              {single?.output == null ? null : (
+                <>
+                  <span className="visually-hidden">, </span>
+                  <span className="conversion-queue-facts">
+                    {`${formatByteLength(single.output.byteLength)}, ${formatCount(
+                      single.output.spectrumCount,
+                    )} spectra, ${formatCount(single.output.chromatogramCount)} chromatograms`}
+                    {single.backend === null
+                      ? ""
+                      : `, ${formatDuration(single.backend.elapsedMilliseconds)}`}
+                  </span>
+                </>
+              )}
+              {/* What a set actually produced, and the exact limits of the claim.
+                  Three separate sentences on purpose: the count is a fact, the
+                  completeness is narrower than it sounds, and the validation is
+                  narrower again. Collapsing them would read as one broad
+                  guarantee that none of them makes. */}
+              {set === null ? null : (
+                <>
+                  <span className="visually-hidden">, </span>
+                  <span className="conversion-queue-set-result">{setResultSentence(set)}</span>
+                  {set.completeness.kind === "established" ? (
+                    <span className="conversion-queue-set-completeness">
+                      {SAMPLE_COMPLETENESS_CLAIM}
+                    </span>
+                  ) : null}
+                  {set.partial === null ? null : (
+                    <span className="conversion-queue-set-partial notice notice-warning" role="note">
+                      {PARTIAL_FINALIZATION_EXPLANATION}
+                    </span>
+                  )}
+                  {/* Which files, not only how many. A result that says "ten
+                      outputs finalized" and cannot say which ten has given the
+                      user a number rather than an answer -- and after a partial
+                      publication the copy above tells them to add the finalized
+                      files individually, which is not something anyone can act
+                      on without their names. Bounded at twenty-four by the
+                      lifecycle that produced them. */}
+                  {finalizedMemberNames(set).length === 0 ? null : (
+                    <ul className="conversion-queue-set-members">
+                      {finalizedMemberNames(set).map((name) => (
+                        <li key={name} title={name}>
+                          {name}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
+              {/* Cleanup failing is the user's problem, not only MSCanvas', because
+                  what is left behind is in the folder they chose. Read from both
+                  places it can be recorded: a cancelled item has no report by
+                  construction, so a residue it left would otherwise be knowable
+                  to MSCanvas and invisible to the person whose folder it is in. */}
+              {(single?.stagingResidue ??
+                set?.stagingResidue ??
+                item.cancellation?.stagingResidue) == null ? null : (
+                <>
+                  <span className="visually-hidden">, </span>
+                  <span className="conversion-queue-residue">{RESIDUE_EXPLANATION}</span>
+                </>
+              )}
+            </li>
+          );
+        })}
       </ol>
 
       {state.status === "terminal" && !retrying ? (
@@ -727,7 +846,7 @@ function QueueState({
               all skipped or all failed validated nothing -- and a skipped item's
               existing file was explicitly not inspected, so claiming
               output-only validation over it would claim a check nobody ran. */}
-          {queue.items.some((item) => item.report?.validation != null) ? (
+          {queue.items.some(conversionJudgedAnyOutput) ? (
             <p className="quiet-text" role="note">
               {OUTPUT_ONLY_DISCLOSURE}
             </p>
@@ -836,6 +955,33 @@ function runningPosition(queue: ConversionQueue): number {
   return next === -1 ? Math.min(queue.currentIndex + 1, queue.itemCount) : next + 1;
 }
 
+/**
+ * What one item's state says, in words rather than in colour.
+ *
+ * A function rather than a bare lookup, because one label is not true of both
+ * cardinalities. A skipped item with a known single output was skipped because
+ * *its* name was taken; a skipped output set reached that state only when every
+ * one of its discovered names was already occupied, and it has no singular name
+ * for the shared sentence to be about.
+ */
+function itemStateLabel(item: ConversionQueueItem): string {
+  if (item.state === "skipped" && item.output.kind === "backendNamedSet") {
+    return SKIPPED_OUTPUT_SET_LABEL;
+  }
+  return ITEM_STATE_LABEL[item.state];
+}
+
+/**
+ * What a skipped output set says.
+ *
+ * Every one of them, not one of them: the multi-output lifecycle steps aside
+ * only when it finds a file at every destination name it discovered, so a
+ * sentence about "a file of that name" would describe a name this item never
+ * had.
+ */
+const SKIPPED_OUTPUT_SET_LABEL =
+  "Skipped — files of all its output names were already there";
+
 /** What each item state says, in words rather than in colour. */
 const ITEM_STATE_LABEL: Record<ConversionQueueItem["state"], string> = {
   cancelled: "Cancelled",
@@ -848,15 +994,150 @@ const ITEM_STATE_LABEL: Record<ConversionQueueItem["state"], string> = {
   failed: "Failed",
 };
 
+/** The single-output report of this item's latest attempt, if it had one. */
+function singleReportOf(item: ConversionQueueItem): ConversionReport | null {
+  return item.result?.kind === "single" ? item.result.report : null;
+}
+
+/** The group report of this item's latest attempt, if it ran a set. */
+function setReportOf(item: ConversionQueueItem): ConversionOutputSetReport | null {
+  return item.result?.kind === "outputSet" ? item.result.report : null;
+}
+
+/**
+ * What a set item shows in the output column once it has run.
+ *
+ * Before it runs, and for every outcome that published nothing, the honest
+ * answer is still the range: no filename exists. Once members are finalized the
+ * count is real and is worth more than the bound.
+ */
+function itemOutputSummary(
+  item: ConversionQueueItem,
+  report: ConversionOutputSetReport | null,
+): string {
+  const maxMembers =
+    item.output.kind === "backendNamedSet" ? item.output.maxMembers : 1;
+  if (report === null || report.finalizedCount === 0) {
+    return outputSetSummary(maxMembers);
+  }
+  return report.finalizedCount === 1
+    ? "1 mzML output"
+    : `${String(report.finalizedCount)} mzML outputs`;
+}
+
+/**
+ * The members that reached their final names, in publication order.
+ *
+ * Read from the states rather than from the count, because the two answer
+ * different questions for a partial publication: the count says how many were
+ * finalized, and this says *which* — which is the prefix that is on disk.
+ */
+function finalizedMemberNames(report: ConversionOutputSetReport): readonly string[] {
+  return report.memberFileNames.filter((_, index) => report.memberStates[index] === "finalized");
+}
+
+/** What one settled set produced, counted rather than claimed. */
+function setResultSentence(report: ConversionOutputSetReport): string {
+  if (report.partial !== null) {
+    return `${String(report.partial.finalizedCount)} of ${String(
+      report.memberCount,
+    )} mzML outputs finalized; ${String(
+      report.partial.notPublishedCount,
+    )} not published.`;
+  }
+  if (report.finalizedCount === 0) {
+    return "No mzML outputs were finalized.";
+  }
+  return report.finalizedCount === 1
+    ? "1 mzML output finalized."
+    : `${String(report.finalizedCount)} mzML outputs finalized.`;
+}
+
 /** Why one item failed, from whichever half of the boundary refused it. */
 function itemFailureSentence(item: ConversionQueueItem): string {
   if (item.error !== null) {
     return item.error.summary;
   }
-  if (item.report === null) {
+  const set = setReportOf(item);
+  if (set !== null) {
+    return setFailureSentence(set);
+  }
+  const report = singleReportOf(item);
+  if (report === null) {
     return "The conversion did not finish, so no file was written.";
   }
-  return failureSentence(item.report);
+  return failureSentence(report);
+}
+
+/**
+ * Why one output set failed, in the user's terms rather than the boundary's.
+ *
+ * The single-output path has explained itself by `detailedOutcome` since ADR
+ * 0012, and a set discarding its own would be the worse half of the same
+ * screen: a destination conflict, an unevidenced build and a sample the reader
+ * lost need three different things from the user, and one sentence for all of
+ * them tells them to do nothing in particular.
+ *
+ * Only identifiers with a *different* recovery get their own sentence. The
+ * fallback is honest rather than specific — an identifier this build has no
+ * sentence for is still a failure, and inventing prose for one would be
+ * inventing a diagnosis.
+ */
+const SET_REFUSAL_SENTENCE: Record<string, string> = {
+  // The destination. Actionable, and the two are genuinely different: one name
+  // was taken, or some were taken and some were not.
+  multi_output_destination_occupied:
+    "Files of these output names are already in that folder, so nothing was converted.",
+  multi_output_mixed_destination_conflict:
+    "Some of these output names are already taken in that folder and some are not, so nothing was converted.",
+  multi_output_output_name_claimed_elsewhere:
+    "Another acquisition in this queue produced one of these output names, so nothing was converted.",
+  multi_output_destination_not_inspectable:
+    "That folder could not be inspected, so nothing was converted.",
+  multi_output_destination_root_not_opened:
+    "That folder could not be opened, so nothing was converted.",
+
+  // The build. Actionable by choosing a different ProteoWizard installation.
+  multi_output_provider_build_not_evidenced:
+    "MSCanvas has no conversion evidence for this acquisition format on the installed ProteoWizard build.",
+
+  // The acquisition. Actionable by opening it again.
+  multi_output_source_not_still_admitted:
+    "The acquisition changed since it was added, so nothing was converted. Add it again to continue.",
+  multi_output_source_bundle_not_bound:
+    "MSCanvas could not hold every file of this acquisition for the run, so nothing was converted.",
+
+  // What the reader said about samples. Not actionable in the app, and that is
+  // the point: it is what stops the outputs being called this acquisition.
+  source_sample_failure_observed:
+    "The SCIEX reader reported a problem with at least one sample, so no output was published.",
+  source_sample_audit_truncated:
+    "MSCanvas could not read enough of the converter's output to establish that no sample was lost, so nothing was published.",
+  source_sample_output_filtering_requested:
+    "The run asked for only some of the acquisition's samples, so its outputs are not this acquisition's complete set.",
+
+  // What was produced. Not actionable, and reported rather than smoothed over.
+  multi_output_set_not_as_declared:
+    "The converter wrote a different set of files than it declared, so none of them was published.",
+  multi_output_member_rejected:
+    "At least one converted file did not pass MSCanvas' integrity checks, so none of them was published.",
+};
+
+/** What a failed output set says. */
+function setFailureSentence(report: ConversionOutputSetReport): string {
+  // A partial publication is explained in full beside this, and must not be
+  // preceded by a sentence saying nothing was written.
+  if (report.partial !== null) {
+    return "The complete output set was not produced.";
+  }
+  const detailed = report.detailedOutcome;
+  if (detailed !== null) {
+    const sentence = SET_REFUSAL_SENTENCE[detailed];
+    if (sentence !== undefined) {
+      return sentence;
+    }
+  }
+  return "The conversion did not finish, so no output set was published.";
 }
 
 /**

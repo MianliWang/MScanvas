@@ -66,28 +66,31 @@ function converted(handle: string, name: string): ConversionQueueItem {
   return queueItem(handle, name, {
     state: "finalized",
     attempts: 1,
-    report: {
-      datasetHandle: handle,
-      sourceKind: "thermo_raw",
-      outcome: "finalized",
-      detailedOutcome: null,
-      outputFileName: name.replace(/\.raw$/i, ".mzML"),
-      output: {
-        byteLength: 28_655,
-        sha256: "6CE2ACE65485488F4A337EE17B71559E737C1944B641F279744932C3C3D8648C",
-        spectrumCount: 1,
-        chromatogramCount: 1,
+    result: {
+      kind: "single" as const,
+      report: {
+        datasetHandle: handle,
+        sourceKind: "thermo_raw",
+        outcome: "finalized",
+        detailedOutcome: null,
+        outputFileName: name.replace(/\.raw$/i, ".mzML"),
+        output: {
+          byteLength: 28_655,
+          sha256: "6CE2ACE65485488F4A337EE17B71559E737C1944B641F279744932C3C3D8648C",
+          spectrumCount: 1,
+          chromatogramCount: 1,
+        },
+        validation: {
+          mode: "output_only",
+          fullyVerified: false,
+          verified: ["source_unchanged"],
+          unverified: [],
+          inapplicable: ["spectrum_count"],
+        },
+        backend: { exitCode: 0, elapsedMilliseconds: 568 },
+        stagingResidue: null,
+        installationGeneration: 0,
       },
-      validation: {
-        mode: "output_only",
-        fullyVerified: false,
-        verified: ["source_unchanged"],
-        unverified: [],
-        inapplicable: ["spectrum_count"],
-      },
-      backend: { exitCode: 0, elapsedMilliseconds: 568 },
-      stagingResidue: null,
-      installationGeneration: 0,
     },
   });
 }

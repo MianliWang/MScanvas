@@ -248,11 +248,14 @@ describe("narrow desktop layout markup", () => {
     expect(names.getPropertyValue("white-space")).toBe("nowrap");
 
     // The state and a failure sentence take the next line whole and wrap
-    // there, rather than being clipped alongside the names.
+    // there, rather than being clipped alongside the names. So does everything
+    // a backend-named set says about its result, for the same reason: a
+    // sentence clipped to a column width is a sentence the user cannot read.
     const status = requireStyleRule(
       app,
       ".conversion-queue-status, .conversion-queue-attempts, .conversion-queue-facts, " +
-        ".conversion-queue-reason, .conversion-queue-residue",
+        ".conversion-queue-reason, .conversion-queue-residue, .conversion-queue-set-result, " +
+        ".conversion-queue-set-completeness, .conversion-queue-set-partial",
     ).style;
     expect(status.getPropertyValue("flex")).toBe("1 0 100%");
     expect(status.getPropertyValue("overflow-wrap")).toBe("anywhere");

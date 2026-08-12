@@ -19,22 +19,23 @@ use mscanvas_proteowizard::{
 };
 
 use super::conversion::conversion_source_kind;
+#[cfg(test)]
+use mscanvas_proteowizard::ConflictPolicy;
 #[allow(clippy::wildcard_imports)]
 use mscanvas_proteowizard::{BackendRunFacts, ConversionAttempt, ConversionCancellation};
-#[cfg(test)]
 use mscanvas_proteowizard::{
-    ConflictPolicy, MAX_CONVERSION_OUTPUTS_PER_SOURCE, OutputNamesClaimed, SetRunSeam,
+    MAX_CONVERSION_OUTPUTS_PER_SOURCE, OutputNamesClaimed, SetRunSeam,
     run_admitted_multi_output_conversion_seamed,
 };
 
-use super::adoption::{AdmittedOutput, AdoptionRefusal, FinalizedOutputAdoptionTicket};
 #[cfg(test)]
-use super::adoption::{FinalizedOutputSetAdoptionTicket, SciexAttemptSettlement};
+use super::adoption::FinalizedOutputSetAdoptionTicket;
+use super::adoption::SciexAttemptSettlement;
+use super::adoption::{AdmittedOutput, AdoptionRefusal, FinalizedOutputAdoptionTicket};
 use super::backend::{
     ConversionBackend, PreviewProvider, open_operations, reporting_redactor,
     selected_spectrum_operation,
 };
-#[cfg(test)]
 use super::conversion::WorkspaceMultiOutputConversionReport;
 #[cfg(test)]
 use super::conversion::run_planned_conversion;
@@ -43,7 +44,6 @@ use super::conversion::{
     refusal_is_retryable, refuse_unevidenced_build, run_planned_conversion_cancellable,
 };
 use super::destination::admit_destination_root;
-#[cfg(test)]
 use super::diagnostics::OutputSetDiagnosticFacts;
 use super::diagnostics::payload;
 use super::diagnostics::{
@@ -59,23 +59,22 @@ use super::drop_ingestion::{
     NativeDropDispatch, NativeDropSignal, NativeDropWork, conversion_busy_state, drop_busy_state,
     expand_drop_paths,
 };
-#[cfg(test)]
 use super::dto::queue_output_name_claimed;
 use super::dto::{
-    BackendAvailabilityDto, BackendFailureDto, ConversionConflictPolicyDto,
-    ConversionOutputFormatDto, ConversionQueuePlanDto, ConversionQueuePlanItemDto,
-    DropIngestionResultDto, MAX_CONVERSION_QUEUE_ITEMS, MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES,
-    MAX_METADATA_LINE_CHARS, MAX_MS_LEVELS, MAX_PRECURSORS, MAX_SPECTRUM_POINTS,
-    MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto, MsLevelCountDto, PrecursorDto,
-    PreviewDto, PreviewErrorDto, RetentionTimeDto, RetentionTimeRangeDto, RunSummaryDto,
-    SelectedSpectrumDto, SelectedSpectrumOutcomeDto, SpectrumRowDto, SpectrumTableDto,
-    ValidationModeDto, WorkspaceAddOutcomeDto, WorkspaceAddResultDto,
-    WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto, WorkspaceDropStateDto,
-    WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto, WorkspaceRemoveResultDto,
-    WorkspaceRosterDto, bounded_text, conversion_busy, dataset_not_previewable,
-    invalid_conversion_reservation, queue_destination_changed, queue_is_empty,
-    queue_output_name_collision, queue_too_large, redact_absolute_paths, require_finite,
-    require_finite_option, workspace_full,
+    AdoptionCandidateIdentityDto, BackendAvailabilityDto, BackendFailureDto,
+    ConversionConflictPolicyDto, ConversionOutputFormatDto, ConversionQueuePlanDto,
+    ConversionQueuePlanItemDto, DropIngestionResultDto, MAX_CONVERSION_QUEUE_ITEMS,
+    MAX_IDENTIFIER_CHARS, MAX_METADATA_ENTRIES, MAX_METADATA_LINE_CHARS, MAX_MS_LEVELS,
+    MAX_PRECURSORS, MAX_SPECTRUM_POINTS, MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto,
+    MsLevelCountDto, PrecursorDto, PreviewDto, PreviewErrorDto, RetentionTimeDto,
+    RetentionTimeRangeDto, RunSummaryDto, SelectedSpectrumDto, SelectedSpectrumOutcomeDto,
+    SpectrumRowDto, SpectrumTableDto, ValidationModeDto, WorkspaceAddOutcomeDto,
+    WorkspaceAddResultDto, WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto,
+    WorkspaceDropStateDto, WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
+    WorkspaceRemoveResultDto, WorkspaceRosterDto, bounded_text, conversion_busy,
+    dataset_not_previewable, invalid_conversion_reservation, queue_destination_changed,
+    queue_is_empty, queue_output_name_collision, queue_too_large, redact_absolute_paths,
+    require_finite, require_finite_option, workspace_full,
 };
 use super::dto::{
     ConversionDiagnosticsExportDto, ConversionDiagnosticsReservationDto,
@@ -99,9 +98,7 @@ use super::operation::{
     ItemState, QueueItem, QueueItemAttempt, StopAccepted, TerminalReason, folded_output_name,
     item_output_topology, item_state_of,
 };
-#[cfg(test)]
 use super::operation::{ItemOutputTopology, SetStopFacts};
-#[cfg(test)]
 use super::selection::DatasetSourceKind;
 use super::selection::{
     AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity, RevocationReason,
@@ -518,7 +515,6 @@ pub struct PreviewService {
     /// it was converted from; adopting it in the session that did not mint it
     /// would commit one session's outputs against another's row. The number is
     /// what lets that be refused rather than merely be unlikely.
-    #[cfg(test)]
     session: u64,
     /// The publication seam the next backend-named set run will carry.
     ///
@@ -528,7 +524,6 @@ pub struct PreviewService {
     /// a real filesystem is a race against another process. Nothing in the run
     /// is weakened — the hook is handed a position and can only act on the
     /// world, exactly as another process could.
-    #[cfg(test)]
     publication_seam: Mutex<Option<PublicationHook>>,
     /// The session's one diagnostics export.
     ///
@@ -587,9 +582,7 @@ impl PreviewService {
             conversion_busy: AtomicBool::new(false),
             backend_quarantined: AtomicBool::new(false),
             adopting_outputs: AtomicBool::new(false),
-            #[cfg(test)]
             session: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
-            #[cfg(test)]
             publication_seam: Mutex::new(None),
             diagnostics_export: Mutex::new(DiagnosticsExportSlot::default()),
             diagnostics_exporting: AtomicBool::new(false),
@@ -1251,7 +1244,7 @@ impl PreviewService {
                     dataset_handle: item.handle().to_owned(),
                     file_name: item.file_name().to_owned(),
                     source_kind: source_kind_dto(item.kind()),
-                    output_file_name: item.output().planned_name().unwrap_or_default().to_owned(),
+                    output: item.output().to_dto(),
                 })
                 .collect(),
             output_format: ConversionOutputFormatDto::MzMl,
@@ -1273,20 +1266,15 @@ impl PreviewService {
     /// queue's own constructor; what this adds is that every handle names a
     /// live, convertible row, and that no two of them would write one name.
     fn plan_queue_items(&self, handles: &[String]) -> Result<Vec<QueueItem>, PreviewErrorDto> {
-        self.plan_items(handles, false)
+        self.plan_items(handles)
     }
 
-    /// Turns handles into queue items, admitting backend-named families or not.
+    /// Turns handles into queue items.
     ///
-    /// One implementation for both planners, so the bound, the duplicate rule,
-    /// the epochs and the collision rule cannot drift apart between the visible
-    /// queue and the private one. `admit_output_sets` is the only difference,
-    /// and only the private entry point sets it.
-    fn plan_items(
-        &self,
-        handles: &[String],
-        admit_output_sets: bool,
-    ) -> Result<Vec<QueueItem>, PreviewErrorDto> {
+    /// One implementation and one answer. There is no longer a private planner
+    /// beside this one: which cardinality a row gets is decided by the family it
+    /// was admitted as, so the planner has nothing left to be told.
+    fn plan_items(&self, handles: &[String]) -> Result<Vec<QueueItem>, PreviewErrorDto> {
         // Refused before the workspace is even read. A list longer than a
         // session may run is not a queue whose rows are worth resolving.
         if handles.is_empty() {
@@ -1312,7 +1300,7 @@ impl PreviewService {
             // dropped: the interface states how many selected rows are
             // excluded, and a boundary that quietly shortened the list would
             // make that count a fiction.
-            let output = item_output_topology(kind, &dto.file_name, admit_output_sets)?;
+            let output = item_output_topology(kind, &dto.file_name)?;
             items.push(QueueItem::new(id, epoch, kind, dto, output));
         }
         drop(workspace);
@@ -1372,26 +1360,7 @@ impl PreviewService {
         conflict: ConversionConflictPolicyDto,
         document_epoch: u64,
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
-        self.begin_queue(handles, conflict, document_epoch, false)
-    }
-
-    /// Binds one private queue that may contain a backend-named set.
-    ///
-    /// The narrowest private entry point that can put a SCIEX row through the
-    /// existing queue. It differs from [`Self::begin_conversion_queue`] in one
-    /// respect -- which rows it will plan -- and shares the whole of the rest:
-    /// the same backend gate, the same family preflight, the same mutation
-    /// gate, the same slot, the same reservation. There is no Tauri command
-    /// behind it and no transfer object built from it, and the row it exists
-    /// for cannot enter a workspace the shipped binary can reach.
-    #[cfg(test)]
-    pub(super) fn begin_private_conversion_queue(
-        &self,
-        handles: &[String],
-        conflict: ConversionConflictPolicyDto,
-        document_epoch: u64,
-    ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
-        self.begin_queue(handles, conflict, document_epoch, true)
+        self.begin_queue(handles, conflict, document_epoch)
     }
 
     fn begin_queue(
@@ -1399,7 +1368,6 @@ impl PreviewService {
         handles: &[String],
         conflict: ConversionConflictPolicyDto,
         document_epoch: u64,
-        admit_output_sets: bool,
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
         // Before the plan, so a quarantined session refuses a queue without
         // first describing one it will never run.
@@ -1417,7 +1385,7 @@ impl PreviewService {
         // is the plan the queue is actually bound from. This first pass also
         // keeps a batch of dead handles from costing a help probe.
         let preflight_families: Vec<ConversionSourceKind> = {
-            let items = self.plan_items(handles, admit_output_sets)?;
+            let items = self.plan_items(handles)?;
             let mut families = Vec::new();
             for item in &items {
                 let kind = conversion_source_kind(item.kind());
@@ -1471,7 +1439,7 @@ impl PreviewService {
         // picker would open for a run guaranteed to end superseded. Planning
         // is lock-cheap and launches nothing, so it is simply done again where
         // it counts.
-        let items = self.plan_items(handles, admit_output_sets)?;
+        let items = self.plan_items(handles)?;
         let mut slot = self.conversion_slot();
         // Under the slot lock, and immediately before the slot is taken. The
         // authority proof is awaited, so a reload can start any time after it
@@ -1856,20 +1824,6 @@ impl PreviewService {
     /// authority, so a stale operation, a running queue, another item or an
     /// item whose retry replaced its ticket all answer with nothing.
     ///
-    /// Adoption itself is [`Self::adopt_output_set`], unchanged: the same
-    /// engine, the same duplicate-before-capacity rule, the same generation
-    /// protocol, no process and no preview. The queue result and its retry
-    /// classification are untouched — adopting is not a thing that happened to
-    /// the conversion.
-    #[cfg(test)]
-    pub(super) fn adopt_queue_output_set(
-        &self,
-        operation: u64,
-        index: usize,
-    ) -> Result<WorkspaceOutputSetAdoptionResult, PreviewErrorDto> {
-        self.adopt_set(OutputSetToAdopt::TerminalItem { operation, index })
-    }
-
     /// Adopts one fully finalized, sample-complete output set into this
     /// workspace.
     ///
@@ -1897,25 +1851,22 @@ impl PreviewService {
         &self,
         ticket: &FinalizedOutputSetAdoptionTicket,
     ) -> Result<WorkspaceOutputSetAdoptionResult, PreviewErrorDto> {
-        self.adopt_set(OutputSetToAdopt::Ticket(ticket))
+        self.adopt_set(ticket)
     }
 
-    /// The adoption both private callers run.
+    /// The adoption a caller-held set ticket runs.
     ///
-    /// Where the authority comes from is the only difference, and it is a
-    /// difference about *claiming order* rather than about the adoption. A
-    /// ticket the caller already holds owns its objects outright, so nothing
-    /// but the workspace can move underneath it. One held by a terminal queue
-    /// item belongs to a settling that a retry or a replacement can end, so it
-    /// is read under the same gate that claims the action -- exactly as the
-    /// visible adoption reads its tickets -- and the settling is re-proved
-    /// before the commit.
+    /// One caller now, and deliberately: a *queue-held* set is adopted by the
+    /// visible action, which expands its authority into member candidates and
+    /// runs this same engine. What is left here is the direct conversion's own
+    /// path, whose ticket the caller owns outright -- so there is no settling to
+    /// re-prove, only a workspace that may have moved on.
     #[cfg(test)]
     fn adopt_set(
         &self,
-        source: OutputSetToAdopt<'_>,
+        ticket: &FinalizedOutputSetAdoptionTicket,
     ) -> Result<WorkspaceOutputSetAdoptionResult, PreviewErrorDto> {
-        let (adoptable, settling, reserved) = {
+        let reserved = {
             // The same gate the visible adoption reserves under, waiting out a
             // native drop that has claimed the workspace. Reserving in front of
             // one would guarantee this adoption is superseded by a decision
@@ -1928,27 +1879,6 @@ impl PreviewService {
             if self.diagnostics_export_is_in_flight() {
                 return Err(adoption_in_progress());
             }
-            // Read under the gate that is about to claim the action, so a retry
-            // cannot start between the read and the claim and leave this
-            // holding an authority whose settling is over.
-            let (adoptable, settling) = match source {
-                OutputSetToAdopt::Ticket(ticket) => (AdoptableSet::Held(ticket), None),
-                OutputSetToAdopt::TerminalItem { operation, index } => {
-                    let slot = self.conversion_slot();
-                    let ticket = slot
-                        .terminal_output_set_ticket(operation, index)
-                        .ok_or_else(adoption_superseded)?;
-                    let round = slot
-                        .terminal_retry_round(operation)
-                        .ok_or_else(adoption_superseded)?;
-                    drop(slot);
-                    (
-                        AdoptableSet::FromQueue(ticket),
-                        Some(TerminalSettling { operation, round }),
-                    )
-                }
-            };
-            let ticket = adoptable.ticket();
             // Before anything is claimed. A ticket names the row it was
             // converted from by an id this session allocates from zero, so
             // another session's ticket would commit its outputs against
@@ -1962,25 +1892,32 @@ impl PreviewService {
             if self.adopting_outputs.swap(true, Ordering::AcqRel) {
                 return Err(adoption_in_progress());
             }
-            (adoptable, settling, self.reserve_adoption(gate))
+            self.reserve_adoption(gate)
         };
         let adopting = AdoptionInFlight(self);
-        let ticket = adoptable.ticket();
 
-        let inspected = self.inspect_adoption_candidates(reserved, ticket.candidates())?;
+        let inspected = self.inspect_adoption_candidates(
+            reserved,
+            ticket
+                .candidates()
+                .into_iter()
+                .map(|(member_index, member)| {
+                    (
+                        AdoptionCandidateIdentityDto {
+                            // One acquisition, adopted outside any queue. There
+                            // is no queue position for it to have.
+                            item_index: 0,
+                            member_index,
+                        },
+                        member,
+                    )
+                })
+                .collect(),
+        )?;
 
         let gate = self.enter_workspace_mutation();
         // The reservation, which says no other workspace decision happened.
         if gate.generation != reserved {
-            return Err(adoption_superseded());
-        }
-        // And, for an authority the queue holds, the settling it came from. A
-        // retry between the two halves leaves the same operation terminal again
-        // with different results, and committing against that would attach
-        // these outputs to a settling that did not produce them.
-        if let Some(TerminalSettling { operation, round }) = settling
-            && self.conversion_slot().terminal_retry_round(operation) != Some(round)
-        {
             return Err(adoption_superseded());
         }
         let mut workspace = self.workspace();
@@ -2016,7 +1953,10 @@ impl PreviewService {
     fn inspect_adoption_candidates(
         &self,
         reserved: u64,
-        candidates: Vec<(usize, Arc<FinalizedOutputAdoptionTicket>)>,
+        candidates: Vec<(
+            AdoptionCandidateIdentityDto,
+            Arc<FinalizedOutputAdoptionTicket>,
+        )>,
     ) -> Result<InspectedAdoptions, PreviewErrorDto> {
         let mut inspected = Vec::with_capacity(candidates.len());
         for (index, ticket) in candidates {
@@ -2546,9 +2486,7 @@ impl PreviewService {
             let outcome = self.convert_queue_item(
                 QueuedItemRun {
                     item: &item,
-                    #[cfg(test)]
                     index,
-                    #[cfg(test)]
                     queue: &queue,
                     destination: &admitted,
                     conflict: queue.conflict(),
@@ -2650,7 +2588,6 @@ impl PreviewService {
                 state: ItemState::Cancelled,
                 // The single-output boundary's own cancellation, so there is no
                 // set here to describe.
-                #[cfg(test)]
                 set: None,
                 // Nothing to diagnose. The user asked for it to stop and the
                 // owned tree is confirmed gone, so there is no failure here for
@@ -2670,7 +2607,6 @@ impl PreviewService {
             // The same two states, from the multi-output lifecycle's own
             // vocabulary. What the queue records must not depend on which
             // lifecycle ran the item.
-            #[cfg(test)]
             QueueItemAttempt::SetStopped(facts) => {
                 let facts = *facts;
                 ItemOutcome::Stopped {
@@ -2705,7 +2641,6 @@ impl PreviewService {
             }
             QueueItemAttempt::CancellationFailed(mut failure) => ItemOutcome::Stopped {
                 state: ItemState::CancellationFailed,
-                #[cfg(test)]
                 set: None,
                 // Taken here, at the one place this failure is turned into what
                 // the queue records. It is already redacted and already bounded;
@@ -2772,7 +2707,6 @@ impl PreviewService {
         // What this item's outputs look like decides which lifecycle runs it,
         // and nothing else does. There is no family name here and no second
         // loop: one queue, one slot, one backend lane, two cardinalities.
-        #[cfg(test)]
         if let ItemOutputTopology::BackendNamedSet { .. } = item.output() {
             return self.convert_queue_output_set(
                 run,
@@ -2792,7 +2726,6 @@ impl PreviewService {
         // Compiled out with the topology that makes it possible. In a build
         // where every item's name is known before the queue exists, the
         // planner has already refused every pair that could reach here.
-        #[cfg(test)]
         if let Some(planned) = item.output().planned_name()
             && let Some(owner) = run
                 .queue
@@ -2875,7 +2808,6 @@ impl PreviewService {
     ///
     /// One item, one process. The set is the item's *result*, never a set of
     /// items.
-    #[cfg(test)]
     fn convert_queue_output_set(
         &self,
         run: QueuedItemRun<'_>,
@@ -3866,48 +3798,6 @@ impl PreviewService {
     }
 }
 
-/// Where one private output-set adoption gets its authority.
-///
-/// Two cases because they have different lifetimes, not different adoptions. A
-/// ticket the caller holds is theirs for as long as they keep it; one a
-/// terminal queue item holds belongs to a settling that can end, so it must be
-/// read under the gate that claims the action and re-proved before the commit.
-#[cfg(test)]
-#[derive(Clone, Copy)]
-enum OutputSetToAdopt<'a> {
-    Ticket(&'a FinalizedOutputSetAdoptionTicket),
-    TerminalItem { operation: u64, index: usize },
-}
-
-/// One output-set authority, however this adoption came by it.
-#[cfg(test)]
-enum AdoptableSet<'a> {
-    /// The caller's own, from the direct private conversion.
-    Held(&'a FinalizedOutputSetAdoptionTicket),
-    /// One terminal queue item's, read under the gate that claimed the action.
-    FromQueue(std::sync::Arc<FinalizedOutputSetAdoptionTicket>),
-}
-
-#[cfg(test)]
-impl AdoptableSet<'_> {
-    fn ticket(&self) -> &FinalizedOutputSetAdoptionTicket {
-        match self {
-            Self::Held(ticket) => ticket,
-            Self::FromQueue(ticket) => ticket,
-        }
-    }
-}
-
-/// The exact settling a queue-held authority came from.
-///
-/// The operation alone is not it: a retry settles the same operation again.
-#[cfg(test)]
-#[derive(Clone, Copy)]
-struct TerminalSettling {
-    operation: u64,
-    round: u64,
-}
-
 /// Everything one queued item's attempt is about.
 ///
 /// Gathered because the list had grown past what a reader can tell apart at a
@@ -3918,13 +3808,13 @@ struct TerminalSettling {
 #[derive(Clone, Copy)]
 struct QueuedItemRun<'a> {
     item: &'a QueueItem,
-    /// Where the item sits, and the queue it sits in. Read only by the
-    /// runtime name authority, which exists for the backend-named set — so in
-    /// a build without that topology there is nothing to ask and nothing to
-    /// carry.
-    #[cfg(test)]
+    /// Where the item sits, and the queue it sits in.
+    ///
+    /// Read by the runtime name authority, which both cardinalities now ask: a
+    /// known single output checks whether an earlier set already published its
+    /// planned name, and a set checks its discovered names against every claim
+    /// the queue holds.
     index: usize,
-    #[cfg(test)]
     queue: &'a ConversionQueue,
     destination: &'a AdmittedDestination,
     conflict: ConversionConflictPolicyDto,
@@ -3936,7 +3826,6 @@ struct QueuedItemRun<'a> {
 /// that failed for any other reason is not a cancellation however close to one
 /// it looks, and a run that reached an outcome was never stopped inside the
 /// backend at all.
-#[cfg(test)]
 fn set_stop_facts(conversion: &mut SciexConversion) -> Option<SetStopFacts> {
     let report = conversion.report();
     let confirmed = match report.refusal_id()? {
@@ -5506,7 +5395,6 @@ impl Drop for AdoptionInFlight<'_> {
 /// it. Every one of those was a way to pair two conversions wrongly, and each
 /// is closed by removal rather than by a check, because a check leaves the
 /// wrong call expressible.
-#[cfg(test)]
 #[derive(Debug)]
 pub(super) struct SciexConversion {
     /// The session that ran it.
@@ -5542,7 +5430,6 @@ pub(super) struct SciexConversion {
 /// Read once, from the row and the gate the run was started under, and carried
 /// into the conversion in one piece. Separately supplying any of them later is
 /// exactly the crossing this whole boundary keeps closing.
-#[cfg(test)]
 pub(super) struct SciexRunFacts {
     pub(super) dataset: DatasetId,
     pub(super) source_kind: DatasetSourceKind,
@@ -5551,7 +5438,6 @@ pub(super) struct SciexRunFacts {
     pub(super) destination: AdmittedDestination,
 }
 
-#[cfg(test)]
 impl SciexConversion {
     /// Builds one conversion from one finished run.
     ///
@@ -5603,6 +5489,7 @@ impl SciexConversion {
     }
 
     /// What it retained, to read and not to replace.
+    #[cfg(test)]
     pub(super) const fn retained(&self) -> &mscanvas_proteowizard::FinalizedOutputSet {
         &self.retained
     }
@@ -5631,6 +5518,7 @@ impl SciexConversion {
     /// establishes completeness before publication -- so a fully finalized run
     /// of that family always has it. The gate is for the runs that would not,
     /// and this forges that state rather than waiting for one to exist.
+    #[cfg(test)]
     pub(super) fn without_completeness(mut self) -> Self {
         self.report = self.report.without_completeness();
         self
@@ -5640,6 +5528,7 @@ impl SciexConversion {
     ///
     /// Likewise the only way to reach the pairing gate: a report and its
     /// retained objects come from one publication and agree by construction.
+    #[cfg(test)]
     pub(super) fn without_last_member(mut self) -> Self {
         self.report = self.report.without_last_member();
         self
@@ -5654,14 +5543,11 @@ impl SciexConversion {
 /// dataset into two folders would read the same value and claim to be the same
 /// run — which is the one thing this identity exists to prevent.
 /// A hook armed for one backend-named set run's publication seam.
-#[cfg(test)]
 type PublicationHook = Box<dyn FnMut(usize) + Send>;
 
-#[cfg(test)]
 static NEXT_CONVERSION_RUN: AtomicU64 = AtomicU64::new(1);
 
 /// Hands out one identity per session.
-#[cfg(test)]
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 
 /// What one private output-set adoption did.
@@ -5695,10 +5581,14 @@ pub(super) struct WorkspaceOutputSetAdoptionResult {
 
 /// Candidates that have been checked and not yet committed.
 ///
-/// Each is the ordinal it was supplied under, the ticket it came from, and
+/// Each is the identity it was supplied under, the ticket it came from, and
 /// either the admitted output -- holds and all -- or the reason it was refused.
+///
+/// The identity is a pair rather than an ordinal, because one queue item can now
+/// contribute several outputs and an item index alone stopped telling them
+/// apart.
 type InspectedAdoptions = Vec<(
-    usize,
+    AdoptionCandidateIdentityDto,
     Arc<FinalizedOutputAdoptionTicket>,
     Result<AdmittedOutput, AdoptionRefusal>,
 )>;
@@ -5740,14 +5630,14 @@ fn commit_adoption_candidates(
                     // rather than when the check did.
                     drop(holds);
                     PendingAdoption::Registered {
-                        item_index: index,
+                        candidate: index,
                         source_handle,
                         output_file_name,
                         outcome,
                     }
                 }
                 Err(refusal) => PendingAdoption::Refused {
-                    item_index: index,
+                    candidate: index,
                     source_handle,
                     output_file_name,
                     reason: refusal.stable_id().to_owned(),
@@ -5760,13 +5650,13 @@ fn commit_adoption_candidates(
 /// One output's adoption, before the roster it produced exists.
 enum PendingAdoption {
     Registered {
-        item_index: usize,
+        candidate: AdoptionCandidateIdentityDto,
         source_handle: String,
         output_file_name: String,
         outcome: AddDatasetOutcome,
     },
     Refused {
-        item_index: usize,
+        candidate: AdoptionCandidateIdentityDto,
         source_handle: String,
         output_file_name: String,
         reason: String,
@@ -5793,25 +5683,25 @@ fn describe_adoptions(
         .into_iter()
         .map(|item| match item {
             PendingAdoption::Refused {
-                item_index,
+                candidate,
                 source_handle,
                 output_file_name,
                 reason,
             } => WorkspaceOutputAdoptionOutcomeDto::Refused {
-                item_index,
+                candidate,
                 source_handle,
                 output_file_name,
                 reason,
             },
             PendingAdoption::Registered {
-                item_index,
+                candidate,
                 source_handle,
                 output_file_name,
                 outcome,
             } => match (outcome, outcome.registered_id().and_then(describe)) {
                 (AddDatasetOutcome::Added { .. }, Some(dataset)) => {
                     WorkspaceOutputAdoptionOutcomeDto::Added {
-                        item_index,
+                        candidate,
                         source_handle,
                         output_file_name,
                         dataset,
@@ -5819,7 +5709,7 @@ fn describe_adoptions(
                 }
                 (AddDatasetOutcome::Duplicate { .. }, Some(dataset)) => {
                     WorkspaceOutputAdoptionOutcomeDto::AlreadyInWorkspace {
-                        item_index,
+                        candidate,
                         source_handle,
                         output_file_name,
                         dataset,
@@ -5830,7 +5720,7 @@ fn describe_adoptions(
                 // inventing a handle for one would be the one thing this
                 // boundary must never do.
                 _ => WorkspaceOutputAdoptionOutcomeDto::Refused {
-                    item_index,
+                    candidate,
                     source_handle,
                     output_file_name,
                     reason: String::from("workspace_full"),

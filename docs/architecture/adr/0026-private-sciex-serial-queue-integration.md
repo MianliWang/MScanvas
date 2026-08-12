@@ -1,8 +1,9 @@
 # ADR 0026 — Private SCIEX serial-queue integration
 
-- Status: Accepted as a private path with no product surface. Visible SCIEX
-  ingestion, visible queue rows and any output-set adoption UI remain
-  separately gated
+- Status: Accepted. **No longer private**: ADR 0027 promotes the topology, the
+  authority and the settlement model recorded here into production and gives
+  the family a picker route. Two things it changed rather than promoted are
+  noted in the amendment at the foot of this record
 - Date: 2026-08-12
 
 ## Context
@@ -305,3 +306,33 @@ sharing, and the document says so.
   routing rather than an engineering one about cardinality — with one question
   still open, which is what a partially finalized acquisition should offer the
   user.
+
+## Amendment, 2026-08-12 — what ADR 0027 changed rather than promoted
+
+Most of this record was promoted verbatim: the topology, the settlement value,
+the runtime name authority, the outcome mapping, the Stop translation, the
+diagnostics shape and the cardinality-aware authority are all production now and
+all say what they said here.
+
+Two decisions did not survive, and both were decisions *about being private*.
+
+**The empty-string projection is gone.** This record kept
+`ConversionQueueItemDto.output_file_name` a `String` and had a set project `""`,
+arguing it was unreachable from the wire. That was true while no visible surface
+could build such an item. The moment one could, an empty string became a value a
+renderer would receive and have to know not to draw — so the field is a
+discriminated union now, and a blank output column is unrepresentable rather
+than merely unreachable. The rule this record actually cared about is unchanged
+and is stronger for it: **no name is derived for a set from anything.**
+
+**The visible adoption does project a set.** This record said it deliberately
+did not, because fitting one into the transfer object would mean flattening it
+into members — "the reconstruction the output-set boundary exists to refuse".
+The distinction that resolves it is between *reconstructing* an authority and
+*expanding* one. ADR 0027 does the second: the member tickets a set was minted
+with are handed to the existing engine as candidates, `Arc`-cloned so the
+retained objects stay in the set ticket. Nothing is rebuilt from a filename or a
+member report, which is what the refusal was about. What made the second entry
+point necessary — that a queue-held authority belongs to a settling a retry can
+end — is still true and is still where it was: read under the gate that claims
+the action, and re-proved before the commit.

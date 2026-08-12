@@ -1,8 +1,9 @@
 # ADR 0023 — Private workspace SCIEX WIFF bundle conversion
 
-- Status: Accepted as a private workspace path with no product surface. Visible
-  ingestion, queue integration, adoption of output sets and every UI concern
-  remain separately gated
+- Status: Accepted. **The workspace path is no longer private**: ADR 0027 gives
+  the family a picker route, a queue row and an adoption. The boundary this
+  record describes is unchanged; what changed is that a user can reach it.
+  Folder and Explorer-Drop ingestion remain separately gated and mzML-only
 - Date: 2026-08-11
 - **Extended by [ADR 0025](0025-private-sciex-output-set-adoption.md),
   2026-08-11.** The consequence recorded below -- that output-set adoption does
@@ -124,8 +125,11 @@ An inert `sciex_wiff` wire member follows, for exactly the reason ADR 0019 gave
 `shimadzu_lcd` one: every roster row carries a family and the projection is
 total over what Rust can admit. Reporting such a row as another family would
 make the roster lie about what it holds; an `unknown` member would make every
-row's family a guess. It is not a support claim. Nothing a user can do creates a
-row of this family.
+row's family a guess. It was not a support claim when this was written, and
+nothing a user could do created a row of this family.
+[ADR 0027](0027-first-visible-sciex-wiff-workflow.md) made it one: `Add files…`
+routes a `.wiff` to the admission described here, and the member is now a
+support claim like the other three.
 
 **The roster reports the acquisition's size, not the primary's.** Identical for
 every single-object family, and deliberately not identical here — a SCIEX row

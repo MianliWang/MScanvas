@@ -6,6 +6,52 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
+- **SCIEX WIFF conversion, through `Add files…`.** Select a `.wiff` and MSCanvas
+  admits it together with the required `.wiff.scan` beside it as **one**
+  workspace row — the companion is never a row of its own, and selecting both
+  halves still gives you one acquisition. Recognition reads the measured
+  structure inside the container and the companion's own leading bytes, never
+  the file name alone; a `.wiff` holding another vendor's container is refused
+  when it is added rather than after a converter has run. A missing, unreadable
+  or wrong companion is refused with a sentence telling you which file to put
+  beside it, and selecting a `.wiff.scan` on its own tells you to select the
+  `.wiff` instead.
+
+  **One acquisition is one queue item, whatever it produces.** A SCIEX
+  acquisition can hold many samples and ProteoWizard writes one document per
+  sample, choosing their names itself — so the plan reads *1–24 mzML outputs,
+  filenames determined during conversion* rather than inventing a name, queue
+  progress still counts acquisitions rather than output files, and a ten-sample
+  acquisition offers **ten** outputs to add when it is over, not one. Each
+  adopted output is an ordinary mzML row.
+
+  For an acquisition that converted all of its outputs, MSCanvas says that
+  *every sample identified by the SCIEX reader produced its output* — which does
+  not claim the reader identified every sample in the acquisition, and claims
+  nothing about fidelity. Validation stays output-only.
+
+  Publishing several files is sequential and is **not** a transaction. If it
+  stops partway, the files already written stay in your folder, MSCanvas says
+  how many there were, and it will not present them as the acquisition's
+  complete output set — you can add them individually later with `Add files…`.
+  Such an item is not offered a retry, and is never described as though nothing
+  had been converted.
+
+  Folders and Explorer drops still discover mzML only — for this family most of
+  all, since a `.wiff` is half an acquisition and pairing it with whatever sits
+  beside it in a folder is a decision a traversal has no evidence to make. SCIEX
+  rows still cannot be previewed directly: convert first, then add the outputs.
+
+### Changed
+
+- **A queue item now states what it will produce rather than naming one file.**
+  Items whose output name is known before the run — Thermo and Shimadzu — are
+  unchanged in meaning; items whose backend names its own outputs say so
+  explicitly instead of carrying an empty name. The count of outputs offered
+  after a queue finishes is now a count of output **files** rather than of
+  finalized items, so a queue holding one Thermo row and one ten-sample SCIEX
+  acquisition offers eleven.
+
 - **Shimadzu LabSolutions LCD conversion.** `Add files…` now also admits the
   evidenced Shimadzu LabSolutions LCD family, and the serial conversion queue
   converts it — alone or mixed with Thermo Scientific RAW rows, in the order

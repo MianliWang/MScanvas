@@ -36,9 +36,12 @@ table remains the target, including the unsupported portions called out below:
   would write, and how many selected rows are excluded for being mzML already —
   and unrelated rows are untouched, including when an item fails. What is absent
   from the acceptance above: "all" is not an option, because a queue is bounded
-  at 16 and a workspace holds up to 1,024 rows; and only the two evidenced
-  vendor families — Thermo Scientific RAW and Shimadzu LabSolutions LCD — can
-  be queued, alone or mixed.
+  at 16 and a workspace holds up to 1,024 rows; and only the three evidenced
+  vendor families — Thermo Scientific RAW, Shimadzu LabSolutions LCD and SCIEX
+  WIFF — can be queued, alone or mixed. A SCIEX row is a **bundle**: a `.wiff`
+  and the `.wiff.scan` beside it, admitted together as one row, and the plan
+  states the range of outputs it will produce rather than a name, because
+  ProteoWizard names those documents itself.
 - **WSP-003 — Implemented for the current mzML surface.** M1.5 accepts one or
   many regular `.mzML` files, ordinary local folders containing regular `.mzML`
   files, or a mixture of both from Windows Explorer
@@ -77,12 +80,15 @@ table remains the target, including the unsupported portions called out below:
 | CNV-009 | Natural-language summary | P0 | Before running, state file count, format, processing and output root. |
 
 **A serial conversion queue is reachable: one to sixteen selected vendor rows
-— Thermo Scientific RAW and Shimadzu LabSolutions LCD, alone or mixed — to
-mzML, one after another, each family on the exact ProteoWizard build evidenced
-for it.** `Add files…` admits both families alongside mzML; selecting vendor
-rows offers the ordered list that would run, which family each row is, the
-names it would write, and one Fail/Skip choice; and one Rust-owned local
-destination picker settles where all of them go. Items convert one at a time in
+— Thermo Scientific RAW, Shimadzu LabSolutions LCD and SCIEX WIFF, alone or
+mixed — to mzML, one after another, each family on the exact ProteoWizard build
+evidenced for it.** `Add files…` admits all three families alongside mzML;
+selecting vendor rows offers the ordered list that would run, which family each
+row is, what each item would write, and one Fail/Skip choice; and one
+Rust-owned local destination picker settles where all of them go. One
+acquisition is one item whatever it produces: a SCIEX acquisition converts to
+one to twenty-four backend-named mzML files and stays a single item, a single
+process and a single row of the plan. Items convert one at a time in
 the order shown. One file's failure marks that file and the queue continues,
 and `Retry N failed` reruns only the failures Rust marks retryable.
 

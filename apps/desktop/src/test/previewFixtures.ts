@@ -16,6 +16,7 @@ import type {
   ConversionConflictPolicy,
   ConversionDiagnosticsExport,
   ConversionDiagnosticsState,
+  ConversionOutputSetReport,
   ConversionQueuePlan,
   ConversionQueueItem,
   FolderDiscoverySummary,
@@ -611,6 +612,11 @@ export function shimadzuDataset(index: number): SelectedFile {
   };
 }
 
+/** The mzML name a known-single vendor row will produce. */
+export function plannedOutputName(fileName: string): string {
+  return fileName.replace(/\.(raw|lcd)$/i, ".mzML");
+}
+
 /** One queue item, as a test describes it. */
 export function queueItem(
   handle: string,
@@ -621,15 +627,89 @@ export function queueItem(
     datasetHandle: handle,
     fileName,
     sourceKind: "thermo_raw",
-    outputFileName: fileName.replace(/\.raw$/i, ".mzML"),
+    output: { kind: "knownSingle", fileName: plannedOutputName(fileName) },
     state: "pending",
     attempts: 0,
     retryable: false,
-    report: null,
+    result: null,
     error: null,
     cancellation: null,
     ...overrides,
   };
+}
+
+/**
+ * One SCIEX queue item: a bundle row whose outputs the backend names.
+ *
+ * Its own factory rather than an override bag, because the two things that make
+ * it a set -- the family and the output plan -- must agree, and a test that set
+ * one without the other would be describing a row Rust cannot produce.
+ */
+export function sciexQueueItem(
+  handle: string,
+  fileName: string,
+  overrides: Partial<ConversionQueueItem> = {},
+): ConversionQueueItem {
+  return queueItem(handle, fileName, {
+    sourceKind: "sciex_wiff",
+    output: { kind: "backendNamedSet", maxMembers: 24 },
+    ...overrides,
+  });
+}
+
+/** A finalized group report over `memberFileNames`, sample-complete. */
+export function outputSetReport(
+  handle: string,
+  memberFileNames: readonly string[],
+  overrides: Partial<ConversionOutputSetReport> = {},
+): ConversionOutputSetReport {
+  return {
+    datasetHandle: handle,
+    sourceKind: "sciex_wiff",
+    groupOutcome: "fully_finalized",
+    detailedOutcome: null,
+    maxMembers: 24,
+    memberCount: memberFileNames.length,
+    finalizedCount: memberFileNames.length,
+    validatedNotPublishedCount: 0,
+    notPublishedCount: 0,
+    boundSourceObjects: 2,
+    memberFileNames,
+    memberStates: memberFileNames.map(() => "finalized"),
+    backend: { exitCode: 0, elapsedMilliseconds: 4_200 },
+    stagingResidue: null,
+    validationMode: "output_only",
+    completeness: {
+      kind: "established",
+      method: "reader_error_audit_v1",
+      sampleCount: memberFileNames.length,
+    },
+    partial: null,
+    completeSetAdoptable: true,
+    installationGeneration: 0,
+    ...overrides,
+  };
+}
+
+/**
+ * The output files one finalized item offers, in publication order.
+ *
+ * A known single output offers the one it planned; a set offers every member it
+ * published, and only when the complete-set authority exists. A partially
+ * finalized prefix offers none, which is the whole of the product policy.
+ */
+export function outputFileNamesOf(
+  item: ConversionQueueItem,
+): readonly string[] {
+  if (item.result?.kind === "outputSet") {
+    return item.result.report.completeSetAdoptable
+      ? item.result.report.memberFileNames.filter(
+          (_, index) => item.result?.kind === "outputSet" &&
+            item.result.report.memberStates[index] === "finalized",
+        )
+      : [];
+  }
+  return item.output.kind === "knownSingle" ? [item.output.fileName] : [];
 }
 
 /** A whole queue from its items, with the counts Rust would derive. */
@@ -659,6 +739,20 @@ export function queueOf(items: readonly ConversionQueueItem[]) {
     cancelledCount: count("cancelled"),
     notRunCount: count("notRun"),
     cancellationFailedCount: count("cancellationFailed"),
+    // Output files, not finalized items: Rust counts what the authorities hold,
+    // so a finalized set contributes every member it published.
+    adoptableOutputCount: items
+      .filter((item) => item.state === "finalized")
+      .reduce(
+        (total, item) =>
+          total +
+          (item.result?.kind === "outputSet"
+            ? item.result.report.completeSetAdoptable
+              ? item.result.report.finalizedCount
+              : 0
+            : 1),
+        0,
+      ),
     error: null,
     installationGeneration: 0,
   };
@@ -730,7 +824,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
           (item) =>
             item.state === "failed" ||
             item.state === "cancellationFailed" ||
-            (item.report?.stagingResidue ?? null) !== null ||
+            (item.result?.report.stagingResidue ?? null) !== null ||
             (item.cancellation?.stagingResidue ?? null) !== null,
         ).length
       : 0;
@@ -779,7 +873,9 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         queueItem(handle, `acquisition-${String(index)}.raw`, {
           state: "finalized",
           attempts: 1,
-          report: {
+          result: {
+            kind: "single",
+            report: {
             datasetHandle: handle,
             sourceKind: "thermo_raw",
             outcome: "finalized",
@@ -801,6 +897,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
             backend: { exitCode: 0, elapsedMilliseconds: 663 },
             stagingResidue: null,
             installationGeneration: 0,
+            },
           },
         }),
       ),
@@ -1039,7 +1136,13 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
           datasetHandle: row!.handle,
           fileName: row!.fileName,
           sourceKind: row!.sourceKind,
-          outputFileName: row!.fileName.replace(/\.(raw|lcd)$/i, ".mzML"),
+          output:
+      row!.sourceKind === "sciex_wiff"
+        ? { kind: "backendNamedSet" as const, maxMembers: 24 }
+        : {
+            kind: "knownSingle" as const,
+            fileName: plannedOutputName(row!.fileName),
+          },
         })),
         outputFormat: "mzML",
         compression: "zlib",
@@ -1095,43 +1198,63 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
               .map((item, index) => ({ item, index }))
               .filter(({ item }) => item.state === "finalized")
           : [];
-      const outcomes = finalized.map(({ item, index }) => {
-        const outputFileName = item.outputFileName;
-        const existing = held.find((entry) => entry.file.fileName === outputFileName);
-        if (existing !== undefined) {
-          return {
-            kind: "alreadyInWorkspace" as const,
-            itemIndex: index,
-            sourceHandle: item.datasetHandle,
-            outputFileName,
-            dataset: existing.file,
-          };
-        }
-        if (held.length >= capacity) {
-          return {
-            kind: "refused" as const,
-            itemIndex: index,
-            sourceHandle: item.datasetHandle,
-            outputFileName,
-            reason: "workspace_full",
-          };
-        }
-        const file: SelectedFile = {
-          handle: `converted-${outputFileName}`,
-          fileName: outputFileName,
-          byteLength: item.report?.output?.byteLength ?? 1_024,
-          sourceKind: "mzml",
-          relativeContext: null,
-        };
-        held = [...held, hold(file, null)];
-        return {
-          kind: "added" as const,
+      // One candidate per output *file*, ordered by item and then by
+      // publication order within one item's set -- which is what Rust's own
+      // expansion produces, and the shape the interface must render.
+      const candidates = finalized.flatMap(({ item, index }) =>
+        outputFileNamesOf(item).map((outputFileName, memberIndex) => ({
+          item,
           itemIndex: index,
-          sourceHandle: item.datasetHandle,
+          memberIndex,
           outputFileName,
-          dataset: file,
-        };
-      });
+        })),
+      );
+      const outcomes = candidates.map(
+        ({ item, itemIndex, memberIndex, outputFileName }) => {
+          const existing = held.find(
+            (entry) => entry.file.fileName === outputFileName,
+          );
+          if (existing !== undefined) {
+            return {
+              kind: "alreadyInWorkspace" as const,
+              itemIndex,
+              memberIndex,
+              sourceHandle: item.datasetHandle,
+              outputFileName,
+              dataset: existing.file,
+            };
+          }
+          if (held.length >= capacity) {
+            return {
+              kind: "refused" as const,
+              itemIndex,
+              memberIndex,
+              sourceHandle: item.datasetHandle,
+              outputFileName,
+              reason: "workspace_full",
+            };
+          }
+          const file: SelectedFile = {
+            handle: `converted-${outputFileName}`,
+            fileName: outputFileName,
+            byteLength:
+              (item.result?.kind === "single"
+                ? item.result.report.output?.byteLength
+                : undefined) ?? 1_024,
+            sourceKind: "mzml",
+            relativeContext: null,
+          };
+          held = [...held, hold(file, null)];
+          return {
+            kind: "added" as const,
+            itemIndex,
+            memberIndex,
+            sourceHandle: item.datasetHandle,
+            outputFileName,
+            dataset: file,
+          };
+        },
+      );
       return {
         operationId,
         retryRound: conversion.status === "terminal" ? conversion.queue.retryRound : 0,

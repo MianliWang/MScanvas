@@ -1,8 +1,10 @@
 # ADR 0022 — Private SCIEX WIFF source admission
 
-- Status: Accepted as a private source family with no product surface.
-  Add-files support, folder and Explorer-Drop ingestion, queue integration and
-  every UI concern remain separately gated
+- Status: Accepted. **The admission itself is unchanged and is now reachable
+  through `Add files…`** — see
+  [ADR 0027](0027-first-visible-sciex-wiff-workflow.md), which adds routing and
+  copy and touches no rule recorded here. Folder and Explorer-Drop ingestion
+  remain separately gated and mzML-only
 - Date: 2026-08-11
 - **Extended by [ADR 0023](0023-private-workspace-sciex-wiff-conversion.md),
   2026-08-11.** Workspace integration named above as gated is now built,

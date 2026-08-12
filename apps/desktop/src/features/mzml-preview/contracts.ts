@@ -42,17 +42,15 @@ export interface BackendAvailability {
  * no `unknown`: a member here is a claim the product understands the data
  * behind it, backed by measured conversion evidence.
  *
- * Three of the four are product-reachable since ADR 0020: `Add files…` admits
- * them and the two vendor families convert through the one queue. Folder
- * ingestion and the Explorer drop remain regular-mzML-only.
+ * All four are product-reachable since ADR 0027: `Add files…` admits them and
+ * the three vendor families convert through the one queue. Folder ingestion and
+ * the Explorer drop remain regular-mzML-only, for every vendor family and for
+ * `sciex_wiff` most of all -- a `.wiff` is half an acquisition, and pairing it
+ * with a neighbour a traversal happened to find is a decision no walk has the
+ * evidence to make.
  *
- * `sciex_wiff` is the exception and is not a support claim. ADR 0023 lets the
- * workspace hold a SCIEX acquisition privately -- one row for a `.wiff` and the
- * `.wiff.scan` beside it -- and nothing a user can do creates such a row: no
- * picker route, no folder walk, no drop, no queue. It is here because every
- * roster row carries a family and Rust's projection is total over the families
- * it can admit; the alternative would be a roster that described one family as
- * another, or an `unknown` member that made every row's family a guess.
+ * `sciex_wiff` names a bundle: a `.wiff` primary and the `.wiff.scan` beside
+ * it, admitted together as one row. The companion is never a row of its own.
  */
 export type DatasetSourceKind =
   | "mzml"
@@ -83,7 +81,9 @@ export const SOURCE_KIND_LABEL: Record<DatasetSourceKind, string> = {
  * disagreed would still be refused by the boundary itself.
  */
 export function isConvertibleSourceKind(kind: DatasetSourceKind): boolean {
-  return kind === "thermo_raw" || kind === "shimadzu_lcd";
+  return (
+    kind === "thermo_raw" || kind === "shimadzu_lcd" || kind === "sciex_wiff"
+  );
 }
 
 export interface SelectedFile {
@@ -491,18 +491,117 @@ export interface ConversionCancellation {
   readonly stagingResidue: string | null;
 }
 
+/**
+ * What one queue item's outputs will look like, before it runs.
+ *
+ * Two named cases rather than a nullable name, because the alternative has no
+ * honest value for a set: an empty string is not a filename, and a name derived
+ * from the acquisition would be one MSCanvas invented for a document the
+ * backend has not written. A renderer must choose an arm, so a blank output
+ * column is unrepresentable rather than merely avoided.
+ */
+export type ConversionOutputPlan =
+  | {
+      readonly kind: "knownSingle";
+      /** Derived before the queue was created, so collisions are refused early. */
+      readonly fileName: string;
+    }
+  | {
+      readonly kind: "backendNamedSet";
+      /** The lifecycle's own bound. Never a prediction of how many there will be. */
+      readonly maxMembers: number;
+    };
+
+/**
+ * Whether every sample the SCIEX reader identified produced its output.
+ *
+ * Deliberately not a boolean and deliberately narrow. `established` is a
+ * statement about the samples the reader identified — not about the samples in
+ * the acquisition, and not about how faithfully any document represents one.
+ */
+export type ConversionSampleCompleteness =
+  | { readonly kind: "notPosed" }
+  | { readonly kind: "notEstablished"; readonly reason: string }
+  | {
+      readonly kind: "established";
+      /** The audit's stable identifier. */
+      readonly method: string;
+      /** How many samples the reader identified and converted. */
+      readonly sampleCount: number;
+    };
+
+/** Where a non-atomic publication stopped. */
+export interface ConversionPartialFinalization {
+  readonly finalizedCount: number;
+  readonly notPublishedCount: number;
+  /** The filesystem's own kind, by stable identifier. Never an OS message. */
+  readonly failureKind: string;
+}
+
+/**
+ * What one backend-named set's attempt did.
+ *
+ * Counts, stable identifiers and the basenames the backend chose. Bounded by
+ * `maxMembers`, path-free, and never a claim about the acquisition beyond what
+ * `completeness` states.
+ */
+export interface ConversionOutputSetReport {
+  readonly datasetHandle: string;
+  readonly sourceKind: DatasetSourceKind;
+  /** What the run did to the set as a whole, by Rust's own identifier. */
+  readonly groupOutcome: string;
+  /** The precise refusal, when the set was refused before publishing. */
+  readonly detailedOutcome: string | null;
+  readonly maxMembers: number;
+  readonly memberCount: number;
+  readonly finalizedCount: number;
+  readonly validatedNotPublishedCount: number;
+  readonly notPublishedCount: number;
+  /** `null` where the acquisition was never bound — not zero, which is a claim. */
+  readonly boundSourceObjects: number | null;
+  /** Basenames in publication order. Never a directory, never a path. */
+  readonly memberFileNames: readonly string[];
+  /** How each member ended, positionally matched to `memberFileNames`. */
+  readonly memberStates: readonly string[];
+  readonly backend: ConversionBackendFacts | null;
+  readonly stagingResidue: string | null;
+  readonly validationMode: ValidationMode;
+  readonly completeness: ConversionSampleCompleteness;
+  readonly partial: ConversionPartialFinalization | null;
+  /**
+   * Whether a complete output-set adoption authority exists for this item.
+   *
+   * Carried rather than derived from the outcome: a fully finalized set whose
+   * completeness was not established has none, and an interface deriving one
+   * from the other would offer an action Rust will refuse.
+   */
+  readonly completeSetAdoptable: boolean;
+  readonly installationGeneration: number;
+}
+
+/**
+ * The latest attempt's result, in the cardinality it actually had.
+ *
+ * `null` means only that no attempt result exists. An item never carries a
+ * single report and a group report at once, and this is what makes that
+ * unrepresentable rather than a rule two nullable fields would have to keep.
+ */
+export type ConversionAttemptResult =
+  | { readonly kind: "single"; readonly report: ConversionReport }
+  | { readonly kind: "outputSet"; readonly report: ConversionOutputSetReport };
+
 /** One item of a queue. */
 export interface ConversionQueueItem {
   readonly datasetHandle: string;
   readonly fileName: string;
   readonly sourceKind: DatasetSourceKind;
-  /** Derived before the queue was created, so collisions are refused early. */
-  readonly outputFileName: string;
+  /** What this item will produce, in the cardinality it will produce it. */
+  readonly output: ConversionOutputPlan;
   readonly state: ConversionQueueItemState;
   readonly attempts: number;
   readonly retryable: boolean;
-  /** The latest attempt's report. Only the latest — never a history. */
-  readonly report: ConversionReport | null;
+  /** The latest attempt's result. Only the latest — never a history. */
+  readonly result: ConversionAttemptResult | null;
   /** Why an attempt never reached a conversion at all. */
   readonly error: PreviewError | null;
   /**
@@ -533,6 +632,14 @@ export interface ConversionQueue {
   readonly notRunCount: number;
   /** Items whose stop could not be confirmed. */
   readonly cancellationFailedCount: number;
+  /**
+   * How many output **files** a complete-set adoption would offer.
+   *
+   * Counted by Rust from the authorities it holds, because that is the only
+   * place the answer lives: one finalized Thermo item offers one, one finalized
+   * ten-member SCIEX item offers ten. Zero unless the queue is terminal.
+   */
+  readonly adoptableOutputCount: number;
   /** A refusal that stopped the whole queue rather than one item. */
   readonly error: PreviewError | null;
   /**
@@ -667,7 +774,8 @@ export interface ConversionQueuePlanItem {
    * the immutable one the queue will run.
    */
   readonly sourceKind: DatasetSourceKind;
-  readonly outputFileName: string;
+  /** What this row will produce, in the cardinality it will produce it. */
+  readonly output: ConversionOutputPlan;
 }
 
 /** What the interface shows before a queue is started. */
@@ -678,6 +786,32 @@ export interface ConversionQueuePlan {
   readonly validationMode: ValidationMode;
   /** The most items one queue may hold, as Rust enforces it. */
   readonly capacity: number;
+}
+
+/**
+ * Whether one queue item's latest attempt actually judged an output.
+ *
+ * The predicate behind every "output-only validation" claim, written once
+ * because two surfaces make that claim and a disclosure they disagreed about
+ * would be a check one of them said ran and the other said did not.
+ *
+ * "Produced a report" is deliberately not the test. A set refused before its
+ * outputs were discovered still reports — with no members, nothing finalized
+ * and nothing validated — and a queue of those judged nothing at all. A skipped
+ * item's existing file was explicitly not inspected, and claiming output-only
+ * validation over either would claim a check nobody ran.
+ */
+export function conversionJudgedAnyOutput(item: ConversionQueueItem): boolean {
+  const result = item.result;
+  if (result === null || result === undefined) {
+    return false;
+  }
+  if (result.kind === "single") {
+    return result.report.validation !== null;
+  }
+  return (
+    result.report.finalizedCount > 0 || result.report.validatedNotPublishedCount > 0
+  );
 }
 
 export function isPreviewError(value: unknown): value is PreviewError {
@@ -714,6 +848,7 @@ export type WorkspaceOutputAdoptionOutcome =
   | {
       readonly kind: "added";
       readonly itemIndex: number;
+      readonly memberIndex: number;
       readonly sourceHandle: string;
       readonly outputFileName: string;
       readonly dataset: SelectedFile;
@@ -721,6 +856,7 @@ export type WorkspaceOutputAdoptionOutcome =
   | {
       readonly kind: "alreadyInWorkspace";
       readonly itemIndex: number;
+      readonly memberIndex: number;
       readonly sourceHandle: string;
       readonly outputFileName: string;
       readonly dataset: SelectedFile;
@@ -728,6 +864,7 @@ export type WorkspaceOutputAdoptionOutcome =
   | {
       readonly kind: "refused";
       readonly itemIndex: number;
+      readonly memberIndex: number;
       readonly sourceHandle: string;
       readonly outputFileName: string;
       /**
@@ -750,6 +887,14 @@ export interface WorkspaceOutputAdoptionResult {
   readonly retryRound: number;
   /** Authoritative and whole, like every other workspace answer. */
   readonly roster: WorkspaceRoster;
-  /** In queue order, one per finalized output the queue held. */
+  /**
+   * One per output file the queue held, ordered by queue item and then by
+   * publication order within one item's set.
+   *
+   * An item index alone stopped identifying an outcome the moment one item
+   * could hold ten of them, so each carries `memberIndex` as well. For a known
+   * single output that is zero — a real position, since such an item has
+   * exactly one member and it is the first.
+   */
   readonly outcomes: readonly WorkspaceOutputAdoptionOutcome[];
 }

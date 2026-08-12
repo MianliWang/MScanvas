@@ -3943,6 +3943,11 @@ command list is asserted unchanged. The inert `sciex_wiff` wire member exists
 for the reason ADR 0019 gave `shimadzu_lcd` one: the roster projection is total
 over what Rust can admit.
 
+> **Superseded on 2026-08-12.** The picker routes `.wiff` and the queue takes
+> the family — see *First visible SCIEX WIFF workflow* at the foot of this
+> record. Folder discovery, the Explorer drop and direct preview are the three
+> parts of the paragraph above that are still true.
+
 A staleness refusal has to leave a way out: revalidation refuses a row whose
 members were rewritten in place and says to open the acquisition again, and
 opening it again reaches the duplicate lookup with unchanged identities. So a
@@ -4144,3 +4149,74 @@ before it. See
 [ADR 0026](docs/architecture/adr/0026-private-sciex-serial-queue-integration.md)
 and
 [the M3.15 evidence record](docs/spikes/M3_SCIEX_PRIVATE_QUEUE_INTEGRATION_EVIDENCE.md).
+
+
+## First visible SCIEX WIFF workflow, 2026-08-12
+
+`Add files…` admits a SCIEX WIFF acquisition. Everything ADRs 0022–0026
+measured is now measured about something a user can do.
+
+**The extension routes; it never recognises.** A `.wiff` candidate goes to the
+existing evidenced bundle admission and to nothing else — the container
+structure, the derived companion name, the companion's own signature, both
+leases and the order-and-count comparison are exactly where they were. A name
+that proposed a family and failed it is a refusal rather than a second guess at
+the family its bytes match. The picker offers `*.wiff` and deliberately not
+`*.wiff.scan`: the companion is half an acquisition, never a row, and selecting
+it alone says which file to select instead. The three companion refusals stopped
+sharing one sentence, because two of them are fixable and collapsing them cost
+the only actionable answer this boundary has for a bundle.
+
+**The wire stopped assuming one named output per item.** `ItemOutputTopology`
+left `#[cfg(test)]`, and what replaced the privacy claim is narrower: a row
+reaches the set arm only by having been through its own evidenced family
+admission and by that family declaring that its backend names its own outputs.
+On the wire it is a discriminated union rather than a `String`, so the empty
+string that used to stand for a set is unrepresentable rather than avoided — a
+renderer must choose an arm to draw anything. The latest attempt's result is
+discriminated the same way, so a group report and a single report cannot both be
+present. Thermo and Shimadzu wire behaviour is unchanged in meaning, asserted by
+the contract pin.
+
+**One action, two cardinalities.** No second command, planner, worker or
+adoption engine. A set authority is *expanded* into the member tickets it was
+minted with, inside the existing engine, never rebuilt from a filename — and the
+expansion refuses a ticket of another session. Every adoption outcome now names
+an item **and** a member, and the offer became a count of output files: one
+finalized Thermo item offers one, one finalized ten-member SCIEX acquisition
+offers ten.
+
+**The partial-finalization question is decided.** A partially finalized
+acquisition is not eligible for complete output-set adoption, its prefix is kept
+as the user's files, and the item says how many were finalized, how many were
+not, that the files remain in the destination folder, and that they can be added
+individually later. It is not labelled `Finalized`, is offered no retry, and must
+never read as "Nothing was converted" — which is the sentence a zero offer
+naturally produces and is false here.
+
+**The walking surfaces did not move, and now say so under test.** A folder
+holding both halves of a bundle discovers only the mzML; both halves dropped
+directly stay unsupported; and neither module names this family at all. For a
+bundle the gap is wider than for a single object: pairing a `.wiff` with
+whatever sits beside it in a folder is a decision a traversal has no evidence to
+make, and upstream's own test data contains a `.wiff.scan` whose primary is a
+`.wiff2` in the same directory as two unrelated `.wiff` files.
+
+**Real evidence.** The ten-sample Enolase acquisition through the
+production-visible path — the picker's own routing, the visible planner, the
+visible queue, the visible adoption. One row of 3,944,804 bytes (primary plus
+companion), one item, `fully_finalized`, completeness `sample_count` 10, ten
+`added`, eleven workspace rows with the acquisition still one bundle row, no
+preview, path-free `Debug` and path-free serialized wire, and a repeat adoption
+reporting all ten as already present. Both fixture digests and the executable's
+were recomputed and matched exactly before use; everything was deleted after
+measurement.
+
+Twelve focused mutations, twelve red. One survived first — adding a member
+basename to the diagnostics export — because the privacy test pinned the debug
+renderings and left the export, which is the document that actually gets sent
+somewhere, asserted only on the fields it happened to know about. It is now
+asserted over the whole serialized document. See
+[ADR 0027](docs/architecture/adr/0027-first-visible-sciex-wiff-workflow.md)
+and
+[the M3.16 evidence record](docs/spikes/M3_VISIBLE_SCIEX_WIFF_WORKFLOW_EVIDENCE.md).
