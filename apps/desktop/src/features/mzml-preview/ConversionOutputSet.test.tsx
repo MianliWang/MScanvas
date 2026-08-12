@@ -401,6 +401,100 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     );
   });
 
+  it("claims no validation for a set that never judged an output", async () => {
+    // Refused before its outputs were discovered: a report exists, and nothing
+    // in it was ever validated. "Produced a report" is not the same question as
+    // "judged an output", and only the second licenses the disclosure.
+    const refused = outputSetReport("file-9", [], {
+      groupOutcome: "refused_before_publication",
+      detailedOutcome: "multi_output_backend_failed",
+      memberCount: 0,
+      finalizedCount: 0,
+      validatedNotPublishedCount: 0,
+      notPublishedCount: 0,
+      memberStates: [],
+      completeness: { kind: "notPosed" },
+      completeSetAdoptable: false,
+    });
+    const api = createFakePreviewApi({
+      initialDatasets: [bundle],
+      availability: availableBackend,
+      initialConversion: {
+        status: "terminal",
+        reason: "completed",
+        operationId: "1",
+        queue: queueOf([
+          sciexQueueItem("file-9", "Enolase_repeats.wiff", {
+            state: "failed",
+            attempts: 1,
+            result: { kind: "outputSet", report: refused },
+          }),
+        ]),
+      },
+    });
+    renderApp(api);
+    const result = await waitFor(() => {
+      const node = document.querySelector(".conversion-running");
+      if (node === null) {
+        throw new Error("expected a queue result on screen");
+      }
+      return node as HTMLElement;
+    });
+
+    // Scoped to the result. The *plan* below still states the disclosure, and
+    // should: a user deciding whether to convert is entitled to know what will
+    // be checked before they choose a folder. What must not happen is a
+    // finished queue claiming a check nobody ran.
+    expect(result.textContent ?? "").not.toContain("Output-only validation.");
+  });
+
+  it("says a skipped output set stepped aside from all its names, not one", async () => {
+    // The multi-output lifecycle reaches this state only when every discovered
+    // destination name is occupied, and the item has no singular name for the
+    // shared sentence to be about.
+    const skipped = outputSetReport("file-9", [], {
+      groupOutcome: "skipped_existing_destinations",
+      memberCount: 0,
+      finalizedCount: 0,
+      validatedNotPublishedCount: 0,
+      notPublishedCount: 0,
+      memberStates: [],
+      completeness: { kind: "notPosed" },
+      completeSetAdoptable: false,
+    });
+    const api = createFakePreviewApi({
+      initialDatasets: [bundle],
+      availability: availableBackend,
+      initialConversion: {
+        status: "terminal",
+        reason: "completed",
+        operationId: "1",
+        queue: queueOf([
+          sciexQueueItem("file-9", "Enolase_repeats.wiff", {
+            state: "skipped",
+            attempts: 1,
+            result: { kind: "outputSet", report: skipped },
+          }),
+        ]),
+      },
+    });
+    renderApp(api);
+    const result = await waitFor(() => {
+      const node = document.querySelector(".conversion-running");
+      if (node === null) {
+        throw new Error("expected a queue result on screen");
+      }
+      return node as HTMLElement;
+    });
+
+    expect(result.querySelector(".conversion-queue-status")?.textContent).toBe(
+      "Skipped — files of all its output names were already there",
+    );
+    expect(document.body.textContent ?? "").not.toContain(
+      "Skipped — a file of that name was already there",
+    );
+  });
+
   it("says nothing about SCIEX in the folder or drop copy", async () => {
     const api = createFakePreviewApi({
       initialDatasets: [selectedFile],

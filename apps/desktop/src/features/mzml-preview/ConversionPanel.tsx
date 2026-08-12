@@ -9,7 +9,7 @@ import type {
   ConversionReport,
   DatasetSourceKind,
 } from "./contracts";
-import { SOURCE_KIND_LABEL } from "./contracts";
+import { conversionJudgedAnyOutput, SOURCE_KIND_LABEL } from "./contracts";
 import { formatByteLength, formatCount, formatDuration } from "./format";
 import type { ConversionOperation } from "./useConversionOperation";
 
@@ -754,7 +754,7 @@ function QueueState({
                 </span>
               )}
               <span className="visually-hidden">, </span>
-              <span className="conversion-queue-status">{ITEM_STATE_LABEL[item.state]}</span>
+              <span className="conversion-queue-status">{itemStateLabel(item)}</span>
               {item.attempts > 1 ? (
                 <>
                   <span className="visually-hidden">, </span>
@@ -846,9 +846,7 @@ function QueueState({
               all skipped or all failed validated nothing -- and a skipped item's
               existing file was explicitly not inspected, so claiming
               output-only validation over it would claim a check nobody ran. */}
-          {queue.items.some(
-            (item) => singleReportOf(item)?.validation != null || setReportOf(item) !== null,
-          ) ? (
+          {queue.items.some(conversionJudgedAnyOutput) ? (
             <p className="quiet-text" role="note">
               {OUTPUT_ONLY_DISCLOSURE}
             </p>
@@ -956,6 +954,33 @@ function runningPosition(queue: ConversionQueue): number {
   const next = queue.items.findIndex((item) => item.state === "pending");
   return next === -1 ? Math.min(queue.currentIndex + 1, queue.itemCount) : next + 1;
 }
+
+/**
+ * What one item's state says, in words rather than in colour.
+ *
+ * A function rather than a bare lookup, because one label is not true of both
+ * cardinalities. A skipped item with a known single output was skipped because
+ * *its* name was taken; a skipped output set reached that state only when every
+ * one of its discovered names was already occupied, and it has no singular name
+ * for the shared sentence to be about.
+ */
+function itemStateLabel(item: ConversionQueueItem): string {
+  if (item.state === "skipped" && item.output.kind === "backendNamedSet") {
+    return SKIPPED_OUTPUT_SET_LABEL;
+  }
+  return ITEM_STATE_LABEL[item.state];
+}
+
+/**
+ * What a skipped output set says.
+ *
+ * Every one of them, not one of them: the multi-output lifecycle steps aside
+ * only when it finds a file at every destination name it discovered, so a
+ * sentence about "a file of that name" would describe a name this item never
+ * had.
+ */
+const SKIPPED_OUTPUT_SET_LABEL =
+  "Skipped — files of all its output names were already there";
 
 /** What each item state says, in words rather than in colour. */
 const ITEM_STATE_LABEL: Record<ConversionQueueItem["state"], string> = {

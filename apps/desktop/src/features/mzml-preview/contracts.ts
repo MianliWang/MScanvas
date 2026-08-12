@@ -788,6 +788,32 @@ export interface ConversionQueuePlan {
   readonly capacity: number;
 }
 
+/**
+ * Whether one queue item's latest attempt actually judged an output.
+ *
+ * The predicate behind every "output-only validation" claim, written once
+ * because two surfaces make that claim and a disclosure they disagreed about
+ * would be a check one of them said ran and the other said did not.
+ *
+ * "Produced a report" is deliberately not the test. A set refused before its
+ * outputs were discovered still reports — with no members, nothing finalized
+ * and nothing validated — and a queue of those judged nothing at all. A skipped
+ * item's existing file was explicitly not inspected, and claiming output-only
+ * validation over either would claim a check nobody ran.
+ */
+export function conversionJudgedAnyOutput(item: ConversionQueueItem): boolean {
+  const result = item.result;
+  if (result === null || result === undefined) {
+    return false;
+  }
+  if (result.kind === "single") {
+    return result.report.validation !== null;
+  }
+  return (
+    result.report.finalizedCount > 0 || result.report.validatedNotPublishedCount > 0
+  );
+}
+
 export function isPreviewError(value: unknown): value is PreviewError {
   return (
     typeof value === "object" &&
