@@ -111,6 +111,7 @@ members, member 0 already a row, exactly one slot free.
 | a set discovers a name a Thermo item owns, under **`Skip`** | typed `multi_output_output_name_claimed_elsewhere`, the set publishes **none** of its own, the Thermo item finalizes, and `skipped_count` stays 0 |
 | two sets discover one name, under **`Skip`** | the first finalizes and its document stays; the second publishes zero and is a typed collision, not a successful skip |
 | a known single output whose name an earlier set published | refused before it runs, `queue_output_name_claimed`, not retryable |
+| the gate answers with a position, honest or not | the lifecycle reports the member from **its own** list: index 1 → the second member, index 0 → the first, `usize::MAX` → still a refusal, still a real name, still nothing published |
 
 `Skip` is the policy used deliberately in the first two, because it is the one
 that would otherwise answer "already converted" about somebody else's output.

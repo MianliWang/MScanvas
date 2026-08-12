@@ -2840,16 +2840,17 @@ impl PreviewService {
             // it answers about is the *plan*: which names other items of this
             // queue already own, whether because they were planned with them or
             // because they published them. See `OutputNamesClaimed`.
-            let mut claimed_name = None;
-            let mut names_claimed =
-                |discovered: &[String]| match queue.name_claimed_by_another(index, discovered) {
-                    Some(owner) => {
-                        let name = owner.display.clone();
-                        claimed_name = Some(owner);
-                        OutputNamesClaimed::Already { name }
-                    }
-                    None => OutputNamesClaimed::None,
-                };
+            // It answers with a position rather than a name. The lifecycle's
+            // failures are path-free by construction and must not depend on
+            // this adapter behaving; it names the member from its own list.
+            let mut names_claimed = |discovered: &[String]| {
+                queue.name_claimed_by_another(index, discovered).map_or(
+                    OutputNamesClaimed::None,
+                    |owner| OutputNamesClaimed::Already {
+                        index: owner.discovered_position,
+                    },
+                )
+            };
             let run = run_admitted_multi_output_conversion_seamed(
                 &source,
                 destination.root(),

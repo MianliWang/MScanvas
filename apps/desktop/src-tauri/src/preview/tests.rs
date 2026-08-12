@@ -19083,6 +19083,7 @@ fn every_set_bearing_debug_is_opaque() {
         folded: folded_output_name(names[0]),
         display: names[0].to_owned(),
         item: 0,
+        discovered_position: 0,
     };
     let rendered = format!("{claimed:?}");
     assert!(

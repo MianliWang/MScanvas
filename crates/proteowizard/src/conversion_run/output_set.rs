@@ -994,9 +994,16 @@ impl std::fmt::Debug for FinalizedOutputSet {
 pub enum OutputNamesClaimed {
     /// Nothing outside this run owns any of them.
     None,
-    /// One of them is already owned. One basename, because that is what the
-    /// caller knows and all the refusal needs.
-    Already { name: String },
+    /// The name at this position of the set the gate was handed is already
+    /// owned.
+    ///
+    /// A position rather than a string, and that is the whole design of this
+    /// answer. Every failure in this vocabulary is path-free *by
+    /// construction*; a caller that could hand back arbitrary text would make
+    /// this one path-free only by its own good behaviour, and the refusal would
+    /// carry whatever it said. The lifecycle names the member from its own
+    /// validated list instead.
+    Already { index: usize },
 }
 
 /// What a caller may contribute to one set run beyond its inputs.
@@ -1878,7 +1885,17 @@ pub(crate) fn settle_staged_output_set_seamed(
         .iter()
         .map(DiscoveredMember::display_name)
         .collect();
-    if let OutputNamesClaimed::Already { name } = names_claimed(&discovered_names) {
+    if let OutputNamesClaimed::Already { index } = names_claimed(&discovered_names) {
+        // From this list, never from the answer. An index the caller could not
+        // have meant still refuses -- the answer was that *something* here is
+        // owned, and publishing on the strength of a bad index would be the one
+        // reading of it that cannot be right. Discovery has already refused an
+        // empty set, so there is always a name to report.
+        let name = discovered_names
+            .get(index)
+            .or_else(|| discovered_names.first())
+            .cloned()
+            .unwrap_or_default();
         return SettledOutputSet {
             outcome: MultiOutputOutcome::RefusedBeforePublication(
                 MultiOutputFailure::OutputNameClaimedElsewhere { name },

@@ -320,6 +320,14 @@ The refusal is `MultiOutputFailure::OutputNameClaimedElsewhere`, and it publishe
 nothing. Production passes an inert seam, so the direct conversion path is
 exactly what it was.
 
+The gate answers with a **position**, not a name. Every failure in this
+vocabulary is path-free by construction, and a gate that accepted a string from
+its caller would make this one path-free only by that caller's good behaviour —
+the refusal would carry whatever it was handed. The lifecycle names the member
+from its own validated list instead, and a position nobody could have meant
+still refuses: the answer was that *something* here is owned, and publishing on
+the strength of a bad index is the one reading of it that cannot be right.
+
 The same seam carries the publication hook the deterministic suite uses to reach
 `PartiallyFinalized` — a name taken between the whole-set preflight and one
 member's rename. The hook is handed a position and nothing else: no object, no

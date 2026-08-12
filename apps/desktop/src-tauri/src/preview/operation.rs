@@ -239,9 +239,14 @@ impl fmt::Debug for ItemOutputTopology {
 pub(super) struct ClaimedOutputName {
     /// Folded once, at derivation, because every use of it is a comparison.
     pub(super) folded: String,
-    /// As the backend or the planner spelled it, for the refusal to name.
+    /// As the backend or the planner spelled it. Read by the queue's own
+    /// refusals; the conversion lifecycle is never handed it, and names the
+    /// member from its own validated list instead.
     pub(super) display: String,
+    /// Which item owns it.
     pub(super) item: usize,
+    /// Where it sat in the list the asker was comparing, when there was one.
+    pub(super) discovered_position: usize,
 }
 
 #[cfg(test)]
@@ -711,6 +716,7 @@ impl ConversionQueue {
                     folded: folded_output_name(planned),
                     display: planned.to_owned(),
                     item: index,
+                    discovered_position: 0,
                 });
             }
             for published in item.published() {
@@ -718,6 +724,7 @@ impl ConversionQueue {
                     folded: folded_output_name(published),
                     display: published.clone(),
                     item: index,
+                    discovered_position: 0,
                 });
             }
         }
@@ -755,7 +762,7 @@ impl ConversionQueue {
         names: &[String],
     ) -> Option<ClaimedOutputName> {
         let claimed = self.claimed_output_names();
-        names.iter().find_map(|name| {
+        names.iter().enumerate().find_map(|(position, name)| {
             let folded = folded_output_name(name);
             claimed
                 .iter()
@@ -764,6 +771,10 @@ impl ConversionQueue {
                     folded: owned.folded.clone(),
                     display: owned.display.clone(),
                     item: owned.item,
+                    // Where in the asker's own list the collision was, so a
+                    // caller that must not be handed a name can still be told
+                    // which one.
+                    discovered_position: position,
                 })
         })
     }

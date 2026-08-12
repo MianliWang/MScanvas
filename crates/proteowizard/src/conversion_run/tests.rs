@@ -4701,6 +4701,68 @@ impl SetFixture {
     }
 }
 
+/// The claim gate names the member from this lifecycle's own list.
+///
+/// Every failure in this vocabulary is path-free by construction, and a gate
+/// that accepted a string from its caller would make this one path-free only by
+/// that caller's good behaviour. So the answer is a position, and the two
+/// halves of that are worth measuring separately: an honest position reports
+/// the member it points at, and a position nobody could have meant still
+/// refuses -- the answer was that *something* here is owned, and publishing on
+/// the strength of a bad index is the one reading of it that cannot be right.
+#[test]
+fn a_claimed_output_name_is_reported_from_the_discovered_set() {
+    for (answered, expected) in [
+        (1_usize, "sample_02.mzML"),
+        (0, "sample_01.mzML"),
+        (usize::MAX, "sample_01.mzML"),
+    ] {
+        let fixture = SetFixture::new(&format!("claimed-{answered}"));
+        for index in 1..=3 {
+            fixture.member(&format!("sample_{index:02}.mzML"));
+        }
+        let destination = fixture.destination();
+        let settled = output_set::settle_staged_output_set_seamed(
+            output_set::StagedOutputSet {
+                source: &fixture.source_facts,
+                directory: &fixture.staged,
+                declared: &fixture.declaration(),
+            },
+            &destination,
+            ConflictPolicy::Fail,
+            ConversionPolicy::default(),
+            MzmlScanLimits::default(),
+            output_set::SetRunSeam {
+                names_claimed: &mut |_| output_set::OutputNamesClaimed::Already { index: answered },
+                before_member_publication: &mut |_| {},
+            },
+        );
+
+        let MultiOutputOutcome::RefusedBeforePublication(
+            MultiOutputFailure::OutputNameClaimedElsewhere { name },
+        ) = &settled.outcome
+        else {
+            panic!("a claimed name refuses the set: {:?}", settled.outcome);
+        };
+        assert_eq!(name, expected, "answered {answered}");
+        assert!(settled.retained.is_empty(), "nothing may publish");
+        assert!(
+            entry_names(&fixture.destination_root).is_empty(),
+            "the destination is untouched"
+        );
+        // Every member was validated before the gate was asked, and none was
+        // published -- which is what makes this a refusal rather than a
+        // discovery failure.
+        assert!(
+            settled
+                .members
+                .iter()
+                .all(|member| member.state() == OutputMemberState::ValidatedNotPublished),
+            "answered {answered}"
+        );
+    }
+}
+
 /// Discovery is the staging directory and its rules: bounded, mzML-only,
 /// ordinary files under safe single-component names, deterministically ordered.
 #[test]

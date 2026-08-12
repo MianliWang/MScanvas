@@ -91,8 +91,13 @@ then. A set has none, so it is not given guesses; its discovered names meet the
 queue's claims at a gate the lifecycle asks **outward**:
 
 ```rust
-pub enum OutputNamesClaimed { None, Already { name: String } }
+pub enum OutputNamesClaimed { None, Already { index: usize } }
 ```
+
+It answers with a position rather than a name, because every failure in that
+vocabulary is path-free *by construction* and a gate accepting arbitrary text
+from its caller would make this one path-free only by the caller's good
+behaviour. The lifecycle names the member from its own validated list.
 
 Asked once, with the complete discovered set, after every member is validated
 and **before the destination is inspected**. That ordering is the decision. A
