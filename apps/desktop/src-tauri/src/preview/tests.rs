@@ -18335,10 +18335,23 @@ fn one_sciex_acquisition_is_one_queue_item_with_ten_outputs() {
         Some(10)
     );
 
-    // One ticket over ten members, adopted through the private terminal path.
+    // What the queue *offered* before anything was adopted, which is the number
+    // the interface renders. Read here and compared with the outcomes below,
+    // because these are two readings of one authority and an interface that
+    // offered ten and received one would have promised the user work it could
+    // not do. There is deliberately only one predicate behind both.
+    let offered = adoptable_output_count(&update);
+    assert_eq!(offered, 10, "the offer counts output files, not items");
+
+    // One ticket over ten members, adopted through the visible action.
     let result =
         adopt_visible(&service, operation).expect("the terminal item holds a set to adopt");
     assert_eq!(set_adoption_kinds(&result.outcomes), vec!["added"; 10]);
+    assert_eq!(
+        result.outcomes.len(),
+        offered,
+        "the count the interface showed and the outcomes it received must agree"
+    );
     // The lifecycle's own deterministic order, which is the staging
     // directory's and not the order the samples sit in the acquisition.
     // Deterministic is not scientific, and nothing here claims otherwise.

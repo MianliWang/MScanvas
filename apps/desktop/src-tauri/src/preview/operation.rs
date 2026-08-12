@@ -1934,7 +1934,6 @@ impl ConversionSlot {
     pub(super) fn terminal_adoption_tickets(
         &self,
         operation: u64,
-        session: u64,
     ) -> Option<
         Vec<(
             AdoptionCandidateIdentityDto,
@@ -1965,20 +1964,21 @@ impl ConversionSlot {
                             Some(QueueAdoptionAuthority::Single(ticket)) => {
                                 vec![Arc::clone(ticket)]
                             }
-                            // Refused rather than validated field by field: a
-                            // ticket of another session simply does not belong
-                            // to this workspace, and its member tickets name
-                            // rows by ids this session allocates too.
-                            Some(QueueAdoptionAuthority::Set(ticket))
-                                if ticket.session() == session =>
-                            {
-                                ticket
-                                    .candidates()
-                                    .into_iter()
-                                    .map(|(_, member)| member)
-                                    .collect()
-                            }
-                            Some(QueueAdoptionAuthority::Set(_)) => Vec::new(),
+                            // No session check here, deliberately. The crossing
+                            // it would guard is closed where it can actually be
+                            // established: a ticket is minted only from a
+                            // conversion of the minting session, so a queue
+                            // item cannot come to hold a foreign one. Checking
+                            // again here would make this predicate differ from
+                            // `adoptable_output_count`'s -- and two answers to
+                            // "how many outputs does this item offer" that can
+                            // disagree is precisely what the count exists not
+                            // to be.
+                            Some(QueueAdoptionAuthority::Set(ticket)) => ticket
+                                .candidates()
+                                .into_iter()
+                                .map(|(_, member)| member)
+                                .collect(),
                             None => Vec::new(),
                         };
                     members

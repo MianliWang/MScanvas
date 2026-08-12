@@ -1654,7 +1654,7 @@ impl PreviewService {
             }
             let tickets = self
                 .conversion_slot()
-                .terminal_adoption_tickets(operation, self.session)
+                .terminal_adoption_tickets(operation)
                 .ok_or_else(outputs_not_adoptable)?;
             if tickets.is_empty() {
                 return Err(outputs_not_adoptable());

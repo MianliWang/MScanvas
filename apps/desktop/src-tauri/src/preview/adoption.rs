@@ -351,6 +351,7 @@ impl fmt::Debug for FinalizedOutputSetAdoptionTicket {
             // session-scoped counter that names an event and never reaches
             // disk. The row is the opaque handle every other answer already
             // carries.
+            .field("session", &self.session)
             .field("source", &self.source)
             .field("source_kind", &self.source_kind)
             .field("run", &self.run)
@@ -491,10 +492,11 @@ impl FinalizedOutputSetAdoptionTicket {
 
     /// The session that minted this ticket.
     ///
-    /// Asked by the queue before it will expand this authority into member
-    /// candidates: a `DatasetId` is allocated per session from zero, so a
-    /// ticket of another session would commit its outputs against whatever row
-    /// happens to hold that number here.
+    /// Read only by the direct-conversion adoption, where the caller holds the
+    /// ticket and a foreign one is expressible. A queue-held ticket cannot be
+    /// foreign: minting refuses a conversion of any other session, so the
+    /// queue's own expansion has nothing left to check.
+    #[cfg(test)]
     pub(super) const fn session(&self) -> u64 {
         self.session
     }
