@@ -1806,6 +1806,14 @@ impl PreviewService {
         self.conversion_slot().terminal_set_run(operation, index)
     }
 
+    /// Forges a retryable set failure. See
+    /// [`ConversionSlot::mark_retryable_for_test`].
+    #[cfg(test)]
+    pub(super) fn mark_retryable_for_test(&self, operation: u64, index: usize) -> bool {
+        self.conversion_slot()
+            .mark_retryable_for_test(operation, index)
+    }
+
     /// What the live queue's runtime name authority currently owns, and the
     /// most it ever could.
     #[cfg(test)]

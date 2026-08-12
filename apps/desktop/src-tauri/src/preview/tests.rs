@@ -18725,6 +18725,167 @@ fn a_retried_set_attempt_reuses_no_identity_or_ticket() {
     assert!(service.adopt_queue_output_set(operation, 0).is_err());
 }
 
+/// A stop landing mid-retry leaves a set failure as the failure it was.
+///
+/// The state this pins is narrow and easy to lose. A retry moves every
+/// retryable failure back to pending; if a stop lands while an earlier one is
+/// running, the item behind it never reruns — and the queue must restore what
+/// that item earned rather than calling it never-run, because never-run would
+/// delete a failure the user has already seen, take it out of the failed count
+/// and drop the diagnostic ticket whose state has to match.
+///
+/// A *set* failure lives in neither `error` nor the single-output report; its
+/// result is its group report. Both restoration paths had to learn to ask.
+#[test]
+fn a_stop_mid_retry_restores_a_set_failure_rather_than_stranding_it() {
+    let fixture = TestFile::new("queue-retry-stranded");
+    let destination = fixture.destination("out");
+    // The second run of the session: the Thermo item, again, on the retry --
+    // which is where the stop lands, leaving the set item behind it pending.
+    let (runner, observed, release) = FakeOutputSetRunner::writing(&["a-S1.mzML"])
+        .also_converting()
+        .also_injecting("uninvited.mzML")
+        .parked_on_call(2, StopEnding::Confirmed);
+    let service = Arc::new(output_set_service(runner));
+    let held_source = fixture.thermo_raw("first.raw");
+    let thermo = service
+        .add_thermo_dataset(&held_source)
+        .expect("a Thermo row");
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+
+    // First pass: the Thermo row is held by somebody else, which is the one
+    // condition measured as transient; the set fails on its undeclared member.
+    let held = hold_for_writing(&held_source);
+    let update = run_private_queue(
+        &service,
+        &[thermo.handle.clone(), sciex.handle.clone()],
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let operation = operation_of(&update);
+    let queue = terminal_queue(&update);
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Failed,
+            ConversionQueueItemStateDto::Failed
+        ]
+    );
+    assert!(queue.items[0].retryable, "a held file is worth retrying");
+    assert!(
+        service.terminal_set_report(operation, 1).is_some(),
+        "the set failure lives in the group report and nowhere else"
+    );
+    assert!(
+        queue.items[1].report.is_none() && queue.items[1].error.is_none(),
+        "and in neither of the two places the restoration paths used to look"
+    );
+    assert_eq!(update.diagnostics.eligible_item_count, 2);
+    drop(held);
+
+    // Forged, because no deterministic test can produce a retryable set
+    // failure -- see `mark_retryable_for_test`.
+    assert!(service.mark_retryable_for_test(operation, 1));
+
+    // Both go back to pending. The Thermo item runs and parks; the stop lands
+    // while it runs, so the set item behind it never reruns.
+    let document = service.workspace_drop_document_epoch();
+    let worker = {
+        let service = Arc::clone(&service);
+        std::thread::spawn(move || service.retry_conversion_queue(document))
+    };
+    observed
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the retried Thermo item started");
+    service
+        .stop_conversion_queue(&operation.to_string(), document)
+        .expect("the stop is accepted");
+    release.send(()).expect("release the parked backend");
+    let retried = worker
+        .join()
+        .expect("the worker finishes")
+        .expect("the retry ran");
+    let queue = terminal_queue(&retried);
+
+    assert_eq!(
+        terminal_reason(&retried),
+        ConversionQueueTerminalReasonDto::Stopped
+    );
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Cancelled,
+            ConversionQueueItemStateDto::Failed
+        ],
+        "the set failure is the failure it was, not a thing that never ran"
+    );
+    assert_eq!(queue.not_run_count, 0);
+    assert_eq!(queue.failed_count, 1);
+    assert!(
+        service.terminal_set_report(operation, 1).is_some(),
+        "and it still holds the report that explains it"
+    );
+    // One, not two: the restored set failure keeps the ticket whose state has
+    // to match, and the confirmed cancellation beside it has nothing to
+    // diagnose -- the user asked for it to stop and the owned tree is gone.
+    assert_eq!(
+        retried.diagnostics.eligible_item_count, 1,
+        "a restored failure keeps the ticket whose state has to match"
+    );
+}
+
+/// The same restoration, when a queue-level refusal ends the pass instead.
+#[test]
+fn a_refused_retry_restores_a_set_failure_rather_than_losing_it() {
+    let fixture = TestFile::new("queue-refused-retry");
+    let destination = fixture.destination("out");
+    let service = Arc::new(output_set_service(
+        FakeOutputSetRunner::writing(&["a-S1.mzML"])
+            .also_converting()
+            .also_injecting("uninvited.mzML"),
+    ));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+    let thermo = service
+        .add_thermo_dataset(&fixture.thermo_raw("after.raw"))
+        .expect("a Thermo row");
+
+    let update = run_private_queue(
+        &service,
+        &[sciex.handle.clone(), thermo.handle.clone()],
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    let operation = operation_of(&update);
+    assert_eq!(terminal_queue(&update).failed_count, 1);
+    assert!(service.mark_retryable_for_test(operation, 0));
+
+    // The destination stops being the object it was admitted as, so the retry
+    // is refused before its first item runs.
+    fs::remove_dir_all(&destination).expect("remove the destination");
+    let refused = service
+        .retry_conversion_queue(service.workspace_drop_document_epoch())
+        .expect_err("a folder that is gone refuses the retry");
+    assert_eq!(refused.kind, "queue_destination_changed");
+
+    // The queue is untouched: the failure is still a failure and still counted.
+    let after = service.conversion_state();
+    let queue = terminal_queue(&after);
+    assert_eq!(
+        item_states(queue),
+        vec![
+            ConversionQueueItemStateDto::Failed,
+            ConversionQueueItemStateDto::Finalized
+        ]
+    );
+    assert_eq!(queue.failed_count, 1);
+    assert_eq!(queue.not_run_count, 0);
+    assert_eq!(after.diagnostics.eligible_item_count, 1);
+}
+
 /// Exports the diagnostics of whatever the slot holds, and reads them back.
 fn export_private_diagnostics(
     service: &PreviewService,

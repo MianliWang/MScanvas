@@ -409,6 +409,15 @@ pub(super) struct QueueItem {
     /// much the larger of the two and the queue is cloned on every read.
     #[cfg(test)]
     set_report: Option<Box<super::conversion::WorkspaceMultiOutputConversionReport>>,
+    /// What the latest set attempt settled into.
+    ///
+    /// A set item that ran keeps this even while a retry has moved it back to
+    /// pending, because that is the only place its result lives: the group
+    /// report is its own field, so the two restoration paths below would
+    /// otherwise see an item with no `error` and no single-output `report` and
+    /// call it never-run.
+    #[cfg(test)]
+    set_state: Option<ItemState>,
     /// Which conversion the latest set attempt was.
     ///
     /// Allocated when that attempt finished, so a retry cannot be described by
@@ -501,6 +510,8 @@ impl QueueItem {
             #[cfg(test)]
             set_report: None,
             #[cfg(test)]
+            set_state: None,
+            #[cfg(test)]
             set_run: None,
             error: None,
             retryable: false,
@@ -554,6 +565,27 @@ impl QueueItem {
 
     pub(super) fn file_name(&self) -> &str {
         &self.dataset_dto.file_name
+    }
+
+    /// The state this item earned by running, if it has run.
+    ///
+    /// `None` means it never has, which is the one case a stop may call not-run.
+    /// Read by both restoration paths, so an item that ran once and was moved
+    /// back to pending by a retry keeps the result the user has already seen --
+    /// its place in the counts, its reason, and the diagnostic ticket whose
+    /// state must still match.
+    fn earned_state(&self) -> Option<ItemState> {
+        if self.error.is_some() {
+            return Some(ItemState::Failed);
+        }
+        if let Some(report) = self.report.as_ref() {
+            return Some(item_state_of(report.outcome_class()));
+        }
+        #[cfg(test)]
+        if let Some(state) = self.set_state {
+            return Some(state);
+        }
+        None
     }
 
     /// Which item a diagnostic built here is about.
@@ -823,13 +855,12 @@ impl ConversionQueue {
             if !item.state.is_pending() {
                 continue;
             }
-            if item.error.is_some() {
-                item.state = ItemState::Failed;
-            } else if let Some(report) = item.report.as_ref() {
-                item.state = item_state_of(report.outcome_class());
-            } else {
-                item.state = ItemState::NotRun;
-                stranded += 1;
+            match item.earned_state() {
+                Some(earned) => item.state = earned,
+                None => {
+                    item.state = ItemState::NotRun;
+                    stranded += 1;
+                }
             }
         }
         self.recount();
@@ -1496,6 +1527,7 @@ impl ConversionSlot {
                 #[cfg(test)]
                 {
                     item.set_report = None;
+                    item.set_state = None;
                     item.set_run = None;
                 }
                 let planned = item.output.planned_name().unwrap_or_default().to_owned();
@@ -1524,6 +1556,7 @@ impl ConversionSlot {
                 .map(Arc::new);
                 item.error = None;
                 item.report = None;
+                item.set_state = Some(settlement.state());
                 item.set_run = Some(settlement.run());
                 let (set_report, adoption) = settlement.into_parts();
                 item.set_report = Some(Box::new(set_report));
@@ -1543,6 +1576,7 @@ impl ConversionSlot {
                 #[cfg(test)]
                 {
                     item.set_report = None;
+                    item.set_state = None;
                     item.set_run = None;
                 }
                 item.diagnostic = Some(Arc::new(ConversionFailureDiagnosticTicket::of_refusal(
@@ -1577,6 +1611,7 @@ impl ConversionSlot {
                 #[cfg(test)]
                 {
                     item.set_report = None;
+                    item.set_state = None;
                     item.set_run = None;
                 }
                 item.cancellation = Some(facts);
@@ -1670,10 +1705,8 @@ impl ConversionSlot {
                 if !item.state.is_pending() {
                     continue;
                 }
-                if item.error.is_some() {
-                    item.state = ItemState::Failed;
-                } else if let Some(report) = item.report.as_ref() {
-                    item.state = item_state_of(report.outcome_class());
+                if let Some(earned) = item.earned_state() {
+                    item.state = earned;
                 }
             }
             TerminalReason::Completed
@@ -1683,6 +1716,33 @@ impl ConversionSlot {
         self.state = SlotState::Terminal { reason, queue };
         self.current_attempt = None;
         self.advance();
+    }
+
+    /// Marks one failed item of a terminal queue as worth another attempt.
+    ///
+    /// There is no other way to reach the interval this exists for. A set
+    /// failure is retryable only when the destination could not be opened or
+    /// inspected -- a physical condition a deterministic test cannot produce --
+    /// so no test can otherwise get a set item back to pending while its result
+    /// lives only in its group report, which is exactly the state a stop
+    /// landing mid-retry must not mistake for never-run. This forges that
+    /// state rather than waiting for one to exist, and changes nothing else.
+    #[cfg(test)]
+    pub(super) fn mark_retryable_for_test(&mut self, operation: u64, index: usize) -> bool {
+        if self.operation != operation {
+            return false;
+        }
+        let SlotState::Terminal { queue, .. } = &mut self.state else {
+            return false;
+        };
+        let Some(item) = queue.items.get_mut(index) else {
+            return false;
+        };
+        if item.state != ItemState::Failed {
+            return false;
+        }
+        item.retryable = true;
+        true
     }
 
     /// Moves every retryable failure back to pending for another pass.

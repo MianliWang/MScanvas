@@ -149,6 +149,22 @@ what was produced. What survives is the class of physical failure that happened
 before the backend was launched and that the single-output classifier already
 calls retryable for the same physical reason.
 
+### An item that ran keeps what it earned
+
+The queue already had this rule, and it had one hole this slice opened. A retry
+moves a retryable failure back to pending; a stop or a queue-level refusal
+landing before that item reruns restores what it earned rather than calling it
+never-run, because never-run would delete a failure the user has already seen,
+take it out of the failed count, and drop the diagnostic ticket whose state has
+to match.
+
+Both restoration paths read `error` then the single-output report. A set
+failure lives in neither — its result is its group report — so both now ask the
+item what state it earned, and the item answers from whichever of the three it
+has. Reaching that interval needs a retryable set failure, which is a physical
+destination condition no deterministic test can produce, so the suite forges
+the retryability and drives the rest for real.
+
 ### Stop
 
 The exact existing attempt-bound registration, unchanged: one

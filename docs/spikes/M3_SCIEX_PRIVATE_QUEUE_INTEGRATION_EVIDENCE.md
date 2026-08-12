@@ -138,6 +138,8 @@ makes about itself.
 | a queue-internal name collision | non-retryable |
 | a success or a skip | never rerun |
 | a retried attempt | names a different run; a fresh conversion names another; a refusal names none and holds no report |
+| a stop landing mid-retry | the set failure is restored as the failure it was, not stranded as never-run; `not_run_count` 0 |
+| a queue-level refusal ending the retry | the same, and the failure keeps its place in the counts and its diagnostic |
 
 ## Diagnostics and privacy
 
@@ -234,7 +236,7 @@ order the samples sit in the acquisition.
 
 ## Mutations
 
-Eleven, each removing one load-bearing guard.
+Twelve, each removing one load-bearing guard.
 
 | # | Guard removed | Result |
 | - | ------------- | ------ |
@@ -248,7 +250,14 @@ Eleven, each removing one load-bearing guard.
 | 8 | a runtime queue-name collision is left to the conflict policy | red |
 | 9 | a set's diagnostic payload carries its member names | red |
 | 10 | **a superseded output-set adoption may commit** | **survived** |
-| 11 | two backend processes may run at once | red |
+| 11 | an item that ran is stranded as never-run by a stop mid-retry | red |
+| 12 | two backend processes may run at once | red |
+
+Mutation 11 was added after a review found the hole it guards, and it survived
+the first test written for it: the stop landed while the *set* item was running,
+so it settled as cancelled and the restoration path was never asked. The test
+now aims the stop at an earlier item, leaving the set item pending with its
+result in nothing but its group report — which is the state the guard is for.
 
 ### The survivors, classified
 
