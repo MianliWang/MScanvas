@@ -9,9 +9,7 @@
 
 /** The measurements the workspace records. */
 export type PreviewMeasurementName =
-  | "openToFirstPreview"
-  | "rowSelectToRendered"
-  | "spectrumTableRender";
+  "openToFirstPreview" | "rowSelectToRendered" | "spectrumTableRender";
 
 export interface PreviewMeasurement {
   readonly name: PreviewMeasurementName;

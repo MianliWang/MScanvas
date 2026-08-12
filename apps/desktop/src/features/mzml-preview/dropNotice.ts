@@ -27,14 +27,11 @@ export function describeDropResult(result: DropIngestionResult): WorkspaceNotice
   const { outcomes, summary } = result;
   const added = outcomes.filter((outcome) => outcome.outcome === "added").length;
   const duplicates = outcomes.filter((outcome) => outcome.outcome === "duplicate").length;
-  const rejected = outcomes.flatMap((outcome) =>
-    outcome.outcome === "rejected" ? [outcome] : [],
-  );
+  const rejected = outcomes.flatMap((outcome) => (outcome.outcome === "rejected" ? [outcome] : []));
   const full = rejected.filter((outcome) => outcome.error.kind === "workspace_full").length;
   const unreadable = rejected.length - full;
   const supportedCandidates = outcomes.filter(
-    (outcome) =>
-      outcome.outcome !== "rejected" || outcome.error.kind !== "unsupported_extension",
+    (outcome) => outcome.outcome !== "rejected" || outcome.error.kind !== "unsupported_extension",
   ).length;
   const noSupportedCandidates = summary.complete && supportedCandidates === 0;
   const parts: string[] = [];
@@ -87,9 +84,7 @@ export function describeDropResult(result: DropIngestionResult): WorkspaceNotice
   }
   if (summary.unsupportedRootCount > 0) {
     const count = summary.unsupportedRootCount;
-    parts.push(
-      `${plural(count, "top-level item")} ${count === 1 ? "was" : "were"} not supported.`,
-    );
+    parts.push(`${plural(count, "top-level item")} ${count === 1 ? "was" : "were"} not supported.`);
   }
   if (summary.skippedReparseEntryCount > 0) {
     const count = summary.skippedReparseEntryCount;

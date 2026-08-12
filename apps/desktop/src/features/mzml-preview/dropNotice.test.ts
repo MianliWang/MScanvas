@@ -31,9 +31,7 @@ describe("drop result notice", () => {
     const notice = describeDropResult(result());
 
     expect(notice.tone).toBe("info");
-    expect(notice.message).toBe(
-      "No supported mzML files were found in the dropped items.",
-    );
+    expect(notice.message).toBe("No supported mzML files were found in the dropped items.");
   });
 
   it("uses the exact no-supported result for unsupported direct-file outcomes", () => {
@@ -52,9 +50,7 @@ describe("drop result notice", () => {
       }),
     );
 
-    expect(notice.message).toBe(
-      "No supported mzML files were found in the dropped items.",
-    );
+    expect(notice.message).toBe("No supported mzML files were found in the dropped items.");
     expect(notice.details).toEqual(["notes.txt: Only mzML files are supported."]);
   });
 
@@ -95,12 +91,8 @@ describe("drop result notice", () => {
       }),
     );
 
-    expect(notice.message).toContain(
-      "this drop reached the shared entry-inspection limit",
-    );
-    expect(notice.message).toContain(
-      "this drop reached the shared directory-entry limit",
-    );
+    expect(notice.message).toContain("this drop reached the shared entry-inspection limit");
+    expect(notice.message).toContain("this drop reached the shared directory-entry limit");
     expect(notice.message).not.toContain("a dropped folder held more");
     expect(notice.message).not.toContain("the dropped folders collectively");
   });
@@ -110,13 +102,11 @@ describe("drop result notice", () => {
       ...selectedFile,
       relativeContext: "private\\directory",
     };
-    const rejected = ["one.mzML", "two.mzML", "three.mzML", "four.mzML"].map(
-      (candidateName) => ({
-        outcome: "rejected" as const,
-        candidateName,
-        error: previewError({ summary: "Could not be added." }),
-      }),
-    );
+    const rejected = ["one.mzML", "two.mzML", "three.mzML", "four.mzML"].map((candidateName) => ({
+      outcome: "rejected" as const,
+      candidateName,
+      error: previewError({ summary: "Could not be added." }),
+    }));
     const notice = describeDropResult(
       result({
         outcomes: [{ outcome: "duplicate", existing: duplicate }, ...rejected],

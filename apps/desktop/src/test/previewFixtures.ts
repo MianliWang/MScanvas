@@ -16,6 +16,7 @@ import type {
   ConversionConflictPolicy,
   ConversionDiagnosticsExport,
   ConversionDiagnosticsState,
+  ConversionOutputSetReport,
   ConversionQueuePlan,
   ConversionQueueItem,
   FolderDiscoverySummary,
@@ -332,8 +333,7 @@ export function deferred<T>(): Deferred<T> {
  * could not tell a correct duplicate rule from an incorrect one.
  */
 export type PickedFile =
-  | SelectedFile
-  | { readonly rejected: string; readonly error?: PreviewError };
+  SelectedFile | { readonly rejected: string; readonly error?: PreviewError };
 
 /**
  * Where a row was found, which is what a collision context is derived from.
@@ -347,8 +347,7 @@ export type DatasetOrigin = readonly string[] | null;
 
 /** A row the session already holds, with where it came from when that matters. */
 export type HeldFile =
-  | SelectedFile
-  | { readonly file: SelectedFile; readonly parents: readonly string[] };
+  SelectedFile | { readonly file: SelectedFile; readonly parents: readonly string[] };
 
 /** One thing a folder scan proposed: a file to add, or a candidate Rust refused. */
 export type ScannedFile =
@@ -444,9 +443,7 @@ export interface FakePreviewApiOptions {
   readonly availability?: BackendAvailability | (() => Promise<BackendAvailability>);
   /** What the folder picker resolves to. `null` stands for a dismissed picker. */
   readonly chosenInstallation?:
-    | BackendAvailability
-    | null
-    | (() => Promise<BackendAvailability | null>);
+    BackendAvailability | null | (() => Promise<BackendAvailability | null>);
   /** What the session already holds when the webview mounts. */
   readonly initialDatasets?: readonly HeldFile[];
   /** What the conversion slot holds when the webview mounts. */
@@ -495,9 +492,7 @@ export interface FakePreviewApiOptions {
    * nothing was created and the last export -- if there was one -- is untouched.
    * Rejecting models a refusal Rust answered with.
    */
-  readonly diagnosticsExport?: (
-    operationId: string,
-  ) => Promise<ConversionDiagnosticsExport | null>;
+  readonly diagnosticsExport?: (operationId: string) => Promise<ConversionDiagnosticsExport | null>;
   readonly retry?: (
     publish: (state: WorkspaceConversionState) => void,
   ) => Promise<WorkspaceConversionState>;
@@ -515,9 +510,7 @@ export interface FakePreviewApiOptions {
    * is deliberately not the same as an empty list.
    */
   readonly pickedFiles?:
-    | readonly PickedFile[]
-    | null
-    | (() => Promise<readonly PickedFile[] | null>);
+    readonly PickedFile[] | null | (() => Promise<readonly PickedFile[] | null>);
   /**
    * What the folder picker and the scan behind it hand back. `null` is a
    * dismissed picker, which is deliberately not the same as a folder that held
@@ -611,6 +604,11 @@ export function shimadzuDataset(index: number): SelectedFile {
   };
 }
 
+/** The mzML name a known-single vendor row will produce. */
+export function plannedOutputName(fileName: string): string {
+  return fileName.replace(/\.(raw|lcd)$/i, ".mzML");
+}
+
 /** One queue item, as a test describes it. */
 export function queueItem(
   handle: string,
@@ -621,15 +619,88 @@ export function queueItem(
     datasetHandle: handle,
     fileName,
     sourceKind: "thermo_raw",
-    outputFileName: fileName.replace(/\.raw$/i, ".mzML"),
+    output: { kind: "knownSingle", fileName: plannedOutputName(fileName) },
     state: "pending",
     attempts: 0,
     retryable: false,
-    report: null,
+    result: null,
     error: null,
     cancellation: null,
     ...overrides,
   };
+}
+
+/**
+ * One SCIEX queue item: a bundle row whose outputs the backend names.
+ *
+ * Its own factory rather than an override bag, because the two things that make
+ * it a set -- the family and the output plan -- must agree, and a test that set
+ * one without the other would be describing a row Rust cannot produce.
+ */
+export function sciexQueueItem(
+  handle: string,
+  fileName: string,
+  overrides: Partial<ConversionQueueItem> = {},
+): ConversionQueueItem {
+  return queueItem(handle, fileName, {
+    sourceKind: "sciex_wiff",
+    output: { kind: "backendNamedSet", maxMembers: 24 },
+    ...overrides,
+  });
+}
+
+/** A finalized group report over `memberFileNames`, sample-complete. */
+export function outputSetReport(
+  handle: string,
+  memberFileNames: readonly string[],
+  overrides: Partial<ConversionOutputSetReport> = {},
+): ConversionOutputSetReport {
+  return {
+    datasetHandle: handle,
+    sourceKind: "sciex_wiff",
+    groupOutcome: "fully_finalized",
+    detailedOutcome: null,
+    maxMembers: 24,
+    memberCount: memberFileNames.length,
+    finalizedCount: memberFileNames.length,
+    validatedNotPublishedCount: 0,
+    notPublishedCount: 0,
+    boundSourceObjects: 2,
+    memberFileNames,
+    memberStates: memberFileNames.map(() => "finalized"),
+    backend: { exitCode: 0, elapsedMilliseconds: 4_200 },
+    stagingResidue: null,
+    validationMode: "output_only",
+    completeness: {
+      kind: "established",
+      method: "reader_error_audit_v1",
+      sampleCount: memberFileNames.length,
+    },
+    partial: null,
+    completeSetAdoptable: true,
+    installationGeneration: 0,
+    ...overrides,
+  };
+}
+
+/**
+ * The output files one finalized item offers, in publication order.
+ *
+ * A known single output offers the one it planned; a set offers every member it
+ * published, and only when the complete-set authority exists. A partially
+ * finalized prefix offers none, which is the whole of the product policy.
+ */
+export function outputFileNamesOf(item: ConversionQueueItem): readonly string[] {
+  if (item.result?.kind === "outputSet") {
+    return item.result.report.completeSetAdoptable
+      ? item.result.report.memberFileNames.filter(
+          (_, index) =>
+            item.result?.kind === "outputSet" &&
+            item.result.report.memberStates[index] === "finalized",
+        )
+      : [];
+  }
+  return item.output.kind === "knownSingle" ? [item.output.fileName] : [];
 }
 
 /** A whole queue from its items, with the counts Rust would derive. */
@@ -659,6 +730,20 @@ export function queueOf(items: readonly ConversionQueueItem[]) {
     cancelledCount: count("cancelled"),
     notRunCount: count("notRun"),
     cancellationFailedCount: count("cancellationFailed"),
+    // Output files, not finalized items: Rust counts what the authorities hold,
+    // so a finalized set contributes every member it published.
+    adoptableOutputCount: items
+      .filter((item) => item.state === "finalized")
+      .reduce(
+        (total, item) =>
+          total +
+          (item.result?.kind === "outputSet"
+            ? item.result.report.completeSetAdoptable
+              ? item.result.report.finalizedCount
+              : 0
+            : 1),
+        0,
+      ),
     error: null,
     installationGeneration: 0,
   };
@@ -730,7 +815,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
           (item) =>
             item.state === "failed" ||
             item.state === "cancellationFailed" ||
-            (item.report?.stagingResidue ?? null) !== null ||
+            (item.result?.report.stagingResidue ?? null) !== null ||
             (item.cancellation?.stagingResidue ?? null) !== null,
         ).length
       : 0;
@@ -779,28 +864,31 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         queueItem(handle, `acquisition-${String(index)}.raw`, {
           state: "finalized",
           attempts: 1,
-          report: {
-            datasetHandle: handle,
-            sourceKind: "thermo_raw",
-            outcome: "finalized",
-            detailedOutcome: null,
-            outputFileName: `acquisition-${String(index)}.mzML`,
-            output: {
-              byteLength: 28_655,
-              sha256: "6CE2ACE65485488F4A337EE17B71559E737C1944B641F279744932C3C3D8648C",
-              spectrumCount: 1,
-              chromatogramCount: 1,
+          result: {
+            kind: "single",
+            report: {
+              datasetHandle: handle,
+              sourceKind: "thermo_raw",
+              outcome: "finalized",
+              detailedOutcome: null,
+              outputFileName: `acquisition-${String(index)}.mzML`,
+              output: {
+                byteLength: 28_655,
+                sha256: "6CE2ACE65485488F4A337EE17B71559E737C1944B641F279744932C3C3D8648C",
+                spectrumCount: 1,
+                chromatogramCount: 1,
+              },
+              validation: {
+                mode: "output_only",
+                fullyVerified: false,
+                verified: ["source_unchanged"],
+                unverified: [],
+                inapplicable: ["spectrum_count"],
+              },
+              backend: { exitCode: 0, elapsedMilliseconds: 663 },
+              stagingResidue: null,
+              installationGeneration: 0,
             },
-            validation: {
-              mode: "output_only",
-              fullyVerified: false,
-              verified: ["source_unchanged"],
-              unverified: [],
-              inapplicable: ["spectrum_count"],
-            },
-            backend: { exitCode: 0, elapsedMilliseconds: 663 },
-            stagingResidue: null,
-            installationGeneration: 0,
           },
         }),
       ),
@@ -854,8 +942,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       ? {
           kind: "rejected",
           candidateName: picked.rejected,
-          error:
-            picked.error ?? previewError({ kind: "unsupported_extension", retryable: false }),
+          error: picked.error ?? previewError({ kind: "unsupported_extension", retryable: false }),
         }
       : acceptOne(picked, null);
 
@@ -864,8 +951,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       ? {
           kind: "rejected",
           candidateName: scanned.rejected,
-          error:
-            scanned.error ?? previewError({ kind: "unsupported_extension", retryable: false }),
+          error: scanned.error ?? previewError({ kind: "unsupported_extension", retryable: false }),
         }
       : acceptOne(scanned.file, scanned.parents ?? []);
 
@@ -938,9 +1024,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     chooseFiles: () =>
       (typeof options.pickedFiles === "function"
         ? options.pickedFiles()
-        : Promise.resolve(
-            options.pickedFiles === undefined ? [selectedFile] : options.pickedFiles,
-          )
+        : Promise.resolve(options.pickedFiles === undefined ? [selectedFile] : options.pickedFiles)
       ).then((picked) => {
         if (picked === null) {
           return null;
@@ -1039,7 +1123,13 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
           datasetHandle: row!.handle,
           fileName: row!.fileName,
           sourceKind: row!.sourceKind,
-          outputFileName: row!.fileName.replace(/\.(raw|lcd)$/i, ".mzML"),
+          output:
+            row!.sourceKind === "sciex_wiff"
+              ? { kind: "backendNamedSet" as const, maxMembers: 24 }
+              : {
+                  kind: "knownSingle" as const,
+                  fileName: plannedOutputName(row!.fileName),
+                },
         })),
         outputFormat: "mzML",
         compression: "zlib",
@@ -1057,7 +1147,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       return conversionUpdate();
     },
     retryConversions: async () => {
-      const settled = options.retry === undefined ? conversion : await options.retry(publishConversion);
+      const settled =
+        options.retry === undefined ? conversion : await options.retry(publishConversion);
       publishConversion(settled);
       return conversionUpdate();
     },
@@ -1095,13 +1186,24 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
               .map((item, index) => ({ item, index }))
               .filter(({ item }) => item.state === "finalized")
           : [];
-      const outcomes = finalized.map(({ item, index }) => {
-        const outputFileName = item.outputFileName;
+      // One candidate per output *file*, ordered by item and then by
+      // publication order within one item's set -- which is what Rust's own
+      // expansion produces, and the shape the interface must render.
+      const candidates = finalized.flatMap(({ item, index }) =>
+        outputFileNamesOf(item).map((outputFileName, memberIndex) => ({
+          item,
+          itemIndex: index,
+          memberIndex,
+          outputFileName,
+        })),
+      );
+      const outcomes = candidates.map(({ item, itemIndex, memberIndex, outputFileName }) => {
         const existing = held.find((entry) => entry.file.fileName === outputFileName);
         if (existing !== undefined) {
           return {
             kind: "alreadyInWorkspace" as const,
-            itemIndex: index,
+            itemIndex,
+            memberIndex,
             sourceHandle: item.datasetHandle,
             outputFileName,
             dataset: existing.file,
@@ -1110,7 +1212,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         if (held.length >= capacity) {
           return {
             kind: "refused" as const,
-            itemIndex: index,
+            itemIndex,
+            memberIndex,
             sourceHandle: item.datasetHandle,
             outputFileName,
             reason: "workspace_full",
@@ -1119,14 +1222,17 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         const file: SelectedFile = {
           handle: `converted-${outputFileName}`,
           fileName: outputFileName,
-          byteLength: item.report?.output?.byteLength ?? 1_024,
+          byteLength:
+            (item.result?.kind === "single" ? item.result.report.output?.byteLength : undefined) ??
+            1_024,
           sourceKind: "mzml",
           relativeContext: null,
         };
         held = [...held, hold(file, null)];
         return {
           kind: "added" as const,
-          itemIndex: index,
+          itemIndex,
+          memberIndex,
           sourceHandle: item.datasetHandle,
           outputFileName,
           dataset: file,
@@ -1145,7 +1251,9 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       // authoritative state is answered with. A test that wants the queue to
       // settle differently publishes that itself.
       const settled =
-        options.stop === undefined ? conversion : await options.stop(operationId, publishConversion);
+        options.stop === undefined
+          ? conversion
+          : await options.stop(operationId, publishConversion);
       publishConversion(settled);
       return conversionUpdate();
     },

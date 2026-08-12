@@ -386,9 +386,7 @@ export function DatasetRoster({
     const row =
       state.focused === null
         ? null
-        : (listRef.current?.querySelector<HTMLElement>(
-            `[data-handle="${state.focused}"]`,
-          ) ?? null);
+        : (listRef.current?.querySelector<HTMLElement>(`[data-handle="${state.focused}"]`) ?? null);
     if (row !== null) {
       row.focus({ preventScroll: true });
       return;
@@ -569,11 +567,7 @@ export function DatasetRoster({
    * waits for `Add files…` to become usable.
    */
   useEffect(() => {
-    if (
-      clearFocusDebt.current !== null ||
-      clearListOffered ||
-      !keyboardOnClearList.current
-    ) {
+    if (clearFocusDebt.current !== null || clearListOffered || !keyboardOnClearList.current) {
       return;
     }
     keyboardOnClearList.current = false;
@@ -911,14 +905,13 @@ export function DatasetRoster({
           onClick={(event) => {
             const control = event.currentTarget;
             const ownsKeyboard = document.activeElement === control;
-            removeFocusDebt.current =
-              ownsKeyboard
-                ? {
-                    requestedHandles: [...state.selected],
-                    rosterSettlementToken,
-                    sawDisabled: false,
-                  }
-                : null;
+            removeFocusDebt.current = ownsKeyboard
+              ? {
+                  requestedHandles: [...state.selected],
+                  rosterSettlementToken,
+                  sawDisabled: false,
+                }
+              : null;
             if (ownsKeyboard) {
               clearFocusDebt.current = null;
               keyboardOnClearList.current = false;
@@ -954,12 +947,13 @@ export function DatasetRoster({
             onClick={(event) => {
               const ownsKeyboard = document.activeElement === event.currentTarget;
               const started = onClearList();
-              clearFocusDebt.current = ownsKeyboard && started
-                ? {
-                    focusOwnershipToken: focusOwnershipToken.current,
-                    rosterSettlementToken,
-                  }
-                : null;
+              clearFocusDebt.current =
+                ownsKeyboard && started
+                  ? {
+                      focusOwnershipToken: focusOwnershipToken.current,
+                      rosterSettlementToken,
+                    }
+                  : null;
               if (ownsKeyboard && started) {
                 removeFocusDebt.current = null;
               }

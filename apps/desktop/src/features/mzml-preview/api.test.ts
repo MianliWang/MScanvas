@@ -85,10 +85,7 @@ describe("Tauri folder-import reservation boundary", () => {
   });
 
   it("keeps out-of-order callers on the one single-use live reservation", async () => {
-    const begins = [
-      deferred<FolderImportReservation>(),
-      deferred<FolderImportReservation>(),
-    ];
+    const begins = [deferred<FolderImportReservation>(), deferred<FolderImportReservation>()];
     const terminal = deferred<FolderIngestionResult | null>();
     const replayFailure = {
       kind: "invalid_folder_import_reservation",

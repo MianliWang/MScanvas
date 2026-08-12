@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 
 import type {
   ConversionConflictPolicy,
+  ConversionOutputSetReport,
   ConversionQueue,
   ConversionQueueItem,
   ConversionQueuePlanItem,
@@ -62,6 +63,50 @@ function describeQueueFamilies(items: readonly ConversionQueuePlanItem[]): strin
     .join(" · ");
   return `${String(count)} supported vendor acquisitions will be converted to mzML, one after another, in the order below. ${perFamily}.`;
 }
+
+/**
+ * What a backend-named set produces, said before it runs.
+ *
+ * A range and not a number, because the number is not known: the backend reads
+ * the acquisition and decides how many documents it writes. The bound is the
+ * lifecycle's own, carried on the plan so this states what Rust enforces rather
+ * than a constant of its own.
+ */
+function outputSetSummary(maxMembers: number): string {
+  return `1–${String(maxMembers)} mzML outputs`;
+}
+
+/**
+ * Why no filename is shown for a set.
+ *
+ * Said rather than left blank. A user who sees a name for every other row and
+ * nothing for this one is owed the reason, and the reason is not that MSCanvas
+ * does not know yet -- it is that the name is the backend's to choose.
+ */
+const OUTPUT_SET_NAMING = "Filenames determined during conversion";
+
+/**
+ * What a full set publication establishes, in the only words the evidence
+ * supports.
+ *
+ * Every clause is load-bearing. "Identified by the SCIEX reader" is narrower
+ * than "in the acquisition", and the difference is exactly what this milestone
+ * did not measure: the audit proves no sample the reader found was lost, not
+ * that the reader found them all.
+ */
+const SAMPLE_COMPLETENESS_CLAIM =
+  "Every sample identified by the SCIEX reader produced its output.";
+
+/**
+ * What a partially finalized acquisition means for the user.
+ *
+ * Deliberately not "nothing was converted", which is what a count-of-items
+ * reading would produce and which is false: the finalized prefix is real, it is
+ * in the folder they chose, and nothing here removes it. What it is not is the
+ * acquisition's output set, which is why MSCanvas will not offer it as one.
+ */
+const PARTIAL_FINALIZATION_EXPLANATION =
+  "Some mzML files were finalized, but the complete output set was not produced, so MSCanvas cannot add this acquisition's outputs as a complete set. The finalized files remain in the destination folder and can be added individually later with Add files….";
 
 /** What each staging residue means for the folder the user chose. */
 const RESIDUE_EXPLANATION = "MSCanvas could not remove its own temporary folder afterwards.";
@@ -251,11 +296,17 @@ function AdoptOutputs({ conversion }: { readonly conversion: ConversionOperation
   const refused = adoption?.outcomes.filter((outcome) => outcome.kind === "refused") ?? [];
 
   if (eligibleOutputCount === 0) {
-    // Nothing finalized, so there is nothing to offer and nothing to explain.
-    // The queue's own result already says what happened to each item.
+    // Nothing to offer -- but "nothing was converted" is only one of the two
+    // reasons for that, and the other one is false in exactly the case that
+    // needs the truth most. A partially finalized acquisition *did* convert
+    // files, they are in the user's folder, and what MSCanvas will not do is
+    // present the prefix as the acquisition's complete output set. Each item's
+    // own row explains itself; this says why the action is absent.
     return (
       <p className="quiet-text">
-        Nothing was converted, so there is nothing to add to the workspace.
+        {conversion.hasIncompleteOutputSet
+          ? "No complete output set is available to add to this workspace."
+          : "Nothing was converted, so there is nothing to add to the workspace."}
       </p>
     );
   }
@@ -284,7 +335,7 @@ function AdoptOutputs({ conversion }: { readonly conversion: ConversionOperation
           {refused.slice(0, 3).map((outcome) => (
             <p
               className="quiet-text"
-              key={`${String(outcome.itemIndex)}-${outcome.outputFileName}`}
+              key={`${String(outcome.itemIndex)}-${String(outcome.memberIndex)}`}
             >
               {`${outcome.outputFileName} was not added: ${
                 ADOPTION_REFUSAL_LABEL[outcome.kind === "refused" ? outcome.reason : ""] ??
@@ -496,9 +547,20 @@ function PlanState({
             <span className="conversion-queue-kind">{SOURCE_KIND_LABEL[item.sourceKind]}</span>
             <span aria-hidden="true">→</span>
             <span className="visually-hidden">converts to </span>
-            <span className="conversion-queue-output" title={item.outputFileName}>
-              {item.outputFileName}
-            </span>
+            {item.output.kind === "knownSingle" ? (
+              <span className="conversion-queue-output" title={item.output.fileName}>
+                {item.output.fileName}
+              </span>
+            ) : (
+              <span
+                className="conversion-queue-output conversion-queue-output-set"
+                data-output-topology="backendNamedSet"
+              >
+                {outputSetSummary(item.output.maxMembers)}
+                <span className="visually-hidden">. </span>
+                <span className="conversion-queue-output-naming">{OUTPUT_SET_NAMING}</span>
+              </span>
+            )}
           </li>
         ))}
       </ol>
@@ -671,9 +733,18 @@ function QueueState({
             </span>
             <span aria-hidden="true">→</span>
             <span className="visually-hidden">converts to </span>
-            <span className="conversion-queue-output" title={item.outputFileName}>
-              {item.outputFileName}
-            </span>
+            {item.output.kind === "knownSingle" ? (
+              <span className="conversion-queue-output" title={item.output.fileName}>
+                {item.output.fileName}
+              </span>
+            ) : (
+              <span
+                className="conversion-queue-output conversion-queue-output-set"
+                data-output-topology="backendNamedSet"
+              >
+                {itemOutputSummary(item)}
+              </span>
+            )}
             <span className="visually-hidden">, </span>
             <span className="conversion-queue-status">{ITEM_STATE_LABEL[item.state]}</span>
             {item.attempts > 1 ? (
@@ -693,17 +764,40 @@ function QueueState({
             {/* What was actually produced, per item. A queue that said only
                 `Converted` would have taken away the one thing that lets a user
                 tell a real conversion from an empty one. */}
-            {item.report?.output == null ? null : (
+            {singleReportOf(item)?.output == null ? null : (
               <>
                 <span className="visually-hidden">, </span>
                 <span className="conversion-queue-facts">
-                  {`${formatByteLength(item.report.output.byteLength)}, ${formatCount(
-                    item.report.output.spectrumCount,
-                  )} spectra, ${formatCount(item.report.output.chromatogramCount)} chromatograms`}
-                  {item.report.backend === null
+                  {`${formatByteLength(singleReportOf(item)!.output!.byteLength)}, ${formatCount(
+                    singleReportOf(item)!.output!.spectrumCount,
+                  )} spectra, ${formatCount(singleReportOf(item)!.output!.chromatogramCount)} chromatograms`}
+                  {singleReportOf(item)!.backend === null
                     ? ""
-                    : `, ${formatDuration(item.report.backend.elapsedMilliseconds)}`}
+                    : `, ${formatDuration(singleReportOf(item)!.backend!.elapsedMilliseconds)}`}
                 </span>
+              </>
+            )}
+            {/* What a set actually produced, and the exact limits of the claim.
+                Three separate sentences on purpose: the count is a fact, the
+                completeness is narrower than it sounds, and the validation is
+                narrower again. Collapsing them would read as one broad
+                guarantee that none of them makes. */}
+            {setReportOf(item) === null ? null : (
+              <>
+                <span className="visually-hidden">, </span>
+                <span className="conversion-queue-set-result">
+                  {setResultSentence(setReportOf(item)!)}
+                </span>
+                {setReportOf(item)!.completeness.kind === "established" ? (
+                  <span className="conversion-queue-set-completeness">
+                    {SAMPLE_COMPLETENESS_CLAIM}
+                  </span>
+                ) : null}
+                {setReportOf(item)!.partial === null ? null : (
+                  <span className="conversion-queue-set-partial notice notice-warning" role="note">
+                    {PARTIAL_FINALIZATION_EXPLANATION}
+                  </span>
+                )}
               </>
             )}
             {/* Cleanup failing is the user's problem, not only MSCanvas', because
@@ -711,7 +805,9 @@ function QueueState({
                 places it can be recorded: a cancelled item has no report by
                 construction, so a residue it left would otherwise be knowable
                 to MSCanvas and invisible to the person whose folder it is in. */}
-            {(item.report?.stagingResidue ?? item.cancellation?.stagingResidue) == null ? null : (
+            {(singleReportOf(item)?.stagingResidue ??
+              setReportOf(item)?.stagingResidue ??
+              item.cancellation?.stagingResidue) == null ? null : (
               <>
                 <span className="visually-hidden">, </span>
                 <span className="conversion-queue-residue">{RESIDUE_EXPLANATION}</span>
@@ -727,7 +823,9 @@ function QueueState({
               all skipped or all failed validated nothing -- and a skipped item's
               existing file was explicitly not inspected, so claiming
               output-only validation over it would claim a check nobody ran. */}
-          {queue.items.some((item) => item.report?.validation != null) ? (
+          {queue.items.some(
+            (item) => singleReportOf(item)?.validation != null || setReportOf(item) !== null,
+          ) ? (
             <p className="quiet-text" role="note">
               {OUTPUT_ONLY_DISCLOSURE}
             </p>
@@ -848,15 +946,68 @@ const ITEM_STATE_LABEL: Record<ConversionQueueItem["state"], string> = {
   failed: "Failed",
 };
 
+/** The single-output report of this item's latest attempt, if it had one. */
+function singleReportOf(item: ConversionQueueItem): ConversionReport | null {
+  return item.result?.kind === "single" ? item.result.report : null;
+}
+
+/** The group report of this item's latest attempt, if it ran a set. */
+function setReportOf(item: ConversionQueueItem): ConversionOutputSetReport | null {
+  return item.result?.kind === "outputSet" ? item.result.report : null;
+}
+
+/**
+ * What a set item shows in the output column once it has run.
+ *
+ * Before it runs, and for every outcome that published nothing, the honest
+ * answer is still the range: no filename exists. Once members are finalized the
+ * count is real and is worth more than the bound.
+ */
+function itemOutputSummary(item: ConversionQueueItem): string {
+  const report = setReportOf(item);
+  const maxMembers = item.output.kind === "backendNamedSet" ? item.output.maxMembers : 1;
+  if (report === null || report.finalizedCount === 0) {
+    return outputSetSummary(maxMembers);
+  }
+  return report.finalizedCount === 1
+    ? "1 mzML output"
+    : `${String(report.finalizedCount)} mzML outputs`;
+}
+
+/** What one settled set produced, counted rather than claimed. */
+function setResultSentence(report: ConversionOutputSetReport): string {
+  if (report.partial !== null) {
+    return `${String(report.partial.finalizedCount)} of ${String(
+      report.memberCount,
+    )} mzML outputs finalized; ${String(report.partial.notPublishedCount)} not published.`;
+  }
+  if (report.finalizedCount === 0) {
+    return "No mzML outputs were finalized.";
+  }
+  return report.finalizedCount === 1
+    ? "1 mzML output finalized."
+    : `${String(report.finalizedCount)} mzML outputs finalized.`;
+}
+
 /** Why one item failed, from whichever half of the boundary refused it. */
 function itemFailureSentence(item: ConversionQueueItem): string {
   if (item.error !== null) {
     return item.error.summary;
   }
-  if (item.report === null) {
+  const set = setReportOf(item);
+  if (set !== null) {
+    // A set says what it produced beside this, so the failure sentence carries
+    // only the reason -- and a partial publication has its own explanation,
+    // which must not be preceded by "nothing was written".
+    return set.partial !== null
+      ? "The complete output set was not produced."
+      : "The conversion did not finish, so no output set was published.";
+  }
+  const report = singleReportOf(item);
+  if (report === null) {
     return "The conversion did not finish, so no file was written.";
   }
-  return failureSentence(item.report);
+  return failureSentence(report);
 }
 
 /**

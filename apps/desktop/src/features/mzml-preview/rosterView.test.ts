@@ -257,11 +257,7 @@ describe("ordering the visible roster", () => {
       input(fourRows(), { query: "sample", selected: ["file-3"], sort: "name-asc" }),
     );
 
-    expect(names(projection.datasets)).toEqual([
-      "blank.mzML",
-      "sample-2.mzML",
-      "sample-10.mzML",
-    ]);
+    expect(names(projection.datasets)).toEqual(["blank.mzML", "sample-2.mzML", "sample-10.mzML"]);
   });
 });
 
@@ -306,7 +302,9 @@ describe("keeping the user's own work visible", () => {
   });
 
   it("keeps a row being read even when the read is not the active one", () => {
-    const projection = projectRoster(input(rows(), { query: "QC", rowState: [["file-2", "opening"]] }));
+    const projection = projectRoster(
+      input(rows(), { query: "QC", rowState: [["file-2", "opening"]] }),
+    );
 
     expect(handles(projection.datasets)).toEqual(["file-0", "file-2"]);
     expect(projection.pinned.get("file-2")).toBe<PinReason>("reading");
@@ -381,7 +379,9 @@ describe("saying what the search found", () => {
   });
 
   it("names the kept rows separately from the matches", () => {
-    const projection = projectRoster(input(rows(), { query: "QC", selected: ["file-1", "file-2"] }));
+    const projection = projectRoster(
+      input(rows(), { query: "QC", selected: ["file-1", "file-2"] }),
+    );
 
     expect(describeProjection(projection)).toBe(
       "1 match of 3 files; 2 selected or active files kept visible.",

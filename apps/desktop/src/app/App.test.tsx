@@ -14,11 +14,7 @@ import type {
   WorkspaceRoster,
 } from "../features/mzml-preview/contracts";
 import { blurAsABrowserWould } from "../test/browserFocus";
-import type {
-  FakeWorkspaceDropTransport,
-  FolderScan,
-  PickedFile,
-} from "../test/previewFixtures";
+import type { FakeWorkspaceDropTransport, FolderScan, PickedFile } from "../test/previewFixtures";
 import {
   COMPLETE_SCAN,
   availableBackend,
@@ -420,8 +416,7 @@ describe("mzML preview workspace", () => {
   it("notices a backend that has gone away and can be told to look again", async () => {
     let installed = true;
     const api = createFakePreviewApi({
-      availability: () =>
-        Promise.resolve(installed ? availableBackend : unavailableBackend),
+      availability: () => Promise.resolve(installed ? availableBackend : unavailableBackend),
       preview: () => {
         installed = false;
         return Promise.reject(previewError({ kind: "backend_not_found", retryable: false }));
@@ -846,16 +841,16 @@ describe("mzML preview workspace", () => {
     // The same caveat is stated at the drawing, because a reduced profile
     // spectrum looks exactly like a centroided one.
     expect(
-      screen.getByText(/does not report whether these are profile samples or centroided peaks, so read each stick/),
+      screen.getByText(
+        /does not report whether these are profile samples or centroided peaks, so read each stick/,
+      ),
     ).toBeVisible();
     // No chromatogram count is emitted, so none is shown as zero.
     expect(screen.getByText("Chromatograms").nextElementSibling).toHaveTextContent("Not reported");
   });
 });
 
-function renderedDropResult(
-  files: readonly SelectedFile[] = [selectedFile],
-): DropIngestionResult {
+function renderedDropResult(files: readonly SelectedFile[] = [selectedFile]): DropIngestionResult {
   return {
     roster: { datasets: files, capacity: 1_024 },
     outcomes: files.map((dataset) => ({ outcome: "added" as const, dataset })),
@@ -926,10 +921,7 @@ describe("native Explorer drop presentation", () => {
     expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
     const clear = screen.getByRole("button", { name: "Clear list" });
     expect(clear).toBeEnabled();
-    expect(screen.getByRole("region", { name: "Workspace" })).toHaveAttribute(
-      "aria-busy",
-      "true",
-    );
+    expect(screen.getByRole("region", { name: "Workspace" })).toHaveAttribute("aria-busy", "true");
     expect(document.querySelector("[data-drop-overlay='importing']")).toHaveTextContent(
       "Adding dropped items…",
     );
@@ -956,7 +948,9 @@ describe("native Explorer drop presentation", () => {
       result: renderedDropResult(),
     });
     expect(screen.queryByRole("option", { name: new RegExp(selectedFile.fileName) })).toBeNull();
-    expect(screen.getByText("The workspace is empty. The pending drop will not add files.")).toBeVisible();
+    expect(
+      screen.getByText("The workspace is empty. The pending drop will not add files."),
+    ).toBeVisible();
   });
 
   it("renders one bounded completion notice and the authoritative dropped rows", async () => {
@@ -1028,9 +1022,9 @@ describe("native Explorer drop presentation", () => {
     );
 
     const addFiles = screen.getByRole("button", { name: "Add files…" });
-    const notice = screen.getByText("The dropped items could not be added").closest<HTMLElement>(
-      ".notice",
-    );
+    const notice = screen
+      .getByText("The dropped items could not be added")
+      .closest<HTMLElement>(".notice");
     expect(notice).not.toBeNull();
     const dismiss = within(notice as HTMLElement).getByRole("button", { name: "Dismiss" });
     dismiss.focus();
@@ -1055,9 +1049,9 @@ describe("native Explorer drop presentation", () => {
       operationId: "903",
       error: previewError({ summary: "The dropped item changed before it could be added." }),
     });
-    const notice = screen.getByText("The dropped items could not be added").closest<HTMLElement>(
-      ".notice",
-    );
+    const notice = screen
+      .getByText("The dropped items could not be added")
+      .closest<HTMLElement>(".notice");
     expect(notice).not.toBeNull();
     const dismiss = within(notice as HTMLElement).getByRole("button", { name: "Dismiss" });
     const focusing = vi.spyOn(addFiles, "focus");
@@ -1077,8 +1071,7 @@ describe("native Explorer drop presentation", () => {
     const retryRegistration = deferred<() => void>();
     let attempts = 0;
     let recoveredListener:
-      | ((update: Parameters<FakeWorkspaceDropTransport["emit"]>[0]) => void)
-      | null = null;
+      ((update: Parameters<FakeWorkspaceDropTransport["emit"]>[0]) => void) | null = null;
     const transport: WorkspaceDropTransport = {
       subscribe: (onUpdate) => {
         attempts += 1;
@@ -1100,7 +1093,9 @@ describe("native Explorer drop presentation", () => {
 
     expect(await screen.findByText("Explorer drag-and-drop is unavailable")).toBeVisible();
     expect(screen.getByText("Explorer drag-and-drop could not connect.")).toBeVisible();
-    expect(screen.getByText("Explorer drag-and-drop is unavailable. Use the Add actions below.")).toBeVisible();
+    expect(
+      screen.getByText("Explorer drag-and-drop is unavailable. Use the Add actions below."),
+    ).toBeVisible();
     expect(document.querySelector("[data-live-region='drop']")).toHaveTextContent(
       "Explorer drag-and-drop is unavailable. Explorer drag-and-drop could not connect.",
     );
@@ -1253,9 +1248,9 @@ describe("the session workspace roster", () => {
     expect(rosterRows()).toHaveLength(3);
     // Everything that arrived is selected, so `Remove selected` acts on the
     // batch the user just added; the first of them is the one being shown.
-    expect(
-      rosterRows().filter((row) => row.getAttribute("aria-selected") === "true"),
-    ).toHaveLength(3);
+    expect(rosterRows().filter((row) => row.getAttribute("aria-selected") === "true")).toHaveLength(
+      3,
+    );
     expect(rosterRow(/QC_pool_01\.mzML/)).toHaveTextContent("▸");
     expect(rosterRow(/QC_pool_02\.mzML/)).not.toHaveTextContent("▸");
     expect(screen.getByText("Added 3 files.", VISIBLE)).toBeVisible();
@@ -1740,8 +1735,7 @@ describe("the session workspace roster", () => {
             : { datasets: [], capacity: 1_024 },
         );
       },
-      removeDatasets: () =>
-        Promise.reject(previewError({ kind: "preview_worker_unavailable" })),
+      removeDatasets: () => Promise.reject(previewError({ kind: "preview_worker_unavailable" })),
     });
     renderApp(api);
     fireEvent.click(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ }));
@@ -1805,9 +1799,11 @@ describe("the session workspace roster", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
     await waitFor(() => {
-      expect(regions().map((region) => region.textContent).join(" ")).toContain(
-        "Workspace: Added 2 files.",
-      );
+      expect(
+        regions()
+          .map((region) => region.textContent)
+          .join(" "),
+      ).toContain("Workspace: Added 2 files.");
     });
     // The same six regions, with new text in one of them.
     expect(regions()).toHaveLength(6);
@@ -2100,9 +2096,9 @@ describe("the session workspace roster", () => {
     expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
     expect(api.openCount()).toBe(reads);
     // And the row it belongs to is still on screen, saying why.
-    expect(
-      screen.getByRole("option", { name: /QC_pool_01\.mzML/ }),
-    ).toHaveAccessibleName(/Showing — outside search/);
+    expect(screen.getByRole("option", { name: /QC_pool_01\.mzML/ })).toHaveAccessibleName(
+      /Showing — outside search/,
+    );
   });
 
   it("keeps the query and the sort across adding, and across removing what it matched", async () => {
@@ -3021,7 +3017,6 @@ describe("adding a folder of mzML files", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
     expect(await screen.findByRole("option", { name: /QC_pool_01\.mzML/ })).toBeVisible();
   });
-
 
   it("does not let a folder scan take the viewer away", async () => {
     // A scan launches no process, so nothing about it is a reason to disable

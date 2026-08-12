@@ -200,8 +200,7 @@ function harness(
     // for a folder has to say what it expects rather than silently receiving a
     // dismissed picker. Nothing here does: this file is about the installation
     // ordering, and a folder import touches none of it.
-    chooseFolder: () =>
-      Promise.reject(new Error("this harness has no folder picker")),
+    chooseFolder: () => Promise.reject(new Error("this harness has no folder picker")),
     removeDatasets: (handles) =>
       Promise.resolve<WorkspaceRemoveResult>({
         roster: empty,
@@ -210,7 +209,8 @@ function harness(
       }),
     clearWorkspace: () => Promise.resolve(empty),
     openPreview:
-      options.preview ?? (() => Promise.resolve(buildPreview(3, false, options.openGeneration ?? 0))),
+      options.preview ??
+      (() => Promise.resolve(buildPreview(3, false, options.openGeneration ?? 0))),
     loadSpectrum: () =>
       options.spectrum?.() ??
       Promise.resolve<SelectedSpectrumOutcome>({ outcome: "unavailable", requestedIndex: 0 }),
@@ -281,7 +281,6 @@ function resolvedOrigin(backend: ReturnType<typeof usePreviewWorkspace>["backend
 function resolvedGeneration(backend: ReturnType<typeof usePreviewWorkspace>["backend"]): number {
   return backend.status === "resolved" ? backend.availability.installationGeneration : -1;
 }
-
 
 describe("backend installation generations", () => {
   it("accepts a newer service generation whose reply a later request superseded", async () => {
@@ -1186,11 +1185,7 @@ describe("starting a folder import", () => {
     expect(api.calls().filter((call) => call === "chooseFolder")).toHaveLength(1);
   });
 
-  it.each([
-    "mutation failure",
-    "folder answer",
-    "same turn with folder queued first",
-  ] as const)(
+  it.each(["mutation failure", "folder answer", "same turn with folder queued first"] as const)(
     "reconciles the folder import when %s settles first",
     async (firstSettlement) => {
       // A request made after the folder import began must suppress that
@@ -1246,9 +1241,9 @@ describe("starting a folder import", () => {
         // The later removal is unresolved, so its intent already makes the
         // folder roster unsafe to expose. In an empty workspace the same bug
         // would also launch an implicit preview for that transient row.
-        expect(
-          result.current.roster.datasets.map((dataset) => dataset.handle),
-        ).not.toContain(secondFile.handle);
+        expect(result.current.roster.datasets.map((dataset) => dataset.handle)).not.toContain(
+          secondFile.handle,
+        );
         removal.reject(previewError({ kind: "preview_worker_unavailable" }));
       } else {
         // Queue the folder reaction first, then the mutation rejection without
@@ -1263,9 +1258,9 @@ describe("starting a folder import", () => {
       // when a transport or task failure happened after Rust changed state.
       await waitFor(() => {
         expect(api.rosterReads()).toBe(2);
-        expect(
-          result.current.roster.datasets.map((dataset) => dataset.handle),
-        ).toContain(secondFile.handle);
+        expect(result.current.roster.datasets.map((dataset) => dataset.handle)).toContain(
+          secondFile.handle,
+        );
       });
       expect(result.current.workspaceError).not.toBeNull();
     },
@@ -1345,9 +1340,9 @@ describe("starting a folder import", () => {
       });
       await Promise.resolve();
     });
-    expect(
-      result.current.roster.datasets.map((dataset) => dataset.handle),
-    ).not.toContain(secondFile.handle);
+    expect(result.current.roster.datasets.map((dataset) => dataset.handle)).not.toContain(
+      secondFile.handle,
+    );
 
     secondRemoval.reject(previewError({ kind: "preview_worker_unavailable" }));
     await waitFor(() => {
@@ -1408,9 +1403,9 @@ describe("starting a folder import", () => {
     // The second mutation is still pending, so the debt from the first must not
     // launch a roster read that could observe the workspace before this request.
     expect(api.rosterReads()).toBe(1);
-    expect(
-      result.current.roster.datasets.map((dataset) => dataset.handle),
-    ).not.toContain(secondFile.handle);
+    expect(result.current.roster.datasets.map((dataset) => dataset.handle)).not.toContain(
+      secondFile.handle,
+    );
 
     secondRemoval.resolve({
       roster: empty,
@@ -1659,8 +1654,7 @@ describe("starting a folder import", () => {
       const api = createFakePreviewApi({
         availability: unavailableBackend,
         folderResult: () => folder.promise,
-        clearWorkspace: () =>
-          Promise.resolve({ datasets: [], capacity: clearedCapacity }),
+        clearWorkspace: () => Promise.resolve({ datasets: [], capacity: clearedCapacity }),
       });
       const { result } = renderHook(() => usePreviewWorkspace(), {
         wrapper: wrapper(api),
@@ -1733,10 +1727,7 @@ describe("starting a folder import", () => {
   });
 });
 
-function completedDrop(
-  files = [selectedFile],
-  workspaceWasEmpty = true,
-): DropIngestionResult {
+function completedDrop(files = [selectedFile], workspaceWasEmpty = true): DropIngestionResult {
   return {
     roster: { datasets: files, capacity: FAKE_WORKSPACE_CAPACITY },
     outcomes: files.map((dataset) => ({ outcome: "added" as const, dataset })),
@@ -2101,9 +2092,8 @@ describe("native Explorer drop updates", () => {
 
   it("retries a failed subscription, rereads the roster and accepts only the new listener", async () => {
     const secondRegistration = deferred<() => void>();
-    const listeners: Array<
-      (update: Parameters<FakeWorkspaceDropTransport["emit"]>[0]) => void
-    > = [];
+    const listeners: Array<(update: Parameters<FakeWorkspaceDropTransport["emit"]>[0]) => void> =
+      [];
     let attempts = 0;
     const failure = previewError({ kind: "drop_subscription_failed" });
     const transport: WorkspaceDropTransport = {
@@ -2304,9 +2294,8 @@ describe("native Explorer drop updates", () => {
   it("lets only the current StrictMode registration read or update the workspace", async () => {
     const registrations = [deferred<() => void>(), deferred<() => void>()];
     const stops = [vi.fn(), vi.fn()];
-    const listeners: Array<
-      (update: Parameters<FakeWorkspaceDropTransport["emit"]>[0]) => void
-    > = [];
+    const listeners: Array<(update: Parameters<FakeWorkspaceDropTransport["emit"]>[0]) => void> =
+      [];
     const transport: WorkspaceDropTransport = {
       subscribe: (onUpdate) => {
         const index = listeners.length;

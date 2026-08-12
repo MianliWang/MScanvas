@@ -13,11 +13,7 @@ import {
   queueOf,
 } from "../../test/previewFixtures";
 import type { FakePreviewApi } from "../../test/previewFixtures";
-import type {
-  ConversionQueueItem,
-  SelectedFile,
-  WorkspaceConversionState,
-} from "./contracts";
+import type { ConversionQueueItem, SelectedFile, WorkspaceConversionState } from "./contracts";
 
 /**
  * Stopping a running queue, from the interface a user actually has.
@@ -66,28 +62,31 @@ function converted(handle: string, name: string): ConversionQueueItem {
   return queueItem(handle, name, {
     state: "finalized",
     attempts: 1,
-    report: {
-      datasetHandle: handle,
-      sourceKind: "thermo_raw",
-      outcome: "finalized",
-      detailedOutcome: null,
-      outputFileName: name.replace(/\.raw$/i, ".mzML"),
-      output: {
-        byteLength: 28_655,
-        sha256: "6CE2ACE65485488F4A337EE17B71559E737C1944B641F279744932C3C3D8648C",
-        spectrumCount: 1,
-        chromatogramCount: 1,
+    result: {
+      kind: "single" as const,
+      report: {
+        datasetHandle: handle,
+        sourceKind: "thermo_raw",
+        outcome: "finalized",
+        detailedOutcome: null,
+        outputFileName: name.replace(/\.raw$/i, ".mzML"),
+        output: {
+          byteLength: 28_655,
+          sha256: "6CE2ACE65485488F4A337EE17B71559E737C1944B641F279744932C3C3D8648C",
+          spectrumCount: 1,
+          chromatogramCount: 1,
+        },
+        validation: {
+          mode: "output_only",
+          fullyVerified: false,
+          verified: ["source_unchanged"],
+          unverified: [],
+          inapplicable: ["spectrum_count"],
+        },
+        backend: { exitCode: 0, elapsedMilliseconds: 568 },
+        stagingResidue: null,
+        installationGeneration: 0,
       },
-      validation: {
-        mode: "output_only",
-        fullyVerified: false,
-        verified: ["source_unchanged"],
-        unverified: [],
-        inapplicable: ["spectrum_count"],
-      },
-      backend: { exitCode: 0, elapsedMilliseconds: 568 },
-      stagingResidue: null,
-      installationGeneration: 0,
     },
   });
 }
@@ -207,9 +206,7 @@ describe("stopping a running conversion queue", () => {
   });
 
   it("says nothing about how the current item will end while it is stopping", async () => {
-    renderApp(
-      apiWith(stoppingQueue()),
-    );
+    renderApp(apiWith(stoppingQueue()));
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
@@ -221,9 +218,9 @@ describe("stopping a running conversion queue", () => {
       ),
     ).toBeVisible();
     // The queue and every result it already has stay on screen.
-    expect(
-      panel.querySelectorAll(".conversion-running .conversion-queue-list > li"),
-    ).toHaveLength(3);
+    expect(panel.querySelectorAll(".conversion-running .conversion-queue-list > li")).toHaveLength(
+      3,
+    );
     expect(within(panel).getByText("Converted")).toBeVisible();
     // Nothing predicts the outcome of the item under way.
     expect(panel.textContent ?? "").not.toContain("Cancelled");
@@ -669,15 +666,11 @@ describe("stopping a running conversion queue", () => {
     // The control the user pressed is gone, and nothing stole the keyboard to
     // somewhere unrelated: focus falls back to the document body rather than
     // jumping into the roster or the plan below.
-    expect(document.activeElement === document.body || document.activeElement === null).toBe(
-      true,
-    );
+    expect(document.activeElement === document.body || document.activeElement === null).toBe(true);
   });
 
   it("keeps queued and converting rows visible while a stop is in flight", async () => {
-    renderApp(
-      apiWith(stoppingQueue()),
-    );
+    renderApp(apiWith(stoppingQueue()));
 
     await screen.findByRole("listbox", { name: "Workspace" });
     const search = screen.getByRole("searchbox", { name: /search/i });

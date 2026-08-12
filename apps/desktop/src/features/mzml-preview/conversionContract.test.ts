@@ -92,14 +92,11 @@ const diagnosticsExportIsExact: Equal<
   ExpectedConversionDiagnosticsExport
 > = true;
 
-// Four members, and the fourth is as deliberate as the third. `shimadzu_lcd`
-// was admitted by Rust privately before ADR 0020 gave it a picker route;
-// `sciex_wiff` is admitted privately now and is reachable from no surface in
-// this interface at all. Both are listed because the roster model is total over
-// what Rust can admit, and a wire family the interface did not know about would
-// be a row it could not describe. Widening this line is the whole decision, so
-// it is made here on purpose rather than absorbed by a permissive type. See
-// ADR 0019 and ADR 0023.
+// Four members, and every one of them is now a support claim. `shimadzu_lcd`
+// was admitted privately before ADR 0020 gave it a picker route; `sciex_wiff`
+// was admitted privately before ADR 0027 gave it one. Widening this line is the
+// whole decision, so it is made here on purpose rather than absorbed by a
+// permissive type. See ADR 0019, ADR 0023 and ADR 0027.
 const familyIsExact: Equal<
   DatasetSourceKind,
   "mzml" | "thermo_raw" | "shimadzu_lcd" | "sciex_wiff"
@@ -151,11 +148,11 @@ const CONVERTED_ITEM = {
   datasetHandle: "file-0",
   fileName: "FT-HCD-MSX.raw",
   sourceKind: "thermo_raw",
-  outputFileName: "FT-HCD-MSX.mzML",
+  output: { kind: "knownSingle", fileName: "FT-HCD-MSX.mzML" },
   state: "finalized",
   attempts: 1,
   retryable: false,
-  report: FINALIZED_REPORT,
+  result: { kind: "single", report: FINALIZED_REPORT },
   error: null,
   cancellation: null,
 } as const satisfies ConversionQueueItem;
@@ -164,11 +161,11 @@ const FAILED_ITEM = {
   datasetHandle: "file-1",
   fileName: "second.raw",
   sourceKind: "thermo_raw",
-  outputFileName: "second.mzML",
+  output: { kind: "knownSingle", fileName: "second.mzML" },
   state: "failed",
   attempts: 2,
   retryable: true,
-  report: null,
+  result: null,
   error: {
     kind: "file_unreadable",
     summary: "MSCanvas could not read that file.",
@@ -192,6 +189,7 @@ const QUEUE = {
   cancelledCount: 0,
   notRunCount: 0,
   cancellationFailedCount: 0,
+  adoptableOutputCount: 1,
   error: null,
   installationGeneration: 0,
 } as const satisfies ConversionQueue;
@@ -211,11 +209,11 @@ const CANCELLED_ITEM = {
   datasetHandle: "file-2",
   fileName: "third.raw",
   sourceKind: "thermo_raw",
-  outputFileName: "third.mzML",
+  output: { kind: "knownSingle", fileName: "third.mzML" },
   state: "cancelled",
   attempts: 1,
   retryable: false,
-  report: null,
+  result: null,
   error: null,
   cancellation: CANCELLATION,
 } as const satisfies ConversionQueueItem;
@@ -224,11 +222,11 @@ const NOT_RUN_ITEM = {
   datasetHandle: "file-3",
   fileName: "fourth.raw",
   sourceKind: "thermo_raw",
-  outputFileName: "fourth.mzML",
+  output: { kind: "knownSingle", fileName: "fourth.mzML" },
   state: "notRun",
   attempts: 0,
   retryable: false,
-  report: null,
+  result: null,
   error: null,
   cancellation: null,
 } as const satisfies ConversionQueueItem;
@@ -247,6 +245,7 @@ const STOPPED_QUEUE = {
   cancelledCount: 1,
   notRunCount: 1,
   cancellationFailedCount: 0,
+  adoptableOutputCount: 1,
   error: null,
   installationGeneration: 0,
 } as const satisfies ConversionQueue;
@@ -413,6 +412,7 @@ describe("the conversion wire contract", () => {
     // rather than arriving unnoticed.
     expect(Object.keys(QUEUE).sort()).toEqual(
       [
+        "adoptableOutputCount",
         "conflictPolicy",
         "currentIndex",
         "error",
@@ -437,8 +437,8 @@ describe("the conversion wire contract", () => {
         "datasetHandle",
         "error",
         "fileName",
-        "outputFileName",
-        "report",
+        "output",
+        "result",
         "retryable",
         "sourceKind",
         "state",
@@ -460,7 +460,7 @@ describe("the conversion wire contract", () => {
     );
     // A cancelled item finalized nothing, so it names no output file and
     // carries no report to name one from.
-    expect(CANCELLED_ITEM.report).toBeNull();
+    expect(CANCELLED_ITEM.result).toBeNull();
     // A not-run item launched nothing, so there is nothing for a stop to have
     // established about it.
     expect(NOT_RUN_ITEM.cancellation).toBeNull();
@@ -489,13 +489,16 @@ describe("the conversion wire contract", () => {
     // `stagingResidue` is the one member whose name says "staging", and it says
     // only whether MSCanvas failed to remove its own temporary folder. It is a
     // stable identifier or null, never the folder.
-    expect(CONVERTED_ITEM.report.stagingResidue).toBeNull();
+    expect(CONVERTED_ITEM.result.report.stagingResidue).toBeNull();
     // A file name is not a path, and the distinction is the whole point: the
     // display name is here, and nothing that could locate it is. Checked over
     // the string values rather than the serialization, whose own punctuation
     // would answer for itself.
     expect(serialized).toContain("FT-HCD-MSX.raw");
-    for (const value of stringsWithin({ sequence: 3, state: { status: "terminal", queue: QUEUE } })) {
+    for (const value of stringsWithin({
+      sequence: 3,
+      state: { status: "terminal", queue: QUEUE },
+    })) {
       expect(value).not.toMatch(/[\\/]/);
       expect(value).not.toMatch(/^[A-Za-z]:/);
     }

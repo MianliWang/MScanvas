@@ -167,31 +167,34 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
         queue: queueOf([
           queueItem("file-7", "sample-7.lcd", {
             sourceKind: "shimadzu_lcd",
-            outputFileName: "sample-7.mzML",
+            output: { kind: "knownSingle", fileName: "sample-7.mzML" },
             state: "finalized",
             attempts: 1,
-            report: {
-              datasetHandle: "file-7",
-              sourceKind: "shimadzu_lcd",
-              outcome: "finalized",
-              detailedOutcome: null,
-              outputFileName: "sample-7.mzML",
-              output: {
-                byteLength: 481_997,
-                sha256: "9CE497643AE025DD1834E8AAFC8F69DFB38D68381C842B4B15E86047968E34CA",
-                spectrumCount: 0,
-                chromatogramCount: 144,
+            result: {
+              kind: "single" as const,
+              report: {
+                datasetHandle: "file-7",
+                sourceKind: "shimadzu_lcd",
+                outcome: "finalized",
+                detailedOutcome: null,
+                outputFileName: "sample-7.mzML",
+                output: {
+                  byteLength: 481_997,
+                  sha256: "9CE497643AE025DD1834E8AAFC8F69DFB38D68381C842B4B15E86047968E34CA",
+                  spectrumCount: 0,
+                  chromatogramCount: 144,
+                },
+                validation: {
+                  mode: "output_only",
+                  fullyVerified: false,
+                  verified: ["source_unchanged"],
+                  unverified: [],
+                  inapplicable: ["spectrum_count"],
+                },
+                backend: { exitCode: 0, elapsedMilliseconds: 592 },
+                stagingResidue: null,
+                installationGeneration: 0,
               },
-              validation: {
-                mode: "output_only",
-                fullyVerified: false,
-                verified: ["source_unchanged"],
-                unverified: [],
-                inapplicable: ["spectrum_count"],
-              },
-              backend: { exitCode: 0, elapsedMilliseconds: 592 },
-              stagingResidue: null,
-              installationGeneration: 0,
             },
           }),
         ]),
@@ -222,9 +225,7 @@ describe("queueing selected Thermo RAW conversions", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
-      expect(
-        within(panel).getByText(/One Thermo RAW acquisition will be converted/),
-      ).toBeVisible();
+      expect(within(panel).getByText(/One Thermo RAW acquisition will be converted/)).toBeVisible();
     });
 
     fireEvent.click(within(panel).getByRole("button", { name: "Convert focused…" }));
@@ -377,24 +378,27 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
-      reason: "completed" as const,
+        reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", {
             state: "failed",
             attempts: 1,
             retryable: false,
-            report: {
-              datasetHandle: "file-1",
-              sourceKind: "thermo_raw",
-              outcome: "output_rejected",
-              detailedOutcome: "output_contains_no_records",
-              outputFileName: null,
-              output: null,
-              validation: null,
-              backend: { exitCode: 0, elapsedMilliseconds: 90 },
-              stagingResidue: null,
-              installationGeneration: 0,
+            result: {
+              kind: "single" as const,
+              report: {
+                datasetHandle: "file-1",
+                sourceKind: "thermo_raw",
+                outcome: "output_rejected",
+                detailedOutcome: "output_contains_no_records",
+                outputFileName: null,
+                output: null,
+                validation: null,
+                backend: { exitCode: 0, elapsedMilliseconds: 90 },
+                stagingResidue: null,
+                installationGeneration: 0,
+              },
             },
           }),
           queueItem("file-2", "run-2.raw", { state: "finalized", attempts: 1 }),
@@ -427,7 +431,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
-      reason: "completed" as const,
+        reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", { state: "finalized", attempts: 1 }),
@@ -447,7 +451,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       retry: () =>
         Promise.resolve({
           status: "terminal",
-      reason: "completed" as const,
+          reason: "completed" as const,
           operationId: "1",
           queue: {
             ...queueOf([
@@ -485,36 +489,39 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
-      reason: "completed" as const,
+        reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", {
             state: "finalized",
             attempts: 1,
-            report: {
-              datasetHandle: "file-1",
-              sourceKind: "thermo_raw",
-              outcome: "finalized",
-              detailedOutcome: null,
-              outputFileName: "run-1.mzML",
-              output: {
-                byteLength: 28_655,
-                sha256: "6CE2ACE6",
-                spectrumCount: 12,
-                chromatogramCount: 3,
+            result: {
+              kind: "single" as const,
+              report: {
+                datasetHandle: "file-1",
+                sourceKind: "thermo_raw",
+                outcome: "finalized",
+                detailedOutcome: null,
+                outputFileName: "run-1.mzML",
+                output: {
+                  byteLength: 28_655,
+                  sha256: "6CE2ACE6",
+                  spectrumCount: 12,
+                  chromatogramCount: 3,
+                },
+                validation: {
+                  mode: "output_only",
+                  fullyVerified: false,
+                  verified: ["source_unchanged"],
+                  unverified: [],
+                  inapplicable: [],
+                },
+                backend: { exitCode: 0, elapsedMilliseconds: 568 },
+                // Cleanup failed, and what it left behind is in the folder the
+                // user chose, so they are owed the warning.
+                stagingResidue: "not_removed",
+                installationGeneration: 0,
               },
-              validation: {
-                mode: "output_only",
-                fullyVerified: false,
-                verified: ["source_unchanged"],
-                unverified: [],
-                inapplicable: [],
-              },
-              backend: { exitCode: 0, elapsedMilliseconds: 568 },
-              // Cleanup failed, and what it left behind is in the folder the
-              // user chose, so they are owed the warning.
-              stagingResidue: "not_removed",
-              installationGeneration: 0,
             },
           }),
         ]),
@@ -547,23 +554,26 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
-      reason: "completed" as const,
+        reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", {
             state: "skipped",
             attempts: 1,
-            report: {
-              datasetHandle: "file-1",
-              sourceKind: "thermo_raw",
-              outcome: "skipped_existing_destination",
-              detailedOutcome: "destination_exists",
-              outputFileName: null,
-              output: null,
-              validation: null,
-              backend: null,
-              stagingResidue: null,
-              installationGeneration: 0,
+            result: {
+              kind: "single" as const,
+              report: {
+                datasetHandle: "file-1",
+                sourceKind: "thermo_raw",
+                outcome: "skipped_existing_destination",
+                detailedOutcome: "destination_exists",
+                outputFileName: null,
+                output: null,
+                validation: null,
+                backend: null,
+                stagingResidue: null,
+                installationGeneration: 0,
+              },
             },
           }),
           queueItem("file-2", "run-2.raw", { state: "skipped", attempts: 1 }),
@@ -598,7 +608,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
-      reason: "completed" as const,
+        reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", { state: "failed", attempts: 1, retryable: true }),
@@ -609,7 +619,7 @@ describe("queueing selected Thermo RAW conversions", () => {
           releaseRetry = () => {
             resolve({
               status: "terminal",
-      reason: "completed" as const,
+              reason: "completed" as const,
               operationId: "1",
               queue: queueOf([
                 queueItem("file-1", "run-1.raw", { state: "finalized", attempts: 2 }),
@@ -655,7 +665,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: unavailableBackend,
       initialConversion: {
         status: "terminal",
-      reason: "completed" as const,
+        reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", { state: "failed", attempts: 1, retryable: true }),
@@ -670,9 +680,9 @@ describe("queueing selected Thermo RAW conversions", () => {
     });
     // And it still says what it would do, so the reason it is unavailable is
     // the backend rather than the control having quietly changed meaning.
-    expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toHaveAccessibleDescription(
-      /Reruns only the failures another attempt could change/,
-    );
+    expect(
+      within(panel).getByRole("button", { name: "Retry 1 failed" }),
+    ).toHaveAccessibleDescription(/Reruns only the failures another attempt could change/);
   });
 
   it("recovers a queue this document did not start", async () => {
@@ -772,7 +782,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       conversion: () =>
         Promise.resolve({
           status: "terminal",
-      reason: "completed" as const,
+          reason: "completed" as const,
           operationId: "1",
           queue: {
             ...queueOf([queueItem("file-1", "run-1.raw"), queueItem("file-2", "run-2.raw")]),
@@ -812,7 +822,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       availability: availableBackend,
       initialConversion: {
         status: "terminal",
-      reason: "completed" as const,
+        reason: "completed" as const,
         operationId: "1",
         queue: queueOf([
           queueItem("file-1", "run-1.raw", { state: "finalized", attempts: 1 }),
@@ -833,9 +843,9 @@ describe("queueing selected Thermo RAW conversions", () => {
       expect(rendered).not.toContain(separator);
     }
     // A skipped item is never described as validated.
-    expect(within(panel).getAllByText(/a file of that name was already there/i).length).toBeGreaterThan(
-      0,
-    );
+    expect(
+      within(panel).getAllByText(/a file of that name was already there/i).length,
+    ).toBeGreaterThan(0);
   });
 
   it("offers converted outputs to the workspace rather than adding them", async () => {

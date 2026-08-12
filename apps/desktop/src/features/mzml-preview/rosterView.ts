@@ -278,9 +278,7 @@ export function describeProjection(projection: RosterProjection): string {
     // the default `aria-relevant` is `additions text` — so clearing a search
     // would be the one step of a search nobody was told about. Empty only when
     // there is no list to describe, which is when the roster says so itself.
-    return projection.total === 0
-      ? ""
-      : `All ${String(projection.total)} ${files} listed.`;
+    return projection.total === 0 ? "" : `All ${String(projection.total)} ${files} listed.`;
   }
   const matches = `${String(projection.matchCount)} ${projection.matchCount === 1 ? "match" : "matches"} of ${String(projection.total)} ${files}`;
   if (projection.pinned.size === 0) {

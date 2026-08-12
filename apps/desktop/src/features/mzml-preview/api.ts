@@ -220,8 +220,7 @@ export const tauriPreviewApi: PreviewApi = {
     invoke<SelectedSpectrumOutcome>("load_selected_spectrum", { handle, index }),
   describeConversion: (handles) =>
     invoke<ConversionQueuePlan>("describe_workspace_conversion_queue", { handles }),
-  getConversionState: () =>
-    invoke<WorkspaceConversionUpdate>("get_workspace_conversion_state"),
+  getConversionState: () => invoke<WorkspaceConversionUpdate>("get_workspace_conversion_state"),
   convertDatasets: (handles, conflictPolicy, onReserved) => {
     const invokeOptions = {
       headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() },

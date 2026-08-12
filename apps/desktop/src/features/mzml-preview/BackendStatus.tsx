@@ -165,7 +165,12 @@ export function BackendStatus({
         <button className="link-button" disabled={busy} onClick={startChoosing} type="button">
           Choose folder…
         </button>
-        <button className="link-button" disabled={busy} onClick={onUseAutomaticDiscovery} type="button">
+        <button
+          className="link-button"
+          disabled={busy}
+          onClick={onUseAutomaticDiscovery}
+          type="button"
+        >
           Search automatically
         </button>
       </p>

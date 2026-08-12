@@ -116,7 +116,10 @@ describe("adopting what Rust holds", () => {
     );
     expect(shown.active).toBe("file-1");
 
-    const reread = rosterReducer(shown, { type: "rosterLoaded", roster: roster("file-0", "file-1") });
+    const reread = rosterReducer(shown, {
+      type: "rosterLoaded",
+      roster: roster("file-0", "file-1"),
+    });
 
     expect(reread.active).toBe("file-1");
     expect(rowPresentation(reread, "file-0")).toBe("failed");
@@ -308,7 +311,10 @@ describe("adding files", () => {
 
     const state = rosterReducer(before, {
       type: "filesAdded",
-      result: addResult([rejected("other.mzXML"), rejected("full.mzML", "workspace_full")], "file-0"),
+      result: addResult(
+        [rejected("other.mzXML"), rejected("full.mzML", "workspace_full")],
+        "file-0",
+      ),
     });
 
     expect(state.focused).toBe("file-0");
@@ -710,7 +716,9 @@ describe("saying what a workspace action did", () => {
   });
 
   it("is quiet when everything arrived", () => {
-    const notice = describeAddResult(addResult([added("file-0"), added("file-1")], "file-0", "file-1"));
+    const notice = describeAddResult(
+      addResult([added("file-0"), added("file-1")], "file-0", "file-1"),
+    );
 
     expect(notice.tone).toBe("info");
     expect(notice.message).toBe("Added 2 files.");
@@ -879,9 +887,9 @@ describe("looking at the roster through a search and a sort", () => {
     });
 
     expect(stepped.focused).toBe("file-1");
-    expect(
-      rosterReducer(stepped, { type: "focusJumped", to: "last", extend: false }).focused,
-    ).toBe("file-0");
+    expect(rosterReducer(stepped, { type: "focusJumped", to: "last", extend: false }).focused).toBe(
+      "file-0",
+    );
   });
 
   it("extends with Shift and an arrow over the visible order", () => {
@@ -1046,7 +1054,10 @@ describe("looking at the roster through a search and a sort", () => {
     const answered = rosterReducer(picked, {
       type: "datasetsRemoved",
       result: {
-        roster: { datasets: [ROWS[1] as SelectedFile, ROWS[3] as SelectedFile], capacity: CAPACITY },
+        roster: {
+          datasets: [ROWS[1] as SelectedFile, ROWS[3] as SelectedFile],
+          capacity: CAPACITY,
+        },
         removedHandles: ["file-0", "file-2"],
         unknownHandles: [],
       },

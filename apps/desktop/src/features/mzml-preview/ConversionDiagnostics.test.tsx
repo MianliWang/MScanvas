@@ -13,11 +13,7 @@ import {
   queueOf,
 } from "../../test/previewFixtures";
 import type { FakePreviewApi } from "../../test/previewFixtures";
-import type {
-  ConversionQueueItem,
-  SelectedFile,
-  WorkspaceConversionState,
-} from "./contracts";
+import type { ConversionQueueItem, SelectedFile, WorkspaceConversionState } from "./contracts";
 
 /**
  * Saving one local, redacted diagnostics file, from the interface a user
@@ -66,17 +62,20 @@ function failed(handle: string, name: string, retryable = false): ConversionQueu
     state: "failed",
     attempts: 1,
     retryable,
-    report: {
-      datasetHandle: handle,
-      sourceKind: "thermo_raw",
-      outcome: "failed",
-      detailedOutcome: "destination_exists",
-      outputFileName: null,
-      output: null,
-      validation: null,
-      backend: { exitCode: 1, elapsedMilliseconds: 812 },
-      stagingResidue: null,
-      installationGeneration: 0,
+    result: {
+      kind: "single" as const,
+      report: {
+        datasetHandle: handle,
+        sourceKind: "thermo_raw",
+        outcome: "failed",
+        detailedOutcome: "destination_exists",
+        outputFileName: null,
+        output: null,
+        validation: null,
+        backend: { exitCode: 1, elapsedMilliseconds: 812 },
+        stagingResidue: null,
+        installationGeneration: 0,
+      },
     },
   });
 }
@@ -86,28 +85,31 @@ function converted(handle: string, name: string): ConversionQueueItem {
   return queueItem(handle, name, {
     state: "finalized",
     attempts: 1,
-    report: {
-      datasetHandle: handle,
-      sourceKind: "thermo_raw",
-      outcome: "finalized",
-      detailedOutcome: null,
-      outputFileName: name.replace(/\.raw$/i, ".mzML"),
-      output: {
-        byteLength: 28_637,
-        sha256: "B3D97B38".repeat(8).slice(0, 64),
-        spectrumCount: 1,
-        chromatogramCount: 1,
+    result: {
+      kind: "single" as const,
+      report: {
+        datasetHandle: handle,
+        sourceKind: "thermo_raw",
+        outcome: "finalized",
+        detailedOutcome: null,
+        outputFileName: name.replace(/\.raw$/i, ".mzML"),
+        output: {
+          byteLength: 28_637,
+          sha256: "B3D97B38".repeat(8).slice(0, 64),
+          spectrumCount: 1,
+          chromatogramCount: 1,
+        },
+        validation: {
+          mode: "output_only",
+          verified: [],
+          unverified: [],
+          inapplicable: [],
+          fullyVerified: false,
+        },
+        backend: null,
+        stagingResidue: null,
+        installationGeneration: 0,
       },
-      validation: {
-        mode: "output_only",
-        verified: [],
-        unverified: [],
-        inapplicable: [],
-        fullyVerified: false,
-      },
-      backend: null,
-      stagingResidue: null,
-      installationGeneration: 0,
     },
   });
 }
@@ -120,9 +122,16 @@ function converted(handle: string, name: string): ConversionQueueItem {
  */
 function residual(handle: string, name: string): ConversionQueueItem {
   const item = converted(handle, name);
+  const result = item.result;
+  if (result?.kind !== "single") {
+    throw new Error("a residual fixture is built from a single-output item");
+  }
   return {
     ...item,
-    report: { ...item.report!, stagingResidue: "staging_not_removed" },
+    result: {
+      kind: "single",
+      report: { ...result.report, stagingResidue: "staging_not_removed" },
+    },
   };
 }
 
@@ -463,8 +472,7 @@ describe("saving conversion diagnostics", () => {
       },
     ]) {
       const api = apiWith(terminal([failed("file-1", "run-1.raw")]), {
-        diagnosticsExport: () =>
-          Promise.reject({ ...failure, detail: null, retryable: false }),
+        diagnosticsExport: () => Promise.reject({ ...failure, detail: null, retryable: false }),
       });
       const { unmount } = render(
         <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>

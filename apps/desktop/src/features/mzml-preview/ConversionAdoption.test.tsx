@@ -63,28 +63,31 @@ function converted(handle: string, name: string): ConversionQueueItem {
   return queueItem(handle, name, {
     state: "finalized",
     attempts: 1,
-    report: {
-      datasetHandle: handle,
-      sourceKind: "thermo_raw",
-      outcome: "finalized",
-      detailedOutcome: null,
-      outputFileName: name.replace(/\.raw$/i, ".mzML"),
-      output: {
-        byteLength: 28_637,
-        sha256: "B3D97B38".repeat(8).slice(0, 64),
-        spectrumCount: 1,
-        chromatogramCount: 1,
+    result: {
+      kind: "single" as const,
+      report: {
+        datasetHandle: handle,
+        sourceKind: "thermo_raw",
+        outcome: "finalized",
+        detailedOutcome: null,
+        outputFileName: name.replace(/\.raw$/i, ".mzML"),
+        output: {
+          byteLength: 28_637,
+          sha256: "B3D97B38".repeat(8).slice(0, 64),
+          spectrumCount: 1,
+          chromatogramCount: 1,
+        },
+        validation: {
+          mode: "output_only",
+          verified: [],
+          unverified: [],
+          inapplicable: [],
+          fullyVerified: false,
+        },
+        backend: null,
+        stagingResidue: null,
+        installationGeneration: 0,
       },
-      validation: {
-        mode: "output_only",
-        verified: [],
-        unverified: [],
-        inapplicable: [],
-        fullyVerified: false,
-      },
-      backend: null,
-      stagingResidue: null,
-      installationGeneration: 0,
     },
   });
 }
@@ -135,7 +138,9 @@ describe("adding converted outputs to the workspace", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     expect(
-      await within(panel).findByText("2 converted mzML outputs are ready to add to this workspace."),
+      await within(panel).findByText(
+        "2 converted mzML outputs are ready to add to this workspace.",
+      ),
     ).toBeVisible();
     const adopt = within(panel).getByRole("button", {
       name: "Add converted outputs to workspace",
@@ -228,6 +233,7 @@ describe("adding converted outputs to the workspace", () => {
         {
           kind: "alreadyInWorkspace",
           itemIndex: 0,
+          memberIndex: 0,
           sourceHandle: "file-1",
           outputFileName: "run-1.mzML",
           dataset: DATASETS[0] as SelectedFile,
@@ -264,6 +270,7 @@ describe("adding converted outputs to the workspace", () => {
         {
           kind: "added",
           itemIndex: 0,
+          memberIndex: 0,
           sourceHandle: "file-1",
           outputFileName: "run-1.mzML",
           dataset: {
@@ -277,6 +284,7 @@ describe("adding converted outputs to the workspace", () => {
         {
           kind: "refused",
           itemIndex: 1,
+          memberIndex: 0,
           sourceHandle: "file-2",
           outputFileName: "run-2.mzML",
           reason: "output_changed",
@@ -476,6 +484,7 @@ describe("adding converted outputs to the workspace", () => {
         {
           kind: "refused",
           itemIndex: 0,
+          memberIndex: 0,
           sourceHandle: "file-1",
           outputFileName: "run-1.mzML",
           reason: "workspace_full",

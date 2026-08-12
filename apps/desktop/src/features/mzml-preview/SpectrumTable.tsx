@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { SpectrumRow, SpectrumTable as SpectrumTableModel } from "./contracts";
-import {
-  formatCount,
-  formatIntensity,
-  formatMz,
-  formatRetentionTimeValue,
-} from "./format";
+import { formatCount, formatIntensity, formatMz, formatRetentionTimeValue } from "./format";
 
 /** Fixed row height keeps the windowing arithmetic exact. Mirrored in CSS. */
 const ROW_HEIGHT = 30;
@@ -48,12 +43,7 @@ export interface SpectrumTableProps {
   readonly onRendered: (renderedRowCount: number, milliseconds: number) => void;
 }
 
-export function SpectrumTable({
-  table,
-  selectedIndex,
-  onSelect,
-  onRendered,
-}: SpectrumTableProps) {
+export function SpectrumTable({ table, selectedIndex, onSelect, onRendered }: SpectrumTableProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(FALLBACK_VIEWPORT_HEIGHT);
@@ -92,8 +82,7 @@ export function SpectrumTable({
   const focusStop = Math.min(end - 1, Math.max(start, focusRow));
 
   const renderStartedAt = useRef(0);
-  renderStartedAt.current =
-    typeof performance === "undefined" ? 0 : performance.now();
+  renderStartedAt.current = typeof performance === "undefined" ? 0 : performance.now();
   useEffect(() => {
     // Only the windowed slice bounds change what was actually rendered.
     onRendered(

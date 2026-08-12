@@ -132,7 +132,9 @@ function SpectrumDetail({ spectrum }: { readonly spectrum: SelectedSpectrum }) {
         </div>
         <div>
           <dt>Scan number</dt>
-          <dd>{spectrum.scanNumber === null ? "Not reported" : formatCount(spectrum.scanNumber)}</dd>
+          <dd>
+            {spectrum.scanNumber === null ? "Not reported" : formatCount(spectrum.scanNumber)}
+          </dd>
         </div>
         <div>
           <dt>MS level</dt>

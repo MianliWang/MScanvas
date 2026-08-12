@@ -28,7 +28,10 @@ function dataset(index: number, relativeContext: string | null = null): Selected
 function seeded(count: number): RosterState {
   return rosterReducer(initialRosterState, {
     type: "rosterLoaded",
-    roster: { datasets: Array.from({ length: count }, (_, index) => dataset(index)), capacity: 1_024 },
+    roster: {
+      datasets: Array.from({ length: count }, (_, index) => dataset(index)),
+      capacity: 1_024,
+    },
   });
 }
 
@@ -220,7 +223,11 @@ describe("looking at the roster through a search and a sort", () => {
     expect(label.tagName).toBe("LABEL");
     expect(label).toHaveAttribute("for", searchBox().id);
     const sort = screen.getByRole("combobox", { name: "Sort files" });
-    expect(within(sort).getAllByRole("option").map((option) => option.textContent)).toEqual([
+    expect(
+      within(sort)
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual([
       "Added order",
       "Name A–Z",
       "Name Z–A",
@@ -338,10 +345,11 @@ describe("looking at the roster through a search and a sort", () => {
   });
 
   it("says a kept row is showing only when something is on screen for it", () => {
-    const shown = rosterReducer(
-      rosterReducer(seeded(4), { type: "activated", handle: "file-2" }),
-      { type: "rowStateChanged", handle: "file-2", state: "loaded" },
-    );
+    const shown = rosterReducer(rosterReducer(seeded(4), { type: "activated", handle: "file-2" }), {
+      type: "rowStateChanged",
+      handle: "file-2",
+      state: "loaded",
+    });
     const searched = rosterReducer(shown, { type: "searchChanged", query: "qc_pool" });
     const { rerender } = render(<Fixed state={searched} />);
 
@@ -394,19 +402,11 @@ describe("looking at the roster through a search and a sort", () => {
 
     fireEvent.click(rows()[0] as HTMLElement);
     fireEvent.click(rows()[2] as HTMLElement, { shiftKey: true });
-    expect(selectedNames()).toEqual([
-      "QC_pool_01.mzML",
-      "QC_pool_02.mzML",
-      "QC_pool_04.mzML",
-    ]);
+    expect(selectedNames()).toEqual(["QC_pool_01.mzML", "QC_pool_02.mzML", "QC_pool_04.mzML"]);
 
     press("a", { ctrlKey: true });
     // Blank_03 is hidden and is not swept into either.
-    expect(selectedNames()).toEqual([
-      "QC_pool_01.mzML",
-      "QC_pool_02.mzML",
-      "QC_pool_04.mzML",
-    ]);
+    expect(selectedNames()).toEqual(["QC_pool_01.mzML", "QC_pool_02.mzML", "QC_pool_04.mzML"]);
   });
 
   it("keeps one tab stop over the visible rows", () => {
@@ -488,11 +488,29 @@ describe("looking at the roster through a search and a sort", () => {
       type: "filesAdded",
       result: {
         roster: {
-          datasets: [...kept.datasets, { handle: "file-9", fileName: "QC_pool_09.mzML", byteLength: 1, sourceKind: "mzml", relativeContext: null }],
+          datasets: [
+            ...kept.datasets,
+            {
+              handle: "file-9",
+              fileName: "QC_pool_09.mzML",
+              byteLength: 1,
+              sourceKind: "mzml",
+              relativeContext: null,
+            },
+          ],
           capacity: 1_024,
         },
         outcomes: [
-          { outcome: "added", dataset: { handle: "file-9", fileName: "QC_pool_09.mzML", byteLength: 1, sourceKind: "mzml", relativeContext: null } },
+          {
+            outcome: "added",
+            dataset: {
+              handle: "file-9",
+              fileName: "QC_pool_09.mzML",
+              byteLength: 1,
+              sourceKind: "mzml",
+              relativeContext: null,
+            },
+          },
         ],
       },
     });
@@ -510,7 +528,11 @@ describe("looking at the roster through a search and a sort", () => {
     // be read is not a fact a search may suppress, and it was suppressed while
     // both shared one slot.
     const failed = rosterReducer(
-      rosterReducer(seeded(4), { type: "rowPressed", handle: "file-2", modifiers: { ctrl: false, shift: false } }),
+      rosterReducer(seeded(4), {
+        type: "rowPressed",
+        handle: "file-2",
+        modifiers: { ctrl: false, shift: false },
+      }),
       { type: "rowStateChanged", handle: "file-2", state: "replaced" },
     );
     render(<Fixed state={rosterReducer(failed, { type: "searchChanged", query: "qc_pool" })} />);
@@ -539,18 +561,10 @@ describe("native drop roster accessibility", () => {
   it("offers an enabled Clear escape over an empty busy roster", () => {
     const onClearList = vi.fn(() => true);
     render(
-      <Fixed
-        canAddFiles={false}
-        dropBusy
-        onClearList={onClearList}
-        state={initialRosterState}
-      />,
+      <Fixed canAddFiles={false} dropBusy onClearList={onClearList} state={initialRosterState} />,
     );
 
-    expect(screen.getByRole("region", { name: "Workspace" })).toHaveAttribute(
-      "aria-busy",
-      "true",
-    );
+    expect(screen.getByRole("region", { name: "Workspace" })).toHaveAttribute("aria-busy", "true");
     const clear = screen.getByRole("button", { name: "Clear list" });
     expect(clear).toHaveAttribute("aria-describedby", "clear-during-drop-import-description");
     expect(
@@ -585,31 +599,21 @@ describe("returning the keyboard after removal", () => {
     const before = selectedMiddle();
     const after = removeFrom(before, "file-1");
     const onRemoveSelected = vi.fn();
-    const { rerender } = render(
-      <Fixed onRemoveSelected={onRemoveSelected} state={before} />,
-    );
+    const { rerender } = render(<Fixed onRemoveSelected={onRemoveSelected} state={before} />);
     const remove = screen.getByRole("button", { name: "Remove selected" });
     const survivor = screen.getByRole("option", { name: /Blank_03\.mzML/ });
     const focusing = vi.spyOn(survivor, "focus");
     remove.focus();
 
     fireEvent.click(remove);
-    rerender(
-      <Fixed canMutate={false} onRemoveSelected={onRemoveSelected} state={before} />,
-    );
+    rerender(<Fixed canMutate={false} onRemoveSelected={onRemoveSelected} state={before} />);
     blurAsABrowserWould(remove);
     rerender(<Fixed onRemoveSelected={onRemoveSelected} state={before} />);
 
     expect(document.body).toHaveFocus();
     expect(focusing).not.toHaveBeenCalled();
 
-    rerender(
-      <Fixed
-        onRemoveSelected={onRemoveSelected}
-        rosterSettlementToken={1}
-        state={after}
-      />,
-    );
+    rerender(<Fixed onRemoveSelected={onRemoveSelected} rosterSettlementToken={1} state={after} />);
 
     expect(onRemoveSelected).toHaveBeenCalledTimes(1);
     expect(survivor).toHaveFocus();
@@ -789,13 +793,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       expect(document.body).toHaveFocus();
 
       focusing.mockClear();
-      rerender(
-        <Fixed
-          onClearList={onClearList}
-          rosterSettlementToken={1}
-          state={seeded(1)}
-        />,
-      );
+      rerender(<Fixed onClearList={onClearList} rosterSettlementToken={1} state={seeded(1)} />);
 
       expect(onClearList).toHaveBeenCalledTimes(1);
       const restored = screen.getByRole("button", { name: "Clear list" });
@@ -806,13 +804,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
       // because the restored action subsequently lost focus to the body.
       blurAsABrowserWould(restored);
       focusing.mockClear();
-      rerender(
-        <Fixed
-          onClearList={onClearList}
-          rosterSettlementToken={2}
-          state={seeded(1)}
-        />,
-      );
+      rerender(<Fixed onClearList={onClearList} rosterSettlementToken={2} state={seeded(1)} />);
       expect(document.body).toHaveFocus();
       expect(focusing).not.toHaveBeenCalledWith({ preventScroll: true });
     } finally {
@@ -904,12 +896,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
     // Clear can answer before the import it superseded. Its token alone must
     // not restore to the still-temporary escape action.
     rerender(
-      <Fixed
-        canAddFiles={false}
-        folderBusy
-        rosterSettlementToken={1}
-        state={initialRosterState}
-      />,
+      <Fixed canAddFiles={false} folderBusy rosterSettlementToken={1} state={initialRosterState} />,
     );
     expect(document.body).toHaveFocus();
     expect(focusing).not.toHaveBeenCalled();
@@ -930,9 +917,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
 
     // Rust's roster answer can render before the request's finally handler
     // releases the mutation gate. A disabled destination cannot receive focus.
-    rerender(
-      <Fixed canMutate={false} rosterSettlementToken={1} state={state} />,
-    );
+    rerender(<Fixed canMutate={false} rosterSettlementToken={1} state={state} />);
     expect(document.body).toHaveFocus();
 
     rerender(<Fixed rosterSettlementToken={1} state={state} />);
@@ -1066,9 +1051,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
 
     // The old Clear debt must not use the body's temporary picker focus when
     // reconciliation answers during the later action.
-    rerender(
-      <Fixed canAddFiles={false} rosterSettlementToken={1} state={seeded(1)} />,
-    );
+    rerender(<Fixed canAddFiles={false} rosterSettlementToken={1} state={seeded(1)} />);
     expect(document.body).toHaveFocus();
     expect(screen.getByRole("button", { name: "Clear list" })).not.toHaveFocus();
 
@@ -1102,9 +1085,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
     // This is a pointer activation: Add files never owned keyboard focus, so
     // its picker has no keyboard destination and cannot erase the older one.
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
-    rerender(
-      <Fixed canAddFiles={false} canMutate={false} state={initialRosterState} />,
-    );
+    rerender(<Fixed canAddFiles={false} canMutate={false} state={initialRosterState} />);
     rerender(
       <Fixed
         canAddFiles={false}
@@ -1144,12 +1125,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
 
   it("does not arm a Clear list activation that acquired no mutation gate", () => {
     const { rerender } = render(
-      <Fixed
-        canAddFiles={false}
-        folderBusy
-        onClearList={() => false}
-        state={initialRosterState}
-      />,
+      <Fixed canAddFiles={false} folderBusy onClearList={() => false} state={initialRosterState} />,
     );
     const clear = screen.getByRole("button", { name: "Clear list" });
     clear.focus();
@@ -1165,9 +1141,7 @@ describe("returning the keyboard after Clear list reconciliation", () => {
 
     // A later mutation has its own disabled lifetime and settlement edge. It
     // must not retroactively arm the earlier activation that acquired no gate.
-    rerender(
-      <Fixed canMutate={false} rosterSettlementToken={1} state={seeded(1)} />,
-    );
+    rerender(<Fixed canMutate={false} rosterSettlementToken={1} state={seeded(1)} />);
     rerender(<Fixed rosterSettlementToken={2} state={seeded(1)} />);
     expect(document.body).toHaveFocus();
   });
@@ -1187,10 +1161,11 @@ describe("the workspace roster as an accessible list", () => {
   });
 
   it("says which row is being shown without relying on colour", () => {
-    const state = rosterReducer(
-      rosterReducer(seeded(3), { type: "activated", handle: "file-1" }),
-      { type: "rowStateChanged", handle: "file-1", state: "loaded" },
-    );
+    const state = rosterReducer(rosterReducer(seeded(3), { type: "activated", handle: "file-1" }), {
+      type: "rowStateChanged",
+      handle: "file-1",
+      state: "loaded",
+    });
     render(
       <DatasetRoster
         canAddFiles
@@ -1231,10 +1206,11 @@ describe("the workspace roster as an accessible list", () => {
     // empties the preview -- that is what makes reading it again one action --
     // but nothing is on screen for it, and the hidden text is the whole of what
     // a screen reader is told.
-    const shown = rosterReducer(
-      rosterReducer(seeded(3), { type: "activated", handle: "file-1" }),
-      { type: "rowStateChanged", handle: "file-1", state: "loaded" },
-    );
+    const shown = rosterReducer(rosterReducer(seeded(3), { type: "activated", handle: "file-1" }), {
+      type: "rowStateChanged",
+      handle: "file-1",
+      state: "loaded",
+    });
     const discarded = rosterReducer(shown, { type: "previewDiscarded" });
     render(
       <DatasetRoster
@@ -1303,15 +1279,7 @@ describe("the workspace roster as an accessible list", () => {
   });
 
   it("offers an accessible escape from an unresolved first folder import", () => {
-    render(
-      <Harness
-        canAddFiles={false}
-        canAddFolder={false}
-        canMutate
-        folderBusy
-        rows={0}
-      />,
-    );
+    render(<Harness canAddFiles={false} canAddFolder={false} canMutate folderBusy rows={0} />);
 
     expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
@@ -1647,9 +1615,7 @@ describe("driving the roster from the keyboard alone", () => {
       transient.focus();
       blurAsABrowserWould(transient);
 
-      rerender(
-        <Harness canAddFiles={false} restoreAddFilesFocusToken={1} rows={0} />,
-      );
+      rerender(<Harness canAddFiles={false} restoreAddFilesFocusToken={1} rows={0} />);
       expect(document.body).toHaveFocus();
       expect(focusing).not.toHaveBeenCalled();
       rerender(<Harness canAddFiles restoreAddFilesFocusToken={1} rows={0} />);
@@ -1674,9 +1640,7 @@ describe("driving the roster from the keyboard alone", () => {
       const add = screen.getByRole("button", { name: "Add files…" });
       transient.focus();
       blurAsABrowserWould(transient);
-      rerender(
-        <Harness canAddFiles={false} restoreAddFilesFocusToken={1} rows={0} />,
-      );
+      rerender(<Harness canAddFiles={false} restoreAddFilesFocusToken={1} rows={0} />);
 
       destination.focus();
       blurAsABrowserWould(destination);
@@ -1820,9 +1784,27 @@ describe("saying which of two identically named rows is which", () => {
       type: "rosterLoaded",
       roster: {
         datasets: [
-          { handle: "file-0", fileName: "sample.mzML", byteLength: 4_096, sourceKind: "mzml", relativeContext: "batch-1" },
-          { handle: "file-1", fileName: "sample.mzML", byteLength: 8_192, sourceKind: "mzml", relativeContext: "batch-2" },
-          { handle: "file-2", fileName: "unique.mzML", byteLength: 2_048, sourceKind: "mzml", relativeContext: null },
+          {
+            handle: "file-0",
+            fileName: "sample.mzML",
+            byteLength: 4_096,
+            sourceKind: "mzml",
+            relativeContext: "batch-1",
+          },
+          {
+            handle: "file-1",
+            fileName: "sample.mzML",
+            byteLength: 8_192,
+            sourceKind: "mzml",
+            relativeContext: "batch-2",
+          },
+          {
+            handle: "file-2",
+            fileName: "unique.mzML",
+            byteLength: 2_048,
+            sourceKind: "mzml",
+            relativeContext: null,
+          },
         ],
         capacity: 1_024,
       },
@@ -1846,9 +1828,9 @@ describe("saying which of two identically named rows is which", () => {
   it("uses the bounded value exactly as Rust gave it, in the visible text and the title alike", () => {
     render(<Fixed state={collided()} />);
 
-    const context = within(screen.getByRole("option", { name: /sample\.mzML,\s*batch-2/ })).getByText(
-      "batch-2",
-    );
+    const context = within(
+      screen.getByRole("option", { name: /sample\.mzML,\s*batch-2/ }),
+    ).getByText("batch-2");
     // No client-side path processing of any kind: the tooltip says exactly what
     // is on screen, so hovering reveals nothing the row did not already show.
     expect(context).toHaveAttribute("title", "batch-2");
@@ -1860,7 +1842,11 @@ describe("saying which of two identically named rows is which", () => {
     // search did not match is on screen anyway.
     const searched = rosterReducer(
       rosterReducer(
-        rosterReducer(collided(), { type: "rowPressed", handle: "file-0", modifiers: { ctrl: false, shift: false } }),
+        rosterReducer(collided(), {
+          type: "rowPressed",
+          handle: "file-0",
+          modifiers: { ctrl: false, shift: false },
+        }),
         { type: "rowStateChanged", handle: "file-0", state: "missing" },
       ),
       { type: "searchChanged", query: "unique" },

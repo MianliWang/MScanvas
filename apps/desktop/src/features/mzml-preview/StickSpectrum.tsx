@@ -125,9 +125,7 @@ function reduce(
   // stick hangs below it and a positive one rises above it.
   const valueSpan = intensityHigh - intensityLow;
   const zeroY =
-    valueSpan > 0
-      ? PLOT_PADDING_TOP + (intensityHigh / valueSpan) * usableHeight
-      : BASELINE_Y;
+    valueSpan > 0 ? PLOT_PADDING_TOP + (intensityHigh / valueSpan) * usableHeight : BASELINE_Y;
 
   const sticks: Stick[] = [];
   const place = (height: number | null | undefined, value: number) => {
@@ -189,7 +187,9 @@ export function StickSpectrum({
   const path = useMemo(
     () =>
       reduction.sticks
-        .map((stick) => `M${stick.x.toFixed(2)} ${reduction.zeroY.toFixed(2)}V${stick.y.toFixed(2)}`)
+        .map(
+          (stick) => `M${stick.x.toFixed(2)} ${reduction.zeroY.toFixed(2)}V${stick.y.toFixed(2)}`,
+        )
         .join(""),
     [reduction.sticks, reduction.zeroY],
   );
