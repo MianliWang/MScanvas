@@ -174,3 +174,24 @@ record documents.
 - SCIEX WIFF remains excluded for the measured reason ADR 0018 records: its
   one-source/many-outputs topology does not fit this queue's model, and
   admitting it requires a multi-output conversion model proven first.
+
+## Amendment, 2026-08-12 — a third family, and a shape this record assumed
+
+The exact claim above names two families.
+[ADR 0027](0027-first-visible-sciex-wiff-workflow.md) adds a third, **SCIEX
+WIFF**, under the same rules this record established: the extension routes and
+never recognises, each family is gated on its own provider evidence, a queue may
+mix them in visible roster order, and the walking surfaces stay mzML-only.
+
+One assumption of this record did not survive, and it was never stated because
+it had never been false: that a visible queue item produces one output whose
+name is known before the picker opens. A SCIEX acquisition produces one to
+twenty-four documents the backend names itself, so the plan states a range and
+its naming rule rather than a filename, and the count of outputs offered after a
+queue finishes is a count of files rather than of items. Both are visible in
+this record's own surfaces; neither changes what a Thermo or Shimadzu row does
+or says.
+
+The "not claimed" list above loses `SCIEX WIFF` and keeps every other entry —
+in particular generic vendor RAW support, compound-file acquisitions in general,
+directory acquisitions, vendor-file preview and source-fidelity verification.

@@ -58,7 +58,8 @@ function ruleFor(style: HTMLStyleElement, selector: string): CSSStyleRule {
       .join(", ");
   const rule = [...(style.sheet?.cssRules ?? [])].find(
     (candidate): candidate is CSSStyleRule =>
-      "selectorText" in candidate && normalize(candidate.selectorText) === normalize(selector),
+      candidate instanceof CSSStyleRule &&
+      normalize(candidate.selectorText) === normalize(selector),
   );
   if (rule === undefined) {
     throw new Error(`no rule for ${selector}`);

@@ -282,3 +282,32 @@ have to be flattened into members to fit.
 
 The set is reached through a separate private entry point naming the exact
 operation and the exact item, and then runs this engine unchanged.
+
+## Amendment, 2026-08-12 — the visible action adopts both cardinalities
+
+The amendment above says the visible action "deliberately does not project a
+set". [ADR 0027](0027-first-visible-sciex-wiff-workflow.md) reversed that, and
+the distinction that made it safe is between **reconstructing** an authority and
+**expanding** one.
+
+A set authority is expanded into the member tickets it was minted with — the
+same `Arc`s, so the retained objects stay in the set ticket and a second attempt
+asks the same objects the same questions — and those become ordinary candidates
+for this engine. Nothing is rebuilt from a filename or a member report, which is
+what the refusal was ever about. The expansion refuses a ticket of another
+session, because a `DatasetId` is allocated per session from zero.
+
+Two things about this record's transfer object changed as a result, and both are
+consequences of one item being able to contribute several outcomes:
+
+- an outcome names an item **and** a member. An item index alone stopped
+  identifying one. For a known single output the member index is zero, which is
+  a real position rather than a filler: such an item has exactly one member and
+  it is the first.
+- the count the interface offers is a count of output **files**, derived by Rust
+  from the same authorities the adoption expands. One finalized Thermo item
+  offers one; one finalized ten-member acquisition offers ten.
+
+Everything else here is unchanged: exact object and exact bytes per member,
+duplicate before capacity, per-member partial adoption, no set-level rollback,
+repeatable, no process, no preview, the same generation protocol.

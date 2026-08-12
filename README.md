@@ -7,9 +7,9 @@ MSCanvas aims to be a Windows-first, local-first desktop application for importi
 > Status: **pre-alpha**. The application has two real end-to-end paths: curate a
 > session workspace of local `.mzML` files and inspect one of them against a
 > user-installed ProteoWizard, and queue up to sixteen selected vendor rows —
-> Thermo Scientific RAW and Shimadzu LabSolutions LCD, alone or mixed — for
-> serial conversion to mzML, each family on the exact ProteoWizard build
-> evidenced for it. It is not yet the batch workspace described under
+> Thermo Scientific RAW, Shimadzu LabSolutions LCD and SCIEX WIFF, alone or
+> mixed — for serial conversion to mzML, each family on the exact ProteoWizard
+> build evidenced for it. It is not yet the batch workspace described under
 > [Product scope](#product-scope).
 
 Canonical repository: [`MianliWang/MScanvas`](https://github.com/MianliWang/MScanvas) (currently private).
@@ -98,16 +98,31 @@ and figure export. mzXML output stays disabled and fail-closed until
 representative multi-source integrity checks pass.
 
 A conversion queue is reachable, and its limits are the claim. `Add files…`
-admits regular `.mzML` files plus two precisely evidenced vendor regular-file
-families — **Thermo Scientific RAW** and **Shimadzu LabSolutions LCD** — each
-recognized by what its bytes are, never by its name alone: a RAW by its
-signature, an LCD by the measured structure inside its container, which shares
-its leading bytes with other vendors' files. Folders and Explorer drops still
-discover mzML only. Select up to **16** vendor rows — either family, or both
-mixed — and MSCanvas shows the ordered list it would run, which family each
-row is, and the name each item would write; you choose Fail or Skip for names
-already taken, with no overwrite, and one folder on this computer through a
-Rust-owned picker. The items convert one at a time, in the order shown, each on
+admits regular `.mzML` files plus three precisely evidenced vendor families —
+**Thermo Scientific RAW**, **Shimadzu LabSolutions LCD** and **SCIEX WIFF** —
+each recognized by what its bytes are, never by its name alone: a RAW by its
+signature, an LCD and a WIFF by the measured structure inside their containers,
+which share their leading bytes with each other. Folders and Explorer drops
+still discover mzML only.
+
+A SCIEX WIFF acquisition is **two files**, and both are required: you select the
+`.wiff`, and MSCanvas admits it together with the matching `.wiff.scan` beside
+it as one workspace row. If the companion is missing, is not a file, or is not
+the companion MSCanvas expects, the acquisition is refused when it is added and
+told which file to put beside it. Selecting the `.wiff.scan` on its own is
+refused the same way. The companion never becomes a row of its own.
+
+Select up to **16** vendor rows — any of the three families, or a mix — and
+MSCanvas shows the ordered list it would run, which family each row is, and what
+each item would write; you choose Fail or Skip for names already taken, with no
+overwrite, and one folder on this computer through a Rust-owned picker.
+
+**One acquisition is one queue item, whatever it produces.** Thermo and Shimadzu
+rows each write one mzML whose name is known before anything runs. A SCIEX
+acquisition can hold many samples, and ProteoWizard writes one document per
+sample and chooses their names itself — so the plan says *1–24 mzML outputs,
+filenames determined during conversion* rather than inventing a name, and the
+queue's progress still counts acquisitions rather than output files. The items convert one at a time, in the order shown, each on
 the exact provider build evidenced for its own family, and each reports what
 was measured of its own output. Conversion is judged on its output alone —
 MSCanvas cannot read a vendor container, so nothing claims source fidelity.
@@ -136,7 +151,18 @@ and Explorer drop stay mzML-only. Converted files are never added to the
 workspace for you -- when a queue is over you can add its finalized outputs
 yourself, and MSCanvas admits one only when the final name still refers to the
 exact object it finalized and that object still holds the bytes it validated.
-Nothing is previewed automatically.
+Nothing is previewed automatically. A ten-sample SCIEX acquisition offers ten
+outputs to add, not one, and each is an ordinary mzML row afterwards.
+
+For a SCIEX acquisition that converted every one of its outputs, MSCanvas says
+that **every sample identified by the SCIEX reader produced its output**. That
+is narrower than it may sound and is meant to be: it does not say the reader
+identified every sample in the acquisition, and it says nothing about how
+faithfully any document represents one. Publishing several files is sequential
+and is not a transaction — if it stops partway, the files already written stay
+in your folder and are yours, MSCanvas says how many there were, and it will not
+offer them as the acquisition's complete output set. You can add them
+individually later with `Add files…`.
 
 When a queue is over and something in it went wrong, you can save one local JSON
 file describing it: which items failed, what the boundary called each failure,

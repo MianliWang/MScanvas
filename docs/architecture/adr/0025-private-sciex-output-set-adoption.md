@@ -1,8 +1,10 @@
 # ADR 0025 — Private SCIEX output-set adoption
 
-- Status: Accepted as a private path with no product surface. Visible SCIEX
-  ingestion, queue integration and any output-set adoption UI remain separately
-  gated
+- Status: Accepted. **The adoption engine is now reached by the visible
+  action**: ADR 0027 expands a queue-held set authority into member candidates
+  and runs this same engine, unchanged. The `PartiallyFinalized` question this
+  record left open as a product decision is decided there — the prefix is not
+  offered as a complete output set, and is explained rather than hidden
 - Date: 2026-08-11
 
 ## Context

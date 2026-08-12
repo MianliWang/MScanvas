@@ -506,11 +506,13 @@ build can hold.
 
 [ADR 0026](0026-private-sciex-serial-queue-integration.md) replaced the item's
 `output_file_name: String` with a named distinction — one known single output,
-or one to twenty-four documents the backend names itself. The second case is
-compiled out of the shipped binary, so nothing here changes for Thermo or
-Shimadzu, the visible transfer object is untouched, and the planning-time
-collision rule still refuses every pair of items whose names can be known that
-early.
+or one to twenty-four documents the backend names itself.
+[ADR 0027](0027-first-visible-sciex-wiff-workflow.md) made the second case
+reachable and put it on the wire as a discriminated union — so an item states
+which shape it has rather than carrying a name that is not one. Nothing here
+changes for Thermo or Shimadzu, whose items still carry the name they always
+did under the known-single arm, and the planning-time collision rule still
+refuses every pair of items whose names can be known that early.
 
 What is new is a second rule for the names that cannot: a set's discovered names
 are compared against the queue's own claims after every member is validated and

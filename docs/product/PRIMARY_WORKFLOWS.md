@@ -127,16 +127,26 @@ settings, its output-root choice and "Open file/folder" remain unreachable. See
 
 ## WF-004a — Convert a queue of vendor acquisitions
 
-1. `Add files…` and choose acquisitions. mzML, evidenced Thermo Scientific RAW
-   and evidenced Shimadzu LabSolutions LCD are all admitted; a folder or a drop
-   still admits mzML only.
-2. Select the vendor rows to convert, or focus one. The two families may be
+1. `Add files…` and choose acquisitions. mzML, evidenced Thermo Scientific RAW,
+   evidenced Shimadzu LabSolutions LCD and evidenced SCIEX WIFF are all
+   admitted; a folder or a drop still admits mzML only.
+
+   A SCIEX acquisition is two files. Choose the `.wiff`; MSCanvas admits it with
+   the required `.wiff.scan` beside it as **one** row. If that companion is
+   missing, is not a file, or is not the companion MSCanvas expects, the
+   acquisition is refused with a sentence saying which file to put beside it —
+   and choosing the `.wiff.scan` on its own says to choose the `.wiff` instead.
+2. Select the vendor rows to convert, or focus one. The three families may be
    mixed in one selection. Vendor rows cannot be previewed, and say so.
 3. Review the plan: the ordered list of what will run, which family each row
-   is, the name each item will write, how many selected rows are excluded for
+   is, what each item will write, how many selected rows are excluded for
    being mzML already, and the
    output-only validation disclosure. Two rows that would write one name are
    refused here, before anything is chosen or created.
+
+   A row whose outputs the backend names itself says so — *1–24 mzML outputs,
+   filenames determined during conversion* — rather than naming a file MSCanvas
+   would be inventing.
 4. Choose Fail or Skip if a file of that name already exists. There is no
    overwrite. The choice applies to the whole queue.
 5. `Convert N selected…` opens a Rust-owned picker for one local folder, which
@@ -149,7 +159,20 @@ settings, its output-root choice and "Open file/folder" remain unreachable. See
    stays visible through a search.
 7. Each item reports its own outcome: the output's name, size and record counts;
    or that a name was already taken and left alone; or why nothing was written.
-   The queue reports how many converted, were skipped, and failed.
+   The queue reports how many converted, were skipped, and failed — always as
+   counts of acquisitions, never of output files.
+
+   An item that produced a set of outputs reports how many were finalized, and
+   — where the run established it — that every sample identified by the SCIEX
+   reader produced its output. That is narrower than "every sample in the
+   acquisition" and is deliberately worded as such.
+
+   Publishing several files is sequential and is not a transaction. An item that
+   stopped partway says how many were finalized and how many were not, states
+   that the finalized files remain in the destination folder, and states that
+   MSCanvas will not present them as the acquisition's complete output set. It
+   is not offered a retry, and it is never described as though nothing had been
+   converted.
 8. `Retry N failed` reruns only the failures another attempt could change, in
    their original places, into the same folder under the same policy. Converted
    and skipped files are left exactly as they are. A queue that was stopped is
@@ -162,7 +185,12 @@ settings, its output-root choice and "Open file/folder" remain unreachable. See
    application is restarted.
 
 10. `Add converted outputs to workspace` adds every finalized output of that
-    queue, in queue order, and only when it is pressed. Nothing is adopted
+    queue — in queue order, and then in publication order within one item's own
+    set — and only when it is pressed. The count offered is a count of output
+    **files**: one finalized Thermo item offers one, and one finalized
+    ten-sample SCIEX acquisition offers ten. An acquisition that finalized only
+    part of its output set offers none, and is explained separately rather than
+    silently omitted. Nothing is adopted
     because a conversion finished and nothing is previewed as a result. Before
     admitting one, MSCanvas re-establishes that the final name still refers to
     the exact object it finalized and that the object still holds the byte
