@@ -5,6 +5,11 @@
   publication state. SCIEX remains invisible to the product; visible ingestion,
   queue integration and output-set adoption stay separately gated
 - Date: 2026-08-11
+- **Extended by [ADR 0025](0025-private-sciex-output-set-adoption.md),
+  2026-08-11.** The completeness evidence is now also an eligibility condition:
+  a conversion whose completeness was not established cannot mint an output-set
+  adoption ticket. The evidence stays with the conversion result and is
+  deliberately not copied into the adopted rows.
 
 ## Context
 

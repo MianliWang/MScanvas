@@ -25,14 +25,33 @@
 //! nothing else. The output stays exactly where it is, and `Add files…` remains
 //! the ordinary way to reach it afterwards.
 
+#[cfg(test)]
+use std::fmt;
 use std::fs::File;
 use std::path::Path;
+#[cfg(test)]
+use std::sync::Arc;
 
 use mscanvas_proteowizard::{FinalizedOutput, OutputDrift};
+#[cfg(test)]
+use mscanvas_proteowizard::{MAX_CONVERSION_OUTPUTS_PER_SOURCE, SciexSampleCompleteness};
 
 use super::destination::{DestinationHold, admit_destination_root};
 use super::operation::AdmittedDestination;
+#[cfg(test)]
+use super::selection::DatasetSourceKind;
 use super::selection::{AcceptedFile, DatasetId, accept_mzml_file};
+#[cfg(test)]
+use super::service::SciexConversion;
+
+/// The group outcome a set must have to be adoptable, by the lifecycle's own
+/// name for it.
+#[cfg(test)]
+const FULLY_FINALIZED: &str = "fully_finalized";
+
+/// The member state every member of such a set must be in.
+#[cfg(test)]
+const FINALIZED: &str = "finalized";
 
 /// Why one finalized output cannot be taken into the workspace.
 ///
@@ -231,6 +250,226 @@ impl FinalizedOutputAdoptionTicket {
 /// The checks establish that this object is the finalized one and still holds
 /// the validated bytes. That stays true only while nobody may write it, so the
 /// writer-excluding hold and the directory it lives in travel with the accepted
+/// Why one fully finalized conversion could not become an adoptable output set.
+///
+/// Path-free and count-free beyond what a caller needs to tell the cases apart.
+/// Every member is the same decision — there is no set to adopt — differing
+/// only in what it can honestly say about why.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum OutputSetNotAdoptable {
+    /// The conversion did not publish its whole output set. Deliberately not
+    /// adoptable *as a set*; see [`FinalizedOutputSetAdoptionTicket`].
+    NotFullyFinalized,
+    /// The run never established that every sample the reader identified
+    /// produced an output, so what it published is not known to be the
+    /// acquisition.
+    SampleCompletenessNotEstablished,
+    /// The retained objects and the reported members do not line up, so no
+    /// member could be paired with the object that is supposed to be its own.
+    MembersDoNotPair,
+}
+
+#[cfg(test)]
+impl OutputSetNotAdoptable {
+    pub(super) const fn stable_id(self) -> &'static str {
+        match self {
+            Self::NotFullyFinalized => "output_set_not_fully_finalized",
+            Self::SampleCompletenessNotEstablished => "output_set_completeness_not_established",
+            Self::MembersDoNotPair => "output_set_members_do_not_pair",
+        }
+    }
+}
+
+/// One fully finalized, sample-complete conversion, retained so its whole
+/// output set can be adopted later.
+///
+/// ## Why a set rather than a queue of ones
+///
+/// The single-output ticket beside this one is the right shape for everything
+/// *inside* it: one object, one name, one destination, one pair of proofs. What
+/// it cannot express is that these particular outputs are the outputs of one
+/// acquisition, all of them, and that adopting some of them is not adopting the
+/// acquisition. So this holds an ordered list of those tickets and adds only
+/// the facts that are about the set: which source it came from, which run, and
+/// the evidence that the set is the whole of what the reader identified.
+///
+/// The member tickets are the existing type, unchanged. Nothing about how one
+/// output is proved differs because there are ten of them.
+///
+/// ## Eligibility, and the one case people will want to bend
+///
+/// A ticket exists only for a run that was **fully finalized** *and* whose
+/// **sample completeness was established**. A partially finalized conversion
+/// does not get one, and that is a decision rather than an oversight: its
+/// published members are real, they are the user's files, and nothing here
+/// deletes or hides them — but they are not the acquisition's output set, and
+/// offering them through an action named for one would turn a conversion that
+/// stopped halfway into a workflow that looks complete. Those files can be
+/// opened the way any other mzML on disk is opened.
+///
+/// Bounded by the lifecycle's own output bound, so the vector cannot grow past
+/// what one conversion may produce.
+///
+#[cfg(test)]
+/// Dropping this closes the retained handles and deletes nothing.
+pub(super) struct FinalizedOutputSetAdoptionTicket {
+    /// The session that minted this, because the row below is named by an id
+    /// only that session allocates.
+    session: u64,
+    /// The workspace row the acquisition was converted from.
+    ///
+    /// The acquisition's *display name* is not kept here: every member ticket
+    /// carries its own copy, and that is the one the registry reads when it
+    /// records where an adopted row came from. A second copy at set level would
+    /// be a second thing to keep true.
+    source: DatasetId,
+    /// The family it was admitted as, so a later reader can tell what kind of
+    /// acquisition produced a set rather than inferring it from the count.
+    source_kind: DatasetSourceKind,
+    /// This conversion, so two runs of one dataset cannot be mixed. Session
+    /// scoped and never persisted; it names an event, not a thing on disk.
+    run: u64,
+    /// How many samples the reader identified and converted, as proved before
+    /// publication. Carried because the ticket's own existence is the claim
+    /// that this set is that acquisition — a reader of the ticket should be
+    /// able to see what that rests on.
+    sample_count: usize,
+    /// One per published member, in the lifecycle's publication order.
+    members: Vec<Arc<FinalizedOutputAdoptionTicket>>,
+}
+
+#[cfg(test)]
+impl fmt::Debug for FinalizedOutputSetAdoptionTicket {
+    /// Opaque but for its shape. The member tickets hold open handles and the
+    /// names are the backend's; what a reader of a log needs is how many there
+    /// are, not what the user's folder is called.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FinalizedOutputSetAdoptionTicket")
+            .field("members", &self.members.len())
+            .field("sample_count", &self.sample_count)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+impl FinalizedOutputSetAdoptionTicket {
+    /// Builds a ticket from a conversion that really happened, or refuses.
+    ///
+    /// Takes the whole conversion by value, because that is the whole point
+    /// twice over. There is no path here from which the outputs could be found
+    /// again, so a ticket assembled from names and a report would be trusting
+    /// exactly what this boundary exists not to trust — and a report handed in
+    /// beside *someone else's* objects would describe a run whose files it was
+    /// not adopting, which counting members cannot detect.
+    ///
+    /// # Errors
+    ///
+    /// Refuses every run that is not a complete, sample-complete publication,
+    /// and refuses a run whose retained objects cannot be paired one-to-one
+    /// with the members the report says were finalized.
+    pub(super) fn of(
+        session: u64,
+        source: DatasetId,
+        source_display_name: String,
+        source_kind: DatasetSourceKind,
+        conversion: SciexConversion,
+    ) -> Result<Self, OutputSetNotAdoptable> {
+        let (report, retained, destination, run) = conversion.into_parts();
+        let report = &report;
+        if report.group_outcome() != FULLY_FINALIZED {
+            return Err(OutputSetNotAdoptable::NotFullyFinalized);
+        }
+        let Some(completeness) = report
+            .completeness()
+            .and_then(SciexSampleCompleteness::established)
+        else {
+            return Err(OutputSetNotAdoptable::SampleCompletenessNotEstablished);
+        };
+        let sample_count = completeness.sample_count();
+
+        let outputs = retained.into_outputs();
+        // One object per reported member, in the same order, and every member
+        // finalized. The lifecycle publishes in the order it reports, so this
+        // is a check that the two agree rather than an attempt to match them
+        // up: a mismatch means something about this run is not understood, and
+        // pairing an object with the wrong member's name would be worse than
+        // refusing.
+        if outputs.len() != report.members().len()
+            || outputs.len() != sample_count
+            || report
+                .members()
+                .iter()
+                .any(|member| member.state() != FINALIZED)
+        {
+            return Err(OutputSetNotAdoptable::MembersDoNotPair);
+        }
+        if outputs.len() > MAX_CONVERSION_OUTPUTS_PER_SOURCE {
+            return Err(OutputSetNotAdoptable::MembersDoNotPair);
+        }
+
+        let members = report
+            .members()
+            .iter()
+            .zip(outputs)
+            .map(|(member, finalized)| {
+                Arc::new(FinalizedOutputAdoptionTicket::new(
+                    run,
+                    source,
+                    source_display_name.clone(),
+                    member.file_name().to_owned(),
+                    destination.clone(),
+                    finalized,
+                ))
+            })
+            .collect();
+
+        Ok(Self {
+            session,
+            source,
+            source_kind,
+            run,
+            sample_count,
+            members,
+        })
+    }
+
+    pub(super) const fn source(&self) -> DatasetId {
+        self.source
+    }
+
+    /// The session that minted this ticket.
+    pub(super) const fn session(&self) -> u64 {
+        self.session
+    }
+
+    pub(super) const fn source_kind(&self) -> DatasetSourceKind {
+        self.source_kind
+    }
+
+    pub(super) const fn run(&self) -> u64 {
+        self.run
+    }
+
+    pub(super) const fn sample_count(&self) -> usize {
+        self.sample_count
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.members.len()
+    }
+
+    /// The members as adoption candidates, in publication order.
+    ///
+    /// Clones the `Arc`s and not the tickets: the retained objects stay in this
+    /// ticket, so a second attempt after freeing workspace capacity asks the
+    /// same objects the same questions.
+    pub(super) fn candidates(&self) -> Vec<(usize, Arc<FinalizedOutputAdoptionTicket>)> {
+        self.members.iter().cloned().enumerate().collect()
+    }
+}
+
 /// file and are released by the commit rather than by the check.
 pub(super) struct AdmittedOutput {
     accepted: AcceptedFile,

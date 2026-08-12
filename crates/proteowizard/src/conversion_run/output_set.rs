@@ -909,6 +909,22 @@ impl FinalizedOutputSet {
     pub fn outputs(&self) -> &[FinalizedOutput] {
         &self.outputs
     }
+
+    /// Hands the retained objects to a caller that will own them, in
+    /// publication order.
+    ///
+    /// Ownership rather than a copy, because a [`FinalizedOutput`] holds the
+    /// handle that keeps its object from being reissued and there is no way to
+    /// duplicate that meaningfully: two of them would be two claims on one
+    /// object, and the second would outlive whatever the first was for.
+    ///
+    /// The order is the one publication used, which is the lifecycle's stable
+    /// application order over the discovered set. A caller pairing these with
+    /// the report's members relies on that, and should say so where it does.
+    #[must_use]
+    pub fn into_outputs(self) -> Vec<FinalizedOutput> {
+        self.outputs
+    }
 }
 
 impl std::fmt::Debug for FinalizedOutputSet {

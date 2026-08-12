@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use mscanvas_proteowizard::{
@@ -24,6 +24,9 @@ use mscanvas_proteowizard::{BackendRunFacts, ConversionAttempt, ConversionCancel
 #[cfg(test)]
 use mscanvas_proteowizard::{ConflictPolicy, run_admitted_multi_output_conversion};
 
+#[cfg(test)]
+use super::adoption::FinalizedOutputSetAdoptionTicket;
+use super::adoption::{AdmittedOutput, AdoptionRefusal, FinalizedOutputAdoptionTicket};
 use super::backend::{
     ConversionBackend, PreviewProvider, open_operations, reporting_redactor,
     selected_spectrum_operation,
@@ -89,6 +92,8 @@ use super::operation::{
     AdmittedDestination, CancellationFacts, ConversionQueue, ConversionSlot, ItemOutcome,
     ItemState, QueueItem, QueueItemAttempt, StopAccepted, TerminalReason, item_state_of,
 };
+#[cfg(test)]
+use super::selection::DatasetSourceKind;
 use super::selection::{
     AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity, RevocationReason,
     accept_mzml_file, accept_workspace_file, candidate_display_name, file_identity,
@@ -497,6 +502,15 @@ pub struct PreviewService {
     /// same reason -- the paths that consult it must not take a lock that the
     /// adoption itself will want back.
     adopting_outputs: AtomicBool,
+    /// Which session this is.
+    ///
+    /// `DatasetId`s are allocated per service, from zero, so the same number
+    /// names different rows in two of them. A ticket carries the id of the row
+    /// it was converted from; adopting it in the session that did not mint it
+    /// would commit one session's outputs against another's row. The number is
+    /// what lets that be refused rather than merely be unlikely.
+    #[cfg(test)]
+    session: u64,
     /// The session's one diagnostics export.
     ///
     /// A leaf beside the conversion slot rather than a field inside it. What it
@@ -554,6 +568,8 @@ impl PreviewService {
             conversion_busy: AtomicBool::new(false),
             backend_quarantined: AtomicBool::new(false),
             adopting_outputs: AtomicBool::new(false),
+            #[cfg(test)]
+            session: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
             diagnostics_export: Mutex::new(DiagnosticsExportSlot::default()),
             diagnostics_exporting: AtomicBool::new(false),
             installation_generation: AtomicU64::new(0),
@@ -1637,21 +1653,7 @@ impl PreviewService {
         // the rest of the session.
         let adopting = AdoptionInFlight(self);
 
-        // No workspace lock, no slot lock and no gate. Each output is opened,
-        // recognised and accepted here; nothing is committed.
-        let mut inspected = Vec::with_capacity(tickets.len());
-        for (index, ticket) in tickets {
-            // Between outputs, and briefly: a reload or a mutation that
-            // advanced the generation has already decided this run commits
-            // nothing, and hashing the rest would hold the adoption flag --
-            // and so the replacement document's own actions -- for no result.
-            // Nothing filesystem-shaped happens while this is held.
-            if self.enter_workspace_mutation().generation != reserved {
-                return Err(adoption_superseded());
-            }
-            let accepted = ticket.accept();
-            inspected.push((index, ticket, accepted));
-        }
+        let inspected = self.inspect_adoption_candidates(reserved, tickets)?;
 
         let gate = self.enter_workspace_mutation();
         // The reservation, and the queue. Both, because they answer different
@@ -1673,43 +1675,7 @@ impl PreviewService {
         }
 
         let mut workspace = self.workspace();
-        let outcomes: Vec<_> = inspected
-            .into_iter()
-            .map(|(index, ticket, accepted)| {
-                let output_file_name = ticket.output_file_name().to_owned();
-                let source_handle = ticket.source().handle();
-                match accepted {
-                    Ok(admitted) => {
-                        let (accepted, holds) = admitted.into_parts();
-                        let outcome = workspace.registry.add_converted(
-                            accepted,
-                            ticket.source(),
-                            ticket.source_display_name().to_owned(),
-                            ticket.operation(),
-                        );
-                        // Released here and not a statement earlier. What was
-                        // proved about this file is that it is the finalized
-                        // object and holds the validated bytes; that stays true
-                        // only while nobody may write it, rename it or take the
-                        // directory it is in. The holds end when the row exists
-                        // rather than when the check did.
-                        drop(holds);
-                        PendingAdoption::Registered {
-                            item_index: index,
-                            source_handle,
-                            output_file_name,
-                            outcome,
-                        }
-                    }
-                    Err(refusal) => PendingAdoption::Refused {
-                        item_index: index,
-                        source_handle,
-                        output_file_name,
-                        reason: refusal.stable_id().to_owned(),
-                    },
-                }
-            })
-            .collect();
+        let outcomes = commit_adoption_candidates(&mut workspace, inspected);
         let result = WorkspaceOutputAdoptionResultDto {
             operation_id: operation.to_string(),
             retry_round,
@@ -1725,6 +1691,174 @@ impl PreviewService {
         drop(adopting);
         drop(gate);
         Ok(result)
+    }
+
+    /// Mints an adoption ticket for a conversion that just finished, or says
+    /// why the set is not adoptable.
+    ///
+    /// Takes the retained objects by value and the report by reference,
+    /// because that is the only moment both exist together: after this the
+    /// objects live in the ticket and there is no way back to them from a name.
+    ///
+    /// Takes the conversion whole and takes nothing else. Everything the ticket
+    /// needs about the run comes from the run: the source row and family from
+    /// the report, the objects, the folder it wrote into, and the identity that
+    /// was allocated when it finished. The only thing this looks up is the
+    /// source row's display name, by the id the conversion itself carries.
+    #[cfg(test)]
+    pub(super) fn output_set_adoption_ticket(
+        &self,
+        conversion: SciexConversion,
+    ) -> Result<FinalizedOutputSetAdoptionTicket, PreviewErrorDto> {
+        // The source comes from the conversion, not from a handle beside it.
+        // A handle the caller supplied could name any live row, and every
+        // member ticket would then carry that row as its origin -- so a
+        // conversion of A, adopted with B's handle, would persist B as where
+        // A's files came from. The conversion already knows which dataset it
+        // was of; asking it is the only answer that cannot be paired wrongly.
+        // Before the row is looked up, because the lookup is the crossing: the
+        // report names its source by an id this session allocates from zero
+        // too, so another session's conversion would resolve a row of ours and
+        // mint a perfectly self-consistent ticket for the wrong acquisition.
+        if conversion.session() != self.session {
+            return Err(outputs_not_adoptable());
+        }
+        let id = DatasetId::parse(conversion.report().dataset()).ok_or_else(unknown_dataset)?;
+        let source_kind = conversion.report().source_kind();
+        let source_display_name = {
+            let workspace = self.workspace();
+            let dataset = workspace.registry.get(id).ok_or_else(unknown_dataset)?;
+            dataset.file().file_name().to_owned()
+        };
+        FinalizedOutputSetAdoptionTicket::of(
+            self.session,
+            id,
+            source_display_name,
+            source_kind,
+            conversion,
+        )
+        .map_err(|refusal| {
+            PreviewErrorDto::new(
+                refusal.stable_id(),
+                "That conversion did not produce a complete output set to adopt.",
+                false,
+            )
+        })
+    }
+
+    /// Adopts one fully finalized, sample-complete output set into this
+    /// workspace.
+    ///
+    /// Private, and compiled out of the shipped binary: no command reaches it,
+    /// no transfer object is built from what it returns, and the ticket it
+    /// takes can only be minted by the private SCIEX conversion path.
+    ///
+    /// ## It is the same adoption
+    ///
+    /// Every check, every refusal reason, the duplicate-before-capacity rule,
+    /// the generation protocol and the mutual exclusion are the ordinary ones —
+    /// literally, through [`Self::inspect_adoption_candidates`] and
+    /// [`commit_adoption_candidates`]. What differs is only where the
+    /// candidates came from: one acquisition rather than one queue. An adopted
+    /// output does not know or care, and becomes an ordinary mzML row.
+    ///
+    /// ## What it does not take
+    ///
+    /// No backend gate, and no document epoch. A conversion result is not a
+    /// document the workspace can be reloaded out from under in the way a
+    /// dropped file list is; what it must not survive is a *workspace* that
+    /// moved on, and the reserved generation is what says that.
+    #[cfg(test)]
+    pub(super) fn adopt_output_set(
+        &self,
+        ticket: &FinalizedOutputSetAdoptionTicket,
+    ) -> Result<WorkspaceOutputSetAdoptionResult, PreviewErrorDto> {
+        // Before anything is claimed. A ticket names the row it was converted
+        // from by an id this session allocates from zero, so another session's
+        // ticket would commit its outputs against whatever row happens to hold
+        // that number here -- with the display name and family of a row that is
+        // not it. Refused rather than validated field by field: the ticket
+        // simply does not belong to this workspace.
+        if ticket.session() != self.session {
+            return Err(outputs_not_adoptable());
+        }
+        let reserved = {
+            // The same gate the visible adoption reserves under, waiting out a
+            // native drop that has claimed the workspace. Reserving in front of
+            // one would guarantee this adoption is superseded by a decision
+            // that had already been made -- and cost the user the drop or the
+            // adoption for nothing.
+            let gate = self.enter_workspace_mutation_after_drop();
+            // The same two owners the visible adoption answers to. An export
+            // holds a terminal queue's result; an adoption in flight holds the
+            // workspace's own capacity and duplicate answers.
+            if self.diagnostics_export_is_in_flight() {
+                return Err(adoption_in_progress());
+            }
+            if self.adopting_outputs.swap(true, Ordering::AcqRel) {
+                return Err(adoption_in_progress());
+            }
+            self.reserve_adoption(gate)
+        };
+        let adopting = AdoptionInFlight(self);
+
+        let inspected = self.inspect_adoption_candidates(reserved, ticket.candidates())?;
+
+        let gate = self.enter_workspace_mutation();
+        // The reservation alone, because there is no queue here whose settling
+        // could have changed underneath: the ticket owns its objects outright.
+        if gate.generation != reserved {
+            return Err(adoption_superseded());
+        }
+        let mut workspace = self.workspace();
+        let outcomes = commit_adoption_candidates(&mut workspace, inspected);
+        let result = WorkspaceOutputSetAdoptionResult {
+            source: ticket.source().handle(),
+            source_kind: ticket.source_kind(),
+            run: ticket.run(),
+            members: ticket.len(),
+            roster: roster_of(&workspace),
+            outcomes: describe_adoptions(&workspace, outcomes),
+        };
+        drop(workspace);
+        // Cleared under the gate this commit still holds, for the reason the
+        // visible adoption clears it there.
+        drop(adopting);
+        drop(gate);
+        Ok(result)
+    }
+
+    /// Opens, recognises and accepts every candidate, committing nothing.
+    ///
+    /// The reading half of an adoption, and the reason it is a function: two
+    /// callers now have ordered candidates to check -- the visible queue, and
+    /// the private output set of one multi-output conversion -- and a second
+    /// implementation of this would be a second answer to "is that still this?"
+    /// the moment either changed. Nothing here knows where the candidates came
+    /// from; a candidate is a ticket and an ordinal.
+    ///
+    /// No workspace lock, no slot lock and no gate is held across the work.
+    /// Hashing up to twenty-four outputs is slow enough that holding one would
+    /// stop the roster answering for as long as it took.
+    fn inspect_adoption_candidates(
+        &self,
+        reserved: u64,
+        candidates: Vec<(usize, Arc<FinalizedOutputAdoptionTicket>)>,
+    ) -> Result<InspectedAdoptions, PreviewErrorDto> {
+        let mut inspected = Vec::with_capacity(candidates.len());
+        for (index, ticket) in candidates {
+            // Between outputs, and briefly: a reload or a mutation that
+            // advanced the generation has already decided this run commits
+            // nothing, and hashing the rest would hold the adoption flag --
+            // and so the replacement document's own actions -- for no result.
+            // Nothing filesystem-shaped happens while this is held.
+            if self.enter_workspace_mutation().generation != reserved {
+                return Err(adoption_superseded());
+            }
+            let accepted = ticket.accept();
+            inspected.push((index, ticket, accepted));
+        }
+        Ok(inspected)
     }
 
     /// The session's one diagnostics export slot, locked.
@@ -3629,13 +3763,7 @@ impl PreviewService {
         handle: &str,
         destination_root: &Path,
         conflict: ConflictPolicy,
-    ) -> Result<
-        (
-            WorkspaceMultiOutputConversionReport,
-            mscanvas_proteowizard::FinalizedOutputSet,
-        ),
-        PreviewErrorDto,
-    > {
+    ) -> Result<SciexConversion, PreviewErrorDto> {
         let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
         let (epoch, remembered) = self
             .workspace()
@@ -3675,9 +3803,14 @@ impl PreviewService {
         }
         let source = open_conversion_source(&file)?;
         let bound_source_objects = source.bound_object_count();
+        // Admitted as an object before anything is written into it, so what the
+        // result carries is the folder this run actually targeted rather than a
+        // name that may mean something else by the time it is adopted.
+        let (destination_root, destination_identity, _held) =
+            admit_destination_root(destination_root)?;
         let run = run_admitted_multi_output_conversion(
             &source,
-            destination_root,
+            &destination_root,
             conflict,
             &backend.capabilities,
             backend.runner,
@@ -3686,8 +3819,9 @@ impl PreviewService {
         let generation = self.note_resolved(backend.installation.clone());
         drop(guards);
         drop(running);
-        Ok((
-            WorkspaceMultiOutputConversionReport::of(
+        Ok(SciexConversion {
+            session: self.session,
+            report: WorkspaceMultiOutputConversionReport::of(
                 id.handle(),
                 file.source_kind(),
                 bound_source_objects,
@@ -3695,8 +3829,12 @@ impl PreviewService {
                 &run.report,
                 run.completeness,
             ),
-            run.retained,
-        ))
+            retained: run.retained,
+            // Allocated here, once, for this conversion. Never read from the
+            // workspace generation: converting does not advance it.
+            run: NEXT_CONVERSION_RUN.fetch_add(1, Ordering::Relaxed),
+            destination: AdmittedDestination::new(destination_root, destination_identity),
+        })
     }
 
     /// How many datasets the session holds.
@@ -4842,6 +4980,210 @@ impl Drop for AdoptionInFlight<'_> {
     fn drop(&mut self) {
         self.0.adopting_outputs.store(false, Ordering::Release);
     }
+}
+
+/// One private SCIEX conversion: what it reported, what it retained, which
+/// folder it wrote into, and which run it was.
+///
+/// The three travel together because two of them are only meaningful about the
+/// same run. A report describes a set of members; the retained objects *are*
+/// that set. Handing a ticket constructor one of each separately would let a
+/// report from one conversion meet the objects of another — same member count,
+/// same states, nothing to notice — and mint a ticket whose provenance and
+/// completeness described a run whose files it was not adopting.
+///
+/// So the conversion hands back one value carrying everything a ticket needs
+/// about the run -- the source, the objects, the folder and the identity -- the
+/// constructor takes it by value, and nothing about the run is supplied beside
+/// it. Every one of those was a way to pair two conversions wrongly, and each
+/// is closed by removal rather than by a check, because a check leaves the
+/// wrong call expressible.
+#[cfg(test)]
+#[derive(Debug)]
+pub(super) struct SciexConversion {
+    /// The session that ran it.
+    ///
+    /// Without this the ticket's own issuer check proves nothing: minting reads
+    /// the source row out of the report by id, and ids are allocated per
+    /// session from zero, so another session holding that number would resolve
+    /// its own unrelated row and then stamp the ticket with *itself*. The
+    /// crossing would be over before the ticket existed.
+    session: u64,
+    report: WorkspaceMultiOutputConversionReport,
+    retained: mscanvas_proteowizard::FinalizedOutputSet,
+    run: u64,
+    /// The folder this conversion wrote into, as the object it was admitted as.
+    ///
+    /// Carried rather than supplied again later, and that closes the last way
+    /// two runs could be crossed. Adoption proves each member is the exact
+    /// object that was finalized, and a hard link in another folder is the same
+    /// object -- so a destination handed in separately could point adoption at
+    /// aliases and register rows under a directory the conversion never wrote
+    /// to, with every per-member proof still passing.
+    destination: AdmittedDestination,
+}
+
+#[cfg(test)]
+impl SciexConversion {
+    /// The session that ran it.
+    pub(super) const fn session(&self) -> u64 {
+        self.session
+    }
+
+    /// What it reported, to read and not to replace.
+    pub(super) const fn report(&self) -> &WorkspaceMultiOutputConversionReport {
+        &self.report
+    }
+
+    /// What it retained, to read and not to replace.
+    pub(super) const fn retained(&self) -> &mscanvas_proteowizard::FinalizedOutputSet {
+        &self.retained
+    }
+
+    /// Everything at once, consuming the value.
+    ///
+    /// The only way out for the components, and it takes the whole conversion
+    /// with it. Two of these can be unpacked but not recombined: there is no
+    /// constructor outside this module and the ticket accepts nothing smaller
+    /// than a whole `SciexConversion`, so a report can never meet another run's
+    /// objects.
+    pub(super) fn into_parts(
+        self,
+    ) -> (
+        WorkspaceMultiOutputConversionReport,
+        mscanvas_proteowizard::FinalizedOutputSet,
+        AdmittedDestination,
+        u64,
+    ) {
+        (self.report, self.retained, self.destination, self.run)
+    }
+
+    /// The same conversion, remembering no completeness.
+    ///
+    /// The gate it reaches is unreachable through the SCIEX path, which
+    /// establishes completeness before publication -- so a fully finalized run
+    /// of that family always has it. The gate is for the runs that would not,
+    /// and this forges that state rather than waiting for one to exist.
+    pub(super) fn without_completeness(mut self) -> Self {
+        self.report = self.report.without_completeness();
+        self
+    }
+
+    /// The same conversion, its report one member short.
+    ///
+    /// Likewise the only way to reach the pairing gate: a report and its
+    /// retained objects come from one publication and agree by construction.
+    pub(super) fn without_last_member(mut self) -> Self {
+        self.report = self.report.without_last_member();
+        self
+    }
+}
+
+/// Hands out one identity per private conversion.
+///
+/// Process-wide and monotonic, which is stronger than it needs to be and
+/// simpler than a per-session counter. It must not be the workspace mutation
+/// generation: converting does not advance that, so two conversions of one
+/// dataset into two folders would read the same value and claim to be the same
+/// run — which is the one thing this identity exists to prevent.
+#[cfg(test)]
+static NEXT_CONVERSION_RUN: AtomicU64 = AtomicU64::new(1);
+
+/// Hands out one identity per session.
+#[cfg(test)]
+static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
+
+/// What one private output-set adoption did.
+///
+/// Path-free by construction. It names the source by its opaque handle, the
+/// members by the basenames the backend chose, and the rows by what the roster
+/// already publishes — and nothing else. There is no destination, no filesystem
+/// identity, no retained object and no raw error.
+///
+/// It makes no claim about source fidelity, and it does not repeat the
+/// completeness proof: the conversion result owns that, and these are ordinary
+/// mzML files now.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct WorkspaceOutputSetAdoptionResult {
+    /// The acquisition these outputs came from, as the session names it.
+    pub(super) source: String,
+    /// The family it was admitted as. Not the family of the adopted rows,
+    /// which are all mzML.
+    pub(super) source_kind: DatasetSourceKind,
+    /// The conversion, so two runs of one dataset cannot be confused.
+    pub(super) run: u64,
+    /// How many members the set had, whatever became of each.
+    pub(super) members: usize,
+    /// The whole roster after the commit, which is the authority on what the
+    /// workspace now holds.
+    pub(super) roster: WorkspaceRosterDto,
+    /// One outcome per member, in publication order.
+    pub(super) outcomes: Vec<WorkspaceOutputAdoptionOutcomeDto>,
+}
+
+/// Candidates that have been checked and not yet committed.
+///
+/// Each is the ordinal it was supplied under, the ticket it came from, and
+/// either the admitted output -- holds and all -- or the reason it was refused.
+type InspectedAdoptions = Vec<(
+    usize,
+    Arc<FinalizedOutputAdoptionTicket>,
+    Result<AdmittedOutput, AdoptionRefusal>,
+)>;
+
+/// Registers every accepted candidate, in the order it was inspected.
+///
+/// The committing half, lifted for the same reason as the reading half. It runs
+/// under the caller's gate and workspace lock, does no filesystem work beyond
+/// registering rows, and treats the candidates as an ordered list of admitted
+/// mzML files -- which is all they are by this point, whatever produced them.
+///
+/// One refused candidate does not stop the rest. That is the existing rule and
+/// it carries over unchanged: the outputs are independent files, and refusing
+/// the ones that are still fine because one is not would cost the user work
+/// nothing was wrong with.
+fn commit_adoption_candidates(
+    workspace: &mut Workspace,
+    inspected: InspectedAdoptions,
+) -> Vec<PendingAdoption> {
+    inspected
+        .into_iter()
+        .map(|(index, ticket, accepted)| {
+            let output_file_name = ticket.output_file_name().to_owned();
+            let source_handle = ticket.source().handle();
+            match accepted {
+                Ok(admitted) => {
+                    let (accepted, holds) = admitted.into_parts();
+                    let outcome = workspace.registry.add_converted(
+                        accepted,
+                        ticket.source(),
+                        ticket.source_display_name().to_owned(),
+                        ticket.operation(),
+                    );
+                    // Released here and not a statement earlier. What was
+                    // proved about this file is that it is the finalized
+                    // object and holds the validated bytes; that stays true
+                    // only while nobody may write it, rename it or take the
+                    // directory it is in. The holds end when the row exists
+                    // rather than when the check did.
+                    drop(holds);
+                    PendingAdoption::Registered {
+                        item_index: index,
+                        source_handle,
+                        output_file_name,
+                        outcome,
+                    }
+                }
+                Err(refusal) => PendingAdoption::Refused {
+                    item_index: index,
+                    source_handle,
+                    output_file_name,
+                    reason: refusal.stable_id().to_owned(),
+                },
+            }
+        })
+        .collect()
 }
 
 /// One output's adoption, before the roster it produced exists.
