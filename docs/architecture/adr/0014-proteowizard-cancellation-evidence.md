@@ -313,3 +313,19 @@ the sequence the check happened to sit rather than on what was observed.
 Rejected and unnecessary. The locked stack expresses all of it: `Arc<AtomicBool>`
 for the request, and the `kernel32` declarations this crate has carried since M0
 for the Job.
+
+
+## Amendment, 2026-08-12 — the same primitive, a second lifecycle
+
+[ADR 0026](0026-private-sciex-serial-queue-integration.md) put a multi-output
+acquisition through the queue, and it uses this exact cancellation object and
+this exact attempt-bound registration. Nothing here was widened and no second
+cancellation system exists.
+
+The one difference is vocabulary: the multi-output lifecycle reports a stop as
+its own two refusals rather than through the single-output boundary's two result
+types, so the queue translates them into the same two item states. A confirmed
+stop is still a claim that an owned tree that existed is gone; an unconfirmed one
+still quarantines the session. A stopped set reports what it had staged when it
+was interrupted, which is the only partial-output claim a run makes about
+itself, and no finalized user file is deleted to make a stop look atomic.

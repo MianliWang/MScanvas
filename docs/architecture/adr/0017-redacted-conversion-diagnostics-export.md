@@ -447,3 +447,26 @@ the one thing the warning exists to prevent.
 **A persistent diagnostics log.** Rejected. It is a job system's feature, it
 accumulates exactly the text this ADR spends its length bounding, and nothing in
 this workflow reads a second entry.
+
+
+## Amendment, 2026-08-12 — one source is still one diagnostic item
+
+[ADR 0026](0026-private-sciex-serial-queue-integration.md) put an acquisition
+that produces up to twenty-four documents into the queue. It is **one**
+diagnostic item, so the sixteen-item bound and the arithmetic behind the 2 MiB
+whole-export bound are unchanged, as are the 32 KiB per-stream excerpt, the
+redactor and the no-clobber writer.
+
+An ordinary queue's export is byte-identical to what it was. A set item — which
+no shipped build can produce — writes `outputFileName: null` rather than a
+fabricated name and gains one additional member, `outputSet`, emitted only for
+such an item. That member is counts and stable identifiers: member states, bound
+source objects, the completeness identifier, the partial-finalization counts and
+the filesystem's own error kind. **No member basename appears anywhere**, because
+the backend derives those from sample identifiers inside the acquisition; the
+acquisition's own display name is still there, as `sourceFileName`, exactly as
+it has been for every family since this export existed.
+
+One real gap was closed at the same time. The workspace group report and its
+member facts derived `Debug`, so any log that rendered one printed every member
+basename. They are opaque now, and carry those names only through accessors.

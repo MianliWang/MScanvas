@@ -111,7 +111,8 @@ Vendor-free and backend-free, over synthetic bundles and a substituted backend.
 | one member rewritten in place | `output_changed` — same object, so only the digest sees it |
 | one member's name removed | `output_missing`, the others adopted |
 | one member already a workspace row | `already`, no duplicate id |
-| partially finalized conversion | **no ticket**; the occupied file untouched; no row added |
+| a name occupied *before* the run | refused whole before publication; the occupied file untouched; no row added |
+| a genuinely partially finalized conversion (M3.15) | **no ticket**; the prefix kept and later admissible as an ordinary mzML |
 | completeness refused (M3.13) | nothing published, nothing retained, `output_set_not_fully_finalized` |
 | skipped set | retained nothing of its own; `output_set_not_fully_finalized` |
 | fully finalized, completeness stripped | `output_set_completeness_not_established` |
@@ -119,6 +120,7 @@ Vendor-free and backend-free, over synthetic bundles and a substituted backend.
 | a conversion run by another session | `outputs_not_adoptable` at the mint, before any row is resolved |
 | a ticket minted by another session | `outputs_not_adoptable`, no row added, and it still adopts where it belongs |
 | adoption twice over | the backend ran once; no row holds preview state |
+| capacity exhausted partway through one set (M3.15) | duplicate, then the last slot, then `workspace_full`; one identifier spent; no rollback |
 
 ## Mutations
 
@@ -170,3 +172,22 @@ and copy.
 The acquisition, its companion, every converted output and every scratch
 directory were deleted after measurement. No vendor data is tracked and no local
 path appears in this record.
+
+## Correction, 2026-08-12
+
+Two claims in this record were weaker than they read, and
+[the M3.15 record](M3_SCIEX_PRIVATE_QUEUE_INTEGRATION_EVIDENCE.md) carries the
+repairs.
+
+**"partially finalized conversion" above was not one.** That case occupied a
+destination name before the run, which the whole-set preflight refuses with
+nothing published — the opposite of a partial result. The test could only assert
+that the outcome was not `fully_finalized`, and it is renamed accordingly. A
+real `PartiallyFinalized`, reached through the publication seam, is now measured
+in full.
+
+**Capacity was inferred from the shared engine, not measured on this path.** The
+inference was sound — set adoption calls the same registry, whose own tests
+prove duplicate-before-capacity — but it says nothing about what happens when
+the workspace fills partway through one ordered set adoption. There is now a
+direct regression, listed above.

@@ -18678,12 +18678,38 @@ fn a_retried_set_attempt_reuses_no_identity_or_ticket() {
         .terminal_set_run(operation, 0)
         .expect("the second attempt names itself");
 
-    // A third pass, from a fresh queue over the same row, names a different
-    // run again -- the identity is per conversion, never per row or per queue.
     let result = service
         .adopt_queue_output_set(operation, 0)
         .expect("the finalized attempt holds a set");
     assert_eq!(result.run, run, "the authority is that exact attempt's");
+
+    // And the other direction: an attempt that never reached a conversion
+    // leaves nothing of the attempt before it. Held again, so the third pass of
+    // this row refuses before the backend -- and must then name no run and hold
+    // no report, rather than still wearing the successful attempt's.
+    let held_again = hold_for_writing(&acquisition);
+    let third = run_private_queue(
+        &service,
+        std::slice::from_ref(&sciex.handle),
+        &fixture.destination("third"),
+        ConversionConflictPolicyDto::Fail,
+    );
+    let third_operation = operation_of(&third);
+    assert_eq!(
+        item_states(terminal_queue(&third)),
+        vec![ConversionQueueItemStateDto::Failed]
+    );
+    assert_eq!(
+        service.terminal_set_run(third_operation, 0),
+        None,
+        "a refusal is described by itself, not by the conversion before it"
+    );
+    assert!(service.terminal_set_report(third_operation, 0).is_none());
+    assert!(service.adopt_queue_output_set(third_operation, 0).is_err());
+    drop(held_again);
+
+    // A fresh queue over the same row names a different run again -- the
+    // identity is per conversion, never per row or per queue.
     let again = run_private_queue(
         &service,
         std::slice::from_ref(&sciex.handle),

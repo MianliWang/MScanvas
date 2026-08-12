@@ -1482,6 +1482,11 @@ impl ConversionSlot {
                 // its planned name from the moment the queue existed, whether
                 // or not it ran, so the claim is already derived from the
                 // topology and recording it again would count it twice.
+                #[cfg(test)]
+                {
+                    item.set_report = None;
+                    item.set_run = None;
+                }
                 let planned = item.output.planned_name().unwrap_or_default().to_owned();
                 item.adoption = finalized.zip(destination).map(|(finalized, destination)| {
                     QueueAdoptionAuthority::Single(Arc::new(FinalizedOutputAdoptionTicket::new(
@@ -1521,6 +1526,14 @@ impl ConversionSlot {
                 // previous attempt of this item had claimed.
                 #[cfg(test)]
                 item.published.clear();
+                // And it describes itself, not the attempt before it. The
+                // single-output report is cleared just below for the same
+                // reason: "the latest attempt" has to mean the latest one.
+                #[cfg(test)]
+                {
+                    item.set_report = None;
+                    item.set_run = None;
+                }
                 item.diagnostic = Some(Arc::new(ConversionFailureDiagnosticTicket::of_refusal(
                     item.diagnostic_identity(operation, index),
                     retryable,
@@ -1550,6 +1563,11 @@ impl ConversionSlot {
                 item.error = None;
                 #[cfg(test)]
                 item.published.clear();
+                #[cfg(test)]
+                {
+                    item.set_report = None;
+                    item.set_run = None;
+                }
                 item.cancellation = Some(facts);
             }
         }
