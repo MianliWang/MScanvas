@@ -10786,6 +10786,50 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
     }
 }
 
+/// An adoption outcome names its item and its member, flat, on the wire.
+///
+/// Pinned because the identity is a nested value flattened into a tagged enum,
+/// which is the one serde arrangement where the shape a reader sees and the
+/// shape the type suggests can differ. The interface reads `itemIndex` and
+/// `memberIndex` as members of the outcome itself, and a nested `candidate`
+/// object would satisfy every Rust test here while giving the webview two
+/// fields it does not know about.
+#[test]
+fn an_adoption_outcome_carries_its_identity_flat_on_the_wire() {
+    let outcome = WorkspaceOutputAdoptionOutcomeDto::Refused {
+        candidate: super::dto::AdoptionCandidateIdentityDto {
+            item_index: 2,
+            member_index: 7,
+        },
+        source_handle: String::from("file-3"),
+        output_file_name: String::from("a-S8.mzML"),
+        reason: String::from("output_changed"),
+    };
+    let wire: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&outcome).expect("an outcome serializes"))
+            .expect("and parses back");
+
+    assert_eq!(
+        sorted_keys(&wire),
+        vec![
+            "itemIndex",
+            "kind",
+            "memberIndex",
+            "outputFileName",
+            "reason",
+            "sourceHandle",
+        ],
+        "the identity is flattened into the outcome, not nested beside it"
+    );
+    assert_eq!(wire["kind"], "refused");
+    assert_eq!(wire["itemIndex"], 2);
+    assert_eq!(wire["memberIndex"], 7);
+    assert!(
+        wire.get("candidate").is_none(),
+        "the identity has no wrapper of its own"
+    );
+}
+
 /// One JSON object's member names, sorted.
 fn sorted_keys(value: &serde_json::Value) -> Vec<&str> {
     let mut keys: Vec<&str> = value
