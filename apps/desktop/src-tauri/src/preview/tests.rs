@@ -19113,6 +19113,67 @@ fn every_private_sciex_failure_is_diagnosable_and_path_free() {
     }
 }
 
+/// A set refused before the lifecycle is still exported as a set.
+///
+/// The schema a reader gets must not depend on which layer said no. A
+/// backend-named set whose row could not be revalidated never reaches the
+/// multi-output lifecycle at all, so it has no members, no completeness and no
+/// bound objects — and it is still a set item, of at most twenty-four members,
+/// and says so.
+#[test]
+fn a_set_refused_before_the_run_keeps_its_shape_in_the_export() {
+    let fixture = TestFile::new("queue-diag-prerun");
+    let destination = fixture.destination("out");
+    let runner = FakeOutputSetRunner::writing(&["a-S1.mzML"]);
+    let launches = runner.launches();
+    let service = Arc::new(output_set_service(runner));
+    let acquisition = fixture.sciex_bundle("acquisition");
+    let sciex = service
+        .add_sciex_wiff_dataset(&acquisition)
+        .expect("a SCIEX row");
+
+    // Held by somebody else, so revalidation refuses before anything is opened
+    // for the run.
+    let held = hold_for_writing(&acquisition);
+    let update = run_private_queue(
+        &service,
+        std::slice::from_ref(&sciex.handle),
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+    assert_eq!(
+        item_states(terminal_queue(&update)),
+        vec![ConversionQueueItemStateDto::Failed]
+    );
+    assert_eq!(launches.load(Ordering::SeqCst), 0, "nothing was launched");
+    drop(held);
+
+    let export = export_private_diagnostics(&service, &fixture, "diag", &update);
+    let item = &export["items"][0];
+    assert_eq!(item["sourceKind"], "sciex_wiff");
+    assert_eq!(item["refusal"], "file_unreadable");
+    assert!(item["outputFileName"].is_null());
+    assert!(
+        item["outcome"].is_null(),
+        "no conversion reached an outcome"
+    );
+
+    let set = &item["outputSet"];
+    assert!(
+        set.is_object(),
+        "a set refused early is still a set in the document"
+    );
+    assert_eq!(set["maxMembers"], 24);
+    assert_eq!(set["memberCount"], 0);
+    assert_eq!(set["finalizedCount"], 0);
+    assert!(
+        set["boundSourceObjects"].is_null(),
+        "the acquisition was never bound, and zero would say it was bound to nothing"
+    );
+    assert!(set["sampleCompleteness"].is_null());
+    assert!(set["partialFinalization"].is_null());
+}
+
 /// A retry between reading a queue-held set and committing it adopts nothing.
 ///
 /// The authority a terminal queue item holds belongs to a *settling*, and a

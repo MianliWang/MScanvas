@@ -197,9 +197,12 @@ twenty-four items and do not quietly exhaust the item bound.
 A set item's `outputFileName` is `null` rather than a fabricated name, and it
 gains one additional member, `outputSet`, emitted *only* for a set — so an
 ordinary queue's export is byte-identical to the document it was before this
-existed. That holds on the stop path too: a stopped set item is still a set
-item, and it carries the shape it is known by even though a stop reaches the run
-before it settles and there are no member facts to report. That member is counts and stable identifiers: member count, finalized
+existed. That holds wherever the item failed. A stopped set item is still a set
+item, and so is one refused before the lifecycle ever ran — each carries the
+shape it is known by, with the counts that are true of it. `boundSourceObjects`
+is `null` rather than zero where the acquisition was never bound, because zero
+would say it was bound to nothing. Otherwise the schema a reader gets would
+depend on which layer said no. That member is counts and stable identifiers: member count, finalized
 count, validated-not-published count, not-published count, bound source objects,
 the completeness identifier, the partial-finalization counts and the
 filesystem's own error kind, and why no authority exists where a reader might

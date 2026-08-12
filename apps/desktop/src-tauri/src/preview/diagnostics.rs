@@ -167,7 +167,10 @@ pub(super) struct OutputSetDiagnosticFacts {
     pub(super) validated_not_published_count: usize,
     pub(super) not_published_count: usize,
     /// How many objects the acquisition was bound to for the run.
-    pub(super) bound_source_objects: usize,
+    ///
+    /// `None` where it never was, which is every refusal that happened before
+    /// the source was opened. Zero would be a claim rather than an absence.
+    pub(super) bound_source_objects: Option<usize>,
     /// The completeness judgement's stable identifier, or none where the
     /// question was never posed.
     pub(super) completeness: Option<&'static str>,
@@ -176,6 +179,33 @@ pub(super) struct OutputSetDiagnosticFacts {
     /// Why no complete-set adoption authority exists, where a reader might
     /// otherwise expect one.
     pub(super) not_adoptable: Option<&'static str>,
+}
+
+#[cfg(test)]
+impl OutputSetDiagnosticFacts {
+    /// The shape of a set item that never reached the lifecycle.
+    ///
+    /// Every count is zero and every count is true: nothing was discovered,
+    /// validated or published, because the run this item would have made was
+    /// refused before it started. What it still says is that this *was* a set
+    /// item and how many members one could ever hold — so a reader is not left
+    /// deciding what kind of item they are looking at from which layer happened
+    /// to refuse it.
+    pub(super) fn before_the_run(max_members: usize) -> Self {
+        Self {
+            max_members,
+            member_count: 0,
+            finalized_count: 0,
+            validated_not_published_count: 0,
+            not_published_count: 0,
+            // Never bound, so there is no number to report. Zero would say the
+            // acquisition was held to no objects, which is a different claim.
+            bound_source_objects: None,
+            completeness: None,
+            partial: None,
+            not_adoptable: None,
+        }
+    }
 }
 
 /// A partial publication, in counts.
@@ -273,7 +303,7 @@ impl ConversionFailureDiagnosticTicket {
             finalized_count: member_count_in(report, "finalized"),
             validated_not_published_count: member_count_in(report, "validated_not_published"),
             not_published_count: member_count_in(report, "not_published"),
-            bound_source_objects: report.bound_source_objects(),
+            bound_source_objects: Some(report.bound_source_objects()),
             completeness: report
                 .completeness()
                 .map(SciexSampleCompleteness::stable_id),
@@ -317,6 +347,8 @@ impl ConversionFailureDiagnosticTicket {
         retryable: bool,
         error: &PreviewErrorDto,
     ) -> Self {
+        #[cfg(test)]
+        let output_set = identity.output.diagnostic_shape();
         Self {
             identity,
             state: ItemState::Failed,
@@ -330,8 +362,10 @@ impl ConversionFailureDiagnosticTicket {
             cancellation: None,
             residue: None,
             text: None,
+            // A refusal reaches every family, so the shape comes from the item
+            // rather than from the run it never made.
             #[cfg(test)]
-            output_set: None,
+            output_set,
         }
     }
 

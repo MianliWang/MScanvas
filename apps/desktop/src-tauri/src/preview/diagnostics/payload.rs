@@ -178,7 +178,7 @@ fn write_item(item: &mut Members<'_>, ticket: &ConversionFailureDiagnosticTicket
                 facts.validated_not_published_count,
             );
             written.count("notPublishedCount", facts.not_published_count);
-            written.count("boundSourceObjects", facts.bound_source_objects);
+            written.optional_count("boundSourceObjects", facts.bound_source_objects);
             written.optional_string("sampleCompleteness", facts.completeness);
             written.optional_string("notAdoptable", facts.not_adoptable);
             match facts.partial {
@@ -354,6 +354,15 @@ impl<'a> Members<'a> {
     fn optional_string(&mut self, name: &str, value: Option<&str>) {
         match value {
             Some(value) => self.string(name, value),
+            None => self.null(name),
+        }
+    }
+
+    /// A count, or `null` where there is none to report.
+    #[cfg(test)]
+    fn optional_count(&mut self, name: &str, value: Option<usize>) {
+        match value {
+            Some(value) => self.count(name, value),
             None => self.null(name),
         }
     }

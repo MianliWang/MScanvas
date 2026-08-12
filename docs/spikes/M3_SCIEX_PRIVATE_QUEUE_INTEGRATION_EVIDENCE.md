@@ -158,6 +158,12 @@ A partial publication exports `finalizedCount` 1, `notPublishedCount` 2,
 `failureKind: "already_exists"` and
 `sampleCompleteness: "source_sample_set_not_fully_published"`.
 
+A set item refused *before* the lifecycle — a row that could not be
+revalidated, an object somebody else holds — keeps its shape too: `outputSet`
+with `maxMembers` 24, zero counts, and `boundSourceObjects` **null**, because
+the acquisition was never bound and zero would say it was bound to nothing.
+Without that, the schema a reader gets would depend on which layer said no.
+
 A **stopped** set item keeps its shape: `outputSet` with `maxMembers` 24 and
 `boundSourceObjects` 2, and zero counts — which is a fact rather than a gap,
 because the two cancellation refusals a stop is translated from publish nothing.

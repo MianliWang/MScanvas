@@ -199,6 +199,20 @@ impl ItemOutputTopology {
         }
     }
 
+    /// The shape an export states for this item before it has run.
+    ///
+    /// `None` for a known single output, which says all it needs to by naming
+    /// its one document.
+    #[cfg(test)]
+    pub(super) fn diagnostic_shape(&self) -> Option<super::diagnostics::OutputSetDiagnosticFacts> {
+        match self {
+            Self::KnownSingle { .. } => None,
+            Self::BackendNamedSet { max_members } => {
+                Some(super::diagnostics::OutputSetDiagnosticFacts::before_the_run(*max_members))
+            }
+        }
+    }
+
     /// How many names this item could ever own.
     ///
     /// The per-item half of the queue name authority's bound.
