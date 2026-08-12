@@ -162,6 +162,7 @@ or a timeout was not counted as a kill.
 | 13 | a set result shows a count and never its member names | red (8) |
 | 14 | any set report counts as evidence that something was validated | red (2) |
 | 15 | a skipped output set reads as a skipped single output | red (2) |
+| 16 | every set refusal answers with one generic sentence | red (3) |
 
 **Mutation 12 found a real gap.** The privacy test pinned the `Debug` renderings
 and the queue state — which is where member names used to be able to leak from —
@@ -174,13 +175,13 @@ unnoticed. The mutation is red against that test.
 No survivors remain. Nothing was classified as equivalent, structurally
 unreachable or lacking a deterministic seam.
 
-Mutations 13–15 guard the three defects review found, and are recorded here
+Mutations 13–16 guard the four defects review found, and are recorded here
 because the tests that kill them were written *after* the code was, which is a
 weaker position than the rest of this record and worth saying so.
 
 ## Review
 
-Three findings on the pull request, all valid, all fixed, each with a
+Four findings on the pull request, all valid, all fixed, each with a
 discriminating test:
 
 **The wire carried member basenames that nothing rendered.** ADR 0027's own
@@ -201,7 +202,17 @@ surfaces make this claim and had been written differently.
 such name, and the multi-output lifecycle steps aside only when *every*
 discovered destination name is occupied. The label branches on cardinality now.
 
-All three were the shared single-output copy reaching a cardinality it was never
+**Every set refusal answered with one sentence.** The single-output path has
+explained itself by `detailedOutcome` since ADR 0012, and the set branch
+discarded it — so a destination conflict, an unevidenced build and a
+reader-reported sample problem were indistinguishable, though each sends the
+user somewhere different. Refusals whose *recovery* differs now have their own
+sentences; those that differ only in where inside the boundary they arose share
+the fallback, which is deliberately unchanged: an identifier this build has no
+sentence for is still a failure, and inventing prose for one would be inventing
+a diagnosis.
+
+All four were the shared single-output copy reaching a cardinality it was never
 written for — which is the failure mode this milestone should have expected
 most, and the reason the first fix's own ADR sentence had already described the
 behaviour it did not implement.
