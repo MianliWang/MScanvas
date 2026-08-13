@@ -1872,3 +1872,135 @@ fn a_marker_label_does_not_land_on_the_value_axis_maximum() {
         "a marker with room keeps its natural place: {clear} vs {axis_maximum}",
     );
 }
+
+/// A joined trace refuses a reduction that keeps one extreme per sign.
+///
+/// `ExtremePerSignPerColumn` keeps a single value for an all-positive column —
+/// the tallest — and joining those across columns draws the upper envelope of
+/// the data rather than the data. Every trough is gone and the trace sits above
+/// the measurement, and nothing in the output says so, because each drawn point
+/// is real.
+#[test]
+fn a_joined_trace_refuses_a_per_sign_reduction() {
+    let reduced = |rule: ReductionRule| {
+        SeriesSpec::new(
+            label("measurement"),
+            StyleRole::Measurement,
+            DataScope::Reduced {
+                source_point_count: 900,
+                rule,
+            },
+            vec![1.0, 2.0],
+            vec![10.0, 20.0],
+        )
+        .expect("a reduction")
+    };
+    let panel = |kind: PlotKind, rule: ReductionRule| {
+        PanelSpec::new(
+            kind,
+            AxisSpec::new(label("x"), UnitState::Unreported),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(1.0, 2.0),
+            domain(0.0, 20.0),
+            vec![reduced(rule)],
+        )
+    };
+
+    for kind in [
+        PlotKind::Chromatogram,
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Profile,
+        },
+    ] {
+        assert!(kind.joins_a_trace(), "{kind:?} is a trace");
+        assert_eq!(
+            panel(kind, ReductionRule::ExtremePerSignPerColumn).unwrap_err(),
+            SpecError::ReductionRuleUnsuitableForTrace,
+        );
+        assert!(panel(kind, ReductionRule::MinMaxPerColumn).is_ok());
+    }
+
+    // Only in that direction: two sticks in a column is not a misdrawing, so a
+    // discrete panel accepts either rule.
+    for representation in [
+        SpectrumRepresentation::Centroid,
+        SpectrumRepresentation::Unreported,
+    ] {
+        let kind = PlotKind::Spectrum { representation };
+        assert!(!kind.joins_a_trace());
+        assert!(panel(kind, ReductionRule::ExtremePerSignPerColumn).is_ok());
+        assert!(panel(kind, ReductionRule::MinMaxPerColumn).is_ok());
+    }
+}
+
+/// Every laid-out string declares the width it is laid out in.
+///
+/// The document embeds no font, so the face is the viewer's choice and a
+/// per-character estimate is a prediction about someone else's machine. An
+/// explicit `textLength` turns it into an instruction, and the width it carries
+/// comes from an upper bound on a glyph rather than an average of one — so a
+/// line of `W`s cannot overflow what was reserved for it.
+#[test]
+fn laid_out_text_declares_its_own_width() {
+    let long = "W".repeat(MAX_LABEL_CHARS);
+    let panel = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label(&long), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(100.0, 200.0),
+        domain(0.0, 20.0),
+        vec![series(vec![100.0, 200.0], vec![10.0, 20.0])],
+    )
+    .expect("a panel")
+    .with_markers(vec![
+        Marker::new(200.0, Some(label(&long))).expect("a marker"),
+    ])
+    .expect("markers on a valid panel");
+
+    let width = MIN_FIGURE_WIDTH;
+    let height = 500.0;
+    let document = svg::render(
+        &FigureSpec::new(
+            FigureTheme::Light,
+            FigureSize::new(width, height).expect("a size"),
+            vec![panel],
+        )
+        .expect("one panel is a figure"),
+    );
+
+    // Every declared width fits the document, and the axis caption — which is
+    // centred rather than wrapped — is condensed into the space it has rather
+    // than running off both sides of it.
+    let declared: Vec<f64> = document
+        .split("textLength=\"")
+        .skip(1)
+        .filter_map(|piece| piece.split('"').next()?.parse::<f64>().ok())
+        .collect();
+    assert!(
+        declared.len() >= 3,
+        "both captions and the label: {declared:?}"
+    );
+    for reserved in declared {
+        assert!(
+            reserved > 0.0 && reserved <= width,
+            "a declared width left the document: {reserved} of {width}",
+        );
+    }
+    assert!(
+        document.contains("lengthAdjust=\"spacingAndGlyphs\""),
+        "the width is honoured by condensing rather than by clipping",
+    );
+
+    // And a caption short enough to fit keeps its natural width rather than
+    // being stretched across the axis.
+    let ordinary = svg::render(&figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )));
+    assert!(
+        ordinary.contains("textLength=\"36.000\""),
+        "\"m/z\" is three characters at 12 units: {ordinary}",
+    );
+}

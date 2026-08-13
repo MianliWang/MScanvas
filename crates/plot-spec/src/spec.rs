@@ -94,6 +94,8 @@ pub enum SpecError {
     BaselineOutsideValueDomain,
     /// A domain's two ends were finite but the width between them was not.
     DomainSpanNotFinite,
+    /// A joined trace declared a reduction that keeps only one sign's extreme.
+    ReductionRuleUnsuitableForTrace,
     /// A decoded document declared a schema this build does not accept.
     UnknownSchemaVersion,
 }
@@ -117,6 +119,9 @@ impl fmt::Display for SpecError {
                 "a panel drawn from the zero line declared a value range without zero in it"
             }
             Self::DomainSpanNotFinite => "a domain was wider than a finite number",
+            Self::ReductionRuleUnsuitableForTrace => {
+                "a joined trace was reduced by a rule that keeps one extreme per sign"
+            }
             Self::UnknownSchemaVersion => "the document declares an unknown schema version",
         })
     }
@@ -278,19 +283,31 @@ pub enum PlotKind {
 }
 
 impl PlotKind {
+    /// Whether this kind joins its points into a trace rather than drawing
+    /// each as its own mark.
+    ///
+    /// Stated once here rather than re-derived by each reader, because the
+    /// renderer, the description and the validation below all have to agree
+    /// about it -- and two of them agreeing while the third does not is how a
+    /// figure comes to describe a drawing it did not make.
+    #[must_use]
+    pub const fn joins_a_trace(self) -> bool {
+        match self {
+            Self::Spectrum { representation } => representation.may_draw_continuous_trace(),
+            Self::Chromatogram => true,
+        }
+    }
+
     /// Whether this kind draws each point as a length measured from zero.
     ///
-    /// The counterpart of [`SpectrumRepresentation::may_draw_continuous_trace`]:
-    /// a kind that is not joined into a trace is drawn as discrete marks rising
-    /// from the zero line, and the length of each mark is what a reader reads as
-    /// its magnitude. A trace carries no such promise -- it is a shape over the
-    /// axis, and a value range that excludes zero merely zooms it.
+    /// The complement of [`Self::joins_a_trace`]: a kind that is not joined is
+    /// drawn as discrete marks rising from the zero line, and the length of
+    /// each mark is what a reader reads as its magnitude. A trace carries no
+    /// such promise -- it is a shape over the axis, and a value range that
+    /// excludes zero merely zooms it.
     #[must_use]
     pub const fn draws_from_zero_baseline(self) -> bool {
-        match self {
-            Self::Spectrum { representation } => !representation.may_draw_continuous_trace(),
-            Self::Chromatogram => false,
-        }
+        !self.joins_a_trace()
     }
 }
 
@@ -669,6 +686,27 @@ impl PanelSpec {
             && (self.value_domain.low() > 0.0 || self.value_domain.high() < 0.0)
         {
             return Err(SpecError::BaselineOutsideValueDomain);
+        }
+        // A joined trace and a per-sign reduction disagree about what a column
+        // is. `ExtremePerSignPerColumn` keeps one value for an all-positive
+        // column -- the tallest -- and joining those across columns draws the
+        // upper envelope of the data rather than the data: every trough is
+        // gone and the whole trace sits above the measurement. Nothing in the
+        // output would say so, because each drawn point is real.
+        //
+        // Refused rather than left to the caller happening to pick the other
+        // rule, and only in this direction: two sticks per column is not a
+        // misdrawing, so a discrete panel accepts either rule.
+        if self.kind.joins_a_trace() {
+            for series in &self.series {
+                if let DataScope::Reduced {
+                    rule: ReductionRule::ExtremePerSignPerColumn,
+                    ..
+                } = series.scope
+                {
+                    return Err(SpecError::ReductionRuleUnsuitableForTrace);
+                }
+            }
         }
         if let Some(visible) = self.visible_domain {
             visible.validate()?;

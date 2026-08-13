@@ -111,8 +111,18 @@ coordinates, unordered source data, backwards domains, a domain whose two ends
 are finite but whose width is not, unbounded or non-printable labels, a
 reduction claiming a source smaller than itself, a visible window outside the
 full domain, a series holding a point outside the panel's own declared range, a
-figure too small for the panels it declares, and a panel drawn as marks from
-zero whose value range does not contain zero.
+figure too small for the panels it declares, a panel drawn as marks from zero
+whose value range does not contain zero, and a joined trace reduced by a rule
+that keeps one extreme per sign.
+
+The last of those is worth naming beside the zero-baseline rule, for the same
+reason. `ExtremePerSignPerColumn` keeps a single value for an all-positive
+column — the tallest — and joining those across columns draws the upper envelope
+of the data rather than the data: every trough is gone and the whole trace sits
+above the measurement, while each drawn point is individually real, so nothing
+in the output can say so. Refused rather than left to the caller happening to
+pick the other rule, and only in that direction: two sticks in a column is not a
+misdrawing, so a discrete panel accepts either.
 
 "Unrepresentable" is load-bearing rather than decorative, so every field
 carrying a validated invariant is `pub(crate)` with a public read accessor. A
@@ -233,12 +243,22 @@ maximum, printed at the same size a unit away at the top-left of the plotting
 area, drops one line rather than being drawn over it; every other marker keeps
 its natural place.
 
+Every laid-out string declares the width it occupies. The document embeds no
+font, so the face is the viewer's choice and a per-character number is otherwise
+a prediction about someone else's machine; an explicit `textLength` with
+`lengthAdjust="spacingAndGlyphs"` makes it an instruction instead. The number
+itself is an upper bound on a glyph — `1em` — rather than the mean advance of a
+sans-serif face, so a line of `W`s cannot overflow what was reserved for it even
+in a viewer that ignores the attribute. Axis captions, which are centred rather
+than wrapped, are condensed into the space they have: condensed text is harder
+to read, and absent text cannot be read at all.
+
 One residual limit, stated rather than smoothed over: at the contract's minimum
-figure size a maximum-length label wraps to a block that reaches past the
+figure size a maximum-length marker label wraps to a block that reaches past the
 plotting area into the axis chrome below it. It stays inside the document and
 every character of it is present, which is what an export must guarantee, but it
-is not laid out around the other text. Placing annotations properly needs either
-real font metrics or a composer that owns the layout, and the composer is
+is not laid out *around* the other text. Placing annotations properly needs
+either real font metrics or a component that owns figure layout, and that is
 FIG-008 — a named non-goal of this milestone.
 
 A trace that reaches the drawn window always leaves a mark. A single sample, a

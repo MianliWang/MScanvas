@@ -45,17 +45,25 @@ const MAX_AXIS_DECIMALS: usize = 17;
 /// Half the width of the mark a single-sample trace is drawn as.
 const LONE_SAMPLE_TICK: f64 = 2.0;
 
-/// The width one character of a marker label is assumed to take, in em.
+/// The width one character of laid-out text is given, in em.
 ///
-/// An estimate, and it has to be: measuring text needs a font, which this
-/// renderer deliberately does not carry. Generous for a proportional
-/// sans-serif face, so it errs towards wrapping a label early -- which costs a
-/// line break -- rather than late, which costs the annotation off the edge of
-/// the exported document.
-const MARKER_LABEL_EM: f64 = 0.6;
+/// Not an average and not an estimate of one. `0.6em` is roughly the *mean*
+/// advance of a proportional sans-serif face, so a line of `W`s exceeds it and
+/// a viewer choosing a wider fallback face exceeds it again -- and this
+/// document embeds no font, so the face is the viewer's choice.
+///
+/// So this is an upper bound on a glyph rather than a guess at one, and every
+/// laid-out string is written with an explicit `textLength` computed from it.
+/// The width then stops being a prediction about a font and becomes an
+/// instruction to the renderer, which is what makes the placement below exact
+/// rather than probable.
+const TEXT_EM: f64 = 1.0;
 
-/// The font size a marker label is drawn at, in figure units.
+/// The font size a marker label and an axis caption are drawn at.
 const MARKER_LABEL_SIZE: f64 = 11.0;
+
+/// The font size an axis caption is drawn at.
+const AXIS_CAPTION_SIZE: f64 = 12.0;
 
 /// The distance between two lines of a wrapped marker label.
 const MARKER_LABEL_LEADING: f64 = 13.0;
@@ -154,17 +162,6 @@ fn axis_caption(label: &str, unit: &UnitState) -> String {
     match unit {
         UnitState::Known { unit } => format!("{label} ({})", unit.as_str()),
         UnitState::Unreported | UnitState::Dimensionless => label.to_owned(),
-    }
-}
-
-/// Whether this kind joins its points into a trace rather than drawing marks.
-///
-/// One statement, read by the description and by the renderer, so the sentence
-/// a figure carries cannot describe a drawing the figure did not make.
-const fn joins_a_trace(kind: PlotKind) -> bool {
-    match kind {
-        PlotKind::Spectrum { representation } => representation.may_draw_continuous_trace(),
-        PlotKind::Chromatogram => true,
     }
 }
 
@@ -303,7 +300,7 @@ fn panel_description(panel: &PanelSpec) -> String {
         sentences.push(format!(
             "{negatives} of the drawn values are negative and are shown below the zero line."
         ));
-    } else if joins_a_trace(panel.kind)
+    } else if panel.kind.joins_a_trace()
         && panel
             .series
             .iter()
@@ -337,6 +334,8 @@ struct Frame {
     plot_top: f64,
     plot_bottom: f64,
     zero_y: f64,
+    /// The height of the whole document, which text placement clamps against.
+    canvas_height: f64,
 }
 
 /// Renders one figure as a standalone SVG document.
@@ -434,6 +433,7 @@ pub fn render(figure: &FigureSpec) -> String {
             plot_top,
             plot_bottom,
             zero_y,
+            canvas_height: height,
         };
         render_panel(&mut out, panel, &frame, &colours);
     }
@@ -492,9 +492,8 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
     // can avoid being drawn on top of it.
     let (domain_low_text, domain_high_text) = axis_ends(domain);
     let (value_low_text, value_high_text) = axis_ends(values);
-    let value_label_right = frame.left
-        + 4.0
-        + value_high_text.chars().count() as f64 * MARKER_LABEL_EM * MARKER_LABEL_SIZE;
+    let value_label_right =
+        frame.left + 4.0 + value_high_text.chars().count() as f64 * TEXT_EM * MARKER_LABEL_SIZE;
 
     for marker in &panel.markers {
         if marker.at < domain.low() || marker.at > domain.high() {
@@ -534,27 +533,34 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
         colours.text,
         escape(&domain_high_text),
     );
+    // Both captions are written to a declared width. A caption is a `Label`, so
+    // it may be 120 characters, and the figure may be 200 units wide -- both
+    // accepted by the contract, and centred text of that length runs off a
+    // document that has no viewport to scroll. Condensed text is harder to read;
+    // absent text cannot be read at all, and nothing in the file would say a
+    // word had been cut off.
+    let domain_caption = axis_caption(panel.x_axis.label.as_str(), &panel.x_axis.unit);
     let _ = writeln!(
         out,
         "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"12\" \
-         text-anchor=\"middle\">{}</text>",
+         text-anchor=\"middle\" textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
         coordinate(f64::midpoint(frame.left, frame.right)),
         coordinate(plot_bottom + 30.0),
         colours.text,
-        escape(&axis_caption(
-            panel.x_axis.label.as_str(),
-            &panel.x_axis.unit
-        )),
+        coordinate(fitted_width(&domain_caption, frame.right - frame.left)),
+        escape(&domain_caption),
     );
     let value_caption = axis_caption(panel.y_axis.label.as_str(), &panel.y_axis.unit);
     let centre_y = f64::midpoint(plot_top, plot_bottom);
     let _ = writeln!(
         out,
         "<text x=\"14.000\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"12\" \
-         text-anchor=\"middle\" transform=\"rotate(-90 14.000 {})\">{}</text>",
+         text-anchor=\"middle\" transform=\"rotate(-90 14.000 {})\" textLength=\"{}\" \
+         lengthAdjust=\"spacingAndGlyphs\">{}</text>",
         coordinate(centre_y),
         colours.text,
         coordinate(centre_y),
+        coordinate(fitted_width(&value_caption, plot_bottom - plot_top)),
         escape(&value_caption),
     );
     let _ = writeln!(
@@ -606,7 +612,7 @@ fn render_series(
     // joining centroid peaks would draw intensity at m/z values nobody
     // measured, and joining unreported points would assert the representation
     // while doing it.
-    let continuous = joins_a_trace(panel.kind);
+    let continuous = panel.kind.joins_a_trace();
 
     // Clipped to the drawn domain rather than projected past its edges. A panel
     // narrowed to a visible window still carries its whole source -- that is
@@ -763,6 +769,17 @@ fn axis_decimals(span: f64) -> usize {
     }
 }
 
+/// The width to lay one string out in: its natural width, or the space there is.
+///
+/// The natural width comes from [`TEXT_EM`], which is an upper bound on a glyph
+/// rather than an average, so a string given its natural width cannot overflow
+/// whatever face a viewer happens to pick. A string too long for its space is
+/// condensed into that space rather than allowed to leave the document.
+fn fitted_width(text: &str, available: f64) -> f64 {
+    let natural = text.chars().count() as f64 * TEXT_EM * AXIS_CAPTION_SIZE;
+    natural.min(available.max(1.0))
+}
+
 /// Splits one label into lines no wider than `columns` characters.
 ///
 /// Greedy on whitespace, and a word longer than one line is cut rather than
@@ -837,7 +854,8 @@ fn render_marker_label(
     colours: &Palette,
 ) {
     let canvas_width = frame.right + MARGIN_RIGHT;
-    let character = MARKER_LABEL_EM * MARKER_LABEL_SIZE;
+    let canvas_height = frame.canvas_height;
+    let character = TEXT_EM * MARKER_LABEL_SIZE;
     let available = (canvas_width - 2.0 * MARKER_LABEL_INSET).max(character);
     let columns = (available / character).floor().max(1.0);
     #[expect(
@@ -858,11 +876,18 @@ fn render_marker_label(
     // same size -- two strings drawn over each other, which costs both. Only a
     // label that would actually reach it drops a line; every other marker keeps
     // its natural place, so the common figure is unchanged.
-    let top = if left < value_label_right {
+    let wanted = if left < value_label_right {
         plot_top + 12.0 + MARKER_LABEL_LEADING
     } else {
         plot_top + 12.0
     };
+    // And the block is clamped down the page as well as across it. A label long
+    // enough to wrap into many lines on a small figure would otherwise run off
+    // the bottom, which loses it just as completely as running off the side.
+    let depth = (lines.len() - 1) as f64 * MARKER_LABEL_LEADING;
+    let top = wanted
+        .min(canvas_height - MARKER_LABEL_INSET - depth)
+        .max(MARKER_LABEL_SIZE);
 
     let _ = write!(
         out,
@@ -875,9 +900,10 @@ fn render_marker_label(
     for (index, line) in lines.iter().enumerate() {
         let _ = write!(
             out,
-            "<tspan x=\"{}\" y=\"{}\">{}</tspan>",
+            "<tspan x=\"{}\" y=\"{}\" textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</tspan>",
             coordinate(left),
             coordinate(top + index as f64 * MARKER_LABEL_LEADING),
+            coordinate(line.chars().count() as f64 * character),
             escape(line),
         );
     }
