@@ -776,15 +776,16 @@ impl PanelSpec {
         // Refused rather than left to the caller happening to pick the other
         // rule, and only in this direction: two sticks per column is not a
         // misdrawing, so a discrete panel accepts either rule.
-        if self.kind.joins_a_trace() {
-            for series in &self.series {
-                if let DataScope::Reduced {
-                    rule: ReductionRule::ExtremePerSignPerColumn,
-                    ..
-                } = series.scope
-                {
-                    return Err(SpecError::ReductionRuleUnsuitableForTrace);
-                }
+        for series in &self.series {
+            if !self.joins(series) {
+                continue;
+            }
+            if let DataScope::Reduced {
+                rule: ReductionRule::ExtremePerSignPerColumn,
+                ..
+            } = series.scope
+            {
+                return Err(SpecError::ReductionRuleUnsuitableForTrace);
             }
         }
         if let Some(visible) = self.visible_domain {
@@ -887,6 +888,25 @@ impl PanelSpec {
     #[must_use]
     pub fn markers(&self) -> &[Marker] {
         &self.markers
+    }
+
+    /// Whether this panel joins that series into a line rather than drawing
+    /// each of its points as its own mark.
+    ///
+    /// Panel kind decides it for a measurement. A **baseline** is joined
+    /// whatever the panel draws: the contract calls it a reference line the
+    /// data is read against, which is a model with a value everywhere between
+    /// its samples rather than a set of measurements -- so joining it asserts
+    /// nothing the series did not already claim, while drawing it as marks from
+    /// zero would put a row of extra peaks into a spectrum.
+    ///
+    /// Stated here rather than in a renderer because the validation above needs
+    /// the same answer: a rule that keeps one extreme per sign is refused for
+    /// whatever will be joined, and a baseline being joined is exactly what
+    /// made a panel-kind-only check miss one.
+    #[must_use]
+    pub fn joins(&self, series: &SeriesSpec) -> bool {
+        self.kind.joins_a_trace() || series.role == StyleRole::Baseline
     }
 
     /// The domain a renderer should draw: the visible window when there is one.

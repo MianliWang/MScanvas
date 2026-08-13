@@ -305,7 +305,11 @@ either real font metrics or a component that owns figure layout, and that is
 FIG-008 — a named non-goal of this milestone.
 
 A **baseline** is drawn as the reference line the contract calls it, joined even
-in a panel of sticks. The rule against joining centroid peaks is about
+in a panel of sticks — and the contract, not the renderer, is where that is
+decided. `PanelSpec::joins` answers it once for the drawing and for the
+validation that refuses a per-sign reduction for anything joined; while the
+renderer held the opinion privately, a baseline reduced per sign in a stick
+panel passed a check that only asked about the panel kind. The rule against joining centroid peaks is about
 measurements, and a baseline is not one: it is a model with a value everywhere
 between its samples, so joining asserts nothing the series did not already
 claim — while drawing it as sticks from zero puts a row of extra peaks into a

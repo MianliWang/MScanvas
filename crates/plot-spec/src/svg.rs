@@ -692,12 +692,11 @@ fn render_series(
     // while doing it.
     //
     // A **baseline** is joined whatever the panel draws, because the rule above
-    // is about measurements and a baseline is not one. The contract calls it
-    // "a reference line the data is read against": it is a model with a value
-    // everywhere between its samples, so joining asserts nothing the series did
-    // not already claim -- while drawing it as sticks from zero would put a row
-    // of extra peaks into a centroid spectrum and call them background.
-    let continuous = panel.kind.joins_a_trace() || series.role == StyleRole::Baseline;
+    // is about measurements and a baseline is not one. That choice lives in the
+    // contract rather than here: the validation that refuses a per-sign
+    // reduction for anything joined has to reach the same answer, and it missed
+    // a baseline for exactly as long as this was the renderer's own opinion.
+    let continuous = panel.joins(series);
 
     // Clipped to the drawn domain rather than projected past its edges. A panel
     // narrowed to a visible window still carries its whole source -- that is

@@ -1952,8 +1952,41 @@ fn a_joined_trace_refuses_a_per_sign_reduction() {
         assert!(panel(kind, ReductionRule::MinMaxPerColumn).is_ok());
     }
 
+    // A baseline is joined whatever the panel draws, so it is held to the same
+    // rule inside a panel of sticks -- which a check that read only the panel
+    // kind could not see.
+    let baseline = |rule: ReductionRule| {
+        PanelSpec::new(
+            PlotKind::Spectrum {
+                representation: SpectrumRepresentation::Centroid,
+            },
+            AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(1.0, 2.0),
+            domain(0.0, 20.0),
+            vec![
+                SeriesSpec::new(
+                    label("baseline"),
+                    StyleRole::Baseline,
+                    DataScope::Reduced {
+                        source_point_count: 900,
+                        rule,
+                    },
+                    vec![1.0, 2.0],
+                    vec![10.0, 20.0],
+                )
+                .expect("a reduction"),
+            ],
+        )
+    };
+    assert_eq!(
+        baseline(ReductionRule::ExtremePerSignPerColumn).unwrap_err(),
+        SpecError::ReductionRuleUnsuitableForTrace,
+    );
+    assert!(baseline(ReductionRule::MinMaxPerColumn).is_ok());
+
     // Only in that direction: two sticks in a column is not a misdrawing, so a
-    // discrete panel accepts either rule.
+    // discrete panel accepts either rule for a measurement.
     for representation in [
         SpectrumRepresentation::Centroid,
         SpectrumRepresentation::Unreported,
