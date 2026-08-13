@@ -2355,3 +2355,181 @@ fn two_markers_at_one_position_keep_both_labels() {
         }
     }
 }
+
+/// A spectrum of measured zeros is not an empty spectrum.
+///
+/// A stick of no length paints nothing, so a peakless scene rendered a blank
+/// plotting area — the same picture as a panel with no points, which is a
+/// different fact about the sample.
+#[test]
+fn measured_zeros_are_drawn_and_disclosed() {
+    let zeros = figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0, 300.0], vec![0.0, 0.0, 0.0]),
+    ));
+    let empty = figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(Vec::new(), Vec::new()),
+    ));
+
+    let drawn = svg::render(&zeros);
+    let nothing = svg::render(&empty);
+
+    let path = path_data(&drawn);
+    assert_eq!(
+        path.matches('L').count(),
+        3,
+        "one visible mark per measured zero: {path}",
+    );
+    assert!(
+        path_data(&nothing).is_empty(),
+        "and a panel with no points still draws no data",
+    );
+    assert!(
+        drawn.contains("Every drawn value is zero."),
+        "the figure says so in words as well: {drawn}",
+    );
+    assert!(!nothing.contains("Every drawn value is zero."));
+
+    // The marks are on the zero line, so they claim no intensity: every drawn
+    // y coordinate is the same one.
+    let ys: Vec<&str> = path
+        .split(['M', 'L'])
+        .filter(|piece| !piece.is_empty())
+        .filter_map(|piece| piece.split_whitespace().nth(1))
+        .collect();
+    assert!(
+        ys.windows(2).all(|pair| pair[0] == pair[1]),
+        "a zero mark has no height: {path}",
+    );
+}
+
+/// A baseline is drawn as the reference line the contract calls it.
+///
+/// `StyleRole::Baseline` is "a reference line the data is read against" — a
+/// model with a value everywhere between its samples, not a set of
+/// measurements. Drawn as sticks from zero it becomes a row of extra peaks in a
+/// centroid spectrum, labelled background.
+#[test]
+fn a_baseline_is_drawn_as_a_line_even_among_sticks() {
+    let measurement = series(vec![100.0, 200.0, 300.0], vec![10.0, 90.0, 20.0]);
+    let baseline = SeriesSpec::new(
+        label("baseline"),
+        StyleRole::Baseline,
+        DataScope::FullSource,
+        vec![100.0, 200.0, 300.0],
+        vec![5.0, 6.0, 7.0],
+    )
+    .expect("a baseline");
+    let panel = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(100.0, 300.0),
+        domain(0.0, 90.0),
+        vec![measurement, baseline],
+    )
+    .expect("a panel");
+
+    let document = svg::render(&figure_of(panel));
+    let paths: Vec<&str> = document
+        .split("<path d=\"")
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next())
+        .collect();
+    assert_eq!(paths.len(), 2, "one path per series: {paths:?}");
+    assert_eq!(
+        paths[0].matches('V').count(),
+        3,
+        "the measurement is three sticks: {}",
+        paths[0],
+    );
+    assert_eq!(
+        paths[1].matches('V').count(),
+        0,
+        "the baseline is not drawn as sticks: {}",
+        paths[1],
+    );
+    assert_eq!(
+        paths[1].matches('L').count(),
+        2,
+        "it is a joined line through its own samples: {}",
+        paths[1],
+    );
+}
+
+/// A label with no room to move shrinks rather than landing on another.
+///
+/// Stepping down the page cannot help a block taller than the room left for
+/// it: two eight-line labels do not fit one under the other on a small figure
+/// however politely they take turns, and the previous rule left the second
+/// exactly on top of the first.
+#[test]
+fn labels_with_no_room_shrink_rather_than_overlap() {
+    let long = "m".repeat(MAX_LABEL_CHARS);
+    let panel = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )
+    .with_markers(vec![
+        Marker::new(150.0, Some(label(&long))).expect("a marker"),
+        Marker::new(150.0, Some(label(&long))).expect("a marker"),
+    ])
+    .expect("markers on a valid panel");
+
+    let document = svg::render(
+        &FigureSpec::new(
+            FigureTheme::Light,
+            FigureSize::new(
+                MIN_FIGURE_WIDTH,
+                MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT,
+            )
+            .expect("the smallest figure that holds one panel"),
+            vec![panel],
+        )
+        .expect("one panel is a figure"),
+    );
+
+    // Two blocks, and their first baselines are not the same coordinate.
+    let baselines: Vec<f64> = document
+        .split("<text ")
+        .skip(1)
+        // The marker colour: the wrapped label is many `<tspan>`s, so no single
+        // block holds the whole string to match on.
+        .filter(|block| block.contains("#b3261e"))
+        .filter_map(|block| {
+            block
+                .split("y=\"")
+                .nth(1)?
+                .split('"')
+                .next()?
+                .parse::<f64>()
+                .ok()
+        })
+        .collect();
+    assert_eq!(baselines.len(), 2, "both labels are drawn");
+    assert_ne!(
+        baselines[0], baselines[1],
+        "the second label did not land on the first: {baselines:?}",
+    );
+
+    // Every character survives the shrinking, in both labels.
+    let kept: String = document
+        .split("<tspan")
+        .skip(1)
+        .filter_map(|piece| {
+            piece
+                .split_once('>')?
+                .1
+                .split_once("</tspan>")
+                .map(|cut| cut.0)
+        })
+        .collect();
+    assert_eq!(
+        kept.matches('m').count(),
+        MAX_LABEL_CHARS * 2,
+        "nothing was elided to make room",
+    );
+}

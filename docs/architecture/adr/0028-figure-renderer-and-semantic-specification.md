@@ -261,7 +261,13 @@ from all of this: its ends *are* one number, and escalating would print digits
 it does not hold.
 
 A marker label is wrapped to the width available, clamped inside the canvas, and
-stepped down past every label already placed in its panel. Two markers at one
+stepped down past every label already placed in its panel — and, where the page
+has no room for the block at any position, shrunk a point at a time until it
+fits, to a floor below which it would be present without being readable.
+Stepping down cannot help a block taller than the room left for it: two
+eight-line labels do not fit one under the other on a small figure however
+politely they take turns. Smaller text is a real cost; text with another string
+drawn over it is a total one, and shrinking keeps every character. Two markers at one
 m/z is a legitimate figure — a precursor window and its monoisotopic peak — and
 one annotation drawn over another leaves a figure that looks annotated and is
 missing an annotation. On screen an overflowing label is usually survivable; an exported
@@ -297,6 +303,18 @@ every character of it is present, which is what an export must guarantee, but it
 is not laid out *around* the other text. Placing annotations properly needs
 either real font metrics or a component that owns figure layout, and that is
 FIG-008 — a named non-goal of this milestone.
+
+A **baseline** is drawn as the reference line the contract calls it, joined even
+in a panel of sticks. The rule against joining centroid peaks is about
+measurements, and a baseline is not one: it is a model with a value everywhere
+between its samples, so joining asserts nothing the series did not already
+claim — while drawing it as sticks from zero puts a row of extra peaks into a
+spectrum and labels them background.
+
+A measured zero draws a short mark on the zero line rather than a stick of no
+length, and the description says every drawn value is zero. A peakless spectrum
+and a spectrum with no points are different facts about a sample, and they had
+been the same picture.
 
 A trace that reaches the drawn window always leaves a mark. A single sample, a
 series whose samples repeat one position, and a zero-width visible window all

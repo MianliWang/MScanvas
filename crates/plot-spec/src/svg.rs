@@ -74,8 +74,12 @@ const AXIS_CAPTION_SIZE: f64 = 12.0;
 /// The font size the visible figure title is drawn at.
 const TITLE_SIZE: f64 = 16.0;
 
-/// The distance between two lines of a wrapped marker label.
-const MARKER_LABEL_LEADING: f64 = 13.0;
+/// The smallest a marker label may be shrunk to before it stops shrinking.
+///
+/// Small text is a real cost, so this is a floor rather than a target: a label
+/// only reaches it on a figure with no room for it at any larger size, and
+/// below this it would be present without being readable, which helps nobody.
+const MIN_MARKER_LABEL_SIZE: f64 = 5.0;
 
 /// How far a marker label stays from either edge of the document.
 const MARKER_LABEL_INSET: f64 = 4.0;
@@ -309,6 +313,21 @@ fn panel_description(panel: &PanelSpec) -> String {
         sentences.push(format!(
             "{negatives} of the drawn values are negative and are shown below the zero line."
         ));
+    } else if panel
+        .series
+        .iter()
+        .flat_map(|series| series.x().iter().zip(series.y().iter()))
+        .filter(|(at, _)| **at >= drawn.low() && **at <= drawn.high())
+        .fold(None, |all_zero, (_, value)| {
+            Some(all_zero.unwrap_or(true) && *value == 0.0)
+        })
+        == Some(true)
+    {
+        // Measured zeros are not missing data, and they draw almost nothing --
+        // a stick of no length, a trace along its own axis. Said in words, so a
+        // reader is not left deciding whether the instrument reported nothing
+        // or reported nothing above zero.
+        sentences.push("Every drawn value is zero.".to_owned());
     } else if panel.kind.joins_a_trace()
         && panel
             .series
@@ -671,7 +690,14 @@ fn render_series(
     // joining centroid peaks would draw intensity at m/z values nobody
     // measured, and joining unreported points would assert the representation
     // while doing it.
-    let continuous = panel.kind.joins_a_trace();
+    //
+    // A **baseline** is joined whatever the panel draws, because the rule above
+    // is about measurements and a baseline is not one. The contract calls it
+    // "a reference line the data is read against": it is a model with a value
+    // everywhere between its samples, so joining asserts nothing the series did
+    // not already claim -- while drawing it as sticks from zero would put a row
+    // of extra peaks into a centroid spectrum and call them background.
+    let continuous = panel.kind.joins_a_trace() || series.role == StyleRole::Baseline;
 
     // Clipped to the drawn domain rather than projected past its edges. A panel
     // narrowed to a visible window still carries its whole source -- that is
@@ -783,12 +809,31 @@ fn render_series(
             if *x < low || *x > high {
                 continue;
             }
+            let at = project(*x, domain, frame.left, frame.right);
+            let top = project(*y, values, plot_bottom, plot_top);
+            // A stick of zero length paints nothing, so a spectrum of measured
+            // zeros drew an empty plotting area -- indistinguishable from a
+            // spectrum with no points at all, which is a different fact about
+            // the sample. It is marked instead: a short horizontal tick on the
+            // zero line, which has no height and so claims no intensity, but is
+            // there to be seen.
+            if (top - zero_y).abs() <= f64::EPSILON {
+                let _ = write!(
+                    path,
+                    "M{} {}L{} {}",
+                    coordinate((at - LONE_SAMPLE_TICK).max(frame.left)),
+                    coordinate(zero_y),
+                    coordinate((at + LONE_SAMPLE_TICK).min(frame.right)),
+                    coordinate(zero_y),
+                );
+                continue;
+            }
             let _ = write!(
                 path,
                 "M{} {}V{}",
-                coordinate(project(*x, domain, frame.left, frame.right)),
+                coordinate(at),
                 coordinate(zero_y),
-                coordinate(project(*y, values, plot_bottom, plot_top)),
+                coordinate(top),
             );
         }
     }
@@ -840,15 +885,15 @@ struct TextBox {
 }
 
 impl TextBox {
-    /// From a block's anchor, its declared width and how far it wraps.
+    /// From a block's anchor, its declared width, how far it wraps and its size.
     ///
-    /// `top` is a baseline, so the box reaches one font size above it — that is
-    /// where the glyphs of the first line actually are.
-    fn new(left: f64, baseline: f64, width: f64, depth: f64) -> Self {
+    /// `baseline` is a baseline, so the box reaches one font size above it —
+    /// that is where the glyphs of the first line actually are.
+    fn new(left: f64, baseline: f64, width: f64, depth: f64, size: f64) -> Self {
         Self {
             left,
             right: left + width,
-            top: baseline - MARKER_LABEL_SIZE,
+            top: baseline - size,
             bottom: baseline + depth,
         }
     }
@@ -950,50 +995,74 @@ fn render_marker_label(
     let plot_top = frame.plot_top;
     let canvas_width = frame.right + MARGIN_RIGHT;
     let canvas_height = frame.canvas_height;
-    let character = TEXT_EM * MARKER_LABEL_SIZE;
-    let available = (canvas_width - 2.0 * MARKER_LABEL_INSET).max(character);
-    let columns = (available / character).floor().max(1.0);
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "bounded above by the canvas width and below by one"
-    )]
-    let lines = wrap_label(label.as_str(), columns as usize);
-    let Some(widest) = lines.iter().map(|line| line.chars().count()).max() else {
+
+    // Try the ordinary size first and give ground only where the page makes it
+    // necessary. Stepping down the page cannot help a block taller than the
+    // room left for it -- two eight-line labels do not fit one under the other
+    // on a 180-unit figure however politely they take turns -- and the previous
+    // rule then left the second block exactly on top of the first. Smaller text
+    // is a real cost; text that cannot be read because another string is drawn
+    // over it is a total one, and shrinking keeps every character.
+    let mut chosen: Option<(f64, Vec<String>, f64, f64, f64)> = None;
+    let mut size = MARKER_LABEL_SIZE;
+    while size >= MIN_MARKER_LABEL_SIZE {
+        let character = TEXT_EM * size;
+        let leading = size + 2.0;
+        let available = (canvas_width - 2.0 * MARKER_LABEL_INSET).max(character);
+        let columns = (available / character).floor().max(1.0);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "bounded above by the canvas width and below by one"
+        )]
+        let lines = wrap_label(label.as_str(), columns as usize);
+        let Some(widest) = lines.iter().map(|line| line.chars().count()).max() else {
+            return;
+        };
+        let block = widest as f64 * character;
+        let left = (x + 3.0)
+            .max(MARKER_LABEL_INSET)
+            .min(canvas_width - MARKER_LABEL_INSET - block);
+        // The value axis prints its maximum at the top-left of the plotting
+        // area, and a marker at the domain's low end lands one unit away from
+        // it at the same size -- two strings drawn over each other, which costs
+        // both. Only a label that would actually reach it drops a line; every
+        // other marker keeps its natural place.
+        let wanted = if left < value_label_right {
+            plot_top + 12.0 + leading
+        } else {
+            plot_top + 12.0
+        };
+        let depth = (lines.len() - 1) as f64 * leading;
+        let floor = canvas_height - MARKER_LABEL_INSET - depth;
+
+        // Step past every label already placed in this panel.
+        let mut top = wanted;
+        let mut clear = false;
+        while top <= floor {
+            if !occupied
+                .iter()
+                .any(|placed| placed.overlaps(&TextBox::new(left, top, block, depth, size)))
+            {
+                clear = true;
+                break;
+            }
+            top += leading;
+        }
+        if clear || size <= MIN_MARKER_LABEL_SIZE {
+            chosen = Some((size, lines, left, top.min(floor).max(size), block));
+            break;
+        }
+        size -= 1.0;
+    }
+
+    let Some((size, lines, left, top, block)) = chosen else {
         return;
     };
-    let block = widest as f64 * character;
-    let left = (x + 3.0)
-        .max(MARKER_LABEL_INSET)
-        .min(canvas_width - MARKER_LABEL_INSET - block);
-    // The value axis prints its maximum at the top-left of the plotting area,
-    // and a marker at the domain's low end lands one unit away from it at the
-    // same size -- two strings drawn over each other, which costs both. Only a
-    // label that would actually reach it drops a line; every other marker keeps
-    // its natural place, so the common figure is unchanged.
-    let wanted = if left < value_label_right {
-        plot_top + 12.0 + MARKER_LABEL_LEADING
-    } else {
-        plot_top + 12.0
-    };
-    // And the block is clamped down the page as well as across it. A label long
-    // enough to wrap into many lines on a small figure would otherwise run off
-    // the bottom, which loses it just as completely as running off the side.
-    let depth = (lines.len() - 1) as f64 * MARKER_LABEL_LEADING;
-    let floor = canvas_height - MARKER_LABEL_INSET - depth;
-    // Step past every label already placed in this panel. Bounded by the page:
-    // once the block cannot move down any further it stays where it is, because
-    // a label overlapping another is still better than one outside the file.
-    let mut top = wanted;
-    let mut proposed = TextBox::new(left, top, block, depth);
-    while occupied.iter().any(|placed| placed.overlaps(&proposed))
-        && top + MARKER_LABEL_LEADING <= floor
-    {
-        top += MARKER_LABEL_LEADING;
-        proposed = TextBox::new(left, top, block, depth);
-    }
-    let top = top.min(floor).max(MARKER_LABEL_SIZE);
-    occupied.push(TextBox::new(left, top, block, depth));
+    let leading = size + 2.0;
+    let character = TEXT_EM * size;
+    let depth = (lines.len() - 1) as f64 * leading;
+    occupied.push(TextBox::new(left, top, block, depth, size));
 
     let _ = write!(
         out,
@@ -1001,14 +1070,14 @@ fn render_marker_label(
         coordinate(left),
         coordinate(top),
         colours.marker,
-        coordinate(MARKER_LABEL_SIZE),
+        coordinate(size),
     );
     for (index, line) in lines.iter().enumerate() {
         let _ = write!(
             out,
             "<tspan x=\"{}\" y=\"{}\" textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</tspan>",
             coordinate(left),
-            coordinate(top + index as f64 * MARKER_LABEL_LEADING),
+            coordinate(top + index as f64 * leading),
             coordinate(line.chars().count() as f64 * character),
             escape(line),
         );

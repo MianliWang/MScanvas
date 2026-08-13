@@ -217,8 +217,14 @@ empty          svg_bytes=  1521  elements=11  finite_only=true chrome_free=true 
 single-point   svg_bytes=  1616  elements=12  finite_only=true chrome_free=true external_free=true
 flat           svg_bytes= 24705  elements=12  finite_only=true chrome_free=true external_free=true
 all-negative   svg_bytes= 24819  elements=13  finite_only=true chrome_free=true external_free=true
-all-zero       svg_bytes= 25709  elements=12  finite_only=true chrome_free=true external_free=true
+all-zero       svg_bytes= 33864  elements=12  finite_only=true chrome_free=true external_free=true
 ```
+
+`all-zero` is the largest of the five and that is the point: a measured zero
+draws a short mark on the zero line rather than a stick of no length, so a
+peakless spectrum is visibly different from a spectrum with no points. The
+marks have no height, so they claim no intensity; the description says
+`Every drawn value is zero.` as well.
 
 `external_free` deliberately does not look for `http://`. The SVG namespace
 declaration is required by the format and fetches nothing; what would make a
