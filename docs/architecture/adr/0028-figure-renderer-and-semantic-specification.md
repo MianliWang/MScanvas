@@ -112,8 +112,18 @@ are finite but whose width is not, unbounded or non-printable labels, a
 reduction claiming a source smaller than itself, a visible window outside the
 full domain, a series holding a point outside the panel's own declared range, a
 figure too small for the panels it declares, a panel drawn as marks from zero
-whose value range does not contain zero, and a joined trace reduced by a rule
-that keeps one extreme per sign.
+whose value range does not contain zero, a joined trace reduced by a rule that
+keeps one extreme per sign, a marker placed where the panel's source does not
+reach, and a label holding a character XML 1.0 forbids.
+
+Two of those are about the file rather than the drawing. A marker outside the
+**full** domain can be drawn at no window at all, including a full-range export,
+so it is an annotation that silently does not exist — refused, while a marker
+inside the source but outside the current window stays valid, because that one
+is exactly what reappears when the window widens. And `U+FFFE` and `U+FFFF` are
+`char`s that are not control characters and are outside XML's `Char` production:
+escaping does nothing for them, so a label carrying one produces a document no
+parser will read, and the figure does not open at all.
 
 The last of those is worth naming beside the zero-baseline rule, for the same
 reason. `ExtremePerSignPerColumn` keeps a single value for an all-positive
@@ -243,7 +253,8 @@ maximum, printed at the same size a unit away at the top-left of the plotting
 area, drops one line rather than being drawn over it; every other marker keeps
 its natural place.
 
-Every laid-out string declares the width it occupies. The document embeds no
+Every laid-out string — the visible title, both axis captions, every line of
+every marker label — declares the width it occupies. The document embeds no
 font, so the face is the viewer's choice and a per-character number is otherwise
 a prediction about someone else's machine; an explicit `textLength` with
 `lengthAdjust="spacingAndGlyphs"` makes it an instruction instead. The number

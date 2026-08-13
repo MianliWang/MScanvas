@@ -72,6 +72,8 @@ pub enum SpecError {
     LabelTooLong,
     /// A label held a control character.
     LabelNotPrintable,
+    /// A label held a character no XML document is allowed to carry.
+    LabelNotXmlSafe,
     /// A coordinate was not finite.
     NotFinite,
     /// The two coordinate arrays were different lengths.
@@ -96,6 +98,8 @@ pub enum SpecError {
     DomainSpanNotFinite,
     /// A joined trace declared a reduction that keeps only one sign's extreme.
     ReductionRuleUnsuitableForTrace,
+    /// A marker was placed where the panel's source does not reach.
+    MarkerOutsideFullDomain,
     /// A decoded document declared a schema this build does not accept.
     UnknownSchemaVersion,
 }
@@ -106,6 +110,7 @@ impl fmt::Display for SpecError {
             Self::LabelEmpty => "a label was empty",
             Self::LabelTooLong => "a label was longer than the bound",
             Self::LabelNotPrintable => "a label held a control character",
+            Self::LabelNotXmlSafe => "a label held a character XML cannot carry",
             Self::NotFinite => "a coordinate was not finite",
             Self::AxisLengthMismatch => "the coordinate arrays were different lengths",
             Self::DomainInverted => "a domain ran backwards",
@@ -122,12 +127,27 @@ impl fmt::Display for SpecError {
             Self::ReductionRuleUnsuitableForTrace => {
                 "a joined trace was reduced by a rule that keeps one extreme per sign"
             }
+            Self::MarkerOutsideFullDomain => "a marker was outside the panel's source domain",
             Self::UnknownSchemaVersion => "the document declares an unknown schema version",
         })
     }
 }
 
 impl std::error::Error for SpecError {}
+
+/// Whether XML 1.0 permits this character in a document at all.
+///
+/// The `Char` production, minus the surrogates a Rust `char` cannot be. Tab,
+/// newline and carriage return are listed for completeness; a label refuses
+/// them anyway as control characters, which is stricter on purpose -- a line
+/// break inside an axis label is not a label.
+const fn is_xml_character(character: char) -> bool {
+    matches!(character,
+        '\u{9}' | '\u{A}' | '\u{D}'
+        | '\u{20}'..='\u{D7FF}'
+        | '\u{E000}'..='\u{FFFD}'
+        | '\u{10000}'..='\u{10FFFF}')
+}
 
 /// One bounded, printable piece of display text.
 ///
@@ -167,6 +187,17 @@ impl Label {
         }
         if text.chars().any(char::is_control) {
             return Err(SpecError::LabelNotPrintable);
+        }
+        // Beyond the control characters, XML 1.0 forbids two more that Rust is
+        // happy to hold: `U+FFFE` and `U+FFFF` are `char`s, are not control
+        // characters, and are outside the `Char` production. Escaping does
+        // nothing for them -- they are not markup -- so they would be written
+        // straight into a document no XML parser will read, and the figure
+        // would not open at all. Refused rather than stripped, for the same
+        // reason a control character is: a label that had to be altered to be
+        // shown is not the label the file carried.
+        if text.chars().any(|character| !is_xml_character(character)) {
+            return Err(SpecError::LabelNotXmlSafe);
         }
         Ok(())
     }
@@ -210,6 +241,17 @@ impl Caption {
             .any(|character| character.is_control() && character != '\n')
         {
             return Err(SpecError::LabelNotPrintable);
+        }
+        // Beyond the control characters, XML 1.0 forbids two more that Rust is
+        // happy to hold: `U+FFFE` and `U+FFFF` are `char`s, are not control
+        // characters, and are outside the `Char` production. Escaping does
+        // nothing for them -- they are not markup -- so they would be written
+        // straight into a document no XML parser will read, and the figure
+        // would not open at all. Refused rather than stripped, for the same
+        // reason a control character is: a label that had to be altered to be
+        // shown is not the label the file carried.
+        if text.chars().any(|character| !is_xml_character(character)) {
+            return Err(SpecError::LabelNotXmlSafe);
         }
         Ok(())
     }
@@ -730,6 +772,16 @@ impl PanelSpec {
         }
         for marker in &self.markers {
             marker.validate()?;
+            // Outside the **full** domain, not outside the visible window. A
+            // marker beyond the source is one the panel can never draw, at any
+            // window, including a full-range export -- so it is an annotation
+            // that silently does not exist, which is worse than one that is
+            // refused. A marker inside the source but outside the current
+            // window is the opposite case and stays valid: it is exactly what
+            // reappears when the window widens.
+            if marker.at < self.full_domain.low() || marker.at > self.full_domain.high() {
+                return Err(SpecError::MarkerOutsideFullDomain);
+            }
         }
         Ok(())
     }

@@ -642,23 +642,50 @@ fn a_min_max_reduction_preserves_the_extrema_it_claims() {
     assert_eq!(reduced_low, -55_555.0, "the deepest trough survives");
 }
 
+/// A marker outside the window is kept but not drawn; outside the source it is
+/// refused.
+///
+/// The two are different facts. A marker the current window excludes is exactly
+/// what reappears when the window widens, so the specification must keep it. A
+/// marker the *source* never reaches can be drawn at no window at all, including
+/// a full-range export — an annotation that silently does not exist, which is
+/// worse than one that is refused when it is set.
 #[test]
-fn a_marker_outside_the_drawn_domain_is_not_drawn() {
+fn a_marker_is_kept_outside_the_window_and_refused_outside_the_source() {
     let panel = spectrum_panel(
         SpectrumRepresentation::Centroid,
         series(vec![100.0, 200.0], vec![10.0, 20.0]),
     )
     .with_markers(vec![
-        Marker::new(150.0, Some(label("inside"))).expect("a marker"),
-        Marker::new(900.0, Some(label("outside"))).expect("a marker"),
+        Marker::new(120.0, Some(label("inside"))).expect("a marker"),
+        Marker::new(190.0, Some(label("outside"))).expect("a marker"),
     ])
     .expect("markers on a valid panel");
-    let document = svg::render(&figure_of(panel));
 
+    let whole = svg::render(&figure_of(panel.clone()));
+    assert!(whole.contains("inside") && whole.contains("outside"));
+
+    let windowed = panel
+        .with_visible_domain(domain(100.0, 150.0))
+        .expect("a window inside the domain");
+    let document = svg::render(&figure_of(windowed));
     assert!(document.contains("inside"));
     assert!(
         !document.contains("outside"),
-        "a marker beyond the domain is not placed at the edge",
+        "a marker beyond the window is not placed at its edge",
+    );
+
+    // And one the source never reaches is refused when it is attached.
+    assert_eq!(
+        spectrum_panel(
+            SpectrumRepresentation::Centroid,
+            series(vec![100.0, 200.0], vec![10.0, 20.0]),
+        )
+        .with_markers(vec![
+            Marker::new(900.0, Some(label("unreachable"))).expect("a marker"),
+        ])
+        .unwrap_err(),
+        SpecError::MarkerOutsideFullDomain,
     );
 }
 
@@ -2002,5 +2029,86 @@ fn laid_out_text_declares_its_own_width() {
     assert!(
         ordinary.contains("textLength=\"36.000\""),
         "\"m/z\" is three characters at 12 units: {ordinary}",
+    );
+}
+
+/// A character XML cannot carry is refused before it can break the document.
+///
+/// `U+FFFE` and `U+FFFF` are `char`s, are not control characters, and are
+/// outside XML 1.0's `Char` production. Escaping does nothing for them — they
+/// are not markup — so they would be written straight into a document no XML
+/// parser will read: the figure would not open at all, rather than opening
+/// wrongly.
+#[test]
+fn a_character_xml_cannot_carry_is_refused() {
+    for forbidden in ['\u{FFFE}', '\u{FFFF}'] {
+        assert_eq!(
+            Label::new(format!("m/z{forbidden}")).unwrap_err(),
+            SpecError::LabelNotXmlSafe,
+            "{forbidden:?} in a label",
+        );
+        assert_eq!(
+            Caption::new(format!("Figure 1.{forbidden}")).unwrap_err(),
+            SpecError::LabelNotXmlSafe,
+            "{forbidden:?} in a caption",
+        );
+    }
+
+    // The neighbours on either side are ordinary text and stay accepted, so the
+    // rule is the XML production rather than a swipe at high code points.
+    assert!(Label::new("\u{FFFD} replacement").is_ok());
+    assert!(Label::new("\u{10000} beyond the plane").is_ok());
+    assert!(Label::new("μ 数据 émile").is_ok());
+}
+
+/// The visible title is laid out inside the document like every other string.
+///
+/// The `<title>` element carries the same words to a screen reader either way,
+/// but a published figure is read by looking at it, and metadata is no
+/// substitute for the heading a reader can see.
+#[test]
+fn the_visible_title_is_laid_out_inside_the_document() {
+    let long = "W".repeat(MAX_LABEL_CHARS);
+    let width = MIN_FIGURE_WIDTH;
+    let document = svg::render(
+        &FigureSpec::new(
+            FigureTheme::Light,
+            FigureSize::new(width, 500.0).expect("a size"),
+            vec![spectrum_panel(
+                SpectrumRepresentation::Centroid,
+                series(vec![100.0, 200.0], vec![10.0, 20.0]),
+            )],
+        )
+        .expect("one panel is a figure")
+        .with_title(Label::new(long).expect("a title")),
+    );
+
+    let heading = document
+        .lines()
+        .find(|line| line.contains("font-weight=\"600\""))
+        .expect("the visible title is drawn");
+    let declared: f64 = heading
+        .split("textLength=\"")
+        .nth(1)
+        .and_then(|piece| piece.split('"').next())
+        .expect("a declared width")
+        .parse()
+        .expect("a number");
+    assert!(
+        declared > 0.0 && 64.0 + declared <= width,
+        "the title ends inside the document: 64 + {declared} of {width}",
+    );
+
+    // A title that fits keeps its natural width rather than being stretched.
+    let ordinary = svg::render(
+        &figure_of(spectrum_panel(
+            SpectrumRepresentation::Centroid,
+            series(vec![100.0, 200.0], vec![10.0, 20.0]),
+        ))
+        .with_title(Label::new("Enolase").expect("a title")),
+    );
+    assert!(
+        ordinary.contains("textLength=\"112.000\""),
+        "seven characters at 16 units: {ordinary}",
     );
 }

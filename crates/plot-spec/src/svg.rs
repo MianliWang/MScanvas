@@ -65,6 +65,9 @@ const MARKER_LABEL_SIZE: f64 = 11.0;
 /// The font size an axis caption is drawn at.
 const AXIS_CAPTION_SIZE: f64 = 12.0;
 
+/// The font size the visible figure title is drawn at.
+const TITLE_SIZE: f64 = 16.0;
+
 /// The distance between two lines of a wrapped marker label.
 const MARKER_LABEL_LEADING: f64 = 13.0;
 
@@ -395,12 +398,24 @@ pub fn render(figure: &FigureSpec) -> String {
     );
 
     if let Some(label) = figure.title.as_ref() {
+        // The visible title is laid out to a declared width like every other
+        // string here. The `<title>` element carries the same words to a screen
+        // reader either way, but a published figure is read by looking at it,
+        // and a metadata element is no substitute for the heading a reader can
+        // see.
         let _ = writeln!(
             out,
             "<text x=\"{}\" y=\"24.000\" fill=\"{}\" font-family=\"sans-serif\" \
-             font-size=\"16\" font-weight=\"600\">{}</text>",
+             font-size=\"{}\" font-weight=\"600\" textLength=\"{}\" \
+             lengthAdjust=\"spacingAndGlyphs\">{}</text>",
             coordinate(MARGIN_LEFT),
             colours.text,
+            coordinate(TITLE_SIZE),
+            coordinate(fitted_width(
+                label.as_str(),
+                TITLE_SIZE,
+                width - MARGIN_LEFT - MARGIN_RIGHT,
+            )),
             escape(label.as_str()),
         );
     }
@@ -547,7 +562,11 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
         coordinate(f64::midpoint(frame.left, frame.right)),
         coordinate(plot_bottom + 30.0),
         colours.text,
-        coordinate(fitted_width(&domain_caption, frame.right - frame.left)),
+        coordinate(fitted_width(
+            &domain_caption,
+            AXIS_CAPTION_SIZE,
+            frame.right - frame.left,
+        )),
         escape(&domain_caption),
     );
     let value_caption = axis_caption(panel.y_axis.label.as_str(), &panel.y_axis.unit);
@@ -560,7 +579,11 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
         coordinate(centre_y),
         colours.text,
         coordinate(centre_y),
-        coordinate(fitted_width(&value_caption, plot_bottom - plot_top)),
+        coordinate(fitted_width(
+            &value_caption,
+            AXIS_CAPTION_SIZE,
+            plot_bottom - plot_top,
+        )),
         escape(&value_caption),
     );
     let _ = writeln!(
@@ -775,8 +798,8 @@ fn axis_decimals(span: f64) -> usize {
 /// rather than an average, so a string given its natural width cannot overflow
 /// whatever face a viewer happens to pick. A string too long for its space is
 /// condensed into that space rather than allowed to leave the document.
-fn fitted_width(text: &str, available: f64) -> f64 {
-    let natural = text.chars().count() as f64 * TEXT_EM * AXIS_CAPTION_SIZE;
+fn fitted_width(text: &str, size: f64, available: f64) -> f64 {
+    let natural = text.chars().count() as f64 * TEXT_EM * size;
     natural.min(available.max(1.0))
 }
 
