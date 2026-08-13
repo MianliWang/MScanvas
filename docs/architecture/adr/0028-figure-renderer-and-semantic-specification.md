@@ -121,11 +121,26 @@ refuses any other version rather than reading what it recognises.
 
 ### Reduction semantics
 
-The rule is named in the contract — `MinMaxPerColumn` — and it is the one the
-screen already performs: the highest **and** the lowest value of each column,
-both kept, because intensity is legitimately negative after baseline
-subtraction and keeping only the larger magnitude would erase measured signal of
-the other sign.
+A reduction is a claim about which measurements were dropped, so the contract
+names **two** rules rather than one, and a figure states which it used:
+
+- `MinMaxPerColumn` — the greatest and the least value of each column, whatever
+  their signs. Two points per column unless they are the same point.
+- `ExtremePerSignPerColumn` — the tallest positive and the deepest negative
+  value of each column. **One** point for an all-positive column, which is most
+  columns of a raw intensity trace.
+
+This is the rule `StickSpectrum` performs today, and the split exists because
+naming it min/max would have been false for nearly every column it draws — a
+false sentence the renderer writes into the exported `<desc>`, so the figure
+itself would assert it. Both rules keep signal of both signs where both are
+present, which is the property that matters after baseline subtraction, where
+intensity is legitimately negative and keeping only the larger magnitude would
+erase measured signal of the other sign.
+
+The measured difference is in the evidence record: the same four scenes reduce
+to 1,800 drawn points under `MinMaxPerColumn` and to 900–942 under
+`ExtremePerSignPerColumn`.
 
 Pointer lookup resolves against the **source** domain, not the drawn sample.
 Against the drawn sample it would answer with a point the reduction happened to

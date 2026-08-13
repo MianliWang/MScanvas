@@ -27,8 +27,8 @@ mod tests;
 
 pub use spec::{
     AxisSpec, Caption, DataScope, DecodeError, Domain, FigureSize, FigureSpec, FigureTheme, Label,
-    MAX_CAPTION_CHARS, MAX_FIGURE_EDGE, MAX_LABEL_CHARS, MAX_PANELS, Marker, PanelSpec, PlotKind,
-    ReductionRule, SCHEMA_VERSION, SeriesSpec, SpecError, SpectrumRepresentation, StyleRole,
-    UnitState,
+    MAX_CAPTION_CHARS, MAX_FIGURE_EDGE, MAX_LABEL_CHARS, MAX_PANELS, MIN_FIGURE_CHROME_HEIGHT,
+    MIN_FIGURE_WIDTH, MIN_PANEL_HEIGHT, Marker, PanelSpec, PlotKind, ReductionRule, SCHEMA_VERSION,
+    SeriesSpec, SpecError, SpectrumRepresentation, StyleRole, UnitState,
 };
 pub use svg::render;

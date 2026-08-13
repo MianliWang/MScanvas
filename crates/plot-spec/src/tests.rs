@@ -2,8 +2,9 @@
 
 use crate::spec::{
     AxisSpec, Caption, DataScope, DecodeError, Domain, FigureSize, FigureSpec, FigureTheme, Label,
-    MAX_LABEL_CHARS, Marker, PanelSpec, PlotKind, ReductionRule, SCHEMA_VERSION, SeriesSpec,
-    SpecError, SpectrumRepresentation, StyleRole, UnitState,
+    MAX_LABEL_CHARS, MIN_FIGURE_CHROME_HEIGHT, MIN_FIGURE_WIDTH, MIN_PANEL_HEIGHT, Marker,
+    PanelSpec, PlotKind, ReductionRule, SCHEMA_VERSION, SeriesSpec, SpecError,
+    SpectrumRepresentation, StyleRole, UnitState,
 };
 use crate::svg;
 
@@ -312,7 +313,7 @@ fn an_unknown_schema_version_fails_closed() {
 
 #[test]
 fn a_figure_holds_between_one_and_the_bounded_number_of_panels() {
-    let size = FigureSize::new(100.0, 100.0).expect("a size");
+    let size = FigureSize::new(MIN_FIGURE_WIDTH, 500.0).expect("a size");
     assert_eq!(
         FigureSpec::new(FigureTheme::Light, size, Vec::new()).unwrap_err(),
         SpecError::PanelCountOutOfRange,
@@ -397,7 +398,9 @@ fn every_figure_carries_a_title_and_a_description() {
     .with_caption(Caption::new("Given description.").expect("a caption"));
     let document = svg::render(&titled);
     assert!(document.contains("<title>Given title</title>"));
-    assert!(document.contains("<desc>Given description.</desc>"));
+    // The caption is there, and so is the disclosure it must not have replaced.
+    assert!(document.contains("<desc>Given description. "));
+    assert!(document.contains("Centroided peaks, as reported by the source file."));
 
     // Absent ones are derived rather than omitted: an untitled figure is still
     // a figure somebody has to be able to identify.
@@ -967,6 +970,169 @@ fn discrete_marks_are_never_interpolated_at_the_window_edge() {
         assert!(
             path.is_empty(),
             "{representation:?} invented a mark at the boundary: {path}",
+        );
+    }
+}
+
+/// The two reductions this repository performs are two rules, and say so.
+///
+/// The screen keeps the tallest positive and the deepest negative value of each
+/// column, so an all-positive column keeps **one** value. Calling that min/max
+/// would be false for every all-positive column, which is most of them -- and
+/// the sentence goes into the exported figure, so the figure would be asserting
+/// it.
+#[test]
+fn the_two_reduction_rules_describe_themselves_differently() {
+    assert_ne!(
+        ReductionRule::MinMaxPerColumn.describe(),
+        ReductionRule::ExtremePerSignPerColumn.describe(),
+    );
+
+    let rendered = |rule: ReductionRule| {
+        let reduced = SeriesSpec::new(
+            label("measurement"),
+            StyleRole::Measurement,
+            DataScope::Reduced {
+                source_point_count: 900,
+                rule,
+            },
+            vec![100.0, 200.0],
+            vec![10.0, 20.0],
+        )
+        .expect("a reduction");
+        svg::render(&figure_of(spectrum_panel(
+            SpectrumRepresentation::Centroid,
+            reduced,
+        )))
+    };
+
+    let min_max = rendered(ReductionRule::MinMaxPerColumn);
+    let per_sign = rendered(ReductionRule::ExtremePerSignPerColumn);
+    assert!(min_max.contains("greatest and the least value"));
+    assert!(per_sign.contains("tallest positive and the deepest negative"));
+    assert!(
+        !per_sign.contains("greatest and the least value"),
+        "a stick reduction must not describe itself as min/max",
+    );
+}
+
+/// An author's caption is added to the disclosures, never in place of them.
+///
+/// The disclosures are where a reduction states its counts and where an
+/// unreported representation says so. A caption that replaced them would let a
+/// custom-titled export read as scientifically complete while dropping the two
+/// facts a reader most needs.
+#[test]
+fn a_caption_does_not_displace_the_semantic_disclosures() {
+    let reduced = SeriesSpec::new(
+        label("measurement"),
+        StyleRole::Measurement,
+        DataScope::Reduced {
+            source_point_count: 40_000,
+            rule: ReductionRule::MinMaxPerColumn,
+        },
+        vec![100.0, 200.0],
+        vec![10.0, 20.0],
+    )
+    .expect("a reduction");
+    let figure = figure_of(spectrum_panel(SpectrumRepresentation::Unreported, reduced))
+        .with_caption(Caption::new("Figure 1. Replicate A.").expect("a caption"));
+
+    let document = svg::render(&figure);
+    assert!(
+        document.contains("Figure 1. Replicate A."),
+        "the caption is kept"
+    );
+    assert!(
+        document.contains("does not report whether"),
+        "and the representation disclosure survives it",
+    );
+    assert!(
+        document.contains("40000 source points reduced to 2"),
+        "and so does the reduction disclosure",
+    );
+}
+
+/// A single-sample trace draws something.
+///
+/// A bare move command paints nothing, so this scene rendered a blank plot area
+/// for data the contract explicitly accepts.
+#[test]
+fn a_single_sample_trace_draws_a_visible_mark() {
+    for kind in [
+        PlotKind::Chromatogram,
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Profile,
+        },
+    ] {
+        let panel = PanelSpec::new(
+            kind,
+            AxisSpec::new(label("x"), UnitState::Unreported),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(500.0, 500.0),
+            domain(0.0, 100.0),
+            vec![series(vec![500.0], vec![70.0])],
+        )
+        .expect("a panel");
+
+        let path = path_data(&svg::render(&figure_of(panel)));
+        assert!(!path.is_empty(), "{kind:?} drew nothing");
+        assert!(
+            path.contains('L'),
+            "{kind:?} emitted only a move, which paints nothing: {path}",
+        );
+    }
+}
+
+/// A figure too small to draw into is refused rather than drawn upside down.
+///
+/// The renderer subtracts fixed gutters, so below some size the plotting area
+/// runs backwards and values are projected in reverse. The contract states a
+/// floor; the assertion below pins that this repository's renderer fits inside
+/// it, so a future margin change fails here rather than inverting a figure.
+#[test]
+fn a_figure_too_small_for_its_panels_is_refused() {
+    assert_eq!(
+        FigureSize::new(100.0, 100.0).unwrap_err(),
+        SpecError::FigureSizeOutOfRange,
+        "a figure narrower than the floor is refused",
+    );
+
+    let panel = || {
+        spectrum_panel(
+            SpectrumRepresentation::Centroid,
+            series(vec![100.0, 200.0], vec![10.0, 20.0]),
+        )
+    };
+    // One panel fits; eight in the same height do not.
+    let one_panel_height = MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT;
+    let size = FigureSize::new(MIN_FIGURE_WIDTH, one_panel_height).expect("a size");
+    assert!(FigureSpec::new(FigureTheme::Light, size, vec![panel()]).is_ok());
+    assert_eq!(
+        FigureSpec::new(FigureTheme::Light, size, (0..8).map(|_| panel()).collect()).unwrap_err(),
+        SpecError::FigureTooSmallForPanels,
+    );
+
+    // And the smallest accepted figure still renders a plotting area the right
+    // way up, which is the property the floor exists for.
+    let smallest = FigureSpec::new(
+        FigureTheme::Light,
+        FigureSize::new(MIN_FIGURE_WIDTH, one_panel_height).expect("a size"),
+        vec![panel()],
+    )
+    .expect("a figure");
+    let document = svg::render(&smallest);
+    let path = path_data(&document);
+    assert!(!path.is_empty(), "the smallest figure still draws its data");
+    for value in path
+        .split(['M', 'L', 'V'])
+        .filter(|piece| !piece.is_empty())
+        .flat_map(|piece| piece.split_whitespace())
+        .filter_map(|value| value.parse::<f64>().ok())
+    {
+        assert!(
+            value.is_finite() && (-1.0..=MIN_FIGURE_WIDTH + 1.0).contains(&value),
+            "{value} left the smallest figure",
         );
     }
 }

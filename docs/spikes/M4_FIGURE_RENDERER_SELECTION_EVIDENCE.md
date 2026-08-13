@@ -128,20 +128,56 @@ Full source, exported whole:
 | centroid-dense-20k | 20,000 | 483,698 | 12 | 5 |
 | transfer-bound-500k | 500,000 | 8,065,802 | 13 | 6 |
 
-The same scenes reduced to 900 columns and exported *as a reduction*:
+The same scenes reduced to 900 columns and exported *as a reduction* — here
+under `MinMaxPerColumn`, the greatest and the least value of each column
+whatever their signs, which is **not** the rule the screen table above used:
 
 | scene | source | drawn | SVG bytes |
 | --- | ---: | ---: | ---: |
-| chromatogram-100k | 100,000 | 900 | 15,784 |
-| profile-dense-60k | 60,000 | 941 | 16,602 |
-| centroid-dense-20k | 20,000 | 900 | 22,925 |
-| transfer-bound-500k | 500,000 | 942 | 16,596 |
+| chromatogram-100k | 100,000 | 1,800 | 30,300 |
+| profile-dense-60k | 60,000 | 1,800 | 30,462 |
+| centroid-dense-20k | 20,000 | 1,800 | 44,641 |
+| transfer-bound-500k | 500,000 | 1,800 | 30,440 |
 
-A full-range export of the 500k scene is **486× larger** than the reduction of
-it (8,065,802 vs 16,596 bytes). That ratio is the difference candidate A silently
+Two per column in every row, because these scenes have no column so flat that
+its greatest and its least value are the same point. The screen's rows drew
+900–942 from the same sources under `ExtremePerSignPerColumn`, which keeps the
+tallest positive and the deepest negative and therefore keeps **one** value for
+an all-positive column. Both reductions are defensible; they are not the same
+reduction, and the contract names which one a figure used — see *Two reduction
+rules, named apart*.
+
+A full-range export of the 500k scene is **265× larger** than the reduction of
+it (8,065,802 vs 30,440 bytes). That ratio is the difference candidate A silently
 elided.
 
-Reduction cost alone, without rendering: 155 µs (20k) to 2.23 ms (500k).
+Reduction cost alone, without rendering: 211 µs (20k) to 2.18 ms (500k).
+
+### Two reduction rules, named apart
+
+The screen table and the export table above reduce the *same* sources to
+different counts, and that is the finding, not a discrepancy:
+
+| rule | what it keeps | all-positive column | these four scenes |
+| --- | --- | --- | ---: |
+| `MinMaxPerColumn` | greatest and least value, whatever the sign | 2 points | 1,800 drawn |
+| `ExtremePerSignPerColumn` | tallest positive, deepest negative | **1** point | 900–942 drawn |
+
+`StickSpectrum` performs the second. Raw intensity is nonnegative almost
+everywhere, so under that rule most columns contribute a single stick — which is
+why the screen's counts sit just above 900 rather than at 1,800, and why the two
+scenes carrying negative baseline (`profile-dense-60k`, `transfer-bound-500k`)
+reach 941 and 942 while the two that do not stay at exactly 900.
+
+The contract therefore names both rather than folding them into one label. The
+renderer writes the rule into the exported `<desc>` in words, so a figure reduced
+per-sign but tagged min/max would state, in the file a reader receives, that both
+extremes of every column survived when for most columns only one did. A test
+requires the two descriptions to differ and requires the per-sign one never to
+claim "greatest and the least value".
+
+Both rules keep signal of both signs wherever both are present. Neither is
+"safer"; they answer different questions, and the figure says which was asked.
 
 Every count above is exact and reproduced identically on every run. **The
 timings are not.** Across four runs under varying machine load:

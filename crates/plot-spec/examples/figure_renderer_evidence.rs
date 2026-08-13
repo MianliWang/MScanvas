@@ -134,11 +134,14 @@ fn centroid_spectrum(points: usize) -> Scene {
     }
 }
 
-/// The reduction the screen performs, applied here so the export harness can
-/// report what a reduced panel costs beside what a full-source one costs.
+/// A true min/max reduction, applied here so the export harness can report what
+/// a reduced panel costs beside what a full-source one costs.
 ///
-/// The same rule the screen states: the highest and the lowest value of each
-/// column, both kept, because intensity may be negative.
+/// Unconditional: the greatest and the least value of each column, whatever
+/// their signs. That is [`ReductionRule::MinMaxPerColumn`] and it is **not**
+/// what the screen's stick reduction does -- a stick plot keeps the tallest
+/// positive and the deepest negative, so an all-positive column keeps one
+/// value. Both are legitimate; describing either as the other is not.
 fn reduce_min_max(x: &[f64], y: &[f64], columns: usize) -> (Vec<f64>, Vec<f64>) {
     if x.is_empty() {
         return (Vec::new(), Vec::new());
@@ -155,20 +158,23 @@ fn reduce_min_max(x: &[f64], y: &[f64], columns: usize) -> (Vec<f64>, Vec<f64>) 
             0.5
         };
         let column = ((fraction * columns as f64) as usize).min(columns - 1);
-        if *height >= 0.0 {
-            let slot = &mut highest[column];
-            if slot.is_none_or(|(_, kept)| *height > kept) {
-                *slot = Some((*value, *height));
-            }
-        } else {
-            let slot = &mut lowest[column];
-            if slot.is_none_or(|(_, kept)| *height < kept) {
-                *slot = Some((*value, *height));
-            }
+        let top = &mut highest[column];
+        if top.is_none_or(|(_, kept)| *height > kept) {
+            *top = Some((*value, *height));
+        }
+        let bottom = &mut lowest[column];
+        if bottom.is_none_or(|(_, kept)| *height < kept) {
+            *bottom = Some((*value, *height));
         }
     }
     let mut kept: Vec<(f64, f64)> = highest.into_iter().chain(lowest).flatten().collect();
     kept.sort_by(|left, right| left.0.total_cmp(&right.0));
+    // A column whose greatest and least value are the same point contributes it
+    // once. Emitting it twice would inflate the drawn count this harness
+    // reports and draw one measurement on top of itself.
+    kept.dedup_by(|left, right| {
+        left.0.to_bits() == right.0.to_bits() && left.1.to_bits() == right.1.to_bits()
+    });
     kept.into_iter().unzip()
 }
 

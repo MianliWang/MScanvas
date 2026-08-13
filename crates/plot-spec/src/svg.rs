@@ -27,6 +27,9 @@ use std::fmt::Write as _;
 /// platform, and a formatter that chose its own precision would not.
 const COORDINATE_DECIMALS: usize = 3;
 
+/// Half the width of the mark a single-sample trace is drawn as.
+const LONE_SAMPLE_TICK: f64 = 2.0;
+
 /// The gutter around the plotting area, in figure units.
 const MARGIN_LEFT: f64 = 64.0;
 const MARGIN_RIGHT: f64 = 20.0;
@@ -152,13 +155,14 @@ fn panel_description(panel: &PanelSpec) -> String {
 
     for series in &panel.series {
         if let DataScope::Reduced {
-            source_point_count, ..
+            source_point_count,
+            rule,
         } = series.scope
         {
             sentences.push(format!(
-                "Drawn from {source_point_count} source points reduced to {}, keeping the \
-                 highest and the lowest value in each column.",
-                series.len()
+                "Drawn from {source_point_count} source points reduced to {}, {}.",
+                series.len(),
+                rule.describe(),
             ));
         }
     }
@@ -223,16 +227,20 @@ pub fn render(figure: &FigureSpec) -> String {
         .map_or_else(|| default_title(figure), |label| label.as_str().to_owned());
     let _ = writeln!(out, "<title>{}</title>", escape(&title));
 
+    // A supplied caption is added to the disclosures, never in place of them.
+    // The generated sentences are where a reduction states its counts and rule,
+    // and where an unreported representation says so; letting an author's
+    // caption replace them would let a custom-titled export look scientifically
+    // complete while dropping the two facts a reader most needs.
+    let disclosures = figure
+        .panels
+        .iter()
+        .map(panel_description)
+        .collect::<Vec<_>>()
+        .join(" ");
     let description = figure.caption.as_ref().map_or_else(
-        || {
-            figure
-                .panels
-                .iter()
-                .map(panel_description)
-                .collect::<Vec<_>>()
-                .join(" ")
-        },
-        |caption| caption.as_str().to_owned(),
+        || disclosures.clone(),
+        |caption| format!("{} {}", caption.as_str(), disclosures),
     );
     let _ = writeln!(out, "<desc>{}</desc>", escape(&description));
 
@@ -516,13 +524,22 @@ fn render_series(
                 coordinate(project(by, values, plot_bottom, plot_top)),
             );
         }
-        // A lone sample inside the window has no segment to be part of.
+        // A lone sample inside the window has no segment to be part of, and a
+        // bare move command paints nothing -- so a single-sample trace would
+        // render a blank plot area for data the contract explicitly accepts.
+        // Drawn as a short horizontal tick at its own value: visible, honest
+        // about there being no trace, and asserting nothing between samples
+        // that do not exist.
         if xs.len() == 1 && xs[0] >= low && xs[0] <= high {
+            let x = project(xs[0], domain, frame.left, frame.right);
+            let y = project(ys[0], values, plot_bottom, plot_top);
             let _ = write!(
                 path,
-                "M{} {}",
-                coordinate(project(xs[0], domain, frame.left, frame.right)),
-                coordinate(project(ys[0], values, plot_bottom, plot_top)),
+                "M{} {}L{} {}",
+                coordinate((x - LONE_SAMPLE_TICK).max(frame.left)),
+                coordinate(y),
+                coordinate((x + LONE_SAMPLE_TICK).min(frame.right)),
+                coordinate(y),
             );
         }
     } else {

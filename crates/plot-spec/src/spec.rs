@@ -44,6 +44,21 @@ pub const MAX_FIGURE_EDGE: f64 = 20_000.0;
 /// The most panels one figure may hold.
 pub const MAX_PANELS: usize = 8;
 
+/// The narrowest figure any renderer here can draw into.
+///
+/// A figure needs gutters for its value labels and its axis caption, and below
+/// some width those gutters meet and the plotting area runs backwards. The
+/// exact gutters are a renderer's business, so this is a contract-level floor
+/// generous enough for any of them; a test pins that this repository's renderer
+/// fits inside it.
+pub const MIN_FIGURE_WIDTH: f64 = 200.0;
+
+/// The height one figure needs before its first panel.
+pub const MIN_FIGURE_CHROME_HEIGHT: f64 = 100.0;
+
+/// The height each panel needs on top of that.
+pub const MIN_PANEL_HEIGHT: f64 = 60.0;
+
 /// Why a specification was refused.
 ///
 /// Closed and specific. Each member names one thing a caller can correct, and
@@ -69,6 +84,8 @@ pub enum SpecError {
     FigureSizeOutOfRange,
     /// A figure held no panel, or more than the bound.
     PanelCountOutOfRange,
+    /// A figure was too small for the panels it declared.
+    FigureTooSmallForPanels,
     /// A reduction claimed to come from fewer points than it holds.
     ReductionNotSmaller,
     /// A series held a point outside the panel's own declared domains.
@@ -89,6 +106,7 @@ impl fmt::Display for SpecError {
             Self::SourceNotOrdered => "the source points were not ordered",
             Self::FigureSizeOutOfRange => "a figure edge was out of range",
             Self::PanelCountOutOfRange => "the panel count was out of range",
+            Self::FigureTooSmallForPanels => "the figure is too small for its panels",
             Self::ReductionNotSmaller => "a reduction was not smaller than its source",
             Self::PointOutsideDomain => "a series left the panel's declared domain",
             Self::UnknownSchemaVersion => "the document declares an unknown schema version",
@@ -329,17 +347,42 @@ impl Domain {
 /// How one column of a reduction was chosen.
 ///
 /// Named rather than implied, because a figure that says it was reduced owes
-/// the reader the rule. `MinMaxPerColumn` is the only rule this build performs
-/// and the only one it can honestly describe.
+/// the reader the rule -- and because the two rules below are genuinely
+/// different reductions that a single name would have blurred.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReductionRule {
-    /// The highest and the lowest value of each column, both kept.
+    /// The greatest and the least value of each column, both kept.
     ///
-    /// Both, because intensity may be negative after baseline subtraction and
+    /// The rule a trace needs. A chromatogram column holding a peak and the
+    /// valley beside it keeps both, so the drawn line still has a lower edge.
+    MinMaxPerColumn,
+    /// The greatest non-negative and the least negative value of each column.
+    ///
+    /// What a stick plot needs, and **not** the same rule as above: a column of
+    /// entirely positive values keeps only its tallest stick, because a shorter
+    /// stick beside a taller one is drawn inside it and adds nothing. The
+    /// negative half is tracked separately rather than dropped, because
+    /// intensity is legitimately negative after baseline subtraction and
     /// keeping only the larger magnitude would erase measured signal of the
     /// other sign.
-    MinMaxPerColumn,
+    ///
+    /// Describing this as min/max would be false for every all-positive column,
+    /// which is most of them.
+    ExtremePerSignPerColumn,
+}
+
+impl ReductionRule {
+    /// How a figure states this rule to a reader.
+    #[must_use]
+    pub const fn describe(self) -> &'static str {
+        match self {
+            Self::MinMaxPerColumn => "keeping the greatest and the least value in each column",
+            Self::ExtremePerSignPerColumn => {
+                "keeping the tallest positive and the deepest negative value in each column"
+            }
+        }
+    }
 }
 
 /// Whether these points are the source or a reduction of it.
@@ -650,8 +693,14 @@ impl FigureSize {
     }
 
     fn validate(self) -> Result<(), SpecError> {
-        let sane = |edge: f64| edge.is_finite() && edge > 0.0 && edge <= MAX_FIGURE_EDGE;
-        if !sane(self.width) || !sane(self.height) {
+        let sane =
+            |edge: f64, floor: f64| edge.is_finite() && edge >= floor && edge <= MAX_FIGURE_EDGE;
+        // The height floor here is the one-panel case; a figure with more
+        // panels is held to its own floor by `FigureSpec::validate`, which is
+        // the only place the panel count is known.
+        if !sane(self.width, MIN_FIGURE_WIDTH)
+            || !sane(self.height, MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT)
+        {
             return Err(SpecError::FigureSizeOutOfRange);
         }
         Ok(())
@@ -722,6 +771,14 @@ impl FigureSpec {
         }
         if self.panels.is_empty() || self.panels.len() > MAX_PANELS {
             return Err(SpecError::PanelCountOutOfRange);
+        }
+        // Panels share the figure's height, so eight of them need eight times
+        // the room one does. Without this a valid-looking figure could hand the
+        // renderer a panel band with negative height and get a plot drawn
+        // upside down.
+        let needed = MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT * (self.panels.len() as f64);
+        if self.size.height() < needed {
+            return Err(SpecError::FigureTooSmallForPanels);
         }
         for panel in &self.panels {
             panel.validate()?;

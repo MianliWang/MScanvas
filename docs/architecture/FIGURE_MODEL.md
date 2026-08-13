@@ -81,6 +81,12 @@ what the data means.
   series is, so a full-range export cannot silently be the screen's reduction —
   the failure mode measured in the rejected DOM-serialization candidate, which
   exported 942 of 500,000 points.
+- A reduction states **which** rule it used. `MinMaxPerColumn` keeps the greatest
+  and the least value of a column; `ExtremePerSignPerColumn` — what the screen
+  performs — keeps the tallest positive and the deepest negative, which for an
+  all-positive column is one value, not two. The exported description names the
+  rule in words, so the distinction reaches the reader rather than staying in the
+  code.
 - An **unreported** spectrum representation is not centroid data, and an
   unreported unit is not a dimensionless one. Both are third states in the
   contract, and the exported description says so in words.
