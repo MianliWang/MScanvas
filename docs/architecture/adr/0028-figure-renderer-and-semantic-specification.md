@@ -137,6 +137,13 @@ in the output can say so. Refused rather than left to the caller happening to
 pick the other rule, and only in that direction: two sticks in a column is not a
 misdrawing, so a discrete panel accepts either.
 
+Decoding refuses a field this build does not know, at every depth. Ignoring one
+turns a typo into a silent change of meaning: a misspelled `visible_domain`
+decodes as *no window*, and a specification that asked for a selected range
+becomes a full-source export with nothing in it to say so. An optional field is
+exactly where that is invisible, because there is no missing-field error to
+raise.
+
 "Unrepresentable" is load-bearing rather than decorative, so every field
 carrying a validated invariant is `pub(crate)` with a public read accessor. A
 public field would have reduced the claim to *checked once*: a marker position
@@ -263,7 +270,12 @@ it does not hold.
 A marker label is wrapped to the width available, clamped inside the canvas, and
 stepped down past every label already placed in its panel — and, where the page
 has no room for the block at any position, shrunk a point at a time until it
-fits, to a floor below which it would be present without being readable.
+fits, to a floor below which it would be present without being readable. A
+label that does not fit at any size is **not drawn**, and the description names
+it: an unreadable annotation and a missing one look identical in the figure, and
+only one of them says so. That is why the panels are rendered before the
+description is written — the words have to be able to report what the drawing
+actually did.
 Stepping down cannot help a block taller than the room left for it: two
 eight-line labels do not fit one under the other on a small figure however
 politely they take turns. Smaller text is a real cost; text with another string

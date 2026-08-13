@@ -340,6 +340,11 @@ impl SpectrumRepresentation {
 /// axis that genuinely has no dimension has.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
+// A field this build does not know is a field the sender meant something
+// by. Ignoring it turns a typo into a silent change of meaning -- a
+// misspelled `visible_domain` decodes as "no window" and exports the whole
+// source -- so the document is refused instead.
+#[serde(deny_unknown_fields)]
 pub enum UnitState {
     /// The file reported this unit.
     Known { unit: Label },
@@ -352,6 +357,11 @@ pub enum UnitState {
 /// What one panel plots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+// A field this build does not know is a field the sender meant something
+// by. Ignoring it turns a typo into a silent change of meaning -- a
+// misspelled `visible_domain` decodes as "no window" and exports the whole
+// source -- so the document is refused instead.
+#[serde(deny_unknown_fields)]
 pub enum PlotKind {
     /// A mass spectrum, carrying what the file said its points are.
     Spectrum {
@@ -392,6 +402,11 @@ impl PlotKind {
 
 /// One axis, semantically.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// A field this build does not know is a field the sender meant something
+// by. Ignoring it turns a typo into a silent change of meaning -- a
+// misspelled `visible_domain` decodes as "no window" and exports the whole
+// source -- so the document is refused instead.
+#[serde(deny_unknown_fields)]
 pub struct AxisSpec {
     /// What the axis is, in words. Never a CSS selector or a field name.
     pub label: Label,
@@ -418,6 +433,11 @@ impl AxisSpec {
 /// Finite and ordered by construction, so no renderer has to decide what to do
 /// with a backwards or infinite range.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+// A field this build does not know is a field the sender meant something
+// by. Ignoring it turns a typo into a silent change of meaning -- a
+// misspelled `visible_domain` decodes as "no window" and exports the whole
+// source -- so the document is refused instead.
+#[serde(deny_unknown_fields)]
 pub struct Domain {
     low: f64,
     high: f64,
@@ -521,6 +541,11 @@ impl ReductionRule {
 /// is what makes the difference checkable rather than a convention.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "scope", rename_all = "snake_case")]
+// A field this build does not know is a field the sender meant something
+// by. Ignoring it turns a typo into a silent change of meaning -- a
+// misspelled `visible_domain` decodes as "no window" and exports the whole
+// source -- so the document is refused instead.
+#[serde(deny_unknown_fields)]
 pub enum DataScope {
     /// Every source point within the panel's domain.
     FullSource,
@@ -546,6 +571,11 @@ pub enum StyleRole {
 
 /// One ordered set of points, and what it is.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+// A field this build does not know is a field the sender meant something
+// by. Ignoring it turns a typo into a silent change of meaning -- a
+// misspelled `visible_domain` decodes as "no window" and exports the whole
+// source -- so the document is refused instead.
+#[serde(deny_unknown_fields)]
 pub struct SeriesSpec {
     /// Stable within one specification. Not a database key and not a handle.
     pub(crate) id: Label,
@@ -660,6 +690,11 @@ impl SeriesSpec {
 
 /// A persistent point of interest on the domain axis.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+// A field this build does not know is a field the sender meant something
+// by. Ignoring it turns a typo into a silent change of meaning -- a
+// misspelled `visible_domain` decodes as "no window" and exports the whole
+// source -- so the document is refused instead.
+#[serde(deny_unknown_fields)]
 pub struct Marker {
     pub(crate) at: f64,
     pub(crate) label: Option<Label>,
@@ -700,6 +735,11 @@ impl Marker {
 
 /// One plot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+// A field this build does not know is a field the sender meant something
+// by. Ignoring it turns a typo into a silent change of meaning -- a
+// misspelled `visible_domain` decodes as "no window" and exports the whole
+// source -- so the document is refused instead.
+#[serde(deny_unknown_fields)]
 pub struct PanelSpec {
     pub(crate) kind: PlotKind,
     pub(crate) x_axis: AxisSpec,
@@ -940,6 +980,11 @@ pub enum FigureTheme {
 
 /// How large the figure is, in figure units.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+// A field this build does not know is a field the sender meant something
+// by. Ignoring it turns a typo into a silent change of meaning -- a
+// misspelled `visible_domain` decodes as "no window" and exports the whole
+// source -- so the document is refused instead.
+#[serde(deny_unknown_fields)]
 pub struct FigureSize {
     width: f64,
     height: f64,
@@ -1141,6 +1186,11 @@ impl FigureSpec {
 /// what a derived `Deserialize` on the public type would have handed to
 /// everyone instead.
 #[derive(Deserialize)]
+// A field this build does not know is a field the sender meant something
+// by. Ignoring it turns a typo into a silent change of meaning -- a
+// misspelled `visible_domain` decodes as "no window" and exports the whole
+// source -- so the document is refused instead.
+#[serde(deny_unknown_fields)]
 struct WireFigure {
     schema_version: u32,
     theme: FigureTheme,

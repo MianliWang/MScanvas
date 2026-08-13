@@ -216,7 +216,7 @@ fn enters_below_zero(series: &SeriesSpec, drawn: Domain) -> bool {
 /// The sentence an export owes the person reading it rather than the person who
 /// made it: whether these are the source points or a reduction, and whether the
 /// file said what the points are at all.
-fn panel_description(panel: &PanelSpec) -> String {
+fn panel_description(panel: &PanelSpec, unplaced: &[String]) -> String {
     let mut sentences = Vec::new();
 
     match panel.kind {
@@ -328,11 +328,10 @@ fn panel_description(panel: &PanelSpec) -> String {
         // reader is not left deciding whether the instrument reported nothing
         // or reported nothing above zero.
         sentences.push("Every drawn value is zero.".to_owned());
-    } else if panel.kind.joins_a_trace()
-        && panel
-            .series
-            .iter()
-            .any(|series| enters_below_zero(series, drawn))
+    } else if panel
+        .series
+        .iter()
+        .any(|series| panel.joins(series) && enters_below_zero(series, drawn))
     {
         // A trace can be drawn below the zero line without any *measured* value
         // inside the window being negative: the window cuts a segment whose
@@ -345,6 +344,27 @@ fn panel_description(panel: &PanelSpec) -> String {
              of the window from a negative value outside it."
                 .to_owned(),
         );
+    }
+
+    // A marker whose label the page had no room for still draws its line, so
+    // the figure would look annotated while an annotation was missing. The
+    // words go here instead: nothing is lost from the file, and a reader is
+    // told to expect a mark they cannot read a name for.
+    match unplaced {
+        [] => {}
+        [only] => sentences.push(format!(
+            "One marker is drawn without its label, \"{only}\", because the figure is too \
+             small to place it clear of the others."
+        )),
+        many => sentences.push(format!(
+            "{} markers are drawn without their labels, {}, because the figure is too small \
+             to place them clear of one another.",
+            many.len(),
+            many.iter()
+                .map(|label| format!("\"{label}\""))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )),
     }
 
     sentences.join(" ")
@@ -389,6 +409,13 @@ pub fn render(figure: &FigureSpec) -> String {
     );
     out.push_str(">\n");
 
+    // The panels are drawn into a buffer before anything is written, because
+    // the description below has to be able to say what the drawing actually
+    // did -- and one of the things it must report is a marker label the page
+    // had no room for. The document's order is unchanged: this only computes
+    // the body earlier than it appends it.
+    let (body, unplaced) = render_panels(figure, width, height, &colours);
+
     // The accessible pair, first, because a reader that stops at the first
     // child should already know what it is looking at.
     let title = figure
@@ -405,7 +432,8 @@ pub fn render(figure: &FigureSpec) -> String {
     let disclosures = figure
         .panels
         .iter()
-        .map(panel_description)
+        .zip(unplaced.iter())
+        .map(|(panel, missing)| panel_description(panel, missing))
         .collect::<Vec<_>>()
         .join(" ");
     let description = figure.caption.as_ref().map_or_else(
@@ -445,9 +473,24 @@ pub fn render(figure: &FigureSpec) -> String {
         );
     }
 
-    // Panels stack in the order the specification gives them, sharing the
-    // figure's height. One panel today; the arithmetic is already the general
-    // one so a second does not change this function's shape.
+    out.push_str(&body);
+    out.push_str("</svg>\n");
+    out
+}
+
+/// Draws every panel, and reports the marker labels each had no room for.
+///
+/// Panels stack in the order the specification gives them, sharing the figure's
+/// height. One panel today; the arithmetic is already the general one so a
+/// second does not change this function's shape.
+fn render_panels(
+    figure: &FigureSpec,
+    width: f64,
+    height: f64,
+    colours: &Palette,
+) -> (String, Vec<Vec<String>>) {
+    let mut body = String::with_capacity(4_096);
+    let mut unplaced = Vec::with_capacity(figure.panels.len());
     let panel_count = figure.panels.len();
     let usable = height - MARGIN_TOP - MARGIN_BOTTOM;
     let panel_height = usable / panel_count as f64;
@@ -475,11 +518,9 @@ pub fn render(figure: &FigureSpec) -> String {
             zero_y,
             canvas_height: height,
         };
-        render_panel(&mut out, panel, &frame, &colours);
+        unplaced.push(render_panel(&mut body, panel, &frame, colours));
     }
-
-    out.push_str("</svg>\n");
-    out
+    (body, unplaced)
 }
 
 /// What a figure is called when it was given no title.
@@ -491,7 +532,12 @@ fn default_title(figure: &FigureSpec) -> String {
     }
 }
 
-fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Palette) {
+fn render_panel(
+    out: &mut String,
+    panel: &PanelSpec,
+    frame: &Frame,
+    colours: &Palette,
+) -> Vec<String> {
     let domain = panel.drawn_domain();
     let values = panel.value_domain;
     let plot_top = frame.plot_top;
@@ -548,6 +594,7 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
     // labels at one baseline hides whichever was written first, leaving a
     // figure that looks annotated and is missing an annotation.
     let mut occupied: Vec<TextBox> = Vec::new();
+    let mut unplaced: Vec<String> = Vec::new();
     for marker in &panel.markers {
         if marker.at < domain.low() || marker.at > domain.high() {
             continue;
@@ -563,8 +610,8 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
             coordinate(plot_bottom),
             colours.marker,
         );
-        if let Some(label) = marker.label.as_ref() {
-            render_marker_label(
+        if let Some(label) = marker.label.as_ref()
+            && !render_marker_label(
                 out,
                 label,
                 x,
@@ -572,7 +619,9 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
                 &mut occupied,
                 frame,
                 colours,
-            );
+            )
+        {
+            unplaced.push(label.as_str().to_owned());
         }
     }
 
@@ -665,6 +714,7 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
             escape(&value_low_text),
         );
     }
+    unplaced
 }
 
 fn render_series(
@@ -990,7 +1040,7 @@ fn render_marker_label(
     occupied: &mut Vec<TextBox>,
     frame: &Frame,
     colours: &Palette,
-) {
+) -> bool {
     let plot_top = frame.plot_top;
     let canvas_width = frame.right + MARGIN_RIGHT;
     let canvas_height = frame.canvas_height;
@@ -1016,7 +1066,7 @@ fn render_marker_label(
         )]
         let lines = wrap_label(label.as_str(), columns as usize);
         let Some(widest) = lines.iter().map(|line| line.chars().count()).max() else {
-            return;
+            return false;
         };
         let block = widest as f64 * character;
         let left = (x + 3.0)
@@ -1048,15 +1098,15 @@ fn render_marker_label(
             }
             top += leading;
         }
-        if clear || size <= MIN_MARKER_LABEL_SIZE {
-            chosen = Some((size, lines, left, top.min(floor).max(size), block));
+        if clear {
+            chosen = Some((size, lines, left, top, block));
             break;
         }
         size -= 1.0;
     }
 
     let Some((size, lines, left, top, block)) = chosen else {
-        return;
+        return false;
     };
     let leading = size + 2.0;
     let character = TEXT_EM * size;
@@ -1082,6 +1132,7 @@ fn render_marker_label(
         );
     }
     let _ = writeln!(out, "</text>");
+    true
 }
 
 /// The two ends of one axis, formatted so that they remain two numbers.

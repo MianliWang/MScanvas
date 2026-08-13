@@ -1584,6 +1584,42 @@ fn a_trace_crossing_into_the_window_from_below_zero_is_disclosed() {
         "but part of the drawing is below it: {document}",
     );
 
+    // And a baseline inside a panel of sticks: it is joined and clipped like
+    // any trace, so it crosses below zero in exactly the same way -- which a
+    // disclosure asking only about the panel kind could not see.
+    let with_baseline = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 10.0),
+        domain(-10.0, 10.0),
+        vec![
+            series(vec![2.0, 8.0], vec![4.0, 6.0]),
+            SeriesSpec::new(
+                label("baseline"),
+                StyleRole::Baseline,
+                DataScope::FullSource,
+                vec![0.0, 10.0],
+                vec![-10.0, 10.0],
+            )
+            .expect("a baseline"),
+        ],
+    )
+    .expect("a panel")
+    .with_visible_domain(domain(1.0, 10.0))
+    .expect("a window inside the domain");
+    let drawn_baseline = svg::render(&figure_of(with_baseline));
+    assert!(
+        !drawn_baseline.contains("of the drawn values are negative"),
+        "no measured value inside the window is negative: {drawn_baseline}",
+    );
+    assert!(
+        drawn_baseline.contains("Part of the drawn trace lies below the zero line"),
+        "but the joined baseline is below it: {drawn_baseline}",
+    );
+
     // A discrete panel never interpolates, so it must not gain the sentence.
     let sticks = PanelSpec::new(
         PlotKind::Spectrum {
@@ -2493,63 +2529,69 @@ fn a_baseline_is_drawn_as_a_line_even_among_sticks() {
     );
 }
 
-/// A label with no room to move shrinks rather than landing on another.
+/// A crowded label shrinks to fit, and is never drawn over another.
 ///
-/// Stepping down the page cannot help a block taller than the room left for
-/// it: two eight-line labels do not fit one under the other on a small figure
-/// however politely they take turns, and the previous rule left the second
-/// exactly on top of the first.
+/// Stepping down the page cannot help a block taller than the room left for it:
+/// two eight-line labels do not fit one under the other on a small figure
+/// however politely they take turns. So a label that cannot be placed clear at
+/// its size shrinks — and if no size fits, it is not drawn at all and the
+/// description names it, because an unreadable annotation and a missing one
+/// look identical while only one of them says so.
 #[test]
-fn labels_with_no_room_shrink_rather_than_overlap() {
+fn a_crowded_label_shrinks_and_is_never_drawn_over_another() {
+    fn marker_baselines(document: &str) -> Vec<f64> {
+        document
+            .split("<text ")
+            .skip(1)
+            // The marker colour: a wrapped label is many `<tspan>`s, so no
+            // single block holds the whole string to match on.
+            .filter(|block| block.contains("#b3261e"))
+            .filter_map(|block| {
+                block
+                    .split("y=\"")
+                    .nth(1)?
+                    .split('"')
+                    .next()?
+                    .parse::<f64>()
+                    .ok()
+            })
+            .collect()
+    }
+
     let long = "m".repeat(MAX_LABEL_CHARS);
-    let panel = spectrum_panel(
-        SpectrumRepresentation::Centroid,
-        series(vec![100.0, 200.0], vec![10.0, 20.0]),
-    )
-    .with_markers(vec![
-        Marker::new(150.0, Some(label(&long))).expect("a marker"),
-        Marker::new(150.0, Some(label(&long))).expect("a marker"),
-    ])
-    .expect("markers on a valid panel");
-
-    let document = svg::render(
-        &FigureSpec::new(
-            FigureTheme::Light,
-            FigureSize::new(
-                MIN_FIGURE_WIDTH,
-                MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT,
-            )
-            .expect("the smallest figure that holds one panel"),
-            vec![panel],
+    let figure = |height: f64| {
+        let panel = spectrum_panel(
+            SpectrumRepresentation::Centroid,
+            series(vec![100.0, 200.0], vec![10.0, 20.0]),
         )
-        .expect("one panel is a figure"),
-    );
+        .with_markers(vec![
+            Marker::new(150.0, Some(label(&long))).expect("a marker"),
+            Marker::new(150.0, Some(label(&long))).expect("a marker"),
+        ])
+        .expect("markers on a valid panel");
+        svg::render(
+            &FigureSpec::new(
+                FigureTheme::Light,
+                FigureSize::new(MIN_FIGURE_WIDTH, height).expect("a size"),
+                vec![panel],
+            )
+            .expect("one panel is a figure"),
+        )
+    };
 
-    // Two blocks, and their first baselines are not the same coordinate.
-    let baselines: Vec<f64> = document
-        .split("<text ")
-        .skip(1)
-        // The marker colour: the wrapped label is many `<tspan>`s, so no single
-        // block holds the whole string to match on.
-        .filter(|block| block.contains("#b3261e"))
-        .filter_map(|block| {
-            block
-                .split("y=\"")
-                .nth(1)?
-                .split('"')
-                .next()?
-                .parse::<f64>()
-                .ok()
-        })
-        .collect();
-    assert_eq!(baselines.len(), 2, "both labels are drawn");
+    // Room for both, once one of them shrinks.
+    let roomy = figure(420.0);
+    let baselines = marker_baselines(&roomy);
+    assert_eq!(baselines.len(), 2, "both labels are drawn: {baselines:?}");
     assert_ne!(
         baselines[0], baselines[1],
-        "the second label did not land on the first: {baselines:?}",
+        "and not on top of each other: {baselines:?}",
     );
-
-    // Every character survives the shrinking, in both labels.
-    let kept: String = document
+    assert!(
+        !roomy.contains("drawn without"),
+        "so nothing is reported missing: {roomy}",
+    );
+    let kept: String = roomy
         .split("<tspan")
         .skip(1)
         .filter_map(|piece| {
@@ -2565,4 +2607,68 @@ fn labels_with_no_room_shrink_rather_than_overlap() {
         MAX_LABEL_CHARS * 2,
         "nothing was elided to make room",
     );
+
+    // Room for neither at any size: one label is drawn, and the figure says in
+    // words that the other is not.
+    let cramped = figure(MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT);
+    assert_eq!(
+        marker_baselines(&cramped).len(),
+        1,
+        "the second is not stacked on the first: {cramped}",
+    );
+    assert!(
+        cramped.contains("One marker is drawn without its label"),
+        "and the description says so: {cramped}",
+    );
+    assert!(
+        cramped.contains(&long),
+        "naming it, so the words are still in the file: {cramped}",
+    );
+}
+
+/// A misspelled optional field is refused rather than quietly dropped.
+///
+/// `serde` ignores what it does not recognise, so `visible_domian` decoded as
+/// "no window" — and a specification that asked for a selected range became a
+/// full-source export with nothing to show it had changed. An optional field is
+/// exactly where this is invisible: there is no missing-field error to raise.
+#[test]
+fn a_field_this_build_does_not_know_is_refused() {
+    let windowed = figure_of(
+        spectrum_panel(
+            SpectrumRepresentation::Centroid,
+            series(vec![100.0, 200.0], vec![10.0, 20.0]),
+        )
+        .with_visible_domain(domain(120.0, 180.0))
+        .expect("a window inside the domain"),
+    )
+    .to_json()
+    .expect("a figure serializes");
+    assert!(windowed.contains("visible_domain"));
+
+    let misspelled = windowed.replace("visible_domain", "visible_domian");
+    assert_ne!(misspelled, windowed, "the probe edited something");
+    assert_eq!(
+        FigureSpec::from_json(&misspelled).unwrap_err(),
+        DecodeError::Malformed,
+        "a typo must not decode as a full-range export",
+    );
+    assert!(serde_json::from_str::<FigureSpec>(&misspelled).is_err());
+
+    // And a field invented at any depth is refused too, not only at the top.
+    for (name, broken) in [
+        ("a panel", windowed.replace("\"markers\"", "\"marks\"")),
+        ("a series", windowed.replace("\"role\"", "\"roll\"")),
+        ("a domain", windowed.replace("\"low\"", "\"lo\"")),
+    ] {
+        assert_ne!(broken, windowed, "{name}: the probe edited something");
+        assert!(
+            FigureSpec::from_json(&broken).is_err(),
+            "{name} decoded with a field this build does not know",
+        );
+    }
+
+    // The document it was made from still decodes, so the rule is unknown
+    // fields rather than strictness for its own sake.
+    assert!(FigureSpec::from_json(&windowed).is_ok());
 }
