@@ -123,10 +123,10 @@ Full source, exported whole:
 
 | scene | source | SVG bytes | SVG elements | `<text>` nodes |
 | --- | ---: | ---: | ---: | ---: |
-| chromatogram-100k | 100,000 | 1,613,790 | 12 | 5 |
-| profile-dense-60k | 60,000 | 969,066 | 13 | 6 |
-| centroid-dense-20k | 20,000 | 483,698 | 12 | 5 |
-| transfer-bound-500k | 500,000 | 8,065,802 | 13 | 6 |
+| chromatogram-100k | 100,000 | 1,613,860 | 12 | 5 |
+| profile-dense-60k | 60,000 | 969,132 | 13 | 6 |
+| centroid-dense-20k | 20,000 | 483,768 | 12 | 5 |
+| transfer-bound-500k | 500,000 | 8,065,868 | 13 | 6 |
 
 The same scenes reduced to 900 columns and exported *as a reduction* — here
 under `MinMaxPerColumn`, the greatest and the least value of each column
@@ -134,10 +134,10 @@ whatever their signs, which is **not** the rule the screen table above used:
 
 | scene | source | drawn | SVG bytes |
 | --- | ---: | ---: | ---: |
-| chromatogram-100k | 100,000 | 1,800 | 30,300 |
-| profile-dense-60k | 60,000 | 1,800 | 30,462 |
-| centroid-dense-20k | 20,000 | 1,800 | 44,641 |
-| transfer-bound-500k | 500,000 | 1,800 | 30,440 |
+| chromatogram-100k | 100,000 | 1,800 | 30,369 |
+| profile-dense-60k | 60,000 | 1,800 | 30,527 |
+| centroid-dense-20k | 20,000 | 1,800 | 44,712 |
+| transfer-bound-500k | 500,000 | 1,800 | 30,505 |
 
 Two per column in every row, because these scenes have no column so flat that
 its greatest and its least value are the same point. The screen's rows drew
@@ -147,11 +147,11 @@ an all-positive column. Both reductions are defensible; they are not the same
 reduction, and the contract names which one a figure used — see *Two reduction
 rules, named apart*.
 
-A full-range export of the 500k scene is **265× larger** than the reduction of
-it (8,065,802 vs 30,440 bytes). That ratio is the difference candidate A silently
+A full-range export of the 500k scene is **264× larger** than the reduction of
+it (8,065,868 vs 30,505 bytes). That ratio is the difference candidate A silently
 elided.
 
-Reduction cost alone, without rendering: 211 µs (20k) to 2.18 ms (500k).
+Reduction cost alone, without rendering: 217 µs (20k) to 2.30 ms (500k).
 
 ### Two reduction rules, named apart
 
@@ -187,8 +187,8 @@ timings are not.** Across four runs under varying machine load:
 | chromatogram-100k | 32.0 ms – 113.3 ms |
 | transfer-bound-500k | 166.3 ms – 771.1 ms |
 
-The byte counts were byte-identical in all four runs (`1,613,790` and
-`8,065,802` every time) while the timings moved by up to 4.6×. These are
+The byte counts were byte-identical in all four runs (`1,613,860` and
+`8,065,868` every time) while the timings moved by up to 4.6×. These are
 order-of-magnitude facts about one loaded laptop, not a product guarantee, and
 they are the reason timing alone did not choose the renderer.
 
@@ -198,11 +198,11 @@ the 500k one, plus an 8 MB output string: **46 MB**.
 Edge scenes, all five:
 
 ```text
-empty          svg_bytes=  1189  elements=11  finite_only=true chrome_free=true external_free=true
-single-point   svg_bytes=  1277  elements=12  finite_only=true chrome_free=true external_free=true
-flat           svg_bytes= 24379  elements=12  finite_only=true chrome_free=true external_free=true
-all-negative   svg_bytes= 24444  elements=13  finite_only=true chrome_free=true external_free=true
-all-zero       svg_bytes= 25379  elements=12  finite_only=true chrome_free=true external_free=true
+empty          svg_bytes=  1260  elements=11  finite_only=true chrome_free=true external_free=true
+single-point   svg_bytes=  1353  elements=12  finite_only=true chrome_free=true external_free=true
+flat           svg_bytes= 24444  elements=12  finite_only=true chrome_free=true external_free=true
+all-negative   svg_bytes= 24506  elements=13  finite_only=true chrome_free=true external_free=true
+all-zero       svg_bytes= 25448  elements=12  finite_only=true chrome_free=true external_free=true
 ```
 
 `external_free` deliberately does not look for `http://`. The SVG namespace
@@ -241,7 +241,29 @@ reader would take it to mean, and nothing in the output said so.
 
 Widening the range inside the renderer was the alternative and was rejected: the
 axis text would then have disagreed with the drawing. A trace is exempt — it is
-a shape over the axis, and a range excluding zero merely zooms it.
+a shape over the axis, and a range excluding zero merely zooms it. The exemption
+has its own cost, paid separately: a zoomed trace must print its non-zero lower
+end, or the horizontal line at the bottom edge reads as a zero line and every
+height on the figure reads as larger than it is.
+
+### What the harness itself got wrong, and what it cost
+
+The reduction harness derived each figure's `full_domain` from the points the
+reduction retained. A reduction keeps each column's extremes, and the first
+sample of a scene is not usually one of them, so the axis was quietly narrower
+than the source the same series claimed — through `DataScope::Reduced` — to
+stand for. Measured across the four scenes:
+
+| scene | source domain | retained | cropped |
+| --- | --- | --- | ---: |
+| chromatogram-100k | 0.0000 – 29.9997 | 0.0102 – 29.9856 | 0.0102 + 0.0141 |
+| profile-dense-60k | 200.000 – 1999.970 | 200.510 – 1999.310 | 0.510 + 0.660 |
+| centroid-dense-20k | 150.165 – 2154.731 | 151.716 – 2153.201 | 1.551 + 1.530 |
+| transfer-bound-500k | 200.000 – 1999.996 | 200.979 – 1999.356 | 0.979 + 0.641 |
+
+At most 0.15% of an axis, and entirely beside the point: the harness was
+producing the exact figure this contract exists to make impossible, and
+measuring it. It passes the source domain explicitly now.
 
 ## Export half — candidate C, Observable Plot 0.6.17
 

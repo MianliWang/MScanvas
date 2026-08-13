@@ -171,12 +171,19 @@ Every exported figure carries `<title>` and `<desc>`, derived when not supplied
 rather than omitted. A supplied caption is added to the derived description
 rather than substituted for it, so the most carefully prepared export is not the
 one that drops its own disclosures. The description states what the file
-reported about the representation — including that it reported nothing —
-discloses reduction with both counts and the rule, and counts negative values
+reported about the representation — including that it reported nothing — names
+any axis whose **unit** the source did not report, discloses reduction with both
+counts and the rule, and counts negative values
 **over the drawn window rather than the whole series**, because the sentence
 says *drawn* and a windowed panel still carries its whole source. Colour is
 written into the document rather than left to a stylesheet, so nothing depends
 on hue alone or on a stylesheet that will not travel with the file.
+
+The unit disclosure is where the contract's third state survives export. An
+unreported unit and a dimensionless one are both captioned with the bare label —
+printing an empty bracket or a guess would display a fact the file never carried
+— so without a sentence saying which, the distinction the contract makes dies at
+the file boundary it exists to cross.
 
 Axis end labels take their precision from the **span**, not from the magnitude:
 a visible window of `1000.1 .. 1000.4` labelled by magnitude printed `1000` at

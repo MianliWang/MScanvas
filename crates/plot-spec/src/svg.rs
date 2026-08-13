@@ -174,6 +174,28 @@ fn panel_description(panel: &PanelSpec) -> String {
         }
     }
 
+    // An unreported unit is not a dimensionless one, and the axis caption
+    // cannot carry the difference: both are drawn as the bare label, because
+    // printing an empty bracket or a guess would display a fact the file never
+    // carried. So the distinction is stated here, in words, or it does not
+    // survive the export at all -- and a reader would have no way to tell a
+    // genuinely dimensionless quantity from one whose unit the source omitted.
+    let unreported: Vec<&str> = [&panel.x_axis, &panel.y_axis]
+        .into_iter()
+        .filter(|axis| matches!(axis.unit, UnitState::Unreported))
+        .map(|axis| axis.label.as_str())
+        .collect();
+    match unreported.as_slice() {
+        [] => {}
+        [only] => sentences.push(format!(
+            "The source file reports no unit for the {only} axis, so none is shown."
+        )),
+        [first, rest @ ..] => sentences.push(format!(
+            "The source file reports no unit for the {first} or the {} axis, so none is shown.",
+            rest.join(" or the "),
+        )),
+    }
+
     // Counted over the drawn window rather than the whole source, because the
     // sentence says *drawn*. A panel narrowed to a visible range still carries
     // its whole series -- that is what makes a full-range export possible from
@@ -436,7 +458,12 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
         colours.text,
         escape(&format_number(values.high(), value_decimals)),
     );
-    if values.low() < 0.0 {
+    // Printed whenever it is not zero, rather than only when it is negative. A
+    // trace may legitimately be zoomed to a value range that excludes zero, and
+    // in that case the horizontal line sits at the bottom edge exactly as a zero
+    // line would -- so suppressing the lower endpoint made the axis read as
+    // zero-based and understated every height on it.
+    if values.low() != 0.0 {
         let _ = writeln!(
             out,
             "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" \

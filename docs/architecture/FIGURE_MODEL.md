@@ -89,7 +89,9 @@ what the data means.
   code.
 - An **unreported** spectrum representation is not centroid data, and an
   unreported unit is not a dimensionless one. Both are third states in the
-  contract, and the exported description says so in words.
+  contract, and the exported description says so in words — the unit one has to,
+  because an unreported and a dimensionless axis are captioned identically and
+  the difference would otherwise not survive the export.
 - The figure theme is the figure's own. Colour is written into the document, so
   a light figure is possible while the application stays dark and the file means
   the same thing wherever it is opened.

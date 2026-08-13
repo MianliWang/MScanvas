@@ -1335,3 +1335,97 @@ fn a_trace_reaching_the_window_is_never_drawn_blank() {
         "two clipped segments, not one fallback mark: {crossing}",
     );
 }
+
+/// An unreported unit reaches the reader, because the caption cannot carry it.
+///
+/// Both unreported and dimensionless axes are captioned with the bare label --
+/// printing an empty bracket or a guess would display a fact the file never
+/// carried -- so if the description does not state the difference, the export
+/// does not carry it at all, and the contract's third state dies at the file
+/// boundary it exists to survive.
+#[test]
+fn an_unreported_unit_is_disclosed_and_a_dimensionless_one_is_not() {
+    let panel = |x_unit: UnitState, y_unit: UnitState| {
+        PanelSpec::new(
+            PlotKind::Spectrum {
+                representation: SpectrumRepresentation::Centroid,
+            },
+            AxisSpec::new(label("m/z"), x_unit),
+            AxisSpec::new(label("Intensity"), y_unit),
+            domain(100.0, 200.0),
+            domain(0.0, 900.0),
+            vec![series(vec![120.0, 180.0], vec![700.0, 900.0])],
+        )
+        .expect("a panel")
+    };
+
+    let neither = svg::render(&figure_of(panel(
+        UnitState::Dimensionless,
+        UnitState::Known {
+            unit: label("counts"),
+        },
+    )));
+    assert!(
+        !neither.contains("reports no unit"),
+        "a dimensionless axis is not an unreported one: {neither}",
+    );
+
+    let one = svg::render(&figure_of(panel(
+        UnitState::Dimensionless,
+        UnitState::Unreported,
+    )));
+    assert!(
+        one.contains("The source file reports no unit for the Intensity axis"),
+        "the unreported axis is named: {one}",
+    );
+
+    let both = svg::render(&figure_of(panel(
+        UnitState::Unreported,
+        UnitState::Unreported,
+    )));
+    assert!(
+        both.contains("no unit for the m/z or the Intensity axis"),
+        "both unreported axes are named: {both}",
+    );
+
+    // And the caption itself still carries no bracket for either state, which is
+    // the reason the sentence above has to exist.
+    assert!(
+        !both.contains("m/z ("),
+        "no invented unit reaches the caption"
+    );
+}
+
+/// A zoomed value axis prints its lower end rather than reading as zero-based.
+///
+/// A trace may be zoomed to a range excluding zero. The horizontal line then
+/// sits at the bottom edge exactly where a zero line would, so an unlabelled
+/// lower end makes every height on the figure read as larger than it is.
+#[test]
+fn a_value_axis_prints_a_lower_end_that_is_not_zero() {
+    let zoomed = svg::render(&figure_of(
+        PanelSpec::new(
+            PlotKind::Chromatogram,
+            AxisSpec::new(label("Time"), UnitState::Unreported),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(0.0, 30.0),
+            domain(500.0, 9_000.0),
+            vec![series(vec![1.0, 2.0], vec![600.0, 8_000.0])],
+        )
+        .expect("a zoomed trace"),
+    ));
+    assert!(
+        zoomed.contains(">500<"),
+        "the zoomed floor is shown: {zoomed}"
+    );
+
+    // A range that reaches zero says nothing extra: the line is the zero line.
+    let grounded = svg::render(&figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )));
+    assert!(
+        !grounded.contains(">0<"),
+        "a zero floor needs no label: {grounded}",
+    );
+}

@@ -198,10 +198,19 @@ fn figure_of(scene: &Scene, scope: DataScope, x: Vec<f64>, y: Vec<f64>) -> Figur
         ),
         PlotKind::Spectrum { .. } => ("m/z", UnitState::Dimensionless, "Intensity"),
     };
-    let full_domain = if x.is_empty() {
+    // The **source** domain, not the domain of the points that survived. A
+    // reduction keeps each column's extremes, and the first sample of the scene
+    // is not usually one of them -- so deriving the domain from the retained
+    // points would quietly crop the axis while the series beside it still
+    // claims, through `DataScope::Reduced`, to stand for the whole source. That
+    // is the exact failure this contract exists to make impossible, and a
+    // harness that produced it would be measuring a figure the product must
+    // never emit.
+    let full_domain = if scene.x.is_empty() {
         Domain::new(0.0, 1.0).expect("a unit domain is valid")
     } else {
-        Domain::new(x[0], x[x.len() - 1]).expect("an ordered axis yields an ordered domain")
+        Domain::new(scene.x[0], scene.x[scene.x.len() - 1])
+            .expect("an ordered axis yields an ordered domain")
     };
     let value_domain = domain_of(&y);
     let series = SeriesSpec::new(
