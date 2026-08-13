@@ -1771,3 +1771,104 @@ fn an_axis_below_every_decimal_place_falls_back_to_exponents() {
     assert!(ordinary.contains(">200<") && ordinary.contains(">2000<"));
     assert!(!ordinary.contains("e2"), "no exponent for a plain axis");
 }
+
+/// A windowed reduction reports the reduction and what the window shows.
+///
+/// The reduction ratio is what lets a reader judge the figure; the count inside
+/// the window is what they can count on it. Reporting the reduction's size as
+/// the number drawn made the disclosure disagree with the drawing whenever a
+/// window was narrower than the source.
+#[test]
+fn a_windowed_reduction_reports_both_counts() {
+    let reduced = SeriesSpec::new(
+        label("measurement"),
+        StyleRole::Measurement,
+        DataScope::Reduced {
+            source_point_count: 500,
+            rule: ReductionRule::MinMaxPerColumn,
+        },
+        vec![100.0, 110.0, 300.0, 310.0, 320.0],
+        vec![10.0, 20.0, 30.0, 40.0, 50.0],
+    )
+    .expect("a reduction");
+    let panel = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(100.0, 320.0),
+        domain(0.0, 50.0),
+        vec![reduced],
+    )
+    .expect("a panel");
+
+    let whole = svg::render(&figure_of(panel.clone()));
+    assert!(
+        whole.contains("Drawn from 500 source points reduced to 5"),
+        "an unwindowed reduction reads as before: {whole}",
+    );
+
+    let windowed = svg::render(&figure_of(
+        panel
+            .with_visible_domain(domain(250.0, 320.0))
+            .expect("a window inside the domain"),
+    ));
+    assert!(
+        windowed.contains("Reduced from 500 source points to 5"),
+        "the reduction ratio survives: {windowed}",
+    );
+    assert!(
+        windowed.contains("3 of them lie inside the range shown"),
+        "and the drawn count is stated: {windowed}",
+    );
+    assert!(
+        !windowed.contains("Drawn from 500 source points reduced to 5"),
+        "the sentence that disagreed with the drawing is gone: {windowed}",
+    );
+}
+
+/// A marker label at the left edge does not land on the value-axis maximum.
+///
+/// Both are drawn at the same size a unit apart, so the pair was unreadable —
+/// and it costs the axis maximum, which no annotation should be able to do.
+#[test]
+fn a_marker_label_does_not_land_on_the_value_axis_maximum() {
+    fn baseline(document: &str, needle: &str) -> f64 {
+        let line = document
+            .lines()
+            .find(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("{needle} is drawn"));
+        let after = line.split("y=\"").nth(1).expect("a y attribute");
+        after
+            .split('"')
+            .next()
+            .expect("a y value")
+            .parse()
+            .expect("a number")
+    }
+
+    let panel = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )
+    .with_markers(vec![
+        Marker::new(100.0, Some(label("injection"))).expect("a marker"),
+        Marker::new(150.0, Some(label("midpoint"))).expect("a marker"),
+    ])
+    .expect("markers on a valid panel");
+
+    let document = svg::render(&figure_of(panel));
+    let axis_maximum = baseline(&document, ">20.0<");
+    let at_edge = baseline(&document, ">injection<");
+    let clear = baseline(&document, ">midpoint<");
+
+    assert!(
+        (at_edge - axis_maximum).abs() >= 11.0,
+        "the edge marker clears the axis maximum: {at_edge} vs {axis_maximum}",
+    );
+    assert!(
+        (clear - axis_maximum).abs() < 11.0,
+        "a marker with room keeps its natural place: {clear} vs {axis_maximum}",
+    );
+}

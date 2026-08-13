@@ -182,8 +182,11 @@ rather than omitted. A supplied caption is added to the derived description
 rather than substituted for it, so the most carefully prepared export is not the
 one that drops its own disclosures. The description states what the file
 reported about the representation — including that it reported nothing — names
-any axis whose **unit** the source did not report, discloses reduction with both
-counts and the rule, and counts negative values
+any axis whose **unit** the source did not report, discloses reduction with the
+source count, the reduced count and the rule — and, when a visible window shows
+fewer points than the reduction holds, how many lie inside it, because reporting
+the reduction's size as the number drawn made the disclosure disagree with the
+figure — and counts negative values
 **over the drawn window rather than the whole series**, because the sentence
 says *drawn* and a windowed panel still carries its whole source. Colour is
 written into the document rather than left to a stylesheet, so nothing depends
@@ -225,7 +228,18 @@ a label longer than the page fits on neither side of anything. Nothing is
 elided; every character appears. The character width is an estimate, and has to
 be, because measuring text needs a font this renderer deliberately does not
 carry; it errs towards wrapping early, which costs a line break, rather than
-late, which costs the annotation.
+late, which costs the annotation. A label that would reach the value axis's own
+maximum, printed at the same size a unit away at the top-left of the plotting
+area, drops one line rather than being drawn over it; every other marker keeps
+its natural place.
+
+One residual limit, stated rather than smoothed over: at the contract's minimum
+figure size a maximum-length label wraps to a block that reaches past the
+plotting area into the axis chrome below it. It stays inside the document and
+every character of it is present, which is what an export must guarantee, but it
+is not laid out around the other text. Placing annotations properly needs either
+real font metrics or a composer that owns the layout, and the composer is
+FIG-008 — a named non-goal of this milestone.
 
 A trace that reaches the drawn window always leaves a mark. A single sample, a
 series whose samples repeat one position, and a zero-width visible window all

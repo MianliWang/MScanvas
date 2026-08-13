@@ -230,17 +230,38 @@ fn panel_description(panel: &PanelSpec) -> String {
         }
     }
 
+    let drawn = panel.drawn_domain();
     for series in &panel.series {
         if let DataScope::Reduced {
             source_point_count,
             rule,
         } = series.scope
         {
-            sentences.push(format!(
-                "Drawn from {source_point_count} source points reduced to {}, {}.",
-                series.len(),
-                rule.describe(),
-            ));
+            // Two numbers, because a windowed panel makes them two facts. The
+            // reduction ratio is what a reader needs to judge the figure; the
+            // count inside the window is what they can see. Reporting the
+            // reduction's size as the number drawn made the disclosure
+            // disagree with the drawing whenever a window was narrower than
+            // the source, and reporting only the visible count would have
+            // hidden that the figure is a reduction at all.
+            let inside = series
+                .x()
+                .iter()
+                .filter(|at| **at >= drawn.low() && **at <= drawn.high())
+                .count();
+            if inside == series.len() {
+                sentences.push(format!(
+                    "Drawn from {source_point_count} source points reduced to {}, {}.",
+                    series.len(),
+                    rule.describe(),
+                ));
+            } else {
+                sentences.push(format!(
+                    "Reduced from {source_point_count} source points to {}, {};                      {inside} of them lie inside the range shown.",
+                    series.len(),
+                    rule.describe(),
+                ));
+            }
         }
     }
 
@@ -272,7 +293,6 @@ fn panel_description(panel: &PanelSpec) -> String {
     // the same specification -- so counting the source would tell a reader to
     // look below the zero line for marks that are outside the window and not in
     // the file they are holding.
-    let drawn = panel.drawn_domain();
     let negatives = panel
         .series
         .iter()
@@ -461,6 +481,21 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
         render_series(out, panel, series, frame, colours);
     }
 
+    // The two domain ends and the two value ends, as real text rather than as
+    // paths, so the figure remains searchable and re-typesettable after export.
+    // Each axis picks its own precision from its own span: a narrow m/z window
+    // and a tall intensity range need different numbers of decimals to stay
+    // legible and to stay distinguishable from each other.
+    //
+    // Formatted here rather than beside the text that carries them, because a
+    // marker label has to know how far the value-axis maximum reaches before it
+    // can avoid being drawn on top of it.
+    let (domain_low_text, domain_high_text) = axis_ends(domain);
+    let (value_low_text, value_high_text) = axis_ends(values);
+    let value_label_right = frame.left
+        + 4.0
+        + value_high_text.chars().count() as f64 * MARKER_LABEL_EM * MARKER_LABEL_SIZE;
+
     for marker in &panel.markers {
         if marker.at < domain.low() || marker.at > domain.high() {
             continue;
@@ -477,17 +512,10 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
             colours.marker,
         );
         if let Some(label) = marker.label.as_ref() {
-            render_marker_label(out, label, x, plot_top, frame, colours);
+            render_marker_label(out, label, x, plot_top, value_label_right, frame, colours);
         }
     }
 
-    // Axis captions and the two domain ends, as real text rather than as paths,
-    // so the figure remains searchable and re-typesettable after export. Each
-    // axis picks its own precision from its own span: a narrow m/z window and a
-    // tall intensity range need different numbers of decimals to stay legible
-    // and to stay distinguishable from each other.
-    let (domain_low_text, domain_high_text) = axis_ends(domain);
-    let (value_low_text, value_high_text) = axis_ends(values);
     let _ = writeln!(
         out,
         "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" \
@@ -804,6 +832,7 @@ fn render_marker_label(
     label: &Label,
     x: f64,
     plot_top: f64,
+    value_label_right: f64,
     frame: &Frame,
     colours: &Palette,
 ) {
@@ -824,7 +853,16 @@ fn render_marker_label(
     let left = (x + 3.0)
         .max(MARKER_LABEL_INSET)
         .min(canvas_width - MARKER_LABEL_INSET - block);
-    let top = plot_top + 12.0;
+    // The value axis prints its maximum at the top-left of the plotting area,
+    // and a marker at the domain's low end lands one unit away from it at the
+    // same size -- two strings drawn over each other, which costs both. Only a
+    // label that would actually reach it drops a line; every other marker keeps
+    // its natural place, so the common figure is unchanged.
+    let top = if left < value_label_right {
+        plot_top + 12.0 + MARKER_LABEL_LEADING
+    } else {
+        plot_top + 12.0
+    };
 
     let _ = write!(
         out,
