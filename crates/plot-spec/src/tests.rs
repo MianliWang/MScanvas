@@ -1136,3 +1136,202 @@ fn a_figure_too_small_for_its_panels_is_refused() {
         );
     }
 }
+
+/// A stick plot's value range must contain the line its sticks rise from.
+///
+/// A stick encodes its magnitude as a length from zero. Against a range that
+/// never reaches zero the baseline is pinned to an edge, so the smallest value
+/// draws a zero-length mark and disappears, and every other mark encodes its
+/// distance from the range end instead. The figure still looks like a figure,
+/// which is what makes it dangerous.
+#[test]
+fn a_panel_drawn_from_the_zero_line_must_contain_zero() {
+    let discrete = [
+        SpectrumRepresentation::Centroid,
+        SpectrumRepresentation::Unreported,
+    ];
+    for representation in discrete {
+        let build = |low: f64, high: f64| {
+            PanelSpec::new(
+                PlotKind::Spectrum { representation },
+                AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+                AxisSpec::new(label("Intensity"), UnitState::Unreported),
+                domain(100.0, 200.0),
+                domain(low, high),
+                vec![series(vec![120.0, 180.0], vec![high, high])],
+            )
+        };
+        assert_eq!(
+            build(500.0, 9_000.0).unwrap_err(),
+            SpecError::BaselineOutsideValueDomain,
+            "{representation:?}: a strictly positive range has no baseline",
+        );
+        assert!(
+            build(0.0, 9_000.0).is_ok(),
+            "{representation:?}: zero in it"
+        );
+    }
+
+    // A strictly negative range is the same defect arrived at from below.
+    assert_eq!(
+        PanelSpec::new(
+            PlotKind::Spectrum {
+                representation: SpectrumRepresentation::Centroid,
+            },
+            AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(100.0, 200.0),
+            domain(-900.0, -10.0),
+            vec![series(vec![120.0, 180.0], vec![-10.0, -10.0])],
+        )
+        .unwrap_err(),
+        SpecError::BaselineOutsideValueDomain,
+    );
+
+    // A trace carries no such promise: it is a shape over the axis, and a value
+    // range excluding zero merely zooms it. Refusing this would refuse a
+    // legitimate chromatogram view.
+    assert!(
+        PanelSpec::new(
+            PlotKind::Chromatogram,
+            AxisSpec::new(label("Time"), UnitState::Unreported),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(0.0, 30.0),
+            domain(500.0, 9_000.0),
+            vec![series(vec![1.0, 2.0], vec![600.0, 800.0])],
+        )
+        .is_ok(),
+    );
+}
+
+/// The negative-value disclosure counts what was drawn, not what was carried.
+///
+/// A panel narrowed to a visible window still holds its whole series, so a
+/// description counting the source would tell a reader to look below the zero
+/// line for marks that are not in the file they are holding.
+#[test]
+fn the_negative_disclosure_counts_only_the_drawn_window() {
+    let panel = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(100.0, 400.0),
+        domain(-50.0, 900.0),
+        vec![series(
+            vec![110.0, 120.0, 300.0, 320.0],
+            vec![-50.0, -20.0, 700.0, 900.0],
+        )],
+    )
+    .expect("a panel");
+
+    let whole = svg::render(&figure_of(panel.clone()));
+    assert!(
+        whole.contains("2 of the drawn values are negative"),
+        "both negatives are drawn when the whole domain is",
+    );
+
+    let windowed = panel
+        .with_visible_domain(domain(250.0, 400.0))
+        .expect("a window inside the domain");
+    let document = svg::render(&figure_of(windowed));
+    assert!(
+        !document.contains("are negative and are shown below the zero line"),
+        "no negative is inside the window, so the figure must not claim one: {document}",
+    );
+}
+
+/// Axis ends take their precision from the span, not from their magnitude.
+///
+/// A visible m/z window of 1000.1 to 1000.4 is a real selection. Rounded by
+/// magnitude, both ends printed `1000`, so the exported axis claimed zero width
+/// and concealed the range the user had chosen.
+#[test]
+fn axis_ends_keep_enough_precision_to_stay_apart() {
+    let panel = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(1_000.0, 1_001.0),
+        domain(0.0, 900.0),
+        vec![series(vec![1_000.2, 1_000.3], vec![700.0, 900.0])],
+    )
+    .expect("a panel")
+    .with_visible_domain(domain(1_000.1, 1_000.4))
+    .expect("a window inside the domain");
+
+    let document = svg::render(&figure_of(panel));
+    assert!(document.contains(">1000.100<"), "the low end: {document}");
+    assert!(document.contains(">1000.400<"), "the high end: {document}");
+
+    // And a wide axis gains no false precision from the same rule.
+    let wide = svg::render(&figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![200.0, 2_000.0], vec![10.0, 20.0]),
+    )));
+    assert!(wide.contains(">200<"), "a wide axis stays whole: {wide}");
+    assert!(wide.contains(">2000<"), "at both ends: {wide}");
+}
+
+/// A trace that reaches the window always draws something.
+///
+/// Three shapes the contract accepts arrive at the same place -- every segment
+/// clips down to a point -- and a path of bare move commands paints nothing,
+/// which reads as *no data*.
+#[test]
+fn a_trace_reaching_the_window_is_never_drawn_blank() {
+    let trace = |x: Vec<f64>, y: Vec<f64>, window: Option<(f64, f64)>| {
+        let x_low = x.iter().copied().fold(f64::INFINITY, f64::min);
+        let x_high = x.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let panel = PanelSpec::new(
+            PlotKind::Chromatogram,
+            AxisSpec::new(label("Time"), UnitState::Unreported),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(x_low, x_high),
+            domain(0.0, 100.0),
+            vec![series(x, y)],
+        )
+        .expect("a panel");
+        let panel = match window {
+            Some((low, high)) => panel
+                .with_visible_domain(domain(low, high))
+                .expect("a window inside the domain"),
+            None => panel,
+        };
+        path_data(&svg::render(&figure_of(panel)))
+    };
+
+    // A zero-width window: the crossing segment clips to a single point.
+    let pinhole = trace(vec![0.0, 10.0], vec![20.0, 80.0], Some((4.0, 4.0)));
+    assert!(
+        pinhole.contains('L'),
+        "a segment crossing a zero-width window must still mark it: {pinhole}",
+    );
+
+    // Repeated samples at one position: no segment has any length.
+    let repeated = trace(vec![5.0, 5.0, 5.0], vec![40.0, 40.0, 40.0], None);
+    assert!(
+        repeated.contains('L'),
+        "repeated samples must still draw: {repeated}",
+    );
+
+    // And the single-sample case the same fallback now also serves.
+    let lone = trace(vec![7.0], vec![55.0], None);
+    assert!(lone.contains('L'), "one sample must still draw: {lone}");
+
+    // The fallback is a last resort, not a shortcut: a window a trace really
+    // crosses is still drawn as the crossing rather than as one tick.
+    let crossing = trace(
+        vec![0.0, 1.0, 2.0],
+        vec![10.0, 20.0, 30.0],
+        Some((0.5, 1.5)),
+    );
+    assert_eq!(
+        crossing.matches('L').count(),
+        2,
+        "two clipped segments, not one fallback mark: {crossing}",
+    );
+}

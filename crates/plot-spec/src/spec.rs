@@ -90,6 +90,8 @@ pub enum SpecError {
     ReductionNotSmaller,
     /// A series held a point outside the panel's own declared domains.
     PointOutsideDomain,
+    /// A panel drawn as marks from zero declared a value range excluding zero.
+    BaselineOutsideValueDomain,
     /// A decoded document declared a schema this build does not accept.
     UnknownSchemaVersion,
 }
@@ -109,6 +111,9 @@ impl fmt::Display for SpecError {
             Self::FigureTooSmallForPanels => "the figure is too small for its panels",
             Self::ReductionNotSmaller => "a reduction was not smaller than its source",
             Self::PointOutsideDomain => "a series left the panel's declared domain",
+            Self::BaselineOutsideValueDomain => {
+                "a panel drawn from the zero line declared a value range without zero in it"
+            }
             Self::UnknownSchemaVersion => "the document declares an unknown schema version",
         })
     }
@@ -267,6 +272,23 @@ pub enum PlotKind {
     },
     /// An ordered trace over a separation axis.
     Chromatogram,
+}
+
+impl PlotKind {
+    /// Whether this kind draws each point as a length measured from zero.
+    ///
+    /// The counterpart of [`SpectrumRepresentation::may_draw_continuous_trace`]:
+    /// a kind that is not joined into a trace is drawn as discrete marks rising
+    /// from the zero line, and the length of each mark is what a reader reads as
+    /// its magnitude. A trace carries no such promise -- it is a shape over the
+    /// axis, and a value range that excludes zero merely zooms it.
+    #[must_use]
+    pub const fn draws_from_zero_baseline(self) -> bool {
+        match self {
+            Self::Spectrum { representation } => !representation.may_draw_continuous_trace(),
+            Self::Chromatogram => false,
+        }
+    }
 }
 
 /// One axis, semantically.
@@ -599,6 +621,19 @@ impl PanelSpec {
         self.y_axis.validate()?;
         self.full_domain.validate()?;
         self.value_domain.validate()?;
+        // A discrete mark is a length measured from zero, so a value range that
+        // never reaches zero has no baseline to measure from. Drawn anyway, the
+        // smallest value would sit exactly on the axis and vanish, and every
+        // other mark would encode its distance from the range end instead of
+        // its magnitude -- a stick plot whose lengths mean something other than
+        // what a reader will take them to mean. Refused rather than widened
+        // here: widening would draw against a range the specification does not
+        // declare, and the axis text would then disagree with the drawing.
+        if self.kind.draws_from_zero_baseline()
+            && (self.value_domain.low() > 0.0 || self.value_domain.high() < 0.0)
+        {
+            return Err(SpecError::BaselineOutsideValueDomain);
+        }
         if let Some(visible) = self.visible_domain {
             visible.validate()?;
             if visible.low() < self.full_domain.low() || visible.high() > self.full_domain.high() {

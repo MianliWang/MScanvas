@@ -109,12 +109,24 @@ next milestone would have to unpick.
 invalid or refused at a constructor: mismatched axis lengths, non-finite
 coordinates, unordered source data, backwards domains, unbounded or
 non-printable labels, a reduction claiming a source smaller than itself, a
-visible window outside the full domain, and a series holding a point outside the
-panel's own declared range. Unordered data is **refused rather than sorted** —
-sorting would decide the file meant something other than what it said, and the
-out-of-range check exists for the same reason: the alternative was to clamp at
-render time, which draws a value the measurement does not contain at a position
-it was never at.
+visible window outside the full domain, a series holding a point outside the
+panel's own declared range, a figure too small for the panels it declares, and a
+panel drawn as marks from zero whose value range does not contain zero.
+Unordered data is **refused rather than sorted** — sorting would decide the file
+meant something other than what it said, and the out-of-range check exists for
+the same reason: the alternative was to clamp at render time, which draws a
+value the measurement does not contain at a position it was never at.
+
+The zero-baseline rule is the one worth naming, because it refuses something
+that renders without complaint. A stick encodes its magnitude as a length from
+zero, so against a range of `500 .. 9000` the baseline pins to the panel edge
+and the drawing means something other than it appears to: measured before the
+rule existed, a stick at 500 came out **0.000 units long** — invisible — and one
+at 4,750 came out 181 of 362 units, exactly half, encoding its distance from 500
+rather than its magnitude. Widening the range inside the renderer was the
+alternative; it was rejected because the axis text would then have disagreed
+with the drawing. A trace is exempt: it is a shape over the axis, and a value
+range excluding zero merely zooms it.
 
 Schema version stays `1`, because no version 1 instance ever existed. Decoding
 refuses any other version rather than reading what it recognises.
@@ -156,11 +168,26 @@ stack every out-of-window point onto the boundary.
 ### Accessibility
 
 Every exported figure carries `<title>` and `<desc>`, derived when not supplied
-rather than omitted. The description states what the file reported about the
-representation — including that it reported nothing — and discloses reduction
-with both counts and the rule. Colour is written into the document rather than
-left to a stylesheet, so nothing depends on hue alone or on a stylesheet that
-will not travel with the file.
+rather than omitted. A supplied caption is added to the derived description
+rather than substituted for it, so the most carefully prepared export is not the
+one that drops its own disclosures. The description states what the file
+reported about the representation — including that it reported nothing —
+discloses reduction with both counts and the rule, and counts negative values
+**over the drawn window rather than the whole series**, because the sentence
+says *drawn* and a windowed panel still carries its whole source. Colour is
+written into the document rather than left to a stylesheet, so nothing depends
+on hue alone or on a stylesheet that will not travel with the file.
+
+Axis end labels take their precision from the **span**, not from the magnitude:
+a visible window of `1000.1 .. 1000.4` labelled by magnitude printed `1000` at
+both ends, so the exported axis claimed zero width. Roughly three significant
+figures across the span, bounded so a wide axis gains no false precision and a
+zero-width one still resolves.
+
+A trace that reaches the drawn window always leaves a mark. A single sample, a
+series whose samples repeat one position, and a zero-width visible window all
+produce a path of bare move commands, which paints nothing and reads as *no
+data* — the one thing an export must never be ambiguous about.
 
 The screen's existing accessible posture is unchanged: `role="img"`, an
 `aria-labelledby` heading and a `<figcaption>` that already states reduction and

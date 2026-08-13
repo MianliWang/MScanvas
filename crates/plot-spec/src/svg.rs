@@ -27,6 +27,13 @@ use std::fmt::Write as _;
 /// platform, and a formatter that chose its own precision would not.
 const COORDINATE_DECIMALS: usize = 3;
 
+/// The most decimals any axis end may carry.
+///
+/// A bound rather than a preference: the precision rule below is derived from a
+/// span that a single-value panel makes zero, and an unbounded answer there
+/// would print a number no instrument reported.
+const MAX_AXIS_DECIMALS: usize = 6;
+
 /// Half the width of the mark a single-sample trace is drawn as.
 const LONE_SAMPLE_TICK: f64 = 2.0;
 
@@ -167,11 +174,18 @@ fn panel_description(panel: &PanelSpec) -> String {
         }
     }
 
+    // Counted over the drawn window rather than the whole source, because the
+    // sentence says *drawn*. A panel narrowed to a visible range still carries
+    // its whole series -- that is what makes a full-range export possible from
+    // the same specification -- so counting the source would tell a reader to
+    // look below the zero line for marks that are outside the window and not in
+    // the file they are holding.
+    let drawn = panel.drawn_domain();
     let negatives = panel
         .series
         .iter()
-        .flat_map(|series| series.y().iter())
-        .filter(|value| **value < 0.0)
+        .flat_map(|series| series.x().iter().zip(series.y().iter()))
+        .filter(|(at, value)| **value < 0.0 && **at >= drawn.low() && **at <= drawn.high())
         .count();
     if negatives > 0 {
         sentences.push(format!(
@@ -367,7 +381,12 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
     }
 
     // Axis captions and the two domain ends, as real text rather than as paths,
-    // so the figure remains searchable and re-typesettable after export.
+    // so the figure remains searchable and re-typesettable after export. Each
+    // axis picks its own precision from its own span: a narrow m/z window and a
+    // tall intensity range need different numbers of decimals to stay legible
+    // and to stay distinguishable from each other.
+    let domain_decimals = axis_decimals(domain.span());
+    let value_decimals = axis_decimals(values.span());
     let _ = writeln!(
         out,
         "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" \
@@ -375,7 +394,7 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
         coordinate(frame.left),
         coordinate(plot_bottom + 14.0),
         colours.text,
-        escape(&format_number(domain.low())),
+        escape(&format_number(domain.low(), domain_decimals)),
     );
     let _ = writeln!(
         out,
@@ -384,7 +403,7 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
         coordinate(frame.right),
         coordinate(plot_bottom + 14.0),
         colours.text,
-        escape(&format_number(domain.high())),
+        escape(&format_number(domain.high(), domain_decimals)),
     );
     let _ = writeln!(
         out,
@@ -415,7 +434,7 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
         coordinate(frame.left + 4.0),
         coordinate(plot_top + 10.0),
         colours.text,
-        escape(&format_number(values.high())),
+        escape(&format_number(values.high(), value_decimals)),
     );
     if values.low() < 0.0 {
         let _ = writeln!(
@@ -425,7 +444,7 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
             coordinate(frame.left + 4.0),
             coordinate(plot_bottom - 2.0),
             colours.text,
-            escape(&format_number(values.low())),
+            escape(&format_number(values.low(), value_decimals)),
         );
     }
 }
@@ -478,6 +497,11 @@ fn render_series(
         // segment the renderer would have drawn, cut where the window ends.
         let (xs, ys) = (series.x(), series.y());
         let mut pen_down = false;
+        // Where to put a mark if the whole trace turns out to draw nothing: it
+        // reaches the window but has no segment with length in it. Recorded as
+        // it is discovered rather than searched for afterwards, so the mark
+        // lands on a point the clipping actually produced.
+        let mut touched: Option<(f64, f64)> = None;
         for index in 1..xs.len() {
             let (x0, y0) = (xs[index - 1], ys[index - 1]);
             let (x1, y1) = (xs[index], ys[index]);
@@ -506,6 +530,9 @@ fn render_series(
             // about to be drawn anyway. Skipped without lifting the pen: the
             // trace either has not started yet or continues through it.
             if (bx - ax).abs() <= f64::EPSILON && (by - ay).abs() <= f64::EPSILON {
+                if touched.is_none() {
+                    touched = Some((ax, ay));
+                }
                 continue;
             }
             if !pen_down {
@@ -524,15 +551,24 @@ fn render_series(
                 coordinate(project(by, values, plot_bottom, plot_top)),
             );
         }
-        // A lone sample inside the window has no segment to be part of, and a
-        // bare move command paints nothing -- so a single-sample trace would
-        // render a blank plot area for data the contract explicitly accepts.
+        // A trace that reaches the window but has no segment with length in it
+        // would leave the plot area blank, which reads as *no data* -- the one
+        // thing an export must never be ambiguous about. Three ways to arrive
+        // here, all accepted by the contract: a single-sample series, a series
+        // whose samples repeat one position, and a zero-width visible window,
+        // where every crossing segment clips down to a point.
+        //
         // Drawn as a short horizontal tick at its own value: visible, honest
         // about there being no trace, and asserting nothing between samples
         // that do not exist.
         if xs.len() == 1 && xs[0] >= low && xs[0] <= high {
-            let x = project(xs[0], domain, frame.left, frame.right);
-            let y = project(ys[0], values, plot_bottom, plot_top);
+            touched = Some((xs[0], ys[0]));
+        }
+        if path.is_empty()
+            && let Some((at, value)) = touched
+        {
+            let x = project(at, domain, frame.left, frame.right);
+            let y = project(value, values, plot_bottom, plot_top);
             let _ = write!(
                 path,
                 "M{} {}L{} {}",
@@ -571,15 +607,35 @@ fn render_series(
     );
 }
 
+/// How many decimals an axis end needs to distinguish itself from the other.
+///
+/// Chosen from the **span**, not from the magnitude. Magnitude was the wrong
+/// question: a visible m/z window of `1000.1 .. 1000.4` is a real selection, and
+/// rounding by magnitude labelled both ends `1000`, so the exported axis claimed
+/// zero width and hid the range the user had chosen.
+///
+/// Roughly three significant figures across the span, bounded at both ends so a
+/// wide axis gains no false precision and a zero-width one -- which a
+/// single-value panel legitimately has -- still resolves rather than dividing by
+/// nothing.
+fn axis_decimals(span: f64) -> usize {
+    if !span.is_finite() || span <= 0.0 {
+        return MAX_AXIS_DECIMALS;
+    }
+    let places = (-span.log10()).ceil() + 2.0;
+    if places <= 0.0 {
+        0
+    } else if places >= MAX_AXIS_DECIMALS as f64 {
+        MAX_AXIS_DECIMALS
+    } else {
+        places as usize
+    }
+}
+
 /// Formats one axis-end number for a reader.
 ///
-/// Three decimals for a value small enough to need them, none for a large one.
 /// Deterministic and locale-independent: no thousands separator and no
 /// locale-dependent decimal mark reaches the document.
-fn format_number(value: f64) -> String {
-    if value.abs() >= 1_000.0 {
-        format!("{value:.0}")
-    } else {
-        format!("{value:.3}")
-    }
+fn format_number(value: f64, decimals: usize) -> String {
+    format!("{value:.decimals$}")
 }

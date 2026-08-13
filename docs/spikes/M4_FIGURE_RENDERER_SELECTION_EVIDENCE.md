@@ -218,6 +218,31 @@ round-trips through JSON and renders identically:     true
 figure json bytes (500k scene):                       3,244,904
 ```
 
+### What the semantic gate refuses, measured
+
+The contract refuses a stick panel whose value range does not contain zero. That
+rule is worth a measurement rather than an assertion, because the figure it
+prevents renders without complaint. With the check removed, a centroid panel
+declared over `500 .. 9000` and rendered:
+
+```text
+PROBE accepted = true
+PROBE path = M227.200 410.000V410.000  M553.600 410.000V229.000  M716.800 410.000V48.000
+PROBE stick length = 0.000
+PROBE stick length = 181.000
+PROBE stick length = 362.000
+```
+
+The peak at 500 — 5.6% of the range top — drew a stick **0.000 units long**, so
+it was not in the figure at all. The peak at 4,750, 52.8% of the top, drew 181 of
+the 362 available units: exactly half, which is its distance from 500 rather than
+its magnitude. Every length in that figure meant something other than what a
+reader would take it to mean, and nothing in the output said so.
+
+Widening the range inside the renderer was the alternative and was rejected: the
+axis text would then have disagreed with the drawing. A trace is exempt — it is
+a shape over the axis, and a range excluding zero merely zooms it.
+
 ## Export half — candidate C, Observable Plot 0.6.17
 
 Installed as a development dependency, measured, and removed. The published
