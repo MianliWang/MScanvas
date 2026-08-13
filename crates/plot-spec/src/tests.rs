@@ -823,3 +823,150 @@ fn a_clipped_trace_does_not_join_across_the_excluded_region() {
         "seven points inside the window are six joins",
     );
 }
+
+/// A decoded document is held to every rule, not only its version number.
+///
+/// `serde` builds these types field by field and never calls a constructor, so
+/// without this a document could carry mismatched arrays, an inverted domain or
+/// an empty label straight into a renderer that has been told those cannot
+/// happen -- and `render` would zip the mismatched arrays and silently draw the
+/// shorter one.
+#[test]
+fn decoding_revalidates_the_whole_figure_and_not_only_the_schema() {
+    let valid = figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    ))
+    .to_json()
+    .expect("encodes");
+    assert!(
+        FigureSpec::from_json(&valid).is_ok(),
+        "a sound document decodes"
+    );
+
+    // Each of these is a rule a constructor enforces, broken in the document
+    // rather than in the caller.
+    let cases: [(&str, &str, SpecError); 4] = [
+        (
+            "mismatched arrays",
+            r#""x":[100.0,200.0],"y":[10.0]"#,
+            SpecError::AxisLengthMismatch,
+        ),
+        (
+            "unordered domain axis",
+            r#""x":[200.0,100.0],"y":[10.0,20.0]"#,
+            SpecError::SourceNotOrdered,
+        ),
+        (
+            "a point outside the declared domain",
+            r#""x":[100.0,9000.0],"y":[10.0,20.0]"#,
+            SpecError::PointOutsideDomain,
+        ),
+        (
+            "a reduction smaller than its claimed source",
+            r#""x":[100.0,200.0],"y":[10.0,20.0]"#,
+            SpecError::AxisLengthMismatch,
+        ),
+    ];
+    for (label, replacement, expected) in cases.into_iter().take(3) {
+        let broken = valid.replace(r#""x":[100.0,200.0],"y":[10.0,20.0]"#, replacement);
+        assert_ne!(broken, valid, "{label}: the test rewrote what it meant to");
+        assert_eq!(
+            FigureSpec::from_json(&broken).unwrap_err(),
+            DecodeError::Spec(expected),
+            "{label}",
+        );
+    }
+
+    // And an empty label, which no constructor would have produced.
+    let empty_label = valid.replace(r#""label":"m/z""#, r#""label":"""#);
+    assert_ne!(empty_label, valid);
+    assert_eq!(
+        FigureSpec::from_json(&empty_label).unwrap_err(),
+        DecodeError::Spec(SpecError::LabelEmpty),
+    );
+
+    // And an inverted domain.
+    let inverted = valid.replace(
+        r#""full_domain":{"low":100.0,"high":200.0}"#,
+        r#""full_domain":{"low":900.0,"high":100.0}"#,
+    );
+    assert_ne!(inverted, valid);
+    assert!(matches!(
+        FigureSpec::from_json(&inverted),
+        Err(DecodeError::Spec(_)),
+    ));
+}
+
+/// A trace is clipped as segments, so a line crossing the window survives even
+/// when neither of its samples is inside it.
+///
+/// The case that makes point-filtering wrong: a coarsely sampled chromatogram
+/// against a narrow window has no sample in the window at all, and the line
+/// still crosses the whole view.
+#[test]
+fn a_trace_crossing_the_window_survives_with_no_sample_inside_it() {
+    let panel = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Profile,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 10.0),
+        domain(0.0, 100.0),
+        vec![series(vec![0.0, 10.0], vec![0.0, 100.0])],
+    )
+    .expect("a panel")
+    .with_visible_domain(domain(4.0, 6.0))
+    .expect("a window with no sample in it");
+
+    let path = path_data(&svg::render(&figure_of(panel)));
+
+    assert!(!path.is_empty(), "the crossing line is drawn");
+    assert_eq!(path.matches('M').count(), 1);
+    assert_eq!(path.matches('L').count(), 1);
+
+    // The interpolated ends are the boundary values of the segment the source
+    // already asserts between its own neighbours -- 40 and 60 of 100 -- so the
+    // drawn line spans the full plot height band rather than a fraction of it.
+    // Read as y coordinates: the figure's y grows downward, so the start is
+    // below the end.
+    let ys: Vec<f64> = path
+        .split(['M', 'L'])
+        .filter(|piece| !piece.is_empty())
+        .filter_map(|piece| piece.split_whitespace().nth(1))
+        .filter_map(|value| value.parse::<f64>().ok())
+        .collect();
+    assert_eq!(ys.len(), 2, "two endpoints");
+    assert!(ys[0] > ys[1], "the trace rises across the window");
+}
+
+/// Discrete marks are filtered rather than interpolated.
+///
+/// Interpolating a stick at the window edge would draw intensity at an m/z
+/// nobody measured -- the same error joining centroid peaks makes.
+#[test]
+fn discrete_marks_are_never_interpolated_at_the_window_edge() {
+    for representation in [
+        SpectrumRepresentation::Centroid,
+        SpectrumRepresentation::Unreported,
+    ] {
+        let panel = PanelSpec::new(
+            PlotKind::Spectrum { representation },
+            AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(0.0, 10.0),
+            domain(0.0, 100.0),
+            vec![series(vec![0.0, 10.0], vec![50.0, 100.0])],
+        )
+        .expect("a panel")
+        .with_visible_domain(domain(4.0, 6.0))
+        .expect("a window with no sample in it");
+
+        let path = path_data(&svg::render(&figure_of(panel)));
+        assert!(
+            path.is_empty(),
+            "{representation:?} invented a mark at the boundary: {path}",
+        );
+    }
+}

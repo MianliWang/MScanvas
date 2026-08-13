@@ -117,6 +117,17 @@ impl Label {
     /// this boundary editing the user's data.
     pub fn new(text: impl Into<String>) -> Result<Self, SpecError> {
         let text = text.into();
+        Self::check(&text)?;
+        Ok(Self(text))
+    }
+
+    /// The rule, stated once.
+    ///
+    /// Read by the constructor and again by [`FigureSpec::from_json`], because
+    /// `serde` builds this type field by field and never calls the constructor
+    /// -- so a decoded document would otherwise hold a label the constructor
+    /// refuses.
+    fn check(text: &str) -> Result<(), SpecError> {
         if text.trim().is_empty() {
             return Err(SpecError::LabelEmpty);
         }
@@ -126,7 +137,11 @@ impl Label {
         if text.chars().any(char::is_control) {
             return Err(SpecError::LabelNotPrintable);
         }
-        Ok(Self(text))
+        Ok(())
+    }
+
+    fn validate(&self) -> Result<(), SpecError> {
+        Self::check(&self.0)
     }
 
     #[must_use]
@@ -148,6 +163,11 @@ impl Caption {
     /// As [`Label::new`], with a longer bound: a caption is a sentence.
     pub fn new(text: impl Into<String>) -> Result<Self, SpecError> {
         let text = text.into();
+        Self::check(&text)?;
+        Ok(Self(text))
+    }
+
+    fn check(text: &str) -> Result<(), SpecError> {
         if text.trim().is_empty() {
             return Err(SpecError::LabelEmpty);
         }
@@ -160,7 +180,11 @@ impl Caption {
         {
             return Err(SpecError::LabelNotPrintable);
         }
-        Ok(Self(text))
+        Ok(())
+    }
+
+    fn validate(&self) -> Result<(), SpecError> {
+        Self::check(&self.0)
     }
 
     #[must_use]
@@ -240,6 +264,14 @@ impl AxisSpec {
     pub const fn new(label: Label, unit: UnitState) -> Self {
         Self { label, unit }
     }
+
+    fn validate(&self) -> Result<(), SpecError> {
+        self.label.validate()?;
+        if let UnitState::Known { unit } = &self.unit {
+            unit.validate()?;
+        }
+        Ok(())
+    }
 }
 
 /// A closed interval on one axis.
@@ -262,13 +294,19 @@ impl Domain {
     /// one-point spectrum are real scenes, and refusing them here would make
     /// the renderer invent a span instead.
     pub fn new(low: f64, high: f64) -> Result<Self, SpecError> {
-        if !low.is_finite() || !high.is_finite() {
+        let domain = Self { low, high };
+        domain.validate()?;
+        Ok(domain)
+    }
+
+    fn validate(self) -> Result<(), SpecError> {
+        if !self.low.is_finite() || !self.high.is_finite() {
             return Err(SpecError::NotFinite);
         }
-        if low > high {
+        if self.low > self.high {
             return Err(SpecError::DomainInverted);
         }
-        Ok(Self { low, high })
+        Ok(())
     }
 
     #[must_use]
@@ -364,29 +402,41 @@ impl SeriesSpec {
         x: Vec<f64>,
         y: Vec<f64>,
     ) -> Result<Self, SpecError> {
-        if x.len() != y.len() {
-            return Err(SpecError::AxisLengthMismatch);
-        }
-        if x.iter().chain(y.iter()).any(|value| !value.is_finite()) {
-            return Err(SpecError::NotFinite);
-        }
-        if x.windows(2).any(|pair| pair[0] > pair[1]) {
-            return Err(SpecError::SourceNotOrdered);
-        }
-        if let DataScope::Reduced {
-            source_point_count, ..
-        } = scope
-            && source_point_count < x.len()
-        {
-            return Err(SpecError::ReductionNotSmaller);
-        }
-        Ok(Self {
+        let series = Self {
             id,
             role,
             scope,
             x,
             y,
-        })
+        };
+        series.validate()?;
+        Ok(series)
+    }
+
+    fn validate(&self) -> Result<(), SpecError> {
+        self.id.validate()?;
+        if self.x.len() != self.y.len() {
+            return Err(SpecError::AxisLengthMismatch);
+        }
+        if self
+            .x
+            .iter()
+            .chain(self.y.iter())
+            .any(|value| !value.is_finite())
+        {
+            return Err(SpecError::NotFinite);
+        }
+        if self.x.windows(2).any(|pair| pair[0] > pair[1]) {
+            return Err(SpecError::SourceNotOrdered);
+        }
+        if let DataScope::Reduced {
+            source_point_count, ..
+        } = self.scope
+            && source_point_count < self.x.len()
+        {
+            return Err(SpecError::ReductionNotSmaller);
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -435,10 +485,19 @@ impl Marker {
     ///
     /// Refuses a position that is not finite.
     pub fn new(at: f64, label: Option<Label>) -> Result<Self, SpecError> {
-        if !at.is_finite() {
+        let marker = Self { at, label };
+        marker.validate()?;
+        Ok(marker)
+    }
+
+    fn validate(&self) -> Result<(), SpecError> {
+        if !self.at.is_finite() {
             return Err(SpecError::NotFinite);
         }
-        Ok(Self { at, label })
+        if let Some(label) = self.label.as_ref() {
+            label.validate()?;
+        }
+        Ok(())
     }
 }
 
@@ -478,20 +537,7 @@ impl PanelSpec {
         value_domain: Domain,
         series: Vec<SeriesSpec>,
     ) -> Result<Self, SpecError> {
-        for one in &series {
-            let outside_x = one
-                .x()
-                .iter()
-                .any(|value| *value < full_domain.low() || *value > full_domain.high());
-            let outside_y = one
-                .y()
-                .iter()
-                .any(|value| *value < value_domain.low() || *value > value_domain.high());
-            if outside_x || outside_y {
-                return Err(SpecError::PointOutsideDomain);
-            }
-        }
-        Ok(Self {
+        let panel = Self {
             kind,
             x_axis,
             y_axis,
@@ -500,7 +546,40 @@ impl PanelSpec {
             value_domain,
             series,
             markers: Vec::new(),
-        })
+        };
+        panel.validate()?;
+        Ok(panel)
+    }
+
+    fn validate(&self) -> Result<(), SpecError> {
+        self.x_axis.validate()?;
+        self.y_axis.validate()?;
+        self.full_domain.validate()?;
+        self.value_domain.validate()?;
+        if let Some(visible) = self.visible_domain {
+            visible.validate()?;
+            if visible.low() < self.full_domain.low() || visible.high() > self.full_domain.high() {
+                return Err(SpecError::DomainInverted);
+            }
+        }
+        for series in &self.series {
+            series.validate()?;
+            let outside_x = series
+                .x()
+                .iter()
+                .any(|value| *value < self.full_domain.low() || *value > self.full_domain.high());
+            let outside_y = series
+                .y()
+                .iter()
+                .any(|value| *value < self.value_domain.low() || *value > self.value_domain.high());
+            if outside_x || outside_y {
+                return Err(SpecError::PointOutsideDomain);
+            }
+        }
+        for marker in &self.markers {
+            marker.validate()?;
+        }
+        Ok(())
     }
 
     /// Narrows the panel to a visible sub-range.
@@ -511,10 +590,8 @@ impl PanelSpec {
     /// source does not cover would ask a renderer to draw where nothing was
     /// measured.
     pub fn with_visible_domain(mut self, visible: Domain) -> Result<Self, SpecError> {
-        if visible.low() < self.full_domain.low() || visible.high() > self.full_domain.high() {
-            return Err(SpecError::DomainInverted);
-        }
         self.visible_domain = Some(visible);
+        self.validate()?;
         Ok(self)
     }
 
@@ -567,11 +644,17 @@ impl FigureSize {
     ///
     /// Refuses a non-finite, non-positive or unbounded edge.
     pub fn new(width: f64, height: f64) -> Result<Self, SpecError> {
+        let size = Self { width, height };
+        size.validate()?;
+        Ok(size)
+    }
+
+    fn validate(self) -> Result<(), SpecError> {
         let sane = |edge: f64| edge.is_finite() && edge > 0.0 && edge <= MAX_FIGURE_EDGE;
-        if !sane(width) || !sane(height) {
+        if !sane(self.width) || !sane(self.height) {
             return Err(SpecError::FigureSizeOutOfRange);
         }
-        Ok(Self { width, height })
+        Ok(())
     }
 
     #[must_use]
@@ -609,17 +692,41 @@ impl FigureSpec {
         size: FigureSize,
         panels: Vec<PanelSpec>,
     ) -> Result<Self, SpecError> {
-        if panels.is_empty() || panels.len() > MAX_PANELS {
-            return Err(SpecError::PanelCountOutOfRange);
-        }
-        Ok(Self {
+        let figure = Self {
             schema_version: SCHEMA_VERSION,
             theme,
             size,
             title: None,
             caption: None,
             panels,
-        })
+        };
+        figure.validate()?;
+        Ok(figure)
+    }
+
+    /// Every rule this contract has, over a whole figure.
+    ///
+    /// # Errors
+    ///
+    /// Answers with the first rule the figure breaks.
+    pub fn validate(&self) -> Result<(), SpecError> {
+        if self.schema_version != SCHEMA_VERSION {
+            return Err(SpecError::UnknownSchemaVersion);
+        }
+        self.size.validate()?;
+        if let Some(title) = self.title.as_ref() {
+            title.validate()?;
+        }
+        if let Some(caption) = self.caption.as_ref() {
+            caption.validate()?;
+        }
+        if self.panels.is_empty() || self.panels.len() > MAX_PANELS {
+            return Err(SpecError::PanelCountOutOfRange);
+        }
+        for panel in &self.panels {
+            panel.validate()?;
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -645,9 +752,11 @@ impl FigureSpec {
     /// Refuses malformed JSON and any schema version but this build's.
     pub fn from_json(document: &str) -> Result<Self, DecodeError> {
         let decoded: Self = serde_json::from_str(document).map_err(|_| DecodeError::Malformed)?;
-        if decoded.schema_version != SCHEMA_VERSION {
-            return Err(DecodeError::Spec(SpecError::UnknownSchemaVersion));
-        }
+        // Every rule, not only the version. `serde` builds these types field by
+        // field and never calls a constructor, so a document could otherwise
+        // carry mismatched arrays, an inverted domain or an empty label into a
+        // renderer that has been told those cannot happen.
+        decoded.validate().map_err(DecodeError::Spec)?;
         Ok(decoded)
     }
 

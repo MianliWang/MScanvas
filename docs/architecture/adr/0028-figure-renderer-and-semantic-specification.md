@@ -181,6 +181,18 @@ unimplemented.
 nothing. What was measured is the cost of producing a scene and the DOM it
 produces, not the cost of painting it.
 
+**That the screen consumes the contract today.** It does not. `StickSpectrum`
+takes points and a boolean, draws sticks for every input, and knows nothing
+about `FigureSpec`. The screen and the contract agree on the facts that matter —
+both extrema per column, an unreported representation stated as unreported,
+negative intensity preserved — but they agree by both being right rather than by
+sharing a type. Wiring them together changes a shipped component's behaviour and
+is the first thing M4.1 does; doing it here would have risked that behaviour to
+make a spike look finished.
+
+**That a continuous-trace screen path was measured.** None exists to measure.
+The joined-trace rule is held today only by the Rust renderer and its tests.
+
 **That the timings are a guarantee.** They moved by up to 4.6× across four runs
 on one loaded laptop while the byte counts stayed identical. They are
 order-of-magnitude facts about this machine.

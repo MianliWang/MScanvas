@@ -12,6 +12,15 @@
  * pnpm --filter @mscanvas/desktop exec vitest bench --run
  * ```
  *
+ * **What these scenes are.** `StickSpectrum` is the only screen renderer this
+ * product has, and it draws sticks for every input -- it takes no plot kind and
+ * no representation, only a `representationKnown` boolean that changes the
+ * caption. So the scenes below are *point-shape stress inputs to the stick
+ * renderer*, not four different screen rendering modes. `chromatogram-100k`
+ * measures what 100,000 ordered points cost that renderer; it does **not**
+ * measure a chromatogram screen path, because no continuous-trace screen
+ * renderer exists yet. Building one is M4.1's slice, not this harness's.
+ *
  * Two honest limits, recorded here rather than in the evidence write-up alone:
  *
  * - jsdom lays nothing out and rasterizes nothing, so every duration below is
@@ -110,7 +119,14 @@ const SCENES: readonly Scene[] = [
   profileSpectrum(500_000, "transfer-bound-500k"),
 ];
 
-/** Renders the real component to markup, which is what the screen path costs. */
+/**
+ * Renders the real component to markup, which is what the screen path costs.
+ *
+ * `representationKnown: false` throughout, and it changes nothing measured here
+ * -- the component draws sticks either way and the flag only selects a caption
+ * sentence. It is set to the honest value for synthetic data: nothing reported
+ * what these points are.
+ */
 function renderScene(scene: Scene): string {
   return renderToStaticMarkup(
     createElement(StickSpectrum, {
@@ -194,7 +210,7 @@ for (const scene of SCENES) {
   );
 }
 
-describe("screen render, repository-owned SVG component", () => {
+describe("stick renderer over each point shape", () => {
   for (const scene of SCENES) {
     bench(scene.name, () => {
       renderScene(scene);

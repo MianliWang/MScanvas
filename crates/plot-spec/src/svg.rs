@@ -455,46 +455,91 @@ fn render_series(
     // what makes a full-range export possible from the same specification -- so
     // without this the points outside the window would be placed outside the
     // frame, and outside the `viewBox` entirely.
-    //
-    // Skipped, not clamped. Clamping would stack every out-of-window point onto
-    // the boundary and draw a wall of marks at a position none of them was
-    // measured at.
-    let inside = |x: f64| x >= domain.low() && x <= domain.high();
-
+    let (low, high) = (domain.low(), domain.high());
     let mut path = String::with_capacity(series.len() * 24);
+
     if continuous {
-        // A gap restarts the subpath. Joining across one would draw a straight
-        // line through a region the window deliberately excludes.
+        // A trace is clipped **as segments**, not filtered as points. Two
+        // samples can straddle the window with neither inside it -- a
+        // chromatogram sampled coarsely against a narrow window is exactly
+        // that -- and dropping both would erase a line that genuinely crosses
+        // the whole view. The crossing is interpolated along the segment the
+        // source already asserts between its own neighbouring samples.
+        //
+        // The interpolation adds no measurement: it is the same straight
+        // segment the renderer would have drawn, cut where the window ends.
+        let (xs, ys) = (series.x(), series.y());
         let mut pen_down = false;
-        for (x, y) in series.x().iter().zip(series.y().iter()) {
-            if !inside(*x) {
+        for index in 1..xs.len() {
+            let (x0, y0) = (xs[index - 1], ys[index - 1]);
+            let (x1, y1) = (xs[index], ys[index]);
+            // The contract guarantees a non-decreasing domain axis, so a
+            // segment is entirely outside exactly when both ends are.
+            if x1 < low || x0 > high {
                 pen_down = false;
                 continue;
             }
-            let px = project(*x, domain, frame.left, frame.right);
-            let py = project(*y, values, plot_bottom, plot_top);
-            let _ = write!(
-                path,
-                "{}{} {}",
-                if pen_down { 'L' } else { 'M' },
-                coordinate(px),
-                coordinate(py),
-            );
-            pen_down = true;
-        }
-    } else {
-        for (x, y) in series.x().iter().zip(series.y().iter()) {
-            if !inside(*x) {
+            let at = |x: f64| {
+                if (x1 - x0).abs() <= f64::EPSILON {
+                    y0
+                } else {
+                    y0 + (y1 - y0) * ((x - x0) / (x1 - x0))
+                }
+            };
+            let (ax, ay) = if x0 < low { (low, at(low)) } else { (x0, y0) };
+            let (bx, by) = if x1 > high {
+                (high, at(high))
+            } else {
+                (x1, y1)
+            };
+            // A segment clipped down to a point contributes nothing but a
+            // duplicate command. It happens at both window edges, where the
+            // outside neighbour is cut back onto the boundary sample that is
+            // about to be drawn anyway. Skipped without lifting the pen: the
+            // trace either has not started yet or continues through it.
+            if (bx - ax).abs() <= f64::EPSILON && (by - ay).abs() <= f64::EPSILON {
                 continue;
             }
-            let px = project(*x, domain, frame.left, frame.right);
-            let py = project(*y, values, plot_bottom, plot_top);
+            if !pen_down {
+                let _ = write!(
+                    path,
+                    "M{} {}",
+                    coordinate(project(ax, domain, frame.left, frame.right)),
+                    coordinate(project(ay, values, plot_bottom, plot_top)),
+                );
+                pen_down = true;
+            }
+            let _ = write!(
+                path,
+                "L{} {}",
+                coordinate(project(bx, domain, frame.left, frame.right)),
+                coordinate(project(by, values, plot_bottom, plot_top)),
+            );
+        }
+        // A lone sample inside the window has no segment to be part of.
+        if xs.len() == 1 && xs[0] >= low && xs[0] <= high {
+            let _ = write!(
+                path,
+                "M{} {}",
+                coordinate(project(xs[0], domain, frame.left, frame.right)),
+                coordinate(project(ys[0], values, plot_bottom, plot_top)),
+            );
+        }
+    } else {
+        // Discrete marks are filtered, not clipped, and there is nothing to
+        // interpolate: a stick outside the window is a measurement outside the
+        // window, and inventing one at the boundary would draw intensity at an
+        // m/z nobody measured -- the same error joining centroid peaks makes.
+        for (x, y) in series.x().iter().zip(series.y().iter()) {
+            if *x < low || *x > high {
+                continue;
+            }
             let _ = write!(
                 path,
                 "M{} {}V{}",
-                coordinate(px),
+                coordinate(project(*x, domain, frame.left, frame.right)),
                 coordinate(zero_y),
-                coordinate(py),
+                coordinate(project(*y, values, plot_bottom, plot_top)),
             );
         }
     }

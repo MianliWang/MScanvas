@@ -53,9 +53,18 @@ measurement.
 Edge scenes: empty, single-point, flat, all-negative, all-zero. Long-but-bounded
 labels are covered by the contract's own bound (120 characters) and its tests.
 
-## Screen half — repository-owned SVG component
+## Screen half — the stick renderer over each point shape
 
 The real `StickSpectrum` rendered to markup, not a re-implementation of it.
+
+**What this table is and is not.** `StickSpectrum` is the only screen renderer
+this product has, and it draws sticks for every input: it takes no plot kind and
+no representation, only a boolean that selects a caption sentence. So these rows
+are one renderer measured against four point shapes, **not four screen rendering
+modes**. The `chromatogram-100k` row says what 100,000 ordered points cost that
+renderer; it does **not** say what a chromatogram screen path costs, because no
+continuous-trace screen renderer exists. Nor does the screen consume the new
+semantic contract — see *What this milestone did not measure*.
 
 | scene | source | markup bytes | DOM elements | `<path>` nodes | drawn sticks | render mean | render p99 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -284,3 +293,14 @@ No dependency was added for this. It is a documented plan, not an implementation
 - **A 24-panel figure.** `MAX_PANELS` is 8 and one panel is what the contract is
   exercised with; the panel-stacking arithmetic is general but only proved at
   one.
+- **A continuous-trace screen renderer.** None exists. `StickSpectrum` draws
+  sticks for every input, so the screen half of the selected architecture is
+  proved only for discrete marks. The Rust export renderer draws and tests both
+  modes, which is where the joined-trace rule is currently held.
+- **The screen consuming `FigureSpec`.** It does not, by decision. Wiring it is
+  a visible-behaviour change to a shipped component, and this milestone's remit
+  was to select and prove a foundation without risking that. The screen and the
+  contract already agree on the facts that matter — reduction keeps both extrema
+  per column, an unreported representation is stated as unreported, negative
+  intensity is preserved — but they agree by both being right, not yet by
+  sharing a type. Closing that gap is the first thing M4.1 does.
