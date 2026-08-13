@@ -27,15 +27,31 @@ use std::fmt::Write as _;
 /// platform, and a formatter that chose its own precision would not.
 const COORDINATE_DECIMALS: usize = 3;
 
-/// The most decimals any axis end may carry.
+/// The most decimals an axis end carries before the two ends are compared.
 ///
-/// A bound rather than a preference: the precision rule below is derived from a
-/// span that a single-value panel makes zero, and an unbounded answer there
-/// would print a number no instrument reported.
-const MAX_AXIS_DECIMALS: usize = 6;
+/// A readability bound rather than a limit: the precision rule below is derived
+/// from a span that a single-value panel makes zero, and an unbounded answer
+/// there would print a number no instrument reported. A domain narrow enough
+/// that both ends still print the same at this many decimals escalates past it
+/// -- see [`distinguishing_decimals`].
+const AXIS_DECIMALS: usize = 6;
+
+/// The point past which more decimals of an `f64` carry nothing.
+///
+/// Seventeen significant decimal digits round-trip a `f64`; beyond that the
+/// escalation below would print digits the number does not hold.
+const MAX_AXIS_DECIMALS: usize = 17;
 
 /// Half the width of the mark a single-sample trace is drawn as.
 const LONE_SAMPLE_TICK: f64 = 2.0;
+
+/// The width one character of a marker label is assumed to take, in em.
+///
+/// An estimate, and it only ever decides which side of its marker a label goes
+/// on. Generous for a proportional sans-serif face, so a label that would have
+/// fitted may still flip -- which costs nothing, while the other error loses
+/// the annotation off the edge of the exported document.
+const MARKER_LABEL_EM: f64 = 0.6;
 
 /// The gutter around the plotting area, in figure units.
 const MARGIN_LEFT: f64 = 64.0;
@@ -131,6 +147,45 @@ fn axis_caption(label: &str, unit: &UnitState) -> String {
     }
 }
 
+/// Whether this kind joins its points into a trace rather than drawing marks.
+///
+/// One statement, read by the description and by the renderer, so the sentence
+/// a figure carries cannot describe a drawing the figure did not make.
+const fn joins_a_trace(kind: PlotKind) -> bool {
+    match kind {
+        PlotKind::Spectrum { representation } => representation.may_draw_continuous_trace(),
+        PlotKind::Chromatogram => true,
+    }
+}
+
+/// The value a joined trace holds at `x`, along the segment that spans it.
+///
+/// `None` when `x` falls outside the samples, so a window wider than the data
+/// reports nothing rather than extrapolating.
+fn value_at(series: &SeriesSpec, x: f64) -> Option<f64> {
+    let (xs, ys) = (series.x(), series.y());
+    for index in 1..xs.len() {
+        let (x0, y0) = (xs[index - 1], ys[index - 1]);
+        let (x1, y1) = (xs[index], ys[index]);
+        if x < x0 || x > x1 {
+            continue;
+        }
+        if (x1 - x0).abs() <= f64::EPSILON {
+            return Some(y0);
+        }
+        return Some(y0 + (y1 - y0) * ((x - x0) / (x1 - x0)));
+    }
+    None
+}
+
+/// Whether a clipped trace reaches below zero at a window edge.
+fn enters_below_zero(series: &SeriesSpec, drawn: Domain) -> bool {
+    [drawn.low(), drawn.high()]
+        .into_iter()
+        .filter_map(|edge| value_at(series, edge))
+        .any(|value| value < 0.0)
+}
+
 /// What a reader must be told about this panel's points.
 ///
 /// The sentence an export owes the person reading it rather than the person who
@@ -213,6 +268,23 @@ fn panel_description(panel: &PanelSpec) -> String {
         sentences.push(format!(
             "{negatives} of the drawn values are negative and are shown below the zero line."
         ));
+    } else if joins_a_trace(panel.kind)
+        && panel
+            .series
+            .iter()
+            .any(|series| enters_below_zero(series, drawn))
+    {
+        // A trace can be drawn below the zero line without any *measured* value
+        // inside the window being negative: the window cuts a segment whose
+        // outside neighbour is negative, and the crossing is interpolated at the
+        // boundary. Counting it among the negatives would put a number in the
+        // description that corresponds to no row in any source file, so it gets
+        // its own sentence instead of a wrong count.
+        sentences.push(
+            "Part of the drawn trace lies below the zero line, where it crosses the edge \
+             of the window from a negative value outside it."
+                .to_owned(),
+        );
     }
 
     sentences.join(" ")
@@ -390,13 +462,33 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
             colours.marker,
         );
         if let Some(label) = marker.label.as_ref() {
+            // A marker at the high end of the domain sits at `frame.right`,
+            // which leaves only the right gutter before the edge of the
+            // document -- so a label placed to its right runs off a standalone
+            // SVG or a PNG rendered from it, and the annotation is simply
+            // absent from the exported figure. On screen the same overflow is
+            // usually survivable; an exported file has no viewport to scroll.
+            //
+            // The width estimate is exactly that. A renderer that measured text
+            // would need a font, which this one deliberately does not carry --
+            // but the estimate only chooses a *side*, and 0.6em per character
+            // over-states a proportional sans-serif face, so it errs towards
+            // flipping early rather than late.
+            let estimated_width = label.as_str().chars().count() as f64 * MARKER_LABEL_EM * 11.0;
+            let canvas_right = frame.right + MARGIN_RIGHT;
+            let overflows = x + 3.0 + estimated_width > canvas_right;
             let _ = writeln!(
                 out,
                 "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" \
-                 font-size=\"11\">{}</text>",
-                coordinate(x + 3.0),
+                 font-size=\"11\"{}>{}</text>",
+                coordinate(if overflows { x - 3.0 } else { x + 3.0 }),
                 coordinate(plot_top + 12.0),
                 colours.marker,
+                if overflows {
+                    " text-anchor=\"end\""
+                } else {
+                    ""
+                },
                 escape(label.as_str()),
             );
         }
@@ -407,8 +499,8 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
     // axis picks its own precision from its own span: a narrow m/z window and a
     // tall intensity range need different numbers of decimals to stay legible
     // and to stay distinguishable from each other.
-    let domain_decimals = axis_decimals(domain.span());
-    let value_decimals = axis_decimals(values.span());
+    let domain_decimals = distinguishing_decimals(domain);
+    let value_decimals = distinguishing_decimals(values);
     let _ = writeln!(
         out,
         "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" \
@@ -499,10 +591,7 @@ fn render_series(
     // joining centroid peaks would draw intensity at m/z values nobody
     // measured, and joining unreported points would assert the representation
     // while doing it.
-    let continuous = match panel.kind {
-        PlotKind::Spectrum { representation } => representation.may_draw_continuous_trace(),
-        PlotKind::Chromatogram => true,
-    };
+    let continuous = joins_a_trace(panel.kind);
 
     // Clipped to the drawn domain rather than projected past its edges. A panel
     // narrowed to a visible window still carries its whole source -- that is
@@ -647,16 +736,45 @@ fn render_series(
 /// nothing.
 fn axis_decimals(span: f64) -> usize {
     if !span.is_finite() || span <= 0.0 {
-        return MAX_AXIS_DECIMALS;
+        return AXIS_DECIMALS;
     }
     let places = (-span.log10()).ceil() + 2.0;
     if places <= 0.0 {
         0
-    } else if places >= MAX_AXIS_DECIMALS as f64 {
-        MAX_AXIS_DECIMALS
+    } else if places >= AXIS_DECIMALS as f64 {
+        AXIS_DECIMALS
     } else {
         places as usize
     }
+}
+
+/// How many decimals this domain's two ends need to remain two numbers.
+///
+/// The readability bound above is enough for any ordinary axis, and a domain
+/// narrow enough to defeat it is still a real selection: `1000.0000001 ..
+/// 1000.0000004` printed as `1000.000000` twice would show a zero-width axis
+/// for a window the user chose, which is the same misstatement the span rule
+/// exists to prevent -- arrived at from the other side.
+///
+/// A **single-valued** domain is different and is left alone: its ends are the
+/// same number, and printing them identically is the truth rather than a loss
+/// of precision.
+///
+/// Escalation stays in fixed-point notation rather than switching to
+/// scientific: the ceiling is where an `f64` stops carrying more, so the loop
+/// always terminates, and an axis label that changed notation according to how
+/// narrow the window was would be harder to read than one that grew a digit.
+fn distinguishing_decimals(domain: Domain) -> usize {
+    let mut decimals = axis_decimals(domain.span());
+    if domain.span() <= 0.0 {
+        return decimals;
+    }
+    while decimals < MAX_AXIS_DECIMALS
+        && format_number(domain.low(), decimals) == format_number(domain.high(), decimals)
+    {
+        decimals += 1;
+    }
+    decimals
 }
 
 /// Formats one axis-end number for a reader.

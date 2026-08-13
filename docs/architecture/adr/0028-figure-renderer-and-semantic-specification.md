@@ -195,11 +195,26 @@ printing an empty bracket or a guess would display a fact the file never carried
 — so without a sentence saying which, the distinction the contract makes dies at
 the file boundary it exists to cross.
 
+The negative count is over measured values. A trace can also be drawn below zero
+without one — clipping interpolates at the window edge, so a segment entering
+from a negative sample outside the window is drawn below the line while every
+measured value inside it is positive. That gets its own sentence rather than a
+count, because counting an interpolated point would put a number in the
+description matching no row in any source file.
+
 Axis end labels take their precision from the **span**, not from the magnitude:
 a visible window of `1000.1 .. 1000.4` labelled by magnitude printed `1000` at
 both ends, so the exported axis claimed zero width. Roughly three significant
-figures across the span, bounded so a wide axis gains no false precision and a
-zero-width one still resolves.
+figures across the span, six decimals for readability, and escalation past that
+— to seventeen, where an `f64` stops carrying more — when the two ends would
+otherwise print the same number. A single-valued domain is exempt: its ends *are*
+one number, and escalating would print digits it does not hold.
+
+A marker label near the right edge turns inward instead of running off the
+document. On screen an overflowing label is usually survivable; an exported file
+has no viewport to scroll, so the annotation would simply be absent. The width
+estimate that decides this is exactly an estimate — this renderer carries no
+font — but it only chooses a side, and it errs towards flipping early.
 
 A trace that reaches the drawn window always leaves a mark. A single sample, a
 series whose samples repeat one position, and a zero-width visible window all

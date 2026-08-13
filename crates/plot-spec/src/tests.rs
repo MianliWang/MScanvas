@@ -1520,3 +1520,132 @@ fn a_marker_position_can_only_be_set_through_the_check() {
         DataScope::FullSource
     );
 }
+
+/// A trace drawn below the zero line says so, even with no negative sample.
+///
+/// Clipping interpolates at the window edge, so a segment entering from a
+/// negative sample outside the window is drawn below zero while every measured
+/// value inside it is positive. Counting the interpolated point among the
+/// negatives would put a number in the description matching no row in any
+/// source file, so it gets its own sentence.
+#[test]
+fn a_trace_crossing_into_the_window_from_below_zero_is_disclosed() {
+    let panel = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(label("Time"), UnitState::Unreported),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 10.0),
+        domain(-10.0, 10.0),
+        vec![series(vec![0.0, 10.0], vec![-10.0, 10.0])],
+    )
+    .expect("a panel")
+    .with_visible_domain(domain(1.0, 10.0))
+    .expect("a window inside the domain");
+
+    let document = svg::render(&figure_of(panel));
+    assert!(
+        !document.contains("of the drawn values are negative"),
+        "no measured value inside the window is negative: {document}",
+    );
+    assert!(
+        document.contains("Part of the drawn trace lies below the zero line"),
+        "but part of the drawing is below it: {document}",
+    );
+
+    // A discrete panel never interpolates, so it must not gain the sentence.
+    let sticks = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 10.0),
+        domain(-10.0, 10.0),
+        vec![series(vec![0.0, 10.0], vec![-10.0, 10.0])],
+    )
+    .expect("a panel")
+    .with_visible_domain(domain(1.0, 10.0))
+    .expect("a window inside the domain");
+    let drawn = svg::render(&figure_of(sticks));
+    assert!(
+        !drawn.contains("below the zero line"),
+        "a stick plot draws nothing between its marks: {drawn}",
+    );
+}
+
+/// A marker label near the right edge turns inward instead of off the canvas.
+///
+/// An exported figure has no viewport to scroll: a label placed past the
+/// document edge is simply not in the file.
+#[test]
+fn a_marker_label_at_the_high_end_stays_inside_the_document() {
+    let panel = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )
+    .with_markers(vec![
+        Marker::new(200.0, Some(label("precursor selection window"))).expect("a marker"),
+        Marker::new(100.0, Some(label("start"))).expect("a marker"),
+    ])
+    .expect("markers on a valid panel");
+
+    let document = svg::render(&figure_of(panel));
+    let far = document
+        .lines()
+        .find(|line| line.contains("precursor selection window"))
+        .expect("the far label is drawn");
+    assert!(
+        far.contains("text-anchor=\"end\""),
+        "a label at the high end turns inward: {far}",
+    );
+    let near = document
+        .lines()
+        .find(|line| line.contains(">start<"))
+        .expect("the near label is drawn");
+    assert!(
+        !near.contains("text-anchor"),
+        "a label with room keeps its natural side: {near}",
+    );
+}
+
+/// A domain too narrow for the readable precision still shows two numbers.
+///
+/// The span rule caps at six decimals for readability. A window of
+/// `1000.0000001 .. 1000.0000004` is narrower than that and is a real
+/// selection, so both ends printing `1000.000000` would claim a zero-width axis
+/// — the same misstatement the span rule exists to prevent, reached from the
+/// other side.
+#[test]
+fn a_domain_narrower_than_the_readable_precision_still_resolves() {
+    let panel = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(1_000.0, 1_001.0),
+        domain(0.0, 900.0),
+        vec![series(vec![1_000.000_000_2], vec![700.0])],
+    )
+    .expect("a panel")
+    .with_visible_domain(domain(1_000.000_000_1, 1_000.000_000_4))
+    .expect("a window inside the domain");
+
+    let document = svg::render(&figure_of(panel));
+    assert!(
+        document.contains(">1000.0000001<") && document.contains(">1000.0000004<"),
+        "both ends resolve: {document}",
+    );
+
+    // A single-valued domain is not a precision failure: its ends *are* the
+    // same number, and escalating would print digits it does not hold.
+    let flat = svg::render(&figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![500.0], vec![10.0]),
+    )));
+    assert_eq!(
+        flat.matches(">500.000000<").count(),
+        2,
+        "one value, printed the same at both ends: {flat}",
+    );
+}
