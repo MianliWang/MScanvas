@@ -8,7 +8,7 @@ This roadmap sequences product risk; it is not the authoritative feature definit
 - Validate `msaccess` or another reviewed route for metadata, TIC/BPC and one spectrum without temporary full conversion.
 - Validate `msconvert` process execution, progress parsing, cancellation and partial-output behavior.
 - Compare three interactive workspace structures at 1366×768 with representative user tasks.
-- Select an on-screen and export renderer after performance and SVG export spikes.
+- Select an on-screen and export renderer after performance and SVG export spikes. **Done** — [ADR 0028](docs/architecture/adr/0028-figure-renderer-and-semantic-specification.md).
 
 ## M1 — Data workspace
 
@@ -30,6 +30,11 @@ This roadmap sequences product risk; it is not the authoritative feature definit
 - Transactional outputs and basic integrity checks.
 
 ## M4 — Figure and data export
+
+The renderer foundation is selected and proved in private: one semantic
+specification, a repository-owned screen renderer and a repository-owned Rust
+export renderer, with no dependency added. Everything below is still
+unimplemented — selecting a renderer is not exporting a figure.
 
 - Copy screenshot; PNG and SVG figure export.
 - Current/full range, light figure theme and underlying CSV/TSV export.

@@ -1,76 +1,34 @@
-//! Renderer-independent semantic plot specifications.
+//! Renderer-independent semantic plot specifications, and one renderer of them.
+//!
+//! Two modules with a one-way dependency, which is the whole architecture in
+//! miniature:
+//!
+//! - [`spec`] is what a figure *means*. It names no renderer, no component, no
+//!   stylesheet, no path and no command. It is what the screen and the export
+//!   must agree about.
+//! - [`svg`] is one way to draw that. It reads the specification; the
+//!   specification cannot read it.
+//!
+//! The screen renderer is deliberately **not** here. It lives in the desktop
+//! application, in TypeScript, because interactive rendering belongs where the
+//! pointer is -- and it consumes the same semantic facts rather than the same
+//! drawing code. Sharing semantics is the requirement; sharing a drawing
+//! technology is not.
+//!
+//! Nothing in this crate is reachable from a user-facing surface yet. It is the
+//! foundation the figure-export milestone will be built on, proved on its own
+//! terms first.
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PlotKind {
-    Chromatogram,
-    CentroidSpectrum,
-    ProfileSpectrum,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AxisSpec {
-    pub label: String,
-    pub unit: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SeriesSpec {
-    pub id: String,
-    pub label: String,
-    pub x: Vec<f64>,
-    pub y: Vec<f64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PlotSpec {
-    pub schema_version: u32,
-    pub kind: PlotKind,
-    pub title: Option<String>,
-    pub x_axis: AxisSpec,
-    pub y_axis: AxisSpec,
-    pub series: Vec<SeriesSpec>,
-}
-
-impl PlotSpec {
-    pub const SCHEMA_VERSION: u32 = 1;
-
-    #[must_use]
-    pub fn new(kind: PlotKind, x_axis: AxisSpec, y_axis: AxisSpec) -> Self {
-        Self {
-            schema_version: Self::SCHEMA_VERSION,
-            kind,
-            title: None,
-            x_axis,
-            y_axis,
-            series: Vec::new(),
-        }
-    }
-}
+pub mod spec;
+pub mod svg;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod tests;
 
-    #[test]
-    fn plot_spec_round_trips_as_json() {
-        let spec = PlotSpec::new(
-            PlotKind::Chromatogram,
-            AxisSpec {
-                label: "Retention time".into(),
-                unit: Some("min".into()),
-            },
-            AxisSpec {
-                label: "Intensity".into(),
-                unit: None,
-            },
-        );
-
-        let json = serde_json::to_string(&spec).expect("serialize plot spec");
-        let decoded: PlotSpec = serde_json::from_str(&json).expect("deserialize plot spec");
-
-        assert_eq!(decoded, spec);
-    }
-}
+pub use spec::{
+    AxisSpec, Caption, DataScope, DecodeError, Domain, FigureSize, FigureSpec, FigureTheme, Label,
+    MAX_CAPTION_CHARS, MAX_FIGURE_EDGE, MAX_LABEL_CHARS, MAX_PANELS, Marker, PanelSpec, PlotKind,
+    ReductionRule, SCHEMA_VERSION, SeriesSpec, SpecError, SpectrumRepresentation, StyleRole,
+    UnitState,
+};
+pub use svg::render;

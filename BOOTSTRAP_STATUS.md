@@ -4220,3 +4220,57 @@ asserted over the whole serialized document. See
 [ADR 0027](docs/architecture/adr/0027-first-visible-sciex-wiff-workflow.md)
 and
 [the M3.16 evidence record](docs/spikes/M3_VISIBLE_SCIEX_WIFF_WORKFLOW_EVIDENCE.md).
+
+
+## Figure renderer and semantic specification foundation, 2026-08-13
+
+The renderer-selection gate the figure model has carried since it was written is
+closed, against measured scenes rather than examples.
+
+**Selected: one semantic contract, two renderers.** The screen keeps its
+repository-owned TypeScript SVG, unchanged. Export is repository-owned Rust over
+`FigureSpec`. They share semantics and not drawing code, which is the point
+rather than a compromise. **No production dependency was added in either
+language.**
+
+**Two facts decided it, and neither was a timing.** The screen was already
+enough: a 500,000-point spectrum renders to *one* `<path>` and 10-11 DOM
+elements, the same as a 20,000-point one, because the component reduces to 900
+columns and emits one path. A library would have replaced a working renderer
+with a dependency. And export cannot be the screen: serializing the mounted DOM
+was measured exporting **942 of 500,000 points — 0.19% — silently**, with the
+application's class names, no colour of its own, no dimensions and no accessible
+title.
+
+**Observable Plot was installed, measured and removed.** Its simple output is
+byte-deterministic, so the blanket claim against it would have been wrong; what
+is true is narrower and worse. Clipped plots are not reproducible — clip ids come
+from a module-level counter — and a visible-domain figure is exactly a clipped
+plot. It emits no `<title>` or `<desc>`, needs jsdom to run headless, and costs
+**+86.87 kB gzip, +99.2%** of the shipped JavaScript. The build reproduced the
+baseline content hash after removal.
+
+**The contract replaced a scaffold rather than revising a contract.**
+`mscanvas-plot-spec` had no dependant anywhere in the workspace and no
+serialized instance, so there was no version 1 to preserve. What replaced it
+makes `Unreported` a third spectrum representation rather than a missing
+boolean, keeps an unreported unit apart from a dimensionless one, states whether
+a series is full source or a disclosed reduction, preserves negative intensity,
+and refuses mismatched lengths, non-finite coordinates and unordered data at one
+boundary — refuses rather than sorts, because sorting would decide the file
+meant something else.
+
+The renderer joins only established profile data. Joining centroid peaks would
+draw intensity at m/z values nobody measured; joining unreported points would
+assert the representation while drawing it.
+
+**Nothing visible was added.** FIG-001 through FIG-008 remain unimplemented:
+no copy action, no export action, no dialog, no PNG, no CSV/TSV. PNG for M4.1
+is planned on `resvg` (Apache-2.0 OR MIT, verified against crates.io) called
+from Rust, which avoids the MPL-2.0 Node binding and sharp's LGPL prebuilts.
+
+Timings moved by up to 4.6x across four runs on one loaded laptop while the byte
+counts stayed identical, which is why they did not choose the renderer. See
+[ADR 0028](docs/architecture/adr/0028-figure-renderer-and-semantic-specification.md)
+and
+[the M4.0 evidence record](docs/spikes/M4_FIGURE_RENDERER_SELECTION_EVIDENCE.md).
