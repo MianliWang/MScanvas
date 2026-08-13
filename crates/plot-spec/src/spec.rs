@@ -92,6 +92,8 @@ pub enum SpecError {
     PointOutsideDomain,
     /// A panel drawn as marks from zero declared a value range excluding zero.
     BaselineOutsideValueDomain,
+    /// A domain's two ends were finite but the width between them was not.
+    DomainSpanNotFinite,
     /// A decoded document declared a schema this build does not accept.
     UnknownSchemaVersion,
 }
@@ -114,6 +116,7 @@ impl fmt::Display for SpecError {
             Self::BaselineOutsideValueDomain => {
                 "a panel drawn from the zero line declared a value range without zero in it"
             }
+            Self::DomainSpanNotFinite => "a domain was wider than a finite number",
             Self::UnknownSchemaVersion => "the document declares an unknown schema version",
         })
     }
@@ -346,6 +349,14 @@ impl Domain {
         if self.low > self.high {
             return Err(SpecError::DomainInverted);
         }
+        // Both ends finite is not enough: `f64::MAX - (-f64::MAX)` is infinity,
+        // and a renderer dividing by that span produces `inf / inf` -- a `NaN`
+        // coordinate written into a document this module promises never holds
+        // one. Refused here rather than guarded in the renderer, so the promise
+        // stays a property of the type.
+        if !self.span().is_finite() {
+            return Err(SpecError::DomainSpanNotFinite);
+        }
         Ok(())
     }
 
@@ -441,14 +452,29 @@ pub enum StyleRole {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SeriesSpec {
     /// Stable within one specification. Not a database key and not a handle.
-    pub id: Label,
-    pub role: StyleRole,
-    pub scope: DataScope,
+    pub(crate) id: Label,
+    pub(crate) role: StyleRole,
+    pub(crate) scope: DataScope,
     x: Vec<f64>,
     y: Vec<f64>,
 }
 
 impl SeriesSpec {
+    #[must_use]
+    pub const fn id(&self) -> &Label {
+        &self.id
+    }
+
+    #[must_use]
+    pub const fn role(&self) -> StyleRole {
+        self.role
+    }
+
+    #[must_use]
+    pub const fn scope(&self) -> DataScope {
+        self.scope
+    }
+
     /// Accepts one ordered series, or says why it is not one.
     ///
     /// # Errors
@@ -539,8 +565,8 @@ impl SeriesSpec {
 /// A persistent point of interest on the domain axis.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Marker {
-    pub at: f64,
-    pub label: Option<Label>,
+    pub(crate) at: f64,
+    pub(crate) label: Option<Label>,
 }
 
 impl Marker {
@@ -549,6 +575,16 @@ impl Marker {
     /// # Errors
     ///
     /// Refuses a position that is not finite.
+    #[must_use]
+    pub const fn at(&self) -> f64 {
+        self.at
+    }
+
+    #[must_use]
+    pub const fn label(&self) -> Option<&Label> {
+        self.label.as_ref()
+    }
+
     pub fn new(at: f64, label: Option<Label>) -> Result<Self, SpecError> {
         let marker = Self { at, label };
         marker.validate()?;
@@ -569,17 +605,17 @@ impl Marker {
 /// One plot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PanelSpec {
-    pub kind: PlotKind,
-    pub x_axis: AxisSpec,
-    pub y_axis: AxisSpec,
+    pub(crate) kind: PlotKind,
+    pub(crate) x_axis: AxisSpec,
+    pub(crate) y_axis: AxisSpec,
     /// The whole domain the source covers.
-    pub full_domain: Domain,
+    pub(crate) full_domain: Domain,
     /// The part of it on screen, when that is narrower than the whole.
-    pub visible_domain: Option<Domain>,
+    pub(crate) visible_domain: Option<Domain>,
     /// The value range, which may reach below zero.
-    pub value_domain: Domain,
-    pub series: Vec<SeriesSpec>,
-    pub markers: Vec<Marker>,
+    pub(crate) value_domain: Domain,
+    pub(crate) series: Vec<SeriesSpec>,
+    pub(crate) markers: Vec<Marker>,
 }
 
 impl PanelSpec {
@@ -673,10 +709,57 @@ impl PanelSpec {
         Ok(self)
     }
 
-    #[must_use]
-    pub fn with_markers(mut self, markers: Vec<Marker>) -> Self {
+    /// Attaches markers to the panel.
+    ///
+    /// # Errors
+    ///
+    /// Refuses anything `validate` refuses. A second constructor that skipped
+    /// the check is how a rule gets added in one place and bypassed in
+    /// another -- the defect this whole boundary exists to prevent.
+    pub fn with_markers(mut self, markers: Vec<Marker>) -> Result<Self, SpecError> {
         self.markers = markers;
-        self
+        self.validate()?;
+        Ok(self)
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> PlotKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub const fn x_axis(&self) -> &AxisSpec {
+        &self.x_axis
+    }
+
+    #[must_use]
+    pub const fn y_axis(&self) -> &AxisSpec {
+        &self.y_axis
+    }
+
+    #[must_use]
+    pub const fn full_domain(&self) -> Domain {
+        self.full_domain
+    }
+
+    #[must_use]
+    pub const fn visible_domain(&self) -> Option<Domain> {
+        self.visible_domain
+    }
+
+    #[must_use]
+    pub const fn value_domain(&self) -> Domain {
+        self.value_domain
+    }
+
+    #[must_use]
+    pub fn series(&self) -> &[SeriesSpec] {
+        &self.series
+    }
+
+    #[must_use]
+    pub fn markers(&self) -> &[Marker] {
+        &self.markers
     }
 
     /// The domain a renderer should draw: the visible window when there is one.
@@ -755,17 +838,47 @@ impl FigureSize {
 /// One figure: ordered panels, a size, a theme and its own words.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FigureSpec {
-    pub schema_version: u32,
-    pub theme: FigureTheme,
-    pub size: FigureSize,
-    pub title: Option<Label>,
-    pub caption: Option<Caption>,
+    pub(crate) schema_version: u32,
+    pub(crate) theme: FigureTheme,
+    pub(crate) size: FigureSize,
+    pub(crate) title: Option<Label>,
+    pub(crate) caption: Option<Caption>,
     /// Ordered. One panel today; the order is in the contract because a second
     /// panel must not have to change the shape to be placed.
-    pub panels: Vec<PanelSpec>,
+    pub(crate) panels: Vec<PanelSpec>,
 }
 
 impl FigureSpec {
+    #[must_use]
+    pub const fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    #[must_use]
+    pub const fn theme(&self) -> FigureTheme {
+        self.theme
+    }
+
+    #[must_use]
+    pub const fn size(&self) -> FigureSize {
+        self.size
+    }
+
+    #[must_use]
+    pub const fn title(&self) -> Option<&Label> {
+        self.title.as_ref()
+    }
+
+    #[must_use]
+    pub const fn caption(&self) -> Option<&Caption> {
+        self.caption.as_ref()
+    }
+
+    #[must_use]
+    pub fn panels(&self) -> &[PanelSpec] {
+        &self.panels
+    }
+
     /// Accepts one figure, or says why it is not one.
     ///
     /// # Errors

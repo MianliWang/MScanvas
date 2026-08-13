@@ -651,7 +651,8 @@ fn a_marker_outside_the_drawn_domain_is_not_drawn() {
     .with_markers(vec![
         Marker::new(150.0, Some(label("inside"))).expect("a marker"),
         Marker::new(900.0, Some(label("outside"))).expect("a marker"),
-    ]);
+    ])
+    .expect("markers on a valid panel");
     let document = svg::render(&figure_of(panel));
 
     assert!(document.contains("inside"));
@@ -1427,5 +1428,95 @@ fn a_value_axis_prints_a_lower_end_that_is_not_zero() {
     assert!(
         !grounded.contains(">0<"),
         "a zero floor needs no label: {grounded}",
+    );
+}
+
+/// A domain whose ends are finite but whose width is not is refused.
+///
+/// `f64::MAX - (-f64::MAX)` is infinity, and a renderer dividing by that span
+/// computes `inf / inf` and writes `NaN` into the document — breaking the
+/// promise this module makes that a non-finite number cannot reach a figure.
+/// Two finite checks are not one finite domain.
+#[test]
+fn a_domain_wider_than_a_finite_number_is_refused() {
+    assert_eq!(
+        Domain::new(-f64::MAX, f64::MAX).unwrap_err(),
+        SpecError::DomainSpanNotFinite,
+    );
+    assert_eq!(
+        Domain::new(-1.0e308, 1.0e308).unwrap_err(),
+        SpecError::DomainSpanNotFinite,
+    );
+    // The bound is on the width, not on the magnitude: a huge but finite span
+    // is still a span, and refusing it would be this boundary inventing a limit
+    // no measurement asked for.
+    assert!(Domain::new(0.0, f64::MAX).is_ok());
+
+    // And the rule reaches a decoded document, not only a constructed one.
+    let document = figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    ))
+    .to_json()
+    .expect("a figure serializes");
+    let widened = document
+        .replace("\"low\":100.0", "\"low\":-1.7976931348623157e308")
+        .replace("\"high\":200.0", "\"high\":1.7976931348623157e308");
+    assert_ne!(widened, document, "the probe edited something");
+    assert!(
+        matches!(
+            FigureSpec::from_json(&widened),
+            Err(DecodeError::Spec(SpecError::DomainSpanNotFinite)),
+        ),
+        "a decoded overflowing domain must be refused too",
+    );
+}
+
+/// A validated figure cannot be edited into an invalid one from outside.
+///
+/// The contract's claim is that invalid states are unrepresentable, not that
+/// they are checked once. Public fields would have made that claim false: a
+/// marker mutated to `NaN` after construction reaches `render`, where both
+/// domain comparisons are false for `NaN`, and `NaN` is written into the
+/// document as a coordinate.
+///
+/// Rust has no runtime test for "this does not compile", so this test pins the
+/// two halves that are testable — the checked path refuses the value, and the
+/// only way to obtain a `Marker` is that path — and the sealing itself is
+/// carried by the field visibility beside it.
+#[test]
+fn a_marker_position_can_only_be_set_through_the_check() {
+    assert_eq!(
+        Marker::new(f64::NAN, None).unwrap_err(),
+        SpecError::NotFinite,
+    );
+    assert_eq!(
+        Marker::new(f64::INFINITY, Some(label("edge"))).unwrap_err(),
+        SpecError::NotFinite,
+    );
+
+    // Reading is public; writing is not. Every accessor a downstream reader
+    // needs exists, so sealing the fields costs no legitimate use.
+    let panel = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )
+    .with_markers(vec![
+        Marker::new(150.0, Some(label("peak"))).expect("a marker"),
+    ])
+    .expect("markers on a valid panel");
+    let figure = figure_of(panel);
+    let read = figure.panels()[0].markers()[0].at();
+    assert!((read - 150.0).abs() < f64::EPSILON);
+    assert_eq!(
+        figure.panels()[0].markers()[0].label().map(Label::as_str),
+        Some("peak"),
+    );
+    assert_eq!(figure.panels()[0].kind(), figure.panels()[0].kind());
+    assert_eq!(figure.schema_version(), SCHEMA_VERSION);
+    assert!(figure.title().is_none() && figure.caption().is_none());
+    assert_eq!(
+        figure.panels()[0].series()[0].scope(),
+        DataScope::FullSource
     );
 }

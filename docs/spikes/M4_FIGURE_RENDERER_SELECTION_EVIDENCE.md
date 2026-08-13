@@ -68,10 +68,10 @@ semantic contract — see *What this milestone did not measure*.
 
 | scene | source | markup bytes | DOM elements | `<path>` nodes | drawn sticks | render mean | render p99 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| chromatogram-100k | 100,000 | 19,757 | 10 | **1** | 900 | 4.02 ms | 4.70 ms |
-| profile-dense-60k | 60,000 | 20,794 | 11 | **1** | 941 | 2.65 ms | 3.85 ms |
-| centroid-dense-20k | 20,000 | 19,489 | 10 | **1** | 900 | 1.75 ms | 2.44 ms |
-| transfer-bound-500k | 500,000 | 20,802 | 11 | **1** | 942 | 13.39 ms | 16.20 ms |
+| chromatogram-100k | 100,000 | 19,757 | 10 | **1** | 900 | 3.75 ms | 4.96 ms |
+| profile-dense-60k | 60,000 | 20,794 | 11 | **1** | 941 | 2.64 ms | 3.68 ms |
+| centroid-dense-20k | 20,000 | 19,489 | 10 | **1** | 900 | 1.74 ms | 2.93 ms |
+| transfer-bound-500k | 500,000 | 20,802 | 11 | **1** | 942 | 14.50 ms | 29.60 ms |
 
 The load-bearing column is not the time. **Node count is constant at 10–11
 elements and exactly one `<path>` regardless of source size**, because the
@@ -83,8 +83,15 @@ the drawn sample — over a 200-probe sweep:
 
 | scene | mean per sweep | per probe |
 | --- | ---: | ---: |
-| chromatogram-100k | 0.0165 ms | ~83 ns |
-| transfer-bound-500k | 0.0158 ms | ~79 ns |
+| chromatogram-100k | 0.0190 ms | ~95 ns |
+| transfer-bound-500k | 0.0227 ms | ~114 ns |
+
+Both tables come from the same benchmark run. The lookup is a lower-bound
+binary search **plus a comparison against the preceding sample**: the bound
+alone is not the nearest point on an irregular m/z axis — for samples at 0 and
+10 with the cursor at 1, the bound is 10 — and timing the bound while
+documenting the nearest would have measured a different lookup from the one
+described.
 
 Lookup cost is flat across a 5× difference in source size, which is what a
 binary search should give and what a lookup against the drawn sample would not
@@ -264,6 +271,32 @@ stand for. Measured across the four scenes:
 At most 0.15% of an axis, and entirely beside the point: the harness was
 producing the exact figure this contract exists to make impossible, and
 measuring it. It passes the source domain explicitly now.
+
+### Two ways `NaN` reached a document that promises it cannot
+
+The renderer's `coordinate` helper documents that the specification has already
+refused non-finite values. Both of these produced `NaN` in the output anyway,
+and both were measured before being closed:
+
+```text
+PROBE domain span = inf
+PROBE trace path = M64.000 373.800LNaN 84.200
+PROBE document holds NaN = true
+PROBE marker line = <line x1="NaN" y1="48.000" x2="NaN" y2="410.000" ... />
+PROBE marker document holds NaN = true
+```
+
+The first is `Domain::new(-f64::MAX, f64::MAX)`: two finite ends whose
+difference is infinity, so `project` computes `inf / inf`. Two finite checks are
+not one finite domain, and the span is checked now.
+
+The second is a marker position written through a public field after the figure
+was validated. `render` does not revalidate, and both of its domain comparisons
+are false for `NaN`, so the marker was neither skipped nor drawable. Every field
+that carries a validated invariant is `pub(crate)` now, with public read
+accessors — so a downstream reader loses nothing and a downstream writer cannot
+exist. `PanelSpec::with_markers` validates as well; a second constructor that
+skipped the check is how a rule gets added in one place and bypassed in another.
 
 ## Export half — candidate C, Observable Plot 0.6.17
 

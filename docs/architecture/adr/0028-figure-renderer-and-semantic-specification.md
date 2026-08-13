@@ -107,11 +107,21 @@ next milestone would have to unpick.
 
 **Validation is one boundary.** Every value is either unrepresentable when
 invalid or refused at a constructor: mismatched axis lengths, non-finite
-coordinates, unordered source data, backwards domains, unbounded or
-non-printable labels, a reduction claiming a source smaller than itself, a
-visible window outside the full domain, a series holding a point outside the
-panel's own declared range, a figure too small for the panels it declares, and a
-panel drawn as marks from zero whose value range does not contain zero.
+coordinates, unordered source data, backwards domains, a domain whose two ends
+are finite but whose width is not, unbounded or non-printable labels, a
+reduction claiming a source smaller than itself, a visible window outside the
+full domain, a series holding a point outside the panel's own declared range, a
+figure too small for the panels it declares, and a panel drawn as marks from
+zero whose value range does not contain zero.
+
+"Unrepresentable" is load-bearing rather than decorative, so every field
+carrying a validated invariant is `pub(crate)` with a public read accessor. A
+public field would have reduced the claim to *checked once*: a marker position
+written to `NaN` after construction reached the renderer, where both domain
+comparisons are false for `NaN`, and `x1="NaN"` was written into the document.
+Reading is unrestricted; writing goes through a constructor or does not happen.
+`with_markers` validates for the same reason — a second constructor that skips
+the check is how a rule gets added in one place and bypassed in another.
 Unordered data is **refused rather than sorted** — sorting would decide the file
 meant something other than what it said, and the out-of-range check exists for
 the same reason: the alternative was to clamp at render time, which draws a

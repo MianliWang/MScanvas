@@ -157,6 +157,17 @@ function nearestSourceIndex(scene: Scene, at: number): number {
       high = middle;
     }
   }
+  // The search lands on the first sample at or after the cursor, which is the
+  // *lower bound* rather than the nearest point: on an irregular m/z axis the
+  // sample just before it is often closer. Returning the bound would have made
+  // this benchmark time one lookup while claiming another.
+  if (low > 0) {
+    const before = scene.mz[low - 1] ?? 0;
+    const after = scene.mz[low] ?? 0;
+    if (at - before <= after - at) {
+      return low - 1;
+    }
+  }
   return low;
 }
 
