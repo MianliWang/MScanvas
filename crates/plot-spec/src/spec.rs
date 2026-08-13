@@ -57,7 +57,13 @@ pub const MIN_FIGURE_WIDTH: f64 = 200.0;
 pub const MIN_FIGURE_CHROME_HEIGHT: f64 = 100.0;
 
 /// The height each panel needs on top of that.
-pub const MIN_PANEL_HEIGHT: f64 = 60.0;
+///
+/// A panel is not drawable at any height: a renderer prints the top and the
+/// bottom of its value range inside the plotting area, and below some height
+/// those two lines of text are closer together than they are tall. This floor
+/// is generous enough for any renderer here; a test pins that this
+/// repository's renderer keeps them legibly apart at exactly this height.
+pub const MIN_PANEL_HEIGHT: f64 = 80.0;
 
 /// Why a specification was refused.
 ///
@@ -153,9 +159,26 @@ const fn is_xml_character(character: char) -> bool {
 ///
 /// A newtype rather than a `String`, so a label that was never checked cannot
 /// reach a figure by being assigned to a field of the right type.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct Label(String);
+
+/// Decoding a label applies the same rule its constructor does.
+///
+/// Derived, this was a public door into the newtype: a decoded `Label` is
+/// accepted by `AxisSpec::new`, `with_title` and `with_caption` without
+/// re-checking, because the type is supposed to mean *checked*. A newtype whose
+/// invariant one entry point does not hold is a `String` with a longer name.
+impl<'de> Deserialize<'de> for Label {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let text = String::deserialize(deserializer)?;
+        Self::check(&text).map_err(serde::de::Error::custom)?;
+        Ok(Self(text))
+    }
+}
 
 impl Label {
     /// Accepts one label, or says why it is not one.
@@ -213,9 +236,23 @@ impl Label {
 }
 
 /// One bounded, printable caption.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct Caption(String);
+
+/// Decoding a caption applies the same rule its constructor does.
+///
+/// As [`Label`]: `with_caption` takes this type because the type means checked.
+impl<'de> Deserialize<'de> for Caption {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let text = String::deserialize(deserializer)?;
+        Self::check(&text).map_err(serde::de::Error::custom)?;
+        Ok(Self(text))
+    }
+}
 
 impl Caption {
     /// Accepts one caption, or says why it is not one.
@@ -1130,7 +1167,12 @@ impl<'de> Deserialize<'de> for FigureSpec {
 /// Why a document could not be read as a figure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
-    /// The text was not this shape at all.
+    /// The text was not this shape, or held a value refused as it was read.
+    ///
+    /// The second half is the newtypes: a `Label` and a `Caption` check
+    /// themselves while decoding, so an empty or non-printable one never
+    /// becomes a label at all. [`Self::Spec`] is what this boundary answers
+    /// when every part was readable and the parts disagree with one another.
     Malformed,
     /// The text was this shape and the shape was refused.
     Spec(SpecError),

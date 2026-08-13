@@ -523,6 +523,12 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
     let value_label_right =
         frame.left + 4.0 + value_high_text.chars().count() as f64 * TEXT_EM * MARKER_LABEL_SIZE;
 
+    // Where each label already drawn in this panel ended up, so the next one
+    // does not land on it. Two markers at the same m/z is a legitimate panel --
+    // a precursor window and its monoisotopic peak, say -- and drawing both
+    // labels at one baseline hides whichever was written first, leaving a
+    // figure that looks annotated and is missing an annotation.
+    let mut occupied: Vec<TextBox> = Vec::new();
     for marker in &panel.markers {
         if marker.at < domain.low() || marker.at > domain.high() {
             continue;
@@ -539,7 +545,15 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
             colours.marker,
         );
         if let Some(label) = marker.label.as_ref() {
-            render_marker_label(out, label, x, plot_top, value_label_right, frame, colours);
+            render_marker_label(
+                out,
+                label,
+                x,
+                value_label_right,
+                &mut occupied,
+                frame,
+                colours,
+            );
         }
     }
 
@@ -814,6 +828,39 @@ fn axis_decimals(span: f64) -> usize {
     }
 }
 
+/// The rectangle one laid-out block of text occupies.
+///
+/// Half-open in neither direction and deliberately crude: the point is to know
+/// whether two annotations would be drawn over each other, not to typeset them.
+struct TextBox {
+    left: f64,
+    right: f64,
+    top: f64,
+    bottom: f64,
+}
+
+impl TextBox {
+    /// From a block's anchor, its declared width and how far it wraps.
+    ///
+    /// `top` is a baseline, so the box reaches one font size above it — that is
+    /// where the glyphs of the first line actually are.
+    fn new(left: f64, baseline: f64, width: f64, depth: f64) -> Self {
+        Self {
+            left,
+            right: left + width,
+            top: baseline - MARKER_LABEL_SIZE,
+            bottom: baseline + depth,
+        }
+    }
+
+    fn overlaps(&self, other: &Self) -> bool {
+        self.left < other.right
+            && other.left < self.right
+            && self.top < other.bottom
+            && other.top < self.bottom
+    }
+}
+
 /// The width to lay one string out in: its natural width, or the space there is.
 ///
 /// The natural width comes from [`TEXT_EM`], which is an upper bound on a glyph
@@ -884,20 +931,23 @@ fn wrap_label(text: &str, columns: usize) -> Vec<String> {
 /// inside the canvas, which subsumes the side choice: near the right edge the
 /// clamp moves the text left of its marker on its own.
 ///
-/// The character width is an estimate, and it has to be: measuring text needs a
-/// font, which this renderer deliberately does not carry -- that is what makes
-/// it headless. `0.6em` over-states a proportional sans-serif face, so the
-/// estimate errs towards wrapping early, which costs a line break, rather than
-/// late, which costs the annotation.
+/// It then steps down past anything already drawn in the panel, because two
+/// markers at the same position is a legitimate figure and one label written
+/// over another is an annotation silently lost.
+///
+/// The character width is an upper bound on a glyph rather than an average, and
+/// every line is written with the `textLength` computed from it, so these boxes
+/// are what the viewer actually lays out rather than what this renderer guessed.
 fn render_marker_label(
     out: &mut String,
     label: &Label,
     x: f64,
-    plot_top: f64,
     value_label_right: f64,
+    occupied: &mut Vec<TextBox>,
     frame: &Frame,
     colours: &Palette,
 ) {
+    let plot_top = frame.plot_top;
     let canvas_width = frame.right + MARGIN_RIGHT;
     let canvas_height = frame.canvas_height;
     let character = TEXT_EM * MARKER_LABEL_SIZE;
@@ -930,9 +980,20 @@ fn render_marker_label(
     // enough to wrap into many lines on a small figure would otherwise run off
     // the bottom, which loses it just as completely as running off the side.
     let depth = (lines.len() - 1) as f64 * MARKER_LABEL_LEADING;
-    let top = wanted
-        .min(canvas_height - MARKER_LABEL_INSET - depth)
-        .max(MARKER_LABEL_SIZE);
+    let floor = canvas_height - MARKER_LABEL_INSET - depth;
+    // Step past every label already placed in this panel. Bounded by the page:
+    // once the block cannot move down any further it stays where it is, because
+    // a label overlapping another is still better than one outside the file.
+    let mut top = wanted;
+    let mut proposed = TextBox::new(left, top, block, depth);
+    while occupied.iter().any(|placed| placed.overlaps(&proposed))
+        && top + MARKER_LABEL_LEADING <= floor
+    {
+        top += MARKER_LABEL_LEADING;
+        proposed = TextBox::new(left, top, block, depth);
+    }
+    let top = top.min(floor).max(MARKER_LABEL_SIZE);
+    occupied.push(TextBox::new(left, top, block, depth));
 
     let _ = write!(
         out,

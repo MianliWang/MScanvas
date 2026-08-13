@@ -111,7 +111,10 @@ coordinates, unordered source data, backwards domains, a domain whose two ends
 are finite but whose width is not, unbounded or non-printable labels, a
 reduction claiming a source smaller than itself, a visible window outside the
 full domain, a series holding a point outside the panel's own declared range, a
-figure too small for the panels it declares, a panel drawn as marks from zero
+figure too small for the panels it declares — the per-panel floor is what leaves
+room for a panel's two value-axis ends to be printed further apart than they are
+tall, a legibility rule the contract has to carry because only it knows how many
+panels share the height — a panel drawn as marks from zero
 whose value range does not contain zero, a joined trace reduced by a rule that
 keeps one extreme per sign, a marker placed where the panel's source does not
 reach, and a label holding a character XML 1.0 forbids.
@@ -140,10 +143,18 @@ public field would have reduced the claim to *checked once*: a marker position
 written to `NaN` after construction reached the renderer, where both domain
 comparisons are false for `NaN`, and `x1="NaN"` was written into the document.
 Reading is unrestricted; writing goes through a constructor or does not happen.
-`Deserialize` is implemented rather than derived for the same reason: a derived
-one is a second public entry point, and `serde_json::from_str::<FigureSpec>`
-would have built the type field by field and skipped every rule that
-[`FigureSpec::from_json`] applies. Sealing the fields closed the mutation route;
+`Deserialize` is implemented rather than derived for the same reason — on
+`FigureSpec` and on `Label` and `Caption`, whose private inner string otherwise
+had a public door: a derived implementation is a second entry point, and
+`serde_json::from_str::<FigureSpec>` (or `::<Label>`, decoded alone and then
+handed to `with_title`) would have built the value field by field and skipped
+every rule that [`FigureSpec::from_json`] applies. A newtype whose invariant one
+entry point does not hold is a `String` with a longer name.
+
+That splits the decode errors along a line worth stating: a value refused as it
+is read never becomes a value, and reports `Malformed`; a document whose parts
+are each readable and disagree with one another reports `Spec` with the rule
+that failed. Sealing the fields closed the mutation route;
 this closes the construction route beside it. `from_json` reads the wire shape
 itself so that its refusals keep the `SpecError` that caused them rather than
 arriving as a decoder message a caller would have to parse.
@@ -249,8 +260,11 @@ threshold, so an ordinary axis never sees it. A single-valued domain is exempt
 from all of this: its ends *are* one number, and escalating would print digits
 it does not hold.
 
-A marker label is wrapped to the width available and its block clamped inside
-the canvas. On screen an overflowing label is usually survivable; an exported
+A marker label is wrapped to the width available, clamped inside the canvas, and
+stepped down past every label already placed in its panel. Two markers at one
+m/z is a legitimate figure — a precursor window and its monoisotopic peak — and
+one annotation drawn over another leaves a figure that looks annotated and is
+missing an annotation. On screen an overflowing label is usually survivable; an exported
 file has no viewport to scroll, so the annotation would simply be absent while
 the marker's line still drew and the figure still looked finished. Clamping
 subsumes choosing a side — near the right edge it moves the text left of its

@@ -909,12 +909,17 @@ fn decoding_revalidates_the_whole_figure_and_not_only_the_schema() {
         );
     }
 
-    // And an empty label, which no constructor would have produced.
+    // And an empty label, which no constructor would have produced. Refused as
+    // `Malformed` rather than as a `SpecError`, and the difference is the
+    // taxonomy rather than an inconsistency: `Label` checks itself as it is
+    // read, so an empty one never becomes a label at all. A `SpecError` is what
+    // this boundary answers when the parts are each readable and disagree with
+    // one another.
     let empty_label = valid.replace(r#""label":"m/z""#, r#""label":"""#);
     assert_ne!(empty_label, valid);
     assert_eq!(
         FigureSpec::from_json(&empty_label).unwrap_err(),
-        DecodeError::Spec(SpecError::LabelEmpty),
+        DecodeError::Malformed,
     );
 
     // And an inverted domain.
@@ -2220,5 +2225,133 @@ fn an_enormous_axis_end_is_stated_as_an_exponent_and_fits() {
             reserved > 0.0 && reserved <= width,
             "a declared width left the document: {reserved} of {width}",
         );
+    }
+}
+
+/// A decoded label is checked exactly as a constructed one is.
+///
+/// A newtype whose invariant one entry point does not hold is a `String` with a
+/// longer name — and `AxisSpec::new`, `with_title` and `with_caption` all take
+/// these types precisely because the type is supposed to mean *checked*.
+#[test]
+fn a_decoded_label_is_checked_like_a_constructed_one() {
+    // Raw strings where a backslash matters: these are JSON documents, so a
+    // backslash-n must reach the decoder as two characters, not as a break.
+    for text in [r#""""#, "\"m/z\u{FFFF}\""] {
+        assert!(
+            serde_json::from_str::<Label>(text).is_err(),
+            "a label decoded unchecked: {text}",
+        );
+        assert!(
+            serde_json::from_str::<Caption>(text).is_err(),
+            "a caption decoded unchecked: {text}",
+        );
+    }
+    // Each keeps its own rule rather than a shared one: a line break is not a
+    // label, and is an ordinary part of a caption.
+    assert!(serde_json::from_str::<Label>(r#""two\nlines""#).is_err());
+    assert!(serde_json::from_str::<Caption>(r#""two\nlines""#).is_ok());
+    assert!(serde_json::from_str::<Label>("\"m/z\"").is_ok());
+    // A caption is a sentence, so it may hold the line break a label may not.
+    assert!(serde_json::from_str::<Caption>(r#""Figure 1.\nReplicate A.""#).is_ok());
+}
+
+/// The smallest panel the contract accepts still shows both of its value ends.
+///
+/// A panel is not drawable at any height. The renderer prints the top and the
+/// bottom of the value range inside the plotting area, and below some height
+/// those two lines of text are closer together than they are tall — so a figure
+/// the contract accepted rendered its own axis unreadable.
+#[test]
+fn the_smallest_accepted_panel_keeps_its_value_ends_apart() {
+    fn baseline(document: &str, needle: &str) -> f64 {
+        let line = document
+            .lines()
+            .find(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("{needle} is drawn: {document}"));
+        line.split("y=\"")
+            .nth(1)
+            .and_then(|piece| piece.split('"').next())
+            .expect("a y value")
+            .parse()
+            .expect("a number")
+    }
+
+    // Eight panels at exactly the floor, each with a value range reaching below
+    // zero so both ends are printed.
+    let panel = || {
+        PanelSpec::new(
+            PlotKind::Spectrum {
+                representation: SpectrumRepresentation::Centroid,
+            },
+            AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(100.0, 200.0),
+            domain(-40.0, 90.0),
+            vec![series(vec![100.0, 200.0], vec![-40.0, 90.0])],
+        )
+        .expect("a panel")
+    };
+    let panels = 8;
+    let height = MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT * f64::from(panels);
+    let document = svg::render(
+        &FigureSpec::new(
+            FigureTheme::Light,
+            FigureSize::new(900.0, height).expect("a size"),
+            (0..panels).map(|_| panel()).collect(),
+        )
+        .expect("eight panels at the floor"),
+    );
+
+    let high = baseline(&document, ">90<");
+    let low = baseline(&document, ">-40<");
+    assert!(
+        (low - high) >= 11.0,
+        "the two value ends are at least a line apart: {high} and {low}",
+    );
+}
+
+/// Two markers at one position do not draw one label over the other.
+///
+/// A precursor window and its monoisotopic peak sit at the same m/z, and one
+/// label written on top of another leaves a figure that looks annotated and is
+/// missing an annotation.
+#[test]
+fn two_markers_at_one_position_keep_both_labels() {
+    let panel = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )
+    .with_markers(vec![
+        Marker::new(150.0, Some(label("precursor"))).expect("a marker"),
+        Marker::new(150.0, Some(label("monoisotopic"))).expect("a marker"),
+        Marker::new(151.0, Some(label("nearly there"))).expect("a marker"),
+    ])
+    .expect("markers on a valid panel");
+
+    let document = svg::render(&figure_of(panel));
+    let baselines: Vec<f64> = ["precursor", "monoisotopic", "nearly there"]
+        .into_iter()
+        .map(|needle| {
+            let line = document
+                .lines()
+                .find(|line| line.contains(&format!(">{needle}<")))
+                .unwrap_or_else(|| panic!("{needle} is drawn: {document}"));
+            line.split("y=\"")
+                .nth(1)
+                .and_then(|piece| piece.split('"').next())
+                .expect("a y value")
+                .parse::<f64>()
+                .expect("a number")
+        })
+        .collect();
+
+    for (index, first) in baselines.iter().enumerate() {
+        for second in baselines.iter().skip(index + 1) {
+            assert!(
+                (first - second).abs() >= 11.0,
+                "two labels landed on each other: {baselines:?}",
+            );
+        }
     }
 }
