@@ -71,6 +71,8 @@ pub enum SpecError {
     PanelCountOutOfRange,
     /// A reduction claimed to come from fewer points than it holds.
     ReductionNotSmaller,
+    /// A series held a point outside the panel's own declared domains.
+    PointOutsideDomain,
     /// A decoded document declared a schema this build does not accept.
     UnknownSchemaVersion,
 }
@@ -88,6 +90,7 @@ impl fmt::Display for SpecError {
             Self::FigureSizeOutOfRange => "a figure edge was out of range",
             Self::PanelCountOutOfRange => "the panel count was out of range",
             Self::ReductionNotSmaller => "a reduction was not smaller than its source",
+            Self::PointOutsideDomain => "a series left the panel's declared domain",
             Self::UnknownSchemaVersion => "the document declares an unknown schema version",
         })
     }
@@ -460,9 +463,13 @@ impl PanelSpec {
     ///
     /// # Errors
     ///
-    /// Refuses a visible domain that is not inside the full domain. Everything
-    /// else was already refused by the value constructors this takes, which is
-    /// the point of taking them rather than raw numbers.
+    /// Refuses a series holding a point outside the declared domains.
+    ///
+    /// That check is the reason this takes domains at all rather than deriving
+    /// them. A panel whose data leaves its own stated range is not a rendering
+    /// problem to be clamped away later -- clamping would draw a value the
+    /// measurement does not contain, at a position it was never at. Refusing
+    /// here is what lets the renderer project without deciding anything.
     pub fn new(
         kind: PlotKind,
         x_axis: AxisSpec,
@@ -471,6 +478,19 @@ impl PanelSpec {
         value_domain: Domain,
         series: Vec<SeriesSpec>,
     ) -> Result<Self, SpecError> {
+        for one in &series {
+            let outside_x = one
+                .x()
+                .iter()
+                .any(|value| *value < full_domain.low() || *value > full_domain.high());
+            let outside_y = one
+                .y()
+                .iter()
+                .any(|value| *value < value_domain.low() || *value > value_domain.high());
+            if outside_x || outside_y {
+                return Err(SpecError::PointOutsideDomain);
+            }
+        }
         Ok(Self {
             kind,
             x_axis,

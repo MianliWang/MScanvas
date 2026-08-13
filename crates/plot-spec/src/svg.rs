@@ -179,11 +179,17 @@ fn panel_description(panel: &PanelSpec) -> String {
 }
 
 /// The plotting area of one panel, in figure units.
+///
+/// `plot_top`/`plot_bottom` are the drawable band inside the frame, and
+/// `zero_y` is where the value zero falls in it. Carried together because every
+/// user of one needs the others, and passing them separately was how the series
+/// renderer grew an argument list nobody could read.
 struct Frame {
     left: f64,
     right: f64,
-    top: f64,
-    bottom: f64,
+    plot_top: f64,
+    plot_bottom: f64,
+    zero_y: f64,
 }
 
 /// Renders one figure as a standalone SVG document.
@@ -256,11 +262,27 @@ pub fn render(figure: &FigureSpec) -> String {
     let usable = height - MARGIN_TOP - MARGIN_BOTTOM;
     let panel_height = usable / panel_count as f64;
     for (index, panel) in figure.panels.iter().enumerate() {
+        let top = MARGIN_TOP + panel_height * index as f64;
+        let bottom = MARGIN_TOP + panel_height * (index as f64 + 1.0);
+        let plot_top = top + 8.0;
+        let plot_bottom = bottom - 34.0;
+        let values = panel.value_domain;
+        // Where zero falls in the value range, so a negative value hangs below
+        // it and a positive one rises above it. A range that never reaches zero
+        // puts the line at the nearer edge rather than off the panel.
+        let zero_y = if values.low() <= 0.0 && values.high() >= 0.0 {
+            project(0.0, values, plot_bottom, plot_top)
+        } else if values.high() < 0.0 {
+            plot_top
+        } else {
+            plot_bottom
+        };
         let frame = Frame {
             left: MARGIN_LEFT,
             right: width - MARGIN_RIGHT,
-            top: MARGIN_TOP + panel_height * index as f64,
-            bottom: MARGIN_TOP + panel_height * (index as f64 + 1.0),
+            plot_top,
+            plot_bottom,
+            zero_y,
         };
         render_panel(&mut out, panel, &frame, &colours);
     }
@@ -281,19 +303,9 @@ fn default_title(figure: &FigureSpec) -> String {
 fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Palette) {
     let domain = panel.drawn_domain();
     let values = panel.value_domain;
-    let plot_top = frame.top + 8.0;
-    let plot_bottom = frame.bottom - 34.0;
-
-    // Where zero falls in the value range, so a negative value hangs below it
-    // and a positive one rises above it. A range that never reaches zero puts
-    // the line at the nearer edge rather than off the panel.
-    let zero_y = if values.low() <= 0.0 && values.high() >= 0.0 {
-        project(0.0, values, plot_bottom, plot_top)
-    } else if values.high() < 0.0 {
-        plot_top
-    } else {
-        plot_bottom
-    };
+    let plot_top = frame.plot_top;
+    let plot_bottom = frame.plot_bottom;
+    let zero_y = frame.zero_y;
 
     let _ = writeln!(
         out,
@@ -315,16 +327,7 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
     );
 
     for series in &panel.series {
-        render_series(
-            out,
-            panel,
-            series,
-            frame,
-            plot_top,
-            plot_bottom,
-            zero_y,
-            colours,
-        );
+        render_series(out, panel, series, frame, colours);
     }
 
     for marker in &panel.markers {
@@ -419,15 +422,11 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_series(
     out: &mut String,
     panel: &PanelSpec,
     series: &SeriesSpec,
     frame: &Frame,
-    plot_top: f64,
-    plot_bottom: f64,
-    zero_y: f64,
     colours: &Palette,
 ) {
     if series.is_empty() {
@@ -435,6 +434,7 @@ fn render_series(
     }
     let domain = panel.drawn_domain();
     let values = panel.value_domain;
+    let (plot_top, plot_bottom, zero_y) = (frame.plot_top, frame.plot_bottom, frame.zero_y);
     let stroke = match series.role {
         StyleRole::Measurement => colours.measurement,
         StyleRole::Baseline => colours.baseline,
@@ -450,21 +450,43 @@ fn render_series(
         PlotKind::Chromatogram => true,
     };
 
+    // Clipped to the drawn domain rather than projected past its edges. A panel
+    // narrowed to a visible window still carries its whole source -- that is
+    // what makes a full-range export possible from the same specification -- so
+    // without this the points outside the window would be placed outside the
+    // frame, and outside the `viewBox` entirely.
+    //
+    // Skipped, not clamped. Clamping would stack every out-of-window point onto
+    // the boundary and draw a wall of marks at a position none of them was
+    // measured at.
+    let inside = |x: f64| x >= domain.low() && x <= domain.high();
+
     let mut path = String::with_capacity(series.len() * 24);
     if continuous {
-        for (index, (x, y)) in series.x().iter().zip(series.y().iter()).enumerate() {
+        // A gap restarts the subpath. Joining across one would draw a straight
+        // line through a region the window deliberately excludes.
+        let mut pen_down = false;
+        for (x, y) in series.x().iter().zip(series.y().iter()) {
+            if !inside(*x) {
+                pen_down = false;
+                continue;
+            }
             let px = project(*x, domain, frame.left, frame.right);
             let py = project(*y, values, plot_bottom, plot_top);
             let _ = write!(
                 path,
                 "{}{} {}",
-                if index == 0 { 'M' } else { 'L' },
+                if pen_down { 'L' } else { 'M' },
                 coordinate(px),
-                coordinate(py.clamp(plot_top, plot_bottom)),
+                coordinate(py),
             );
+            pen_down = true;
         }
     } else {
         for (x, y) in series.x().iter().zip(series.y().iter()) {
+            if !inside(*x) {
+                continue;
+            }
             let px = project(*x, domain, frame.left, frame.right);
             let py = project(*y, values, plot_bottom, plot_top);
             let _ = write!(
@@ -472,9 +494,13 @@ fn render_series(
                 "M{} {}V{}",
                 coordinate(px),
                 coordinate(zero_y),
-                coordinate(py.clamp(plot_top, plot_bottom)),
+                coordinate(py),
             );
         }
+    }
+
+    if path.is_empty() {
+        return;
     }
 
     let _ = writeln!(

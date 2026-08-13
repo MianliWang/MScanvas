@@ -109,9 +109,12 @@ next milestone would have to unpick.
 invalid or refused at a constructor: mismatched axis lengths, non-finite
 coordinates, unordered source data, backwards domains, unbounded or
 non-printable labels, a reduction claiming a source smaller than itself, a
-visible window outside the full domain. Unordered data is **refused rather than
-sorted** — sorting would decide the file meant something other than what it
-said.
+visible window outside the full domain, and a series holding a point outside the
+panel's own declared range. Unordered data is **refused rather than sorted** —
+sorting would decide the file meant something other than what it said, and the
+out-of-range check exists for the same reason: the alternative was to clamp at
+render time, which draws a value the measurement does not contain at a position
+it was never at.
 
 Schema version stays `1`, because no version 1 instance ever existed. Decoding
 refuses any other version rather than reading what it recognises.
@@ -127,6 +130,13 @@ the other sign.
 Pointer lookup resolves against the **source** domain, not the drawn sample.
 Against the drawn sample it would answer with a point the reduction happened to
 keep.
+
+A panel narrowed to a visible window still carries its whole source — that is
+what makes a full-range export possible from the same specification — so the
+renderer **clips** to the drawn window rather than projecting past its edges,
+and breaks a joined trace at the boundary rather than bridging a region the
+window deliberately excludes. Clipping skips rather than clamps: clamping would
+stack every out-of-window point onto the boundary.
 
 ### Accessibility
 

@@ -42,6 +42,21 @@ fn spectrum_panel(representation: SpectrumRepresentation, series: SeriesSpec) ->
     .expect("a test panel is valid")
 }
 
+/// The drawing commands of the first series path, without the rest of the
+/// document.
+///
+/// Counting a command letter across the whole document would count the `M` in
+/// the default title "Mass spectrum" as a subpath, which is exactly the kind of
+/// assertion that passes for the wrong reason.
+fn path_data(document: &str) -> String {
+    document
+        .split("<path d=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_default()
+        .to_owned()
+}
+
 fn figure_of(panel: PanelSpec) -> FigureSpec {
     FigureSpec::new(
         FigureTheme::Light,
@@ -414,9 +429,12 @@ fn an_unreported_representation_is_never_described_as_established() {
     assert!(!document.contains("Profile samples, as reported"));
 
     // And it is drawn as discrete marks rather than joined, because joining
-    // would assert the representation while drawing it.
-    assert!(document.contains("V"), "the marks are sticks");
-    assert!(!document.contains("L"), "nothing is joined into a trace");
+    // would assert the representation while drawing it. Read from the path
+    // rather than the document: a command letter counted across the whole
+    // document would also count one in a label.
+    let path = path_data(&document);
+    assert!(path.contains('V'), "the marks are sticks");
+    assert!(!path.contains('L'), "nothing is joined into a trace");
 }
 
 #[test]
@@ -424,22 +442,22 @@ fn only_established_profile_data_is_joined_into_a_trace() {
     let points = (0..8).map(f64::from).collect::<Vec<_>>();
     let values = vec![1.0, 2.0, 3.0, 2.0, 1.0, 2.0, 3.0, 4.0];
 
-    let profile = svg::render(&figure_of(spectrum_panel(
+    let profile = path_data(&svg::render(&figure_of(spectrum_panel(
         SpectrumRepresentation::Profile,
         series(points.clone(), values.clone()),
-    )));
+    ))));
     assert!(profile.contains('L'), "profile samples are joined");
 
     for representation in [
         SpectrumRepresentation::Centroid,
         SpectrumRepresentation::Unreported,
     ] {
-        let document = svg::render(&figure_of(spectrum_panel(
+        let path = path_data(&svg::render(&figure_of(spectrum_panel(
             representation,
             series(points.clone(), values.clone()),
-        )));
+        ))));
         assert!(
-            !document.contains('L'),
+            !path.contains('L'),
             "{representation:?} points are not joined",
         );
     }
@@ -657,4 +675,151 @@ fn an_unreported_unit_is_not_displayed_as_one() {
     assert!(document.contains(">Retention time<"));
     assert!(!document.contains("Retention time ("), "no empty bracket");
     assert!(!document.contains("min"), "and no invented unit");
+}
+
+/// A panel refuses data that leaves its own declared range.
+///
+/// The alternative was to clamp at render time, which would have drawn a value
+/// the measurement does not contain at a position it was never at. Refusing
+/// here is what lets the renderer project without deciding anything.
+#[test]
+fn a_series_outside_the_declared_domain_is_refused() {
+    let build = |full: Domain, values: Domain, x: Vec<f64>, y: Vec<f64>| {
+        PanelSpec::new(
+            PlotKind::Spectrum {
+                representation: SpectrumRepresentation::Centroid,
+            },
+            AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            full,
+            values,
+            vec![series(x, y)],
+        )
+    };
+
+    assert_eq!(
+        build(
+            domain(100.0, 200.0),
+            domain(0.0, 50.0),
+            vec![100.0, 250.0],
+            vec![10.0, 20.0],
+        )
+        .unwrap_err(),
+        SpecError::PointOutsideDomain,
+        "a point beyond the domain axis is refused",
+    );
+    assert_eq!(
+        build(
+            domain(100.0, 200.0),
+            domain(0.0, 50.0),
+            vec![100.0, 200.0],
+            vec![10.0, 900.0],
+        )
+        .unwrap_err(),
+        SpecError::PointOutsideDomain,
+        "a value beyond the value range is refused",
+    );
+    // The exact bounds are inside.
+    assert!(
+        build(
+            domain(100.0, 200.0),
+            domain(0.0, 50.0),
+            vec![100.0, 200.0],
+            vec![0.0, 50.0],
+        )
+        .is_ok()
+    );
+}
+
+/// A visible window draws what is in it, and nothing outside the frame.
+///
+/// The panel still carries its whole source -- that is what makes a full-range
+/// export possible from the same specification -- so a renderer that projected
+/// past the window's edges would place marks outside the plot area and outside
+/// the `viewBox` entirely.
+#[test]
+fn a_visible_window_clips_rather_than_projecting_past_its_edges() {
+    let x: Vec<f64> = (0..=10).map(|index| f64::from(index) * 100.0).collect();
+    let y: Vec<f64> = (0..=10).map(|index| f64::from(index) * 10.0).collect();
+    let panel = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 1_000.0),
+        domain(0.0, 100.0),
+        vec![series(x, y)],
+    )
+    .expect("a panel")
+    .with_visible_domain(domain(400.0, 600.0))
+    .expect("a visible window");
+
+    let figure = FigureSpec::new(
+        FigureTheme::Light,
+        FigureSize::new(900.0, 500.0).expect("a size"),
+        vec![panel],
+    )
+    .expect("a figure");
+    let document = svg::render(&figure);
+
+    // Three of the eleven points fall inside [400, 600].
+    assert_eq!(
+        path_data(&document).matches('V').count(),
+        3,
+        "only the window is drawn",
+    );
+
+    // And every drawn coordinate is inside the figure, which is what a
+    // projection past the edges would have broken.
+    let drawn: Vec<f64> = document
+        .split('M')
+        .skip(1)
+        .filter_map(|piece| piece.split(' ').next())
+        .filter_map(|value| value.parse::<f64>().ok())
+        .collect();
+    assert!(!drawn.is_empty(), "the test read some coordinates");
+    for value in drawn {
+        assert!(
+            (0.0..=900.0).contains(&value),
+            "{value} is outside the figure",
+        );
+    }
+}
+
+/// A window that excludes a middle region breaks the trace rather than
+/// bridging it.
+#[test]
+fn a_clipped_trace_does_not_join_across_the_excluded_region() {
+    // A profile spectrum, so the renderer is allowed to join at all.
+    let x: Vec<f64> = (0..=10).map(f64::from).collect();
+    let y = vec![5.0; 11];
+    let panel = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Profile,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 10.0),
+        domain(0.0, 10.0),
+        vec![series(x, y)],
+    )
+    .expect("a panel");
+
+    let whole = path_data(&svg::render(&figure_of(panel.clone())));
+    // One subpath for eleven joined points.
+    assert_eq!(whole.matches('M').count(), 1);
+    assert_eq!(whole.matches('L').count(), 10);
+
+    let windowed = panel
+        .with_visible_domain(domain(2.0, 8.0))
+        .expect("a window");
+    let clipped = path_data(&svg::render(&figure_of(windowed)));
+    // Still one subpath: the window excludes only the ends, not a middle.
+    assert_eq!(clipped.matches('M').count(), 1);
+    assert_eq!(
+        clipped.matches('L').count(),
+        6,
+        "seven points inside the window are six joins",
+    );
 }
