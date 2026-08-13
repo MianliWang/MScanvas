@@ -170,7 +170,15 @@ different counts, and that is the finding, not a discrepancy:
 | `MinMaxPerColumn` | greatest and least value, whatever the sign | 2 points | 1,800 drawn |
 | `ExtremePerSignPerColumn` | tallest positive, deepest negative | **1** point | 900–942 drawn |
 
-`StickSpectrum` performs the second. Raw intensity is nonnegative almost
+`StickSpectrum` performs the second — and said the first in its `<figcaption>`
+until this milestone corrected it. That sentence is the screen's own disclosure
+to a user, so leaving it claiming both extrema of every column survived would
+have been the same defect this section exists to describe, in the one place a
+user actually reads. The reduction itself is unchanged; only the description of
+it was wrong. [ADR 0005](../architecture/adr/0005-mzml-preview-boundary.md) is
+corrected to match.
+
+Raw intensity is nonnegative almost
 everywhere, so under that rule most columns contribute a single stick — which is
 why the screen's counts sit just above 900 rather than at 1,800, and why the two
 scenes carrying negative baseline (`profile-dense-60k`, `transfer-bound-500k`)

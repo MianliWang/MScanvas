@@ -1573,39 +1573,88 @@ fn a_trace_crossing_into_the_window_from_below_zero_is_disclosed() {
     );
 }
 
-/// A marker label near the right edge turns inward instead of off the canvas.
+/// Every marker label lies inside the document, whatever its length.
 ///
-/// An exported figure has no viewport to scroll: a label placed past the
-/// document edge is simply not in the file.
+/// An exported figure has no viewport to scroll, so a label placed past the
+/// document edge is not clipped — it is absent — while the marker's line still
+/// draws and the figure still looks finished.
+///
+/// Two failures, and the second is why choosing a side is not enough on its own:
+/// a label to the right of a marker at the domain's high end runs off the page,
+/// and a label longer than the page fits on neither side of anything.
 #[test]
-fn a_marker_label_at_the_high_end_stays_inside_the_document() {
-    let panel = spectrum_panel(
-        SpectrumRepresentation::Centroid,
-        series(vec![100.0, 200.0], vec![10.0, 20.0]),
-    )
-    .with_markers(vec![
-        Marker::new(200.0, Some(label("precursor selection window"))).expect("a marker"),
-        Marker::new(100.0, Some(label("start"))).expect("a marker"),
-    ])
-    .expect("markers on a valid panel");
+fn every_marker_label_lies_inside_the_document() {
+    /// The same estimate the renderer uses: 0.6em at 11 units.
+    const CHARACTER: f64 = 6.6;
 
-    let document = svg::render(&figure_of(panel));
-    let far = document
-        .lines()
-        .find(|line| line.contains("precursor selection window"))
-        .expect("the far label is drawn");
-    assert!(
-        far.contains("text-anchor=\"end\""),
-        "a label at the high end turns inward: {far}",
-    );
-    let near = document
-        .lines()
-        .find(|line| line.contains(">start<"))
-        .expect("the near label is drawn");
-    assert!(
-        !near.contains("text-anchor"),
-        "a label with room keeps its natural side: {near}",
-    );
+    // Every `<tspan>` of every label, as (x, character count).
+    fn placed(document: &str) -> Vec<(f64, usize)> {
+        document
+            .split("<tspan x=\"")
+            .skip(1)
+            .filter_map(|piece| {
+                let (x, rest) = piece.split_once('"')?;
+                let text = rest.split_once('>')?.1.split_once("</tspan>")?.0;
+                Some((x.parse::<f64>().ok()?, text.chars().count()))
+            })
+            .collect()
+    }
+
+    let marked = |width: f64, text: &str| {
+        let panel = spectrum_panel(
+            SpectrumRepresentation::Centroid,
+            series(vec![100.0, 200.0], vec![10.0, 20.0]),
+        )
+        .with_markers(vec![
+            Marker::new(200.0, Some(label(text))).expect("a marker"),
+            Marker::new(100.0, Some(label("start"))).expect("a marker"),
+        ])
+        .expect("markers on a valid panel");
+        FigureSpec::new(
+            FigureTheme::Light,
+            FigureSize::new(width, 500.0).expect("a size"),
+            vec![panel],
+        )
+        .expect("one panel is a figure")
+    };
+
+    // An ordinary figure with a long-ish label, and the smallest figure the
+    // contract accepts carrying the longest label it accepts.
+    for (width, text) in [
+        (900.0, "precursor selection window".to_owned()),
+        (MIN_FIGURE_WIDTH, "m".repeat(MAX_LABEL_CHARS)),
+        (MIN_FIGURE_WIDTH, "precursor selection window".to_owned()),
+    ] {
+        let document = svg::render(&marked(width, &text));
+        let lines = placed(&document);
+        assert!(!lines.is_empty(), "labels are drawn at {width}");
+        for (x, characters) in lines {
+            assert!(
+                x >= 0.0,
+                "a label started off the left edge at {width}: {x}"
+            );
+            assert!(
+                x + characters as f64 * CHARACTER <= width,
+                "a label ran off the right edge at {width}: {x} + {characters} characters",
+            );
+        }
+        let rejoined: String = document
+            .split("<tspan")
+            .skip(1)
+            .filter_map(|piece| {
+                piece
+                    .split_once('>')?
+                    .1
+                    .split_once("</tspan>")
+                    .map(|cut| cut.0)
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            rejoined.contains(&text) || rejoined.replace(' ', "").contains(&text.replace(' ', "")),
+            "wrapping keeps every character of the label: {rejoined}",
+        );
+    }
 }
 
 /// A domain too narrow for the readable precision still shows two numbers.
@@ -1648,4 +1697,77 @@ fn a_domain_narrower_than_the_readable_precision_still_resolves() {
         2,
         "one value, printed the same at both ends: {flat}",
     );
+}
+
+/// Two distinct samples are interpolated between, however close they are.
+///
+/// `f64::EPSILON` is an absolute quantity, so testing a coordinate difference
+/// against it collapses distinct samples whose values happen to be small — and
+/// the ratio a clip computes is in `0..=1` for any distinct pair, so there was
+/// nothing to guard against but a true division by zero.
+#[test]
+fn a_narrow_pair_of_samples_is_interpolated_rather_than_collapsed() {
+    let panel = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(label("Time"), UnitState::Unreported),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 1.0e-20),
+        domain(-1.0, 1.0),
+        vec![series(vec![0.0, 1.0e-20], vec![-1.0, 1.0])],
+    )
+    .expect("a panel")
+    .with_visible_domain(domain(2.5e-21, 7.5e-21))
+    .expect("a window inside the domain");
+
+    // The window covers a quarter to three quarters of the segment, so the
+    // clipped trace runs from -0.5 to 0.5: it crosses the zero line, and a
+    // collapsed one would be flat at -1.
+    let document = svg::render(&figure_of(panel));
+    let path = path_data(&document);
+    let ys: Vec<f64> = path
+        .split(['M', 'L'])
+        .filter(|piece| !piece.is_empty())
+        .filter_map(|piece| piece.split_whitespace().nth(1)?.parse::<f64>().ok())
+        .collect();
+    assert_eq!(ys.len(), 2, "one clipped segment: {path}");
+    assert!(
+        (ys[0] - ys[1]).abs() > 1.0,
+        "the clipped segment rises across the window rather than lying flat: {path}",
+    );
+    assert!(
+        document.contains("Part of the drawn trace lies below the zero line"),
+        "and the half below zero is disclosed: {document}",
+    );
+}
+
+/// An axis too small for any decimal place still shows two numbers.
+///
+/// Seventeen *decimal places* is not seventeen significant digits: a domain of
+/// `1e-20 .. 4e-20` exhausts every place and prints `0.000…` at both ends, so
+/// fixed point alone cannot state a range at that magnitude. The pair falls
+/// back to exponent notation rather than claiming a zero-width axis.
+#[test]
+fn an_axis_below_every_decimal_place_falls_back_to_exponents() {
+    let panel = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(label("Time"), UnitState::Unreported),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(1.0e-20, 4.0e-20),
+        domain(0.0, 100.0),
+        vec![series(vec![1.0e-20, 4.0e-20], vec![10.0, 90.0])],
+    )
+    .expect("a panel");
+
+    let document = svg::render(&figure_of(panel));
+    assert!(document.contains(">1e-20<"), "the low end: {document}");
+    assert!(document.contains(">4e-20<"), "the high end: {document}");
+
+    // The fallback triggers on the strings colliding, not on a magnitude
+    // threshold, so an ordinary axis is untouched by it.
+    let ordinary = svg::render(&figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![200.0, 2_000.0], vec![10.0, 20.0]),
+    )));
+    assert!(ordinary.contains(">200<") && ordinary.contains(">2000<"));
+    assert!(!ordinary.contains("e2"), "no exponent for a plain axis");
 }

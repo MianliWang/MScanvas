@@ -15,7 +15,7 @@
 //! measurement.
 
 use crate::spec::{
-    DataScope, Domain, FigureSpec, FigureTheme, PanelSpec, PlotKind, SeriesSpec,
+    DataScope, Domain, FigureSpec, FigureTheme, Label, PanelSpec, PlotKind, SeriesSpec,
     SpectrumRepresentation, StyleRole, UnitState,
 };
 use std::fmt::Write as _;
@@ -47,11 +47,21 @@ const LONE_SAMPLE_TICK: f64 = 2.0;
 
 /// The width one character of a marker label is assumed to take, in em.
 ///
-/// An estimate, and it only ever decides which side of its marker a label goes
-/// on. Generous for a proportional sans-serif face, so a label that would have
-/// fitted may still flip -- which costs nothing, while the other error loses
-/// the annotation off the edge of the exported document.
+/// An estimate, and it has to be: measuring text needs a font, which this
+/// renderer deliberately does not carry. Generous for a proportional
+/// sans-serif face, so it errs towards wrapping a label early -- which costs a
+/// line break -- rather than late, which costs the annotation off the edge of
+/// the exported document.
 const MARKER_LABEL_EM: f64 = 0.6;
+
+/// The font size a marker label is drawn at, in figure units.
+const MARKER_LABEL_SIZE: f64 = 11.0;
+
+/// The distance between two lines of a wrapped marker label.
+const MARKER_LABEL_LEADING: f64 = 13.0;
+
+/// How far a marker label stays from either edge of the document.
+const MARKER_LABEL_INSET: f64 = 4.0;
 
 /// The gutter around the plotting area, in figure units.
 const MARGIN_LEFT: f64 = 64.0;
@@ -170,7 +180,12 @@ fn value_at(series: &SeriesSpec, x: f64) -> Option<f64> {
         if x < x0 || x > x1 {
             continue;
         }
-        if (x1 - x0).abs() <= f64::EPSILON {
+        // Exact equality, not an epsilon. `f64::EPSILON` is an absolute
+        // quantity, so any comparison against it collapses distinct samples
+        // whose values happen to be small -- and `(x - x0) / (x1 - x0)` is in
+        // `0..=1` for any distinct pair, however close, so there is nothing to
+        // guard against but a true division by zero.
+        if x1 == x0 {
             return Some(y0);
         }
         return Some(y0 + (y1 - y0) * ((x - x0) / (x1 - x0)));
@@ -462,35 +477,7 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
             colours.marker,
         );
         if let Some(label) = marker.label.as_ref() {
-            // A marker at the high end of the domain sits at `frame.right`,
-            // which leaves only the right gutter before the edge of the
-            // document -- so a label placed to its right runs off a standalone
-            // SVG or a PNG rendered from it, and the annotation is simply
-            // absent from the exported figure. On screen the same overflow is
-            // usually survivable; an exported file has no viewport to scroll.
-            //
-            // The width estimate is exactly that. A renderer that measured text
-            // would need a font, which this one deliberately does not carry --
-            // but the estimate only chooses a *side*, and 0.6em per character
-            // over-states a proportional sans-serif face, so it errs towards
-            // flipping early rather than late.
-            let estimated_width = label.as_str().chars().count() as f64 * MARKER_LABEL_EM * 11.0;
-            let canvas_right = frame.right + MARGIN_RIGHT;
-            let overflows = x + 3.0 + estimated_width > canvas_right;
-            let _ = writeln!(
-                out,
-                "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" \
-                 font-size=\"11\"{}>{}</text>",
-                coordinate(if overflows { x - 3.0 } else { x + 3.0 }),
-                coordinate(plot_top + 12.0),
-                colours.marker,
-                if overflows {
-                    " text-anchor=\"end\""
-                } else {
-                    ""
-                },
-                escape(label.as_str()),
-            );
+            render_marker_label(out, label, x, plot_top, frame, colours);
         }
     }
 
@@ -499,8 +486,8 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
     // axis picks its own precision from its own span: a narrow m/z window and a
     // tall intensity range need different numbers of decimals to stay legible
     // and to stay distinguishable from each other.
-    let domain_decimals = distinguishing_decimals(domain);
-    let value_decimals = distinguishing_decimals(values);
+    let (domain_low_text, domain_high_text) = axis_ends(domain);
+    let (value_low_text, value_high_text) = axis_ends(values);
     let _ = writeln!(
         out,
         "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" \
@@ -508,7 +495,7 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
         coordinate(frame.left),
         coordinate(plot_bottom + 14.0),
         colours.text,
-        escape(&format_number(domain.low(), domain_decimals)),
+        escape(&domain_low_text),
     );
     let _ = writeln!(
         out,
@@ -517,7 +504,7 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
         coordinate(frame.right),
         coordinate(plot_bottom + 14.0),
         colours.text,
-        escape(&format_number(domain.high(), domain_decimals)),
+        escape(&domain_high_text),
     );
     let _ = writeln!(
         out,
@@ -548,7 +535,7 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
         coordinate(frame.left + 4.0),
         coordinate(plot_top + 10.0),
         colours.text,
-        escape(&format_number(values.high(), value_decimals)),
+        escape(&value_high_text),
     );
     // Printed whenever it is not zero, rather than only when it is negative. A
     // trace may legitimately be zoomed to a value range that excludes zero, and
@@ -563,7 +550,7 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
             coordinate(frame.left + 4.0),
             coordinate(plot_bottom - 2.0),
             colours.text,
-            escape(&format_number(values.low(), value_decimals)),
+            escape(&value_low_text),
         );
     }
 }
@@ -628,7 +615,7 @@ fn render_series(
                 continue;
             }
             let at = |x: f64| {
-                if (x1 - x0).abs() <= f64::EPSILON {
+                if x1 == x0 {
                     y0
                 } else {
                     y0 + (y1 - y0) * ((x - x0) / (x1 - x0))
@@ -645,7 +632,7 @@ fn render_series(
             // outside neighbour is cut back onto the boundary sample that is
             // about to be drawn anyway. Skipped without lifting the pen: the
             // trace either has not started yet or continues through it.
-            if (bx - ax).abs() <= f64::EPSILON && (by - ay).abs() <= f64::EPSILON {
+            if bx == ax && by == ay {
                 if touched.is_none() {
                     touched = Some((ax, ay));
                 }
@@ -746,6 +733,148 @@ fn axis_decimals(span: f64) -> usize {
     } else {
         places as usize
     }
+}
+
+/// Splits one label into lines no wider than `columns` characters.
+///
+/// Greedy on whitespace, and a word longer than one line is cut rather than
+/// allowed to overhang -- an over-long word is usually an identifier, and an
+/// identifier running off the page carries less than one broken across two
+/// lines. Nothing is dropped or elided: every character of the label appears.
+fn wrap_label(text: &str, columns: usize) -> Vec<String> {
+    let columns = columns.max(1);
+    let mut lines: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        let mut word = word;
+        while word.chars().count() > columns {
+            let cut = word
+                .char_indices()
+                .nth(columns)
+                .map_or(word.len(), |(index, _)| index);
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+            }
+            lines.push(word[..cut].to_owned());
+            word = &word[cut..];
+        }
+        if word.is_empty() {
+            continue;
+        }
+        let would_be = if line.is_empty() {
+            word.chars().count()
+        } else {
+            line.chars().count() + 1 + word.chars().count()
+        };
+        if would_be > columns && !line.is_empty() {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+/// Draws one marker's label so that all of it is inside the document.
+///
+/// Two failures to avoid, and the second is why flipping the label to the other
+/// side of its marker is not enough on its own. A label placed to the right of
+/// a marker at the domain's high end runs off the page. And a label longer than
+/// the page cannot be placed on either side of anything -- an exported file has
+/// no viewport to scroll, so whatever leaves the canvas is not clipped, it is
+/// absent, while the marker's line still draws and the figure still looks
+/// finished.
+///
+/// So the label is wrapped to the width available and then its block is clamped
+/// inside the canvas, which subsumes the side choice: near the right edge the
+/// clamp moves the text left of its marker on its own.
+///
+/// The character width is an estimate, and it has to be: measuring text needs a
+/// font, which this renderer deliberately does not carry -- that is what makes
+/// it headless. `0.6em` over-states a proportional sans-serif face, so the
+/// estimate errs towards wrapping early, which costs a line break, rather than
+/// late, which costs the annotation.
+fn render_marker_label(
+    out: &mut String,
+    label: &Label,
+    x: f64,
+    plot_top: f64,
+    frame: &Frame,
+    colours: &Palette,
+) {
+    let canvas_width = frame.right + MARGIN_RIGHT;
+    let character = MARKER_LABEL_EM * MARKER_LABEL_SIZE;
+    let available = (canvas_width - 2.0 * MARKER_LABEL_INSET).max(character);
+    let columns = (available / character).floor().max(1.0);
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "bounded above by the canvas width and below by one"
+    )]
+    let lines = wrap_label(label.as_str(), columns as usize);
+    let Some(widest) = lines.iter().map(|line| line.chars().count()).max() else {
+        return;
+    };
+    let block = widest as f64 * character;
+    let left = (x + 3.0)
+        .max(MARKER_LABEL_INSET)
+        .min(canvas_width - MARKER_LABEL_INSET - block);
+    let top = plot_top + 12.0;
+
+    let _ = write!(
+        out,
+        "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"{}\">",
+        coordinate(left),
+        coordinate(top),
+        colours.marker,
+        coordinate(MARKER_LABEL_SIZE),
+    );
+    for (index, line) in lines.iter().enumerate() {
+        let _ = write!(
+            out,
+            "<tspan x=\"{}\" y=\"{}\">{}</tspan>",
+            coordinate(left),
+            coordinate(top + index as f64 * MARKER_LABEL_LEADING),
+            escape(line),
+        );
+    }
+    let _ = writeln!(out, "</text>");
+}
+
+/// The two ends of one axis, formatted so that they remain two numbers.
+///
+/// Fixed-point first, because that is what a reader expects on an m/z or a
+/// retention-time axis. Decimals grow until the ends differ, and if they still
+/// do not -- which fixed point cannot fix for a domain like `1e-20 .. 4e-20`,
+/// where the significant digits are far to the right of any decimal place this
+/// could print -- the pair falls back to exponent notation.
+///
+/// The fallback is a last resort rather than a threshold: it triggers on the
+/// strings being equal, so it cannot fire for a domain whose ends already read
+/// distinctly. Rust's exponent formatting is shortest-round-trip and computed
+/// in `core`, so it stays deterministic across platforms, which fixed-point
+/// precision was chosen for in the first place.
+///
+/// A **single-valued** domain never reaches the fallback: its ends *are* one
+/// number, and printing them identically is the truth.
+fn axis_ends(domain: Domain) -> (String, String) {
+    let decimals = distinguishing_decimals(domain);
+    let (low, high) = (
+        format_number(domain.low(), decimals),
+        format_number(domain.high(), decimals),
+    );
+    if domain.span() > 0.0 && low == high {
+        return (
+            format!("{:e}", domain.low()),
+            format!("{:e}", domain.high()),
+        );
+    }
+    (low, high)
 }
 
 /// How many decimals this domain's two ends need to remain two numbers.

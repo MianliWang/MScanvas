@@ -207,14 +207,25 @@ a visible window of `1000.1 .. 1000.4` labelled by magnitude printed `1000` at
 both ends, so the exported axis claimed zero width. Roughly three significant
 figures across the span, six decimals for readability, and escalation past that
 — to seventeen, where an `f64` stops carrying more — when the two ends would
-otherwise print the same number. A single-valued domain is exempt: its ends *are*
-one number, and escalating would print digits it does not hold.
+otherwise print the same number. Seventeen decimal *places* is not seventeen
+significant digits, so a domain like `1e-20 .. 4e-20` exhausts them all and
+still prints `0.000…` twice; that pair falls back to exponent notation. The
+fallback triggers on the two strings colliding rather than on a magnitude
+threshold, so an ordinary axis never sees it. A single-valued domain is exempt
+from all of this: its ends *are* one number, and escalating would print digits
+it does not hold.
 
-A marker label near the right edge turns inward instead of running off the
-document. On screen an overflowing label is usually survivable; an exported file
-has no viewport to scroll, so the annotation would simply be absent. The width
-estimate that decides this is exactly an estimate — this renderer carries no
-font — but it only chooses a side, and it errs towards flipping early.
+A marker label is wrapped to the width available and its block clamped inside
+the canvas. On screen an overflowing label is usually survivable; an exported
+file has no viewport to scroll, so the annotation would simply be absent while
+the marker's line still drew and the figure still looked finished. Clamping
+subsumes choosing a side — near the right edge it moves the text left of its
+marker on its own — and wrapping is what covers the case a side choice cannot:
+a label longer than the page fits on neither side of anything. Nothing is
+elided; every character appears. The character width is an estimate, and has to
+be, because measuring text needs a font this renderer deliberately does not
+carry; it errs towards wrapping early, which costs a line break, rather than
+late, which costs the annotation.
 
 A trace that reaches the drawn window always leaves a mark. A single sample, a
 series whose samples repeat one position, and a zero-width visible window all
