@@ -2112,3 +2112,113 @@ fn the_visible_title_is_laid_out_inside_the_document() {
         "seven characters at 16 units: {ordinary}",
     );
 }
+
+/// Deserializing a figure applies every rule a constructor would.
+///
+/// A derived `Deserialize` is a public entry point, not an internal detail:
+/// `serde_json::from_str::<FigureSpec>` would build the type field by field,
+/// skip every check, and hand the result to a renderer that has been told those
+/// states cannot occur. Sealing the fields closed the mutation route; this is
+/// the construction route beside it.
+#[test]
+fn deserializing_a_figure_applies_every_rule() {
+    let document = figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    ))
+    .to_json()
+    .expect("a figure serializes");
+    assert!(
+        serde_json::from_str::<FigureSpec>(&document).is_ok(),
+        "a valid document still decodes",
+    );
+
+    // Each of these is a state a constructor refuses, injected into a document
+    // that is otherwise well formed.
+    for (name, broken) in [
+        (
+            "mismatched arrays",
+            document.replace("\"y\":[10.0,20.0]", "\"y\":[10.0]"),
+        ),
+        (
+            "an inverted domain",
+            document.replace(
+                "\"low\":100.0,\"high\":200.0",
+                "\"low\":200.0,\"high\":100.0",
+            ),
+        ),
+        ("an empty label", document.replace("\"m/z\"", "\"\"")),
+        (
+            "a character XML cannot carry",
+            document.replace("\"m/z\"", "\"m/z\u{FFFF}\""),
+        ),
+    ] {
+        assert_ne!(broken, document, "{name}: the probe edited something");
+        assert!(
+            serde_json::from_str::<FigureSpec>(&broken).is_err(),
+            "{name} decoded through the public derive",
+        );
+        assert!(
+            FigureSpec::from_json(&broken).is_err(),
+            "{name} decoded through from_json",
+        );
+    }
+
+    // And `from_json` still answers with the specific rule rather than with a
+    // decoder message, which is why it reads the wire shape itself.
+    let inverted = document.replace(
+        "\"low\":100.0,\"high\":200.0",
+        "\"low\":200.0,\"high\":100.0",
+    );
+    assert_eq!(
+        FigureSpec::from_json(&inverted).unwrap_err(),
+        DecodeError::Spec(SpecError::DomainInverted),
+    );
+}
+
+/// An axis end too large to write out is stated as an exponent, and fits.
+///
+/// `Domain` accepts any finite pair, so `1e307` is a legal endpoint — and its
+/// fixed-point form is 308 characters, which is neither a number a reader can
+/// read nor a string an axis can hold.
+#[test]
+fn an_enormous_axis_end_is_stated_as_an_exponent_and_fits() {
+    let width = MIN_FIGURE_WIDTH;
+    let panel = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(label("Time"), UnitState::Unreported),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(1.0e307, 2.0e307),
+        domain(0.0, 1.0e307),
+        vec![series(vec![1.0e307, 2.0e307], vec![1.0e306, 1.0e307])],
+    )
+    .expect("a panel");
+
+    let document = svg::render(
+        &FigureSpec::new(
+            FigureTheme::Light,
+            FigureSize::new(width, 500.0).expect("a size"),
+            vec![panel],
+        )
+        .expect("one panel is a figure"),
+    );
+
+    assert!(document.contains(">1e307<"), "the low end: {document}");
+    assert!(document.contains(">2e307<"), "the high end: {document}");
+    assert!(
+        !document.contains("0000000000000000000"),
+        "no endpoint is written out in full: {document}",
+    );
+
+    // Every declared width still fits the document, endpoints included.
+    for reserved in document
+        .split("textLength=\"")
+        .skip(1)
+        .filter_map(|piece| piece.split('"').next()?.parse::<f64>().ok())
+    {
+        assert!(
+            reserved > 0.0 && reserved <= width,
+            "a declared width left the document: {reserved} of {width}",
+        );
+    }
+}

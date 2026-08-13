@@ -130,10 +130,10 @@ Full source, exported whole:
 
 | scene | source | SVG bytes | SVG elements | `<text>` nodes |
 | --- | ---: | ---: | ---: | ---: |
-| chromatogram-100k | 100,000 | 1,613,966 | 12 | 5 |
-| profile-dense-60k | 60,000 | 969,237 | 13 | 6 |
-| centroid-dense-20k | 20,000 | 483,873 | 12 | 5 |
-| transfer-bound-500k | 500,000 | 8,065,973 | 13 | 6 |
+| chromatogram-100k | 100,000 | 1,614,122 | 12 | 5 |
+| profile-dense-60k | 60,000 | 969,445 | 13 | 6 |
+| centroid-dense-20k | 20,000 | 484,029 | 12 | 5 |
+| transfer-bound-500k | 500,000 | 8,066,181 | 13 | 6 |
 
 The same scenes reduced to 900 columns and exported *as a reduction* — here
 under `MinMaxPerColumn`, the greatest and the least value of each column
@@ -141,10 +141,10 @@ whatever their signs, which is **not** the rule the screen table above used:
 
 | scene | source | drawn | SVG bytes |
 | --- | ---: | ---: | ---: |
-| chromatogram-100k | 100,000 | 1,800 | 30,475 |
-| profile-dense-60k | 60,000 | 1,800 | 30,632 |
-| centroid-dense-20k | 20,000 | 1,800 | 44,817 |
-| transfer-bound-500k | 500,000 | 1,800 | 30,610 |
+| chromatogram-100k | 100,000 | 1,800 | 30,631 |
+| profile-dense-60k | 60,000 | 1,800 | 30,840 |
+| centroid-dense-20k | 20,000 | 1,800 | 44,973 |
+| transfer-bound-500k | 500,000 | 1,800 | 30,818 |
 
 Two per column in every row, because these scenes have no column so flat that
 its greatest and its least value are the same point. The screen's rows drew
@@ -155,7 +155,7 @@ reduction, and the contract names which one a figure used — see *Two reduction
 rules, named apart*.
 
 A full-range export of the 500k scene is **264× larger** than the reduction of
-it (8,065,973 vs 30,610 bytes). That ratio is the difference candidate A silently
+it (8,066,181 vs 30,818 bytes). That ratio is the difference candidate A silently
 elided.
 
 Reduction cost alone, without rendering: 217 µs (20k) to 2.30 ms (500k).
@@ -202,8 +202,8 @@ timings are not.** Across four runs under varying machine load:
 | chromatogram-100k | 32.0 ms – 113.3 ms |
 | transfer-bound-500k | 166.3 ms – 771.1 ms |
 
-The byte counts were byte-identical in all four runs (`1,613,966` and
-`8,065,973` every time) while the timings moved by up to 4.6×. These are
+The byte counts were byte-identical in all four runs (`1,614,122` and
+`8,066,181` every time) while the timings moved by up to 4.6×. These are
 order-of-magnitude facts about one loaded laptop, not a product guarantee, and
 they are the reason timing alone did not choose the renderer.
 
@@ -213,11 +213,11 @@ the 500k one, plus an 8 MB output string: **46 MB**.
 Edge scenes, all five:
 
 ```text
-empty          svg_bytes=  1365  elements=11  finite_only=true chrome_free=true external_free=true
-single-point   svg_bytes=  1458  elements=12  finite_only=true chrome_free=true external_free=true
-flat           svg_bytes= 24549  elements=12  finite_only=true chrome_free=true external_free=true
-all-negative   svg_bytes= 24611  elements=13  finite_only=true chrome_free=true external_free=true
-all-zero       svg_bytes= 25553  elements=12  finite_only=true chrome_free=true external_free=true
+empty          svg_bytes=  1521  elements=11  finite_only=true chrome_free=true external_free=true
+single-point   svg_bytes=  1616  elements=12  finite_only=true chrome_free=true external_free=true
+flat           svg_bytes= 24705  elements=12  finite_only=true chrome_free=true external_free=true
+all-negative   svg_bytes= 24819  elements=13  finite_only=true chrome_free=true external_free=true
+all-zero       svg_bytes= 25709  elements=12  finite_only=true chrome_free=true external_free=true
 ```
 
 `external_free` deliberately does not look for `http://`. The SVG namespace

@@ -926,7 +926,11 @@ impl FigureSize {
 }
 
 /// One figure: ordered panels, a size, a theme and its own words.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// `Deserialize` is **implemented rather than derived** -- see the impl below.
+/// A derived one would be a public door into this type that skips every rule
+/// the constructors enforce.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FigureSpec {
     pub(crate) schema_version: u32,
     pub(crate) theme: FigureTheme,
@@ -1046,11 +1050,18 @@ impl FigureSpec {
     ///
     /// Refuses malformed JSON and any schema version but this build's.
     pub fn from_json(document: &str) -> Result<Self, DecodeError> {
-        let decoded: Self = serde_json::from_str(document).map_err(|_| DecodeError::Malformed)?;
+        let decoded = Self::from(
+            serde_json::from_str::<WireFigure>(document).map_err(|_| DecodeError::Malformed)?,
+        );
         // Every rule, not only the version. `serde` builds these types field by
         // field and never calls a constructor, so a document could otherwise
         // carry mismatched arrays, an inverted domain or an empty label into a
         // renderer that has been told those cannot happen.
+        //
+        // Read from the unvalidated wire shape rather than through this type's
+        // own `Deserialize`, which validates too -- so that a refusal here
+        // arrives as the `SpecError` that caused it rather than as a decoder
+        // message a caller would have to parse.
         decoded.validate().map_err(DecodeError::Spec)?;
         Ok(decoded)
     }
@@ -1062,6 +1073,57 @@ impl FigureSpec {
     /// Propagates a serializer failure, which this shape does not produce.
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
+    }
+}
+
+/// The field-by-field shape `serde` builds, before any rule has been applied.
+///
+/// Private, and the only thing in this module that may hold an unchecked
+/// figure. It exists so that decoding has one place where the values are
+/// present but not yet trusted -- which is what both readers below need, and
+/// what a derived `Deserialize` on the public type would have handed to
+/// everyone instead.
+#[derive(Deserialize)]
+struct WireFigure {
+    schema_version: u32,
+    theme: FigureTheme,
+    size: FigureSize,
+    title: Option<Label>,
+    caption: Option<Caption>,
+    panels: Vec<PanelSpec>,
+}
+
+impl From<WireFigure> for FigureSpec {
+    fn from(wire: WireFigure) -> Self {
+        Self {
+            schema_version: wire.schema_version,
+            theme: wire.theme,
+            size: wire.size,
+            title: wire.title,
+            caption: wire.caption,
+            panels: wire.panels,
+        }
+    }
+}
+
+/// Decoding a figure applies every rule a constructor would.
+///
+/// Implemented rather than derived, because a derived implementation is a
+/// public entry point: `serde_json::from_str::<FigureSpec>` would build the
+/// type field by field, skip every check, and hand the result to a renderer
+/// that has been told those states cannot occur. Sealing the fields closed the
+/// mutation route; this closes the construction route beside it.
+///
+/// [`FigureSpec::from_json`] reads the wire shape directly instead of going
+/// through here, so that its refusals keep their `SpecError`.
+impl<'de> Deserialize<'de> for FigureSpec {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let figure = Self::from(WireFigure::deserialize(deserializer)?);
+        figure.validate().map_err(serde::de::Error::custom)?;
+        Ok(figure)
     }
 }
 

@@ -140,6 +140,13 @@ public field would have reduced the claim to *checked once*: a marker position
 written to `NaN` after construction reached the renderer, where both domain
 comparisons are false for `NaN`, and `x1="NaN"` was written into the document.
 Reading is unrestricted; writing goes through a constructor or does not happen.
+`Deserialize` is implemented rather than derived for the same reason: a derived
+one is a second public entry point, and `serde_json::from_str::<FigureSpec>`
+would have built the type field by field and skipped every rule that
+[`FigureSpec::from_json`] applies. Sealing the fields closed the mutation route;
+this closes the construction route beside it. `from_json` reads the wire shape
+itself so that its refusals keep the `SpecError` that caused them rather than
+arriving as a decoder message a caller would have to parse.
 `with_markers` validates for the same reason — a second constructor that skips
 the check is how a rule gets added in one place and bypassed in another.
 Unordered data is **refused rather than sorted** — sorting would decide the file
@@ -228,6 +235,10 @@ description matching no row in any source file.
 Axis end labels take their precision from the **span**, not from the magnitude:
 a visible window of `1000.1 .. 1000.4` labelled by magnitude printed `1000` at
 both ends, so the exported axis claimed zero width. Roughly three significant
+An end whose fixed-point form runs past 24 characters is stated as an exponent:
+`Domain` accepts any finite pair, and `1e307` written out is 308 digits, which
+is neither a number a reader can read nor a string an axis can hold. Otherwise:
+roughly three significant
 figures across the span, six decimals for readability, and escalation past that
 — to seventeen, where an `f64` stops carrying more — when the two ends would
 otherwise print the same number. Seventeen decimal *places* is not seventeen
@@ -253,8 +264,9 @@ maximum, printed at the same size a unit away at the top-left of the plotting
 area, drops one line rather than being drawn over it; every other marker keeps
 its natural place.
 
-Every laid-out string — the visible title, both axis captions, every line of
-every marker label — declares the width it occupies. The document embeds no
+Every laid-out string — the visible title, both axis captions, all four numeric
+axis ends, and every line of every marker label — declares the width it
+occupies. The document embeds no
 font, so the face is the viewer's choice and a per-character number is otherwise
 a prediction about someone else's machine; an explicit `textLength` with
 `lengthAdjust="spacingAndGlyphs"` makes it an instruction instead. The number

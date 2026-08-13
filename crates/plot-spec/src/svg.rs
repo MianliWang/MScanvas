@@ -36,6 +36,12 @@ const COORDINATE_DECIMALS: usize = 3;
 /// -- see [`distinguishing_decimals`].
 const AXIS_DECIMALS: usize = 6;
 
+/// The longest an axis end may print before it is stated as an exponent.
+///
+/// Comfortably above any real m/z, retention time or intensity written in full,
+/// and far below the 308 characters a fixed-point `1e307` would take.
+const MAX_AXIS_LABEL_CHARS: usize = 24;
+
 /// The point past which more decimals of an `f64` carry nothing.
 ///
 /// Seventeen significant decimal digits round-trip a `f64`; beyond that the
@@ -507,6 +513,13 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
     // can avoid being drawn on top of it.
     let (domain_low_text, domain_high_text) = axis_ends(domain);
     let (value_low_text, value_high_text) = axis_ends(values);
+    // Half the axis each, so the two domain ends cannot meet in the middle, and
+    // a declared width so neither can leave the document. An end is a number
+    // rather than a `Label`, but `Domain` accepts any finite pair -- and a
+    // magnitude an axis cannot print is a figure the reader loses, not an input
+    // this renderer gets to assume away.
+    let end_room = (frame.right - frame.left) / 2.0;
+    let value_room = frame.right - frame.left - 4.0;
     let value_label_right =
         frame.left + 4.0 + value_high_text.chars().count() as f64 * TEXT_EM * MARKER_LABEL_SIZE;
 
@@ -532,20 +545,22 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
 
     let _ = writeln!(
         out,
-        "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" \
-         font-size=\"11\">{}</text>",
+        "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"11\" \
+         textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
         coordinate(frame.left),
         coordinate(plot_bottom + 14.0),
         colours.text,
+        coordinate(fitted_width(&domain_low_text, MARKER_LABEL_SIZE, end_room)),
         escape(&domain_low_text),
     );
     let _ = writeln!(
         out,
         "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"11\" \
-         text-anchor=\"end\">{}</text>",
+         text-anchor=\"end\" textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
         coordinate(frame.right),
         coordinate(plot_bottom + 14.0),
         colours.text,
+        coordinate(fitted_width(&domain_high_text, MARKER_LABEL_SIZE, end_room)),
         escape(&domain_high_text),
     );
     // Both captions are written to a declared width. A caption is a `Label`, so
@@ -588,10 +603,16 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
     );
     let _ = writeln!(
         out,
-        "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"11\">{}</text>",
+        "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"11\" \
+         textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
         coordinate(frame.left + 4.0),
         coordinate(plot_top + 10.0),
         colours.text,
+        coordinate(fitted_width(
+            &value_high_text,
+            MARKER_LABEL_SIZE,
+            value_room
+        )),
         escape(&value_high_text),
     );
     // Printed whenever it is not zero, rather than only when it is negative. A
@@ -602,11 +623,12 @@ fn render_panel(out: &mut String, panel: &PanelSpec, frame: &Frame, colours: &Pa
     if values.low() != 0.0 {
         let _ = writeln!(
             out,
-            "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" \
-             font-size=\"11\">{}</text>",
+            "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"11\" \
+             textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
             coordinate(frame.left + 4.0),
             coordinate(plot_bottom - 2.0),
             colours.text,
+            coordinate(fitted_width(&value_low_text, MARKER_LABEL_SIZE, value_room)),
             escape(&value_low_text),
         );
     }
@@ -955,7 +977,14 @@ fn axis_ends(domain: Domain) -> (String, String) {
         format_number(domain.low(), decimals),
         format_number(domain.high(), decimals),
     );
-    if domain.span() > 0.0 && low == high {
+    // Two ways fixed point stops being the right notation, and both end here.
+    // The ends collide, which is the narrow-domain case -- or the ends are so
+    // large that a fixed-point form runs to hundreds of digits: `1e307` prints
+    // 308 characters, which is not a number a reader can read and not a string
+    // an axis can hold.
+    let unreadable =
+        low.chars().count() > MAX_AXIS_LABEL_CHARS || high.chars().count() > MAX_AXIS_LABEL_CHARS;
+    if unreadable || (domain.span() > 0.0 && low == high) {
         return (
             format!("{:e}", domain.low()),
             format!("{:e}", domain.high()),
