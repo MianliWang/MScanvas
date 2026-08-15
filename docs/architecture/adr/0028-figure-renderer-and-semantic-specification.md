@@ -221,9 +221,13 @@ names **two** rules rather than one, and a figure states which it used:
 
 - `MinMaxPerColumn` — the greatest and the least value of each column, whatever
   their signs. Two points per column unless they are the same point.
-- `ExtremePerSignPerColumn` — the tallest positive and the deepest negative
-  value of each column. **One** point for an all-positive column, which is most
-  columns of a raw intensity trace.
+- `ExtremePerSignPerColumn` — the greatest non-negative and the deepest negative
+  value of each column. **One** point for an all-non-negative column, which is
+  most columns of a raw intensity trace. Non-negative rather than positive
+  because the boundary is `>= 0`: a column of measured zeros keeps a zero, and
+  calling that the tallest *positive* value would assert a positive signal the
+  column does not contain — in the screen's caption and in the exported
+  `<desc>`, which share this sentence.
 
 This is the rule `StickSpectrum` performs today, and the split exists because
 naming it min/max would have been false for nearly every column it draws — a

@@ -568,7 +568,7 @@ impl ReductionRule {
         match self {
             Self::MinMaxPerColumn => "keeping the greatest and the least value in each column",
             Self::ExtremePerSignPerColumn => {
-                "keeping the tallest positive and the deepest negative value in each column"
+                "keeping the greatest non-negative and the deepest negative value in each column"
             }
         }
     }
@@ -682,10 +682,16 @@ impl SeriesSpec {
         if self.x.windows(2).any(|pair| pair[0] > pair[1]) {
             return Err(SpecError::SourceNotOrdered);
         }
+        // Strictly smaller, which is what the error has always been called. A
+        // reduction that removed nothing is a `FullSource` series wearing the
+        // other label, and the figure says so in words: "reduced to 5" from 5
+        // source points asserts that measurements were dropped when none were.
+        // The equal case is not a harmless rounding of the truth -- it is a
+        // caller's misclassification reaching a scientific caption intact.
         if let DataScope::Reduced {
             source_point_count, ..
         } = self.scope
-            && source_point_count < self.x.len()
+            && source_point_count <= self.x.len()
         {
             return Err(SpecError::ReductionNotSmaller);
         }

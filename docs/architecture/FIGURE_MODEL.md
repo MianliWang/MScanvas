@@ -83,7 +83,7 @@ what the data means.
   exported 942 of 500,000 points.
 - A reduction states **which** rule it used. `MinMaxPerColumn` keeps the greatest
   and the least value of a column; `ExtremePerSignPerColumn` — what the screen
-  performs — keeps the tallest positive and the deepest negative, which for an
+  performs — keeps the greatest non-negative and the deepest negative, which for an
   all-positive column is one value, not two. The exported description names the
   rule in words, so the distinction reaches the reader rather than staying in the
   code.

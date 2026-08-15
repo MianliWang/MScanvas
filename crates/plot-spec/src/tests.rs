@@ -1024,7 +1024,7 @@ fn discrete_marks_are_never_interpolated_at_the_window_edge() {
 
 /// The two reductions this repository performs are two rules, and say so.
 ///
-/// The screen keeps the tallest positive and the deepest negative value of each
+/// The screen keeps the greatest non-negative and the deepest negative value of each
 /// column, so an all-positive column keeps **one** value. Calling that min/max
 /// would be false for every all-positive column, which is most of them -- and
 /// the sentence goes into the exported figure, so the figure would be asserting
@@ -1057,10 +1057,17 @@ fn the_two_reduction_rules_describe_themselves_differently() {
     let min_max = rendered(ReductionRule::MinMaxPerColumn);
     let per_sign = rendered(ReductionRule::ExtremePerSignPerColumn);
     assert!(min_max.contains("greatest and the least value"));
-    assert!(per_sign.contains("tallest positive and the deepest negative"));
+    assert!(per_sign.contains("greatest non-negative and the deepest negative"));
     assert!(
         !per_sign.contains("greatest and the least value"),
         "a stick reduction must not describe itself as min/max",
+    );
+    // The boundary is `>= 0`, so a column of measured zeros keeps a zero.
+    // Calling that the tallest *positive* value asserts a positive signal the
+    // column does not contain, in the one sentence both renderers share.
+    assert!(
+        !per_sign.contains("positive"),
+        "zero is kept by this rule and zero is not positive",
     );
 }
 
@@ -3476,5 +3483,142 @@ fn a_negative_zero_axis_end_is_not_printed_signed() {
     assert!(
         document.contains(">0.000000<"),
         "and the value it holds is still printed: {document}",
+    );
+}
+
+/// A reduction that removed nothing is not a reduction.
+///
+/// `ReductionNotSmaller` is the name the error always had, but the check read
+/// `<`, so a source count equal to the retained count was accepted and the
+/// figure then said "reduced to 5" from 5 source points -- asserting that
+/// measurements were dropped when none were. That is a caller's
+/// misclassification reaching a scientific caption intact.
+#[test]
+fn a_reduction_that_dropped_nothing_is_refused() {
+    let reduction = |source: usize| {
+        SeriesSpec::new(
+            label("measurement"),
+            StyleRole::Measurement,
+            DataScope::Reduced {
+                source_point_count: source,
+                rule: ReductionRule::MinMaxPerColumn,
+            },
+            vec![100.0, 150.0, 200.0],
+            vec![10.0, 40.0, 20.0],
+        )
+    };
+
+    assert_eq!(
+        reduction(3).unwrap_err(),
+        SpecError::ReductionNotSmaller,
+        "three points from three sources dropped nothing",
+    );
+    assert_eq!(
+        reduction(2).unwrap_err(),
+        SpecError::ReductionNotSmaller,
+        "and fewer sources than points is still not a reduction",
+    );
+    assert!(
+        reduction(4).is_ok(),
+        "one point dropped is a reduction, and the smallest real one",
+    );
+
+    // The empty case collapses the same way: nothing from nothing.
+    assert_eq!(
+        SeriesSpec::new(
+            label("measurement"),
+            StyleRole::Measurement,
+            DataScope::Reduced {
+                source_point_count: 0,
+                rule: ReductionRule::MinMaxPerColumn,
+            },
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap_err(),
+        SpecError::ReductionNotSmaller,
+        "an empty series stands for no source but its own",
+    );
+}
+
+/// A marker label clears the value-axis *low* end as well as the high one.
+///
+/// The panel floor kept a label inside the plotting area, but the low end is
+/// drawn two units above that floor and inside the same area -- so a label
+/// stepping down to the last position the floor allowed landed on it, and the
+/// axis end, written afterwards, covered the annotation.
+#[test]
+fn a_marker_label_clears_the_value_axis_low_end() {
+    let panel = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(
+            label("Retention time"),
+            UnitState::Known { unit: label("min") },
+        ),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 10.0),
+        domain(1.0, 2.0),
+        vec![series(vec![0.0, 10.0], vec![1.0, 2.0])],
+    )
+    .expect("a trace zoomed to a non-zero range")
+    .with_markers(vec![
+        Marker::new(0.0, Some(label("a"))).expect("a marker"),
+        Marker::new(0.1, Some(label("b"))).expect("a second marker"),
+    ])
+    .expect("markers on a valid panel");
+
+    let document = svg::render(
+        &FigureSpec::new(
+            FigureTheme::Light,
+            FigureSize::new(
+                MIN_FIGURE_WIDTH,
+                MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT,
+            )
+            .expect("the smallest figure the contract accepts"),
+            vec![panel],
+        )
+        .expect("one panel"),
+    );
+
+    // The renderer's own arithmetic for this figure.
+    let plot_bottom = 40.0 + (180.0 - 40.0 - 56.0) - 34.0;
+    let low_end_baseline = plot_bottom - 2.0;
+    // The low end is drawn at 11 units, so its glyphs start that far above its
+    // baseline. A marker block must finish above that to stay clear of it.
+    let low_end_top = low_end_baseline - 11.0;
+
+    let mut labels = 0;
+    for block in document.split("<text ").skip(1) {
+        let Some(block) = block.split("</text>").next() else {
+            continue;
+        };
+        if !block.contains("<tspan") {
+            continue;
+        }
+        labels += 1;
+        let last = block
+            .split("<tspan")
+            .skip(1)
+            .filter_map(|piece| {
+                piece
+                    .split("y=\"")
+                    .nth(1)?
+                    .split('"')
+                    .next()?
+                    .parse::<f64>()
+                    .ok()
+            })
+            .fold(f64::MIN, f64::max);
+        assert!(
+            last <= low_end_top,
+            "a marker label reached the value-axis low end: {last} against {low_end_top}",
+        );
+    }
+    // Whatever could not be placed is disclosed rather than drawn over the
+    // axis, so the two markers are either both placed clear or named in words.
+    let description = description_of(&document);
+    assert!(
+        labels == 2 || description.contains("without its label"),
+        "every marker is drawn clear or disclosed: {labels} placed, {description:?}",
     );
 }

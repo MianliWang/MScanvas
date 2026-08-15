@@ -56,7 +56,7 @@ interface Reduction {
 }
 
 /**
- * Reduces the transferred points to the tallest positive and the deepest
+ * Reduces the transferred points to the greatest non-negative and the deepest
  * negative value in each column.
  *
  * Both signs, because intensities can legitimately be negative after baseline
@@ -234,7 +234,7 @@ export function StickSpectrum({
       </svg>
       <figcaption className="spectrum-caption">
         {reduction.sticks.length < mz.length
-          ? `Drawn as ${formatSticks(reduction.sticks.length)} from ${mz.length} points, keeping the tallest positive and the deepest negative value in each column, so a peak spread over several points can appear as one stick.`
+          ? `Drawn as ${formatSticks(reduction.sticks.length)} from ${mz.length} points, keeping the greatest non-negative and the deepest negative value in each column, so a peak spread over several points can appear as one stick.`
           : `Drawn as ${formatSticks(reduction.sticks.length)}, one per point.`}
         {" Horizontal axis: m/z. Vertical axis: intensity, scaled to the point furthest from zero."}
         {reduction.negativeCount > 0

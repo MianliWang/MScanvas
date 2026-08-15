@@ -149,7 +149,7 @@ whatever their signs, which is **not** the rule the screen table above used:
 Two per column in every row, because these scenes have no column so flat that
 its greatest and its least value are the same point. The screen's rows drew
 900–942 from the same sources under `ExtremePerSignPerColumn`, which keeps the
-tallest positive and the deepest negative and therefore keeps **one** value for
+greatest non-negative and the deepest negative and therefore keeps **one** value for
 an all-positive column. Both reductions are defensible; they are not the same
 reduction, and the contract names which one a figure used — see *Two reduction
 rules, named apart*.
@@ -165,10 +165,10 @@ Reduction cost alone, without rendering: 217 µs (20k) to 2.30 ms (500k).
 The screen table and the export table above reduce the *same* sources to
 different counts, and that is the finding, not a discrepancy:
 
-| rule | what it keeps | all-positive column | these four scenes |
+| rule | what it keeps | all-non-negative column | these four scenes |
 | --- | --- | --- | ---: |
 | `MinMaxPerColumn` | greatest and least value, whatever the sign | 2 points | 1,800 drawn |
-| `ExtremePerSignPerColumn` | tallest positive, deepest negative | **1** point | 900–942 drawn |
+| `ExtremePerSignPerColumn` | greatest non-negative, deepest negative | **1** point | 900–942 drawn |
 
 `StickSpectrum` performs the second — and said the first in its `<figcaption>`
 until this milestone corrected it. That sentence is the screen's own disclosure

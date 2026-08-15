@@ -683,15 +683,38 @@ fn render_panel(
     // this renderer gets to assume away.
     let end_room = (frame.right - frame.left) / 2.0;
     let value_room = frame.right - frame.left - 4.0;
-    let value_label_right =
-        frame.left + 4.0 + value_high_text.chars().count() as f64 * TEXT_EM * MARKER_LABEL_SIZE;
 
     // Where each label already drawn in this panel ended up, so the next one
     // does not land on it. Two markers at the same m/z is a legitimate panel --
     // a precursor window and its monoisotopic peak, say -- and drawing both
     // labels at one baseline hides whichever was written first, leaving a
     // figure that looks annotated and is missing an annotation.
-    let mut occupied: Vec<TextBox> = Vec::new();
+    //
+    // Seeded with the two value-axis ends, because both are drawn *inside* the
+    // plotting area and are therefore exactly as collidable as another label.
+    // Keeping the plotting area as the floor was not enough on its own: the
+    // low end sits two units above that floor, so a marker label stepping down
+    // to the last position the floor allows landed on top of it -- and the axis
+    // end is written afterwards, so it covered the annotation. Treating them as
+    // occupied rather than special-casing either replaces the earlier
+    // hand-rolled avoidance of the high end with the collision machinery that
+    // was already here, and covers both ends by construction.
+    let mut occupied: Vec<TextBox> = vec![TextBox::new(
+        frame.left + 4.0,
+        plot_top + 10.0,
+        fitted_width(&value_high_text, MARKER_LABEL_SIZE, value_room),
+        0.0,
+        MARKER_LABEL_SIZE,
+    )];
+    if values.low() != 0.0 {
+        occupied.push(TextBox::new(
+            frame.left + 4.0,
+            plot_bottom - 2.0,
+            fitted_width(&value_low_text, MARKER_LABEL_SIZE, value_room),
+            0.0,
+            MARKER_LABEL_SIZE,
+        ));
+    }
     let mut unplaced: Vec<String> = Vec::new();
     for marker in &panel.markers {
         if marker.at < domain.low() || marker.at > domain.high() {
@@ -709,15 +732,7 @@ fn render_panel(
             colours.marker,
         );
         if let Some(label) = marker.label.as_ref()
-            && !render_marker_label(
-                out,
-                label,
-                x,
-                value_label_right,
-                &mut occupied,
-                frame,
-                colours,
-            )
+            && !render_marker_label(out, label, x, &mut occupied, frame, colours)
         {
             unplaced.push(label.as_str().to_owned());
         }
@@ -1128,7 +1143,6 @@ fn render_marker_label(
     out: &mut String,
     label: &Label,
     x: f64,
-    value_label_right: f64,
     occupied: &mut Vec<TextBox>,
     frame: &Frame,
     colours: &Palette,
@@ -1163,16 +1177,10 @@ fn render_marker_label(
         let left = (x + 3.0)
             .max(MARKER_LABEL_INSET)
             .min(canvas_width - MARKER_LABEL_INSET - block);
-        // The value axis prints its maximum at the top-left of the plotting
-        // area, and a marker at the domain's low end lands one unit away from
-        // it at the same size -- two strings drawn over each other, which costs
-        // both. Only a label that would actually reach it drops a line; every
-        // other marker keeps its natural place.
-        let wanted = if left < value_label_right {
-            plot_top + 12.0 + leading
-        } else {
-            plot_top + 12.0
-        };
+        // The natural place for every label. Both value-axis ends are already
+        // in `occupied`, so a label that would land on one steps past it below
+        // rather than being pushed down by a rule of its own.
+        let wanted = plot_top + 12.0;
         // The block belongs to the panel that owns the marker, not to the
         // page. Below the plotting area sit this panel's own domain-end labels
         // and its axis caption, and after those the next panel -- so a floor

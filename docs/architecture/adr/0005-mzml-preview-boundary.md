@@ -92,7 +92,7 @@ is rather than removed in a slice that is about something else.
   and no charting library. Intensities are drawn against a zero line rather
   than a floor, because baseline subtraction produces legitimately negative
   values and dropping them would erase measured signal. Column reduction keeps
-  the tallest positive and the deepest negative value in each column, so a
+  the greatest non-negative and the deepest negative value in each column, so a
   signal of either sign survives it. That is a per-sign rule rather than a
   min/max one -- an all-positive column keeps a single value -- and
   [ADR 0028](0028-figure-renderer-and-semantic-specification.md) names the two
