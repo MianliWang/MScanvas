@@ -474,6 +474,15 @@ reported two intensities at one m/z; offsetting one would draw a measurement at
 a position nothing measured it at, which is the error the clipping rules exist
 to avoid. So the words carry it, which is what the words are for.
 
+Sharing a position is not the same as being covered, and counting it that way
+put a number in the description the drawing contradicts. Three forms leave a
+mark at one position and only a mark of the same form can hide another: a stick
+rising from the zero line, a stick hanging below it, and the short horizontal
+tick a measured zero draws. `+10` and `-10` at one m/z are two sticks pointing
+opposite ways with both ends visible, and a zero beside either is a tick on a
+line the stick only touches. Marks are grouped by position and then by form, and
+within each form all but one are covered.
+
 A measured zero draws a short mark on the zero line rather than a stick of no
 length, and the description says every drawn value is zero. A peakless spectrum
 and a spectrum with no points are different facts about a sample, and they had

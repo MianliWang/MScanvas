@@ -216,6 +216,50 @@ fn value_at(series: &SeriesSpec, x: f64) -> Option<f64> {
     None
 }
 
+/// How many discrete marks are drawn where another mark already covers them.
+///
+/// Sharing a domain position is not enough to be hidden, and counting it that
+/// way put a number in the description that the drawing contradicts. Three
+/// forms leave a mark at one position and only a mark of the same form can
+/// cover another: a stick rising from the zero line, a stick hanging below it,
+/// and the short horizontal tick a measured zero draws. `+10` and `-10` at one
+/// m/z are two sticks pointing opposite ways with both ends visible, and a zero
+/// beside either of them is a horizontal tick on a line the vertical stick only
+/// touches.
+///
+/// So marks are grouped by position and then by form, and within each form all
+/// but one are covered -- the tallest of a set of same-signed sticks is the one
+/// that can be seen, and identical zero ticks are indistinguishable from each
+/// other.
+fn covered_marks(series: &SeriesSpec, drawn: Domain) -> usize {
+    let (xs, ys) = (series.x(), series.y());
+    let mut covered = 0;
+    let mut start = 0;
+    while start < xs.len() {
+        // The contract guarantees a non-decreasing domain axis, so equal
+        // positions are adjacent and one pass finds every group.
+        let mut end = start + 1;
+        while end < xs.len() && xs[end] == xs[start] {
+            end += 1;
+        }
+        if xs[start] >= drawn.low() && xs[start] <= drawn.high() {
+            let (mut zeros, mut above, mut below) = (0_usize, 0_usize, 0_usize);
+            for value in &ys[start..end] {
+                if *value == 0.0 {
+                    zeros += 1;
+                } else if *value > 0.0 {
+                    above += 1;
+                } else {
+                    below += 1;
+                }
+            }
+            covered += zeros.saturating_sub(1) + above.saturating_sub(1) + below.saturating_sub(1);
+        }
+        start = end;
+    }
+    covered
+}
+
 /// Whether a joined series draws anything into a window holding no sample.
 ///
 /// A segment can straddle a window with neither of its ends inside it -- a
@@ -427,17 +471,7 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String], position: (usize, u
         .series
         .iter()
         .filter(|series| !panel.joins(series))
-        .map(|series| {
-            let inside: Vec<f64> = series
-                .x()
-                .iter()
-                .copied()
-                .filter(|at| *at >= drawn.low() && *at <= drawn.high())
-                .collect();
-            // The domain axis is non-decreasing, so equal values are adjacent
-            // and one pass counts every mark after the first at each position.
-            inside.windows(2).filter(|pair| pair[0] == pair[1]).count()
-        })
+        .map(|series| covered_marks(series, drawn))
         .sum();
     if hidden > 0 {
         sentences.push(format!(

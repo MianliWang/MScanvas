@@ -3981,6 +3981,50 @@ fn coincident_discrete_marks_are_disclosed() {
         "both covered measurements are counted: {description:?}",
     );
 
+    // Opposite signs at one position are two sticks pointing opposite ways from
+    // the zero line, with both ends visible. Sharing a position is not being
+    // covered, and counting it that way put a number in the description the
+    // drawing contradicts.
+    let both_signs = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(100.0, 300.0),
+        domain(-40.0, 90.0),
+        vec![series(
+            vec![100.0, 200.0, 200.0, 300.0],
+            vec![10.0, 40.0, -40.0, 20.0],
+        )],
+    )
+    .expect("a peak and a negative excursion at one m/z");
+    assert!(
+        !description_of(&svg::render(&figure_of(both_signs))).contains("hidden behind it"),
+        "sticks pointing opposite ways do not cover each other",
+    );
+
+    // A measured zero draws a horizontal tick on the zero line, which a
+    // vertical stick only touches.
+    let zero_beside_peak = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(100.0, 300.0),
+        domain(0.0, 90.0),
+        vec![series(
+            vec![100.0, 200.0, 200.0, 300.0],
+            vec![10.0, 90.0, 0.0, 20.0],
+        )],
+    )
+    .expect("a zero beside a peak at one m/z");
+    assert!(
+        !description_of(&svg::render(&figure_of(zero_beside_peak))).contains("hidden behind it"),
+        "a zero tick is not covered by a stick that only touches it",
+    );
+
     // A trace joins its samples rather than stacking marks, so nothing is
     // hidden and nothing is claimed.
     let joined = PanelSpec::new(
