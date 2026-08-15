@@ -269,10 +269,19 @@ Nor on hue. A baseline and a measurement are drawn in two colours and were
 distinguished by nothing else, so a monochrome print, a rasterization or a
 reader who does not know this palette lost which line was which — while
 `SeriesSpec` was carrying a name for each of them that the document dropped.
-A panel with more than one series, or with any series that is not a
-measurement, names them: the id the contract holds, and which is measured data
-and which a reference line. A lone measurement says nothing, because there is
+A figure holding more than one series, or any series that is not a measurement,
+names them: the id the contract holds, and which is measured data and which a
+reference line. A figure of one measurement says nothing, because there is
 nothing there to disambiguate.
+
+The question is the **figure's** rather than any panel's, and that distinction
+was a defect of its own. Asking whether *this* panel held more than one series
+stayed silent for two panels each holding one — two identically drawn traces
+and two identical paragraphs, with nothing in the file attributing either. For
+the same reason a figure of more than one panel numbers them, counting from the
+top: the panels stack in the specification's order and the description is one
+run of text, so without an ordinal a reader has the paragraphs and no way to
+attach them to the plots.
 
 The unit disclosure is where the contract's third state survives export. An
 unreported unit and a dimensionless one are both captioned with the bare label —

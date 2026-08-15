@@ -3358,3 +3358,123 @@ fn no_validated_type_has_an_unchecked_decode_door() {
         "a window outside the source is not a panel",
     );
 }
+
+/// A multi-panel figure attributes each trace to a panel and an id.
+///
+/// Two panels each holding one measurement are two identically drawn traces and
+/// two identical paragraphs: same colour, same axis semantics, same generic
+/// sentence. Asking only whether *this* panel held more than one series stayed
+/// silent exactly where attribution was needed, because the question is the
+/// figure's rather than the panel's.
+#[test]
+fn a_multi_panel_figure_names_each_panel_and_its_series() {
+    let trace = |name: &str, top: f64| {
+        PanelSpec::new(
+            PlotKind::Chromatogram,
+            AxisSpec::new(
+                label("Retention time"),
+                UnitState::Known { unit: label("min") },
+            ),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(0.0, 10.0),
+            domain(0.0, 100.0),
+            vec![
+                SeriesSpec::new(
+                    label(name),
+                    StyleRole::Measurement,
+                    DataScope::FullSource,
+                    vec![0.0, 10.0],
+                    vec![1.0, top],
+                )
+                .expect("a measurement"),
+            ],
+        )
+        .expect("a chromatogram panel")
+    };
+    let document = svg::render(
+        &FigureSpec::new(
+            FigureTheme::Light,
+            FigureSize::new(900.0, 500.0).expect("a size"),
+            vec![trace("total ion current", 90.0), trace("base peak", 40.0)],
+        )
+        .expect("two panels"),
+    );
+    let description = description_of(&document);
+
+    assert!(
+        description.contains("Panel 1 of 2, counting from the top."),
+        "each panel says which it is: {description:?}",
+    );
+    assert!(
+        description.contains("Panel 2 of 2, counting from the top."),
+        "including the second: {description:?}",
+    );
+    assert!(
+        description.contains("&quot;total ion current&quot; is measured data"),
+        "and which series it draws: {description:?}",
+    );
+    assert!(
+        description.contains("&quot;base peak&quot; is measured data"),
+        "for both of them: {description:?}",
+    );
+    // Order is the attribution, so the first panel's id must precede the
+    // second's — otherwise "counting from the top" names nothing.
+    let first = description
+        .find("total ion current")
+        .expect("the first id appears");
+    let second = description
+        .find("base peak")
+        .expect("the second id appears");
+    assert!(first < second, "in panel order: {description:?}");
+
+    // A single-panel, single-series figure still says neither: there is one
+    // plot and one trace, and naming them discloses nothing.
+    let lone = description_of(&svg::render(&figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    ))));
+    assert!(
+        !lone.contains("Panel 1 of"),
+        "one panel is not numbered: {lone:?}",
+    );
+    assert!(
+        !lone.contains("Series drawn"),
+        "and one series is not introduced: {lone:?}",
+    );
+}
+
+/// A negative-zero axis end prints as the zero it equals.
+///
+/// `-0.0` is a legitimate `f64`, compares equal to `0.0`, and Rust formats it
+/// with its sign — so `Domain::new(-0.0, 0.0)`, a single-valued zero domain,
+/// labelled its ends `-0.000000` and `0.000000` and read as an interval
+/// spanning zero rather than as the one value it is.
+#[test]
+fn a_negative_zero_axis_end_is_not_printed_signed() {
+    let panel = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(
+            label("Retention time"),
+            UnitState::Known { unit: label("min") },
+        ),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        Domain::new(-0.0, 0.0).expect("negative zero is a finite bound"),
+        Domain::new(-0.0, 0.0).expect("negative zero is a finite bound"),
+        vec![series(vec![-0.0], vec![0.0])],
+    )
+    .expect("a single-valued zero panel");
+
+    let document = svg::render(&figure_of(panel));
+    assert!(
+        !document.contains(">-0.000000<"),
+        "no axis end claims a signed zero: {document}",
+    );
+    assert!(
+        !document.contains(">-0e0<"),
+        "nor does the exponent form: {document}",
+    );
+    assert!(
+        document.contains(">0.000000<"),
+        "and the value it holds is still printed: {document}",
+    );
+}

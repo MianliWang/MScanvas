@@ -218,8 +218,24 @@ fn enters_below_zero(series: &SeriesSpec, drawn: Domain) -> bool {
 /// The sentence an export owes the person reading it rather than the person who
 /// made it: whether these are the source points or a reduction, and whether the
 /// file said what the points are at all.
-fn panel_description(panel: &PanelSpec, unplaced: &[String]) -> String {
+fn panel_description(
+    panel: &PanelSpec,
+    unplaced: &[String],
+    name_series: bool,
+    position: (usize, usize),
+) -> String {
     let mut sentences = Vec::new();
+
+    // Which panel this is, where there is more than one. Panels stack in the
+    // specification's order, and the description is one run of text, so without
+    // this a reader has two paragraphs and no way to attach either to a plot.
+    let (index, panel_count) = position;
+    if panel_count > 1 {
+        sentences.push(format!(
+            "Panel {} of {panel_count}, counting from the top.",
+            index + 1,
+        ));
+    }
 
     match panel.kind {
         PlotKind::Spectrum { representation } => match representation {
@@ -248,14 +264,13 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String]) -> String {
     // not know this product's palette loses the distinction entirely, while the
     // contract was carrying a name for each of them that the export dropped.
     //
-    // Only where there is something to disambiguate: one measurement series is
-    // the whole figure and naming it discloses nothing a reader did not have.
-    if panel.series.len() > 1
-        || panel
-            .series
-            .iter()
-            .any(|series| series.role() != StyleRole::Measurement)
-    {
+    // The caller decides, because the question is the figure's rather than this
+    // panel's: two panels each holding one measurement are two identical
+    // paragraphs and two identically drawn traces, so a rule that only counted
+    // the series beside it stayed silent exactly where attribution was needed.
+    // One series in the whole figure still says nothing, because naming it
+    // discloses nothing a reader did not already have.
+    if name_series {
         let named = panel
             .series
             .iter()
@@ -498,11 +513,26 @@ pub fn render(figure: &FigureSpec) -> String {
     // and where an unreported representation says so; letting an author's
     // caption replace them would let a custom-titled export look scientifically
     // complete while dropping the two facts a reader most needs.
+    // Asked of the whole figure, once. A series needs naming when the document
+    // holds more than one of them to attribute, or when any of them is not a
+    // measurement -- both are questions about the file a reader receives rather
+    // than about whichever panel is being described at the time.
+    let series_count: usize = figure.panels.iter().map(|panel| panel.series.len()).sum();
+    let name_series = series_count > 1
+        || figure
+            .panels
+            .iter()
+            .flat_map(|panel| panel.series.iter())
+            .any(|series| series.role() != StyleRole::Measurement);
+    let panel_count = figure.panels.len();
     let disclosures = figure
         .panels
         .iter()
         .zip(unplaced.iter())
-        .map(|(panel, missing)| panel_description(panel, missing))
+        .enumerate()
+        .map(|(index, (panel, missing))| {
+            panel_description(panel, missing, name_series, (index, panel_count))
+        })
         .collect::<Vec<_>>()
         .join(" ");
     let description = figure.caption.as_ref().map_or_else(
@@ -1245,8 +1275,8 @@ fn axis_ends(domain: Domain) -> (String, String) {
         || (domain.span() > 0.0 && low == high)
     {
         return (
-            format!("{:e}", domain.low()),
-            format!("{:e}", domain.high()),
+            format!("{:e}", normalized_zero(domain.low())),
+            format!("{:e}", normalized_zero(domain.high())),
         );
     }
     (low, high)
@@ -1286,5 +1316,20 @@ fn distinguishing_decimals(domain: Domain) -> usize {
 /// Deterministic and locale-independent: no thousands separator and no
 /// locale-dependent decimal mark reaches the document.
 fn format_number(value: f64, decimals: usize) -> String {
-    format!("{value:.decimals$}")
+    format!("{:.decimals$}", normalized_zero(value))
+}
+
+/// Negative zero, written as the zero it equals.
+///
+/// `-0.0` is a legitimate `f64` that arithmetic produces readily, it compares
+/// equal to `0.0`, and Rust formats it with its sign. So an axis end that came
+/// out as negative zero printed `-0.000000` — and `Domain::new(-0.0, 0.0)`, a
+/// single-valued zero domain, labelled its two ends `-0.000000` and `0.000000`,
+/// which reads as an interval spanning zero rather than as the one value it is.
+///
+/// Normalised at the two places an axis number is written, rather than at the
+/// domain boundary: `-0.0` is a perfectly good coordinate to compute with, and
+/// the only thing wrong with it is how it prints.
+fn normalized_zero(value: f64) -> f64 {
+    if value == 0.0 { 0.0 } else { value }
 }
