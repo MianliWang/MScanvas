@@ -3067,3 +3067,156 @@ fn a_baseline_is_named_in_the_description_rather_than_only_coloured() {
         "a lone measurement is not introduced to itself: {plain:?}",
     );
 }
+
+/// A window with no sample in it does not claim a zero line either.
+///
+/// The zero-line correction covered the counted-negatives sentence and left the
+/// interpolated one beside it: a trace whose visible window clips a segment
+/// with neither source sample inside it counts zero negatives, so it fell
+/// through to the sentence about crossing the zero line -- in a panel whose
+/// range excludes zero and which therefore draws no zero line at all.
+#[test]
+fn a_clipped_window_with_no_sample_does_not_claim_a_zero_line() {
+    let panel = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(
+            label("Retention time"),
+            UnitState::Known { unit: label("min") },
+        ),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 10.0),
+        domain(-10.0, -5.0),
+        vec![series(vec![0.0, 10.0], vec![-10.0, -5.0])],
+    )
+    .expect("a trace zoomed below zero")
+    .with_visible_domain(domain(2.0, 8.0))
+    .expect("a window inside the domain");
+
+    let description = description_of(&svg::render(&figure_of(panel)));
+    assert!(
+        !description.contains("zero line, where it crosses"),
+        "no zero line is crossed in a figure that has none: {description:?}",
+    );
+    assert!(
+        description.contains("No measured sample lies inside the range shown"),
+        "the reader is told why the trace has no vertices: {description:?}",
+    );
+    assert!(
+        description.contains(
+            "Zero is outside the value range shown, so the horizontal rule is the top of \
+             that range rather than a zero line."
+        ),
+        "and where zero is not: {description:?}",
+    );
+
+    // The interpolated-crossing sentence is still produced where there really
+    // is a zero line to cross, so this narrows a claim rather than dropping it.
+    let crossing = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(
+            label("Retention time"),
+            UnitState::Known { unit: label("min") },
+        ),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 10.0),
+        domain(-10.0, 10.0),
+        vec![series(vec![0.0, 10.0], vec![-10.0, 10.0])],
+    )
+    .expect("a trace whose range contains zero")
+    .with_visible_domain(domain(2.0, 4.0))
+    .expect("a window inside the domain");
+    let description = description_of(&svg::render(&figure_of(crossing)));
+    assert!(
+        description.contains("Part of the drawn trace lies below the zero line"),
+        "a real crossing is still described: {description:?}",
+    );
+    assert!(
+        !description.contains("Zero is outside the value range shown"),
+        "and an ordinary range says nothing about zero being absent: {description:?}",
+    );
+}
+
+/// A panel may not carry two measurement series.
+///
+/// Both would be drawn in one colour at one width, and a description naming two
+/// ids as measured data cannot say which line is which — a figure that looks
+/// like a comparison and cannot be read as one. Telling them apart needs a
+/// style system and a legend to decode it, which is FIG-008 and a named
+/// non-goal here, so the contract refuses the figure rather than rendering it
+/// ambiguously.
+#[test]
+fn a_panel_refuses_a_second_measurement_series() {
+    let overlay = |second_role| {
+        PanelSpec::new(
+            PlotKind::Chromatogram,
+            AxisSpec::new(
+                label("Retention time"),
+                UnitState::Known { unit: label("min") },
+            ),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(0.0, 10.0),
+            domain(0.0, 100.0),
+            vec![
+                SeriesSpec::new(
+                    label("total ion current"),
+                    StyleRole::Measurement,
+                    DataScope::FullSource,
+                    vec![0.0, 10.0],
+                    vec![10.0, 90.0],
+                )
+                .expect("a measurement"),
+                SeriesSpec::new(
+                    label("base peak"),
+                    second_role,
+                    DataScope::FullSource,
+                    vec![0.0, 10.0],
+                    vec![5.0, 40.0],
+                )
+                .expect("a second series"),
+            ],
+        )
+    };
+
+    assert_eq!(
+        overlay(StyleRole::Measurement).unwrap_err(),
+        SpecError::MultipleMeasurementSeries,
+        "two measurements cannot be told apart, so they are not a figure",
+    );
+    // One measurement read against one reference line stays representable: the
+    // pair is distinguishable in the drawing and named in the words.
+    assert!(
+        overlay(StyleRole::Baseline).is_ok(),
+        "a measurement and a baseline remain a valid panel",
+    );
+
+    // And the refusal holds at the decode boundary too, not only at the
+    // constructor -- a document is the other way into this type.
+    let document = serde_json::to_string(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "theme": "light",
+        "size": { "width": 900.0, "height": 500.0 },
+        "title": null,
+        "caption": null,
+        "panels": [{
+            "kind": { "kind": "chromatogram" },
+            "x_axis": { "label": "Retention time", "unit": { "state": "unreported" } },
+            "y_axis": { "label": "Intensity", "unit": { "state": "unreported" } },
+            "full_domain": { "low": 0.0, "high": 10.0 },
+            "visible_domain": null,
+            "value_domain": { "low": 0.0, "high": 100.0 },
+            "series": [
+                { "id": "a", "role": "measurement", "scope": { "scope": "full_source" },
+                  "x": [0.0, 10.0], "y": [10.0, 90.0] },
+                { "id": "b", "role": "measurement", "scope": { "scope": "full_source" },
+                  "x": [0.0, 10.0], "y": [5.0, 40.0] }
+            ],
+            "markers": []
+        }]
+    }))
+    .expect("a document");
+    assert_eq!(
+        FigureSpec::from_json(&document),
+        Err(DecodeError::Spec(SpecError::MultipleMeasurementSeries)),
+        "and a decoded overlay is refused with the rule that failed",
+    );
+}

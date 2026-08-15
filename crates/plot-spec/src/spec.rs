@@ -106,6 +106,8 @@ pub enum SpecError {
     ReductionRuleUnsuitableForTrace,
     /// A marker was placed where the panel's source does not reach.
     MarkerOutsideFullDomain,
+    /// A panel carried more than one measurement series.
+    MultipleMeasurementSeries,
     /// A decoded document declared a schema this build does not accept.
     UnknownSchemaVersion,
 }
@@ -134,6 +136,9 @@ impl fmt::Display for SpecError {
                 "a joined trace was reduced by a rule that keeps one extreme per sign"
             }
             Self::MarkerOutsideFullDomain => "a marker was outside the panel's source domain",
+            Self::MultipleMeasurementSeries => {
+                "a panel carried more than one measurement series, which cannot be told apart"
+            }
             Self::UnknownSchemaVersion => "the document declares an unknown schema version",
         })
     }
@@ -805,6 +810,31 @@ impl PanelSpec {
             && (self.value_domain.low() > 0.0 || self.value_domain.high() < 0.0)
         {
             return Err(SpecError::BaselineOutsideValueDomain);
+        }
+        // Two measurements in one panel are drawn in one colour, at one width,
+        // with nothing else to tell them apart -- and a description naming both
+        // ids as measured data cannot say which line is which either. A reader
+        // receiving that file sees two traces and has no way to attribute
+        // either, which is worse than not having the figure: it looks like a
+        // comparison and cannot be read as one.
+        //
+        // Refused rather than styled around. Telling series apart needs a style
+        // system with a legend to decode it, and a legend is figure layout --
+        // FIG-008, a named non-goal of this milestone. A role is not a style
+        // slot: `Baseline` is one reference line read against one measurement,
+        // which is why that pair *is* representable and distinguishable, in the
+        // drawing and in the words. An overlay of two measurements is
+        // VIEW-008's multi-layer comparison, and it should arrive with the
+        // component that can draw it rather than as a figure that renders
+        // ambiguously today.
+        if self
+            .series
+            .iter()
+            .filter(|series| series.role == StyleRole::Measurement)
+            .count()
+            > 1
+        {
+            return Err(SpecError::MultipleMeasurementSeries);
         }
         // A joined trace and a per-sign reduction disagree about what a column
         // is. `ExtremePerSignPerColumn` keeps one value for an all-positive

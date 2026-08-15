@@ -117,7 +117,20 @@ tall, a legibility rule the contract has to carry because only it knows how many
 panels share the height — a panel drawn as marks from zero
 whose value range does not contain zero, a joined trace reduced by a rule that
 keeps one extreme per sign, a marker placed where the panel's source does not
-reach, and a label holding a character XML 1.0 forbids.
+reach, a panel carrying a second measurement series, and a label holding a
+character XML 1.0 forbids.
+
+That second measurement is refused rather than styled around. Two measurements
+share one stroke colour and one width, and a description naming both ids as
+measured data cannot say which line is which either — a figure that looks like
+a comparison and cannot be read as one. Telling them apart needs a style system
+and a legend to decode it, and a legend is figure layout: FIG-008, a named
+non-goal here. A role is not a style slot — `Baseline` is one reference line
+read against one measurement, which is why that pair *is* representable and is
+distinguishable both in the drawing and in the words — and an overlay of two
+measurements is VIEW-008's multi-layer comparison, which should arrive with the
+component that can draw it rather than as a figure that renders ambiguously
+today.
 
 Two of those are about the file rather than the drawing. A marker outside the
 **full** domain can be drawn at no window at all, including a full-range export,
@@ -259,13 +272,16 @@ measured value inside it is positive. That gets its own sentence rather than a
 count, because counting an interpolated point would put a number in the
 description matching no row in any source file.
 
-And it says *below the zero line* only where the figure has one. The trace
-exemption above lets a value range exclude zero, and against a range like
-`-10 .. -5` the horizontal rule is pinned to the edge of the plotting area as
-that range's own end. Naming it the zero line there hands the reader the wrong
-datum to measure every depth against, and contradicts the value-axis ends the
-same document prints; the sentence states instead that zero is outside the
-range shown.
+And it names the zero line only where the figure has one. The trace exemption
+above lets a value range exclude zero, and against a range like `-10 .. -5` the
+horizontal rule is pinned to the edge of the plotting area as that range's own
+end. Naming it the zero line there hands the reader the wrong datum to measure
+every depth against, and contradicts the value-axis ends the same document
+prints. Both sentences that would name it ask first — the counted one and the
+interpolated-crossing one, which is reachable on its own because a window that
+clips a segment with neither sample inside it counts no negatives at all — and
+a panel whose range excludes zero states that fact once, for the axis rather
+than for the values, naming which edge the rule actually is.
 
 Axis end labels take their precision from the **span**, not from the magnitude:
 a visible window of `1000.1 .. 1000.4` labelled by magnitude printed `1000` at

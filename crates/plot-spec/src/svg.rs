@@ -341,26 +341,25 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String]) -> String {
         .flat_map(|series| series.x().iter().zip(series.y().iter()))
         .filter(|(at, value)| **value < 0.0 && **at >= drawn.low() && **at <= drawn.high())
         .count();
+    // Whether this figure has a zero line at all. A joined trace is exempt from
+    // the zero-baseline rule, so its value range may legitimately exclude zero
+    // -- and where it does, the horizontal rule is pinned to the edge of the
+    // plotting area as that range's own end. Every sentence below that would
+    // otherwise name the zero line has to ask this first, because naming a rule
+    // that is not zero hands the reader the wrong datum to measure every depth
+    // against, and contradicts the value-axis ends the same document prints.
+    let values = panel.value_domain;
+    let shows_zero = values.low() <= 0.0 && values.high() >= 0.0;
     if negatives > 0 {
-        // "Below the zero line" is only a fact where the figure has one. A
-        // joined trace is exempt from the zero-baseline rule, so its value
-        // range may legitimately exclude zero -- and where it does, the
-        // horizontal rule sits at the edge of the plotting area as the end of
-        // that range, not as zero. Calling it the zero line there would give a
-        // reader the wrong datum to read every depth on the figure against, and
-        // it would contradict the value-axis ends the same document prints.
-        if panel.value_domain.low() <= 0.0 && panel.value_domain.high() >= 0.0 {
+        if shows_zero {
             sentences.push(format!(
                 "{negatives} of the drawn values are negative and are shown below the zero line."
             ));
         } else {
-            // Reachable only downwards: a range excluding zero with a negative
-            // value in it is a range lying entirely below zero, so the rule is
-            // pinned to the top of the plotting area.
-            sentences.push(format!(
-                "All {negatives} drawn values are negative. Zero is outside the value range \
-                 shown, so the horizontal rule is the top of that range rather than a zero line."
-            ));
+            // Reachable only downwards: a range excluding zero that still holds
+            // a negative value lies entirely below zero, so every drawn value
+            // is one.
+            sentences.push(format!("All {negatives} drawn values are negative."));
         }
     } else if panel
         .series
@@ -388,11 +387,34 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String]) -> String {
         // boundary. Counting it among the negatives would put a number in the
         // description that corresponds to no row in any source file, so it gets
         // its own sentence instead of a wrong count.
-        sentences.push(
-            "Part of the drawn trace lies below the zero line, where it crosses the edge \
-             of the window from a negative value outside it."
-                .to_owned(),
-        );
+        if shows_zero {
+            sentences.push(
+                "Part of the drawn trace lies below the zero line, where it crosses the edge \
+                 of the window from a negative value outside it."
+                    .to_owned(),
+            );
+        } else {
+            // Same branch, no zero line to cross. Reaching here at all means no
+            // measured sample lies inside the window -- one would have been
+            // negative, since the range is entirely below zero, and would have
+            // been counted above -- so that is the fact worth stating instead.
+            sentences.push(
+                "No measured sample lies inside the range shown; the trace drawn is \
+                 interpolated between samples outside it."
+                    .to_owned(),
+            );
+        }
+    }
+
+    // Stated once, for the panel rather than for its values, because it is a
+    // fact about the axis: this figure has no zero line, and the rule at the
+    // edge of the plotting area is the end of the range instead.
+    if !shows_zero {
+        let edge = if values.high() < 0.0 { "top" } else { "bottom" };
+        sentences.push(format!(
+            "Zero is outside the value range shown, so the horizontal rule is the {edge} of \
+             that range rather than a zero line."
+        ));
     }
 
     // A marker whose label the page had no room for still draws its line, so
