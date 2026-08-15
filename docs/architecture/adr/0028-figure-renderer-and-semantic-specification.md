@@ -273,25 +273,48 @@ Nor on hue. A baseline and a measurement are drawn in two colours and were
 distinguished by nothing else, so a monochrome print, a rasterization or a
 reader who does not know this palette lost which line was which — while
 `SeriesSpec` was carrying a name for each of them that the document dropped.
-A figure holding more than one series, or any series that is not a measurement,
-names them: the id the contract holds, and which is measured data and which a
-reference line. A figure of one measurement says nothing, because there is
-nothing there to disambiguate.
+Every figure names its series: the id the contract holds, and which is measured
+data and which a reference line.
 
-The question is the **figure's** rather than any panel's, and that distinction
-was a defect of its own. Asking whether *this* panel held more than one series
-stayed silent for two panels each holding one — two identically drawn traces
-and two identical paragraphs, with nothing in the file attributing either. For
-the same reason a figure of more than one panel numbers them, counting from the
-top: the panels stack in the specification's order and the description is one
-run of text, so without an ordinal a reader has the paragraphs and no way to
-attach them to the plots.
+**Every** figure, not only one where two series could be confused. Attribution
+between traces is what prompted this, but identity is not only attribution.
+`id` is the one place the contract says *which* measurement a series is, and a
+lone chromatogram drawn against "Retention time" and "Intensity" has axes that
+cannot tell a reader whether they hold a total ion current, a base peak trace
+or an extracted ion chromatogram. Dropping the name because nothing sat beside
+it discarded the only semantic field separating them. Two narrower rules were
+tried first and each was silent somewhere it mattered — per panel, which said
+nothing for two panels holding one series each, and then per figure, which said
+nothing for one.
+
+A figure of more than one panel also numbers them, counting from the top. The
+panels stack in the specification's order and the description is one run of
+text, so without an ordinal a reader has the paragraphs and no way to attach
+them to the plots. One panel is not numbered: an ordinal with nothing to order
+is noise.
 
 The unit disclosure is where the contract's third state survives export. An
 unreported unit and a dimensionless one are both captioned with the bare label —
 printing an empty bracket or a guess would display a fact the file never carried
 — so without a sentence saying which, the distinction the contract makes dies at
 the file boundary it exists to cross.
+
+A panel with no measured point inside the range shown says so, and says which
+kind of nothing it is. A window between two discrete peaks draws no path at
+all, and so does an empty source; the file otherwise claimed centroid data and
+left those indistinguishable from each other and from a renderer that had
+failed. Whether there is no data or merely no drawing is the one thing an
+export must never leave ambiguous. A joined trace crossing such a window is the
+third case and keeps its own sentence, because something *is* drawn there —
+interpolated between samples outside the window rather than measured inside it.
+
+Colour is held to a contrast floor rather than chosen by eye. Every role is at
+least 3:1 against its own theme's background, which is what WCAG asks of a
+graphical object, and a test measures all of them in both themes. The light
+baseline was `#9a9a9a` — 2.81:1 on white, drawn as a one-unit hairline, so the
+reference line a reader measures against was the least visible thing in the
+figure. Contrast is not visible to the eye that picks a hex value, which is why
+it is checked rather than intended.
 
 The negative count is over measured values. A trace can also be drawn below zero
 without one — clipping interpolates at the window edge, so a segment entering

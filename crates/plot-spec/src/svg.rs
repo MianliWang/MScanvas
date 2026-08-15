@@ -112,7 +112,13 @@ const fn palette(theme: FigureTheme) -> Palette {
             axis: "#333333",
             text: "#111111",
             measurement: "#1f4e9c",
-            baseline: "#9a9a9a",
+            // 3.45:1 against this background. A baseline is a reference line a
+            // reader measures against rather than decoration, so it is a
+            // graphical object WCAG asks for 3:1 on -- and it is drawn one unit
+            // wide, which is where a low-contrast hairline stops being visible
+            // at all once a figure is scaled down or printed. The grey it
+            // replaced managed 2.81:1. A test holds every role to the floor.
+            baseline: "#8a8a8a",
             marker: "#b3261e",
         },
         FigureTheme::Dark => Palette {
@@ -205,6 +211,17 @@ fn value_at(series: &SeriesSpec, x: f64) -> Option<f64> {
     None
 }
 
+/// Whether a joined series draws anything into a window holding no sample.
+///
+/// A segment can straddle a window with neither of its ends inside it -- a
+/// coarsely sampled chromatogram against a narrow selection is exactly that --
+/// and the renderer draws the interpolated crossing. So "nothing measured is in
+/// range" and "nothing is drawn" are different questions, and the description
+/// has to answer the one that matches the picture.
+fn crosses_window(series: &SeriesSpec, drawn: Domain) -> bool {
+    value_at(series, drawn.low()).is_some() || value_at(series, drawn.high()).is_some()
+}
+
 /// Whether a clipped trace reaches below zero at a window edge.
 fn enters_below_zero(series: &SeriesSpec, drawn: Domain) -> bool {
     [drawn.low(), drawn.high()]
@@ -218,12 +235,7 @@ fn enters_below_zero(series: &SeriesSpec, drawn: Domain) -> bool {
 /// The sentence an export owes the person reading it rather than the person who
 /// made it: whether these are the source points or a reduction, and whether the
 /// file said what the points are at all.
-fn panel_description(
-    panel: &PanelSpec,
-    unplaced: &[String],
-    name_series: bool,
-    position: (usize, usize),
-) -> String {
+fn panel_description(panel: &PanelSpec, unplaced: &[String], position: (usize, usize)) -> String {
     let mut sentences = Vec::new();
 
     // Which panel this is, where there is more than one. Panels stack in the
@@ -264,13 +276,15 @@ fn panel_description(
     // not know this product's palette loses the distinction entirely, while the
     // contract was carrying a name for each of them that the export dropped.
     //
-    // The caller decides, because the question is the figure's rather than this
-    // panel's: two panels each holding one measurement are two identical
-    // paragraphs and two identically drawn traces, so a rule that only counted
-    // the series beside it stayed silent exactly where attribution was needed.
-    // One series in the whole figure still says nothing, because naming it
-    // discloses nothing a reader did not already have.
-    if name_series {
+    // Always, rather than only where two of them could be confused. Attribution
+    // between traces was the case that prompted this, but identity is not only
+    // attribution: `id` is the one place the contract says *which* measurement
+    // this is, and a lone chromatogram drawn against "Retention time" and
+    // "Intensity" is a figure whose axes cannot tell a reader whether they are
+    // holding a total ion current, a base peak trace or an extracted ion
+    // chromatogram. Dropping the name because nothing sat beside it discarded
+    // the only semantic field that distinguished them.
+    {
         let named = panel
             .series
             .iter()
@@ -350,6 +364,42 @@ fn panel_description(
     // the same specification -- so counting the source would tell a reader to
     // look below the zero line for marks that are outside the window and not in
     // the file they are holding.
+    // Nothing measured lies inside the window. Two different figures reach here
+    // and they are different facts about a sample, so they get different
+    // sentences -- and one of them had none at all: a discrete panel windowed
+    // between two peaks drew no path, said nothing, and was indistinguishable
+    // from an empty source or from a renderer that had failed. Whether there is
+    // no data or merely no drawing is the one thing an export must never leave
+    // ambiguous.
+    //
+    // Its own block rather than an arm of the chain below, because it is
+    // independent of what those sentences report: a trace can both have no
+    // sample in the window *and* be drawn below the zero line, and folding this
+    // in as an alternative silently dropped the second disclosure.
+    if panel
+        .series
+        .iter()
+        .flat_map(|series| series.x().iter())
+        .all(|at| *at < drawn.low() || *at > drawn.high())
+    {
+        if panel
+            .series
+            .iter()
+            .any(|series| panel.joins(series) && crosses_window(series, drawn))
+        {
+            sentences.push(
+                "No measured sample lies inside the range shown; the trace drawn is \
+                 interpolated between samples outside it."
+                    .to_owned(),
+            );
+        } else {
+            sentences.push(
+                "No measured point lies inside the range shown, so this panel draws none."
+                    .to_owned(),
+            );
+        }
+    }
+
     let negatives = panel
         .series
         .iter()
@@ -391,10 +441,11 @@ fn panel_description(
         // reader is not left deciding whether the instrument reported nothing
         // or reported nothing above zero.
         sentences.push("Every drawn value is zero.".to_owned());
-    } else if panel
-        .series
-        .iter()
-        .any(|series| panel.joins(series) && enters_below_zero(series, drawn))
+    } else if shows_zero
+        && panel
+            .series
+            .iter()
+            .any(|series| panel.joins(series) && enters_below_zero(series, drawn))
     {
         // A trace can be drawn below the zero line without any *measured* value
         // inside the window being negative: the window cuts a segment whose
@@ -402,23 +453,11 @@ fn panel_description(
         // boundary. Counting it among the negatives would put a number in the
         // description that corresponds to no row in any source file, so it gets
         // its own sentence instead of a wrong count.
-        if shows_zero {
-            sentences.push(
-                "Part of the drawn trace lies below the zero line, where it crosses the edge \
-                 of the window from a negative value outside it."
-                    .to_owned(),
-            );
-        } else {
-            // Same branch, no zero line to cross. Reaching here at all means no
-            // measured sample lies inside the window -- one would have been
-            // negative, since the range is entirely below zero, and would have
-            // been counted above -- so that is the fact worth stating instead.
-            sentences.push(
-                "No measured sample lies inside the range shown; the trace drawn is \
-                 interpolated between samples outside it."
-                    .to_owned(),
-            );
-        }
+        sentences.push(
+            "Part of the drawn trace lies below the zero line, where it crosses the edge \
+             of the window from a negative value outside it."
+                .to_owned(),
+        );
     }
 
     // Stated once, for the panel rather than for its values, because it is a
@@ -513,26 +552,13 @@ pub fn render(figure: &FigureSpec) -> String {
     // and where an unreported representation says so; letting an author's
     // caption replace them would let a custom-titled export look scientifically
     // complete while dropping the two facts a reader most needs.
-    // Asked of the whole figure, once. A series needs naming when the document
-    // holds more than one of them to attribute, or when any of them is not a
-    // measurement -- both are questions about the file a reader receives rather
-    // than about whichever panel is being described at the time.
-    let series_count: usize = figure.panels.iter().map(|panel| panel.series.len()).sum();
-    let name_series = series_count > 1
-        || figure
-            .panels
-            .iter()
-            .flat_map(|panel| panel.series.iter())
-            .any(|series| series.role() != StyleRole::Measurement);
     let panel_count = figure.panels.len();
     let disclosures = figure
         .panels
         .iter()
         .zip(unplaced.iter())
         .enumerate()
-        .map(|(index, (panel, missing))| {
-            panel_description(panel, missing, name_series, (index, panel_count))
-        })
+        .map(|(index, (panel, missing))| panel_description(panel, missing, (index, panel_count)))
         .collect::<Vec<_>>()
         .join(" ");
     let description = figure.caption.as_ref().map_or_else(

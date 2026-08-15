@@ -130,10 +130,10 @@ Full source, exported whole:
 
 | scene | source | SVG bytes | SVG elements | `<text>` nodes |
 | --- | ---: | ---: | ---: | ---: |
-| chromatogram-100k | 100,000 | 1,614,164 | 12 | 5 |
-| profile-dense-60k | 60,000 | 969,487 | 13 | 6 |
-| centroid-dense-20k | 20,000 | 484,071 | 12 | 5 |
-| transfer-bound-500k | 500,000 | 8,066,223 | 13 | 6 |
+| chromatogram-100k | 100,000 | 1,614,220 | 12 | 5 |
+| profile-dense-60k | 60,000 | 969,543 | 13 | 6 |
+| centroid-dense-20k | 20,000 | 484,127 | 12 | 5 |
+| transfer-bound-500k | 500,000 | 8,066,279 | 13 | 6 |
 
 The same scenes reduced to 900 columns and exported *as a reduction* — here
 under `MinMaxPerColumn`, the greatest and the least value of each column
@@ -141,10 +141,10 @@ whatever their signs, which is **not** the rule the screen table above used:
 
 | scene | source | drawn | SVG bytes |
 | --- | ---: | ---: | ---: |
-| chromatogram-100k | 100,000 | 1,800 | 30,673 |
-| profile-dense-60k | 60,000 | 1,800 | 30,882 |
-| centroid-dense-20k | 20,000 | 1,800 | 45,015 |
-| transfer-bound-500k | 500,000 | 1,800 | 30,860 |
+| chromatogram-100k | 100,000 | 1,800 | 30,729 |
+| profile-dense-60k | 60,000 | 1,800 | 30,938 |
+| centroid-dense-20k | 20,000 | 1,800 | 45,071 |
+| transfer-bound-500k | 500,000 | 1,800 | 30,916 |
 
 Two per column in every row, because these scenes have no column so flat that
 its greatest and its least value are the same point. The screen's rows drew
@@ -154,8 +154,8 @@ an all-positive column. Both reductions are defensible; they are not the same
 reduction, and the contract names which one a figure used — see *Two reduction
 rules, named apart*.
 
-A full-range export of the 500k scene is **264× larger** than the reduction of
-it (8,066,223 vs 30,860 bytes). That ratio is the difference candidate A silently
+A full-range export of the 500k scene is **261× larger** than the reduction of
+it (8,066,279 vs 30,916 bytes). That ratio is the difference candidate A silently
 elided.
 
 Reduction cost alone, without rendering: 217 µs (20k) to 2.30 ms (500k).
@@ -202,8 +202,8 @@ timings are not.** Across four runs under varying machine load:
 | chromatogram-100k | 32.0 ms – 113.3 ms |
 | transfer-bound-500k | 166.3 ms – 771.1 ms |
 
-The byte counts were byte-identical in all four runs (`1,614,164` and
-`8,066,223` every time) while the timings moved by up to 4.6×. These are
+The byte counts were byte-identical in all four runs (`1,614,220` and
+`8,066,279` every time) while the timings moved by up to 4.6×. These are
 order-of-magnitude facts about one loaded laptop, not a product guarantee, and
 they are the reason timing alone did not choose the renderer.
 
@@ -213,11 +213,11 @@ the 500k one, plus an 8 MB output string: **46 MB**.
 Edge scenes, all five:
 
 ```text
-empty          svg_bytes=  1563  elements=11  finite_only=true chrome_free=true external_free=true
-single-point   svg_bytes=  1658  elements=12  finite_only=true chrome_free=true external_free=true
-flat           svg_bytes= 24747  elements=12  finite_only=true chrome_free=true external_free=true
-all-negative   svg_bytes= 24861  elements=13  finite_only=true chrome_free=true external_free=true
-all-zero       svg_bytes= 33906  elements=12  finite_only=true chrome_free=true external_free=true
+empty          svg_bytes=  1692  elements=11  finite_only=true chrome_free=true external_free=true
+single-point   svg_bytes=  1714  elements=12  finite_only=true chrome_free=true external_free=true
+flat           svg_bytes= 24803  elements=12  finite_only=true chrome_free=true external_free=true
+all-negative   svg_bytes= 24917  elements=13  finite_only=true chrome_free=true external_free=true
+all-zero       svg_bytes= 33962  elements=12  finite_only=true chrome_free=true external_free=true
 ```
 
 `all-zero` is the largest of the five and that is the point: a measured zero
@@ -225,6 +225,11 @@ draws a short mark on the zero line rather than a stick of no length, so a
 peakless spectrum is visibly different from a spectrum with no points. The
 marks have no height, so they claim no intensity; the description says
 `Every drawn value is zero.` as well.
+
+The `empty` scene is the smallest and now says why it is: a panel with no
+measured point in the range shown discloses that in words rather than producing
+a figure whose blank plotting area could equally mean an empty source, a window
+between two peaks, or a renderer that failed.
 
 `external_free` deliberately does not look for `http://`. The SVG namespace
 declaration is required by the format and fetches nothing; what would make a

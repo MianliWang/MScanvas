@@ -3063,15 +3063,16 @@ fn a_baseline_is_named_in_the_description_rather_than_only_coloured() {
         "and so is the baseline: {description:?}",
     );
 
-    // One measurement series has nothing to disambiguate, so it says nothing --
-    // a disclosure on every figure would be noise rather than information.
+    // A lone measurement is named too. Identity is not only attribution: the id
+    // is the one place the contract says *which* measurement a trace is, and a
+    // figure drawn against generic axes has nowhere else to carry it.
     let plain = description_of(&svg::render(&figure_of(spectrum_panel(
         SpectrumRepresentation::Centroid,
         series(vec![100.0, 200.0], vec![10.0, 20.0]),
     ))));
     assert!(
-        !plain.contains("Series drawn"),
-        "a lone measurement is not introduced to itself: {plain:?}",
+        plain.contains("&quot;measurement&quot; is measured data"),
+        "a lone measurement still carries its name: {plain:?}",
     );
 }
 
@@ -3434,8 +3435,8 @@ fn a_multi_panel_figure_names_each_panel_and_its_series() {
         .expect("the second id appears");
     assert!(first < second, "in panel order: {description:?}");
 
-    // A single-panel, single-series figure still says neither: there is one
-    // plot and one trace, and naming them discloses nothing.
+    // A single-panel figure is not numbered, because "Panel 1 of 1" is an
+    // ordinal with nothing to order.
     let lone = description_of(&svg::render(&figure_of(spectrum_panel(
         SpectrumRepresentation::Centroid,
         series(vec![100.0, 200.0], vec![10.0, 20.0]),
@@ -3444,9 +3445,11 @@ fn a_multi_panel_figure_names_each_panel_and_its_series() {
         !lone.contains("Panel 1 of"),
         "one panel is not numbered: {lone:?}",
     );
+    // The series is still named: an ordinal without a second panel means
+    // nothing, but an identity always does.
     assert!(
-        !lone.contains("Series drawn"),
-        "and one series is not introduced: {lone:?}",
+        lone.contains("Series drawn"),
+        "and its series is still named: {lone:?}",
     );
 }
 
@@ -3621,4 +3624,143 @@ fn a_marker_label_clears_the_value_axis_low_end() {
         labels == 2 || description.contains("without its label"),
         "every marker is drawn clear or disclosed: {labels} placed, {description:?}",
     );
+}
+
+/// A window holding no measured point says so.
+///
+/// A discrete panel windowed between two peaks drew no path and said nothing,
+/// so the file claimed centroid data and left "no measurement in this range"
+/// indistinguishable from an empty source and from a renderer that had failed.
+#[test]
+fn a_window_with_no_measured_point_discloses_it() {
+    let between_peaks = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0, 300.0], vec![10.0, 20.0, 30.0]),
+    )
+    .with_visible_domain(domain(210.0, 290.0))
+    .expect("a window between two peaks");
+    let document = svg::render(&figure_of(between_peaks));
+    assert!(
+        !document.contains("<path "),
+        "nothing is drawn in that window: {document}",
+    );
+    assert!(
+        description_of(&document)
+            .contains("No measured point lies inside the range shown, so this panel draws none."),
+        "and the file says so: {}",
+        description_of(&document),
+    );
+
+    // An empty source reaches the same sentence, which is correct: it also has
+    // no measured point in range. What matters is that neither is silent.
+    let empty = description_of(&svg::render(&figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(Vec::new(), Vec::new()),
+    ))));
+    assert!(
+        empty.contains("No measured point lies inside the range shown"),
+        "an empty panel is not silent either: {empty:?}",
+    );
+
+    // A joined trace crossing the window is a different fact and keeps its own
+    // sentence, because something *is* drawn there.
+    let crossing = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(label("Time"), UnitState::Unreported),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 10.0),
+        domain(0.0, 100.0),
+        vec![series(vec![0.0, 10.0], vec![10.0, 90.0])],
+    )
+    .expect("a trace")
+    .with_visible_domain(domain(4.0, 6.0))
+    .expect("a window between its samples");
+    let document = svg::render(&figure_of(crossing));
+    assert!(document.contains("<path "), "a line is drawn: {document}");
+    let description = description_of(&document);
+    assert!(
+        description.contains("No measured sample lies inside the range shown; the trace drawn is"),
+        "and is described as interpolated rather than as absent: {description:?}",
+    );
+    assert!(
+        !description.contains("this panel draws none"),
+        "a drawn trace is not called nothing: {description:?}",
+    );
+}
+
+/// Every figure colour clears the contrast floor its role needs.
+///
+/// The light baseline was `#9a9a9a` on white — 2.81:1, below the 3:1 WCAG asks
+/// of a graphical object, and drawn as a one-unit hairline, so the reference
+/// line a reader measures against was the least visible thing in the figure.
+/// Checked for every role in both themes rather than for the one that was
+/// wrong, because a palette is edited by eye and contrast is not visible to it.
+#[test]
+fn every_figure_colour_clears_the_contrast_floor() {
+    fn channel(component: f64) -> f64 {
+        if component <= 0.03928 {
+            component / 12.92
+        } else {
+            ((component + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    fn luminance(colour: &str) -> f64 {
+        let value = |at: usize| {
+            f64::from(u8::from_str_radix(&colour[at..at + 2], 16).expect("a six-digit hex colour"))
+                / 255.0
+        };
+        0.2126 * channel(value(1)) + 0.7152 * channel(value(3)) + 0.0722 * channel(value(5))
+    }
+    fn contrast(ink: &str, ground: &str) -> f64 {
+        let (a, b) = (luminance(ink), luminance(ground));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    for theme in [FigureTheme::Light, FigureTheme::Dark] {
+        // Rendered rather than read from the palette, so this measures the
+        // colours a file actually carries.
+        let document = svg::render(
+            &FigureSpec::new(
+                theme,
+                FigureSize::new(900.0, 500.0).expect("a size"),
+                vec![
+                    spectrum_panel(
+                        SpectrumRepresentation::Centroid,
+                        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+                    )
+                    .with_markers(vec![
+                        Marker::new(150.0, Some(label("precursor"))).expect("a marker"),
+                    ])
+                    .expect("markers on a valid panel"),
+                ],
+            )
+            .expect("one panel"),
+        );
+        let ground = document
+            .split("fill=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .expect("the background rect names its fill")
+            .to_owned();
+        let mut inks: Vec<String> = Vec::new();
+        for attribute in ["stroke=\"", "fill=\""] {
+            for piece in document.split(attribute).skip(1) {
+                let Some(colour) = piece.split('"').next() else {
+                    continue;
+                };
+                if colour.starts_with('#') && colour != ground && !inks.iter().any(|c| c == colour)
+                {
+                    inks.push(colour.to_owned());
+                }
+            }
+        }
+        assert!(inks.len() >= 4, "the figure uses several colours: {inks:?}");
+        for ink in &inks {
+            let ratio = contrast(ink, &ground);
+            assert!(
+                ratio >= 3.0,
+                "{ink} on {ground} is {ratio:.2}:1, below the 3:1 floor",
+            );
+        }
+    }
 }
