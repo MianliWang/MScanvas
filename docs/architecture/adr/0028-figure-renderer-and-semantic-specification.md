@@ -389,6 +389,15 @@ therefore also triggers when the fixed-point form has rounded a non-zero value
 away to nothing. A domain that genuinely is zero still prints as zero, because
 the test is losing the value rather than being small.
 
+A marker carrying no label is disclosed too. `Marker::new(at, None)` is a
+legitimate way to mark a persistent selection, and the renderer draws a dashed
+rule for it, so saying nothing left a mark a sighted reader can see and a
+screen-reader user could not know existed — the same asymmetry the
+unplaced-label sentence exists to close, from the other direction. The
+description names how many there are and where, for those inside the drawn
+window; one outside it draws no line, and reporting it would describe something
+the figure does not contain.
+
 A marker label is wrapped to the width available, clamped inside **its own
 panel** — below the plotting area sit that panel's axis text and then the next
 panel, so a block bounded by the page could cover the axis it annotates — and

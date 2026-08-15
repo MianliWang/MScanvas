@@ -438,15 +438,17 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String], position: (usize, u
         .flat_map(|series| series.x().iter())
         .all(|at| *at < drawn.low() || *at > drawn.high())
     {
-        if panel
+        // The series that crosses is the one whose scope this sentence is about.
+        // Asking "does any series cross" and "is any series reduced" separately
+        // let a full-source baseline draw the line while a reduced measurement
+        // supplied the word "retained", describing the drawing with the other
+        // series' semantics.
+        if let Some(crossing) = panel
             .series
             .iter()
-            .any(|series| panel.joins(series) && crosses_window(series, drawn))
+            .find(|series| panel.joins(series) && crosses_window(series, drawn))
         {
-            let retained = panel
-                .series
-                .iter()
-                .any(|series| matches!(series.scope(), DataScope::Reduced { .. }));
+            let retained = matches!(crossing.scope(), DataScope::Reduced { .. });
             sentences.push(if retained {
                 // As above: a reduction cannot speak for the samples it dropped.
                 "No point retained by the reduction lies inside the range shown; the trace \
@@ -593,6 +595,37 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String], position: (usize, u
             "Zero is outside the value range shown, so the horizontal rule is the {edge} of \
              that range rather than a zero line."
         ));
+    }
+
+    // A marker carrying no label draws its line and says nothing about itself.
+    // `Marker::new(at, None)` is a legitimate way to mark a persistent
+    // selection, so the figure gains a dashed rule a reader can see and a
+    // screen-reader user cannot know exists -- an annotation present in the
+    // drawing and absent from the description, which is the same asymmetry the
+    // unplaced-label sentence below exists to close.
+    //
+    // Only those inside the drawn window: a marker outside it draws no line,
+    // and reporting one would describe something the figure does not contain.
+    let anonymous: Vec<String> = panel
+        .markers
+        .iter()
+        .filter(|marker| {
+            marker.label().is_none() && marker.at() >= drawn.low() && marker.at() <= drawn.high()
+        })
+        .map(|marker| format_number(marker.at(), axis_decimals(drawn.span())))
+        .collect();
+    match anonymous.as_slice() {
+        [] => {}
+        [only] => sentences.push(format!(
+            "One marker line is drawn without a label, at {only} on the {} axis.",
+            panel.x_axis.label.as_str(),
+        )),
+        many => sentences.push(format!(
+            "{} marker lines are drawn without labels, at {} on the {} axis.",
+            many.len(),
+            many.join(", "),
+            panel.x_axis.label.as_str(),
+        )),
     }
 
     // A marker whose label the page had no room for still draws its line, so

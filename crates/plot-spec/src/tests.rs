@@ -4272,3 +4272,129 @@ fn an_empty_window_of_a_reduction_claims_only_what_it_retained() {
         "a full source carries every point it had",
     );
 }
+
+/// A marker with no label is still disclosed as an annotation.
+///
+/// `Marker::new(at, None)` is a legitimate way to mark a persistent selection,
+/// and the renderer draws a dashed rule for it. Saying nothing left a mark a
+/// sighted reader can see and a screen-reader user cannot know exists.
+#[test]
+fn an_unlabelled_marker_is_named_in_the_description() {
+    let panel = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )
+    .with_markers(vec![
+        Marker::new(150.0, None).expect("a marker with no label"),
+    ])
+    .expect("markers on a valid panel");
+    let document = svg::render(&figure_of(panel));
+    assert!(
+        document.contains("stroke-dasharray"),
+        "the rule is drawn: {document}",
+    );
+    let description = description_of(&document);
+    assert!(
+        description.contains("One marker line is drawn without a label, at 150")
+            && description.contains("on the m/z axis."),
+        "and the description accounts for it: {description:?}",
+    );
+
+    // Two of them are counted and both positions given.
+    let two = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )
+    .with_markers(vec![
+        Marker::new(120.0, None).expect("a marker"),
+        Marker::new(180.0, None).expect("a second marker"),
+    ])
+    .expect("markers on a valid panel");
+    assert!(
+        description_of(&svg::render(&figure_of(two)))
+            .contains("2 marker lines are drawn without labels, at 120"),
+        "both are counted",
+    );
+
+    // A marker outside the drawn window draws no line, so nothing is claimed.
+    let windowed = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )
+    .with_markers(vec![Marker::new(110.0, None).expect("a marker")])
+    .expect("markers on a valid panel")
+    .with_visible_domain(domain(150.0, 200.0))
+    .expect("a window past the marker");
+    assert!(
+        !description_of(&svg::render(&figure_of(windowed))).contains("without a label"),
+        "a marker the figure does not draw is not described",
+    );
+
+    // A labelled marker keeps its own treatment and is not counted here.
+    let labelled = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )
+    .with_markers(vec![
+        Marker::new(150.0, Some(label("precursor"))).expect("a marker"),
+    ])
+    .expect("markers on a valid panel");
+    assert!(
+        !description_of(&svg::render(&figure_of(labelled))).contains("without a label"),
+        "a labelled marker speaks for itself",
+    );
+}
+
+/// The crossing sentence describes the series that actually crosses.
+///
+/// Asking "does any series cross the window" and "is any series reduced"
+/// separately let a full-source baseline draw the line while a reduced
+/// measurement supplied the word "retained" -- the drawing described with the
+/// other series' semantics.
+#[test]
+fn the_crossing_sentence_reads_the_scope_of_the_series_that_crosses() {
+    let reduced_measurement = SeriesSpec::new(
+        label("measurement"),
+        StyleRole::Measurement,
+        DataScope::Reduced {
+            source_point_count: 900,
+            rule: ReductionRule::MinMaxPerColumn,
+        },
+        vec![0.0, 10.0],
+        vec![10.0, 20.0],
+    )
+    .expect("a reduction whose points sit outside the window");
+    let whole_baseline = SeriesSpec::new(
+        label("background"),
+        StyleRole::Baseline,
+        DataScope::FullSource,
+        vec![0.0, 10.0],
+        vec![1.0, 2.0],
+    )
+    .expect("a full-source baseline spanning the window");
+    let panel = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 10.0),
+        domain(0.0, 20.0),
+        vec![reduced_measurement, whole_baseline],
+    )
+    .expect("a panel")
+    .with_visible_domain(domain(4.0, 6.0))
+    .expect("a window between every point");
+
+    let description = description_of(&svg::render(&figure_of(panel)));
+    // The baseline is what crosses, and it is full source, so the sentence must
+    // be about samples rather than about retained points.
+    assert!(
+        description.contains("No measured sample lies inside the range shown"),
+        "the crossing series is full source: {description:?}",
+    );
+    assert!(
+        !description.contains("interpolated between retained points"),
+        "so the reduction's wording does not describe it: {description:?}",
+    );
+}
