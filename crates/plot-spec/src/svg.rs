@@ -242,6 +242,35 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String]) -> String {
         }
     }
 
+    // Which series is which, where the drawing answers that with colour alone.
+    // A baseline and a measurement differ by hue and by nothing else in the
+    // document -- so a monochrome print, a rasterization, or a reader who does
+    // not know this product's palette loses the distinction entirely, while the
+    // contract was carrying a name for each of them that the export dropped.
+    //
+    // Only where there is something to disambiguate: one measurement series is
+    // the whole figure and naming it discloses nothing a reader did not have.
+    if panel.series.len() > 1
+        || panel
+            .series
+            .iter()
+            .any(|series| series.role() != StyleRole::Measurement)
+    {
+        let named = panel
+            .series
+            .iter()
+            .map(|series| {
+                let role = match series.role() {
+                    StyleRole::Measurement => "measured data",
+                    StyleRole::Baseline => "a reference baseline",
+                };
+                format!("\"{}\" is {role}", series.id().as_str())
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        sentences.push(format!("Series drawn: {named}."));
+    }
+
     let drawn = panel.drawn_domain();
     for series in &panel.series {
         if let DataScope::Reduced {
@@ -313,9 +342,26 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String]) -> String {
         .filter(|(at, value)| **value < 0.0 && **at >= drawn.low() && **at <= drawn.high())
         .count();
     if negatives > 0 {
-        sentences.push(format!(
-            "{negatives} of the drawn values are negative and are shown below the zero line."
-        ));
+        // "Below the zero line" is only a fact where the figure has one. A
+        // joined trace is exempt from the zero-baseline rule, so its value
+        // range may legitimately exclude zero -- and where it does, the
+        // horizontal rule sits at the edge of the plotting area as the end of
+        // that range, not as zero. Calling it the zero line there would give a
+        // reader the wrong datum to read every depth on the figure against, and
+        // it would contradict the value-axis ends the same document prints.
+        if panel.value_domain.low() <= 0.0 && panel.value_domain.high() >= 0.0 {
+            sentences.push(format!(
+                "{negatives} of the drawn values are negative and are shown below the zero line."
+            ));
+        } else {
+            // Reachable only downwards: a range excluding zero with a negative
+            // value in it is a range lying entirely below zero, so the rule is
+            // pinned to the top of the plotting area.
+            sentences.push(format!(
+                "All {negatives} drawn values are negative. Zero is outside the value range \
+                 shown, so the horizontal rule is the top of that range rather than a zero line."
+            ));
+        }
     } else if panel
         .series
         .iter()

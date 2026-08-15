@@ -58,6 +58,21 @@ fn path_data(document: &str) -> String {
         .to_owned()
 }
 
+/// The description the document actually carries, still XML-escaped.
+///
+/// Escaped rather than unescaped on the way out, because what a test should
+/// pin is the bytes a reader's viewer receives. A quotation mark in a series
+/// name reaches the file as `&quot;`, and a helper that quietly undid that
+/// would let an unescaped description pass.
+fn description_of(document: &str) -> String {
+    document
+        .split("<desc>")
+        .nth(1)
+        .and_then(|rest| rest.split("</desc>").next())
+        .expect("the document carries a description")
+        .to_owned()
+}
+
 fn figure_of(panel: PanelSpec) -> FigureSpec {
     FigureSpec::new(
         FigureTheme::Light,
@@ -2845,15 +2860,6 @@ fn wrapping_a_label_keeps_every_character() {
 /// renderer preserves the text it was given, and that is a different rule.
 #[test]
 fn the_description_carries_no_unintended_whitespace() {
-    fn description_of(document: &str) -> String {
-        document
-            .split("<desc>")
-            .nth(1)
-            .and_then(|rest| rest.split("</desc>").next())
-            .expect("the document carries a description")
-            .to_owned()
-    }
-
     let reduced = SeriesSpec::new(
         label("measurement"),
         StyleRole::Measurement,
@@ -2926,4 +2932,138 @@ fn the_description_carries_no_unintended_whitespace() {
             "a run of spaces reached the description: {description:?}",
         );
     }
+}
+
+/// A trace zoomed below zero does not describe a zero line it does not draw.
+///
+/// A joined trace is exempt from the zero-baseline rule, so its value range may
+/// legitimately exclude zero -- and against a range like `-10 .. -5` the
+/// renderer pins the horizontal rule to the top of the plotting area, where it
+/// is that range's own end. Calling it the zero line gave the reader the wrong
+/// datum to read every depth against, and contradicted the value-axis ends the
+/// same document prints.
+#[test]
+fn a_trace_zoomed_below_zero_does_not_claim_a_zero_line() {
+    let zoomed = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(
+            label("Retention time"),
+            UnitState::Known { unit: label("min") },
+        ),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 3.0),
+        domain(-10.0, -5.0),
+        vec![series(
+            vec![0.0, 1.0, 2.0, 3.0],
+            vec![-9.0, -6.0, -8.0, -5.5],
+        )],
+    )
+    .expect("a trace may be zoomed to a range excluding zero");
+
+    let description = description_of(&svg::render(&figure_of(zoomed)));
+    assert!(
+        !description.contains("shown below the zero line"),
+        "a figure with no zero line does not claim one: {description:?}",
+    );
+    assert!(
+        description.contains("All 4 drawn values are negative."),
+        "the negative values are still disclosed: {description:?}",
+    );
+    assert!(
+        description.contains("Zero is outside the value range shown"),
+        "and the reader is told where zero is not: {description:?}",
+    );
+
+    // The sentence is still the right one where the range does reach zero,
+    // which is every ordinary figure -- this narrows a claim rather than
+    // removing it.
+    let ordinary = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(
+            label("Retention time"),
+            UnitState::Known { unit: label("min") },
+        ),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 3.0),
+        domain(-10.0, 40.0),
+        vec![series(
+            vec![0.0, 1.0, 2.0, 3.0],
+            vec![-9.0, 30.0, -8.0, 12.0],
+        )],
+    )
+    .expect("a trace whose range contains zero");
+    let description = description_of(&svg::render(&figure_of(ordinary)));
+    assert!(
+        description
+            .contains("2 of the drawn values are negative and are shown below the zero line."),
+        "a real zero line is still described as one: {description:?}",
+    );
+}
+
+/// A baseline is named in the export rather than distinguished by hue alone.
+///
+/// The drawing separates a reference baseline from measured data with a stroke
+/// colour and nothing else, so a monochrome print, a rasterization, or a reader
+/// who does not know this product's palette cannot tell which line is which --
+/// while `SeriesSpec` was carrying a name for each of them that the document
+/// dropped on the floor.
+#[test]
+fn a_baseline_is_named_in_the_description_rather_than_only_coloured() {
+    let measurement = SeriesSpec::new(
+        label("sample intensity"),
+        StyleRole::Measurement,
+        DataScope::FullSource,
+        vec![100.0, 150.0, 200.0],
+        vec![10.0, 40.0, 20.0],
+    )
+    .expect("a measurement");
+    let baseline = SeriesSpec::new(
+        label("estimated background"),
+        StyleRole::Baseline,
+        DataScope::FullSource,
+        vec![100.0, 200.0],
+        vec![2.0, 3.0],
+    )
+    .expect("a baseline");
+    let panel = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(100.0, 200.0),
+        domain(0.0, 40.0),
+        vec![measurement, baseline],
+    )
+    .expect("a panel of two series");
+
+    let document = svg::render(&figure_of(panel));
+    // Two strokes and two roles: without the sentence below, the only thing in
+    // the file telling them apart is the colour.
+    assert_eq!(
+        document.matches("<path ").count(),
+        2,
+        "two series: {document}"
+    );
+    let description = description_of(&document);
+    // Escaped, because that is what the file carries.
+    assert!(
+        description.contains("&quot;sample intensity&quot; is measured data"),
+        "the measurement is named: {description:?}",
+    );
+    assert!(
+        description.contains("&quot;estimated background&quot; is a reference baseline"),
+        "and so is the baseline: {description:?}",
+    );
+
+    // One measurement series has nothing to disambiguate, so it says nothing --
+    // a disclosure on every figure would be noise rather than information.
+    let plain = description_of(&svg::render(&figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    ))));
+    assert!(
+        !plain.contains("Series drawn"),
+        "a lone measurement is not introduced to itself: {plain:?}",
+    );
 }

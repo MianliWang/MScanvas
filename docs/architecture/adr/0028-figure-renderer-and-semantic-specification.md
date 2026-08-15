@@ -235,7 +235,16 @@ figure — and counts negative values
 **over the drawn window rather than the whole series**, because the sentence
 says *drawn* and a windowed panel still carries its whole source. Colour is
 written into the document rather than left to a stylesheet, so nothing depends
-on hue alone or on a stylesheet that will not travel with the file.
+on a stylesheet that will not travel with the file.
+
+Nor on hue. A baseline and a measurement are drawn in two colours and were
+distinguished by nothing else, so a monochrome print, a rasterization or a
+reader who does not know this palette lost which line was which — while
+`SeriesSpec` was carrying a name for each of them that the document dropped.
+A panel with more than one series, or with any series that is not a
+measurement, names them: the id the contract holds, and which is measured data
+and which a reference line. A lone measurement says nothing, because there is
+nothing there to disambiguate.
 
 The unit disclosure is where the contract's third state survives export. An
 unreported unit and a dimensionless one are both captioned with the bare label —
@@ -249,6 +258,14 @@ from a negative sample outside the window is drawn below the line while every
 measured value inside it is positive. That gets its own sentence rather than a
 count, because counting an interpolated point would put a number in the
 description matching no row in any source file.
+
+And it says *below the zero line* only where the figure has one. The trace
+exemption above lets a value range exclude zero, and against a range like
+`-10 .. -5` the horizontal rule is pinned to the edge of the plotting area as
+that range's own end. Naming it the zero line there hands the reader the wrong
+datum to measure every depth against, and contradicts the value-axis ends the
+same document prints; the sentence states instead that zero is outside the
+range shown.
 
 Axis end labels take their precision from the **span**, not from the magnitude:
 a visible window of `1000.1 .. 1000.4` labelled by magnitude printed `1000` at
