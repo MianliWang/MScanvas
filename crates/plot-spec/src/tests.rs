@@ -2672,3 +2672,258 @@ fn a_field_this_build_does_not_know_is_refused() {
     // fields rather than strictness for its own sake.
     assert!(FigureSpec::from_json(&windowed).is_ok());
 }
+
+/// A marker label stays inside the panel that owns it.
+///
+/// Below the plotting area sit that panel's own domain-end labels and its axis
+/// caption, and after those the next panel — so a block bounded by the page
+/// could cover the axis it annotates, and in a stacked figure walk into the
+/// panel below.
+#[test]
+fn a_marker_label_stays_inside_its_own_panel() {
+    let panel = || {
+        spectrum_panel(
+            SpectrumRepresentation::Centroid,
+            series(vec![100.0, 200.0], vec![10.0, 20.0]),
+        )
+        .with_markers(vec![
+            Marker::new(150.0, Some(label(&"m".repeat(MAX_LABEL_CHARS)))).expect("a marker"),
+        ])
+        .expect("markers on a valid panel")
+    };
+    // Narrow enough that a maximum-length label wraps to many lines, and short
+    // enough that those lines would reach the panel below if only the page
+    // bounded them.
+    let panels = 3;
+    let width = MIN_FIGURE_WIDTH;
+    let height = MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT * f64::from(panels);
+    let document = svg::render(
+        &FigureSpec::new(
+            FigureTheme::Light,
+            FigureSize::new(width, height).expect("a size"),
+            (0..panels).map(|_| panel()).collect(),
+        )
+        .expect("three panels"),
+    );
+
+    // The plotting band of each panel, from the renderer's own arithmetic.
+    let usable = height - 40.0 - 56.0;
+    let each = usable / f64::from(panels);
+    let bands: Vec<(f64, f64)> = (0..panels)
+        .map(|index| {
+            let top = 40.0 + each * f64::from(index);
+            (top + 8.0, 40.0 + each * f64::from(index + 1) - 34.0)
+        })
+        .collect();
+
+    let mut drawn = 0;
+    // Only a marker label is drawn as `<tspan>` lines, and a block reaches to
+    // the next `<text `, so this is the label's own content rather than a
+    // colour that happens to appear further down the document.
+    for block in document.split("<text ").skip(1) {
+        let Some(block) = block.split("</text>").next() else {
+            continue;
+        };
+        if !block.contains("<tspan") {
+            continue;
+        }
+        let index = drawn;
+        drawn += 1;
+        let baselines: Vec<f64> = block
+            .split("<tspan")
+            .skip(1)
+            .filter_map(|piece| {
+                piece
+                    .split("y=\"")
+                    .nth(1)?
+                    .split('"')
+                    .next()?
+                    .parse::<f64>()
+                    .ok()
+            })
+            .collect();
+        assert!(!baselines.is_empty(), "a label has lines: {block}");
+        let (first, last) = (baselines[0], baselines[baselines.len() - 1]);
+        // Against **its own** band, by index, rather than against any of them.
+        // Panels are rendered in order and each one's markers are drawn before
+        // its axis text, so the nth block belongs to the nth panel -- and
+        // asking only whether some band contains the block would accept the
+        // defect this test exists for, a label that stepped down out of its
+        // panel and landed tidily inside the next one.
+        //
+        // The band ends at the plotting area, and this panel's own domain-end
+        // labels sit 14 units below that with its axis caption below those, so
+        // staying inside the band is also what keeps the annotation off the
+        // axis text it annotates.
+        assert!(index < bands.len(), "a fourth label appeared: {block}");
+        let (top, bottom) = bands[index];
+        assert!(
+            first >= top && last <= bottom,
+            "a label left panel {index}: {first}..{last} against {top}..{bottom}",
+        );
+    }
+    assert_eq!(drawn, 3, "one label per panel");
+}
+
+/// Wrapping a label cuts it into pieces and never rewrites it.
+///
+/// `split_whitespace` trimmed the ends and collapsed runs, so `sample  A` was
+/// exported as `sample A` — the same silent edit this boundary refuses to make
+/// when it accepts the label in the first place, applied one layer down to what
+/// may be a sample identifier.
+#[test]
+fn wrapping_a_label_keeps_every_character() {
+    // Written as escapes rather than as literal spaces: the runs are the point
+    // of the test, and a run of spaces inside a string literal is exactly what
+    // `check_repo.py` looks for as a lost line continuation.
+    let awkward = "\u{20}\u{20}sample\u{20}\u{20}A\u{20}\u{20}";
+    let panel = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )
+    .with_markers(vec![
+        Marker::new(150.0, Some(label(awkward))).expect("a marker"),
+    ])
+    .expect("markers on a valid panel");
+
+    let document = svg::render(&figure_of(panel));
+    let rejoined: String = document
+        .split("<tspan")
+        .skip(1)
+        .filter_map(|piece| {
+            piece
+                .split_once('>')?
+                .1
+                .split_once("</tspan>")
+                .map(|cut| cut.0)
+        })
+        .collect();
+    assert_eq!(rejoined, awkward, "the label survives its own layout");
+    assert!(
+        document.contains("xml:space=\"preserve\""),
+        "and the document tells a viewer to keep it: {document}",
+    );
+
+    // Even when it has to be cut into many lines.
+    let long = "ab cd ".repeat(20);
+    let wrapped = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )
+    .with_markers(vec![
+        Marker::new(150.0, Some(label(&long))).expect("a marker"),
+    ])
+    .expect("markers on a valid panel");
+    let document = svg::render(&figure_of(wrapped));
+    let rejoined: String = document
+        .split("<tspan")
+        .skip(1)
+        .filter_map(|piece| {
+            piece
+                .split_once('>')?
+                .1
+                .split_once("</tspan>")
+                .map(|cut| cut.0)
+        })
+        .collect();
+    assert_eq!(rejoined, long, "including every space it was given");
+}
+
+/// The exported description spaces its own sentences, and nothing else.
+///
+/// A lost line continuation left twenty-two spaces inside the windowed
+/// reduction sentence, and every assertion in place missed it: they test that
+/// disclosure in fragments, and `contains` cannot see a gap between two
+/// fragments it checks separately. So this reads the `<desc>` the document
+/// actually carries.
+///
+/// Both halves are load-bearing. The whole sentence pins this text; the run
+/// check catches the same defect arriving in any of the other sentences
+/// `panel_description` can emit, which is the class rather than the instance.
+/// It is scoped to labels carrying no run of their own, because a label that
+/// carried one would reach the unplaced-label sentence legitimately -- the
+/// renderer preserves the text it was given, and that is a different rule.
+#[test]
+fn the_description_carries_no_unintended_whitespace() {
+    fn description_of(document: &str) -> String {
+        document
+            .split("<desc>")
+            .nth(1)
+            .and_then(|rest| rest.split("</desc>").next())
+            .expect("the document carries a description")
+            .to_owned()
+    }
+
+    let reduced = SeriesSpec::new(
+        label("measurement"),
+        StyleRole::Measurement,
+        DataScope::Reduced {
+            source_point_count: 500,
+            rule: ReductionRule::MinMaxPerColumn,
+        },
+        vec![100.0, 110.0, 300.0, 310.0, 320.0],
+        vec![10.0, 20.0, 30.0, 40.0, 50.0],
+    )
+    .expect("a reduction");
+    let windowed = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(100.0, 320.0),
+        domain(0.0, 50.0),
+        vec![reduced],
+    )
+    .expect("a panel")
+    .with_visible_domain(domain(250.0, 320.0))
+    .expect("a window inside the domain");
+
+    let description = description_of(&svg::render(&figure_of(windowed)));
+    assert!(
+        description.contains(
+            "Reduced from 500 source points to 5, keeping the greatest and the least value \
+             in each column; 3 of them lie inside the range shown."
+        ),
+        "the windowed disclosure reads as one sentence: {description:?}",
+    );
+
+    // Every other sentence this function can produce, over scenes chosen to
+    // reach them: an unreported representation, an unreported unit, a negative
+    // count, a measured zero and a chromatogram trace.
+    let scenes = [
+        svg::render(&figure_of(spectrum_panel(
+            SpectrumRepresentation::Unreported,
+            series(vec![100.0, 200.0], vec![10.0, -20.0]),
+        ))),
+        svg::render(&figure_of(spectrum_panel(
+            SpectrumRepresentation::Centroid,
+            series(vec![100.0, 200.0], vec![0.0, 0.0]),
+        ))),
+        svg::render(&figure_of(
+            PanelSpec::new(
+                PlotKind::Chromatogram,
+                AxisSpec::new(
+                    label("Retention time"),
+                    UnitState::Known { unit: label("min") },
+                ),
+                AxisSpec::new(label("Intensity"), UnitState::Unreported),
+                domain(0.0, 3.0),
+                domain(-5.0, 10.0),
+                vec![series(vec![0.0, 1.0, 2.0, 3.0], vec![1.0, -5.0, 10.0, 2.0])],
+            )
+            .expect("a chromatogram panel"),
+        )),
+    ];
+    for document in &scenes {
+        let description = description_of(document);
+        assert!(
+            !description.is_empty(),
+            "the scene disclosed something: {document}",
+        );
+        assert!(
+            !description.contains("  "),
+            "a run of spaces reached the description: {description:?}",
+        );
+    }
+}

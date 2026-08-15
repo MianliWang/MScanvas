@@ -267,7 +267,9 @@ threshold, so an ordinary axis never sees it. A single-valued domain is exempt
 from all of this: its ends *are* one number, and escalating would print digits
 it does not hold.
 
-A marker label is wrapped to the width available, clamped inside the canvas, and
+A marker label is wrapped to the width available, clamped inside **its own
+panel** — below the plotting area sit that panel's axis text and then the next
+panel, so a block bounded by the page could cover the axis it annotates — and
 stepped down past every label already placed in its panel — and, where the page
 has no room for the block at any position, shrunk a point at a time until it
 fits, to a floor below which it would be present without being readable. A
@@ -288,7 +290,12 @@ the marker's line still drew and the figure still looked finished. Clamping
 subsumes choosing a side — near the right edge it moves the text left of its
 marker on its own — and wrapping is what covers the case a side choice cannot:
 a label longer than the page fits on neither side of anything. Nothing is
-elided; every character appears. The character width is an estimate, and has to
+elided; every character appears, the spaces included: wrapping cuts the label
+into pieces and never rewrites it, and the document carries
+`xml:space="preserve"` so a viewer does not collapse `sample  A` into
+`sample A` either. This boundary refuses a label rather than repairing one, and
+a layout step quietly editing the same string would be that decision made
+twice, differently. The character width is an estimate, and has to
 be, because measuring text needs a font this renderer deliberately does not
 carry; it errs towards wrapping early, which costs a line break, rather than
 late, which costs the annotation. A label that would reach the value axis's own

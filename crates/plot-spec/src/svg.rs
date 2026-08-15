@@ -79,7 +79,9 @@ const TITLE_SIZE: f64 = 16.0;
 /// Small text is a real cost, so this is a floor rather than a target: a label
 /// only reaches it on a figure with no room for it at any larger size, and
 /// below this it would be present without being readable, which helps nobody.
-const MIN_MARKER_LABEL_SIZE: f64 = 5.0;
+/// A label that does not fit even here is not drawn and is named in the
+/// description instead, which is the honest end of the ladder.
+const MIN_MARKER_LABEL_SIZE: f64 = 4.0;
 
 /// How far a marker label stays from either edge of the document.
 const MARKER_LABEL_INSET: f64 = 4.0;
@@ -267,7 +269,8 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String]) -> String {
                 ));
             } else {
                 sentences.push(format!(
-                    "Reduced from {source_point_count} source points to {}, {};                      {inside} of them lie inside the range shown.",
+                    "Reduced from {source_point_count} source points to {}, {}; \
+                     {inside} of them lie inside the range shown.",
                     series.len(),
                     rule.describe(),
                 ));
@@ -382,8 +385,6 @@ struct Frame {
     plot_top: f64,
     plot_bottom: f64,
     zero_y: f64,
-    /// The height of the whole document, which text placement clamps against.
-    canvas_height: f64,
 }
 
 /// Renders one figure as a standalone SVG document.
@@ -459,7 +460,7 @@ pub fn render(figure: &FigureSpec) -> String {
         let _ = writeln!(
             out,
             "<text x=\"{}\" y=\"24.000\" fill=\"{}\" font-family=\"sans-serif\" \
-             font-size=\"{}\" font-weight=\"600\" textLength=\"{}\" \
+             font-size=\"{}\" font-weight=\"600\" xml:space=\"preserve\" textLength=\"{}\" \
              lengthAdjust=\"spacingAndGlyphs\">{}</text>",
             coordinate(MARGIN_LEFT),
             colours.text,
@@ -516,7 +517,6 @@ fn render_panels(
             plot_top,
             plot_bottom,
             zero_y,
-            canvas_height: height,
         };
         unplaced.push(render_panel(&mut body, panel, &frame, colours));
     }
@@ -655,7 +655,8 @@ fn render_panel(
     let _ = writeln!(
         out,
         "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"12\" \
-         text-anchor=\"middle\" textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
+         text-anchor=\"middle\" xml:space=\"preserve\" textLength=\"{}\" \
+         lengthAdjust=\"spacingAndGlyphs\">{}</text>",
         coordinate(f64::midpoint(frame.left, frame.right)),
         coordinate(plot_bottom + 30.0),
         colours.text,
@@ -671,8 +672,8 @@ fn render_panel(
     let _ = writeln!(
         out,
         "<text x=\"14.000\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"12\" \
-         text-anchor=\"middle\" transform=\"rotate(-90 14.000 {})\" textLength=\"{}\" \
-         lengthAdjust=\"spacingAndGlyphs\">{}</text>",
+         text-anchor=\"middle\" transform=\"rotate(-90 14.000 {})\" xml:space=\"preserve\" \
+         textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
         coordinate(centre_y),
         colours.text,
         coordinate(centre_y),
@@ -968,45 +969,38 @@ fn fitted_width(text: &str, size: f64, available: f64) -> f64 {
 
 /// Splits one label into lines no wider than `columns` characters.
 ///
-/// Greedy on whitespace, and a word longer than one line is cut rather than
-/// allowed to overhang -- an over-long word is usually an identifier, and an
-/// identifier running off the page carries less than one broken across two
-/// lines. Nothing is dropped or elided: every character of the label appears.
+/// **Every character of the label appears, in order, exactly once** -- this cuts
+/// the text into pieces and never rewrites it. That is not a nicety: this
+/// boundary refuses a label it cannot accept rather than repairing one, and a
+/// wrapper that trimmed the ends and collapsed `sample  A` into `sample A`
+/// would be the same edit made silently, one layer down, to a string that may
+/// be a sample identifier.
+///
+/// Lines break at a space where there is one to break at, and mid-word only
+/// where a word is longer than a line -- an over-long word is usually an
+/// identifier, and one running off the page carries less than one broken across
+/// two lines. A space a line ends on stays on that line, because dropping it
+/// would be the edit again.
 fn wrap_label(text: &str, columns: usize) -> Vec<String> {
     let columns = columns.max(1);
+    let characters: Vec<char> = text.chars().collect();
     let mut lines: Vec<String> = Vec::new();
-    let mut line = String::new();
-    for word in text.split_whitespace() {
-        let mut word = word;
-        while word.chars().count() > columns {
-            let cut = word
-                .char_indices()
-                .nth(columns)
-                .map_or(word.len(), |(index, _)| index);
-            if !line.is_empty() {
-                lines.push(std::mem::take(&mut line));
-            }
-            lines.push(word[..cut].to_owned());
-            word = &word[cut..];
+    let mut start = 0;
+    while start < characters.len() {
+        let remaining = characters.len() - start;
+        if remaining <= columns {
+            lines.push(characters[start..].iter().collect());
+            break;
         }
-        if word.is_empty() {
-            continue;
-        }
-        let would_be = if line.is_empty() {
-            word.chars().count()
-        } else {
-            line.chars().count() + 1 + word.chars().count()
-        };
-        if would_be > columns && !line.is_empty() {
-            lines.push(std::mem::take(&mut line));
-        }
-        if !line.is_empty() {
-            line.push(' ');
-        }
-        line.push_str(word);
-    }
-    if !line.is_empty() {
-        lines.push(line);
+        // The last space inside the line, so the break lands between words when
+        // there is a between to land in. The space itself stays behind.
+        let hard = start + columns;
+        let cut = characters[start..hard]
+            .iter()
+            .rposition(char::is_ascii_whitespace)
+            .map_or(hard, |offset| start + offset + 1);
+        lines.push(characters[start..cut].iter().collect());
+        start = cut;
     }
     lines
 }
@@ -1043,7 +1037,6 @@ fn render_marker_label(
 ) -> bool {
     let plot_top = frame.plot_top;
     let canvas_width = frame.right + MARGIN_RIGHT;
-    let canvas_height = frame.canvas_height;
 
     // Try the ordinary size first and give ground only where the page makes it
     // necessary. Stepping down the page cannot help a block taller than the
@@ -1082,8 +1075,13 @@ fn render_marker_label(
         } else {
             plot_top + 12.0
         };
+        // The block belongs to the panel that owns the marker, not to the
+        // page. Below the plotting area sit this panel's own domain-end labels
+        // and its axis caption, and after those the next panel -- so a floor
+        // measured from the canvas let an annotation cover the axis it
+        // annotates, and in a stacked figure walk into the panel below.
         let depth = (lines.len() - 1) as f64 * leading;
-        let floor = canvas_height - MARKER_LABEL_INSET - depth;
+        let floor = frame.plot_bottom - MARKER_LABEL_INSET - depth;
 
         // Step past every label already placed in this panel.
         let mut top = wanted;
@@ -1124,7 +1122,8 @@ fn render_marker_label(
     for (index, line) in lines.iter().enumerate() {
         let _ = write!(
             out,
-            "<tspan x=\"{}\" y=\"{}\" textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</tspan>",
+            "<tspan x=\"{}\" y=\"{}\" xml:space=\"preserve\" textLength=\"{}\" \
+             lengthAdjust=\"spacingAndGlyphs\">{}</tspan>",
             coordinate(left),
             coordinate(top + index as f64 * leading),
             coordinate(line.chars().count() as f64 * character),
