@@ -1224,14 +1224,26 @@ fn axis_ends(domain: Domain) -> (String, String) {
         format_number(domain.low(), decimals),
         format_number(domain.high(), decimals),
     );
-    // Two ways fixed point stops being the right notation, and both end here.
-    // The ends collide, which is the narrow-domain case -- or the ends are so
-    // large that a fixed-point form runs to hundreds of digits: `1e307` prints
-    // 308 characters, which is not a number a reader can read and not a string
-    // an axis can hold.
+    // Three ways fixed point stops being the right notation, and they all end
+    // here. The ends collide, which is the narrow-domain case -- or the ends are
+    // so large that a fixed-point form runs to hundreds of digits: `1e307`
+    // prints 308 characters, which is not a number a reader can read and not a
+    // string an axis can hold -- or the fixed-point form has rounded the number
+    // away to nothing.
+    //
+    // That last one is what a single-valued domain hits, and it is the case the
+    // collision rule cannot see: `1e-20 .. 1e-20` never collides, because the
+    // ends genuinely are one number, so it printed `0.000000` at both and the
+    // axis stated zero where the measurement is not. Printing a value's ends
+    // identically is the truth; printing them as a different number is not.
+    let lost = |value: f64, text: &str| value != 0.0 && text.parse::<f64>() == Ok(0.0);
     let unreadable =
         low.chars().count() > MAX_AXIS_LABEL_CHARS || high.chars().count() > MAX_AXIS_LABEL_CHARS;
-    if unreadable || (domain.span() > 0.0 && low == high) {
+    if unreadable
+        || lost(domain.low(), &low)
+        || lost(domain.high(), &high)
+        || (domain.span() > 0.0 && low == high)
+    {
         return (
             format!("{:e}", domain.low()),
             format!("{:e}", domain.high()),

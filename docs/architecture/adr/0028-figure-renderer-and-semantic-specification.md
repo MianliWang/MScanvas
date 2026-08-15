@@ -117,17 +117,21 @@ tall, a legibility rule the contract has to carry because only it knows how many
 panels share the height — a panel drawn as marks from zero
 whose value range does not contain zero, a joined trace reduced by a rule that
 keeps one extreme per sign, a marker placed where the panel's source does not
-reach, a panel carrying a second measurement series, and a label holding a
+reach, a panel carrying two series of one style role, and a label holding a
 character XML 1.0 forbids.
 
-That second measurement is refused rather than styled around. Two measurements
-share one stroke colour and one width, and a description naming both ids as
-measured data cannot say which line is which either — a figure that looks like
-a comparison and cannot be read as one. Telling them apart needs a style system
-and a legend to decode it, and a legend is figure layout: FIG-008, a named
-non-goal here. A role is not a style slot — `Baseline` is one reference line
-read against one measurement, which is why that pair *is* representable and is
-distinguishable both in the drawing and in the words — and an overlay of two
+That last panel rule is refused rather than styled around, and it is stated
+over roles rather than over any one of them. A role is exactly what a renderer
+maps to a stroke, so two series sharing a role are drawn in one colour at one
+width with nothing left to tell them apart — and a description naming both ids
+under the same role cannot say which line is which either. It is a figure that
+looks like a comparison and cannot be read as one. Written against
+`Measurement` alone, the same rule left two baselines drawing the same grey
+line as each other, which is why it belongs to the mapping and not to a member
+of it. Telling more series apart needs a style system and a legend to decode
+it, and a legend is figure layout: FIG-008, a named non-goal here. One
+measurement read against one baseline stays representable and stays
+distinguishable, in the drawing and in the words; an overlay of two
 measurements is VIEW-008's multi-layer comparison, which should arrive with the
 component that can draw it rather than as a figure that renders ambiguously
 today.
@@ -163,13 +167,20 @@ public field would have reduced the claim to *checked once*: a marker position
 written to `NaN` after construction reached the renderer, where both domain
 comparisons are false for `NaN`, and `x1="NaN"` was written into the document.
 Reading is unrestricted; writing goes through a constructor or does not happen.
-`Deserialize` is implemented rather than derived for the same reason — on
-`FigureSpec` and on `Label` and `Caption`, whose private inner string otherwise
-had a public door: a derived implementation is a second entry point, and
-`serde_json::from_str::<FigureSpec>` (or `::<Label>`, decoded alone and then
-handed to `with_title`) would have built the value field by field and skipped
-every rule that [`FigureSpec::from_json`] applies. A newtype whose invariant one
-entry point does not hold is a `String` with a longer name.
+`Deserialize` is implemented rather than derived for the same reason, on **every
+type that documents an invariant** — `FigureSpec`, `PanelSpec`, `SeriesSpec`,
+`Marker`, `Domain`, `FigureSize`, and `Label` and `Caption`, whose private inner
+string otherwise had a public door. A derived implementation is a second entry
+point, and `serde_json::from_str::<FigureSpec>` (or `::<Label>`, decoded alone
+and then handed to `with_title`) would have built the value field by field and
+skipped every rule that [`FigureSpec::from_json`] applies. A newtype whose
+invariant one entry point does not hold is a `String` with a longer name.
+
+Listing them individually is the point rather than pedantry. Sealing only the
+outermost three left `serde_json::from_str::<Domain>(r#"{"low":10,"high":0}"#)`
+building an inverted domain whose `low`, `high` and `span` then contradicted the
+sentence directly above them — and being reachable only through an outer
+constructor that happens to revalidate is not the same as holding an invariant.
 
 That splits the decode errors along a line worth stating: a value refused as it
 is read never becomes a value, and reports `Malformed`; a document whose parts
@@ -177,7 +188,11 @@ are each readable and disagree with one another reports `Spec` with the rule
 that failed. Sealing the fields closed the mutation route;
 this closes the construction route beside it. `from_json` reads the wire shape
 itself so that its refusals keep the `SpecError` that caused them rather than
-arriving as a decoder message a caller would have to parse.
+arriving as a decoder message a caller would have to parse — and the wire shapes
+therefore **nest**, each holding the wire form of its members rather than the
+checked one. A tree whose parts validated themselves as they were read would
+report every inner disagreement as a decoder message, which is the `SpecError`
+this whole arrangement exists to preserve.
 `with_markers` validates for the same reason — a second constructor that skips
 the check is how a rule gets added in one place and bypassed in another.
 Unordered data is **refused rather than sorted** — sorting would decide the file
@@ -297,8 +312,17 @@ significant digits, so a domain like `1e-20 .. 4e-20` exhausts them all and
 still prints `0.000…` twice; that pair falls back to exponent notation. The
 fallback triggers on the two strings colliding rather than on a magnitude
 threshold, so an ordinary axis never sees it. A single-valued domain is exempt
-from all of this: its ends *are* one number, and escalating would print digits
-it does not hold.
+from the escalation: its ends *are* one number, and escalating would print
+digits it does not hold.
+
+Exempt from the escalation, not from the fallback — and that distinction was
+the defect. Printing one value's two ends identically is the truth; printing
+them as a *different* number is not, and `1e-20 .. 1e-20` never collides with
+itself, so the collision rule could not see it: both ends came out `0.000000`
+and the axis stated zero for a measurement that is not zero. The fallback
+therefore also triggers when the fixed-point form has rounded a non-zero value
+away to nothing. A domain that genuinely is zero still prints as zero, because
+the test is losing the value rather than being small.
 
 A marker label is wrapped to the width available, clamped inside **its own
 panel** — below the plotting area sit that panel's axis text and then the next

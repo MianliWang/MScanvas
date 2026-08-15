@@ -3145,7 +3145,7 @@ fn a_clipped_window_with_no_sample_does_not_claim_a_zero_line() {
 /// non-goal here, so the contract refuses the figure rather than rendering it
 /// ambiguously.
 #[test]
-fn a_panel_refuses_a_second_measurement_series() {
+fn a_panel_refuses_two_series_of_one_role() {
     let overlay = |second_role| {
         PanelSpec::new(
             PlotKind::Chromatogram,
@@ -3179,7 +3179,7 @@ fn a_panel_refuses_a_second_measurement_series() {
 
     assert_eq!(
         overlay(StyleRole::Measurement).unwrap_err(),
-        SpecError::MultipleMeasurementSeries,
+        SpecError::DuplicateSeriesRole,
         "two measurements cannot be told apart, so they are not a figure",
     );
     // One measurement read against one reference line stays representable: the
@@ -3216,7 +3216,145 @@ fn a_panel_refuses_a_second_measurement_series() {
     .expect("a document");
     assert_eq!(
         FigureSpec::from_json(&document),
-        Err(DecodeError::Spec(SpecError::MultipleMeasurementSeries)),
+        Err(DecodeError::Spec(SpecError::DuplicateSeriesRole)),
         "and a decoded overlay is refused with the rule that failed",
+    );
+}
+
+/// Two baselines are as indistinguishable as two measurements.
+///
+/// The role check was written against `Measurement` and left the same ambiguity
+/// reachable through the other role: two baselines get one grey stroke at one
+/// width, and a description naming both ids as reference lines maps neither to
+/// a path. The rule belongs to the mapping rather than to any member of it.
+#[test]
+fn a_panel_refuses_two_series_of_the_same_non_measurement_role() {
+    let line = |name: &str| {
+        SeriesSpec::new(
+            label(name),
+            StyleRole::Baseline,
+            DataScope::FullSource,
+            vec![0.0, 10.0],
+            vec![1.0, 2.0],
+        )
+        .expect("a baseline")
+    };
+    let panel = |series| {
+        PanelSpec::new(
+            PlotKind::Chromatogram,
+            AxisSpec::new(
+                label("Retention time"),
+                UnitState::Known { unit: label("min") },
+            ),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(0.0, 10.0),
+            domain(0.0, 100.0),
+            series,
+        )
+    };
+
+    assert_eq!(
+        panel(vec![line("solvent"), line("column bleed")]).unwrap_err(),
+        SpecError::DuplicateSeriesRole,
+        "two baselines cannot be told apart either",
+    );
+    assert!(
+        panel(vec![line("solvent")]).is_ok(),
+        "one baseline on its own remains a valid panel",
+    );
+}
+
+/// A single-valued domain still prints the value it holds.
+///
+/// `1e-20 .. 1e-20` is a legitimate domain -- a flat trace, a one-point series
+/// -- and it never collides with itself, so the narrow-domain fallback could
+/// not see it: both ends printed `0.000000` and the axis stated zero where the
+/// measurement is not. Printing one value's ends identically is the truth;
+/// printing them as a *different* number is not.
+#[test]
+fn a_tiny_single_valued_axis_is_not_printed_as_zero() {
+    let panel = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(
+            label("Retention time"),
+            UnitState::Known { unit: label("min") },
+        ),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(1.0e-20, 1.0e-20),
+        domain(1.0e-20, 1.0e-20),
+        vec![series(vec![1.0e-20], vec![1.0e-20])],
+    )
+    .expect("a single-valued panel is a real scene");
+
+    let document = svg::render(&figure_of(panel));
+    assert!(
+        document.contains("1e-20"),
+        "the value the axis holds is printed: {document}",
+    );
+    // The defect: an axis claiming zero for a measurement that is not zero.
+    // `0.000000` is what the fixed-point form rounded it to at both ends.
+    assert!(
+        !document.contains(">0.000000<"),
+        "and never rounded away to zero: {document}",
+    );
+
+    // A domain that genuinely is zero still prints as zero rather than as an
+    // exponent -- the fallback triggers on losing a value, not on being small.
+    let zeroed = svg::render(&figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![0.0, 0.0]),
+    )));
+    assert!(
+        zeroed.contains(">0.000000<"),
+        "a real zero is printed as zero rather than as an exponent: {zeroed}",
+    );
+}
+
+/// Every type that documents an invariant holds it at the decode door too.
+///
+/// `FigureSpec`, `Label` and `Caption` were sealed; `Domain`, `FigureSize`,
+/// `Marker`, `SeriesSpec` and `PanelSpec` were not, so
+/// `serde_json::from_str::<Domain>` built an inverted domain whose `low`,
+/// `high` and `span` contradicted the sentence above them. Being reachable only
+/// through an outer constructor that happens to revalidate is not the same as
+/// holding an invariant.
+#[test]
+fn no_validated_type_has_an_unchecked_decode_door() {
+    assert!(
+        serde_json::from_str::<Domain>(r#"{"low":10.0,"high":0.0}"#).is_err(),
+        "an inverted domain is not a domain",
+    );
+    assert!(
+        serde_json::from_str::<Domain>(r#"{"low":0.0,"high":10.0}"#).is_ok(),
+        "and an ordered one still decodes",
+    );
+    assert!(
+        serde_json::from_str::<FigureSize>(r#"{"width":1.0,"height":1.0}"#).is_err(),
+        "a figure smaller than the floor is not a size",
+    );
+    assert!(
+        serde_json::from_str::<Marker>(r#"{"at":null,"label":null}"#).is_err(),
+        "a marker with no position is not a marker",
+    );
+    assert!(
+        serde_json::from_str::<SeriesSpec>(
+            r#"{"id":"a","role":"measurement","scope":{"scope":"full_source"},
+                "x":[1.0,2.0],"y":[1.0]}"#
+        )
+        .is_err(),
+        "a series whose axes disagree in length is not a series",
+    );
+    assert!(
+        serde_json::from_str::<PanelSpec>(
+            r#"{"kind":{"kind":"chromatogram"},
+                "x_axis":{"label":"t","unit":{"state":"unreported"}},
+                "y_axis":{"label":"i","unit":{"state":"unreported"}},
+                "full_domain":{"low":0.0,"high":10.0},
+                "visible_domain":{"low":-5.0,"high":10.0},
+                "value_domain":{"low":0.0,"high":10.0},
+                "series":[],"markers":[]}"#
+        )
+        .is_err(),
+        "a window outside the source is not a panel",
     );
 }

@@ -106,8 +106,8 @@ pub enum SpecError {
     ReductionRuleUnsuitableForTrace,
     /// A marker was placed where the panel's source does not reach.
     MarkerOutsideFullDomain,
-    /// A panel carried more than one measurement series.
-    MultipleMeasurementSeries,
+    /// A panel carried two series of the same style role.
+    DuplicateSeriesRole,
     /// A decoded document declared a schema this build does not accept.
     UnknownSchemaVersion,
 }
@@ -136,8 +136,8 @@ impl fmt::Display for SpecError {
                 "a joined trace was reduced by a rule that keeps one extreme per sign"
             }
             Self::MarkerOutsideFullDomain => "a marker was outside the panel's source domain",
-            Self::MultipleMeasurementSeries => {
-                "a panel carried more than one measurement series, which cannot be told apart"
+            Self::DuplicateSeriesRole => {
+                "a panel carried two series of the same style role, which cannot be told apart"
             }
             Self::UnknownSchemaVersion => "the document declares an unknown schema version",
         })
@@ -437,15 +437,50 @@ impl AxisSpec {
 ///
 /// Finite and ordered by construction, so no renderer has to decide what to do
 /// with a backwards or infinite range.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// `Deserialize` is implemented rather than derived -- see [`WireDomain`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct Domain {
+    low: f64,
+    high: f64,
+}
+
+/// The field-by-field shape `serde` builds for a [`Domain`], before any rule.
+///
+/// A derived `Deserialize` on the public type is a public door that skips its
+/// constructor: `serde_json::from_str::<Domain>(r#"{"low":10,"high":0}"#)`
+/// built an inverted domain whose `low`, `high` and `span` then contradicted
+/// the sentence above them. Being reachable only through an outer constructor
+/// that happens to revalidate is not the same as holding an invariant, and a
+/// type that documents one owes it at every entry point.
+#[derive(Deserialize)]
 // A field this build does not know is a field the sender meant something
 // by. Ignoring it turns a typo into a silent change of meaning -- a
 // misspelled `visible_domain` decodes as "no window" and exports the whole
 // source -- so the document is refused instead.
 #[serde(deny_unknown_fields)]
-pub struct Domain {
+struct WireDomain {
     low: f64,
     high: f64,
+}
+
+impl From<WireDomain> for Domain {
+    fn from(wire: WireDomain) -> Self {
+        Self {
+            low: wire.low,
+            high: wire.high,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Domain {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let domain = Self::from(WireDomain::deserialize(deserializer)?);
+        domain.validate().map_err(serde::de::Error::custom)?;
+        Ok(domain)
+    }
 }
 
 impl Domain {
@@ -575,12 +610,8 @@ pub enum StyleRole {
 }
 
 /// One ordered set of points, and what it is.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-// A field this build does not know is a field the sender meant something
-// by. Ignoring it turns a typo into a silent change of meaning -- a
-// misspelled `visible_domain` decodes as "no window" and exports the whole
-// source -- so the document is refused instead.
-#[serde(deny_unknown_fields)]
+/// `Deserialize` is implemented rather than derived, as [`Domain`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SeriesSpec {
     /// Stable within one specification. Not a database key and not a handle.
     pub(crate) id: Label,
@@ -694,15 +725,80 @@ impl SeriesSpec {
 }
 
 /// A persistent point of interest on the domain axis.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// `Deserialize` is implemented rather than derived, as [`Domain`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Marker {
+    pub(crate) at: f64,
+    pub(crate) label: Option<Label>,
+}
+
+#[derive(Deserialize)]
 // A field this build does not know is a field the sender meant something
 // by. Ignoring it turns a typo into a silent change of meaning -- a
 // misspelled `visible_domain` decodes as "no window" and exports the whole
 // source -- so the document is refused instead.
 #[serde(deny_unknown_fields)]
-pub struct Marker {
-    pub(crate) at: f64,
-    pub(crate) label: Option<Label>,
+struct WireMarker {
+    at: f64,
+    label: Option<Label>,
+}
+
+impl From<WireMarker> for Marker {
+    fn from(wire: WireMarker) -> Self {
+        Self {
+            at: wire.at,
+            label: wire.label,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Marker {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let marker = Self::from(WireMarker::deserialize(deserializer)?);
+        marker.validate().map_err(serde::de::Error::custom)?;
+        Ok(marker)
+    }
+}
+
+#[derive(Deserialize)]
+// A field this build does not know is a field the sender meant something
+// by. Ignoring it turns a typo into a silent change of meaning -- a
+// misspelled `visible_domain` decodes as "no window" and exports the whole
+// source -- so the document is refused instead.
+#[serde(deny_unknown_fields)]
+struct WireSeries {
+    id: Label,
+    role: StyleRole,
+    scope: DataScope,
+    x: Vec<f64>,
+    y: Vec<f64>,
+}
+
+impl<'de> Deserialize<'de> for SeriesSpec {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let series = Self::from(WireSeries::deserialize(deserializer)?);
+        series.validate().map_err(serde::de::Error::custom)?;
+        Ok(series)
+    }
+}
+
+impl From<WireSeries> for SeriesSpec {
+    fn from(wire: WireSeries) -> Self {
+        Self {
+            id: wire.id,
+            role: wire.role,
+            scope: wire.scope,
+            x: wire.x,
+            y: wire.y,
+        }
+    }
 }
 
 impl Marker {
@@ -739,12 +835,9 @@ impl Marker {
 }
 
 /// One plot.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-// A field this build does not know is a field the sender meant something
-// by. Ignoring it turns a typo into a silent change of meaning -- a
-// misspelled `visible_domain` decodes as "no window" and exports the whole
-// source -- so the document is refused instead.
-#[serde(deny_unknown_fields)]
+///
+/// `Deserialize` is implemented rather than derived, as [`Domain`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PanelSpec {
     pub(crate) kind: PlotKind,
     pub(crate) x_axis: AxisSpec,
@@ -757,6 +850,55 @@ pub struct PanelSpec {
     pub(crate) value_domain: Domain,
     pub(crate) series: Vec<SeriesSpec>,
     pub(crate) markers: Vec<Marker>,
+}
+
+#[derive(Deserialize)]
+// A field this build does not know is a field the sender meant something
+// by. Ignoring it turns a typo into a silent change of meaning -- a
+// misspelled `visible_domain` decodes as "no window" and exports the whole
+// source -- so the document is refused instead.
+#[serde(deny_unknown_fields)]
+// Wire members throughout, not public ones. A wire shape whose parts validated
+// themselves as they were read would report every inner refusal as a decoder
+// message, and [`FigureSpec::from_json`] would lose the `SpecError` it exists to
+// keep -- the split this module draws between a value refused as it is read and
+// a document whose readable parts disagree. So the whole tree decodes
+// unvalidated, and one `validate` at the top answers with the rule that failed.
+struct WirePanel {
+    kind: PlotKind,
+    x_axis: AxisSpec,
+    y_axis: AxisSpec,
+    full_domain: WireDomain,
+    visible_domain: Option<WireDomain>,
+    value_domain: WireDomain,
+    series: Vec<WireSeries>,
+    markers: Vec<WireMarker>,
+}
+
+impl From<WirePanel> for PanelSpec {
+    fn from(wire: WirePanel) -> Self {
+        Self {
+            kind: wire.kind,
+            x_axis: wire.x_axis,
+            y_axis: wire.y_axis,
+            full_domain: wire.full_domain.into(),
+            visible_domain: wire.visible_domain.map(Into::into),
+            value_domain: wire.value_domain.into(),
+            series: wire.series.into_iter().map(Into::into).collect(),
+            markers: wire.markers.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for PanelSpec {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let panel = Self::from(WirePanel::deserialize(deserializer)?);
+        panel.validate().map_err(serde::de::Error::custom)?;
+        Ok(panel)
+    }
 }
 
 impl PanelSpec {
@@ -811,30 +953,33 @@ impl PanelSpec {
         {
             return Err(SpecError::BaselineOutsideValueDomain);
         }
-        // Two measurements in one panel are drawn in one colour, at one width,
-        // with nothing else to tell them apart -- and a description naming both
-        // ids as measured data cannot say which line is which either. A reader
-        // receiving that file sees two traces and has no way to attribute
-        // either, which is worse than not having the figure: it looks like a
-        // comparison and cannot be read as one.
+        // One series per style role, because a role is exactly what a renderer
+        // maps to a stroke. Two series sharing a role are drawn in one colour
+        // at one width with nothing left to tell them apart -- and a
+        // description naming both ids under the same role cannot say which line
+        // is which either. A reader receiving that file sees two traces and can
+        // attribute neither, which is worse than not having the figure: it
+        // looks like a comparison and cannot be read as one.
         //
-        // Refused rather than styled around. Telling series apart needs a style
-        // system with a legend to decode it, and a legend is figure layout --
-        // FIG-008, a named non-goal of this milestone. A role is not a style
-        // slot: `Baseline` is one reference line read against one measurement,
-        // which is why that pair *is* representable and distinguishable, in the
-        // drawing and in the words. An overlay of two measurements is
-        // VIEW-008's multi-layer comparison, and it should arrive with the
-        // component that can draw it rather than as a figure that renders
-        // ambiguously today.
-        if self
-            .series
-            .iter()
-            .filter(|series| series.role == StyleRole::Measurement)
-            .count()
-            > 1
-        {
-            return Err(SpecError::MultipleMeasurementSeries);
+        // Stated over roles rather than over one role, because the ambiguity
+        // belongs to the mapping and not to any particular member of it: a rule
+        // written against `Measurement` alone left two baselines drawing the
+        // same grey line as each other.
+        //
+        // Refused rather than styled around. Telling more series apart needs a
+        // style system with a legend to decode it, and a legend is figure
+        // layout -- FIG-008, a named non-goal of this milestone. One
+        // measurement read against one baseline stays representable and stays
+        // distinguishable, in the drawing and in the words. An overlay of two
+        // measurements is VIEW-008's multi-layer comparison, and it should
+        // arrive with the component that can draw it rather than as a figure
+        // that renders ambiguously today.
+        let mut roles: Vec<StyleRole> = Vec::with_capacity(self.series.len());
+        for series in &self.series {
+            if roles.contains(&series.role) {
+                return Err(SpecError::DuplicateSeriesRole);
+            }
+            roles.push(series.role);
         }
         // A joined trace and a per-sign reduction disagree about what a column
         // is. `ExtremePerSignPerColumn` keeps one value for an all-positive
@@ -1009,15 +1154,42 @@ pub enum FigureTheme {
 }
 
 /// How large the figure is, in figure units.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// `Deserialize` is implemented rather than derived, as [`Domain`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct FigureSize {
+    width: f64,
+    height: f64,
+}
+
+#[derive(Deserialize)]
 // A field this build does not know is a field the sender meant something
 // by. Ignoring it turns a typo into a silent change of meaning -- a
 // misspelled `visible_domain` decodes as "no window" and exports the whole
 // source -- so the document is refused instead.
 #[serde(deny_unknown_fields)]
-pub struct FigureSize {
+struct WireFigureSize {
     width: f64,
     height: f64,
+}
+
+impl From<WireFigureSize> for FigureSize {
+    fn from(wire: WireFigureSize) -> Self {
+        Self {
+            width: wire.width,
+            height: wire.height,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for FigureSize {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let size = Self::from(WireFigureSize::deserialize(deserializer)?);
+        size.validate().map_err(serde::de::Error::custom)?;
+        Ok(size)
+    }
 }
 
 impl FigureSize {
@@ -1224,10 +1396,10 @@ impl FigureSpec {
 struct WireFigure {
     schema_version: u32,
     theme: FigureTheme,
-    size: FigureSize,
+    size: WireFigureSize,
     title: Option<Label>,
     caption: Option<Caption>,
-    panels: Vec<PanelSpec>,
+    panels: Vec<WirePanel>,
 }
 
 impl From<WireFigure> for FigureSpec {
@@ -1235,10 +1407,10 @@ impl From<WireFigure> for FigureSpec {
         Self {
             schema_version: wire.schema_version,
             theme: wire.theme,
-            size: wire.size,
+            size: wire.size.into(),
             title: wire.title,
             caption: wire.caption,
-            panels: wire.panels,
+            panels: wire.panels.into_iter().map(Into::into).collect(),
         }
     }
 }
