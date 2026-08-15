@@ -276,6 +276,13 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String], position: (usize, u
     // not know this product's palette loses the distinction entirely, while the
     // contract was carrying a name for each of them that the export dropped.
     //
+    // "Series", not "series drawn". A series is present in the panel whichever
+    // way the window falls, and an empty one -- or a discrete one whose samples
+    // all lie outside the visible domain -- is named here and then reported as
+    // undrawn two sentences later. Calling it drawn made the description
+    // contradict itself inside one `<desc>`. Presence is what this sentence
+    // knows; what reached the page is the empty-range disclosure's business.
+    //
     // Always, rather than only where two of them could be confused. Attribution
     // between traces was the case that prompted this, but identity is not only
     // attribution: `id` is the one place the contract says *which* measurement
@@ -297,7 +304,7 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String], position: (usize, u
             })
             .collect::<Vec<_>>()
             .join(", ");
-        sentences.push(format!("Series drawn: {named}."));
+        sentences.push(format!("Series: {named}."));
     }
 
     let drawn = panel.drawn_domain();
@@ -649,10 +656,25 @@ fn render_panels(
 
 /// What a figure is called when it was given no title.
 fn default_title(figure: &FigureSpec) -> String {
-    match figure.panels.first().map(|panel| panel.kind) {
-        Some(PlotKind::Chromatogram) => "Chromatogram".to_owned(),
-        Some(PlotKind::Spectrum { .. }) => "Mass spectrum".to_owned(),
-        None => "Figure".to_owned(),
+    // Every panel, not the first one. A linked chromatogram above a spectrum is
+    // the figure this contract was built to make possible, and naming it after
+    // whichever panel happens to be at the top tells a reader who has only the
+    // title -- a screen reader announcing the document, a file browser, a
+    // reference manager -- that a mixed figure is one of its halves.
+    let chromatograms = figure
+        .panels
+        .iter()
+        .any(|panel| matches!(panel.kind, PlotKind::Chromatogram));
+    let spectra = figure
+        .panels
+        .iter()
+        .any(|panel| matches!(panel.kind, PlotKind::Spectrum { .. }));
+    match (chromatograms, spectra) {
+        (true, false) => "Chromatogram".to_owned(),
+        (false, true) => "Mass spectrum".to_owned(),
+        // Neutral rather than invented. A combined name would have to decide an
+        // order and a relationship the specification does not state.
+        _ => "Figure".to_owned(),
     }
 }
 
@@ -1174,7 +1196,6 @@ fn render_marker_label(
     colours: &Palette,
 ) -> bool {
     let plot_top = frame.plot_top;
-    let canvas_width = frame.right + MARGIN_RIGHT;
 
     // Try the ordinary size first and give ground only where the page makes it
     // necessary. Stepping down the page cannot help a block taller than the
@@ -1188,7 +1209,7 @@ fn render_marker_label(
     while size >= MIN_MARKER_LABEL_SIZE {
         let character = TEXT_EM * size;
         let leading = size + 2.0;
-        let available = (canvas_width - 2.0 * MARKER_LABEL_INSET).max(character);
+        let available = (frame.right - frame.left).max(character);
         let columns = (available / character).floor().max(1.0);
         #[expect(
             clippy::cast_possible_truncation,
@@ -1200,9 +1221,14 @@ fn render_marker_label(
             return false;
         };
         let block = widest as f64 * character;
-        let left = (x + 3.0)
-            .max(MARKER_LABEL_INSET)
-            .min(canvas_width - MARKER_LABEL_INSET - block);
+        // Clamped to the plotting area rather than to the page. Left of the
+        // frame is the value axis's own gutter, where its caption is drawn
+        // rotated through the whole plot height -- and that caption is written
+        // after the markers, so a label allowed out there was covered by it.
+        // An annotation belongs to the plot it annotates; the page is not the
+        // right bound for it, and bounding it here needs no second collision
+        // box to discover that.
+        let left = (x + 3.0).max(frame.left).min(frame.right - block);
         // The natural place for every label. Both value-axis ends are already
         // in `occupied`, so a label that would land on one steps past it below
         // rather than being pushed down by a rule of its own.

@@ -255,7 +255,14 @@ stack every out-of-window point onto the boundary.
 ### Accessibility
 
 Every exported figure carries `<title>` and `<desc>`, derived when not supplied
-rather than omitted. A supplied caption is added to the derived description
+rather than omitted. A derived title reads every panel rather than the first:
+a linked chromatogram above a spectrum is the figure this contract exists to
+make possible, and naming it after whichever panel sits at the top tells anyone
+holding only the title — a screen reader announcing the document, a file
+browser, a reference manager — that a mixed figure is one of its halves. A
+mixed figure is `Figure`, which is neutral rather than invented: a combined name
+would have to decide an order and a relationship the specification does not
+state. A supplied caption is added to the derived description
 rather than substituted for it, so the most carefully prepared export is not the
 one that drops its own disclosures. The description states what the file
 reported about the representation — including that it reported nothing — names
@@ -274,7 +281,11 @@ distinguished by nothing else, so a monochrome print, a rasterization or a
 reader who does not know this palette lost which line was which — while
 `SeriesSpec` was carrying a name for each of them that the document dropped.
 Every figure names its series: the id the contract holds, and which is measured
-data and which a reference line.
+data and which a reference line. The sentence says *series*, not *series drawn*
+— a series is present in its panel whichever way the window falls, and an
+empty one, or a discrete one whose samples all lie outside the visible domain,
+would otherwise be named and then reported as undrawn two sentences later, with
+one `<desc>` contradicting itself.
 
 **Every** figure, not only one where two series could be confused. Attribution
 between traces is what prompted this, but identity is not only attribution.
@@ -408,13 +419,22 @@ in a viewer that ignores the attribute. Axis captions, which are centred rather
 than wrapped, are condensed into the space they have: condensed text is harder
 to read, and absent text cannot be read at all.
 
-One residual limit, stated rather than smoothed over: at the contract's minimum
-figure size a maximum-length marker label wraps to a block that reaches past the
-plotting area into the axis chrome below it. It stays inside the document and
-every character of it is present, which is what an export must guarantee, but it
-is not laid out *around* the other text. Placing annotations properly needs
-either real font metrics or a component that owns figure layout, and that is
-FIG-008 — a named non-goal of this milestone.
+A label is bounded by the **plotting area**, not by the page. Left of the frame
+is the value axis's own gutter, where its caption is drawn rotated through the
+whole plot height, and that caption is written after the markers — so a label
+allowed onto the page at large was covered by it. An annotation belongs to the
+plot it annotates, and bounding it there needs no further collision box to
+discover that.
+
+One residual limit follows from it, stated rather than smoothed over: at the
+contract's minimum figure size a maximum-length marker label does not fit the
+plotting area at any size it may shrink to, so it is not drawn and the
+description names it. That is the honest end of the ladder rather than a
+regression — the alternative was a block drawn across the axis text it sits
+beside — but it does mean the smallest figures cannot carry the longest
+annotations. Laying annotations out *around* the other text needs either real
+font metrics or a component that owns figure layout, and that is FIG-008, a
+named non-goal of this milestone.
 
 A **baseline** is drawn as the reference line the contract calls it, joined even
 in a panel of sticks — and the contract, not the renderer, is where that is

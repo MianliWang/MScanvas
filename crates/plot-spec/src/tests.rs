@@ -2630,21 +2630,24 @@ fn a_crowded_label_shrinks_and_is_never_drawn_over_another() {
         "nothing was elided to make room",
     );
 
-    // Room for neither at any size: one label is drawn, and the figure says in
-    // words that the other is not.
+    // Room for neither at any size. A label is bounded by the plotting area
+    // rather than by the page -- left of the frame is the value axis's own
+    // rotated caption -- and a maximum-length label does not fit the smallest
+    // panel the contract accepts at any size it may shrink to. Neither is
+    // drawn, and the figure says so in words, naming both.
     let cramped = figure(MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT);
     assert_eq!(
         marker_baselines(&cramped).len(),
-        1,
-        "the second is not stacked on the first: {cramped}",
+        0,
+        "neither is stacked on the other: {cramped}",
     );
     assert!(
-        cramped.contains("One marker is drawn without its label"),
+        cramped.contains("2 markers are drawn without their labels"),
         "and the description says so: {cramped}",
     );
     assert!(
         cramped.contains(&long),
-        "naming it, so the words are still in the file: {cramped}",
+        "naming them, so the words are still in the file: {cramped}",
     );
 }
 
@@ -2703,19 +2706,23 @@ fn a_field_this_build_does_not_know_is_refused() {
 /// panel below.
 #[test]
 fn a_marker_label_stays_inside_its_own_panel() {
+    // Short enough to be placed on the smallest panel the contract accepts. A
+    // maximum-length label has no room in that plotting area at any size and is
+    // disclosed instead, which `a_crowded_label_shrinks_and_is_never_drawn_over_another`
+    // covers; what this test needs is a label that *is* drawn, so that where it
+    // lands can be checked.
     let panel = || {
         spectrum_panel(
             SpectrumRepresentation::Centroid,
             series(vec![100.0, 200.0], vec![10.0, 20.0]),
         )
         .with_markers(vec![
-            Marker::new(150.0, Some(label(&"m".repeat(MAX_LABEL_CHARS)))).expect("a marker"),
+            Marker::new(150.0, Some(label("precursor"))).expect("a marker"),
         ])
         .expect("markers on a valid panel")
     };
-    // Narrow enough that a maximum-length label wraps to many lines, and short
-    // enough that those lines would reach the panel below if only the page
-    // bounded them.
+    // Narrow enough that the label wraps, and short enough that its lines would
+    // reach the panel below if only the page bounded them.
     let panels = 3;
     let width = MIN_FIGURE_WIDTH;
     let height = MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT * f64::from(panels);
@@ -3448,7 +3455,7 @@ fn a_multi_panel_figure_names_each_panel_and_its_series() {
     // The series is still named: an ordinal without a second panel means
     // nothing, but an identity always does.
     assert!(
-        lone.contains("Series drawn"),
+        lone.contains("Series:"),
         "and its series is still named: {lone:?}",
     );
 }
@@ -3763,4 +3770,119 @@ fn every_figure_colour_clears_the_contrast_floor() {
             );
         }
     }
+}
+
+/// A default title reads every panel, not only the first.
+///
+/// A linked chromatogram above a spectrum is the figure this contract exists to
+/// make possible, and naming it after whichever panel sits at the top tells
+/// anyone holding only the title -- a screen reader announcing the document, a
+/// file browser, a reference manager -- that a mixed figure is one of its
+/// halves.
+#[test]
+fn a_default_title_describes_the_whole_figure() {
+    let chromatogram = || {
+        PanelSpec::new(
+            PlotKind::Chromatogram,
+            AxisSpec::new(
+                label("Retention time"),
+                UnitState::Known { unit: label("min") },
+            ),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(0.0, 10.0),
+            domain(0.0, 100.0),
+            vec![series(vec![0.0, 10.0], vec![1.0, 90.0])],
+        )
+        .expect("a chromatogram panel")
+    };
+    let spectrum = || {
+        spectrum_panel(
+            SpectrumRepresentation::Centroid,
+            series(vec![100.0, 200.0], vec![10.0, 20.0]),
+        )
+    };
+    let titled = |panels: Vec<PanelSpec>| {
+        let document = svg::render(
+            &FigureSpec::new(
+                FigureTheme::Light,
+                FigureSize::new(900.0, 500.0).expect("a size"),
+                panels,
+            )
+            .expect("a figure"),
+        );
+        document
+            .split("<title>")
+            .nth(1)
+            .and_then(|rest| rest.split("</title>").next())
+            .expect("a title")
+            .to_owned()
+    };
+
+    assert_eq!(titled(vec![chromatogram()]), "Chromatogram");
+    assert_eq!(titled(vec![spectrum()]), "Mass spectrum");
+    assert_eq!(titled(vec![chromatogram(), chromatogram()]), "Chromatogram");
+    assert_eq!(titled(vec![spectrum(), spectrum()]), "Mass spectrum");
+    // Mixed: neutral rather than invented. A combined name would have to decide
+    // an order and a relationship the specification does not state.
+    assert_eq!(titled(vec![chromatogram(), spectrum()]), "Figure");
+    assert_eq!(titled(vec![spectrum(), chromatogram()]), "Figure");
+}
+
+/// A marker label stays inside the plotting area it annotates.
+///
+/// Left of the frame is the value axis's own gutter, where its caption is drawn
+/// rotated through the whole plot height -- and that caption is written after
+/// the markers, so a label allowed onto the page at large was covered by it.
+#[test]
+fn a_marker_label_stays_inside_the_plotting_area() {
+    let panel = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )
+    .with_markers(vec![
+        // At the domain's low end, which is where a label is pushed leftwards.
+        Marker::new(100.0, Some(label("precursor window"))).expect("a marker"),
+    ])
+    .expect("markers on a valid panel");
+    let document = svg::render(
+        &FigureSpec::new(
+            FigureTheme::Light,
+            FigureSize::new(
+                MIN_FIGURE_WIDTH,
+                MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT,
+            )
+            .expect("the smallest figure the contract accepts"),
+            vec![panel],
+        )
+        .expect("one panel"),
+    );
+
+    // The renderer's own gutters for this figure.
+    let (frame_left, frame_right) = (64.0, MIN_FIGURE_WIDTH - 20.0);
+    let mut lines = 0;
+    for piece in document.split("<tspan").skip(1) {
+        let Some(head) = piece.split('>').next() else {
+            continue;
+        };
+        let read = |name: &str| {
+            head.split(name)
+                .nth(1)
+                .and_then(|rest| rest.split('"').next())
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or_else(|| panic!("{name} on {head}"))
+        };
+        let left = read("x=\"");
+        let width = read("textLength=\"");
+        lines += 1;
+        assert!(
+            left >= frame_left,
+            "a label reached the value-axis gutter: {left} before {frame_left}",
+        );
+        assert!(
+            left + width <= frame_right,
+            "a label reached past the plot: {} after {frame_right}",
+            left + width,
+        );
+    }
+    assert!(lines > 0, "the label was drawn at all: {document}");
 }
