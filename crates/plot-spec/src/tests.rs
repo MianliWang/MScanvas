@@ -4098,3 +4098,177 @@ fn a_reduction_of_a_non_empty_source_keeps_something() {
         "an empty full source is a real scene",
     );
 }
+
+/// The zero-baseline rule follows the series drawn, not the panel kind.
+///
+/// A baseline is a joined reference line whatever the panel draws, so a panel
+/// holding only one -- or whose measurement series is empty -- draws nothing
+/// from the zero line and may be zoomed like any other trace. Asking the kind
+/// refused those figures for a mark that was never going to be drawn, while the
+/// rule exists for the mark whose length would lie.
+#[test]
+fn the_zero_baseline_rule_asks_which_series_are_drawn_from_zero() {
+    let panel = |series: Vec<SeriesSpec>| {
+        PanelSpec::new(
+            PlotKind::Spectrum {
+                representation: SpectrumRepresentation::Centroid,
+            },
+            AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(100.0, 200.0),
+            Domain::new(5.0, 10.0).expect("a range excluding zero"),
+            series,
+        )
+    };
+    let baseline = SeriesSpec::new(
+        label("background"),
+        StyleRole::Baseline,
+        DataScope::FullSource,
+        vec![100.0, 200.0],
+        vec![6.0, 7.0],
+    )
+    .expect("a baseline");
+
+    assert!(
+        panel(vec![baseline.clone()]).is_ok(),
+        "a panel of only a joined baseline may be zoomed away from zero",
+    );
+    assert!(
+        panel(vec![
+            SeriesSpec::new(
+                label("measurement"),
+                StyleRole::Measurement,
+                DataScope::FullSource,
+                Vec::new(),
+                Vec::new(),
+            )
+            .expect("an empty measurement"),
+            baseline,
+        ])
+        .is_ok(),
+        "an empty measurement draws no mark whose length could lie",
+    );
+
+    // And the rule still holds where a mark really is drawn from zero: this is
+    // the figure it was written for, where a stick at 5 against 5..10 comes out
+    // with no length at all.
+    assert_eq!(
+        panel(vec![
+            SeriesSpec::new(
+                label("measurement"),
+                StyleRole::Measurement,
+                DataScope::FullSource,
+                vec![100.0, 200.0],
+                vec![5.0, 9.0],
+            )
+            .expect("a measurement"),
+        ])
+        .unwrap_err(),
+        SpecError::BaselineOutsideValueDomain,
+        "a drawn stick still needs its baseline",
+    );
+}
+
+/// An all-zero claim accounts for what clipping interpolates.
+///
+/// A window whose only samples are zero can still draw a line that is not:
+/// clipping interpolates at the edge, so a segment running out to a non-zero
+/// neighbour rises away from the axis inside the window while every sample in
+/// it reads zero.
+#[test]
+fn an_interpolated_rise_is_not_described_as_all_zero() {
+    let panel = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(label("Time"), UnitState::Unreported),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(-1.0, 2.0),
+        domain(0.0, 5.0),
+        vec![series(vec![-1.0, 0.0, 2.0], vec![5.0, 0.0, 5.0])],
+    )
+    .expect("a trace dipping to zero")
+    .with_visible_domain(domain(0.0, 1.0))
+    .expect("a window from the dip");
+
+    let description = description_of(&svg::render(&figure_of(panel)));
+    assert!(
+        !description.contains("Every drawn value is zero."),
+        "the drawn line rises to 2.5 inside this window: {description:?}",
+    );
+
+    // A window that really is all zero still says so.
+    let flat = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(label("Time"), UnitState::Unreported),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 3.0),
+        domain(0.0, 5.0),
+        vec![series(vec![0.0, 1.0, 2.0, 3.0], vec![0.0, 0.0, 0.0, 0.0])],
+    )
+    .expect("a flat zero trace");
+    assert!(
+        description_of(&svg::render(&figure_of(flat))).contains("Every drawn value is zero."),
+        "a genuinely zero trace is still disclosed",
+    );
+}
+
+/// A reduction does not claim to know where its dropped points were.
+///
+/// `DataScope::Reduced` carries the points kept and a count of what they came
+/// from, and nothing about the positions of the rest -- so "no measured point
+/// lies inside the range shown" is a claim the figure cannot support. A
+/// whole-domain reduction can keep one column's extreme and drop real
+/// measurements inside a window that then looks empty.
+#[test]
+fn an_empty_window_of_a_reduction_claims_only_what_it_retained() {
+    let reduced = SeriesSpec::new(
+        label("measurement"),
+        StyleRole::Measurement,
+        DataScope::Reduced {
+            source_point_count: 900,
+            rule: ReductionRule::MinMaxPerColumn,
+        },
+        vec![0.0, 1.0],
+        vec![10.0, 20.0],
+    )
+    .expect("a reduction");
+    let panel = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 1.0),
+        domain(0.0, 20.0),
+        vec![reduced],
+    )
+    .expect("a panel")
+    .with_visible_domain(domain(0.4, 0.6))
+    .expect("a window between the retained points");
+
+    let description = description_of(&svg::render(&figure_of(panel)));
+    assert!(
+        description.contains("No point retained by the reduction lies inside the range shown"),
+        "the sentence is about what was retained: {description:?}",
+    );
+    assert!(
+        description.contains("not") && description.contains("recorded in this figure"),
+        "and says the source is not answerable from here: {description:?}",
+    );
+    assert!(
+        !description.contains("No measured point lies inside"),
+        "which is more than a reduction can prove: {description:?}",
+    );
+
+    // A full-source series can prove it, and still says the stronger thing.
+    let whole = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![0.0, 1.0], vec![10.0, 20.0]),
+    )
+    .with_visible_domain(domain(0.4, 0.6))
+    .expect("a window between the points");
+    assert!(
+        description_of(&svg::render(&figure_of(whole)))
+            .contains("No measured point lies inside the range shown"),
+        "a full source carries every point it had",
+    );
+}

@@ -443,9 +443,35 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String], position: (usize, u
             .iter()
             .any(|series| panel.joins(series) && crosses_window(series, drawn))
         {
-            sentences.push(
+            let retained = panel
+                .series
+                .iter()
+                .any(|series| matches!(series.scope(), DataScope::Reduced { .. }));
+            sentences.push(if retained {
+                // As above: a reduction cannot speak for the samples it dropped.
+                "No point retained by the reduction lies inside the range shown; the trace \
+                 drawn is interpolated between retained points outside it."
+                    .to_owned()
+            } else {
                 "No measured sample lies inside the range shown; the trace drawn is \
                  interpolated between samples outside it."
+                    .to_owned()
+            });
+        } else if panel
+            .series
+            .iter()
+            .any(|series| matches!(series.scope(), DataScope::Reduced { .. }))
+        {
+            // A reduction carries the points it kept and a count of what it
+            // came from, and nothing about where the dropped ones were. So
+            // "no measured point is in range" is a claim this figure cannot
+            // support: a whole-domain reduction can keep one column's extreme
+            // and drop real measurements inside a window that then looks
+            // empty. What it can say is what it retained.
+            sentences.push(
+                "No point retained by the reduction lies inside the range shown, so this \
+                 panel draws none; whether the source held measurements there is not \
+                 recorded in this figure."
                     .to_owned(),
             );
         } else {
@@ -521,6 +547,18 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String], position: (usize, u
             Some(all_zero.unwrap_or(true) && *value == 0.0)
         })
         == Some(true)
+        && !panel.series.iter().any(|series| {
+            // A window whose only samples are zero can still draw a line that
+            // is not: clipping interpolates at the edge, so a segment running
+            // out to a non-zero neighbour rises away from the axis inside the
+            // window. The samples are all zero and the drawing is not, and the
+            // sentence below says *drawn*.
+            panel.joins(series)
+                && [drawn.low(), drawn.high()]
+                    .into_iter()
+                    .filter_map(|edge| value_at(series, edge))
+                    .any(|value| value != 0.0)
+        })
     {
         // Measured zeros are not missing data, and they draw almost nothing --
         // a stick of no length, a trace along its own axis. Said in words, so a

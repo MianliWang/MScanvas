@@ -203,6 +203,14 @@ meant something other than what it said, and the out-of-range check exists for
 the same reason: the alternative was to clamp at render time, which draws a
 value the measurement does not contain at a position it was never at.
 
+The zero-baseline rule asks which series are drawn that way rather than what
+kind the panel is. `PanelSpec::joins` is the per-series answer — a baseline is a
+joined reference line whatever the panel draws — so a centroid panel holding
+only a baseline, or one whose measurement series is empty, draws nothing from
+the zero line and may be zoomed like any other trace. Asking the kind refused
+those figures for a mark that was never going to be drawn, while the rule exists
+for the mark whose length would lie.
+
 The zero-baseline rule is the one worth naming, because it refuses something
 that renders without complaint. A stick encodes its magnitude as a length from
 zero, so against a range of `500 .. 9000` the baseline pins to the panel edge
@@ -314,7 +322,14 @@ printing an empty bracket or a guess would display a fact the file never carried
 the file boundary it exists to cross.
 
 A panel with no measured point inside the range shown says so, and says which
-kind of nothing it is. A window between two discrete peaks draws no path at
+kind of nothing it is — and, for a reduction, says only what it can prove. A
+`Reduced` series carries the points it kept and a count of what they came from,
+and nothing about where the dropped ones were, so a whole-domain reduction can
+keep one column's extreme and leave a window that looks empty while the source
+held measurements in it. The sentence is therefore about what was *retained*,
+and states that the source is not answerable from this figure. Only a
+`FullSource` series can say no measurement lies in the range, because only it
+carries every point it had. A window between two discrete peaks draws no path at
 all, and so does an empty source; the file otherwise claimed centroid data and
 left those indistinguishable from each other and from a renderer that had
 failed. Whether there is no data or merely no drawing is the one thing an
@@ -484,7 +499,11 @@ line the stick only touches. Marks are grouped by position and then by form, and
 within each form all but one are covered.
 
 A measured zero draws a short mark on the zero line rather than a stick of no
-length, and the description says every drawn value is zero. A peakless spectrum
+length, and the description says every drawn value is zero — but only where
+the drawing agrees. A window whose samples are all zero can still draw a line
+that is not, because clipping interpolates at the edge and a segment running out
+to a non-zero neighbour rises away from the axis inside the window. The sentence
+says *drawn*, so it asks the interpolated edges too. A peakless spectrum
 and a spectrum with no points are different facts about a sample, and they had
 been the same picture.
 

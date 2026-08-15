@@ -967,7 +967,19 @@ impl PanelSpec {
         // what a reader will take them to mean. Refused rather than widened
         // here: widening would draw against a range the specification does not
         // declare, and the axis text would then disagree with the drawing.
-        if self.kind.draws_from_zero_baseline()
+        //
+        // Asked of the series actually drawn that way, not of the panel kind.
+        // `joins` is the per-series answer -- a baseline is a joined reference
+        // line whatever the panel draws -- so a centroid panel holding only a
+        // baseline, or one whose measurement series is empty, draws nothing
+        // from the zero line and may legitimately be zoomed to `5 .. 10` like
+        // any other trace. Asking the kind refused those figures for a mark
+        // that was never going to be drawn, while the rule's whole purpose is
+        // the mark whose length would lie.
+        if self
+            .series
+            .iter()
+            .any(|series| !self.joins(series) && !series.is_empty())
             && (self.value_domain.low() > 0.0 || self.value_domain.high() < 0.0)
         {
             return Err(SpecError::BaselineOutsideValueDomain);
