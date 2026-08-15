@@ -74,6 +74,11 @@ const AXIS_CAPTION_SIZE: f64 = 12.0;
 /// The font size the visible figure title is drawn at.
 const TITLE_SIZE: f64 = 16.0;
 
+/// The smallest any laid-out text may be shrunk to before it stops shrinking.
+///
+/// Below this a string is present without being readable, which helps nobody.
+const MIN_TEXT_SIZE: f64 = 4.0;
+
 /// The smallest a marker label may be shrunk to before it stops shrinking.
 ///
 /// Small text is a real cost, so this is a floor rather than a target: a label
@@ -81,7 +86,7 @@ const TITLE_SIZE: f64 = 16.0;
 /// below this it would be present without being readable, which helps nobody.
 /// A label that does not fit even here is not drawn and is named in the
 /// description instead, which is the honest end of the ladder.
-const MIN_MARKER_LABEL_SIZE: f64 = 4.0;
+const MIN_MARKER_LABEL_SIZE: f64 = MIN_TEXT_SIZE;
 
 /// How far a marker label stays from either edge of the document.
 const MARKER_LABEL_INSET: f64 = 4.0;
@@ -407,6 +412,46 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String], position: (usize, u
         }
     }
 
+    // Two discrete measurements at one position are drawn as two marks from the
+    // same baseline at the same x, in the same colour: the shorter is inside
+    // the taller and cannot be seen. `SeriesSpec` accepts equal neighbouring
+    // domain values deliberately -- the axis is non-decreasing, not strictly
+    // increasing -- so this is a figure the contract allows and the drawing
+    // cannot show, which is exactly the kind of thing the words are for.
+    //
+    // Disclosed rather than refused or nudged. Refusing would reject a file
+    // that genuinely reported two intensities at one m/z, and offsetting one
+    // would draw a measurement at a position nothing measured it at, which is
+    // the error the whole clipping and interpolation design exists to avoid.
+    let hidden: usize = panel
+        .series
+        .iter()
+        .filter(|series| !panel.joins(series))
+        .map(|series| {
+            let inside: Vec<f64> = series
+                .x()
+                .iter()
+                .copied()
+                .filter(|at| *at >= drawn.low() && *at <= drawn.high())
+                .collect();
+            // The domain axis is non-decreasing, so equal values are adjacent
+            // and one pass counts every mark after the first at each position.
+            inside.windows(2).filter(|pair| pair[0] == pair[1]).count()
+        })
+        .sum();
+    if hidden > 0 {
+        sentences.push(format!(
+            "{hidden} drawn {} another at the same position on the domain axis and {} \
+             hidden behind it.",
+            if hidden == 1 {
+                "point shares"
+            } else {
+                "points share"
+            },
+            if hidden == 1 { "is" } else { "are" },
+        ));
+    }
+
     let negatives = panel
         .series
         .iter()
@@ -546,6 +591,19 @@ pub fn render(figure: &FigureSpec) -> String {
     // the body earlier than it appends it.
     let (body, unplaced) = render_panels(figure, width, height, &colours);
 
+    // Whether the visible heading can be drawn at a readable size, decided
+    // before the description is written so the words can report it when it
+    // cannot. `<title>` carries the text either way, so nothing leaves the
+    // file -- what is at stake is the heading a sighted reader sees.
+    let heading = figure.title.as_ref().and_then(|label| {
+        readable_size(
+            label.as_str(),
+            TITLE_SIZE,
+            width - MARGIN_LEFT - MARGIN_RIGHT,
+        )
+        .map(|size| (label, size))
+    });
+
     // The accessible pair, first, because a reader that stops at the first
     // child should already know what it is looking at.
     let title = figure
@@ -568,10 +626,20 @@ pub fn render(figure: &FigureSpec) -> String {
         .map(|(index, (panel, missing))| panel_description(panel, missing, (index, panel_count)))
         .collect::<Vec<_>>()
         .join(" ");
-    let description = figure.caption.as_ref().map_or_else(
+    let mut description = figure.caption.as_ref().map_or_else(
         || disclosures.clone(),
         |caption| format!("{} {}", caption.as_str(), disclosures),
     );
+    // A title too long for the figure to print legibly is not drawn as a
+    // heading, so the description says where it went. Squeezing it in would
+    // have put a line of sub-unit glyphs across the top of the figure and
+    // called it a heading.
+    if figure.title.is_some() && heading.is_none() {
+        description.push_str(
+            " The figure's title is too long to print legibly at this size and is not shown \
+             as a heading; it is carried in the document's title element.",
+        );
+    }
     let _ = writeln!(out, "<desc>{}</desc>", escape(&description));
 
     let _ = writeln!(
@@ -582,7 +650,7 @@ pub fn render(figure: &FigureSpec) -> String {
         colours.background,
     );
 
-    if let Some(label) = figure.title.as_ref() {
+    if let Some((label, size)) = heading {
         // The visible title is laid out to a declared width like every other
         // string here. The `<title>` element carries the same words to a screen
         // reader either way, but a published figure is read by looking at it,
@@ -595,12 +663,8 @@ pub fn render(figure: &FigureSpec) -> String {
              lengthAdjust=\"spacingAndGlyphs\">{}</text>",
             coordinate(MARGIN_LEFT),
             colours.text,
-            coordinate(TITLE_SIZE),
-            coordinate(fitted_width(
-                label.as_str(),
-                TITLE_SIZE,
-                width - MARGIN_LEFT - MARGIN_RIGHT,
-            )),
+            coordinate(size),
+            coordinate(label.as_str().chars().count() as f64 * TEXT_EM * size),
             escape(label.as_str()),
         );
     }
@@ -813,35 +877,41 @@ fn render_panel(
     // absent text cannot be read at all, and nothing in the file would say a
     // word had been cut off.
     let domain_caption = axis_caption(panel.x_axis.label.as_str(), &panel.x_axis.unit);
+    let domain_caption_room = frame.right - frame.left;
+    let domain_caption_size = caption_size(&domain_caption, domain_caption_room);
     let _ = writeln!(
         out,
-        "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"12\" \
+        "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"{}\" \
          text-anchor=\"middle\" xml:space=\"preserve\" textLength=\"{}\" \
          lengthAdjust=\"spacingAndGlyphs\">{}</text>",
         coordinate(f64::midpoint(frame.left, frame.right)),
         coordinate(plot_bottom + 30.0),
         colours.text,
+        coordinate(domain_caption_size),
         coordinate(fitted_width(
             &domain_caption,
-            AXIS_CAPTION_SIZE,
-            frame.right - frame.left,
+            domain_caption_size,
+            domain_caption_room,
         )),
         escape(&domain_caption),
     );
     let value_caption = axis_caption(panel.y_axis.label.as_str(), &panel.y_axis.unit);
     let centre_y = f64::midpoint(plot_top, plot_bottom);
+    let value_caption_room = plot_bottom - plot_top;
+    let value_caption_size = caption_size(&value_caption, value_caption_room);
     let _ = writeln!(
         out,
-        "<text x=\"14.000\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"12\" \
+        "<text x=\"14.000\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"{}\" \
          text-anchor=\"middle\" transform=\"rotate(-90 14.000 {})\" xml:space=\"preserve\" \
          textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
         coordinate(centre_y),
         colours.text,
+        coordinate(value_caption_size),
         coordinate(centre_y),
         coordinate(fitted_width(
             &value_caption,
-            AXIS_CAPTION_SIZE,
-            plot_bottom - plot_top,
+            value_caption_size,
+            value_caption_room,
         )),
         escape(&value_caption),
     );
@@ -1126,6 +1196,37 @@ impl TextBox {
 fn fitted_width(text: &str, size: f64, available: f64) -> f64 {
     let natural = text.chars().count() as f64 * TEXT_EM * size;
     natural.min(available.max(1.0))
+}
+
+/// The size an axis caption is drawn at: the largest that needs no condensing.
+///
+/// Falls back to the floor rather than to nothing. Unlike the figure's heading,
+/// a caption is never dropped -- an unlabelled axis is a worse figure than a
+/// small label, and the `<title>` element that carries a heading's words has no
+/// equivalent for an axis. So this shrinks first and condenses only what will
+/// not fit even at the floor.
+fn caption_size(text: &str, available: f64) -> f64 {
+    readable_size(text, AXIS_CAPTION_SIZE, available).unwrap_or(MIN_TEXT_SIZE)
+}
+
+/// The largest size at which this string fits without being condensed at all.
+///
+/// `None` when even the floor is too wide. Condensing is the fallback of last
+/// resort rather than the first answer: `lengthAdjust="spacingAndGlyphs"` will
+/// squeeze any string into any width, and a 120-character title on a
+/// 200-unit-wide figure came out at 0.97 units a glyph at font-size 16 -- inside
+/// the document, inside its declared box, and completely unreadable. Text
+/// present but illegible is not the thing "condensed beats absent" was weighing.
+fn readable_size(text: &str, largest: f64, available: f64) -> Option<f64> {
+    let count = text.chars().count() as f64;
+    let mut size = largest;
+    while size >= MIN_TEXT_SIZE {
+        if count * TEXT_EM * size <= available {
+            return Some(size);
+        }
+        size -= 1.0;
+    }
+    None
 }
 
 /// Splits one label into lines no wider than `columns` characters.

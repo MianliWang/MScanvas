@@ -96,6 +96,8 @@ pub enum SpecError {
     FigureTooSmallForPanels,
     /// A reduction claimed to come from fewer points than it holds.
     ReductionNotSmaller,
+    /// A reduction of a non-empty source kept no points at all.
+    ReductionKeptNothing,
     /// A series held a point outside the panel's own declared domains.
     PointOutsideDomain,
     /// A panel drawn as marks from zero declared a value range excluding zero.
@@ -127,6 +129,7 @@ impl fmt::Display for SpecError {
             Self::PanelCountOutOfRange => "the panel count was out of range",
             Self::FigureTooSmallForPanels => "the figure is too small for its panels",
             Self::ReductionNotSmaller => "a reduction was not smaller than its source",
+            Self::ReductionKeptNothing => "a reduction of a non-empty source kept no points",
             Self::PointOutsideDomain => "a series left the panel's declared domain",
             Self::BaselineOutsideValueDomain => {
                 "a panel drawn from the zero line declared a value range without zero in it"
@@ -691,9 +694,19 @@ impl SeriesSpec {
         if let DataScope::Reduced {
             source_point_count, ..
         } = self.scope
-            && source_point_count <= self.x.len()
         {
-            return Err(SpecError::ReductionNotSmaller);
+            if source_point_count <= self.x.len() {
+                return Err(SpecError::ReductionNotSmaller);
+            }
+            // Neither named rule can produce this. Both keep at least one
+            // extreme from every column that holds a source point, so a
+            // reduction of a non-empty source retains at least one point --
+            // and a figure claiming otherwise says a rule did something the
+            // rule cannot do, then draws the result as an empty panel. The
+            // scope for a series with nothing in it is `FullSource`.
+            if self.x.is_empty() {
+                return Err(SpecError::ReductionKeptNothing);
+            }
         }
         Ok(())
     }

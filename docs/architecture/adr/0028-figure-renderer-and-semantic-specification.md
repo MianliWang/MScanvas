@@ -117,8 +117,11 @@ tall, a legibility rule the contract has to carry because only it knows how many
 panels share the height — a panel drawn as marks from zero
 whose value range does not contain zero, a joined trace reduced by a rule that
 keeps one extreme per sign, a marker placed where the panel's source does not
-reach, a panel carrying two series of one style role, and a label holding a
-character XML 1.0 forbids.
+reach, a panel carrying two series of one style role, a reduction of a
+non-empty source that kept no points — neither named rule can produce that,
+since both keep at least one extreme from every column holding a source point,
+so the figure would report a rule doing what the rule cannot — and a label
+holding a character XML 1.0 forbids.
 
 That last panel rule is refused rather than styled around, and it is stated
 over roles rather than over any one of them. A role is exactly what a renderer
@@ -407,6 +410,21 @@ maximum, printed at the same size a unit away at the top-left of the plotting
 area, drops one line rather than being drawn over it; every other marker keeps
 its natural place.
 
+A string is **shrunk before it is condensed**, and condensing is a last resort
+rather than the first answer. `lengthAdjust="spacingAndGlyphs"` will squeeze any
+string into any width, so a 120-character title on the narrowest figure the
+contract accepts came out at 0.97 units a glyph at font-size 16 — inside the
+document, inside its declared box, and completely unreadable. Text present but
+illegible was not what *condensed beats absent* was weighing.
+
+The heading and the axis captions then part company, because what they lose
+differs. A heading that fits at no readable size is **not drawn**, and the
+description says so; `<title>` still carries every character, so the words never
+leave the file. An axis caption is **never dropped** — an unlabelled axis is a
+worse figure than a small label, and there is no metadata element carrying an
+axis name the way `<title>` carries a heading — so it shrinks to the floor and
+condenses only what will not fit even there.
+
 Every laid-out string — the visible title, both axis captions, all four numeric
 axis ends, and every line of every marker label — declares the width it
 occupies. The document embeds no
@@ -446,6 +464,15 @@ measurements, and a baseline is not one: it is a model with a value everywhere
 between its samples, so joining asserts nothing the series did not already
 claim — while drawing it as sticks from zero puts a row of extra peaks into a
 spectrum and labels them background.
+
+Two discrete measurements at one position are **disclosed**. `SeriesSpec`
+accepts equal neighbouring domain values deliberately — the axis is
+non-decreasing, not strictly increasing — so two marks can be drawn from the
+same baseline at the same x in the same colour, and the shorter sits inside the
+taller where nothing can see it. Refusing would reject a file that genuinely
+reported two intensities at one m/z; offsetting one would draw a measurement at
+a position nothing measured it at, which is the error the clipping rules exist
+to avoid. So the words carry it, which is what the words are for.
 
 A measured zero draws a short mark on the zero line rather than a stick of no
 length, and the description says every drawn value is zero. A peakless spectrum

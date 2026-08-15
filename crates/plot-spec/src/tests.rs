@@ -2164,35 +2164,76 @@ fn a_character_xml_cannot_carry_is_refused() {
 /// substitute for the heading a reader can see.
 #[test]
 fn the_visible_title_is_laid_out_inside_the_document() {
-    let long = "W".repeat(MAX_LABEL_CHARS);
     let width = MIN_FIGURE_WIDTH;
-    let document = svg::render(
-        &FigureSpec::new(
-            FigureTheme::Light,
-            FigureSize::new(width, 500.0).expect("a size"),
-            vec![spectrum_panel(
-                SpectrumRepresentation::Centroid,
-                series(vec![100.0, 200.0], vec![10.0, 20.0]),
-            )],
+    let render_titled = |title: &str, width: f64| {
+        svg::render(
+            &FigureSpec::new(
+                FigureTheme::Light,
+                FigureSize::new(width, 500.0).expect("a size"),
+                vec![spectrum_panel(
+                    SpectrumRepresentation::Centroid,
+                    series(vec![100.0, 200.0], vec![10.0, 20.0]),
+                )],
+            )
+            .expect("one panel is a figure")
+            .with_title(Label::new(title).expect("a title")),
         )
-        .expect("one panel is a figure")
-        .with_title(Label::new(long).expect("a title")),
+    };
+    let declared_width = |document: &str| -> Option<f64> {
+        document
+            .lines()
+            .find(|line| line.contains("font-weight="))?
+            .split("textLength=\"")
+            .nth(1)?
+            .split('"')
+            .next()?
+            .parse()
+            .ok()
+    };
+
+    // A heading that fits is drawn, uncondensed, inside the document.
+    let document = render_titled("Enolase digest, 30 minute gradient", 900.0);
+    let declared = declared_width(&document).expect("the visible title is drawn");
+    assert!(
+        declared > 0.0 && 64.0 + declared <= 900.0,
+        "the title ends inside the document: 64 + {declared} of 900",
     );
 
-    let heading = document
-        .lines()
-        .find(|line| line.contains("font-weight=\"600\""))
-        .expect("the visible title is drawn");
-    let declared: f64 = heading
-        .split("textLength=\"")
-        .nth(1)
-        .and_then(|piece| piece.split('"').next())
-        .expect("a declared width")
-        .parse()
-        .expect("a number");
+    // On the narrowest figure the contract accepts, the same heading has no
+    // room at any readable size, so it is shrunk only as far as the floor and
+    // then reported rather than squeezed.
+    let narrow = render_titled("Enolase digest, 30 minute gradient", width);
     assert!(
-        declared > 0.0 && 64.0 + declared <= width,
-        "the title ends inside the document: 64 + {declared} of {width}",
+        declared_width(&narrow).is_none(),
+        "a 34-character heading does not fit 116 units legibly: {narrow}",
+    );
+
+    // A heading too long for the figure to print legibly is not drawn as a
+    // heading at all. `lengthAdjust="spacingAndGlyphs"` would have squeezed
+    // 120 characters into 116 units -- under one unit a glyph at font-size 16,
+    // inside its declared box and completely unreadable.
+    let long = "W".repeat(MAX_LABEL_CHARS);
+    let cramped = render_titled(&long, width);
+    assert!(
+        declared_width(&cramped).is_none(),
+        "no illegible heading is drawn: {cramped}",
+    );
+    assert!(
+        description_of(&cramped).contains("too long to print legibly"),
+        "and the description says where it went: {cramped}",
+    );
+    // The words are still in the file, which is what an export must guarantee.
+    assert!(
+        cramped.contains(&format!("<title>{long}</title>")),
+        "the title element still carries it: {cramped}",
+    );
+
+    // The same title on a figure wide enough for it is drawn, so this is a
+    // limit of the size rather than of the length.
+    let roomy = render_titled(&long, 2400.0);
+    assert!(
+        declared_width(&roomy).is_some(),
+        "a wide enough figure prints it: {roomy}",
     );
 
     // A title that fits keeps its natural width rather than being stretched.
@@ -3885,4 +3926,131 @@ fn a_marker_label_stays_inside_the_plotting_area() {
         );
     }
     assert!(lines > 0, "the label was drawn at all: {document}");
+}
+
+/// Two discrete measurements at one position are disclosed rather than hidden.
+///
+/// `SeriesSpec` accepts equal neighbouring domain values deliberately -- the
+/// axis is non-decreasing, not strictly increasing -- so two sticks can be
+/// drawn from the same baseline at the same x in the same colour, and the
+/// shorter is inside the taller where nothing can see it.
+#[test]
+fn coincident_discrete_marks_are_disclosed() {
+    let panel = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(100.0, 300.0),
+        domain(0.0, 90.0),
+        vec![series(
+            vec![100.0, 200.0, 200.0, 300.0],
+            vec![10.0, 40.0, 90.0, 20.0],
+        )],
+    )
+    .expect("equal neighbouring m/z is accepted");
+
+    let description = description_of(&svg::render(&figure_of(panel)));
+    assert!(
+        description.contains(
+            "1 drawn point shares another at the same position on the domain axis and is \
+             hidden behind it."
+        ),
+        "the covered measurement is named: {description:?}",
+    );
+
+    // Three at one position is two hidden, and the sentence agrees in number.
+    let crowded = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(100.0, 300.0),
+        domain(0.0, 90.0),
+        vec![series(
+            vec![100.0, 200.0, 200.0, 200.0, 300.0],
+            vec![10.0, 40.0, 90.0, 60.0, 20.0],
+        )],
+    )
+    .expect("three at one position is accepted too");
+    let description = description_of(&svg::render(&figure_of(crowded)));
+    assert!(
+        description.contains("2 drawn points share another at the same position"),
+        "both covered measurements are counted: {description:?}",
+    );
+
+    // A trace joins its samples rather than stacking marks, so nothing is
+    // hidden and nothing is claimed.
+    let joined = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(label("Time"), UnitState::Unreported),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 3.0),
+        domain(0.0, 90.0),
+        vec![series(
+            vec![0.0, 1.0, 1.0, 3.0],
+            vec![10.0, 40.0, 90.0, 20.0],
+        )],
+    )
+    .expect("a trace");
+    assert!(
+        !description_of(&svg::render(&figure_of(joined))).contains("hidden behind it"),
+        "a joined trace hides nothing",
+    );
+
+    // And an ordinary spectrum says nothing about it at all.
+    assert!(
+        !description_of(&svg::render(&figure_of(spectrum_panel(
+            SpectrumRepresentation::Centroid,
+            series(vec![100.0, 200.0], vec![10.0, 20.0]),
+        ))))
+        .contains("same position"),
+        "distinct positions are not remarked on",
+    );
+}
+
+/// A reduction of a non-empty source cannot have kept nothing.
+///
+/// Both named rules keep at least one extreme from every column holding a
+/// source point, so an empty retained series from a non-empty source is a state
+/// the declared rule cannot produce -- and the figure would report it as one.
+#[test]
+fn a_reduction_of_a_non_empty_source_keeps_something() {
+    let empty_reduction = |source: usize| {
+        SeriesSpec::new(
+            label("measurement"),
+            StyleRole::Measurement,
+            DataScope::Reduced {
+                source_point_count: source,
+                rule: ReductionRule::MinMaxPerColumn,
+            },
+            Vec::new(),
+            Vec::new(),
+        )
+    };
+
+    assert_eq!(
+        empty_reduction(500).unwrap_err(),
+        SpecError::ReductionKeptNothing,
+        "500 points do not reduce to none under either rule",
+    );
+    assert_eq!(
+        empty_reduction(1).unwrap_err(),
+        SpecError::ReductionKeptNothing,
+        "nor does one",
+    );
+    // An empty series is still representable; its scope is what it actually is.
+    assert!(
+        SeriesSpec::new(
+            label("measurement"),
+            StyleRole::Measurement,
+            DataScope::FullSource,
+            Vec::new(),
+            Vec::new(),
+        )
+        .is_ok(),
+        "an empty full source is a real scene",
+    );
 }
