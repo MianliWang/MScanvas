@@ -375,15 +375,22 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String], position: (usize, u
                 .iter()
                 .filter(|at| **at >= drawn.low() && **at <= drawn.high())
                 .count();
+            // Named, because a panel may hold more than one series and only
+            // one of them be reduced. A measurement read against a reference
+            // baseline is exactly that figure, and counts with no owner leave a
+            // reader unable to tell which trace was reduced -- listing both
+            // series in an earlier sentence does not attach either to these
+            // numbers.
+            let id = series.id().as_str();
             if inside == series.len() {
                 sentences.push(format!(
-                    "Drawn from {source_point_count} source points reduced to {}, {}.",
+                    "\"{id}\" is drawn from {source_point_count} source points reduced to {}, {}.",
                     series.len(),
                     rule.describe(),
                 ));
             } else {
                 sentences.push(format!(
-                    "Reduced from {source_point_count} source points to {}, {}; \
+                    "\"{id}\" is reduced from {source_point_count} source points to {}, {}; \
                      {inside} of them lie inside the range shown.",
                     series.len(),
                     rule.describe(),
@@ -438,27 +445,34 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String], position: (usize, u
         .flat_map(|series| series.x().iter())
         .all(|at| *at < drawn.low() || *at > drawn.high())
     {
-        // The series that crosses is the one whose scope this sentence is about.
-        // Asking "does any series cross" and "is any series reduced" separately
-        // let a full-source baseline draw the line while a reduced measurement
-        // supplied the word "retained", describing the drawing with the other
-        // series' semantics.
-        if let Some(crossing) = panel
+        // One sentence per crossing series, each naming itself and reading its
+        // own scope. Two joined series can both straddle a window -- a
+        // measurement and the baseline it is read against, sampled coarsely --
+        // and the renderer draws both, so describing only the first left the
+        // second's interpolation and scope entirely unstated. Taking the first
+        // series' scope for all of them was the same error one step earlier.
+        let crossing: Vec<&SeriesSpec> = panel
             .series
             .iter()
-            .find(|series| panel.joins(series) && crosses_window(series, drawn))
-        {
-            let retained = matches!(crossing.scope(), DataScope::Reduced { .. });
-            sentences.push(if retained {
-                // As above: a reduction cannot speak for the samples it dropped.
-                "No point retained by the reduction lies inside the range shown; the trace \
-                 drawn is interpolated between retained points outside it."
-                    .to_owned()
-            } else {
-                "No measured sample lies inside the range shown; the trace drawn is \
-                 interpolated between samples outside it."
-                    .to_owned()
-            });
+            .filter(|series| panel.joins(series) && crosses_window(series, drawn))
+            .collect();
+        if !crossing.is_empty() {
+            for series in crossing {
+                let id = series.id().as_str();
+                sentences.push(if matches!(series.scope(), DataScope::Reduced { .. }) {
+                    // A reduction cannot speak for the samples it dropped.
+                    format!(
+                        "No point retained by the reduction for \"{id}\" lies inside the \
+                         range shown; the trace drawn for it is interpolated between retained \
+                         points outside it."
+                    )
+                } else {
+                    format!(
+                        "No measured sample of \"{id}\" lies inside the range shown; the \
+                         trace drawn for it is interpolated between samples outside it."
+                    )
+                });
+            }
         } else if panel
             .series
             .iter()
@@ -612,7 +626,7 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String], position: (usize, u
         .filter(|marker| {
             marker.label().is_none() && marker.at() >= drawn.low() && marker.at() <= drawn.high()
         })
-        .map(|marker| format_number(marker.at(), axis_decimals(drawn.span())))
+        .map(|marker| axis_number(marker.at(), axis_notation(drawn)))
         .collect();
     match anonymous.as_slice() {
         [] => {}
@@ -1515,6 +1529,35 @@ fn render_marker_label(
 /// A **single-valued** domain never reaches the fallback: its ends *are* one
 /// number, and printing them identically is the truth.
 fn axis_ends(domain: Domain) -> (String, String) {
+    let notation = axis_notation(domain);
+    (
+        axis_number(domain.low(), notation),
+        axis_number(domain.high(), notation),
+    )
+}
+
+/// How one axis writes its numbers.
+///
+/// Extracted so that everything naming a position on that axis says it the same
+/// way. A marker described in one notation while the axis is labelled in
+/// another puts the `<desc>` in conflict with the drawing it describes: against
+/// `1e-20 .. 4e-20` the ends print as exponents while a fixed-point marker
+/// position rounded to `0.000000`, naming a coordinate the line is not drawn at.
+#[derive(Clone, Copy)]
+enum AxisNotation {
+    /// Fixed point, to this many decimals.
+    Fixed(usize),
+    /// Shortest-round-trip exponent form.
+    Exponent,
+}
+
+/// Whether a fixed-point rendering has rounded a number away to nothing.
+fn rounds_away(value: f64, text: &str) -> bool {
+    value != 0.0 && text.parse::<f64>() == Ok(0.0)
+}
+
+/// Which notation this axis needs, decided once from its two ends.
+fn axis_notation(domain: Domain) -> AxisNotation {
     let decimals = distinguishing_decimals(domain);
     let (low, high) = (
         format_number(domain.low(), decimals),
@@ -1532,20 +1575,36 @@ fn axis_ends(domain: Domain) -> (String, String) {
     // ends genuinely are one number, so it printed `0.000000` at both and the
     // axis stated zero where the measurement is not. Printing a value's ends
     // identically is the truth; printing them as a different number is not.
-    let lost = |value: f64, text: &str| value != 0.0 && text.parse::<f64>() == Ok(0.0);
     let unreadable =
         low.chars().count() > MAX_AXIS_LABEL_CHARS || high.chars().count() > MAX_AXIS_LABEL_CHARS;
     if unreadable
-        || lost(domain.low(), &low)
-        || lost(domain.high(), &high)
+        || rounds_away(domain.low(), &low)
+        || rounds_away(domain.high(), &high)
         || (domain.span() > 0.0 && low == high)
     {
-        return (
-            format!("{:e}", normalized_zero(domain.low())),
-            format!("{:e}", normalized_zero(domain.high())),
-        );
+        return AxisNotation::Exponent;
     }
-    (low, high)
+    AxisNotation::Fixed(decimals)
+}
+
+/// One number written the way its axis writes numbers.
+///
+/// A value that fixed point would round away to nothing escalates on its own,
+/// even where the axis ends did not need to: an axis spanning `0 .. 100` prints
+/// no decimals, and a marker at `0.0001` described as being at `0` names a
+/// position the line is not drawn at.
+fn axis_number(value: f64, notation: AxisNotation) -> String {
+    match notation {
+        AxisNotation::Exponent => format!("{:e}", normalized_zero(value)),
+        AxisNotation::Fixed(decimals) => {
+            let text = format_number(value, decimals);
+            if rounds_away(value, &text) {
+                format!("{:e}", normalized_zero(value))
+            } else {
+                text
+            }
+        }
+    }
 }
 
 /// How many decimals this domain's two ends need to remain two numbers.

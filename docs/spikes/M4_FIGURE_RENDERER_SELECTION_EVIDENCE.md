@@ -141,10 +141,10 @@ whatever their signs, which is **not** the rule the screen table above used:
 
 | scene | source | drawn | SVG bytes |
 | --- | ---: | ---: | ---: |
-| chromatogram-100k | 100,000 | 1,800 | 30,731 |
-| profile-dense-60k | 60,000 | 1,800 | 30,940 |
-| centroid-dense-20k | 20,000 | 1,800 | 45,073 |
-| transfer-bound-500k | 500,000 | 1,800 | 30,918 |
+| chromatogram-100k | 100,000 | 1,800 | 30,758 |
+| profile-dense-60k | 60,000 | 1,800 | 30,967 |
+| centroid-dense-20k | 20,000 | 1,800 | 45,100 |
+| transfer-bound-500k | 500,000 | 1,800 | 30,945 |
 
 Two per column in every row, because these scenes have no column so flat that
 its greatest and its least value are the same point. The screen's rows drew
@@ -155,7 +155,7 @@ reduction, and the contract names which one a figure used — see *Two reduction
 rules, named apart*.
 
 A full-range export of the 500k scene is **261× larger** than the reduction of
-it (8,066,281 vs 30,918 bytes). That ratio is the difference candidate A silently
+it (8,066,281 vs 30,945 bytes). That ratio is the difference candidate A silently
 elided.
 
 Reduction cost alone, without rendering: 217 µs (20k) to 2.30 ms (500k).

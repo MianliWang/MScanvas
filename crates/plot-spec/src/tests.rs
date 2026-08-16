@@ -1895,7 +1895,7 @@ fn a_windowed_reduction_reports_both_counts() {
 
     let whole = svg::render(&figure_of(panel.clone()));
     assert!(
-        whole.contains("Drawn from 500 source points reduced to 5"),
+        whole.contains("&quot;measurement&quot; is drawn from 500 source points reduced to 5"),
         "an unwindowed reduction reads as before: {whole}",
     );
 
@@ -1905,7 +1905,7 @@ fn a_windowed_reduction_reports_both_counts() {
             .expect("a window inside the domain"),
     ));
     assert!(
-        windowed.contains("Reduced from 500 source points to 5"),
+        windowed.contains("&quot;measurement&quot; is reduced from 500 source points to 5"),
         "the reduction ratio survives: {windowed}",
     );
     assert!(
@@ -1913,7 +1913,7 @@ fn a_windowed_reduction_reports_both_counts() {
         "and the drawn count is stated: {windowed}",
     );
     assert!(
-        !windowed.contains("Drawn from 500 source points reduced to 5"),
+        !windowed.contains("&quot;measurement&quot; is drawn from 500 source points reduced to 5"),
         "the sentence that disagreed with the drawing is gone: {windowed}",
     );
 }
@@ -2943,8 +2943,9 @@ fn the_description_carries_no_unintended_whitespace() {
     let description = description_of(&svg::render(&figure_of(windowed)));
     assert!(
         description.contains(
-            "Reduced from 500 source points to 5, keeping the greatest and the least value \
-             in each column; 3 of them lie inside the range shown."
+            "&quot;measurement&quot; is reduced from 500 source points to 5, \
+             keeping the greatest and the least value in each column; 3 of them lie \
+             inside the range shown."
         ),
         "the windowed disclosure reads as one sentence: {description:?}",
     );
@@ -3154,7 +3155,8 @@ fn a_clipped_window_with_no_sample_does_not_claim_a_zero_line() {
         "no zero line is crossed in a figure that has none: {description:?}",
     );
     assert!(
-        description.contains("No measured sample lies inside the range shown"),
+        description
+            .contains("No measured sample of &quot;measurement&quot; lies inside the range shown"),
         "the reader is told why the trace has no vertices: {description:?}",
     );
     assert!(
@@ -3727,7 +3729,10 @@ fn a_window_with_no_measured_point_discloses_it() {
     assert!(document.contains("<path "), "a line is drawn: {document}");
     let description = description_of(&document);
     assert!(
-        description.contains("No measured sample lies inside the range shown; the trace drawn is"),
+        description.contains(
+            "No measured sample of &quot;measurement&quot; lies inside the range \
+             shown; the trace drawn for it is"
+        ),
         "and is described as interpolated rather than as absent: {description:?}",
     );
     assert!(
@@ -4390,11 +4395,221 @@ fn the_crossing_sentence_reads_the_scope_of_the_series_that_crosses() {
     // The baseline is what crosses, and it is full source, so the sentence must
     // be about samples rather than about retained points.
     assert!(
-        description.contains("No measured sample lies inside the range shown"),
-        "the crossing series is full source: {description:?}",
+        description
+            .contains("No measured sample of &quot;background&quot; lies inside the range shown"),
+        "the crossing series is full source, and is named: {description:?}",
     );
     assert!(
         !description.contains("interpolated between retained points"),
         "so the reduction's wording does not describe it: {description:?}",
+    );
+}
+
+/// A marker position is written the way its own axis writes numbers.
+///
+/// The axis ends escalate precision and fall back to exponent notation; the
+/// marker sentence formatted at a fixed six decimals and did neither. Against
+/// `1e-20 .. 4e-20` the ends print as exponents while a line at `2e-20` was
+/// described as being at `0.000000` -- a coordinate the figure does not draw it
+/// at, in a `<desc>` that contradicts the axis printed beside it.
+#[test]
+fn an_unlabelled_marker_position_uses_the_axis_notation() {
+    let tiny = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(label("Time"), UnitState::Unreported),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        Domain::new(1.0e-20, 4.0e-20).expect("a tiny domain"),
+        domain(0.0, 10.0),
+        vec![series(vec![1.0e-20, 4.0e-20], vec![1.0, 2.0])],
+    )
+    .expect("a panel over a tiny domain")
+    .with_markers(vec![
+        Marker::new(2.0e-20, None).expect("a marker inside it"),
+    ])
+    .expect("markers on a valid panel");
+
+    let document = svg::render(&figure_of(tiny));
+    let description = description_of(&document);
+    assert!(
+        description.contains("at 2e-20 on the Time axis"),
+        "the marker is described where it is drawn: {description:?}",
+    );
+    assert!(
+        !description.contains("at 0.000000"),
+        "and never rounded away to a position it is not at: {description:?}",
+    );
+    // The axis itself is in the same notation, which is the point: the sentence
+    // and the printed axis must not disagree.
+    assert!(
+        document.contains(">1e-20<") && document.contains(">4e-20<"),
+        "the axis ends are exponents too: {document}",
+    );
+
+    // A value fixed point would round away escalates even where the axis ends
+    // did not need to: `0 .. 100` prints no decimals at all.
+    let coarse = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(label("Time"), UnitState::Unreported),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 100.0),
+        domain(0.0, 10.0),
+        vec![series(vec![0.0, 100.0], vec![1.0, 2.0])],
+    )
+    .expect("a coarse domain")
+    .with_markers(vec![
+        Marker::new(0.0001, None).expect("a marker just off the origin"),
+    ])
+    .expect("markers on a valid panel");
+    let description = description_of(&svg::render(&figure_of(coarse)));
+    assert!(
+        description.contains("at 1e-4 on the Time axis"),
+        "a marker fixed point would lose escalates on its own: {description:?}",
+    );
+
+    // An ordinary axis is unaffected and stays in plain fixed point.
+    let ordinary = spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )
+    .with_markers(vec![Marker::new(150.0, None).expect("a marker")])
+    .expect("markers on a valid panel");
+    assert!(
+        description_of(&svg::render(&figure_of(ordinary))).contains("at 150 on the m/z axis"),
+        "an ordinary position is not dressed up as an exponent",
+    );
+}
+
+/// A reduction disclosure names the series whose facts it states.
+///
+/// A panel may hold a measurement and the baseline it is read against and
+/// reduce only one of them. Counts with no owner leave a reader unable to tell
+/// which trace was reduced, and listing both series in an earlier sentence does
+/// not attach either to these numbers.
+#[test]
+fn a_reduction_disclosure_names_its_own_series() {
+    let reduced_baseline = SeriesSpec::new(
+        label("estimated background"),
+        StyleRole::Baseline,
+        DataScope::Reduced {
+            source_point_count: 900,
+            rule: ReductionRule::MinMaxPerColumn,
+        },
+        vec![100.0, 200.0],
+        vec![1.0, 2.0],
+    )
+    .expect("a reduced baseline");
+    let whole_measurement = SeriesSpec::new(
+        label("sample intensity"),
+        StyleRole::Measurement,
+        DataScope::FullSource,
+        vec![100.0, 150.0, 200.0],
+        vec![10.0, 40.0, 20.0],
+    )
+    .expect("a full-source measurement");
+    let panel = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(100.0, 200.0),
+        domain(0.0, 40.0),
+        vec![whole_measurement, reduced_baseline],
+    )
+    .expect("a panel of two series, one reduced");
+
+    let description = description_of(&svg::render(&figure_of(panel)));
+    // The reduced one is the baseline, and the sentence must say so.
+    assert!(
+        description.contains(
+            "&quot;estimated background&quot; is drawn from 900 source points reduced to 2"
+        ),
+        "the reduction names the series it describes: {description:?}",
+    );
+    // The measurement, which was not reduced, is not implicated.
+    assert!(
+        !description.contains("&quot;sample intensity&quot; is drawn from 900"),
+        "the full-source series is not described as reduced: {description:?}",
+    );
+    // And the bare, ownerless form is gone.
+    assert!(
+        !description.contains("Drawn from 900 source points reduced to"),
+        "no reduction sentence is left without an owner: {description:?}",
+    );
+}
+
+/// Every crossing joined series gets its own crossing disclosure.
+///
+/// Two joined series can both straddle a window with neither's samples inside
+/// it -- a measurement and the baseline it is read against, coarsely sampled --
+/// and the renderer draws both. Describing only the first left the second's
+/// interpolation and scope entirely unstated.
+#[test]
+fn every_crossing_series_is_disclosed_with_its_own_scope() {
+    let reduced_measurement = SeriesSpec::new(
+        label("sample intensity"),
+        StyleRole::Measurement,
+        DataScope::Reduced {
+            source_point_count: 900,
+            rule: ReductionRule::MinMaxPerColumn,
+        },
+        vec![0.0, 10.0],
+        vec![10.0, 20.0],
+    )
+    .expect("a reduced measurement spanning the window");
+    let whole_baseline = SeriesSpec::new(
+        label("estimated background"),
+        StyleRole::Baseline,
+        DataScope::FullSource,
+        vec![0.0, 10.0],
+        vec![1.0, 2.0],
+    )
+    .expect("a full-source baseline spanning the window");
+    let panel = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(label("Time"), UnitState::Unreported),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 10.0),
+        domain(0.0, 20.0),
+        vec![reduced_measurement, whole_baseline],
+    )
+    .expect("a panel of two crossing traces")
+    .with_visible_domain(domain(4.0, 6.0))
+    .expect("a window between every sample");
+
+    let document = svg::render(&figure_of(panel));
+    // Both traces really are drawn, which is what makes one sentence wrong.
+    assert_eq!(
+        document.matches("<path ").count(),
+        2,
+        "two traces cross this window: {document}",
+    );
+    let description = description_of(&document);
+
+    // Each is named, and each reads its own scope: the measurement is reduced,
+    // the baseline is not.
+    assert!(
+        description.contains("No point retained by the reduction for &quot;sample intensity&quot; lies inside the range shown"),
+        "the reduced series is disclosed as a reduction: {description:?}",
+    );
+    assert!(
+        description.contains(
+            "No measured sample of &quot;estimated background&quot; lies inside the range shown"
+        ),
+        "and the full-source series as measured samples: {description:?}",
+    );
+    // Neither borrows the other's scope.
+    assert!(
+        !description.contains(
+            "No measured sample of &quot;sample intensity&quot; lies inside the range shown"
+        ) && !description
+            .contains("No point retained by the reduction for &quot;estimated background&quot;"),
+        "no series is described with the other semantics: {description:?}",
+    );
+    // Two disclosures, not one collapsed singular sentence.
+    assert_eq!(
+        description.matches("lies inside the range shown").count(),
+        2,
+        "one sentence per crossing series: {description:?}",
     );
 }

@@ -278,10 +278,10 @@ rather than substituted for it, so the most carefully prepared export is not the
 one that drops its own disclosures. The description states what the file
 reported about the representation — including that it reported nothing — names
 any axis whose **unit** the source did not report, discloses reduction with the
-source count, the reduced count and the rule — and, when a visible window shows
-fewer points than the reduction holds, how many lie inside it, because reporting
-the reduction's size as the number drawn made the disclosure disagree with the
-figure — and counts negative values
+**series it belongs to**, the source count, the reduced count and the rule — and,
+when a visible window shows fewer points than the reduction holds, how many lie
+inside it, because reporting the reduction's size as the number drawn made the
+disclosure disagree with the figure — and counts negative values
 **over the drawn window rather than the whole series**, because the sentence
 says *drawn* and a windowed panel still carries its whole source. Colour is
 written into the document rather than left to a stylesheet, so nothing depends
@@ -336,6 +336,13 @@ failed. Whether there is no data or merely no drawing is the one thing an
 export must never leave ambiguous. A joined trace crossing such a window is the
 third case and keeps its own sentence, because something *is* drawn there —
 interpolated between samples outside the window rather than measured inside it.
+
+**One sentence per crossing series**, each naming itself and reading its own
+scope. Two joined series can both straddle a window with neither's samples
+inside it — a measurement and the baseline it is read against, coarsely
+sampled — and the renderer draws both, so a single sentence left the second
+trace's interpolation and scope unstated, and taking the first series' scope for
+all of them described one drawing with another's semantics.
 
 Colour is held to a contrast floor rather than chosen by eye. Every role is at
 least 3:1 against its own theme's background, which is what WCAG asks of a
@@ -397,6 +404,14 @@ unplaced-label sentence exists to close, from the other direction. The
 description names how many there are and where, for those inside the drawn
 window; one outside it draws no line, and reporting it would describe something
 the figure does not contain.
+
+Its position is written the way that axis writes numbers — the same precision
+escalation and the same exponent fallback, decided once by `axis_notation` and
+used by the axis ends and the marker sentence alike. A position named in one
+notation while the axis is labelled in another puts the description in conflict
+with the drawing: against `1e-20 .. 4e-20` the ends print as exponents while a
+fixed-point marker rounded to `0.000000`, naming a coordinate the line is not
+drawn at.
 
 A marker label is wrapped to the width available, clamped inside **its own
 panel** — below the plotting area sit that panel's axis text and then the next
