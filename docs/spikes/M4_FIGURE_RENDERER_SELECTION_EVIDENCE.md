@@ -213,7 +213,7 @@ the 500k one, plus an 8 MB output string: **46 MB**.
 Edge scenes, all five:
 
 ```text
-empty          svg_bytes=  1694  elements=11  finite_only=true chrome_free=true external_free=true
+empty          svg_bytes=  1692  elements=11  finite_only=true chrome_free=true external_free=true
 single-point   svg_bytes=  1716  elements=12  finite_only=true chrome_free=true external_free=true
 flat           svg_bytes= 24805  elements=12  finite_only=true chrome_free=true external_free=true
 all-negative   svg_bytes= 24919  elements=13  finite_only=true chrome_free=true external_free=true
@@ -226,10 +226,13 @@ peakless spectrum is visibly different from a spectrum with no points. The
 marks have no height, so they claim no intensity; the description says
 `Every drawn value is zero.` as well.
 
-The `empty` scene is the smallest and now says why it is: a panel with no
-measured point in the range shown discloses that in words rather than producing
-a figure whose blank plotting area could equally mean an empty source, a window
-between two peaks, or a renderer that failed.
+The `empty` scene is the smallest and now says why it is: its one series
+discloses, by name, that it carries no points and that nothing is drawn for it,
+rather than producing a figure whose blank plotting area could equally mean an
+empty source, a window between two peaks, or a renderer that failed. It is two
+bytes shorter than it was when that disclosure was written for the panel rather
+than for the series — the only measured number in this document the per-series
+disclosure moved.
 
 `external_free` deliberately does not look for `http://`. The SVG namespace
 declaration is required by the format and fetches nothing; what would make a

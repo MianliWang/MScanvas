@@ -3695,21 +3695,28 @@ fn a_window_with_no_measured_point_discloses_it() {
         "nothing is drawn in that window: {document}",
     );
     assert!(
-        description_of(&document)
-            .contains("No measured point lies inside the range shown, so this panel draws none."),
-        "and the file says so: {}",
+        description_of(&document).contains(
+            "No measured point of &quot;measurement&quot; lies inside the range shown, \
+             so none of it is drawn."
+        ),
+        "and the file says so, naming the series it is about: {}",
         description_of(&document),
     );
 
-    // An empty source reaches the same sentence, which is correct: it also has
-    // no measured point in range. What matters is that neither is silent.
+    // An empty source is a *different* fact and gets its own sentence: it has
+    // no points at all, rather than none of them in range. Both are disclosed,
+    // and neither is silent.
     let empty = description_of(&svg::render(&figure_of(spectrum_panel(
         SpectrumRepresentation::Centroid,
         series(Vec::new(), Vec::new()),
     ))));
     assert!(
-        empty.contains("No measured point lies inside the range shown"),
+        empty.contains("&quot;measurement&quot; carries no points, so nothing is drawn for it."),
         "an empty panel is not silent either: {empty:?}",
+    );
+    assert!(
+        !empty.contains("lies inside the range shown"),
+        "and is not described as a window that missed its points: {empty:?}",
     );
 
     // A joined trace crossing the window is a different fact and keeps its own
@@ -3736,8 +3743,287 @@ fn a_window_with_no_measured_point_discloses_it() {
         "and is described as interpolated rather than as absent: {description:?}",
     );
     assert!(
-        !description.contains("this panel draws none"),
+        !description.contains("so none of it is drawn")
+            && !description.contains("carries no points"),
         "a drawn trace is not called nothing: {description:?}",
+    );
+}
+
+/// A marker sentence states the marker's own coordinate rather than the axis's.
+///
+/// The axis and this sentence do different jobs, and making them share a
+/// precision makes one of them false. An axis end is a statement of a *display
+/// range*, and `0 .. 100` printing whole numbers says how wide the view is
+/// perfectly well. The sentence says where one line actually is -- so
+/// inheriting the axis's rounding read a marker at `1.4` as being "at 1", an
+/// exact-looking coordinate the figure does not draw it at, in the one place a
+/// reader has no drawing to check it against.
+#[test]
+fn an_unlabelled_marker_keeps_its_own_coordinate() {
+    let against_a_coarse_axis = |at: f64| {
+        let panel = PanelSpec::new(
+            PlotKind::Chromatogram,
+            AxisSpec::new(label("Time"), UnitState::Unreported),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(0.0, 100.0),
+            domain(0.0, 10.0),
+            vec![series(vec![0.0, 100.0], vec![1.0, 2.0])],
+        )
+        .expect("a domain whose ends print as whole numbers")
+        .with_markers(vec![Marker::new(at, None).expect("a marker inside it")])
+        .expect("markers on a valid panel");
+        description_of(&svg::render(&figure_of(panel)))
+    };
+
+    // The axis prints `0` and `100`. The marker is at neither, and says so.
+    let fractional = against_a_coarse_axis(1.4);
+    assert!(
+        fractional.contains("at 1.4 on the Time axis"),
+        "the marker's own coordinate survives a coarser axis: {fractional:?}",
+    );
+    assert!(
+        !fractional.contains("at 1 on the Time axis"),
+        "and the axis's rounding is not restated as its position: {fractional:?}",
+    );
+
+    // Precision grows only as far as the `f64` itself carries it. A whole
+    // number is a whole number, and decimals it does not hold would be
+    // invented ones.
+    let integral = against_a_coarse_axis(50.0);
+    assert!(
+        integral.contains("at 50 on the Time axis"),
+        "an ordinary whole-numbered marker gains no notation: {integral:?}",
+    );
+
+    // A value fixed point would round away to nothing keeps the exponent form
+    // it already had: the same number, in the notation a reader can take in.
+    let vanishing = against_a_coarse_axis(0.0001);
+    assert!(
+        vanishing.contains("at 1e-4 on the Time axis"),
+        "a value the axis would print as zero stays distinguishable: {vanishing:?}",
+    );
+
+    // A domain too narrow for fixed point at all states every position as an
+    // exponent, and the marker is still exactly itself.
+    let narrow = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(label("Time"), UnitState::Unreported),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(1.0e-20, 4.0e-20),
+        domain(0.0, 10.0),
+        vec![series(vec![1.0e-20, 4.0e-20], vec![1.0, 2.0])],
+    )
+    .expect("a tiny domain")
+    .with_markers(vec![
+        Marker::new(2.5e-20, None).expect("a marker between its ends"),
+    ])
+    .expect("markers on a valid panel");
+    let described = description_of(&svg::render(&figure_of(narrow)));
+    assert!(
+        described.contains("at 2.5e-20 on the Time axis"),
+        "a tiny-domain marker remains distinguishable: {described:?}",
+    );
+}
+
+/// Two distinct measurements are not merged by the way coordinates are written.
+///
+/// Geometry is serialized to a fixed number of decimals so that the same
+/// specification produces the same bytes everywhere. Three decimals alone is
+/// also a quantizer: on the narrowest figure the contract accepts, `0.5` and
+/// `0.500001` of a `0 .. 1` domain both projected to `122.000`, so two
+/// same-signed sticks were written at one x and the shorter vanished inside the
+/// taller -- at every zoom, permanently, with nothing in the file to say a
+/// measurement had been lost. `covered_marks` could not disclose it either: it
+/// compares source positions, and these two never shared one.
+#[test]
+fn distinct_measurements_survive_coordinate_serialization() {
+    let panel = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 1.0),
+        domain(0.0, 90.0),
+        vec![series(vec![0.5, 0.500_001], vec![90.0, 40.0])],
+    )
+    .expect("two distinct m/z a hair apart");
+    let document = svg::render(
+        &FigureSpec::new(
+            FigureTheme::Light,
+            FigureSize::new(
+                MIN_FIGURE_WIDTH,
+                MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT,
+            )
+            .expect("the smallest figure the contract accepts"),
+            vec![panel],
+        )
+        .expect("one panel"),
+    );
+
+    // Both sticks are drawn, and they are drawn at two coordinates.
+    let drawn = path_data(&document);
+    let xs: Vec<&str> = drawn
+        .split('M')
+        .skip(1)
+        .filter_map(|command| command.split(' ').next())
+        .collect();
+    assert_eq!(xs.len(), 2, "both measurements are drawn: {drawn:?}");
+    assert!(
+        xs[0] != xs[1],
+        "and they keep two positions rather than one: {xs:?}",
+    );
+
+    // Nothing is disclosed as hidden, because nothing is. The two marks never
+    // shared a domain position, and now they do not share a serialized one
+    // either -- so the words and the drawing agree.
+    assert!(
+        !description_of(&document).contains("hidden behind it"),
+        "no covering is claimed for two separable marks: {document}",
+    );
+
+    // The precision is derived from the drawn geometry, so a figure that never
+    // needed it is unchanged -- the readable default, byte for byte.
+    let ordinary = svg::render(&figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )));
+    assert!(
+        ordinary.contains("viewBox=\"0 0 900.000 500.000\""),
+        "an ordinary figure keeps three decimals: {ordinary}",
+    );
+}
+
+/// Every series says what it drew, not just the panel.
+///
+/// A panel is not one drawable thing. A measurement inside the window read
+/// against a baseline the source left empty is a legitimate figure, and the
+/// panel-wide test could not see it: the panel as a whole held points, so
+/// nothing was said, while the description listed the baseline as present and
+/// the drawing showed nothing for it. The file could then not tell an empty
+/// reference line from one whose samples lie outside the window, from one drawn
+/// and coincident with the measurement, from an ordinary one.
+#[test]
+fn an_undrawn_series_discloses_itself_in_a_mixed_panel() {
+    let measured = || series(vec![4.0, 5.0, 6.0], vec![10.0, 20.0, 30.0]);
+    let baseline = |scope: DataScope, x: Vec<f64>, y: Vec<f64>| {
+        SeriesSpec::new(
+            label("estimated background"),
+            StyleRole::Baseline,
+            scope,
+            x,
+            y,
+        )
+        .expect("a reference baseline")
+    };
+    let windowed = |against: SeriesSpec| {
+        let panel = PanelSpec::new(
+            PlotKind::Chromatogram,
+            AxisSpec::new(label("Time"), UnitState::Unreported),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(0.0, 10.0),
+            domain(0.0, 30.0),
+            vec![measured(), against],
+        )
+        .expect("a measurement read against a baseline")
+        .with_visible_domain(domain(4.0, 6.0))
+        .expect("a window holding every measured sample");
+        svg::render(&figure_of(panel))
+    };
+
+    // An empty baseline. The panel draws the measurement, so no panel-wide
+    // question could have reached this, and the baseline is listed as present
+    // two sentences earlier.
+    let document = windowed(baseline(DataScope::FullSource, Vec::new(), Vec::new()));
+    let description = description_of(&document);
+    assert_eq!(
+        document.matches("<path ").count(),
+        1,
+        "the measurement is drawn and the baseline is not: {document}",
+    );
+    assert!(
+        description.contains(
+            "&quot;estimated background&quot; carries no points, so nothing is drawn \
+             for it."
+        ),
+        "the empty baseline discloses itself, by name: {description:?}",
+    );
+    assert!(
+        !description.contains("&quot;measurement&quot; carries no points"),
+        "and the drawn measurement is not swept up with it: {description:?}",
+    );
+
+    // A baseline whose samples are all outside the window. Present, non-empty,
+    // and still nothing on the page for it -- a different fact from the one
+    // above, and it gets a different sentence.
+    let description = description_of(&windowed(baseline(
+        DataScope::FullSource,
+        vec![0.0, 1.0],
+        vec![1.0, 2.0],
+    )));
+    assert!(
+        description.contains(
+            "No measured point of &quot;estimated background&quot; lies inside the range \
+             shown, so none of it is drawn."
+        ),
+        "a baseline outside the window says so: {description:?}",
+    );
+    assert!(
+        !description.contains("&quot;estimated background&quot; carries no points"),
+        "and is not confused with an empty one: {description:?}",
+    );
+
+    // A baseline whose segment crosses the window with neither end inside it.
+    // This one *is* drawn, by interpolation, and must never be called absent.
+    let document = windowed(baseline(
+        DataScope::FullSource,
+        vec![0.0, 10.0],
+        vec![1.0, 2.0],
+    ));
+    let description = description_of(&document);
+    assert_eq!(
+        document.matches("<path ").count(),
+        2,
+        "the crossing baseline is drawn too: {document}",
+    );
+    assert!(
+        description.contains(
+            "No measured sample of &quot;estimated background&quot; lies inside the range \
+             shown; the trace drawn for it is interpolated between samples outside it."
+        ),
+        "a crossing baseline is described as interpolated: {description:?}",
+    );
+    assert!(
+        !description.contains("&quot;estimated background&quot; carries no points")
+            && !description.contains(
+                "No measured point of &quot;estimated background&quot; lies inside the \
+                 range shown, so none of it is drawn."
+            ),
+        "and never as empty or undrawn: {description:?}",
+    );
+
+    // A reduced baseline with no retained point in the window. It carries what
+    // it kept and a count of what that came from, and nothing about where the
+    // dropped points were -- so the sentence stays inside what it retained.
+    let description = description_of(&windowed(baseline(
+        DataScope::Reduced {
+            source_point_count: 900,
+            rule: ReductionRule::MinMaxPerColumn,
+        },
+        vec![0.0, 1.0],
+        vec![1.0, 2.0],
+    )));
+    assert!(
+        description.contains(
+            "No point retained by the reduction for &quot;estimated background&quot; lies \
+             inside the range shown, so none of it is drawn; whether the source held \
+             measurements there is not recorded in this figure."
+        ),
+        "a reduction claims only what it retained: {description:?}",
+    );
+    assert!(
+        !description.contains("No measured point of &quot;estimated background&quot;"),
+        "and never the stronger claim a full source could make: {description:?}",
     );
 }
 
@@ -4252,15 +4538,18 @@ fn an_empty_window_of_a_reduction_claims_only_what_it_retained() {
 
     let description = description_of(&svg::render(&figure_of(panel)));
     assert!(
-        description.contains("No point retained by the reduction lies inside the range shown"),
-        "the sentence is about what was retained: {description:?}",
+        description.contains(
+            "No point retained by the reduction for &quot;measurement&quot; lies inside \
+             the range shown"
+        ),
+        "the sentence is about what was retained, and names the series: {description:?}",
     );
     assert!(
         description.contains("not") && description.contains("recorded in this figure"),
         "and says the source is not answerable from here: {description:?}",
     );
     assert!(
-        !description.contains("No measured point lies inside"),
+        !description.contains("No measured point of &quot;measurement&quot; lies inside"),
         "which is more than a reduction can prove: {description:?}",
     );
 
@@ -4273,7 +4562,7 @@ fn an_empty_window_of_a_reduction_claims_only_what_it_retained() {
     .expect("a window between the points");
     assert!(
         description_of(&svg::render(&figure_of(whole)))
-            .contains("No measured point lies inside the range shown"),
+            .contains("No measured point of &quot;measurement&quot; lies inside the range shown"),
         "a full source carries every point it had",
     );
 }

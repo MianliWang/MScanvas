@@ -321,21 +321,36 @@ printing an empty bracket or a guess would display a fact the file never carried
 — so without a sentence saying which, the distinction the contract makes dies at
 the file boundary it exists to cross.
 
-A panel with no measured point inside the range shown says so, and says which
-kind of nothing it is — and, for a reduction, says only what it can prove. A
+**Each series says what it drew**, and every such sentence names the series it
+is about. A panel is not one drawable thing, and asking the question of the
+panel could not see the figure that matters: a measurement inside the window
+read against a baseline the source left empty. The panel as a whole held points,
+so the panel-wide test was false and nothing was said — while the description
+listed the baseline as present and the drawing showed nothing for it. A reader
+could then not separate an empty reference line from one whose samples all lie
+outside the window, from one drawn and coincident with the measurement, from an
+ordinary one.
+
+The states are different facts and none of them substitutes for another. A
+series carrying no points at all says so, and a `Reduced` series can never be
+one — the contract refuses a reduction that kept nothing. A series whose points
+are present but all outside the window says *that* instead. A joined trace whose
+segment crosses the window with no sample inside it **is** drawn, by
+interpolation, and must never be described as absent; it keeps its own sentence,
+because something is drawn there. A window between two discrete peaks draws no
+path at all, and so does an empty source; the file otherwise claimed centroid
+data and left those indistinguishable from each other and from a renderer that
+had failed. Whether there is no data or merely no drawing is the one thing an
+export must never leave ambiguous.
+
+And, for a reduction, each of those sentences says only what it can prove. A
 `Reduced` series carries the points it kept and a count of what they came from,
 and nothing about where the dropped ones were, so a whole-domain reduction can
 keep one column's extreme and leave a window that looks empty while the source
 held measurements in it. The sentence is therefore about what was *retained*,
 and states that the source is not answerable from this figure. Only a
 `FullSource` series can say no measurement lies in the range, because only it
-carries every point it had. A window between two discrete peaks draws no path at
-all, and so does an empty source; the file otherwise claimed centroid data and
-left those indistinguishable from each other and from a renderer that had
-failed. Whether there is no data or merely no drawing is the one thing an
-export must never leave ambiguous. A joined trace crossing such a window is the
-third case and keeps its own sentence, because something *is* drawn there —
-interpolated between samples outside the window rather than measured inside it.
+carries every point it had.
 
 **One sentence per crossing series**, each naming itself and reading its own
 scope. Two joined series can both straddle a window with neither's samples
@@ -405,13 +420,24 @@ description names how many there are and where, for those inside the drawn
 window; one outside it draws no line, and reporting it would describe something
 the figure does not contain.
 
-Its position is written the way that axis writes numbers — the same precision
-escalation and the same exponent fallback, decided once by `axis_notation` and
-used by the axis ends and the marker sentence alike. A position named in one
-notation while the axis is labelled in another puts the description in conflict
-with the drawing: against `1e-20 .. 4e-20` the ends print as exponents while a
-fixed-point marker rounded to `0.000000`, naming a coordinate the line is not
-drawn at.
+Its position is written in the **notation** that axis writes numbers in — fixed
+point or exponent, decided once by `axis_notation` and shared by the axis ends
+and the marker sentence. A position named in one notation while the axis is
+labelled in another puts the description in conflict with the drawing: against
+`1e-20 .. 4e-20` the ends print as exponents while a fixed-point marker rounded
+to `0.000000`, naming a coordinate the line is not drawn at.
+
+The **precision** is not shared, because the two are not doing the same job. An
+axis end states a display range, and `0 .. 100` printing whole numbers says how
+wide the view is perfectly well; the marker sentence states where one line
+actually is. Inheriting the axis's rounding therefore read a marker at `1.4` as
+being "at 1" — an exact-looking coordinate the figure does not draw it at,
+asserted in the one place a reader has no drawing to check it against. So the
+marker's decimals grow from the axis's until the text parses back to the `f64`
+the specification carries, and stop there. That bound is the value's own in both
+directions: it can neither round the coordinate away nor print a digit the
+number does not hold. A value fixed point would lose entirely still escalates to
+the exponent form, as it always did.
 
 A marker label is wrapped to the width available, clamped inside **its own
 panel** — below the plotting area sit that panel's axis text and then the next

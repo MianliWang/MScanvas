@@ -20,12 +20,34 @@ use crate::spec::{
 };
 use std::fmt::Write as _;
 
-/// Coordinates are written to this many decimals.
+/// The fewest decimals a coordinate is written to.
 ///
 /// Fixed rather than shortest-round-trip, because determinism is the property
 /// under test: the same specification must produce the same bytes on every
-/// platform, and a formatter that chose its own precision would not.
+/// platform, and a formatter that chose its own precision per number would not.
+/// A floor rather than the answer -- see [`coordinate_precision`], which raises
+/// it for the one kind of figure this many decimals would quantize.
 const COORDINATE_DECIMALS: usize = 3;
+
+/// The most decimals a coordinate is written to.
+///
+/// Seventeen significant decimals round-trip an `f64`, and every *drawn
+/// position* this renderer writes lies at least `MARGIN_TOP` figure units from
+/// the origin -- so seventeen decimal *places* separate two neighbouring `f64`
+/// anywhere on the plotting area, and past here there is nothing left of a
+/// coordinate to preserve.
+const MAX_COORDINATE_DECIMALS: usize = 17;
+
+/// `10^-d`, for every decimal count a document may be written to.
+///
+/// Literals rather than `powi`: an exponentiation is a floating-point operation
+/// whose result this renderer would have to trust to be bit-identical on every
+/// platform, and the determinism these numbers exist to protect is exactly what
+/// that would be staking.
+const DECIMAL_STEPS: [f64; MAX_COORDINATE_DECIMALS + 1] = [
+    1e0, 1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 1e-11, 1e-12, 1e-13, 1e-14,
+    1e-15, 1e-16, 1e-17,
+];
 
 /// The most decimals an axis end carries before the two ends are compared.
 ///
@@ -157,14 +179,91 @@ fn escape(text: &str) -> String {
     escaped
 }
 
-/// Formats one coordinate.
+/// How many decimals one document writes its coordinates to.
 ///
-/// Every number reaching the document goes through here. The specification has
-/// already refused non-finite values, so this cannot be handed one -- and the
-/// renderer still never formats a raw `f64` anywhere else, so a future field
-/// that forgot the check cannot print `NaN` into a figure.
-fn coordinate(value: f64) -> String {
-    format!("{value:.COORDINATE_DECIMALS$}")
+/// Carried as a value rather than read from a constant, and decided once for
+/// the whole document rather than per number: a figure whose geometry is
+/// written at two precisions is a figure whose bytes depend on which value
+/// happened to need what, and both the determinism and the reading of it are
+/// easier to hold when there is one answer.
+#[derive(Clone, Copy)]
+struct Precision(usize);
+
+impl Precision {
+    /// Formats one coordinate.
+    ///
+    /// Every number reaching the document goes through here. The specification
+    /// has already refused non-finite values, so this cannot be handed one --
+    /// and the renderer still never formats a raw `f64` anywhere else, so a
+    /// future field that forgot the check cannot print `NaN` into a figure.
+    fn coordinate(self, value: f64) -> String {
+        format!("{value:.decimals$}", decimals = self.0)
+    }
+}
+
+/// How many decimals this figure's drawn geometry needs to stay distinct.
+///
+/// Three decimals is readable and is what almost every figure gets. On its own
+/// it is also a quantizer: two measurements whose projected positions differ by
+/// less than half a thousandth of a figure unit can serialize to one
+/// coordinate, and two same-signed sticks written at one x are one stick -- the
+/// shorter is
+/// inside the taller, at every zoom, permanently. A vector format that loses a
+/// measurement to its own number formatting has discarded the thing it exists
+/// to carry, and no viewer can get it back.
+///
+/// Disclosing the collision in words was the alternative, and it is the worse
+/// one: the geometry would still be gone, and the sentence would be explaining
+/// an artefact this renderer had just created rather than a fact about the
+/// sample. So the geometry is kept instead. [`covered_marks`] is left exactly
+/// as it was -- a statement about measurements that share a *domain position*,
+/// which no precision can separate and which the drawing genuinely cannot show
+/// -- and this keeps everything that does *not* share one separable.
+///
+/// Derived rather than raised across the board: the smallest gap between two
+/// distinct drawn positions decides it, it never falls below the readable
+/// floor, and it stops at the `f64`'s own limit. An ordinary figure comes out
+/// byte for byte what it was.
+fn coordinate_precision(figure: &FigureSpec) -> Precision {
+    let (left, right) = (MARGIN_LEFT, figure.size.width() - MARGIN_RIGHT);
+    let mut smallest = f64::INFINITY;
+    for panel in &figure.panels {
+        let drawn = panel.drawn_domain();
+        for series in &panel.series {
+            // Source positions rather than everything the path will contain.
+            // A clipped segment's endpoint is not a measurement -- it is the
+            // window's own edge -- so a clip landing on a sample duplicates a
+            // vertex the path already carries and loses nothing. What must
+            // stay distinct is what was measured.
+            //
+            // The contract guarantees a non-decreasing domain axis and the
+            // projection is monotonic, so the drawn positions arrive in order
+            // and one pass over them finds the smallest gap.
+            let mut previous: Option<f64> = None;
+            for at in series.x() {
+                if *at < drawn.low() || *at > drawn.high() {
+                    continue;
+                }
+                let projected = project(*at, drawn, left, right);
+                if let Some(last) = previous
+                    && projected > last
+                {
+                    smallest = smallest.min(projected - last);
+                }
+                previous = Some(projected);
+            }
+        }
+    }
+    // A gap of at least `10^-decimals` survives rounding to that many places:
+    // scaled by `10^decimals` the two values differ by at least one, and
+    // rounding is monotonic, so they cannot land on the same integer. Growing
+    // the count until that holds is therefore enough, and the ceiling is where
+    // an `f64` stops carrying more -- which is also why the loop terminates.
+    let mut decimals = COORDINATE_DECIMALS;
+    while decimals < MAX_COORDINATE_DECIMALS && smallest < DECIMAL_STEPS[decimals] {
+        decimals += 1;
+    }
+    Precision(decimals)
 }
 
 /// Maps a value from one interval onto another.
@@ -421,81 +520,96 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String], position: (usize, u
         )),
     }
 
+    // What actually reached the page, series by series.
+    //
+    // A panel is not one drawable thing, and asking the question of the panel
+    // could not see the figure that matters: a measurement inside the window
+    // read against a baseline the source left empty. The panel as a whole held
+    // points, so the panel-wide test was false and nothing was said -- while
+    // the sentence above listed the baseline as present and the drawing showed
+    // nothing for it. A reader could not then tell an empty reference line from
+    // one whose samples all lie outside the window, from one drawn and
+    // coincident with the measurement, from an ordinary one.
+    //
+    // So it is asked of each series, and every answer names the series it is
+    // about; counts and states with no owner are what made the panel-wide form
+    // unreadable in the first place. The states are different facts and none of
+    // them substitutes for another: nothing in the series at all, points
+    // present but none of them in the window, and a joined trace whose segment
+    // crosses the window with no sample inside it -- which *is* drawn, and must
+    // never be described as absent.
+    //
     // Counted over the drawn window rather than the whole source, because the
-    // sentence says *drawn*. A panel narrowed to a visible range still carries
+    // sentences say *drawn*. A panel narrowed to a visible range still carries
     // its whole series -- that is what makes a full-range export possible from
     // the same specification -- so counting the source would tell a reader to
-    // look below the zero line for marks that are outside the window and not in
-    // the file they are holding.
-    // Nothing measured lies inside the window. Two different figures reach here
-    // and they are different facts about a sample, so they get different
-    // sentences -- and one of them had none at all: a discrete panel windowed
-    // between two peaks drew no path, said nothing, and was indistinguishable
-    // from an empty source or from a renderer that had failed. Whether there is
-    // no data or merely no drawing is the one thing an export must never leave
-    // ambiguous.
-    //
-    // Its own block rather than an arm of the chain below, because it is
-    // independent of what those sentences report: a trace can both have no
-    // sample in the window *and* be drawn below the zero line, and folding this
-    // in as an alternative silently dropped the second disclosure.
-    if panel
-        .series
-        .iter()
-        .flat_map(|series| series.x().iter())
-        .all(|at| *at < drawn.low() || *at > drawn.high())
-    {
-        // One sentence per crossing series, each naming itself and reading its
-        // own scope. Two joined series can both straddle a window -- a
-        // measurement and the baseline it is read against, sampled coarsely --
-        // and the renderer draws both, so describing only the first left the
-        // second's interpolation and scope entirely unstated. Taking the first
-        // series' scope for all of them was the same error one step earlier.
-        let crossing: Vec<&SeriesSpec> = panel
-            .series
-            .iter()
-            .filter(|series| panel.joins(series) && crosses_window(series, drawn))
-            .collect();
-        if !crossing.is_empty() {
-            for series in crossing {
-                let id = series.id().as_str();
-                sentences.push(if matches!(series.scope(), DataScope::Reduced { .. }) {
-                    // A reduction cannot speak for the samples it dropped.
-                    format!(
-                        "No point retained by the reduction for \"{id}\" lies inside the \
-                         range shown; the trace drawn for it is interpolated between retained \
-                         points outside it."
-                    )
-                } else {
-                    format!(
-                        "No measured sample of \"{id}\" lies inside the range shown; the \
-                         trace drawn for it is interpolated between samples outside it."
-                    )
-                });
-            }
-        } else if panel
-            .series
-            .iter()
-            .any(|series| matches!(series.scope(), DataScope::Reduced { .. }))
-        {
-            // A reduction carries the points it kept and a count of what it
-            // came from, and nothing about where the dropped ones were. So
-            // "no measured point is in range" is a claim this figure cannot
-            // support: a whole-domain reduction can keep one column's extreme
-            // and drop real measurements inside a window that then looks
-            // empty. What it can say is what it retained.
-            sentences.push(
-                "No point retained by the reduction lies inside the range shown, so this \
-                 panel draws none; whether the source held measurements there is not \
-                 recorded in this figure."
-                    .to_owned(),
-            );
-        } else {
-            sentences.push(
-                "No measured point lies inside the range shown, so this panel draws none."
-                    .to_owned(),
-            );
+    // look for marks that are outside the window and not in the file they are
+    // holding.
+    for series in &panel.series {
+        let id = series.id().as_str();
+        if series.is_empty() {
+            // A reduction cannot be empty: the contract refuses one that kept
+            // nothing, because neither named rule can produce it. So this is a
+            // series whose source carried no points, and saying so claims
+            // nothing about measurements a reduction dropped.
+            sentences.push(format!(
+                "\"{id}\" carries no points, so nothing is drawn for it."
+            ));
+            continue;
         }
+        let inside = series
+            .x()
+            .iter()
+            .filter(|at| **at >= drawn.low() && **at <= drawn.high())
+            .count();
+        if inside > 0 {
+            continue;
+        }
+        let reduced = matches!(series.scope(), DataScope::Reduced { .. });
+        if panel.joins(series) && crosses_window(series, drawn) {
+            // The one state that is drawn. A segment can straddle a window with
+            // neither of its ends inside it -- a coarsely sampled chromatogram
+            // against a narrow selection is exactly that -- and the renderer
+            // draws the interpolated crossing. "Nothing measured is in range"
+            // and "nothing is drawn" are different questions, and this sentence
+            // answers the one that matches the picture.
+            sentences.push(if reduced {
+                // A reduction cannot speak for the samples it dropped.
+                format!(
+                    "No point retained by the reduction for \"{id}\" lies inside the \
+                     range shown; the trace drawn for it is interpolated between \
+                     retained points outside it."
+                )
+            } else {
+                format!(
+                    "No measured sample of \"{id}\" lies inside the range shown; \
+                     the trace drawn for it is interpolated between samples outside it."
+                )
+            });
+            continue;
+        }
+        // Nothing of this series reaches the window, and nothing is drawn for
+        // it. A discrete mark outside the window is a measurement outside the
+        // window; a joined trace with no sample inside it and no segment
+        // crossing it has no geometry in range either.
+        sentences.push(if reduced {
+            // A reduction carries the points it kept and a count of what they
+            // came from, and nothing about where the dropped ones were. So "no
+            // measured point is in range" is a claim this figure cannot
+            // support: a whole-domain reduction can keep one column's extreme
+            // and drop real measurements inside a window that then looks empty.
+            // What it can say is what it retained.
+            format!(
+                "No point retained by the reduction for \"{id}\" lies inside the \
+                 range shown, so none of it is drawn; whether the source held \
+                 measurements there is not recorded in this figure."
+            )
+        } else {
+            format!(
+                "No measured point of \"{id}\" lies inside the range shown, \
+                 so none of it is drawn."
+            )
+        });
     }
 
     // Two discrete measurements at one position are drawn as two marks from the
@@ -626,7 +740,7 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String], position: (usize, u
         .filter(|marker| {
             marker.label().is_none() && marker.at() >= drawn.low() && marker.at() <= drawn.high()
         })
-        .map(|marker| axis_number(marker.at(), axis_notation(drawn)))
+        .map(|marker| marker_number(marker.at(), axis_notation(drawn)))
         .collect();
     match anonymous.as_slice() {
         [] => {}
@@ -687,6 +801,7 @@ struct Frame {
 #[must_use]
 pub fn render(figure: &FigureSpec) -> String {
     let colours = palette(figure.theme);
+    let precision = coordinate_precision(figure);
     let width = figure.size.width();
     let height = figure.size.height();
 
@@ -696,10 +811,10 @@ pub fn render(figure: &FigureSpec) -> String {
         out,
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" \
          viewBox=\"0 0 {} {}\" role=\"img\"",
-        coordinate(width),
-        coordinate(height),
-        coordinate(width),
-        coordinate(height),
+        precision.coordinate(width),
+        precision.coordinate(height),
+        precision.coordinate(width),
+        precision.coordinate(height),
     );
     out.push_str(">\n");
 
@@ -708,7 +823,7 @@ pub fn render(figure: &FigureSpec) -> String {
     // did -- and one of the things it must report is a marker label the page
     // had no room for. The document's order is unchanged: this only computes
     // the body earlier than it appends it.
-    let (body, unplaced) = render_panels(figure, width, height, &colours);
+    let (body, unplaced) = render_panels(figure, width, height, &colours, precision);
 
     // Whether the visible heading can be drawn at a readable size, decided
     // before the description is written so the words can report it when it
@@ -764,8 +879,8 @@ pub fn render(figure: &FigureSpec) -> String {
     let _ = writeln!(
         out,
         "<rect x=\"0\" y=\"0\" width=\"{}\" height=\"{}\" fill=\"{}\"/>",
-        coordinate(width),
-        coordinate(height),
+        precision.coordinate(width),
+        precision.coordinate(height),
         colours.background,
     );
 
@@ -780,10 +895,10 @@ pub fn render(figure: &FigureSpec) -> String {
             "<text x=\"{}\" y=\"24.000\" fill=\"{}\" font-family=\"sans-serif\" \
              font-size=\"{}\" font-weight=\"600\" xml:space=\"preserve\" textLength=\"{}\" \
              lengthAdjust=\"spacingAndGlyphs\">{}</text>",
-            coordinate(MARGIN_LEFT),
+            precision.coordinate(MARGIN_LEFT),
             colours.text,
-            coordinate(size),
-            coordinate(label.as_str().chars().count() as f64 * TEXT_EM * size),
+            precision.coordinate(size),
+            precision.coordinate(label.as_str().chars().count() as f64 * TEXT_EM * size),
             escape(label.as_str()),
         );
     }
@@ -803,6 +918,7 @@ fn render_panels(
     width: f64,
     height: f64,
     colours: &Palette,
+    precision: Precision,
 ) -> (String, Vec<Vec<String>>) {
     let mut body = String::with_capacity(4_096);
     let mut unplaced = Vec::with_capacity(figure.panels.len());
@@ -832,7 +948,7 @@ fn render_panels(
             plot_bottom,
             zero_y,
         };
-        unplaced.push(render_panel(&mut body, panel, &frame, colours));
+        unplaced.push(render_panel(&mut body, panel, &frame, colours, precision));
     }
     (body, unplaced)
 }
@@ -866,6 +982,7 @@ fn render_panel(
     panel: &PanelSpec,
     frame: &Frame,
     colours: &Palette,
+    precision: Precision,
 ) -> Vec<String> {
     let domain = panel.drawn_domain();
     let values = panel.value_domain;
@@ -876,24 +993,24 @@ fn render_panel(
     let _ = writeln!(
         out,
         "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"1\"/>",
-        coordinate(frame.left),
-        coordinate(zero_y),
-        coordinate(frame.right),
-        coordinate(zero_y),
+        precision.coordinate(frame.left),
+        precision.coordinate(zero_y),
+        precision.coordinate(frame.right),
+        precision.coordinate(zero_y),
         colours.axis,
     );
     let _ = writeln!(
         out,
         "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"1\"/>",
-        coordinate(frame.left),
-        coordinate(plot_top),
-        coordinate(frame.left),
-        coordinate(plot_bottom),
+        precision.coordinate(frame.left),
+        precision.coordinate(plot_top),
+        precision.coordinate(frame.left),
+        precision.coordinate(plot_bottom),
         colours.axis,
     );
 
     for series in &panel.series {
-        render_series(out, panel, series, frame, colours);
+        render_series(out, panel, series, frame, colours, precision);
     }
 
     // The two domain ends and the two value ends, as real text rather than as
@@ -956,14 +1073,14 @@ fn render_panel(
             out,
             "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" \
              stroke-width=\"1\" stroke-dasharray=\"4 3\"/>",
-            coordinate(x),
-            coordinate(plot_top),
-            coordinate(x),
-            coordinate(plot_bottom),
+            precision.coordinate(x),
+            precision.coordinate(plot_top),
+            precision.coordinate(x),
+            precision.coordinate(plot_bottom),
             colours.marker,
         );
         if let Some(label) = marker.label.as_ref()
-            && !render_marker_label(out, label, x, &mut occupied, frame, colours)
+            && !render_marker_label(out, label, x, &mut occupied, frame, colours, precision)
         {
             unplaced.push(label.as_str().to_owned());
         }
@@ -973,20 +1090,20 @@ fn render_panel(
         out,
         "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"11\" \
          textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
-        coordinate(frame.left),
-        coordinate(plot_bottom + 14.0),
+        precision.coordinate(frame.left),
+        precision.coordinate(plot_bottom + 14.0),
         colours.text,
-        coordinate(fitted_width(&domain_low_text, MARKER_LABEL_SIZE, end_room)),
+        precision.coordinate(fitted_width(&domain_low_text, MARKER_LABEL_SIZE, end_room)),
         escape(&domain_low_text),
     );
     let _ = writeln!(
         out,
         "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"11\" \
          text-anchor=\"end\" textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
-        coordinate(frame.right),
-        coordinate(plot_bottom + 14.0),
+        precision.coordinate(frame.right),
+        precision.coordinate(plot_bottom + 14.0),
         colours.text,
-        coordinate(fitted_width(&domain_high_text, MARKER_LABEL_SIZE, end_room)),
+        precision.coordinate(fitted_width(&domain_high_text, MARKER_LABEL_SIZE, end_room)),
         escape(&domain_high_text),
     );
     // Both captions are written to a declared width. A caption is a `Label`, so
@@ -1003,11 +1120,11 @@ fn render_panel(
         "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"{}\" \
          text-anchor=\"middle\" xml:space=\"preserve\" textLength=\"{}\" \
          lengthAdjust=\"spacingAndGlyphs\">{}</text>",
-        coordinate(f64::midpoint(frame.left, frame.right)),
-        coordinate(plot_bottom + 30.0),
+        precision.coordinate(f64::midpoint(frame.left, frame.right)),
+        precision.coordinate(plot_bottom + 30.0),
         colours.text,
-        coordinate(domain_caption_size),
-        coordinate(fitted_width(
+        precision.coordinate(domain_caption_size),
+        precision.coordinate(fitted_width(
             &domain_caption,
             domain_caption_size,
             domain_caption_room,
@@ -1023,11 +1140,11 @@ fn render_panel(
         "<text x=\"14.000\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"{}\" \
          text-anchor=\"middle\" transform=\"rotate(-90 14.000 {})\" xml:space=\"preserve\" \
          textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
-        coordinate(centre_y),
+        precision.coordinate(centre_y),
         colours.text,
-        coordinate(value_caption_size),
-        coordinate(centre_y),
-        coordinate(fitted_width(
+        precision.coordinate(value_caption_size),
+        precision.coordinate(centre_y),
+        precision.coordinate(fitted_width(
             &value_caption,
             value_caption_size,
             value_caption_room,
@@ -1038,10 +1155,10 @@ fn render_panel(
         out,
         "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"11\" \
          textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
-        coordinate(frame.left + 4.0),
-        coordinate(plot_top + 10.0),
+        precision.coordinate(frame.left + 4.0),
+        precision.coordinate(plot_top + 10.0),
         colours.text,
-        coordinate(fitted_width(
+        precision.coordinate(fitted_width(
             &value_high_text,
             MARKER_LABEL_SIZE,
             value_room
@@ -1058,10 +1175,10 @@ fn render_panel(
             out,
             "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"11\" \
              textLength=\"{}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>",
-            coordinate(frame.left + 4.0),
-            coordinate(plot_bottom - 2.0),
+            precision.coordinate(frame.left + 4.0),
+            precision.coordinate(plot_bottom - 2.0),
             colours.text,
-            coordinate(fitted_width(&value_low_text, MARKER_LABEL_SIZE, value_room)),
+            precision.coordinate(fitted_width(&value_low_text, MARKER_LABEL_SIZE, value_room)),
             escape(&value_low_text),
         );
     }
@@ -1074,6 +1191,7 @@ fn render_series(
     series: &SeriesSpec,
     frame: &Frame,
     colours: &Palette,
+    precision: Precision,
 ) {
     if series.is_empty() {
         return;
@@ -1161,16 +1279,16 @@ fn render_series(
                 let _ = write!(
                     path,
                     "M{} {}",
-                    coordinate(project(ax, domain, frame.left, frame.right)),
-                    coordinate(project(ay, values, plot_bottom, plot_top)),
+                    precision.coordinate(project(ax, domain, frame.left, frame.right)),
+                    precision.coordinate(project(ay, values, plot_bottom, plot_top)),
                 );
                 pen_down = true;
             }
             let _ = write!(
                 path,
                 "L{} {}",
-                coordinate(project(bx, domain, frame.left, frame.right)),
-                coordinate(project(by, values, plot_bottom, plot_top)),
+                precision.coordinate(project(bx, domain, frame.left, frame.right)),
+                precision.coordinate(project(by, values, plot_bottom, plot_top)),
             );
         }
         // A trace that reaches the window but has no segment with length in it
@@ -1194,10 +1312,10 @@ fn render_series(
             let _ = write!(
                 path,
                 "M{} {}L{} {}",
-                coordinate((x - LONE_SAMPLE_TICK).max(frame.left)),
-                coordinate(y),
-                coordinate((x + LONE_SAMPLE_TICK).min(frame.right)),
-                coordinate(y),
+                precision.coordinate((x - LONE_SAMPLE_TICK).max(frame.left)),
+                precision.coordinate(y),
+                precision.coordinate((x + LONE_SAMPLE_TICK).min(frame.right)),
+                precision.coordinate(y),
             );
         }
     } else {
@@ -1221,19 +1339,19 @@ fn render_series(
                 let _ = write!(
                     path,
                     "M{} {}L{} {}",
-                    coordinate((at - LONE_SAMPLE_TICK).max(frame.left)),
-                    coordinate(zero_y),
-                    coordinate((at + LONE_SAMPLE_TICK).min(frame.right)),
-                    coordinate(zero_y),
+                    precision.coordinate((at - LONE_SAMPLE_TICK).max(frame.left)),
+                    precision.coordinate(zero_y),
+                    precision.coordinate((at + LONE_SAMPLE_TICK).min(frame.right)),
+                    precision.coordinate(zero_y),
                 );
                 continue;
             }
             let _ = write!(
                 path,
                 "M{} {}V{}",
-                coordinate(at),
-                coordinate(zero_y),
-                coordinate(top),
+                precision.coordinate(at),
+                precision.coordinate(zero_y),
+                precision.coordinate(top),
             );
         }
     }
@@ -1414,6 +1532,7 @@ fn render_marker_label(
     occupied: &mut Vec<TextBox>,
     frame: &Frame,
     colours: &Palette,
+    precision: Precision,
 ) -> bool {
     let plot_top = frame.plot_top;
 
@@ -1492,19 +1611,19 @@ fn render_marker_label(
     let _ = write!(
         out,
         "<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"sans-serif\" font-size=\"{}\">",
-        coordinate(left),
-        coordinate(top),
+        precision.coordinate(left),
+        precision.coordinate(top),
         colours.marker,
-        coordinate(size),
+        precision.coordinate(size),
     );
     for (index, line) in lines.iter().enumerate() {
         let _ = write!(
             out,
             "<tspan x=\"{}\" y=\"{}\" xml:space=\"preserve\" textLength=\"{}\" \
              lengthAdjust=\"spacingAndGlyphs\">{}</tspan>",
-            coordinate(left),
-            coordinate(top + index as f64 * leading),
-            coordinate(line.chars().count() as f64 * character),
+            precision.coordinate(left),
+            precision.coordinate(top + index as f64 * leading),
+            precision.coordinate(line.chars().count() as f64 * character),
             escape(line),
         );
     }
@@ -1605,6 +1724,54 @@ fn axis_number(value: f64, notation: AxisNotation) -> String {
             }
         }
     }
+}
+
+/// One marker coordinate, written so that it stays that coordinate.
+///
+/// The axis and this sentence do different jobs, and forcing them to share a
+/// precision makes one of them false. An axis end is a statement of a *display
+/// range*: `0 .. 100` printing no decimals says how wide the view is, and says
+/// it well. A marker sentence is a statement of *where one line is*, and a
+/// marker at `1.4` described as being "at 1" names a coordinate the figure does
+/// not draw it at -- an exact-looking number that is simply wrong, which is
+/// worse in a scientific export than a longer one that is right.
+///
+/// So the *notation* is still the axis's -- fixed point stays fixed point, an
+/// exponent axis stays exponent, and the `<desc>` never reads in a different
+/// form from the numbers printed beside the plot -- while the decimals grow
+/// until the text parses back to the very `f64` the specification carries. That
+/// is the value's own bound in both directions: it cannot print a digit the
+/// number does not hold, and it stops the moment the number is stated.
+fn marker_number(value: f64, notation: AxisNotation) -> String {
+    let normalized = normalized_zero(value);
+    let AxisNotation::Fixed(decimals) = notation else {
+        return format!("{normalized:e}");
+    };
+    // A value fixed point rounds away to nothing keeps the escalation it
+    // already had. `0.0001` on a `0 .. 100` axis is stated as `1e-4` rather
+    // than as four decimal places of leading zeros: both are the same number,
+    // and the exponent is the one a reader can take in at a glance.
+    if rounds_away(value, &format_number(value, decimals)) {
+        return format!("{normalized:e}");
+    }
+    for places in decimals..=MAX_AXIS_DECIMALS {
+        let text = format_number(value, places);
+        if text.parse::<f64>() != Ok(normalized) {
+            continue;
+        }
+        // Bounded like an axis end, and for the same reason: a coordinate that
+        // needs every decimal an `f64` holds prints a string nobody reads as a
+        // number, and the exponent form states the same value in fewer
+        // characters without dropping any of it.
+        return if text.chars().count() > MAX_AXIS_LABEL_CHARS {
+            format!("{normalized:e}")
+        } else {
+            text
+        };
+    }
+    // No fixed-point form this side of the `f64`'s own limit states this value,
+    // which is the case exponent notation exists for.
+    format!("{normalized:e}")
 }
 
 /// How many decimals this domain's two ends need to remain two numbers.
