@@ -549,13 +549,20 @@ line the stick only touches. Marks are grouped by position and then by form, and
 within each form all but one are covered.
 
 A measured zero draws a short mark on the zero line rather than a stick of no
-length, and the description says every drawn value is zero — but only where
-the drawing agrees. A window whose samples are all zero can still draw a line
-that is not, because clipping interpolates at the edge and a segment running out
-to a non-zero neighbour rises away from the axis inside the window. The sentence
-says *drawn*, so it asks the interpolated edges too. A peakless spectrum
-and a spectrum with no points are different facts about a sample, and they had
-been the same picture.
+length, and the description says every drawn value is zero — but only where the
+drawing agrees, and the drawing is what it asks. The sentence says *drawn*, so
+it reads the geometry the renderer writes rather than the samples that happen to
+fall in range, and those two sets differ in **both** directions. A window whose
+samples are all zero can still draw a line that is not, because clipping
+interpolates at the edge and a segment running out to a non-zero neighbour rises
+away from the axis inside it. And a window holding no sample at all can still
+draw a line that is entirely zero, because a segment straddling it is drawn from
+one interpolated edge to the other — a trace lying flat along zero across the
+whole view, which a rule reading only the samples in range had nothing to say
+about at all. Nothing is interpolated for a discrete series: a stick outside the
+window is a measurement outside the window. A peakless spectrum and a spectrum
+with no points are different facts about a sample, and they had been the same
+picture.
 
 A trace that reaches the drawn window always leaves a mark. A single sample, a
 series whose samples repeat one position, and a zero-width visible window all

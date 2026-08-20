@@ -130,10 +130,10 @@ Full source, exported whole:
 
 | scene | source | SVG bytes | SVG elements | `<text>` nodes |
 | --- | ---: | ---: | ---: | ---: |
-| chromatogram-100k | 100,000 | 1,614,222 | 12 | 5 |
-| profile-dense-60k | 60,000 | 969,545 | 13 | 6 |
-| centroid-dense-20k | 20,000 | 484,129 | 12 | 5 |
-| transfer-bound-500k | 500,000 | 8,066,281 | 13 | 6 |
+| chromatogram-100k | 100,000 | 2,214,315 | 12 | 5 |
+| profile-dense-60k | 60,000 | 1,329,647 | 13 | 6 |
+| centroid-dense-20k | 20,000 | 544,160 | 12 | 5 |
+| transfer-bound-500k | 500,000 | 13,066,451 | 13 | 6 |
 
 The same scenes reduced to 900 columns and exported *as a reduction* — here
 under `MinMaxPerColumn`, the greatest and the least value of each column
@@ -141,10 +141,10 @@ whatever their signs, which is **not** the rule the screen table above used:
 
 | scene | source | drawn | SVG bytes |
 | --- | ---: | ---: | ---: |
-| chromatogram-100k | 100,000 | 1,800 | 30,758 |
-| profile-dense-60k | 60,000 | 1,800 | 30,967 |
-| centroid-dense-20k | 20,000 | 1,800 | 45,100 |
-| transfer-bound-500k | 500,000 | 1,800 | 30,945 |
+| chromatogram-100k | 100,000 | 1,800 | 38,020 |
+| profile-dense-60k | 60,000 | 1,800 | 41,869 |
+| centroid-dense-20k | 20,000 | 1,800 | 50,531 |
+| transfer-bound-500k | 500,000 | 1,800 | 41,847 |
 
 Two per column in every row, because these scenes have no column so flat that
 its greatest and its least value are the same point. The screen's rows drew
@@ -154,9 +154,20 @@ an all-positive column. Both reductions are defensible; they are not the same
 reduction, and the contract names which one a figure used — see *Two reduction
 rules, named apart*.
 
-A full-range export of the 500k scene is **261× larger** than the reduction of
-it (8,066,281 vs 30,945 bytes). That ratio is the difference candidate A silently
-elided.
+A full-range export of the 500k scene is **312× larger** than the reduction of
+it (13,066,451 vs 41,847 bytes). That ratio is the difference candidate A
+silently elided.
+
+Every count in both tables is larger than it was while geometry precision was
+fixed at three decimals rather than derived from the geometry. The escalation is
+what keeps distinct measurements distinct in the file, and on these scenes it is
+the **value** axis that asks for it: a hundred thousand noisy points always hold
+two consecutive samples whose projected heights are a small fraction of a figure
+unit apart, and three decimals wrote both of them at one height, flattening that
+segment permanently. The price is measured rather than assumed — roughly +35% on
+a reduced export and +62% on a full-range one — and it is paid only where the
+geometry asks. The five edge scenes below, and every figure in the deterministic
+suite, are byte-for-byte what they were.
 
 Reduction cost alone, without rendering: 217 µs (20k) to 2.30 ms (500k).
 
@@ -202,13 +213,17 @@ timings are not.** Across four runs under varying machine load:
 | chromatogram-100k | 32.0 ms – 113.3 ms |
 | transfer-bound-500k | 166.3 ms – 771.1 ms |
 
-The byte counts were byte-identical in all four runs (`1,614,222` and
-`8,066,281` every time) while the timings moved by up to 4.6×. These are
-order-of-magnitude facts about one loaded laptop, not a product guarantee, and
-they are the reason timing alone did not choose the renderer.
+The byte counts were byte-identical in every run (`2,214,315` and `13,066,451`
+every time) while the timings moved by up to 4.6×. These are order-of-magnitude
+facts about one loaded laptop, not a product guarantee, and they are the reason
+timing alone did not choose the renderer. The ranges above were observed on the
+earlier three-decimal output; the medians measured since — 33.8 ms and 178.9 ms
+— still fall inside them.
 
 Peak working set of the whole harness process — four scenes resident, including
-the 500k one, plus an 8 MB output string: **46 MB**.
+the 500k one, plus a 13 MB output string: **60 MB**, measured over three runs.
+It was 46 MB against the 8 MB output string the same harness produced before
+precision was derived from the geometry.
 
 Edge scenes, all five:
 

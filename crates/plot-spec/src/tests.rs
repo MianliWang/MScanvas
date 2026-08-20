@@ -3894,6 +3894,79 @@ fn distinct_measurements_survive_coordinate_serialization() {
     );
 }
 
+/// Distinct intensities are not merged by the way coordinates are written.
+///
+/// The precision decision protected the domain axis and read only `series.x()`,
+/// so a trace whose samples are far apart across the plot and a hair apart up
+/// it kept three decimals: on the smallest panel the contract accepts, values
+/// `0.5` and `0.500001` of a `0 .. 1` range both reached `y="69.000"`, and a
+/// genuinely sloped trace was exported as a flat one. Nothing in the file said
+/// the slope had been rounded away, and no zoom brings it back.
+#[test]
+fn distinct_intensities_survive_coordinate_serialization() {
+    let panel = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Profile,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(100.0, 200.0),
+        domain(0.0, 1.0),
+        vec![series(vec![100.0, 200.0], vec![0.5, 0.500_001])],
+    )
+    .expect("two well-separated m/z whose intensities are a hair apart");
+    let document = svg::render(
+        &FigureSpec::new(
+            FigureTheme::Light,
+            FigureSize::new(
+                MIN_FIGURE_WIDTH,
+                MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT,
+            )
+            .expect("the smallest figure the contract accepts"),
+            vec![panel],
+        )
+        .expect("one panel"),
+    );
+
+    let drawn = path_data(&document);
+    let vertices: Vec<&str> = drawn
+        .split(['M', 'L'])
+        .filter(|piece| !piece.is_empty())
+        .collect();
+    assert_eq!(vertices.len(), 2, "both vertices are drawn: {drawn:?}");
+    let heights: Vec<Option<&str>> = vertices
+        .iter()
+        .map(|vertex| vertex.split(' ').nth(1))
+        .collect();
+    assert!(
+        heights[0] != heights[1],
+        "the trace keeps its slope rather than going flat: {heights:?}",
+    );
+
+    // The domain axis alone would never have asked for this. These two samples
+    // are a hundred m/z apart; it is the value axis that needed the decimals,
+    // which is exactly what reading only `x` missed.
+    let positions: Vec<Option<&str>> = vertices
+        .iter()
+        .map(|vertex| vertex.split(' ').next())
+        .collect();
+    assert!(
+        positions[0] != positions[1],
+        "their positions were never in doubt: {positions:?}",
+    );
+
+    // A figure whose geometry never comes that close on either axis is
+    // untouched, at the readable default.
+    let ordinary = svg::render(&figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )));
+    assert!(
+        ordinary.contains("viewBox=\"0 0 900.000 500.000\""),
+        "no escalation is forced on a figure that does not need one: {ordinary}",
+    );
+}
+
 /// Every series says what it drew, not just the panel.
 ///
 /// A panel is not one drawable thing. A measurement inside the window read
@@ -4499,6 +4572,76 @@ fn an_interpolated_rise_is_not_described_as_all_zero() {
     assert!(
         description_of(&svg::render(&figure_of(flat))).contains("Every drawn value is zero."),
         "a genuinely zero trace is still disclosed",
+    );
+}
+
+/// An all-zero claim reads the geometry drawn, not the samples in range.
+///
+/// The guard against claiming all-zero for an interpolated rise left the
+/// inverse case unsaid. A joined trace can cross the window with no sample
+/// inside it at all -- `x = [-1, 2]`, `y = [0, 0]` seen through `0 .. 1` -- and
+/// the renderer draws a flat line along zero across the whole view, while the
+/// fold over samples in range has nothing to fold and answers `None`. The
+/// reader of that file was shown a trace and told nothing about what it reads.
+#[test]
+fn an_entirely_interpolated_zero_trace_is_disclosed_as_all_zero() {
+    let crossing = |values: Vec<f64>| {
+        PanelSpec::new(
+            PlotKind::Chromatogram,
+            AxisSpec::new(label("Time"), UnitState::Unreported),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(-1.0, 2.0),
+            domain(0.0, 5.0),
+            vec![series(vec![-1.0, 2.0], values)],
+        )
+        .expect("a trace spanning the window")
+        .with_visible_domain(domain(0.0, 1.0))
+        .expect("a window with no sample of its own inside it")
+    };
+
+    // Flat along zero across the whole window. Every vertex the renderer
+    // writes here is interpolated, and every one of them is zero.
+    let document = svg::render(&figure_of(crossing(vec![0.0, 0.0])));
+    assert!(document.contains("<path "), "a line is drawn: {document}");
+    let description = description_of(&document);
+    assert!(
+        description.contains("Every drawn value is zero."),
+        "and the reader is told what it is drawn at: {description:?}",
+    );
+
+    // The case guarded earlier is unchanged: an interpolated rise is not flat,
+    // and must not be described as though it were.
+    let rising = description_of(&svg::render(&figure_of(crossing(vec![0.0, 5.0]))));
+    assert!(
+        !rising.contains("Every drawn value is zero."),
+        "an interpolated rise is not described as all zero: {rising:?}",
+    );
+
+    // A discrete panel interpolates nothing. Its two measured zeros lie outside
+    // the window, so no mark is invented at the boundary, nothing is drawn, and
+    // nothing is claimed about what is.
+    let sticks = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Centroid,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(-1.0, 2.0),
+        domain(0.0, 5.0),
+        vec![series(vec![-1.0, 2.0], vec![0.0, 0.0])],
+    )
+    .expect("two measured zeros")
+    .with_visible_domain(domain(0.0, 1.0))
+    .expect("a window between them");
+    let document = svg::render(&figure_of(sticks));
+    assert!(
+        !document.contains("<path "),
+        "no mark is invented at the window edge: {document}",
+    );
+    assert!(
+        !description_of(&document).contains("Every drawn value is zero."),
+        "and a panel drawing nothing claims no drawn value: {}",
+        description_of(&document),
     );
 }
 

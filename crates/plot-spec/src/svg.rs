@@ -203,54 +203,100 @@ impl Precision {
 
 /// How many decimals this figure's drawn geometry needs to stay distinct.
 ///
-/// Three decimals is readable and is what almost every figure gets. On its own
-/// it is also a quantizer: two measurements whose projected positions differ by
-/// less than half a thousandth of a figure unit can serialize to one
-/// coordinate, and two same-signed sticks written at one x are one stick -- the
-/// shorter is
-/// inside the taller, at every zoom, permanently. A vector format that loses a
-/// measurement to its own number formatting has discarded the thing it exists
-/// to carry, and no viewer can get it back.
+/// Three decimals is readable and is what an ordinary figure gets. On its own
+/// it is also a quantizer, and on **both** axes -- but what it destroys differs
+/// by axis, so the two are asked different questions.
 ///
-/// Disclosing the collision in words was the alternative, and it is the worse
-/// one: the geometry would still be gone, and the sentence would be explaining
-/// an artefact this renderer had just created rather than a fact about the
-/// sample. So the geometry is kept instead. [`covered_marks`] is left exactly
-/// as it was -- a statement about measurements that share a *domain position*,
-/// which no precision can separate and which the drawing genuinely cannot show
-/// -- and this keeps everything that does *not* share one separable.
+/// Across the **domain axis** the question is whether two marks land on top of
+/// each other. Two drawn positions closer than half a thousandth of a figure
+/// unit serialize to one x, and two same-signed sticks written at one x are one
+/// stick: the shorter is inside the taller at every zoom, permanently. Position
+/// is ordered, so the closest pair is an adjacent pair and one pass finds it.
 ///
-/// Derived rather than raised across the board: the smallest gap between two
-/// distinct drawn positions decides it, it never falls below the readable
-/// floor, and it stops at the `f64`'s own limit. An ordinary figure comes out
-/// byte for byte what it was.
-fn coordinate_precision(figure: &FigureSpec) -> Precision {
-    let (left, right) = (MARGIN_LEFT, figure.size.width() - MARGIN_RIGHT);
+/// Up the **value axis** nothing is hidden -- two marks at one height are still
+/// two marks, at their own positions -- and what is destroyed instead is
+/// *slope*. Two consecutive vertices of a drawn line written at one height make
+/// that segment horizontal: on the smallest panel the contract accepts, values
+/// `0.5` and `0.500001` of a `0 .. 1` range both reached `69.000`, and a
+/// genuinely sloped trace was exported as a flat one. So the value axis is
+/// asked about consecutive drawn vertices, in the order the path visits them,
+/// which is the pair a flattened segment is actually between.
+///
+/// Deliberately not the closest pair anywhere in the series. Intensity is not
+/// ordered and finding that pair would mean sorting it, and on real data the
+/// answer is the smallest coincidence in a large sample: a hundred thousand
+/// noisy points always hold two that are near-identical somewhere, so every
+/// dense figure would escalate to near the `f64`'s own limit, double in size,
+/// and preserve a distinction between two intensities nothing in the drawing
+/// relates to each other. Worse, that answer is a knife edge -- perturb one
+/// input value by a single unit in the last place and a different pair becomes
+/// the closest, which can move the whole document's precision. A figure's bytes
+/// should not turn on which two of half a million samples happened to coincide.
+///
+/// Disclosing a collision in words was the alternative to all of this, and it
+/// is the worse one: the geometry would still be gone, and the sentence would
+/// be explaining an artefact this renderer had just created rather than a fact
+/// about the sample. [`covered_marks`] is left exactly as it was -- a statement
+/// about measurements that share a *domain position*, which no precision can
+/// separate and which the drawing genuinely cannot show -- and this keeps
+/// everything that does *not* share one separable.
+///
+/// The floor is never gone below and the ceiling is the `f64`'s own, so a
+/// figure whose geometry never comes that close is unchanged, byte for byte.
+fn coordinate_precision(figure: &FigureSpec, frames: &[Frame]) -> Precision {
     let mut smallest = f64::INFINITY;
-    for panel in &figure.panels {
+    for (panel, frame) in figure.panels.iter().zip(frames) {
         let drawn = panel.drawn_domain();
+        let values = panel.value_domain;
         for series in &panel.series {
-            // Source positions rather than everything the path will contain.
-            // A clipped segment's endpoint is not a measurement -- it is the
-            // window's own edge -- so a clip landing on a sample duplicates a
-            // vertex the path already carries and loses nothing. What must
-            // stay distinct is what was measured.
+            let height = |value: f64| project(value, values, frame.plot_bottom, frame.plot_top);
+            let mut across: Option<f64> = None;
+            let mut up: Option<f64> = None;
+            let mut gap = |last: &mut Option<f64>, next: f64, ordered: bool| {
+                if let Some(previous) = *last {
+                    let apart = if ordered {
+                        next - previous
+                    } else {
+                        (next - previous).abs()
+                    };
+                    if apart > 0.0 {
+                        smallest = smallest.min(apart);
+                    }
+                }
+                *last = Some(next);
+            };
+            // A joined series draws two vertices it never measured: the
+            // interpolation where the window cuts the segment it enters on and
+            // the one it leaves on. They are visited before and after every
+            // sample in range, and for a segment straddling the window with no
+            // sample inside it they are the only two vertices there are -- so
+            // leaving them out let the entire visible slope of a crossing trace
+            // flatten with nothing to say it ever had one.
             //
-            // The contract guarantees a non-decreasing domain axis and the
-            // projection is monotonic, so the drawn positions arrive in order
-            // and one pass over them finds the smallest gap.
-            let mut previous: Option<f64> = None;
-            for at in series.x() {
+            // Nothing is added for a discrete series. A stick outside the
+            // window is a measurement outside the window, and inventing a value
+            // at the boundary for it is the error the clipping design exists to
+            // avoid.
+            let clipped = panel.joins(series);
+            if clipped && let Some(value) = value_at(series, drawn.low()) {
+                gap(&mut up, height(value), false);
+            }
+            for (at, value) in series.x().iter().zip(series.y().iter()) {
                 if *at < drawn.low() || *at > drawn.high() {
                     continue;
                 }
-                let projected = project(*at, drawn, left, right);
-                if let Some(last) = previous
-                    && projected > last
-                {
-                    smallest = smallest.min(projected - last);
-                }
-                previous = Some(projected);
+                // The contract guarantees a non-decreasing domain and the
+                // projection is monotonic, so these arrive in order and the
+                // difference needs no absolute value.
+                gap(
+                    &mut across,
+                    project(*at, drawn, frame.left, frame.right),
+                    true,
+                );
+                gap(&mut up, height(*value), false);
+            }
+            if clipped && let Some(value) = value_at(series, drawn.high()) {
+                gap(&mut up, height(value), false);
             }
         }
     }
@@ -368,6 +414,52 @@ fn covered_marks(series: &SeriesSpec, drawn: Domain) -> usize {
 /// has to answer the one that matches the picture.
 fn crosses_window(series: &SeriesSpec, drawn: Domain) -> bool {
     value_at(series, drawn.low()).is_some() || value_at(series, drawn.high()).is_some()
+}
+
+/// Whether this panel draws anything, and draws nothing but zero.
+///
+/// *Drawn*, not *measured inside the window*, and the two are different sets.
+/// A joined series also draws the interpolation at each edge of the window, and
+/// for a segment straddling the window with no sample inside it that
+/// interpolation is the only geometry there is. Reading the samples alone was
+/// wrong in both directions: it claimed all-zero for a window whose clipped
+/// edge rises away from the axis, and then, once that was guarded, withheld the
+/// sentence from a window drawn entirely along zero -- `x = [-1, 2]`,
+/// `y = [0, 0]` seen through `0 .. 1` draws a flat zero line across the whole
+/// view while the fold over samples has nothing to fold and answers `None`.
+/// The reader of that file was told nothing about a trace they can see.
+///
+/// Nothing is interpolated for a discrete series. A stick outside the window is
+/// a measurement outside the window, and inventing a value at the boundary for
+/// it would draw intensity at a position nobody measured -- the error the whole
+/// clipping design exists to avoid.
+///
+/// False for a panel that draws nothing at all: there is no drawn value to be
+/// zero, and an empty window is already its own disclosure.
+fn draws_only_zero(panel: &PanelSpec, drawn: Domain) -> bool {
+    let mut drew = false;
+    for series in &panel.series {
+        for (at, value) in series.x().iter().zip(series.y().iter()) {
+            if *at < drawn.low() || *at > drawn.high() {
+                continue;
+            }
+            drew = true;
+            if *value != 0.0 {
+                return false;
+            }
+        }
+        if panel.joins(series) {
+            for edge in [drawn.low(), drawn.high()] {
+                if let Some(value) = value_at(series, edge) {
+                    drew = true;
+                    if value != 0.0 {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    drew
 }
 
 /// Whether a clipped trace reaches below zero at a window edge.
@@ -668,32 +760,17 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String], position: (usize, u
             // is one.
             sentences.push(format!("All {negatives} drawn values are negative."));
         }
-    } else if panel
-        .series
-        .iter()
-        .flat_map(|series| series.x().iter().zip(series.y().iter()))
-        .filter(|(at, _)| **at >= drawn.low() && **at <= drawn.high())
-        .fold(None, |all_zero, (_, value)| {
-            Some(all_zero.unwrap_or(true) && *value == 0.0)
-        })
-        == Some(true)
-        && !panel.series.iter().any(|series| {
-            // A window whose only samples are zero can still draw a line that
-            // is not: clipping interpolates at the edge, so a segment running
-            // out to a non-zero neighbour rises away from the axis inside the
-            // window. The samples are all zero and the drawing is not, and the
-            // sentence below says *drawn*.
-            panel.joins(series)
-                && [drawn.low(), drawn.high()]
-                    .into_iter()
-                    .filter_map(|edge| value_at(series, edge))
-                    .any(|value| value != 0.0)
-        })
-    {
+    } else if draws_only_zero(panel, drawn) {
         // Measured zeros are not missing data, and they draw almost nothing --
         // a stick of no length, a trace along its own axis. Said in words, so a
         // reader is not left deciding whether the instrument reported nothing
         // or reported nothing above zero.
+        //
+        // Asked of the drawing rather than of the samples, because the sentence
+        // says *drawn*: a window whose only samples are zero can still show a
+        // line rising away from the axis where clipping interpolates out to a
+        // non-zero neighbour, and a window with no sample at all can still show
+        // a trace lying flat along zero across its whole width.
         sentences.push("Every drawn value is zero.".to_owned());
     } else if shows_zero
         && panel
@@ -801,9 +878,13 @@ struct Frame {
 #[must_use]
 pub fn render(figure: &FigureSpec) -> String {
     let colours = palette(figure.theme);
-    let precision = coordinate_precision(figure);
     let width = figure.size.width();
     let height = figure.size.height();
+    // Where every panel's plotting area is, computed before anything is
+    // written because the precision decision has to project the drawn geometry
+    // into it first.
+    let frames = panel_frames(figure, width, height);
+    let precision = coordinate_precision(figure, &frames);
 
     let mut out = String::with_capacity(4_096);
     out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -823,7 +904,7 @@ pub fn render(figure: &FigureSpec) -> String {
     // did -- and one of the things it must report is a marker label the page
     // had no room for. The document's order is unchanged: this only computes
     // the body earlier than it appends it.
-    let (body, unplaced) = render_panels(figure, width, height, &colours, precision);
+    let (body, unplaced) = render_panels(figure, &frames, &colours, precision);
 
     // Whether the visible heading can be drawn at a readable size, decided
     // before the description is written so the words can report it when it
@@ -908,47 +989,64 @@ pub fn render(figure: &FigureSpec) -> String {
     out
 }
 
-/// Draws every panel, and reports the marker labels each had no room for.
+/// The plotting area of every panel, in figure units.
 ///
 /// Panels stack in the order the specification gives them, sharing the figure's
 /// height. One panel today; the arithmetic is already the general one so a
-/// second does not change this function's shape.
+/// second does not change its shape.
+///
+/// Its own function because two passes need the same answer: the precision
+/// decision has to project the drawn geometry into these frames before a byte
+/// is written, and the renderer then projects it again to write it. A second
+/// copy of this arithmetic is exactly how the two would come to disagree about
+/// where the plot is.
+fn panel_frames(figure: &FigureSpec, width: f64, height: f64) -> Vec<Frame> {
+    let panel_count = figure.panels.len();
+    let usable = height - MARGIN_TOP - MARGIN_BOTTOM;
+    let panel_height = usable / panel_count as f64;
+    figure
+        .panels
+        .iter()
+        .enumerate()
+        .map(|(index, panel)| {
+            let top = MARGIN_TOP + panel_height * index as f64;
+            let bottom = MARGIN_TOP + panel_height * (index as f64 + 1.0);
+            let plot_top = top + 8.0;
+            let plot_bottom = bottom - 34.0;
+            let values = panel.value_domain;
+            // Where zero falls in the value range, so a negative value hangs
+            // below it and a positive one rises above it. A range that never
+            // reaches zero puts the line at the nearer edge rather than off the
+            // panel.
+            let zero_y = if values.low() <= 0.0 && values.high() >= 0.0 {
+                project(0.0, values, plot_bottom, plot_top)
+            } else if values.high() < 0.0 {
+                plot_top
+            } else {
+                plot_bottom
+            };
+            Frame {
+                left: MARGIN_LEFT,
+                right: width - MARGIN_RIGHT,
+                plot_top,
+                plot_bottom,
+                zero_y,
+            }
+        })
+        .collect()
+}
+
+/// Draws every panel, and reports the marker labels each had no room for.
 fn render_panels(
     figure: &FigureSpec,
-    width: f64,
-    height: f64,
+    frames: &[Frame],
     colours: &Palette,
     precision: Precision,
 ) -> (String, Vec<Vec<String>>) {
     let mut body = String::with_capacity(4_096);
     let mut unplaced = Vec::with_capacity(figure.panels.len());
-    let panel_count = figure.panels.len();
-    let usable = height - MARGIN_TOP - MARGIN_BOTTOM;
-    let panel_height = usable / panel_count as f64;
-    for (index, panel) in figure.panels.iter().enumerate() {
-        let top = MARGIN_TOP + panel_height * index as f64;
-        let bottom = MARGIN_TOP + panel_height * (index as f64 + 1.0);
-        let plot_top = top + 8.0;
-        let plot_bottom = bottom - 34.0;
-        let values = panel.value_domain;
-        // Where zero falls in the value range, so a negative value hangs below
-        // it and a positive one rises above it. A range that never reaches zero
-        // puts the line at the nearer edge rather than off the panel.
-        let zero_y = if values.low() <= 0.0 && values.high() >= 0.0 {
-            project(0.0, values, plot_bottom, plot_top)
-        } else if values.high() < 0.0 {
-            plot_top
-        } else {
-            plot_bottom
-        };
-        let frame = Frame {
-            left: MARGIN_LEFT,
-            right: width - MARGIN_RIGHT,
-            plot_top,
-            plot_bottom,
-            zero_y,
-        };
-        unplaced.push(render_panel(&mut body, panel, &frame, colours, precision));
+    for (panel, frame) in figure.panels.iter().zip(frames) {
+        unplaced.push(render_panel(&mut body, panel, frame, colours, precision));
     }
     (body, unplaced)
 }
