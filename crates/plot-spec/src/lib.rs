@@ -73,4 +73,26 @@ mod tests {
 
         assert_eq!(decoded, spec);
     }
+
+    // TEMPORARY PROBE -- DELETE. A disposable trigger check, not product code.
+    // This branch and its pull request are closed and deleted immediately.
+    #[test]
+    fn temporary_probe_a_new_plot_spec_carries_no_series() {
+        let spec = PlotSpec::new(
+            PlotKind::CentroidSpectrum,
+            AxisSpec {
+                label: "m/z".into(),
+                unit: None,
+            },
+            AxisSpec {
+                label: "Intensity".into(),
+                unit: None,
+            },
+        );
+
+        assert_eq!(spec.schema_version, PlotSpec::SCHEMA_VERSION);
+        assert_eq!(spec.kind, PlotKind::CentroidSpectrum);
+        assert_eq!(spec.title, None);
+        assert!(spec.series.is_empty());
+    }
 }

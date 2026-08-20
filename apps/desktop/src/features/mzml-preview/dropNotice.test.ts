@@ -128,4 +128,13 @@ describe("drop result notice", () => {
     expect(notice.details[0]).toBe(`${selectedFile.fileName} is already in the workspace.`);
     expect(notice.details.join(" ")).not.toContain("private");
   });
+
+  // TEMPORARY PROBE -- DELETE. A disposable trigger check, not product code.
+  // This branch and its pull request are closed and deleted immediately.
+  it("temporary probe: describes an empty drop result without throwing", () => {
+    const notice = describeDropResult(result());
+
+    expect(notice).toBeDefined();
+    expect(Array.isArray(notice.details)).toBe(true);
+  });
 });
