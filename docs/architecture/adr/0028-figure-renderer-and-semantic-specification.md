@@ -587,6 +587,28 @@ in the same place. The precision grows until they stay apart. It does not grow
 for a measured zero: that mark is the horizontal tick above, and a tick has no
 height to lose.
 
+Precision reaches only as far as the projection does. `project` maps the
+declared value range onto the plotting area in `f64`, and a wide enough range
+makes that mapping lossy before anything is serialized: against `0 .. 1e20` a
+measured intensity of `1` lands on exactly the baseline coordinate — a
+difference of zero against an ulp of `5.7e-14`. Past that boundary the height is
+gone before a digit is written, and no number of decimals recovers it, because
+the two coordinates were already equal and any consumer of the file recomputes
+them in the same double precision.
+
+So the boundary is **disclosed** rather than papered over. `source value == 0`
+and `projected endpoint == projected baseline` are different statements, and
+only the first is a fact about the sample; treating the second as a measured
+zero is the renderer reporting a different scientific value because the picture
+is easier that way. The mark keeps its position and its tick — the only visible
+geometry left to it — the figure never calls it zero, and the description states
+that a real measurement lies below what this value range can show. A minimum
+stick height was refused: it would draw an intensity nobody measured. Widening
+the value range was refused: it would restate the figure the specification asked
+for. Refusing the figure outright was refused too: the condition depends on the
+renderer's own layout, which the contract deliberately knows nothing about, and
+a wide dynamic range is real data rather than a self-inconsistent specification.
+
 A trace that reaches the drawn window always leaves a mark. A single sample, a
 series whose samples repeat one position, and a zero-width visible window all
 produce a path of bare move commands, which paints nothing and reads as *no

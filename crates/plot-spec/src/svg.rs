@@ -314,7 +314,7 @@ fn coordinate_precision(figure: &FigureSpec, frames: &[Frame]) -> Precision {
                 // because every stick starts there: the baseline is the
                 // coordinate each one has to stay distinct from, and its
                 // neighbours are the domain axis's business.
-                if !joined && !draws_as_zero_tick(top, frame.zero_y) {
+                if !joined && !draws_without_length(top, frame.zero_y) {
                     let mut from_baseline = Some(frame.zero_y);
                     gap(&mut from_baseline, top, false);
                 }
@@ -460,20 +460,35 @@ fn covered_marks(series: &SeriesSpec, drawn: Domain) -> usize {
     covered
 }
 
-/// Whether a discrete mark is drawn as the short tick a measured zero gets.
+/// Whether a discrete mark has any length left once it has been projected.
 ///
-/// Shared with the renderer rather than restated in each place that needs the
-/// answer. The precision decision has to ask exactly the question the drawing
-/// will ask -- which marks have a length, and which are a horizontal tick with
-/// no height to lose -- and a second copy of this comparison is how the two
-/// would come to disagree about it.
+/// A question about the **drawing**. A stick of no length paints nothing, so a
+/// mark that answers yes is written as the short horizontal tick instead --
+/// visible, and claiming no height, which is all the geometry can honestly do.
 ///
-/// Compared on the projected coordinates rather than on the source value,
-/// because that is what the drawing compares: a value so small against its
-/// range that it lands on the baseline anyway is a tick, and asking the source
-/// would have called it a stick and then drawn a tick.
-fn draws_as_zero_tick(top: f64, zero_y: f64) -> bool {
+/// Shared with everything that needs the answer rather than restated: the
+/// precision decision has to ask exactly the question the drawing will ask, and
+/// a second copy of this comparison is how the two would come to disagree.
+fn draws_without_length(top: f64, zero_y: f64) -> bool {
     (top - zero_y).abs() <= f64::EPSILON
+}
+
+/// Whether a discrete mark is a measured zero.
+///
+/// A question about the **measurement**, and deliberately not the one above.
+/// Reading the projection to answer it was the defect: `project` maps the value
+/// range onto the plotting area in `f64`, and a wide enough range makes that
+/// mapping lossy before a single digit is serialized. Against `0 .. 1e20` a
+/// measured intensity of `1` projects to exactly the baseline coordinate -- a
+/// difference of zero against an ulp of `5.7e-14` -- so a real measurement was
+/// classified as a zero because the arithmetic could not hold it apart.
+///
+/// `source value == 0` and `projected endpoint == projected baseline` are
+/// different statements, and only the first is a fact about the sample. The
+/// renderer must not report a different scientific value because the picture is
+/// easier that way.
+fn is_measured_zero(value: f64) -> bool {
+    value == 0.0
 }
 
 /// Whether a joined series draws anything into a window holding no sample.
@@ -546,7 +561,12 @@ fn enters_below_zero(series: &SeriesSpec, drawn: Domain) -> bool {
 /// The sentence an export owes the person reading it rather than the person who
 /// made it: whether these are the source points or a reduction, and whether the
 /// file said what the points are at all.
-fn panel_description(panel: &PanelSpec, unplaced: &[usize], position: (usize, usize)) -> String {
+fn panel_description(
+    panel: &PanelSpec,
+    unplaced: &[usize],
+    frame: &Frame,
+    position: (usize, usize),
+) -> String {
     let mut sentences = Vec::new();
 
     // Which panel this is, where there is more than one. Panels stack in the
@@ -873,6 +893,67 @@ fn panel_description(panel: &PanelSpec, unplaced: &[usize], position: (usize, us
         ));
     }
 
+    // A measurement that is not zero, drawn as though it had no height.
+    //
+    // The projection is `f64` arithmetic over the declared value range, and a
+    // range wide enough makes it lossy before anything is serialized: against
+    // `0 .. 1e20` a measured intensity of `1` lands on exactly the baseline
+    // coordinate. The mark then has no length to draw and is written as the
+    // short horizontal tick -- which is the geometry a *measured zero* uses,
+    // and this measurement is not a measured zero.
+    //
+    // Nothing recovers it in the drawing, and this figure does not pretend
+    // otherwise. More decimals cannot help: the two coordinates were already
+    // equal before serialization, and any consumer of the file recomputes them
+    // in the same double precision. A minimum stick height would draw an
+    // intensity nobody measured, and widening the value range would restate the
+    // figure the specification asked for -- both are the renderer deciding a
+    // different scientific value to make the picture convenient, which is the
+    // one thing this contract exists to prevent.
+    //
+    // So it is said in words instead. The mark keeps its position and stays
+    // visible, the figure never calls it zero -- the all-zero sentence reads
+    // source values and cannot fire here -- and the reader is told that a real
+    // measurement lies below what this value range can show.
+    //
+    // Counted for the panel rather than attributed per series: a panel holds at
+    // most one series drawn from the zero line, because roles are unique and a
+    // baseline is always joined, so there is no attribution to lose.
+    let unshowable = panel
+        .series
+        .iter()
+        .filter(|series| !panel.joins(series))
+        .flat_map(|series| series.x().iter().zip(series.y().iter()))
+        .filter(|(at, value)| {
+            **at >= drawn.low()
+                && **at <= drawn.high()
+                && !is_measured_zero(**value)
+                && draws_without_length(
+                    project(
+                        **value,
+                        panel.value_domain,
+                        frame.plot_bottom,
+                        frame.plot_top,
+                    ),
+                    frame.zero_y,
+                )
+        })
+        .count();
+    if unshowable > 0 {
+        sentences.push(format!(
+            "{unshowable} drawn {} not zero but {} too small to show against the value \
+             range of this figure; {} marked on the zero line without a height, where a \
+             measured zero is marked too.",
+            if unshowable == 1 {
+                "measurement is"
+            } else {
+                "measurements are"
+            },
+            if unshowable == 1 { "is" } else { "are" },
+            if unshowable == 1 { "it is" } else { "they are" },
+        ));
+    }
+
     // Every marker line the figure actually draws, each one named and placed.
     //
     // The root element is `role="img"`, and that is what makes this necessary:
@@ -1014,8 +1095,11 @@ pub fn render(figure: &FigureSpec) -> String {
         .panels
         .iter()
         .zip(unplaced.iter())
+        .zip(frames.iter())
         .enumerate()
-        .map(|(index, (panel, missing))| panel_description(panel, missing, (index, panel_count)))
+        .map(|(index, ((panel, missing), frame))| {
+            panel_description(panel, missing, frame, (index, panel_count))
+        })
         .collect::<Vec<_>>()
         .join(" ");
     let mut description = figure.caption.as_ref().map_or_else(
@@ -1513,7 +1597,7 @@ fn render_series(
             // the sample. It is marked instead: a short horizontal tick on the
             // zero line, which has no height and so claims no intensity, but is
             // there to be seen.
-            if draws_as_zero_tick(top, zero_y) {
+            if draws_without_length(top, zero_y) {
                 let _ = write!(
                     path,
                     "M{} {}L{} {}",

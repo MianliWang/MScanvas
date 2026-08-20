@@ -4450,6 +4450,122 @@ fn a_non_zero_mark_keeps_its_length_through_serialization() {
     );
 }
 
+/// A measurement is never called zero because the arithmetic lost its height.
+///
+/// The tick-or-stick decision is a question about the drawing, and it has to
+/// be: a stick of no projected length paints nothing. Reading it as a question
+/// about the *measurement* was the defect. `project` maps the declared value
+/// range onto the plotting area in `f64`, and a wide enough range makes that
+/// lossy before a digit is serialized -- against `0 .. 1e20` a measured
+/// intensity of `1` lands on exactly the baseline coordinate, a difference of
+/// zero against an ulp of `5.7e-14`. The mark was then exported with the
+/// geometry reserved for a measured zero, and no precision could recover it,
+/// because the coordinates were already equal before serialization.
+///
+/// Nothing can put that height back in the picture, so the figure says so
+/// rather than quietly reporting a different scientific value.
+#[test]
+fn a_measurement_below_drawable_resolution_is_disclosed_not_called_zero() {
+    let unshowable = "not zero but";
+    let centroid = |values: Vec<f64>, low: f64, high: f64| {
+        figure_of(
+            PanelSpec::new(
+                PlotKind::Spectrum {
+                    representation: SpectrumRepresentation::Centroid,
+                },
+                AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+                AxisSpec::new(label("Intensity"), UnitState::Unreported),
+                domain(100.0, 200.0),
+                domain(low, high),
+                vec![series(vec![100.0, 200.0], values)],
+            )
+            .expect("a centroid panel"),
+        )
+    };
+
+    // One count against a hundred quintillion. The projection cannot hold the
+    // peak apart from the baseline, so the drawing cannot show its height.
+    let document = svg::render(&centroid(vec![1.0, 1.0e20], 0.0, 1.0e20));
+    let description = description_of(&document);
+    assert!(
+        description.contains("1 drawn measurement is not zero but is too small to show"),
+        "the figure says a real measurement is below what it can show: {description:?}",
+    );
+    assert!(
+        !description.contains("Every drawn value is zero."),
+        "and never calls the sample zero: {description:?}",
+    );
+    // The mark is still drawn, and still where it was measured.
+    assert!(
+        path_data(&document).contains('L'),
+        "the measurement is still marked on the page: {document}",
+    );
+
+    // A genuine measured zero is a different fact and keeps its own semantics:
+    // the same tick, and no claim that anything was too small to draw.
+    let zeroed = description_of(&svg::render(&centroid(vec![0.0, 0.0], 0.0, 1.0e20)));
+    assert!(
+        !zeroed.contains(unshowable),
+        "a measured zero is not described as unshowable: {zeroed:?}",
+    );
+    assert!(
+        zeroed.contains("Every drawn value is zero."),
+        "it is described as the zero it is: {zeroed:?}",
+    );
+
+    // A mixed panel separates them: one measured zero, one collapsed non-zero.
+    let mixed = description_of(&svg::render(&centroid(vec![0.0, 1.0], 0.0, 1.0e20)));
+    assert!(
+        mixed.contains("1 drawn measurement is not zero but is too small to show"),
+        "only the non-zero one is counted: {mixed:?}",
+    );
+    assert!(
+        !mixed.contains("Every drawn value is zero."),
+        "and the panel is not called all-zero: {mixed:?}",
+    );
+
+    // An ordinary non-zero mark is untouched: a stick with a real length, and
+    // nothing claimed about resolution.
+    let ordinary_document = svg::render(&figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )));
+    assert!(
+        path_data(&ordinary_document).contains('V'),
+        "an ordinary peak keeps its stick: {ordinary_document}",
+    );
+    assert!(
+        !description_of(&ordinary_document).contains(unshowable),
+        "and says nothing about resolution",
+    );
+
+    // Below zero the same honesty applies: a negative measurement whose depth
+    // the projection cannot hold is disclosed, not reported as zero.
+    let negative = description_of(&svg::render(&centroid(vec![-1.0, -1.0e20], -1.0e20, 0.0)));
+    assert!(
+        negative.contains("1 drawn measurement is not zero but is too small to show"),
+        "a negative measurement below the resolution is disclosed too: {negative:?}",
+    );
+
+    // A joined trace is not drawn from the zero line at all, so the question is
+    // not asked of it and no such sentence appears.
+    let joined = description_of(&svg::render(&figure_of(
+        PanelSpec::new(
+            PlotKind::Chromatogram,
+            AxisSpec::new(label("Time"), UnitState::Unreported),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(0.0, 10.0),
+            domain(0.0, 1.0e20),
+            vec![series(vec![0.0, 10.0], vec![1.0, 1.0e20])],
+        )
+        .expect("a trace across an extreme range"),
+    )));
+    assert!(
+        !joined.contains(unshowable),
+        "a joined trace is not given the discrete rule: {joined:?}",
+    );
+}
+
 /// Every figure colour clears the contrast floor its role needs.
 ///
 /// The light baseline was `#9a9a9a` on white — 2.81:1, below the 3:1 WCAG asks
