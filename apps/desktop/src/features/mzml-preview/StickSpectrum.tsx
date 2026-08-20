@@ -56,12 +56,14 @@ interface Reduction {
 }
 
 /**
- * Reduces the transferred points to the highest and the lowest value in each
- * column.
+ * Reduces the transferred points to the greatest non-negative and the deepest
+ * negative value in each column.
  *
- * Both extremes, because intensities can legitimately be negative after
- * baseline subtraction: dropping them, or keeping only whichever magnitude is
- * larger, would erase measured signal of the other sign. Keeping extremes is
+ * Both signs, because intensities can legitimately be negative after baseline
+ * subtraction: dropping them, or keeping only whichever magnitude is larger,
+ * would erase measured signal of the other sign. Note what this is *not*: an
+ * all-positive column keeps one value, not two, so this is not a min/max
+ * reduction and the caption below must not call it one. Keeping extremes is
  * also what makes the reduction safe to look at — a tall peak can never be
  * replaced by a shorter neighbour, and no value is drawn that the spectrum
  * does not contain.
@@ -232,11 +234,11 @@ export function StickSpectrum({
       </svg>
       <figcaption className="spectrum-caption">
         {reduction.sticks.length < mz.length
-          ? `Drawn as ${formatSticks(reduction.sticks.length)} from ${mz.length} points, keeping the highest and the lowest value in each column, so a peak spread over several points can appear as one stick.`
+          ? `Drawn as ${formatSticks(reduction.sticks.length)} from ${mz.length} points, keeping the greatest non-negative and the deepest negative value in each column, so a peak spread over several points can appear as one stick.`
           : `Drawn as ${formatSticks(reduction.sticks.length)}, one per point.`}
         {" Horizontal axis: m/z. Vertical axis: intensity, scaled to the point furthest from zero."}
         {reduction.negativeCount > 0
-          ? ` ${reduction.negativeCount} of the points ${reduction.negativeCount === 1 ? "carries" : "carry"} negative intensity; the lowest in each column is drawn below the zero line.`
+          ? ` ${reduction.negativeCount} of the points ${reduction.negativeCount === 1 ? "carries" : "carry"} negative intensity; the deepest negative in each column is drawn below the zero line.`
           : ""}
         {representationKnown
           ? ""

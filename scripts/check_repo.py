@@ -212,16 +212,24 @@ def validate_project_contract(errors: list[str]) -> None:
 CONTINUATION_RE = re.compile(r"\\\n[ \t]*")
 # The same defect reflowed onto one line. What precedes the run is not
 # restricted to a letter: a digit or a closing bracket ends a cut sentence as
-# surely as a word does. What follows it still must be a letter, and that is
-# what separates a broken message from deliberate column alignment — the
-# simulated help fixtures align with runs of spaces before a `:`, never before
-# a word. Which escapes may precede a run is decided per match, in
-# `_reflowed_gap`, rather than by a lookbehind here.
+# surely as a word does. What follows it must be a word, and that is what
+# separates a broken message from deliberate column alignment — the simulated
+# help fixtures align with runs of spaces before a `:`, never before a word.
+# Which escapes may precede a run is decided per match, in `_reflowed_gap`,
+# rather than by a lookbehind here.
+#
+# A `{` opens a word too. A format placeholder is interpolated into the
+# sentence and reads as whatever it names, so a run before `{inside}` is the
+# same broken sentence as a run before a letter — and that is the shape the
+# defect took the second time, in a disclosure a figure writes into its own
+# `<desc>`, which this rule read straight past. `{{` is excluded because it is
+# not a placeholder: it renders one literal brace, which is punctuation and
+# aligns in a column exactly as `:` does.
 #
 # Residual, stated rather than implied: a sentence reflowed onto one line whose
 # next word is a number is not caught. Its two-line form is, by the newline
 # rule above, and that is the form the defect actually takes.
-INLINE_RUN_RE = re.compile(r"[^\s][ ]{2,}[A-Za-z]")
+INLINE_RUN_RE = re.compile(r"[^\s][ ]{2,}(?:[A-Za-z]|\{(?!\{))")
 # Any newline left in an ordinary literal once continuations are applied. Rust
 # spells a deliberate newline `\n`, and content that is genuinely multi-line
 # lives in a raw string, which this does not read. So a newline surviving here
@@ -333,6 +341,61 @@ def _reflowed_gap(content: str) -> bool:
     return False
 
 
+def validate_inline_run_rule(errors: list[str]) -> None:
+    """The inline-run rule's own discrimination, checked rather than assumed.
+
+    All of this rule's value is in where it draws one line: a run of spaces
+    before a word is a sentence that lost its continuation, and a run before a
+    punctuation mark is a fixture aligning a column. Both directions cost
+    something, and they cost differently. Widening it turns the aligned
+    fixtures red, which is loud and gets fixed. Narrowing it goes quiet — and
+    that is the failure that actually happened: the rule was written for a run
+    before a letter, a second instance arrived before a `{`, and nothing said
+    anything until the malformed sentence had shipped inside an exported
+    figure's description.
+
+    So the fixtures below are the rule's contract rather than an illustration
+    of it. They run through `_reflowed_gap`, which is the decision the check
+    actually makes, not the bare pattern.
+
+    Here rather than in a test file because this repository has no Python test
+    surface, and adding one is a dependency decision this check does not get to
+    make on its own.
+    """
+    caught = [
+        # The instance that shipped: a lost continuation before a placeholder.
+        "points to {}, {};                      {inside} of them lie inside",
+        # The original shape, before a plain word.
+        "the commands                      MSCanvas needs.",
+        # An escaped quote still ends a cut sentence.
+        'Select \\"OK\\"    to continue.',
+    ]
+    ignored = [
+        # Deliberate column alignment: a run before a punctuation mark.
+        "--filter        : keep only matching rows",
+        # `{{` renders one literal brace, which aligns like any punctuation.
+        "total         {{",
+        # An escaped newline or tab legitimately precedes indentation.
+        "\\n     indented backend output",
+        "\\t     indented backend output",
+        # An ordinary sentence.
+        "One space between words, and one after a full stop.",
+    ]
+    for fixture in caught:
+        if not _reflowed_gap(fixture):
+            fail(
+                "the inline-run rule no longer catches a lost continuation in "
+                f"{fixture!r}",
+                errors,
+            )
+    for fixture in ignored:
+        if _reflowed_gap(fixture):
+            fail(
+                f"the inline-run rule now reports deliberate spacing in {fixture!r}",
+                errors,
+            )
+
+
 def validate_user_facing_strings(errors: list[str]) -> None:
     """Catches a lost line continuation inside a user-facing Rust message.
 
@@ -437,6 +500,7 @@ def main() -> int:
         validate_skill_frontmatter(errors)
         validate_markdown_links(errors)
         validate_project_contract(errors)
+        validate_inline_run_rule(errors)
         validate_user_facing_strings(errors)
         validate_test_support_stays_a_dev_dependency(errors)
 
