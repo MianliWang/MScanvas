@@ -136,5 +136,7 @@ describe("drop result notice", () => {
 
     expect(notice).toBeDefined();
     expect(Array.isArray(notice.details)).toBe(true);
+    expect(notice.details).toHaveLength(0);
+    expect(typeof notice.more).toBe("number");
   });
 });

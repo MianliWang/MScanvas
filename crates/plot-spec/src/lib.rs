@@ -94,5 +94,9 @@ mod tests {
         assert_eq!(spec.kind, PlotKind::CentroidSpectrum);
         assert_eq!(spec.title, None);
         assert!(spec.series.is_empty());
+        assert_eq!(spec.x_axis.label, "m/z");
+        assert_eq!(spec.y_axis.label, "Intensity");
+        assert_eq!(spec.x_axis.unit, None);
+        assert_eq!(spec.y_axis.unit, None);
     }
 }
