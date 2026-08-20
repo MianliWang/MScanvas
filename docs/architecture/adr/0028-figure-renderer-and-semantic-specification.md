@@ -577,6 +577,16 @@ window is a measurement outside the window. A peakless spectrum and a spectrum
 with no points are different facts about a sample, and they had been the same
 picture.
 
+A **non-zero** mark keeps a length for the same reason, and that is a question
+for the coordinate precision rather than for the geometry. A stick is written as
+its baseline coordinate and its endpoint, so an intensity small enough against
+its own range for those two to round together is a real measured peak exported
+as nothing — a centroid intensity of `1` on a `0 .. 1e9` range stands a few
+ten-millionths of a figure unit above the line, and three decimals put both ends
+in the same place. The precision grows until they stay apart. It does not grow
+for a measured zero: that mark is the horizontal tick above, and a tick has no
+height to lose.
+
 A trace that reaches the drawn window always leaves a mark. A single sample, a
 series whose samples repeat one position, and a zero-width visible window all
 produce a path of bare move commands, which paints nothing and reads as *no

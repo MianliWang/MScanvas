@@ -4340,6 +4340,116 @@ fn every_drawn_marker_is_recoverable_from_the_description() {
     );
 }
 
+/// A non-zero peak keeps a length when it is written down.
+///
+/// A discrete mark is serialized as `M x zero_y V top`, so the two coordinates
+/// are what its height *is*. The precision decision protected distinct
+/// positions, consecutive trace vertices and marker lines, but never asked
+/// whether a stick's own two ends stayed apart -- and against a wide value range
+/// they do not. A centroid intensity of `1` on a `0 .. 1e9` range stands a few
+/// ten-millionths of a figure unit above the baseline, three decimals put both
+/// ends at `410.000`, and a real measured peak was exported as a zero-length
+/// path: not shortened, absent, at every zoom.
+#[test]
+fn a_non_zero_mark_keeps_its_length_through_serialization() {
+    // Each stick is `M{x} {zero_y}V{top}`, so its two ends are the baseline
+    // coordinate and the endpoint. A stick whose ends match has no length.
+    fn stick_ends(document: &str) -> Vec<(String, String)> {
+        path_data(document)
+            .split('M')
+            .skip(1)
+            .filter_map(|stick| {
+                let (head, top) = stick.split_once('V')?;
+                let base = head.split(' ').nth(1)?;
+                Some((base.to_owned(), top.to_owned()))
+            })
+            .collect()
+    }
+
+    let centroid = |values: Vec<f64>, low: f64, high: f64| {
+        PanelSpec::new(
+            PlotKind::Spectrum {
+                representation: SpectrumRepresentation::Centroid,
+            },
+            AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(100.0, 200.0),
+            domain(low, high),
+            vec![series(vec![100.0, 200.0], values)],
+        )
+        .expect("a centroid panel")
+    };
+
+    // One count against a billion. The peak is real and the figure must keep it.
+    let document = svg::render(&figure_of(centroid(
+        vec![1.0, 1_000_000_000.0],
+        0.0,
+        1_000_000_000.0,
+    )));
+    let ends = stick_ends(&document);
+    assert_eq!(ends.len(), 2, "both peaks are drawn: {document}");
+    for (base, top) in &ends {
+        assert_ne!(
+            base, top,
+            "a stick was written with no length at all: {document}",
+        );
+    }
+
+    // A measured zero is a different fact and already has its own geometry: a
+    // short horizontal tick on the baseline, which has no height to lose. It
+    // must not drag the whole document's precision up with it.
+    let zeroed = svg::render(&figure_of(centroid(vec![0.0, 0.0], 0.0, 1_000_000_000.0)));
+    assert!(
+        stick_ends(&zeroed).is_empty() && path_data(&zeroed).contains('L'),
+        "measured zeros keep their tick rather than a stick: {zeroed}",
+    );
+    assert!(
+        zeroed.contains("viewBox=\"0 0 900.000 500.000\""),
+        "and ask for no escalation: {zeroed}",
+    );
+
+    // A negative peak is measured from the same line and stays off it.
+    let negative = svg::render(&figure_of(centroid(
+        vec![-1.0, -1_000_000_000.0],
+        -1_000_000_000.0,
+        0.0,
+    )));
+    for (base, top) in &stick_ends(&negative) {
+        assert_ne!(
+            base, top,
+            "a negative measurement is not flattened onto zero: {negative}",
+        );
+    }
+
+    // An ordinary spectrum is untouched at the readable default.
+    let ordinary = svg::render(&figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![100.0, 200.0], vec![10.0, 20.0]),
+    )));
+    assert!(
+        ordinary.contains("viewBox=\"0 0 900.000 500.000\""),
+        "an ordinary spectrum keeps three decimals: {ordinary}",
+    );
+
+    // A joined trace is not drawn from the baseline at all, so this question is
+    // not asked of it: its precision still comes from consecutive vertices.
+    let joined = svg::render(&figure_of(
+        PanelSpec::new(
+            PlotKind::Chromatogram,
+            AxisSpec::new(label("Time"), UnitState::Unreported),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(0.0, 10.0),
+            domain(0.0, 1_000_000_000.0),
+            vec![series(vec![0.0, 10.0], vec![1.0, 1_000_000_000.0])],
+        )
+        .expect("a trace across a wide range"),
+    ));
+    assert!(
+        joined.contains("viewBox=\"0 0 900.000 500.000\""),
+        "a joined trace keeps its own precision semantics: {joined}",
+    );
+}
+
 /// Every figure colour clears the contrast floor its role needs.
 ///
 /// The light baseline was `#9a9a9a` on white — 2.81:1, below the 3:1 WCAG asks

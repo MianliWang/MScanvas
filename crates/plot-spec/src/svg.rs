@@ -277,8 +277,8 @@ fn coordinate_precision(figure: &FigureSpec, frames: &[Frame]) -> Precision {
             // window is a measurement outside the window, and inventing a value
             // at the boundary for it is the error the clipping design exists to
             // avoid.
-            let clipped = panel.joins(series);
-            if clipped && let Some(value) = value_at(series, drawn.low()) {
+            let joined = panel.joins(series);
+            if joined && let Some(value) = value_at(series, drawn.low()) {
                 gap(&mut up, height(value), false);
             }
             for (at, value) in series.x().iter().zip(series.y().iter()) {
@@ -293,9 +293,33 @@ fn coordinate_precision(figure: &FigureSpec, frames: &[Frame]) -> Precision {
                     project(*at, drawn, frame.left, frame.right),
                     true,
                 );
-                gap(&mut up, height(*value), false);
+                let top = height(*value);
+                gap(&mut up, top, false);
+                // A discrete mark is a *length measured from the zero line*,
+                // and that is a third question the value axis has to answer.
+                // The mark is written `M x zero_y V top`, so if those two
+                // coordinates round to one string the stick has no length at
+                // all and a genuinely non-zero peak is drawn as nothing -- not
+                // shortened, absent, at every zoom. A centroid intensity of `1`
+                // against a `0 .. 1e9` range is exactly that: it stands a few
+                // ten-millionths of a figure unit above the baseline, and three
+                // decimals put both ends in the same place.
+                //
+                // Only for marks the renderer will give a length. A measured
+                // zero is drawn as its own short horizontal tick on the
+                // baseline -- it has no height to lose -- so escalating for one
+                // would buy nothing and inflate every peakless spectrum.
+                //
+                // Seeded at the baseline rather than at the previous mark,
+                // because every stick starts there: the baseline is the
+                // coordinate each one has to stay distinct from, and its
+                // neighbours are the domain axis's business.
+                if !joined && !draws_as_zero_tick(top, frame.zero_y) {
+                    let mut from_baseline = Some(frame.zero_y);
+                    gap(&mut from_baseline, top, false);
+                }
             }
-            if clipped && let Some(value) = value_at(series, drawn.high()) {
+            if joined && let Some(value) = value_at(series, drawn.high()) {
                 gap(&mut up, height(value), false);
             }
         }
@@ -434,6 +458,22 @@ fn covered_marks(series: &SeriesSpec, drawn: Domain) -> usize {
         start = end;
     }
     covered
+}
+
+/// Whether a discrete mark is drawn as the short tick a measured zero gets.
+///
+/// Shared with the renderer rather than restated in each place that needs the
+/// answer. The precision decision has to ask exactly the question the drawing
+/// will ask -- which marks have a length, and which are a horizontal tick with
+/// no height to lose -- and a second copy of this comparison is how the two
+/// would come to disagree about it.
+///
+/// Compared on the projected coordinates rather than on the source value,
+/// because that is what the drawing compares: a value so small against its
+/// range that it lands on the baseline anyway is a tick, and asking the source
+/// would have called it a stick and then drawn a tick.
+fn draws_as_zero_tick(top: f64, zero_y: f64) -> bool {
+    (top - zero_y).abs() <= f64::EPSILON
 }
 
 /// Whether a joined series draws anything into a window holding no sample.
@@ -1473,7 +1513,7 @@ fn render_series(
             // the sample. It is marked instead: a short horizontal tick on the
             // zero line, which has no height and so claims no intensity, but is
             // there to be seen.
-            if (top - zero_y).abs() <= f64::EPSILON {
+            if draws_as_zero_tick(top, zero_y) {
                 let _ = write!(
                     path,
                     "M{} {}L{} {}",
