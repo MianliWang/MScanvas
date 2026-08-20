@@ -299,6 +299,37 @@ fn coordinate_precision(figure: &FigureSpec, frames: &[Frame]) -> Precision {
                 gap(&mut up, height(value), false);
             }
         }
+        // A marker line is drawn geometry too, and the domain axis asks it the
+        // same question it asks a stick: two persistent selections written at
+        // one x are one dashed rule, and no zoom of the vector recovers the
+        // second. Reading only the series left that to the samples, so a panel
+        // whose points are far apart -- or which has none at all -- kept three
+        // decimals while carrying two markers a millionth of its domain apart.
+        //
+        // Sorted, because nothing orders markers: they are annotations placed
+        // by a reader, not an axis the contract holds non-decreasing. Sorting
+        // is affordable here for the reason it was not on the value axis --
+        // there are a handful of annotations, not half a million intensities.
+        //
+        // Only those inside the drawn window, matching what the renderer draws:
+        // a marker outside it produces no line, and letting one raise the
+        // precision of a figure it does not appear in would be paying for
+        // geometry that is not there.
+        let mut placed: Vec<f64> = panel
+            .markers
+            .iter()
+            .filter(|marker| marker.at() >= drawn.low() && marker.at() <= drawn.high())
+            .map(|marker| project(marker.at(), drawn, frame.left, frame.right))
+            .collect();
+        placed.sort_unstable_by(f64::total_cmp);
+        for pair in placed.windows(2) {
+            // Strictly apart, so two markers genuinely at one position stay
+            // one line and are left to the layout to disclose. They are the
+            // same coordinate; no precision separates them and none should try.
+            if pair[1] > pair[0] {
+                smallest = smallest.min(pair[1] - pair[0]);
+            }
+        }
     }
     // A gap of at least `10^-decimals` survives rounding to that many places:
     // scaled by `10^decimals` the two values differ by at least one, and
@@ -475,7 +506,7 @@ fn enters_below_zero(series: &SeriesSpec, drawn: Domain) -> bool {
 /// The sentence an export owes the person reading it rather than the person who
 /// made it: whether these are the source points or a reduction, and whether the
 /// file said what the points are at all.
-fn panel_description(panel: &PanelSpec, unplaced: &[String], position: (usize, usize)) -> String {
+fn panel_description(panel: &PanelSpec, unplaced: &[usize], position: (usize, usize)) -> String {
     let mut sentences = Vec::new();
 
     // Which panel this is, where there is more than one. Panels stack in the
@@ -802,55 +833,61 @@ fn panel_description(panel: &PanelSpec, unplaced: &[String], position: (usize, u
         ));
     }
 
-    // A marker carrying no label draws its line and says nothing about itself.
-    // `Marker::new(at, None)` is a legitimate way to mark a persistent
-    // selection, so the figure gains a dashed rule a reader can see and a
-    // screen-reader user cannot know exists -- an annotation present in the
-    // drawing and absent from the description, which is the same asymmetry the
-    // unplaced-label sentence below exists to close.
+    // Every marker line the figure actually draws, each one named and placed.
+    //
+    // The root element is `role="img"`, and that is what makes this necessary:
+    // assistive technology reads an image's accessible name and description and
+    // does not descend into the `<text>` inside it. A marker label drawn on the
+    // page is therefore not a label a screen-reader user has, however well it
+    // was placed. The description reported only the two cases where nothing
+    // readable had been drawn -- a marker carrying no label, and one whose
+    // label the page had no room for -- which is exactly backwards: a placed
+    // label is no more recoverable from a `role="img"` document than either of
+    // them, so the annotation most likely to matter was the one left out.
+    //
+    // One clause per marker rather than one sentence per failure mode. The old
+    // shape reported an unplaced label in a sentence that never said where that
+    // marker was, while a placed one appeared in no sentence at all: three
+    // partial views of the same annotation that a reader holding only the words
+    // could not reconcile. Here each drawn marker is stated once, with its
+    // position in the axis's own notation, its label if it has one, and whether
+    // that label reached the page.
     //
     // Only those inside the drawn window: a marker outside it draws no line,
     // and reporting one would describe something the figure does not contain.
-    let anonymous: Vec<String> = panel
+    let notation = axis_notation(drawn);
+    let marked: Vec<String> = panel
         .markers
         .iter()
-        .filter(|marker| {
-            marker.label().is_none() && marker.at() >= drawn.low() && marker.at() <= drawn.high()
+        .enumerate()
+        .filter(|(_, marker)| marker.at() >= drawn.low() && marker.at() <= drawn.high())
+        .map(|(index, marker)| {
+            let at = marker_number(marker.at(), notation);
+            match marker.label() {
+                None => format!("an unlabelled line at {at}"),
+                // Named and placed in one clause, so the two facts cannot drift
+                // apart or be read as two annotations.
+                Some(label) if unplaced.contains(&index) => format!(
+                    "\"{}\" at {at}, whose label the figure is too small to place clear of \
+                     the others",
+                    label.as_str(),
+                ),
+                Some(label) => format!("\"{}\" at {at}", label.as_str()),
+            }
         })
-        .map(|marker| marker_number(marker.at(), axis_notation(drawn)))
         .collect();
-    match anonymous.as_slice() {
+    match marked.as_slice() {
         [] => {}
         [only] => sentences.push(format!(
-            "One marker line is drawn without a label, at {only} on the {} axis.",
+            "One marker line is drawn on the {} axis: {only}.",
             panel.x_axis.label.as_str(),
         )),
+        // Semicolons rather than commas: a clause may carry one of its own.
         many => sentences.push(format!(
-            "{} marker lines are drawn without labels, at {} on the {} axis.",
+            "{} marker lines are drawn on the {} axis: {}.",
             many.len(),
-            many.join(", "),
             panel.x_axis.label.as_str(),
-        )),
-    }
-
-    // A marker whose label the page had no room for still draws its line, so
-    // the figure would look annotated while an annotation was missing. The
-    // words go here instead: nothing is lost from the file, and a reader is
-    // told to expect a mark they cannot read a name for.
-    match unplaced {
-        [] => {}
-        [only] => sentences.push(format!(
-            "One marker is drawn without its label, \"{only}\", because the figure is too \
-             small to place it clear of the others."
-        )),
-        many => sentences.push(format!(
-            "{} markers are drawn without their labels, {}, because the figure is too small \
-             to place them clear of one another.",
-            many.len(),
-            many.iter()
-                .map(|label| format!("\"{label}\""))
-                .collect::<Vec<_>>()
-                .join(", "),
+            many.join("; "),
         )),
     }
 
@@ -1042,7 +1079,7 @@ fn render_panels(
     frames: &[Frame],
     colours: &Palette,
     precision: Precision,
-) -> (String, Vec<Vec<String>>) {
+) -> (String, Vec<Vec<usize>>) {
     let mut body = String::with_capacity(4_096);
     let mut unplaced = Vec::with_capacity(figure.panels.len());
     for (panel, frame) in figure.panels.iter().zip(frames) {
@@ -1081,7 +1118,7 @@ fn render_panel(
     frame: &Frame,
     colours: &Palette,
     precision: Precision,
-) -> Vec<String> {
+) -> Vec<usize> {
     let domain = panel.drawn_domain();
     let values = panel.value_domain;
     let plot_top = frame.plot_top;
@@ -1161,8 +1198,11 @@ fn render_panel(
             MARKER_LABEL_SIZE,
         ));
     }
-    let mut unplaced: Vec<String> = Vec::new();
-    for marker in &panel.markers {
+    // Which markers lost their labels, by index rather than by label text. Two
+    // markers may legitimately carry the same words, and matching on those
+    // words would attach one marker's layout failure to the other's clause.
+    let mut unplaced: Vec<usize> = Vec::new();
+    for (index, marker) in panel.markers.iter().enumerate() {
         if marker.at < domain.low() || marker.at > domain.high() {
             continue;
         }
@@ -1180,7 +1220,7 @@ fn render_panel(
         if let Some(label) = marker.label.as_ref()
             && !render_marker_label(out, label, x, &mut occupied, frame, colours, precision)
         {
-            unplaced.push(label.as_str().to_owned());
+            unplaced.push(index);
         }
     }
 

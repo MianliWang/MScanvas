@@ -2682,9 +2682,12 @@ fn a_crowded_label_shrinks_and_is_never_drawn_over_another() {
         0,
         "neither is stacked on the other: {cramped}",
     );
-    assert!(
-        cramped.contains("2 markers are drawn without their labels"),
-        "and the description says so: {cramped}",
+    assert_eq!(
+        cramped
+            .matches("whose label the figure is too small to place")
+            .count(),
+        2,
+        "and the description says so, once for each: {cramped}",
     );
     assert!(
         cramped.contains(&long),
@@ -3671,7 +3674,7 @@ fn a_marker_label_clears_the_value_axis_low_end() {
     // axis, so the two markers are either both placed clear or named in words.
     let description = description_of(&document);
     assert!(
-        labels == 2 || description.contains("without its label"),
+        labels == 2 || description.contains("whose label the figure is too small to place"),
         "every marker is drawn clear or disclosed: {labels} placed, {description:?}",
     );
 }
@@ -3776,14 +3779,14 @@ fn an_unlabelled_marker_keeps_its_own_coordinate() {
     };
 
     // The axis prints `0` and `100`. The marker is at neither, and says so.
+    // Stated whole, because the sentence the axis's own rounding would have
+    // produced is this one with `at 1.` in place of `at 1.4.` -- a prefix of
+    // the right answer, which no `contains` of the number alone can rule out.
     let fractional = against_a_coarse_axis(1.4);
     assert!(
-        fractional.contains("at 1.4 on the Time axis"),
+        fractional
+            .contains("One marker line is drawn on the Time axis: an unlabelled line at 1.4."),
         "the marker's own coordinate survives a coarser axis: {fractional:?}",
-    );
-    assert!(
-        !fractional.contains("at 1 on the Time axis"),
-        "and the axis's rounding is not restated as its position: {fractional:?}",
     );
 
     // Precision grows only as far as the `f64` itself carries it. A whole
@@ -3791,7 +3794,7 @@ fn an_unlabelled_marker_keeps_its_own_coordinate() {
     // invented ones.
     let integral = against_a_coarse_axis(50.0);
     assert!(
-        integral.contains("at 50 on the Time axis"),
+        integral.contains("an unlabelled line at 50."),
         "an ordinary whole-numbered marker gains no notation: {integral:?}",
     );
 
@@ -3799,7 +3802,7 @@ fn an_unlabelled_marker_keeps_its_own_coordinate() {
     // it already had: the same number, in the notation a reader can take in.
     let vanishing = against_a_coarse_axis(0.0001);
     assert!(
-        vanishing.contains("at 1e-4 on the Time axis"),
+        vanishing.contains("an unlabelled line at 1e-4."),
         "a value the axis would print as zero stays distinguishable: {vanishing:?}",
     );
 
@@ -3820,7 +3823,7 @@ fn an_unlabelled_marker_keeps_its_own_coordinate() {
     .expect("markers on a valid panel");
     let described = description_of(&svg::render(&figure_of(narrow)));
     assert!(
-        described.contains("at 2.5e-20 on the Time axis"),
+        described.contains("an unlabelled line at 2.5e-20."),
         "a tiny-domain marker remains distinguishable: {described:?}",
     );
 }
@@ -4097,6 +4100,243 @@ fn an_undrawn_series_discloses_itself_in_a_mixed_panel() {
     assert!(
         !description.contains("No measured point of &quot;estimated background&quot;"),
         "and never the stronger claim a full source could make: {description:?}",
+    );
+}
+
+/// Two distinct markers are not merged by the way coordinates are written.
+///
+/// The precision decision read the series and nothing else, so a panel whose
+/// samples are far apart -- or which has none in range at all -- stayed at three
+/// decimals however close its markers were. On the narrowest figure the contract
+/// accepts, markers at `0.5` and `0.500001` of a `0 .. 1` domain both serialized
+/// to one x: two persistent selections drawn as one dashed rule, with no zoom of
+/// the vector able to recover the second.
+#[test]
+fn distinct_markers_survive_coordinate_serialization() {
+    // Dashed rules only. The axis and the frame are solid lines at the same
+    // depth in the document, and counting every `<line>` would count those.
+    fn marker_positions(document: &str) -> Vec<&str> {
+        document
+            .split("<line ")
+            .skip(1)
+            .filter(|piece| piece.contains("stroke-dasharray"))
+            .filter_map(|piece| piece.split("x1=\"").nth(1))
+            .filter_map(|rest| rest.split('"').next())
+            .collect()
+    }
+
+    // The samples sit at the two ends of the domain, so nothing but the markers
+    // can ask for precision here.
+    let smallest = |markers: Vec<Marker>, visible: Option<Domain>| {
+        let mut panel = PanelSpec::new(
+            PlotKind::Chromatogram,
+            AxisSpec::new(label("Time"), UnitState::Unreported),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(0.0, 1.0),
+            domain(0.0, 5.0),
+            vec![series(vec![0.0, 1.0], vec![1.0, 2.0])],
+        )
+        .expect("a trace across the whole domain")
+        .with_markers(markers)
+        .expect("markers on a valid panel");
+        if let Some(window) = visible {
+            panel = panel.with_visible_domain(window).expect("a window");
+        }
+        svg::render(
+            &FigureSpec::new(
+                FigureTheme::Light,
+                FigureSize::new(
+                    MIN_FIGURE_WIDTH,
+                    MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT,
+                )
+                .expect("the smallest figure the contract accepts"),
+                vec![panel],
+            )
+            .expect("one panel"),
+        )
+    };
+
+    let document = smallest(
+        vec![
+            Marker::new(0.5, None).expect("a marker"),
+            Marker::new(0.500_001, None).expect("a marker a millionth along"),
+        ],
+        None,
+    );
+    let positions = marker_positions(&document);
+    assert_eq!(positions.len(), 2, "both rules are drawn: {document}");
+    assert!(
+        positions[0] != positions[1],
+        "and they keep two coordinates rather than one: {positions:?}",
+    );
+
+    // Two markers genuinely at one position are one coordinate, and stay one.
+    // No precision separates them, and none should be spent trying.
+    let coincident = smallest(
+        vec![
+            Marker::new(0.5, None).expect("a marker"),
+            Marker::new(0.5, None).expect("another at the same place"),
+        ],
+        None,
+    );
+    let positions = marker_positions(&coincident);
+    assert_eq!(
+        positions.len(),
+        2,
+        "both rules are still drawn: {coincident}"
+    );
+    assert_eq!(
+        positions[0], positions[1],
+        "at the one position they share: {positions:?}",
+    );
+    assert!(
+        coincident.contains("viewBox=\"0 0 200.000 180.000\""),
+        "and nothing is escalated for them: {coincident}",
+    );
+
+    // A marker outside the drawn window is not drawn, so it cannot ask the
+    // figure it does not appear in to spend precision on it.
+    let windowed = smallest(
+        vec![
+            Marker::new(0.5, None).expect("a marker inside the window"),
+            Marker::new(0.500_001, None).expect("a marker just outside it"),
+        ],
+        Some(domain(0.0, 0.5)),
+    );
+    assert_eq!(
+        marker_positions(&windowed).len(),
+        1,
+        "only one rule is drawn: {windowed}",
+    );
+    assert!(
+        windowed.contains("viewBox=\"0 0 200.000 180.000\""),
+        "so the readable default is kept: {windowed}",
+    );
+
+    // And ordinary, well-separated markers inflate nothing.
+    let ordinary = smallest(
+        vec![
+            Marker::new(0.2, None).expect("a marker"),
+            Marker::new(0.8, None).expect("a well-separated second"),
+        ],
+        None,
+    );
+    assert!(
+        ordinary.contains("viewBox=\"0 0 200.000 180.000\""),
+        "ordinary markers keep three decimals: {ordinary}",
+    );
+}
+
+/// Every marker the figure draws is recoverable from its description.
+///
+/// The root element is `role="img"`, so assistive technology reads the
+/// accessible name and description and does not descend into the `<text>`
+/// inside. A marker label drawn on the page is therefore not a label a
+/// screen-reader user has -- and the description reported only the marker with
+/// no label and the marker whose label had no room, leaving out the one case
+/// where the annotation had succeeded and mattered most.
+#[test]
+fn every_drawn_marker_is_recoverable_from_the_description() {
+    let annotated = |markers: Vec<Marker>| {
+        description_of(&svg::render(&figure_of(
+            spectrum_panel(
+                SpectrumRepresentation::Centroid,
+                series(vec![100.0, 200.0], vec![10.0, 20.0]),
+            )
+            .with_markers(markers)
+            .expect("markers on a valid panel"),
+        )))
+    };
+
+    // A labelled marker whose label was placed is still described: the drawing
+    // carrying the words is not the description carrying them.
+    let placed = annotated(vec![
+        Marker::new(150.0, Some(label("precursor"))).expect("a marker"),
+    ]);
+    assert!(
+        placed.contains("&quot;precursor&quot; at 150"),
+        "its label and its position are both stated: {placed:?}",
+    );
+
+    // An unlabelled one keeps the positional disclosure it already had.
+    let anonymous = annotated(vec![Marker::new(150.0, None).expect("a marker")]);
+    assert!(
+        anonymous.contains("an unlabelled line at 150."),
+        "an unlabelled marker is still placed in words: {anonymous:?}",
+    );
+
+    // Every marker of a mixed set stays attributable to itself.
+    let several = annotated(vec![
+        Marker::new(120.0, Some(label("precursor"))).expect("a marker"),
+        Marker::new(150.0, None).expect("an unlabelled marker"),
+        Marker::new(180.0, Some(label("fragment"))).expect("a third"),
+    ]);
+    for expected in [
+        "3 marker lines are drawn on the m/z axis:",
+        "&quot;precursor&quot; at 120",
+        "an unlabelled line at 150",
+        "&quot;fragment&quot; at 180",
+    ] {
+        assert!(
+            several.contains(expected),
+            "{expected:?} is missing from: {several:?}",
+        );
+    }
+
+    // A marker outside the drawn window draws no line, and is not described as
+    // though it did.
+    let windowed = description_of(&svg::render(&figure_of(
+        spectrum_panel(
+            SpectrumRepresentation::Centroid,
+            series(vec![100.0, 200.0], vec![10.0, 20.0]),
+        )
+        .with_markers(vec![
+            Marker::new(110.0, Some(label("precursor"))).expect("a marker"),
+        ])
+        .expect("markers on a valid panel")
+        .with_visible_domain(domain(150.0, 200.0))
+        .expect("a window past it"),
+    )));
+    assert!(
+        !windowed.contains("marker line") && !windowed.contains("precursor"),
+        "an undrawn marker is not described: {windowed:?}",
+    );
+
+    // A marker whose label the page had no room for is disclosed once, with its
+    // position and its label, and with the reason -- not as one sentence naming
+    // it and another placing it, which is how the two could disagree.
+    let long = "m".repeat(MAX_LABEL_CHARS);
+    let cramped = description_of(&svg::render(
+        &FigureSpec::new(
+            FigureTheme::Light,
+            FigureSize::new(
+                MIN_FIGURE_WIDTH,
+                MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT,
+            )
+            .expect("the smallest figure the contract accepts"),
+            vec![
+                spectrum_panel(
+                    SpectrumRepresentation::Centroid,
+                    series(vec![100.0, 200.0], vec![10.0, 20.0]),
+                )
+                .with_markers(vec![
+                    Marker::new(150.0, Some(label(&long))).expect("a marker"),
+                ])
+                .expect("markers on a valid panel"),
+            ],
+        )
+        .expect("one panel"),
+    ));
+    assert!(
+        cramped.contains(&format!(
+            "&quot;{long}&quot; at 150, whose label the figure is too small to place"
+        )),
+        "named, placed, and explained in one clause: {cramped:?}",
+    );
+    assert_eq!(
+        cramped.matches("at 150").count(),
+        1,
+        "and stated exactly once: {cramped:?}",
     );
 }
 
@@ -4732,8 +4972,8 @@ fn an_unlabelled_marker_is_named_in_the_description() {
     );
     let description = description_of(&document);
     assert!(
-        description.contains("One marker line is drawn without a label, at 150")
-            && description.contains("on the m/z axis."),
+        description
+            .contains("One marker line is drawn on the m/z axis: an unlabelled line at 150."),
         "and the description accounts for it: {description:?}",
     );
 
@@ -4748,9 +4988,11 @@ fn an_unlabelled_marker_is_named_in_the_description() {
     ])
     .expect("markers on a valid panel");
     assert!(
-        description_of(&svg::render(&figure_of(two)))
-            .contains("2 marker lines are drawn without labels, at 120"),
-        "both are counted",
+        description_of(&svg::render(&figure_of(two))).contains(
+            "2 marker lines are drawn on the m/z axis: an unlabelled line at 120; \
+             an unlabelled line at 180."
+        ),
+        "both are counted and both positions given",
     );
 
     // A marker outside the drawn window draws no line, so nothing is claimed.
@@ -4763,11 +5005,13 @@ fn an_unlabelled_marker_is_named_in_the_description() {
     .with_visible_domain(domain(150.0, 200.0))
     .expect("a window past the marker");
     assert!(
-        !description_of(&svg::render(&figure_of(windowed))).contains("without a label"),
+        !description_of(&svg::render(&figure_of(windowed))).contains("marker line"),
         "a marker the figure does not draw is not described",
     );
 
-    // A labelled marker keeps its own treatment and is not counted here.
+    // A labelled marker is disclosed too, by name and position, rather than
+    // being left to a visible `<text>` a `role="img"` document does not expose.
+    // It is not called unlabelled, which is the distinction this sentence keeps.
     let labelled = spectrum_panel(
         SpectrumRepresentation::Centroid,
         series(vec![100.0, 200.0], vec![10.0, 20.0]),
@@ -4776,9 +5020,17 @@ fn an_unlabelled_marker_is_named_in_the_description() {
         Marker::new(150.0, Some(label("precursor"))).expect("a marker"),
     ])
     .expect("markers on a valid panel");
+    let described = description_of(&svg::render(&figure_of(labelled)));
     assert!(
-        !description_of(&svg::render(&figure_of(labelled))).contains("without a label"),
-        "a labelled marker speaks for itself",
+        described.contains(
+            "One marker line is drawn on the m/z axis: \
+                            &quot;precursor&quot; at 150."
+        ),
+        "a labelled marker is named and placed: {described:?}",
+    );
+    assert!(
+        !described.contains("unlabelled"),
+        "and is not reported as anonymous: {described:?}",
     );
 }
 
@@ -4863,8 +5115,12 @@ fn an_unlabelled_marker_position_uses_the_axis_notation() {
     let document = svg::render(&figure_of(tiny));
     let description = description_of(&document);
     assert!(
-        description.contains("at 2e-20 on the Time axis"),
+        description.contains("an unlabelled line at 2e-20."),
         "the marker is described where it is drawn: {description:?}",
+    );
+    assert!(
+        description.contains("on the Time axis"),
+        "on the axis it annotates: {description:?}",
     );
     assert!(
         !description.contains("at 0.000000"),
@@ -4894,7 +5150,7 @@ fn an_unlabelled_marker_position_uses_the_axis_notation() {
     .expect("markers on a valid panel");
     let description = description_of(&svg::render(&figure_of(coarse)));
     assert!(
-        description.contains("at 1e-4 on the Time axis"),
+        description.contains("an unlabelled line at 1e-4."),
         "a marker fixed point would lose escalates on its own: {description:?}",
     );
 
@@ -4906,7 +5162,7 @@ fn an_unlabelled_marker_position_uses_the_axis_notation() {
     .with_markers(vec![Marker::new(150.0, None).expect("a marker")])
     .expect("markers on a valid panel");
     assert!(
-        description_of(&svg::render(&figure_of(ordinary))).contains("at 150 on the m/z axis"),
+        description_of(&svg::render(&figure_of(ordinary))).contains("an unlabelled line at 150."),
         "an ordinary position is not dressed up as an exponent",
     );
 }

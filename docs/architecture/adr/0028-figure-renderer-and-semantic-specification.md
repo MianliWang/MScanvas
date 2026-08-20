@@ -411,14 +411,27 @@ therefore also triggers when the fixed-point form has rounded a non-zero value
 away to nothing. A domain that genuinely is zero still prints as zero, because
 the test is losing the value rather than being small.
 
-A marker carrying no label is disclosed too. `Marker::new(at, None)` is a
-legitimate way to mark a persistent selection, and the renderer draws a dashed
-rule for it, so saying nothing left a mark a sighted reader can see and a
-screen-reader user could not know existed — the same asymmetry the
-unplaced-label sentence exists to close, from the other direction. The
-description names how many there are and where, for those inside the drawn
-window; one outside it draws no line, and reporting it would describe something
-the figure does not contain.
+**Every marker the figure draws is disclosed**, not only the ones the drawing
+could not speak for. The root element is `role="img"`, so assistive technology
+reads the image's accessible name and description and does not descend into the
+`<text>` inside it: a marker label drawn on the page is not a label a
+screen-reader user has, however well it was placed. The description therefore
+carried exactly the wrong two cases — a marker with no label, and one whose label
+had no room — and left out the case where the annotation had succeeded and was
+the most worth having. `Marker::new(at, None)` is a legitimate way to mark a
+persistent selection and a labelled marker is the more informative annotation,
+and neither is recoverable from a `role="img"` document except in words.
+
+One clause per marker, rather than a sentence per failure mode. Each drawn
+marker is stated once, carrying its position in the axis's own notation, its
+label if it has one, and whether that label reached the page — so an unplaced
+label is no longer named in a sentence that never said where its marker was
+while a placed one appeared in no sentence at all. Only markers inside the drawn
+window: one outside it draws no line, and reporting it would describe something
+the figure does not contain. Which markers lost their labels is carried by
+index rather than by label text, because two markers may legitimately carry the
+same words and matching on those words attaches one marker's layout failure to
+the other's clause.
 
 Its position is written in the **notation** that axis writes numbers in — fixed
 point or exponent, decided once by `axis_notation` and shared by the axis ends
