@@ -2014,6 +2014,19 @@ impl PreviewService {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// A handle on the retained spectrum that does not keep it alive.
+    ///
+    /// Test-only. Revocation is about releasing two `f64` arrays, and every
+    /// other observation a test can make -- a stale token, a refused export --
+    /// proves only that the slot stopped *naming* them. This is what proves
+    /// they are gone.
+    #[cfg(test)]
+    pub(super) fn retained_spectrum_weak(
+        &self,
+    ) -> Option<std::sync::Weak<mscanvas_proteowizard::SelectedSpectrumResult>> {
+        self.spectrum_export_slot().weak_current()
+    }
+
     /// Starts one export of one named spectrum, answering with its reservation.
     ///
     /// # Errors
@@ -3700,6 +3713,9 @@ impl PreviewService {
             return Err(conversion_busy());
         }
         let mut removed = Vec::new();
+        // The same rows, as identities. The export slot answers a question the
+        // handle strings cannot: is the spectrum it retains one of these.
+        let mut removed_ids = Vec::new();
         let mut unknown = Vec::new();
         // The same handle twice is one row to remove, not one removal and one
         // stale handle. A selection can hold a row once; a caller assembling a
@@ -3717,12 +3733,18 @@ impl PreviewService {
                     // facts all go together.
                     workspace.revoke(id, RevocationReason::Removed);
                     removed.push(handle.clone());
+                    removed_ids.push(id);
                 }
                 None => unknown.push(handle.clone()),
             }
         }
         let roster = roster_of(&workspace);
         drop(workspace);
+        // After the workspace lock, because the export slot is a leaf. Removing
+        // rows *around* the preview is not a revocation: the frontend keeps the
+        // preview open in exactly that case, and a slot that forgot anyway
+        // would refuse the next export of a spectrum still on screen.
+        self.spectrum_export_slot().forget_if_owned_by(&removed_ids);
         let result = WorkspaceRemoveResultDto {
             roster,
             removed_handles: removed,
@@ -3766,6 +3788,9 @@ impl PreviewService {
         workspace.clear(RevocationReason::Cleared);
         let roster = roster_of(&workspace);
         drop(workspace);
+        // Every row is gone, so whatever the slot held is owned by a dataset
+        // this session no longer has.
+        self.spectrum_export_slot().forget();
         drop(batch);
         self.drop_updates.publish_terminal_with_busy(
             delivery,
@@ -4102,6 +4127,12 @@ impl PreviewService {
         // leaves the workspace exactly as it was, because this line returns
         // before anything below it runs.
         let accepted = accept_mzml_file(path)?;
+        // This path replaces the whole selection -- the clear below empties the
+        // workspace -- so the dataset the retained spectrum came from is about
+        // to stop existing. Revoked here, after the inspection that can refuse
+        // the path and before the workspace lock, because the export slot is a
+        // leaf and this is the last point at which no other lock is held.
+        self.spectrum_export_slot().forget();
         let mut workspace = self.workspace();
         // Everything the previous selection owned goes at once: its row, its
         // preview facts, the identity lease that kept its file's identity its
@@ -4511,6 +4542,13 @@ impl PreviewService {
     }
 
     pub fn open_preview(&self, handle: &str) -> Result<PreviewDto, PreviewErrorDto> {
+        // First, and whatever happens next. Opening a preview takes the current
+        // one off the screen before this call can succeed or fail -- the panel
+        // has no loaded spectrum from here on either way -- so the retained
+        // spectrum stops being the one anything names at the same moment.
+        // Re-opening the same dataset is no exception: that clears the selection
+        // too, and a spectrum nobody has selected is not one to keep.
+        self.spectrum_export_slot().forget();
         // Asked before anything else. Once a stop could not be confirmed this
         // session does not start another process at all, and a preview is a
         // process.
@@ -4727,9 +4765,30 @@ impl PreviewService {
         })
     }
 
-    /// Loads exactly one spectrum by zero-based index. Requests stay direct and
-    /// uncached in this slice.
+    /// Loads exactly one spectrum by zero-based index.
+    ///
+    /// Wraps the read so the export slot's invariant is decided in one place.
+    /// Every way this can end other than a spectrum -- unavailable, or any
+    /// refusal at all -- leaves the panel with nothing loaded, and the retained
+    /// spectrum has to go with it. Deciding that here rather than in each branch
+    /// below is what stops the next branch somebody adds from quietly keeping a
+    /// spectrum alive that nothing on screen names.
+    ///
+    /// A claimed export is untouched: it holds its own handle and finishes.
     pub fn load_spectrum(
+        &self,
+        handle: &str,
+        index: u64,
+    ) -> Result<SelectedSpectrumOutcomeDto, PreviewErrorDto> {
+        let outcome = self.interpret_spectrum(handle, index);
+        if !matches!(outcome, Ok(SelectedSpectrumOutcomeDto::Spectrum { .. })) {
+            self.spectrum_export_slot().forget();
+        }
+        outcome
+    }
+
+    /// The read itself. Requests stay direct and uncached in this slice.
+    fn interpret_spectrum(
         &self,
         handle: &str,
         index: u64,
@@ -4909,7 +4968,7 @@ impl PreviewService {
                     // export identifies this spectrum rather than
                     // reconstructing one from the arrays it is about to
                     // receive, which may be a prefix of them.
-                    let snapshot = self.spectrum_export_slot().install(spectrum);
+                    let snapshot = self.spectrum_export_slot().install(id, spectrum);
                     let projected = selected_spectrum_dto(
                         snapshot.spectrum(),
                         &redactor,

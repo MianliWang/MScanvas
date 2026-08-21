@@ -31,6 +31,27 @@
 //! restart. An export that has already claimed its snapshot finishes from the
 //! `Arc` it took, so a selection landing while a save dialog is open cannot
 //! change which spectrum is being written.
+//!
+//! ## And no longer than that
+//!
+//! "The spectrum whose preview is on screen" is a claim about a moment, and the
+//! moment ends in more ways than a newer selection. The spectrum can turn out
+//! to be unavailable, the read can fail, the preview can be replaced, its
+//! dataset can be removed, the whole list can be cleared. Each of those leaves
+//! a panel with nothing loaded, and a slot still holding the last complete
+//! measurement is a slot whose contents outlive the sentence describing them --
+//! two `f64` arrays kept alive for the rest of the session by nothing the user
+//! can see.
+//!
+//! So revocation is Rust's decision, taken where the event happens, rather than
+//! a courtesy call the webview is trusted to make. `forget` drops the retained
+//! spectrum; `forget_if_owned_by` drops it only when the dataset it came from
+//! is one of the ones going away, which is what keeps removing an *unrelated*
+//! row -- or moving focus to one -- from revoking the spectrum a user is
+//! reading. A claimed export is untouched by all of it: it holds its own `Arc`
+//! and finishes. What revocation guarantees is narrower and is the whole point
+//! -- after it, the old token names nothing, so every *new* operation is
+//! refused as stale.
 
 use std::sync::Arc;
 
@@ -43,6 +64,7 @@ use mscanvas_proteowizard::{
 };
 
 use super::dialog::SaveDialogFacts;
+use super::selection::DatasetId;
 
 /// The exported figure's size, in figure units.
 ///
@@ -196,6 +218,14 @@ impl SpectrumExportToken {
 #[derive(Debug, Clone)]
 pub(super) struct SpectrumSnapshot {
     token: SpectrumExportToken,
+    /// Which dataset this spectrum was read from.
+    ///
+    /// The minimum needed to answer one question: when rows are removed, is
+    /// this one of them. A `DatasetId` is a number this session allocated and
+    /// only Rust can turn into a path, so carrying it here adds no way to learn
+    /// where the file is -- and it is never serialized, never sent to the
+    /// webview, and never written down.
+    owner: DatasetId,
     spectrum: Arc<SelectedSpectrumResult>,
 }
 
@@ -218,6 +248,11 @@ impl SpectrumSnapshot {
 
     pub(super) fn index(&self) -> u64 {
         self.spectrum.identity().index()
+    }
+
+    /// The dataset this spectrum was read from.
+    pub(super) const fn owner(&self) -> DatasetId {
+        self.owner
     }
 }
 
@@ -321,7 +356,11 @@ impl SpectrumExportSlot {
     /// spectrum is retained, not a history of them. An export already under way
     /// is unaffected -- it holds its own handle -- so this neither waits for one
     /// nor cancels one.
-    pub(super) fn install(&mut self, spectrum: SelectedSpectrumResult) -> SpectrumSnapshot {
+    pub(super) fn install(
+        &mut self,
+        owner: DatasetId,
+        spectrum: SelectedSpectrumResult,
+    ) -> SpectrumSnapshot {
         let token = SpectrumExportToken(self.next_token);
         self.next_token = self
             .next_token
@@ -329,6 +368,7 @@ impl SpectrumExportSlot {
             .expect("a session interprets fewer than u64::MAX selected spectra");
         let snapshot = SpectrumSnapshot {
             token,
+            owner,
             spectrum: Arc::new(spectrum),
         };
         self.current = Some(snapshot.clone());
@@ -337,10 +377,43 @@ impl SpectrumExportSlot {
 
     /// Forgets the retained spectrum.
     ///
-    /// Called when the preview it belonged to is no longer the one on screen.
-    /// An export under way keeps its own handle and finishes.
+    /// Called wherever the panel stops naming it: the read failed, the spectrum
+    /// was unavailable, a preview was opened over it, or the list was cleared.
+    /// An export under way keeps its own handle and finishes; what this ends is
+    /// the ability to start a *new* one against the old token.
     pub(super) fn forget(&mut self) {
         self.current = None;
+    }
+
+    /// Forgets the retained spectrum only if one of these datasets owns it.
+    ///
+    /// Removing rows around the preview is not a reason to revoke what the user
+    /// is reading -- the frontend keeps the preview open in exactly that case,
+    /// and a slot that forgot anyway would refuse the next export of a spectrum
+    /// still on screen. Answers whether it dropped anything.
+    pub(super) fn forget_if_owned_by(&mut self, removed: &[DatasetId]) -> bool {
+        let owned = self
+            .current
+            .as_ref()
+            .is_some_and(|snapshot| removed.contains(&snapshot.owner()));
+        if owned {
+            self.current = None;
+        }
+        owned
+    }
+
+    /// A handle that does not keep the spectrum alive.
+    ///
+    /// Test-only, and the only way to witness what revocation is actually for:
+    /// whether the two arrays are *released*, rather than merely unreachable
+    /// through this slot. A test drops its own snapshot, revokes, and upgrades
+    /// this -- `None` is the evidence, and nothing else in this module could
+    /// have produced it.
+    #[cfg(test)]
+    pub(super) fn weak_current(&self) -> Option<std::sync::Weak<SelectedSpectrumResult>> {
+        self.current
+            .as_ref()
+            .map(|snapshot| Arc::downgrade(&snapshot.spectrum))
     }
 
     /// Whether an export has reached something a second one must not disturb.
@@ -373,9 +446,11 @@ impl SpectrumExportSlot {
         token: &str,
         format: SpectrumExportFormat,
     ) -> Result<SpectrumReservationId, BeginExportRefusal> {
-        if self.is_committed() {
-            return Err(BeginExportRefusal::AlreadyExporting);
-        }
+        // Asked before whether anything else is running, because the two
+        // refusals send the user somewhere different. "Already exporting" means
+        // wait; "no longer loaded" means select the spectrum again. A stale
+        // token answered with the first would send someone to wait for an
+        // export whose finishing cannot help them.
         let requested = SpectrumExportToken::from_wire(token).ok_or(BeginExportRefusal::Stale)?;
         let snapshot = self
             .current
@@ -383,6 +458,9 @@ impl SpectrumExportSlot {
             .filter(|snapshot| snapshot.token == requested)
             .ok_or(BeginExportRefusal::Stale)?
             .clone();
+        if self.is_committed() {
+            return Err(BeginExportRefusal::AlreadyExporting);
+        }
         let reservation = SpectrumReservationId(self.next_reservation);
         self.next_reservation = self
             .next_reservation
@@ -676,6 +754,15 @@ pub(super) fn data_document(
 mod tests {
     use super::*;
     use mscanvas_plot_spec::spec::DataScope;
+
+    /// The dataset a slot test's spectrum came from.
+    ///
+    /// Which one rarely matters here -- the slot tests are about the token and
+    /// the reservation, not about ownership -- so they share one, and the tests
+    /// that *are* about ownership name a second explicitly.
+    fn owner(number: u64) -> DatasetId {
+        DatasetId::parse(&format!("file-{number}")).expect("a well-formed handle")
+    }
 
     fn spectrum(index: u64, mz: Vec<f64>, intensity: Vec<f64>) -> SelectedSpectrumResult {
         SelectedSpectrumResult::from_points_for_tests(index, mz, intensity)
@@ -1062,10 +1149,10 @@ mod tests {
     #[test]
     fn a_stale_token_is_refused_rather_than_rebound() {
         let mut slot = SpectrumExportSlot::default();
-        let first = slot.install(spectrum(1, vec![100.0], vec![1.0]));
+        let first = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let stale = first.token().as_wire();
         // A newer selection replaces the retained spectrum.
-        let second = slot.install(spectrum(2, vec![200.0], vec![2.0]));
+        let second = slot.install(owner(1), spectrum(2, vec![200.0], vec![2.0]));
         assert_ne!(stale, second.token().as_wire(), "each spectrum has its own");
         assert_eq!(
             slot.begin(&stale, SpectrumExportFormat::Svg),
@@ -1083,7 +1170,7 @@ mod tests {
     #[test]
     fn a_claimed_export_is_unaffected_by_a_later_selection() {
         let mut slot = SpectrumExportSlot::default();
-        let first = slot.install(spectrum(1, vec![100.0, 200.0], vec![1.0, 2.0]));
+        let first = slot.install(owner(1), spectrum(1, vec![100.0, 200.0], vec![1.0, 2.0]));
         let reservation = slot
             .begin(&first.token().as_wire(), SpectrumExportFormat::Csv)
             .expect("a reservation");
@@ -1091,8 +1178,8 @@ mod tests {
             .claim(&reservation.as_wire())
             .expect("the reservation is claimable once");
         // The user is now in a save dialog. Two more selections land.
-        slot.install(spectrum(2, vec![300.0], vec![3.0]));
-        slot.install(spectrum(3, Vec::new(), Vec::new()));
+        slot.install(owner(1), spectrum(2, vec![300.0], vec![3.0]));
+        slot.install(owner(1), spectrum(3, Vec::new(), Vec::new()));
         assert_eq!(
             claimed.snapshot.point_count(),
             2,
@@ -1105,7 +1192,7 @@ mod tests {
     #[test]
     fn a_reservation_claims_once_and_a_superseded_one_never_does() {
         let mut slot = SpectrumExportSlot::default();
-        let snapshot = slot.install(spectrum(1, vec![100.0], vec![1.0]));
+        let snapshot = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let token = snapshot.token().as_wire();
         let first = slot
             .begin(&token, SpectrumExportFormat::Svg)
@@ -1131,7 +1218,7 @@ mod tests {
     #[test]
     fn a_committed_export_refuses_another() {
         let mut slot = SpectrumExportSlot::default();
-        let snapshot = slot.install(spectrum(1, vec![100.0], vec![1.0]));
+        let snapshot = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let token = snapshot.token().as_wire();
         let reservation = slot
             .begin(&token, SpectrumExportFormat::Svg)
@@ -1156,7 +1243,7 @@ mod tests {
     #[test]
     fn cancelling_frees_the_slot_and_forgetting_drops_the_spectrum() {
         let mut slot = SpectrumExportSlot::default();
-        let snapshot = slot.install(spectrum(1, vec![100.0], vec![1.0]));
+        let snapshot = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let token = snapshot.token().as_wire();
         let reservation = slot
             .begin(&token, SpectrumExportFormat::Svg)

@@ -20489,3 +20489,324 @@ fn a_real_sciex_acquisition_runs_through_the_visible_workflow() {
     );
     assert_eq!(update.diagnostics.eligible_item_count, 0);
 }
+
+// ---------------------------------------------------------------------------
+// The retained selected spectrum, and how long it is retained for.
+//
+// The slot's contract is one sentence -- it holds the spectrum the loaded panel
+// names -- and M4.1 enforced only half of it. Installing a newer spectrum
+// replaced the old one, but every *other* way a panel stops naming one left the
+// complete arrays in memory with nothing on screen pointing at them. These are
+// the other ways.
+//
+// Two things are asserted throughout, because they are different claims. That
+// the old token is refused proves the slot stopped *naming* the spectrum. That a
+// `Weak` fails to upgrade proves the arrays were *released*. Only the second is
+// what the retention was about.
+// ---------------------------------------------------------------------------
+
+/// Loads one spectrum and answers with the token the panel would hold.
+fn loaded_export_token(service: &PreviewService, handle: &str, index: u64) -> String {
+    let outcome = service
+        .load_spectrum(handle, index)
+        .expect("the spectrum loads");
+    let SelectedSpectrumOutcomeDto::Spectrum { spectrum } = outcome else {
+        panic!("a present spectrum is not the unavailable outcome");
+    };
+    spectrum.export_token.clone()
+}
+
+fn one_spectrum() -> Response {
+    Response::File(selected_spectrum_output(
+        0,
+        &[(100.5, 10.0), (200.25, 40.0)],
+    ))
+}
+
+#[test]
+fn a_spectrum_that_turns_out_unavailable_revokes_the_retained_one() {
+    let file = TestFile::new("lifecycle-unavailable");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
+        one_spectrum(),
+        Response::NoOutput,
+    ])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let token = loaded_export_token(&service, &selected.handle, 0);
+    let retained = service
+        .retained_spectrum_weak()
+        .expect("a loaded spectrum is retained");
+
+    let outcome = service
+        .load_spectrum(&selected.handle, 1)
+        .expect("an absent index is an answer, not a failure");
+    assert!(matches!(
+        outcome,
+        SelectedSpectrumOutcomeDto::Unavailable { .. }
+    ));
+
+    assert!(
+        retained.upgrade().is_none(),
+        "the arrays are released once nothing names them"
+    );
+    let refusal = service
+        .begin_spectrum_export(&token, "svg")
+        .expect_err("the old token names a spectrum this session no longer has");
+    assert_eq!(refusal.kind, "spectrum_export_stale");
+}
+
+#[test]
+fn a_spectrum_whose_read_fails_revokes_the_retained_one() {
+    let file = TestFile::new("lifecycle-failed");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
+        one_spectrum(),
+        Response::Error(PreviewErrorDto::new(
+            "spectrum_failed",
+            "the read did not complete",
+            true,
+        )),
+    ])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let token = loaded_export_token(&service, &selected.handle, 0);
+    let retained = service
+        .retained_spectrum_weak()
+        .expect("a loaded spectrum is retained");
+
+    service
+        .load_spectrum(&selected.handle, 1)
+        .expect_err("the read fails");
+
+    assert!(retained.upgrade().is_none());
+    assert_eq!(
+        service
+            .begin_spectrum_export(&token, "csv")
+            .expect_err("stale")
+            .kind,
+        "spectrum_export_stale"
+    );
+}
+
+#[test]
+fn removing_the_previews_own_dataset_revokes_the_retained_spectrum() {
+    let file = TestFile::new("lifecycle-remove-own");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let token = loaded_export_token(&service, &selected.handle, 0);
+    let retained = service
+        .retained_spectrum_weak()
+        .expect("a loaded spectrum is retained");
+
+    service
+        .remove_datasets(std::slice::from_ref(&selected.handle))
+        .expect("the row is removed");
+
+    assert!(retained.upgrade().is_none());
+    assert_eq!(
+        service
+            .begin_spectrum_export(&token, "svg")
+            .expect_err("stale")
+            .kind,
+        "spectrum_export_stale"
+    );
+}
+
+#[test]
+fn removing_an_unrelated_dataset_leaves_the_retained_spectrum() {
+    // The frontend keeps the preview open when a row *around* it goes, and this
+    // is the half of the invariant that says so. A slot that forgot on any
+    // removal would refuse the next export of a spectrum still on screen.
+    let file = TestFile::new("lifecycle-remove-other");
+    let sibling = file.sibling("other.mzML");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    // Added as a batch, because accepting a file one at a time is the picker
+    // path and that replaces the whole selection.
+    service.add_files_now(&[file.path.clone(), sibling]);
+    let roster = service.roster();
+    let read = roster.datasets[0].handle.clone();
+    let unrelated = roster.datasets[1].handle.clone();
+    let token = loaded_export_token(&service, &read, 0);
+
+    service
+        .remove_datasets(std::slice::from_ref(&unrelated))
+        .expect("the other row is removed");
+
+    assert!(
+        service.retained_spectrum_weak().is_some(),
+        "the spectrum on screen is untouched by a removal elsewhere"
+    );
+    service
+        .begin_spectrum_export(&token, "svg")
+        .expect("the spectrum on screen is still exportable");
+}
+
+#[test]
+fn clearing_the_list_revokes_the_retained_spectrum() {
+    let file = TestFile::new("lifecycle-clear");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let token = loaded_export_token(&service, &selected.handle, 0);
+    let retained = service
+        .retained_spectrum_weak()
+        .expect("a loaded spectrum is retained");
+
+    service.clear_workspace().expect("the list clears");
+
+    assert!(retained.upgrade().is_none());
+    assert_eq!(
+        service
+            .begin_spectrum_export(&token, "tsv")
+            .expect_err("stale")
+            .kind,
+        "spectrum_export_stale"
+    );
+}
+
+#[test]
+fn opening_a_preview_revokes_whatever_the_last_one_left() {
+    // Whatever happens next. An open takes the current preview off the screen
+    // before it can succeed or fail, so the retained spectrum stops being named
+    // at that moment -- which is why this asserts it against an open that does
+    // not even complete.
+    let file = TestFile::new("lifecycle-open");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let token = loaded_export_token(&service, &selected.handle, 0);
+    let retained = service
+        .retained_spectrum_weak()
+        .expect("a loaded spectrum is retained");
+
+    service
+        .open_preview(&selected.handle)
+        .expect_err("this fake has no further response to give");
+
+    assert!(retained.upgrade().is_none());
+    assert_eq!(
+        service
+            .begin_spectrum_export(&token, "svg")
+            .expect_err("stale")
+            .kind,
+        "spectrum_export_stale"
+    );
+}
+
+#[test]
+fn reading_the_roster_does_not_revoke_the_retained_spectrum() {
+    // The Rust-side shape of the M4.1 invariant that focus is not a revocation.
+    // Moving the keyboard to a vendor row while the preview stays visible calls
+    // no command that changes the selection; what it does reach is the roster,
+    // and the spectrum has to survive that.
+    let file = TestFile::new("lifecycle-focus");
+    let sibling = file.sibling("beside.mzML");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    service.add_files_now(&[file.path.clone(), sibling]);
+    let read = service.roster().datasets[0].handle.clone();
+    let token = loaded_export_token(&service, &read, 0);
+
+    let roster = service.roster();
+    assert_eq!(roster.datasets.len(), 2);
+
+    assert!(service.retained_spectrum_weak().is_some());
+    service
+        .begin_spectrum_export(&token, "svg")
+        .expect("the spectrum a user is reading stays exportable");
+}
+
+#[test]
+fn a_claimed_export_finishes_after_the_spectrum_it_names_is_revoked() {
+    // The exception the whole design turns on. Revocation ends the ability to
+    // start something new; it does not reach into an operation the user already
+    // committed to, which holds its own handle and finishes from that.
+    let file = TestFile::new("lifecycle-claimed");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let token = loaded_export_token(&service, &selected.handle, 0);
+
+    let reservation = service
+        .begin_spectrum_export(&token, "svg")
+        .expect("the export begins");
+    let claimed = service
+        .claim_spectrum_export(&reservation)
+        .expect("the reservation is claimed");
+
+    // The user is standing in a save dialog when the list is cleared.
+    service.clear_workspace().expect("the list clears");
+
+    assert!(
+        service.retained_spectrum_weak().is_none(),
+        "the slot holds nothing current"
+    );
+    assert_eq!(
+        service
+            .begin_spectrum_export(&token, "svg")
+            .expect_err("a new export is refused")
+            .kind,
+        "spectrum_export_stale"
+    );
+
+    let destination = file.directory.join("claimed.svg");
+    service
+        .write_spectrum_export(&claimed, &destination)
+        .expect("the claimed export still writes the spectrum it named");
+    let written = fs::read_to_string(&destination).expect("the file exists");
+    assert!(written.contains("<svg"), "{written:.60}");
+}
+
+#[test]
+fn a_later_spectrum_installs_one_snapshot_and_keeps_no_history() {
+    let file = TestFile::new("lifecycle-replace");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
+        one_spectrum(),
+        Response::File(selected_spectrum_output(1, &[(300.5, 5.0)])),
+    ])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let first = loaded_export_token(&service, &selected.handle, 0);
+    let retained = service
+        .retained_spectrum_weak()
+        .expect("a loaded spectrum is retained");
+
+    let second = loaded_export_token(&service, &selected.handle, 1);
+
+    assert_ne!(first, second, "each retained spectrum has its own name");
+    assert!(
+        retained.upgrade().is_none(),
+        "the replaced spectrum is released rather than accumulated"
+    );
+    assert_eq!(
+        service
+            .begin_spectrum_export(&first, "svg")
+            .expect_err("stale")
+            .kind,
+        "spectrum_export_stale"
+    );
+    service
+        .begin_spectrum_export(&second, "svg")
+        .expect("the spectrum now on screen is the exportable one");
+}
+
+#[test]
+fn choosing_another_file_through_the_picker_revokes_the_retained_spectrum() {
+    // The single-file picker replaces the whole selection rather than adding to
+    // it, so the dataset the retained spectrum came from stops existing. This
+    // path empties the workspace without going through `clear_workspace`, which
+    // is exactly why it needs its own revocation and its own test.
+    let file = TestFile::new("lifecycle-replace-selection");
+    let another = file.sibling("another.mzML");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let token = loaded_export_token(&service, &selected.handle, 0);
+    let retained = service
+        .retained_spectrum_weak()
+        .expect("a loaded spectrum is retained");
+
+    service
+        .accept_file(&another)
+        .expect("the new file is chosen");
+
+    assert!(retained.upgrade().is_none());
+    assert_eq!(
+        service
+            .begin_spectrum_export(&token, "svg")
+            .expect_err("stale")
+            .kind,
+        "spectrum_export_stale"
+    );
+}
