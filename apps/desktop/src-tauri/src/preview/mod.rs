@@ -30,6 +30,13 @@ pub mod dialog;
 mod discovery;
 mod drop_ingestion;
 pub mod dto;
+/// The session's one selected-spectrum export: the retained complete spectrum,
+/// the figure specification built from it, and the CSV/TSV document beside it.
+///
+/// Private to this module. The webview learns that an export is possible and
+/// what one wrote; it never receives the spectrum's complete arrays, a path, or
+/// the folder a file was saved in. See ADR 0029.
+mod export;
 mod installation;
 mod operation;
 pub mod selection;

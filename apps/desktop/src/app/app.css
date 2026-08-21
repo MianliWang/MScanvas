@@ -1037,6 +1037,39 @@ button:disabled {
   padding: 10px 12px 14px;
 }
 
+/* The selected spectrum's export affordance, in the panel header beside the
+   heading. It wraps rather than shrinking: three actions and a status line do
+   not fit one row beside a heading at 960px, and a header that clipped them
+   would hide the only route to this feature. */
+.spectrum-export {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px 8px;
+}
+
+.spectrum-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Present whether or not it has anything to say, so the live region exists
+   before the first result rather than being inserted with one -- an assistive
+   technology announces a region it was already watching. Empty text collapses
+   the line, so an idle export costs no height. */
+.spectrum-export-status {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.spectrum-export-status:empty {
+  display: none;
+}
+
 .spectrum-summary {
   margin: 0;
   color: var(--color-text-secondary);

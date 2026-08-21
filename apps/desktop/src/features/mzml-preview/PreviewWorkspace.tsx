@@ -646,7 +646,13 @@ export function PreviewWorkspace() {
               selectedIndex={workspace.selectedIndex}
               table={preview.preview.spectrumTable}
             />
-            <SelectedSpectrumPanel onRetry={workspace.retrySpectrum} state={spectrum} />
+            <SelectedSpectrumPanel
+              exportState={workspace.spectrumExport}
+              onDismissExport={workspace.dismissSpectrumExport}
+              onExport={workspace.exportSpectrum}
+              onRetry={workspace.retrySpectrum}
+              state={spectrum}
+            />
           </div>
         ) : (
           <section className="panel workspace-placeholder">

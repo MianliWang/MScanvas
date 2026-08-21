@@ -52,7 +52,32 @@ interface Reduction {
   readonly intensityLow: number;
   readonly intensityHigh: number;
   readonly negativeCount: number;
+  /** Negative sticks that were placed at all -- one per column that had any. */
+  readonly negativesDrawn: number;
+  /**
+   * Negative sticks drawn with no length: on the zero line rather than below
+   * it, because the value range is wider than two decimals can hold apart.
+   */
+  readonly negativesDrawnFlat: number;
   readonly zeroY: number;
+}
+
+/**
+ * How a coordinate is written into the path.
+ *
+ * Shared with the question of whether a stick has any length rather than
+ * restated there: the caption has to ask exactly the question the drawing
+ * answers, and a second copy of this rounding is how the two would come to
+ * disagree. The export renderer learned the same lesson closing
+ * M4.1-BLOCKER-A.
+ */
+function coordinate(value: number): string {
+  return value.toFixed(2);
+}
+
+/** Whether a stick is drawn on the zero line rather than away from it. */
+function drawsWithoutLength(y: number, zeroY: number): boolean {
+  return coordinate(y) === coordinate(zeroY);
 }
 
 /**
@@ -132,15 +157,24 @@ function reduce(
       : BASELINE_Y;
 
   const sticks: Stick[] = [];
+  let negativesDrawn = 0;
+  let negativesDrawnFlat = 0;
   const place = (height: number | null | undefined, value: number) => {
     if (height === null || height === undefined) {
       return;
     }
     const fraction = span > 0 ? (value - domainLow) / span : 0.5;
     const scaled = valueSpan > 0 ? (intensityHigh - height) / valueSpan : 1;
+    const y = PLOT_PADDING_TOP + scaled * usableHeight;
+    if (height < 0) {
+      negativesDrawn += 1;
+      if (drawsWithoutLength(y, zeroY)) {
+        negativesDrawnFlat += 1;
+      }
+    }
     sticks.push({
       x: PLOT_PADDING_LEFT + fraction * usableWidth,
-      y: PLOT_PADDING_TOP + scaled * usableHeight,
+      y,
     });
   };
   for (let column = 0; column < columnCount; column += 1) {
@@ -155,8 +189,38 @@ function reduce(
     intensityLow,
     intensityHigh,
     negativeCount,
+    negativesDrawn,
+    negativesDrawnFlat,
     zeroY,
   };
+}
+
+/**
+ * What the drawing can honestly claim about the negatives it drew.
+ *
+ * The caption used to say the deepest negative in each column is drawn below
+ * the zero line, whatever the numbers were. Against a wide enough value range
+ * that is false: coordinates are written to two decimals, so a small negative
+ * beside a huge one lands *on* the zero line, drawn with no length at all.
+ * Saying so is the difference between a reader concluding there is no negative
+ * signal and a reader knowing there is some this drawing cannot show them.
+ */
+function describeNegativeDrawing(reduction: Reduction): string {
+  const withHeight = reduction.negativesDrawn - reduction.negativesDrawnFlat;
+  if (reduction.negativesDrawnFlat === 0) {
+    return " The deepest negative in each column is drawn below the zero line.";
+  }
+  if (withHeight === 0) {
+    return (
+      " The value range is too wide to hold them apart from zero at this size," +
+      " so they are drawn on the zero line without a length rather than below it."
+    );
+  }
+  return (
+    ` The deepest negative in ${withHeight} of the columns is drawn below the zero` +
+    " line; in the rest the value range is too wide to hold them apart from zero" +
+    " at this size, so they are drawn on the line without a length."
+  );
 }
 
 /**
@@ -191,7 +255,10 @@ export function StickSpectrum({
   const path = useMemo(
     () =>
       reduction.sticks
-        .map((stick) => `M${stick.x.toFixed(2)} ${reduction.zeroY.toFixed(2)}V${stick.y.toFixed(2)}`)
+        .map(
+          (stick) =>
+            `M${coordinate(stick.x)} ${coordinate(reduction.zeroY)}V${coordinate(stick.y)}`,
+        )
         .join(""),
     [reduction.sticks, reduction.zeroY],
   );
@@ -238,7 +305,7 @@ export function StickSpectrum({
           : `Drawn as ${formatSticks(reduction.sticks.length)}, one per point.`}
         {" Horizontal axis: m/z. Vertical axis: intensity, scaled to the point furthest from zero."}
         {reduction.negativeCount > 0
-          ? ` ${reduction.negativeCount} of the points ${reduction.negativeCount === 1 ? "carries" : "carry"} negative intensity; the deepest negative in each column is drawn below the zero line.`
+          ? ` ${reduction.negativeCount} of the points ${reduction.negativeCount === 1 ? "carries" : "carry"} negative intensity.${describeNegativeDrawing(reduction)}`
           : ""}
         {representationKnown
           ? ""

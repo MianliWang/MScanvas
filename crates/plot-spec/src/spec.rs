@@ -110,6 +110,8 @@ pub enum SpecError {
     MarkerOutsideFullDomain,
     /// A panel carried two series of the same style role.
     DuplicateSeriesRole,
+    /// A panel declared no series at all.
+    PanelHasNoSeries,
     /// A decoded document declared a schema this build does not accept.
     UnknownSchemaVersion,
 }
@@ -142,6 +144,7 @@ impl fmt::Display for SpecError {
             Self::DuplicateSeriesRole => {
                 "a panel carried two series of the same style role, which cannot be told apart"
             }
+            Self::PanelHasNoSeries => "a panel declared no series at all",
             Self::UnknownSchemaVersion => "the document declares an unknown schema version",
         })
     }
@@ -959,6 +962,24 @@ impl PanelSpec {
         self.y_axis.validate()?;
         self.full_domain.validate()?;
         self.value_domain.validate()?;
+        // A panel is a plot of something, and a panel of nothing is not a
+        // plot of nothing -- it is a specification that forgot to say what it
+        // draws. The renderer had no honest answer for it: the sentence that
+        // names a panel's series joined an empty list and printed `Series: .`,
+        // and no later sentence explained the blank plotting area, so a reader
+        // could not tell a deliberately empty figure from a renderer that had
+        // failed. That ambiguity is the one thing this export must never leave
+        // open, and inventing a placeholder panel to describe would be the
+        // contract making up a figure nobody asked for.
+        //
+        // This is **not** the same rule as refusing an empty measurement. A
+        // spectrum that genuinely holds no peaks is a real scientific answer
+        // and stays representable: it is one `SeriesSpec` carrying zero points,
+        // which the description already discloses by name. What is refused here
+        // is a panel that declares no series to have points at all.
+        if self.series.is_empty() {
+            return Err(SpecError::PanelHasNoSeries);
+        }
         // A discrete mark is a length measured from zero, so a value range that
         // never reaches zero has no baseline to measure from. Drawn anyway, the
         // smallest value would sit exactly on the axis and vanish, and every

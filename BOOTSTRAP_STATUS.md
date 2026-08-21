@@ -4264,13 +4264,49 @@ The renderer joins only established profile data. Joining centroid peaks would
 draw intensity at m/z values nobody measured; joining unreported points would
 assert the representation while drawing it.
 
-**Nothing visible was added.** FIG-001 through FIG-008 remain unimplemented:
-no copy action, no export action, no dialog, no PNG, no CSV/TSV. PNG for M4.1
-is planned on `resvg` (Apache-2.0 OR MIT, verified against crates.io) called
-from Rust, which avoids the MPL-2.0 Node binding and sharp's LGPL prebuilts.
+**Nothing visible was added by M4.0.** PNG is planned for **M4.2** on `resvg`
+(Apache-2.0 OR MIT, verified against crates.io) called from Rust, which avoids
+the MPL-2.0 Node binding and sharp's LGPL prebuilts. It is still unadded.
 
 Timings moved by up to 4.6x across four runs on one loaded laptop while the byte
 counts stayed identical, which is why they did not choose the renderer. See
 [ADR 0028](docs/architecture/adr/0028-figure-renderer-and-semantic-specification.md)
 and
 [the M4.0 evidence record](docs/spikes/M4_FIGURE_RENDERER_SELECTION_EVIDENCE.md).
+
+### M4.1 — first visible spectrum figure and data export
+
+The selected mzML spectrum can now be exported: `Export SVG…`, `Export CSV…` and
+`Export TSV…` in the `Selected spectrum` panel, once a spectrum has loaded. A
+spectrum that loaded with no peaks is exportable too, and produces an honest
+empty figure.
+
+**What the milestone is actually about is where the bytes come from.** The
+webview receives at most `MAX_SPECTRUM_POINTS` of each array, because that
+projection carries a drawing. The complete `SelectedSpectrumResult` stays in
+Rust, in one session slot behind an `Arc`, and the webview receives an opaque
+token naming it. An export command names a spectrum and never carries one, so a
+file cannot silently become the transferred prefix — a defect that would have
+appeared only on the large spectra a user most wants exported. A token from an
+earlier selection is refused rather than rebound to whatever is loaded now.
+
+The figure and the data document are siblings over that one source: one panel,
+one measurement series, `DataScope::FullSource`, no visible domain, with
+representation and units carried across as the `Unreported` states the backend
+actually reports. Spectrum CSV/TSV schema v1 is a `#` metadata preamble, a
+header row and one record per source point, with values that round-trip the
+parsed `f64` bit for bit.
+
+Rust owns the path throughout. Each action writes one file through a native
+dialog that replaces nothing, publishing through a private sibling renamed by
+handle; a dismissed dialog is an outcome rather than an error, and no path
+crosses to React in either direction.
+
+Both M4.1 entry blockers were closed first: a negative is called visibly below zero
+only where it is drawn there, and a panel must declare at least one series.
+
+**FIG-003** is implemented for the selected spectrum at full range. **FIG-004**
+is partial — selected-spectrum CSV/TSV only, no chromatogram data export.
+**FIG-001**, **FIG-002** and **FIG-006** through **FIG-008** remain
+unimplemented, and **FIG-005** has no user-selectable theme. See
+[ADR 0029](docs/architecture/adr/0029-first-visible-spectrum-figure-and-data-export.md).

@@ -6,15 +6,46 @@
 
 use super::dto::PreviewErrorDto;
 
+/// How one save dialog presents itself.
+///
+/// Carried together rather than as loose parameters because each field is
+/// wrong on its own: a window titled "Save conversion diagnostics" over a
+/// filter reading `*.csv` is a dialog that misstates what is about to be
+/// written, and the two would drift the moment a third format arrived.
+///
+/// Every field is `&'static str`. These describe MSCanvas's own formats, so
+/// none of them is ever built from a path, a file name a user chose, or
+/// anything else that crossed a boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SaveDialogFacts {
+    /// The dialog window's title.
+    pub title: &'static str,
+    /// What the filter row reads, including its pattern in the usual form.
+    pub filter_label: &'static str,
+    /// The pattern the filter matches, such as `*.svg`.
+    pub filter_pattern: &'static str,
+    /// The extension appended when the typed name carries none.
+    pub default_extension: &'static str,
+}
+
 #[cfg(windows)]
 pub use windows_dialog::{
     choose_conversion_destination, choose_diagnostics_destination, choose_installation_folder,
-    choose_mzml_folder, choose_workspace_files,
+    choose_mzml_folder, choose_save_destination, choose_workspace_files,
+};
+
+/// The save dialog for the one diagnostics document.
+pub const DIAGNOSTICS_SAVE_DIALOG: SaveDialogFacts = SaveDialogFacts {
+    title: "Save conversion diagnostics",
+    filter_label: "Diagnostics (*.json)",
+    filter_pattern: "*.json",
+    default_extension: "json",
 };
 
 #[cfg(not(windows))]
-pub fn choose_diagnostics_destination(
+pub fn choose_save_destination(
     _owner: Option<isize>,
+    _facts: SaveDialogFacts,
     _default_file_name: &str,
 ) -> Result<Option<std::path::PathBuf>, PreviewErrorDto> {
     Err(PreviewErrorDto::new(
@@ -22,6 +53,14 @@ pub fn choose_diagnostics_destination(
         "The native save dialog is available on Windows in this version.",
         false,
     ))
+}
+
+#[cfg(not(windows))]
+pub fn choose_diagnostics_destination(
+    owner: Option<isize>,
+    default_file_name: &str,
+) -> Result<Option<std::path::PathBuf>, PreviewErrorDto> {
+    choose_save_destination(owner, DIAGNOSTICS_SAVE_DIALOG, default_file_name)
 }
 
 #[cfg(not(windows))]
@@ -70,6 +109,7 @@ pub fn choose_conversion_destination(
 
 #[cfg(windows)]
 mod windows_dialog {
+    use super::SaveDialogFacts;
     use std::ffi::OsString;
     use std::ffi::c_void;
     use std::os::windows::ffi::OsStringExt;
@@ -277,12 +317,27 @@ mod windows_dialog {
         owner: Option<isize>,
         default_file_name: &str,
     ) -> Result<Option<PathBuf>, PreviewErrorDto> {
+        choose_save_destination(owner, super::DIAGNOSTICS_SAVE_DIALOG, default_file_name)
+    }
+
+    /// Shows one native save dialog and answers with the name that was chosen.
+    ///
+    /// Parametrised by [`SaveDialogFacts`] rather than copied per format: the
+    /// flags below are the interesting part of this function, and three copies
+    /// of them would be three places for the no-overwrite posture to be relaxed
+    /// in. Only the title, the filter and the default extension differ between
+    /// the documents MSCanvas writes.
+    pub fn choose_save_destination(
+        owner: Option<isize>,
+        facts: SaveDialogFacts,
+        default_file_name: &str,
+    ) -> Result<Option<PathBuf>, PreviewErrorDto> {
         let mut filter = Vec::new();
-        filter.extend_from_slice(&wide("Diagnostics (*.json)"));
-        filter.extend_from_slice(&wide("*.json"));
+        filter.extend_from_slice(&wide(facts.filter_label));
+        filter.extend_from_slice(&wide(facts.filter_pattern));
         filter.push(0);
-        let title = wide("Save conversion diagnostics");
-        let default_extension = wide("json");
+        let title = wide(facts.title);
+        let default_extension = wide(facts.default_extension);
 
         // The proposed name goes into the same buffer the answer comes back in,
         // which is how this entry point is documented to receive one.

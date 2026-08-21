@@ -781,6 +781,65 @@ impl fmt::Debug for SelectedSpectrumResult {
 }
 
 impl SelectedSpectrumResult {
+    /// Builds one selected spectrum from its points, for tests in this
+    /// workspace.
+    ///
+    /// Off in every shipped build, like the capability constructor beside it.
+    /// The facts a parser reads out of a backend's own line -- the identifiers,
+    /// the precursors, the analyser strings -- are left at what the formatter
+    /// emits when it says nothing, because a caller that wanted to test those
+    /// should be testing the parser rather than fabricating its answer.
+    ///
+    /// The summary values are derived from the points rather than taken as
+    /// arguments, so a test cannot build a spectrum whose reported base peak
+    /// disagrees with the array it is supposedly the peak of.
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn from_points_for_tests(
+        index: u64,
+        mz_values: Vec<f64>,
+        intensity_values: Vec<f64>,
+    ) -> Self {
+        let mut base_peak_index = 0;
+        for point in 1..intensity_values.len() {
+            if intensity_values[point] > intensity_values[base_peak_index] {
+                base_peak_index = point;
+            }
+        }
+        Self {
+            identity: SpectrumIdentity {
+                index,
+                representations: Vec::new(),
+                scan_number: None,
+            },
+            ms_level: 1,
+            retention_time: RetentionTime {
+                value: 0.0,
+                unit: UnitState::NotEmitted,
+            },
+            mz_low: mz_values.first().copied().unwrap_or(0.0),
+            mz_high: mz_values.last().copied().unwrap_or(0.0),
+            base_peak_mz: mz_values.get(base_peak_index).copied().unwrap_or(0.0),
+            base_peak_intensity: intensity_values
+                .get(base_peak_index)
+                .copied()
+                .unwrap_or(0.0),
+            total_ion_current: intensity_values.iter().sum(),
+            mz_values,
+            intensity_values,
+            precursors: Vec::new(),
+            mass_analyzer_type: None,
+            scan_event: None,
+            filter_string: None,
+            precision: NumericPrecisionEvidence {
+                requested_fraction_digits: 0,
+                observed_maximum_fraction_digits: 0,
+            },
+            value_units: UnitState::NotEmitted,
+            representation: SpectrumRepresentationState::NotEmitted,
+        }
+    }
+
     #[must_use]
     pub const fn identity(&self) -> &SpectrumIdentity {
         &self.identity

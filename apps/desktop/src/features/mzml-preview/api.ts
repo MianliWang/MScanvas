@@ -9,6 +9,8 @@ import type {
   FolderIngestionResult,
   Preview,
   SelectedSpectrumOutcome,
+  SpectrumExportFormat,
+  SpectrumExportOutcome,
   WorkspaceAddResult,
   WorkspaceConversionUpdate,
   WorkspaceRemoveResult,
@@ -196,6 +198,26 @@ export interface PreviewApi {
     operationId: string,
     onReserved: () => void,
   ): Promise<WorkspaceConversionUpdate>;
+  /**
+   * Exports the loaded selected spectrum as one SVG, CSV or TSV file.
+   *
+   * Takes the opaque token that spectrum's panel carries, and nothing else.
+   * This side supplies no arrays, no path and no dataset handle: which
+   * measurement is written was decided when Rust interpreted it, and the arrays
+   * this document holds are a bounded transfer that must never become a file.
+   *
+   * A token from an earlier selection is refused rather than answered with
+   * whichever spectrum is loaded now, so an export cannot quietly write a
+   * different measurement than the one it was invoked for.
+   *
+   * Where the file goes is chosen in a Rust-owned native save dialog and is
+   * never named by this side. Resolves to `cancelled` when that dialog is
+   * dismissed, which is an ordinary outcome and not an error.
+   */
+  exportSelectedSpectrum(
+    exportToken: string,
+    format: SpectrumExportFormat,
+  ): Promise<SpectrumExportOutcome>;
 }
 
 export const tauriPreviewApi: PreviewApi = {
@@ -276,6 +298,11 @@ export const tauriPreviewApi: PreviewApi = {
       return saved;
     });
   },
+  exportSelectedSpectrum: (exportToken, format) =>
+    invoke<string>("begin_selected_spectrum_export", { exportToken, format }).then(
+      (reservationId) =>
+        invoke<SpectrumExportOutcome>("save_selected_spectrum_export", { reservationId }),
+    ),
 };
 
 const PreviewApiContext = createContext<PreviewApi>(tauriPreviewApi);

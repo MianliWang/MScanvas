@@ -469,6 +469,110 @@ pub fn diagnostics_export_superseded() -> PreviewErrorDto {
     )
 }
 
+/// Another export of this session has not finished.
+///
+/// One at a time, so two save dialogs cannot be open over one spectrum and two
+/// writes cannot race for one name.
+#[must_use]
+pub fn spectrum_export_in_progress() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "spectrum_export_in_progress",
+        "MSCanvas is already exporting this spectrum.",
+        false,
+    )
+}
+
+/// The named spectrum is not the one this session holds.
+///
+/// Retryable, and the recovery is ordinary: the spectrum on screen has its own
+/// token, so selecting it again -- or simply exporting the one that is there --
+/// works. Nothing is written from a spectrum other than the one asked for.
+#[must_use]
+pub fn spectrum_export_stale() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "spectrum_export_stale",
+        "That spectrum is no longer the one MSCanvas has loaded, so nothing was exported. \
+         Select the spectrum again and export it.",
+        true,
+    )
+}
+
+/// The specification refused the spectrum, so no figure was drawn.
+///
+/// Not retryable: the same reading will be refused the same way. It is a fact
+/// about the spectrum rather than about the moment.
+#[must_use]
+pub fn spectrum_export_refused() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "spectrum_export_refused",
+        "MSCanvas could not build a figure this spectrum can be drawn in honestly, so no file \
+         was written.",
+        false,
+    )
+}
+
+/// The native save dialog could not be shown.
+#[must_use]
+pub fn spectrum_picker_unavailable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "spectrum_picker_unavailable",
+        "MSCanvas could not open the save dialog, so nothing was exported.",
+        true,
+    )
+}
+
+/// A file of that name is already there, and MSCanvas replaced nothing.
+#[must_use]
+pub fn spectrum_destination_exists(temporary_left_behind: bool) -> PreviewErrorDto {
+    with_residue(
+        PreviewErrorDto::new(
+            "spectrum_destination_exists",
+            "A file of that name is already in that folder. MSCanvas did not replace it. Export \
+             under another name.",
+            true,
+        ),
+        temporary_left_behind,
+    )
+}
+
+/// The chosen folder is not one this boundary will create a file in.
+#[must_use]
+pub fn spectrum_destination_unusable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "spectrum_destination_unusable",
+        "MSCanvas exports to a folder on this computer's own drives. Choose a local folder that is \
+         not a link.",
+        true,
+    )
+}
+
+/// The bytes could not be written.
+#[must_use]
+pub fn spectrum_not_written(temporary_left_behind: bool) -> PreviewErrorDto {
+    with_residue(
+        PreviewErrorDto::new(
+            "spectrum_not_written",
+            "MSCanvas could not write the export. Nothing was saved under the name you chose.",
+            true,
+        ),
+        temporary_left_behind,
+    )
+}
+
+/// The bytes were written and could not be given the chosen name.
+#[must_use]
+pub fn spectrum_not_finalized(temporary_left_behind: bool) -> PreviewErrorDto {
+    with_residue(
+        PreviewErrorDto::new(
+            "spectrum_not_finalized",
+            "MSCanvas wrote the export and could not give it the name you chose, so nothing was \
+             saved under that name.",
+            true,
+        ),
+        temporary_left_behind,
+    )
+}
+
 /// The chosen folder is not one this boundary will create a file in.
 #[must_use]
 pub fn diagnostics_destination_unusable() -> PreviewErrorDto {
@@ -1648,6 +1752,41 @@ pub struct SelectedSpectrumDto {
     /// The backend emitted no unit for the arrays, so no unit is displayed.
     pub value_units_known: bool,
     pub truncated: bool,
+    /// Which retained spectrum an export of this panel would write.
+    ///
+    /// Opaque and session-scoped. It names the complete result Rust kept, not
+    /// the possibly shortened arrays beside it, which is the whole point: the
+    /// webview can ask for that spectrum to be exported without being able to
+    /// supply -- or even see -- the data the file will contain. A token from an
+    /// earlier selection names a spectrum this session no longer holds and is
+    /// refused rather than silently answered with whatever is current.
+    pub export_token: String,
+}
+
+/// What one selected-spectrum export did.
+///
+/// Cancelling is one of the outcomes rather than an error: the user was offered
+/// a save dialog and closed it, nothing was created, and the spectrum on screen
+/// is exactly as it was.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum SpectrumExportOutcomeDto {
+    #[serde(rename_all = "camelCase")]
+    Cancelled,
+    #[serde(rename_all = "camelCase")]
+    Saved {
+        /// `svg`, `csv` or `tsv`.
+        format: String,
+        /// The name the file was given, and nothing about where it went.
+        file_name: String,
+        /// How many source points the document carries.
+        ///
+        /// The complete count. A reader comparing it against the panel's own
+        /// `point_count` is comparing two readings of the same spectrum, and a
+        /// truncated transfer cannot make them disagree, because this one did
+        /// not come from the transfer.
+        point_count: usize,
+    },
 }
 
 /// A selected-spectrum request either produced a spectrum or produced the

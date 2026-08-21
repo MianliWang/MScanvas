@@ -236,6 +236,8 @@ function harness(
     stopConversion: () => Promise.reject(new Error("not used in this file")),
     exportConversionDiagnostics: () =>
       Promise.reject(new Error("this test never exports conversion diagnostics")),
+    exportSelectedSpectrum: () =>
+      Promise.reject(new Error("this test never exports a selected spectrum")),
   };
   return {
     service,

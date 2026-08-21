@@ -89,8 +89,17 @@ use super::dto::{
 };
 use super::dto::{MAX_WORKSPACE_DATASETS, backend_quarantined, conversion_not_stoppable};
 use super::dto::{
+    SpectrumExportOutcomeDto, spectrum_destination_exists, spectrum_destination_unusable,
+    spectrum_export_in_progress, spectrum_export_refused, spectrum_export_stale,
+    spectrum_not_finalized, spectrum_not_written,
+};
+use super::dto::{
     WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto, adoption_in_progress,
     adoption_superseded, outputs_not_adoptable,
+};
+use super::export::{
+    BeginExportRefusal, ClaimedSpectrumExport, SpectrumExportFormat, SpectrumExportSlot,
+    data_document, svg_document,
 };
 use super::installation::InstallationIdentity;
 use super::operation::{
@@ -539,6 +548,14 @@ pub struct PreviewService {
     /// what it mirrors. It exists for the same callers the conversion mirror
     /// exists for, the native drop callback among them.
     diagnostics_exporting: AtomicBool,
+    /// The session's one selected-spectrum export.
+    ///
+    /// Holds the complete spectrum the current preview interpreted, which is
+    /// the only place that complete reading survives: the projection that
+    /// crosses to the webview is bounded at `MAX_SPECTRUM_POINTS` and exists to
+    /// carry a drawing. A leaf of its own, like the diagnostics slot beside it,
+    /// and taken last where more than one lock is needed.
+    spectrum_export: Mutex<SpectrumExportSlot>,
     /// Which backend the last look actually resolved to.
     ///
     /// Not the folder that was requested. A request names a configuration; what
@@ -586,6 +603,7 @@ impl PreviewService {
             publication_seam: Mutex::new(None),
             diagnostics_export: Mutex::new(DiagnosticsExportSlot::default()),
             diagnostics_exporting: AtomicBool::new(false),
+            spectrum_export: Mutex::new(SpectrumExportSlot::default()),
             installation_generation: AtomicU64::new(0),
             resolved: Mutex::new(ObservedBackend::default()),
         }
@@ -1982,6 +2000,111 @@ impl PreviewService {
         self.diagnostics_export
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The session's one selected-spectrum export slot, locked.
+    ///
+    /// Never held across the native dialog or the write. Both of those take a
+    /// snapshot out of the slot first and work from that, so a selection that
+    /// lands while a dialog is open changes what a *new* export would name
+    /// without disturbing one already under way.
+    fn spectrum_export_slot(&self) -> std::sync::MutexGuard<'_, SpectrumExportSlot> {
+        self.spectrum_export
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Starts one export of one named spectrum, answering with its reservation.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a second concurrent export, and refuses a token this session no
+    /// longer holds rather than exporting whichever spectrum is current now.
+    pub fn begin_spectrum_export(
+        &self,
+        token: &str,
+        format: &str,
+    ) -> Result<String, PreviewErrorDto> {
+        let format = SpectrumExportFormat::from_wire(format).ok_or_else(spectrum_export_stale)?;
+        self.spectrum_export_slot()
+            .begin(token, format)
+            .map(|reservation| reservation.as_wire())
+            .map_err(|refusal| match refusal {
+                BeginExportRefusal::AlreadyExporting => spectrum_export_in_progress(),
+                BeginExportRefusal::Stale => spectrum_export_stale(),
+            })
+    }
+
+    /// Claims one issued reservation so its save dialog may be shown.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a reservation that was never issued, has already been claimed,
+    /// or has since been cancelled.
+    pub fn claim_spectrum_export(
+        &self,
+        reservation: &str,
+    ) -> Result<ClaimedSpectrumExport, PreviewErrorDto> {
+        self.spectrum_export_slot()
+            .claim(reservation)
+            .ok_or_else(spectrum_export_stale)
+    }
+
+    /// Returns one reservation to idle without writing anything.
+    ///
+    /// The ordinary end of a cancelled dialog, and the recovery when a dialog
+    /// could not be dispatched at all.
+    pub fn cancel_spectrum_export(&self, reservation: &str) {
+        self.spectrum_export_slot().cancel(reservation);
+    }
+
+    /// Writes one claimed export to one chosen destination.
+    ///
+    /// The document is built from the snapshot the claim took, not from
+    /// anything read again here: by the time this runs the user has been in a
+    /// modal dialog, and the spectrum on screen may have been replaced twice
+    /// over. What is written is the spectrum the export was invoked for.
+    ///
+    /// # Errors
+    ///
+    /// Answers with the refusal that stopped it, and with whether a private
+    /// temporary object was left behind. On every failing path the chosen name
+    /// is untouched.
+    pub fn write_spectrum_export(
+        &self,
+        claimed: &ClaimedSpectrumExport,
+        destination: &Path,
+    ) -> Result<SpectrumExportOutcomeDto, PreviewErrorDto> {
+        self.spectrum_export_slot().begin_write();
+        let _in_flight = SpectrumExportInFlight(self);
+
+        let spectrum = claimed.snapshot.spectrum();
+        let bytes = match claimed.format {
+            SpectrumExportFormat::Svg => {
+                svg_document(spectrum).map_err(|_| spectrum_export_refused())?
+            }
+            format => data_document(spectrum, format).ok_or_else(spectrum_export_refused)?,
+        };
+
+        let (parent, file_name) = match (destination.parent(), destination.file_name()) {
+            (Some(parent), Some(file_name)) => (parent, file_name),
+            _ => return Err(spectrum_destination_unusable()),
+        };
+        // The same admission a conversion destination and a diagnostics export
+        // go through, and for the same reasons: the no-clobber rename and the
+        // object-bound cleanup this write depends on are local guarantees, and
+        // a redirector or a link is somewhere neither of them holds. The hold
+        // is kept for the whole write, so the folder cannot be renamed away
+        // underneath it.
+        let (root, _identity, _held) =
+            admit_destination_root(parent).map_err(|_| spectrum_destination_unusable())?;
+        write_new_local_file(&root, file_name, bytes.as_bytes()).map_err(spectrum_write_failure)?;
+
+        Ok(SpectrumExportOutcomeDto::Saved {
+            format: claimed.format.stable_id().to_owned(),
+            file_name: bounded_text(&file_name.to_string_lossy(), MAX_CANDIDATE_NAME_CHARS),
+            point_count: claimed.snapshot.point_count(),
+        })
     }
 
     /// Republishes the lock-free export mirror from the slot that owns it.
@@ -4780,9 +4903,29 @@ impl PreviewService {
                             ));
                         }
                     }
-                    Ok(SelectedSpectrumOutcomeDto::Spectrum {
-                        spectrum: Box::new(selected_spectrum_dto(&spectrum, &redactor)?),
-                    })
+                    // Retained before the projection shortens it. This is the
+                    // one place the complete reading exists, and the token
+                    // below is the only way the webview can name it -- so an
+                    // export identifies this spectrum rather than
+                    // reconstructing one from the arrays it is about to
+                    // receive, which may be a prefix of them.
+                    let snapshot = self.spectrum_export_slot().install(spectrum);
+                    let projected = selected_spectrum_dto(
+                        snapshot.spectrum(),
+                        &redactor,
+                        snapshot.token().as_wire(),
+                    );
+                    match projected {
+                        Ok(spectrum) => Ok(SelectedSpectrumOutcomeDto::Spectrum {
+                            spectrum: Box::new(spectrum),
+                        }),
+                        Err(error) => {
+                            // Nothing on screen names this spectrum, so nothing
+                            // may export it either.
+                            self.spectrum_export_slot().forget();
+                            Err(error)
+                        }
+                    }
                 }
                 _ => Err(PreviewErrorDto::new(
                     "unexpected_preview_result",
@@ -5266,6 +5409,7 @@ fn spectrum_table_dto(
 fn selected_spectrum_dto(
     spectrum: &SelectedSpectrumResult,
     redactor: &Redactor,
+    export_token: String,
 ) -> Result<SelectedSpectrumDto, PreviewErrorDto> {
     let point_count = spectrum.mz_values().len();
     let truncated = point_count > MAX_SPECTRUM_POINTS;
@@ -5317,7 +5461,39 @@ fn selected_spectrum_dto(
         representation_known: false,
         value_units_known: false,
         truncated,
+        export_token,
     })
+}
+
+/// Every way the safe writer can fail, said in the export's vocabulary.
+///
+/// Total over the writer's own enumeration with no wildcard arm, for the reason
+/// the diagnostics reading beside it has none: a failure added there has to be
+/// answered here rather than falling into a default that happens to compile.
+fn spectrum_write_failure(failure: LocalFileWriteFailure) -> PreviewErrorDto {
+    let residue = failure.temporary_left_behind();
+    match failure.error() {
+        LocalFileWriteError::UnsafeName | LocalFileWriteError::ParentNotUsable { .. } => {
+            spectrum_destination_unusable()
+        }
+        LocalFileWriteError::TargetExists => spectrum_destination_exists(residue),
+        LocalFileWriteError::TemporaryNotCreated { .. }
+        | LocalFileWriteError::NotWritten { .. }
+        | LocalFileWriteError::NotFlushed { .. } => spectrum_not_written(residue),
+        LocalFileWriteError::NotFinalized { .. } => spectrum_not_finalized(residue),
+    }
+}
+
+/// Returns the slot to idle however the export ends.
+///
+/// A slot left writing would refuse every later export for the rest of the
+/// session, which is a worse failure than the one it would be recording.
+struct SpectrumExportInFlight<'service>(&'service PreviewService);
+
+impl Drop for SpectrumExportInFlight<'_> {
+    fn drop(&mut self) {
+        self.0.spectrum_export_slot().release_write();
+    }
 }
 
 /// Every way the safe writer can fail, said in this boundary's vocabulary.
