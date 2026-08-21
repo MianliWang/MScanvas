@@ -1775,10 +1775,13 @@ pub enum SpectrumExportOutcomeDto {
     Cancelled,
     #[serde(rename_all = "camelCase")]
     Saved {
-        /// `svg`, `csv` or `tsv`.
+        /// `svg`, `png`, `csv` or `tsv`.
         format: String,
         /// The name the file was given, and nothing about where it went.
         file_name: String,
+        /// What the figure was rendered as, for the formats that are figures.
+        /// `None` for the data documents, which no figure setting reaches.
+        figure: Option<ExportedFigureDto>,
         /// How many source points the document carries.
         ///
         /// The complete count. A reader comparing it against the panel's own
@@ -1787,6 +1790,98 @@ pub enum SpectrumExportOutcomeDto {
         /// not come from the transfer.
         point_count: usize,
     },
+}
+
+/// The figure settings the interface asked for, as they cross the boundary.
+///
+/// Integers because these are counts of pixels and a fractional pixel is not
+/// something a user asked for. Nothing is trusted here: the boundary reads this
+/// into a validated typed value or refuses it.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FigureSettingsDto {
+    pub width_px: u32,
+    pub height_px: u32,
+    pub png_dpi: u32,
+    /// `light` or `dark`.
+    pub theme: String,
+}
+
+/// What a figure output was rendered as.
+///
+/// Reported back so the interface can say what it produced rather than what it
+/// requested -- the two are the same here, and saying so is how a reader knows
+/// the setting took effect. Never a path.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportedFigureDto {
+    pub width: u32,
+    pub height: u32,
+    /// The physical resolution recorded in the file, for the formats that
+    /// record one. `None` for SVG, which has no pixels to describe.
+    pub dpi: Option<u32>,
+    /// `light` or `dark`.
+    pub theme: String,
+}
+
+/// A copy-to-clipboard either put an image on the clipboard or it did not.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum SpectrumCopyOutcomeDto {
+    #[serde(rename_all = "camelCase")]
+    Copied {
+        /// What was copied, so the interface can say it in the same words the
+        /// figure settings use.
+        figure: ExportedFigureDto,
+        /// How many source points the copied figure was drawn from.
+        point_count: usize,
+    },
+}
+
+/// The interface asked for a figure that is not one.
+///
+/// Retryable in the only sense that matters: the correction is a number the
+/// user can change, and the message says which one.
+#[must_use]
+pub fn figure_settings_refused(detail: &'static str) -> PreviewErrorDto {
+    PreviewErrorDto::new("figure_settings_refused", detail, true)
+}
+
+/// No font on this machine can draw the figure's text.
+///
+/// A raster figure needs a real typeface to draw a label with; a vector one
+/// keeps the text as text and needs none. So this refuses the pixel formats and
+/// says what still works, rather than producing an image with the words missing
+/// -- which would look finished and would not be.
+#[must_use]
+pub fn figure_font_unavailable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "figure_font_unavailable",
+        "MSCanvas could not find a font on this computer to draw the figure's labels with, so \
+         no image was produced. Export the figure as SVG, which keeps the text as text.",
+        false,
+    )
+}
+
+/// The figure could not be turned into pixels.
+#[must_use]
+pub fn figure_not_rasterizable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "figure_not_rasterizable",
+        "MSCanvas could not draw this figure at the size you chose, so no image was produced. \
+         Try a smaller width and height.",
+        true,
+    )
+}
+
+/// The system clipboard would not take the image.
+#[must_use]
+pub fn figure_clipboard_unavailable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "figure_clipboard_unavailable",
+        "MSCanvas could not put the plot on the clipboard. Nothing was copied.",
+        true,
+    )
 }
 
 /// A selected-spectrum request either produced a spectrum or produced the

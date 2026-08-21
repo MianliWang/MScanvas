@@ -191,6 +191,8 @@ function harness(
     chooseInstallation: () => service.chooseInstallation(options.dismissPicker ?? false),
     useAutomaticDiscovery: () => service.useAutomaticDiscovery(),
     getRoster: () => Promise.resolve(empty),
+    copySelectedSpectrumPlot: () =>
+      Promise.reject(new Error("this test never copies a plot")),
     chooseFiles: () =>
       Promise.resolve<WorkspaceAddResult | null>({
         roster: { datasets: [selectedFile], capacity: FAKE_WORKSPACE_CAPACITY },

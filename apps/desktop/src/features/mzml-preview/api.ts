@@ -10,6 +10,8 @@ import type {
   Preview,
   SelectedSpectrumOutcome,
   SpectrumExportFormat,
+  FigureSettings,
+  SpectrumCopyOutcome,
   SpectrumExportOutcome,
   WorkspaceAddResult,
   WorkspaceConversionUpdate,
@@ -217,7 +219,24 @@ export interface PreviewApi {
   exportSelectedSpectrum(
     exportToken: string,
     format: SpectrumExportFormat,
+    settings: FigureSettings,
   ): Promise<SpectrumExportOutcome>;
+
+  /**
+   * Puts the selected spectrum's figure on the system clipboard.
+   *
+   * The same figure a PNG export writes, drawn by the same Rust renderer from
+   * the same retained spectrum. No image crosses this boundary in either
+   * direction: this side asks for a copy and is told whether one happened.
+   *
+   * There is no dialog, no file name and no path. A token from an earlier
+   * selection is refused rather than answered with whichever spectrum is loaded
+   * now.
+   */
+  copySelectedSpectrumPlot(
+    exportToken: string,
+    settings: FigureSettings,
+  ): Promise<SpectrumCopyOutcome>;
 }
 
 export const tauriPreviewApi: PreviewApi = {
@@ -298,11 +317,13 @@ export const tauriPreviewApi: PreviewApi = {
       return saved;
     });
   },
-  exportSelectedSpectrum: (exportToken, format) =>
-    invoke<string>("begin_selected_spectrum_export", { exportToken, format }).then(
+  exportSelectedSpectrum: (exportToken, format, settings) =>
+    invoke<string>("begin_selected_spectrum_export", { exportToken, format, settings }).then(
       (reservationId) =>
         invoke<SpectrumExportOutcome>("save_selected_spectrum_export", { reservationId }),
     ),
+  copySelectedSpectrumPlot: (exportToken, settings) =>
+    invoke<SpectrumCopyOutcome>("copy_selected_spectrum_plot", { exportToken, settings }),
 };
 
 const PreviewApiContext = createContext<PreviewApi>(tauriPreviewApi);

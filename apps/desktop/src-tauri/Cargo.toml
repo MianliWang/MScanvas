@@ -31,8 +31,26 @@ mscanvas-core = { path = "../../../crates/core" }
 # them to a user-reachable action. No third-party dependency is added by it.
 mscanvas-plot-spec = { path = "../../../crates/plot-spec" }
 mscanvas-proteowizard = { path = "../../../crates/proteowizard" }
+# The PNG encoder, used for one thing the rasterizer's own writer cannot do:
+# record the requested physical resolution in the `pHYs` chunk. Hand-rolling a
+# chunk and its CRC beside a reviewed encoder already in this tree would be
+# writing a second PNG implementation to add four bytes of metadata.
+png = "=0.18.1"
+# Rasterizes the SVG this application already produces. Deliberately not a
+# second scientific renderer: PNG is the same `FigureSpec`, through the same
+# deterministic SVG, put on a pixel grid. Default features are off because the
+# figure embeds no bitmaps and is never gzipped -- `text` and `system-fonts` are
+# what a figure with axis labels needs and all it needs.
+resvg = { version = "=0.48.1", default-features = false, features = [
+  "text",
+  "system-fonts",
+] }
 serde.workspace = true
 tauri.workspace = true
+# Copy plot writes an image to the clipboard from Rust. The official plugin's
+# Rust API is used directly; its generic commands stay denied to the webview,
+# which never receives the pixels and has no clipboard capability of its own.
+tauri-plugin-clipboard-manager = "=2.3.2"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "=0.61.3", features = [

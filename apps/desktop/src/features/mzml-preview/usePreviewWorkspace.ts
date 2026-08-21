@@ -5,6 +5,9 @@ import type { ConversionOperation } from "./useConversionOperation";
 import { useConversionOperation } from "./useConversionOperation";
 import type {
   BackendAvailability,
+  ExportedFigure,
+  FigureSettings,
+  FigureTheme,
   Preview,
   PreviewError,
   SelectedFile,
@@ -82,21 +85,112 @@ export type SpectrumState =
  * dismissed, nothing was created, and the spectrum on screen is exactly as it
  * was.
  */
+/**
+ * The figure this application exports when nobody changes anything.
+ *
+ * The same figure M4.1 shipped, so a user who never opens these controls keeps
+ * getting exactly the document they used to. Rust holds the same defaults and
+ * is the authority on them; these are what the fields start showing.
+ */
+export const DEFAULT_FIGURE_WIDTH = 1_200;
+export const DEFAULT_FIGURE_HEIGHT = 640;
+export const DEFAULT_PNG_DPI = 300;
+
+/**
+ * What the one figure-operation lane is doing, named the way the panel says it.
+ *
+ * One label rather than two parallel busy flags, because Rust has one lane: a
+ * copy and a save cannot both be running, and a model that could represent them
+ * both running would be a model that can disagree with the backend.
+ */
+export type FigureOperation = SpectrumExportFormat | "copy";
+
 export type SpectrumExportState =
   | { readonly status: "idle" }
-  | { readonly status: "exporting"; readonly format: SpectrumExportFormat }
+  | { readonly status: "running"; readonly operation: FigureOperation }
   | { readonly status: "cancelled" }
   | {
       readonly status: "saved";
       readonly format: SpectrumExportFormat;
       readonly fileName: string;
+      /** What the figure was rendered as. `null` for the data documents. */
+      readonly figure: ExportedFigure | null;
+      readonly pointCount: number;
+    }
+  | {
+      readonly status: "copied";
+      readonly figure: ExportedFigure;
       readonly pointCount: number;
     }
   | {
       readonly status: "failed";
-      readonly format: SpectrumExportFormat;
+      readonly operation: FigureOperation;
       readonly error: PreviewError;
     };
+
+/**
+ * The figure settings as the user is editing them.
+ *
+ * Text rather than numbers, because a half-typed field is a real state a person
+ * passes through and a model that can only hold numbers has to invent one for
+ * it -- usually by snapping the value, which moves the cursor and fights the
+ * user. What crosses to Rust is the parsed form, and only when there is one.
+ */
+export interface FigureSettingsDraft {
+  readonly widthPx: string;
+  readonly heightPx: string;
+  readonly pngDpi: string;
+  readonly theme: FigureTheme;
+}
+
+/** Which field of the figure settings a change is about. */
+export type FigureSettingsField = "widthPx" | "heightPx" | "pngDpi";
+
+/**
+ * Reads one field, accepting only a whole positive count.
+ *
+ * Shape only. Whether 4 is too small a width and whether 40,000 is too large a
+ * one are Rust's questions, and it answers them with a refusal that names the
+ * correction -- duplicating those bounds here would be a second copy to drift.
+ * What this catches is what the interface can know on its own: blank, not a
+ * number, negative, fractional, zero.
+ */
+function wholeCount(text: string): number | null {
+  const trimmed = text.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return null;
+  }
+  const value = Number(trimmed);
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+/** The settings these fields describe, if they describe any. */
+export function resolveFigureSettings(draft: FigureSettingsDraft): FigureSettings | null {
+  const widthPx = wholeCount(draft.widthPx);
+  const heightPx = wholeCount(draft.heightPx);
+  const pngDpi = wholeCount(draft.pngDpi);
+  if (widthPx === null || heightPx === null || pngDpi === null) {
+    return null;
+  }
+  return { widthPx, heightPx, pngDpi, theme: draft.theme };
+}
+
+/** What is wrong with these fields, in the words the panel reads out. */
+export function describeFigureSettingsProblem(draft: FigureSettingsDraft): string | null {
+  const wrong = (
+    [
+      ["widthPx", "Width"],
+      ["heightPx", "Height"],
+      ["pngDpi", "PNG DPI"],
+    ] as const
+  )
+    .filter(([field]) => wholeCount(draft[field]) === null)
+    .map(([, label]) => label);
+  if (wrong.length === 0) {
+    return null;
+  }
+  return `${wrong.join(", ")} must be a whole number of at least 1.`;
+}
 
 export type RosterLoadState =
   | { readonly status: "loading" }
@@ -272,8 +366,23 @@ export interface PreviewWorkspace {
    * is exactly as it was when the dialog closes however it closes.
    */
   readonly exportSpectrum: (format: SpectrumExportFormat) => void;
+  /**
+   * Puts the loaded selected spectrum's figure on the system clipboard.
+   *
+   * The same figure a PNG export writes, and the same binding: what is copied
+   * is the spectrum the user was looking at. No file, no dialog, no path.
+   */
+  readonly copySpectrumPlot: () => void;
   /** Returns the export to rest after a result has been read. */
   readonly dismissSpectrumExport: () => void;
+  /** The figure settings as the user is editing them. */
+  readonly figureSettings: FigureSettingsDraft;
+  /** What those fields describe, or `null` while they describe nothing. */
+  readonly resolvedFigureSettings: FigureSettings | null;
+  /** What is wrong with them, in words a panel can read out. */
+  readonly figureSettingsProblem: string | null;
+  readonly setFigureSetting: (field: FigureSettingsField, value: string) => void;
+  readonly setFigureTheme: (theme: FigureTheme) => void;
   /**
    * Completes whichever render measurements are outstanding, once what they
    * measure is actually in the DOM. Called from a layout effect, never from a
@@ -1804,6 +1913,30 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     }
   }, [selectSpectrum, selectedIndex]);
 
+  // Session state, deliberately not persisted: a figure size is a decision
+  // about one export, and a size silently restored from a previous run is a
+  // property of a file nobody chose for it.
+  const [figureSettings, setFigureSettings] = useState<FigureSettingsDraft>({
+    widthPx: String(DEFAULT_FIGURE_WIDTH),
+    heightPx: String(DEFAULT_FIGURE_HEIGHT),
+    pngDpi: String(DEFAULT_PNG_DPI),
+    theme: "light",
+  });
+  const setFigureSetting = useCallback((field: FigureSettingsField, value: string) => {
+    setFigureSettings((current) => ({ ...current, [field]: value }));
+  }, []);
+  const setFigureTheme = useCallback((theme: FigureTheme) => {
+    setFigureSettings((current) => ({ ...current, theme }));
+  }, []);
+  const resolvedFigureSettings = useMemo(
+    () => resolveFigureSettings(figureSettings),
+    [figureSettings],
+  );
+  const figureSettingsProblem = useMemo(
+    () => describeFigureSettingsProblem(figureSettings),
+    [figureSettings],
+  );
+
   const [spectrumExport, setSpectrumExport] = useState<SpectrumExportState>({ status: "idle" });
   // A result belongs to the spectrum it describes. Loading another one clears
   // it, so a panel can never show "saved 1,000,000 points" beside a different
@@ -1833,13 +1966,20 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       if (spectrum.status !== "loaded") {
         return;
       }
-      if (spectrumExport.status === "exporting") {
+      if (spectrumExport.status === "running") {
+        return;
+      }
+      // A figure the settings could not describe is not offered, so reaching
+      // here with none means the panel and this disagree; refusing is the
+      // honest end rather than sending Rust something to reject.
+      const settings = resolvedFigureSettings;
+      if (settings === null) {
         return;
       }
       const token = spectrum.spectrum.exportToken;
-      setSpectrumExport({ status: "exporting", format });
+      setSpectrumExport({ status: "running", operation: format });
       void api
-        .exportSelectedSpectrum(token, format)
+        .exportSelectedSpectrum(token, format, settings)
         .then((outcome) => {
           // Dropped rather than shown if the panel has moved on. The file was
           // still written -- Rust decided that, not this -- but "Saved 1,000,000
@@ -1856,6 +1996,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
                   status: "saved",
                   format: outcome.format,
                   fileName: outcome.fileName,
+                  figure: outcome.figure,
                   pointCount: outcome.pointCount,
                 },
           );
@@ -1864,11 +2005,63 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           if (boundExportToken.current !== token) {
             return;
           }
-          setSpectrumExport({ status: "failed", format, error: toPreviewError(cause) });
+          setSpectrumExport({
+            status: "failed",
+            operation: format,
+            error: toPreviewError(cause),
+          });
         });
     },
-    [api, spectrum, spectrumExport.status],
+    [api, resolvedFigureSettings, spectrum, spectrumExport.status],
   );
+
+  /**
+   * Puts the loaded spectrum's figure on the system clipboard.
+   *
+   * The same lane as an export, because Rust has one: a copy while a save is
+   * running is refused there, and offering it here would be offering an action
+   * already known to fail.
+   */
+  const copySpectrumPlot = useCallback(() => {
+    if (spectrum.status !== "loaded") {
+      return;
+    }
+    if (spectrumExport.status === "running") {
+      return;
+    }
+    const settings = resolvedFigureSettings;
+    if (settings === null) {
+      return;
+    }
+    const token = spectrum.spectrum.exportToken;
+    setSpectrumExport({ status: "running", operation: "copy" });
+    void api
+      .copySelectedSpectrumPlot(token, settings)
+      .then((outcome) => {
+        // The same binding discipline a save has. The clipboard was written --
+        // Rust decided that -- but a "copied" message beside a spectrum those
+        // pixels did not come from would say the wrong thing about what is on
+        // the clipboard.
+        if (boundExportToken.current !== token) {
+          return;
+        }
+        setSpectrumExport({
+          status: "copied",
+          figure: outcome.figure,
+          pointCount: outcome.pointCount,
+        });
+      })
+      .catch((cause: unknown) => {
+        if (boundExportToken.current !== token) {
+          return;
+        }
+        setSpectrumExport({
+          status: "failed",
+          operation: "copy",
+          error: toPreviewError(cause),
+        });
+      });
+  }, [api, resolvedFigureSettings, spectrum, spectrumExport.status]);
 
   // A conversion's report carries the installation sequence it ran at. If it is
   // newer than what this document has applied, the banner and everything read
@@ -2001,7 +2194,13 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     retrySpectrum,
     spectrumExport,
     exportSpectrum,
+    copySpectrumPlot,
     dismissSpectrumExport,
+    figureSettings,
+    resolvedFigureSettings,
+    figureSettingsProblem,
+    setFigureSetting,
+    setFigureTheme,
     completeRenderMeasurements,
     recordMeasurement,
     conversion,

@@ -14,25 +14,53 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { SelectedSpectrum } from "./contracts";
 import { SelectedSpectrumPanel } from "./SelectedSpectrumPanel";
-import type { SpectrumExportState, SpectrumState } from "./usePreviewWorkspace";
+import type {
+  FigureSettingsDraft,
+  SpectrumExportState,
+  SpectrumState,
+} from "./usePreviewWorkspace";
 import { buildSpectrum } from "../../test/previewFixtures";
+
+/** The fields a panel starts with, which is what most of these tests want. */
+const DEFAULT_DRAFT: FigureSettingsDraft = {
+  widthPx: "1200",
+  heightPx: "640",
+  pngDpi: "300",
+  theme: "light",
+};
 
 function renderPanel(
   state: SpectrumState,
   exportState: SpectrumExportState = { status: "idle" },
-): { readonly onExport: ReturnType<typeof vi.fn>; readonly onDismiss: ReturnType<typeof vi.fn> } {
+  draft: FigureSettingsDraft = DEFAULT_DRAFT,
+  problem: string | null = null,
+): {
+  readonly onExport: ReturnType<typeof vi.fn>;
+  readonly onDismiss: ReturnType<typeof vi.fn>;
+  readonly onCopyPlot: ReturnType<typeof vi.fn>;
+  readonly onFigureSetting: ReturnType<typeof vi.fn>;
+  readonly onFigureTheme: ReturnType<typeof vi.fn>;
+} {
   const onExport = vi.fn();
   const onDismiss = vi.fn();
+  const onCopyPlot = vi.fn();
+  const onFigureSetting = vi.fn();
+  const onFigureTheme = vi.fn();
   render(
     <SelectedSpectrumPanel
       exportState={exportState}
+      figureSettings={draft}
+      figureSettingsProblem={problem}
+      onCopyPlot={onCopyPlot}
       onDismissExport={onDismiss}
       onExport={onExport}
+      onFigureSetting={onFigureSetting}
+      onFigureTheme={onFigureTheme}
       onRetry={() => undefined}
       state={state}
     />,
   );
-  return { onExport, onDismiss };
+  return { onExport, onDismiss, onCopyPlot, onFigureSetting, onFigureTheme };
 }
 
 function loaded(overrides: Partial<SelectedSpectrum> = {}): SpectrumState {
@@ -63,8 +91,13 @@ describe("selected spectrum export affordance", () => {
       const { unmount } = render(
         <SelectedSpectrumPanel
           exportState={{ status: "idle" }}
+          figureSettings={DEFAULT_DRAFT}
+          figureSettingsProblem={null}
+          onCopyPlot={() => undefined}
           onDismissExport={() => undefined}
           onExport={() => undefined}
+          onFigureSetting={() => undefined}
+          onFigureTheme={() => undefined}
           onRetry={() => undefined}
           state={state}
         />,
@@ -125,7 +158,7 @@ describe("selected spectrum export affordance", () => {
   });
 
   it("closes every action while one export is running and says which", () => {
-    renderPanel(loaded(), { status: "exporting", format: "svg" });
+    renderPanel(loaded(), { status: "running", operation: "svg" });
 
     // Rust holds one export slot and refuses a second, so leaving the others
     // live would offer an action already known to fail.
@@ -144,6 +177,7 @@ describe("selected spectrum export affordance", () => {
       status: "saved",
       format: "csv",
       fileName: "mscanvas-spectrum-3.csv",
+      figure: null,
       pointCount: 1_000_000,
     });
 
@@ -170,7 +204,7 @@ describe("selected spectrum export affordance", () => {
   it("says what a typed refusal was, in its own words", () => {
     renderPanel(loaded(), {
       status: "failed",
-      format: "tsv",
+      operation: "tsv",
       error: {
         kind: "spectrum_destination_exists",
         summary: "A file of that name is already in that folder.",
@@ -197,7 +231,7 @@ describe("selected spectrum export affordance", () => {
     // evidence that it half-did sitting there unexplained.
     renderPanel(loaded(), {
       status: "failed",
-      format: "csv",
+      operation: "csv",
       error: {
         kind: "spectrum_destination_exists",
         summary: "A file of that name is already in that folder.",
@@ -227,5 +261,161 @@ describe("selected spectrum export affordance", () => {
 
     expect(screen.queryByRole("button", { name: "Dismiss export message" })).toBeNull();
     expect(screen.getByRole("status")).toHaveTextContent("");
+  });
+
+  it("offers the figure controls and the data actions as separate groups", () => {
+    renderPanel(loaded());
+
+    // The figure settings decide what a figure looks like and reach nothing in
+    // a data document. Grouping says so before any label has to.
+    for (const label of ["Width", "Height", "PNG DPI"]) {
+      expect(screen.getByRole("textbox", { name: new RegExp(`^${label}`, "u") })).toBeVisible();
+    }
+    for (const theme of ["Light", "Dark"]) {
+      expect(screen.getByRole("radio", { name: theme })).toBeVisible();
+    }
+    for (const name of ["Export SVG…", "Export PNG…", "Copy plot", "Export CSV…", "Export TSV…"]) {
+      expect(screen.getByRole("button", { name })).toBeEnabled();
+    }
+    // Light is where a figure starts, because a reader publishing on paper is
+    // the case a default should serve.
+    expect(screen.getByRole("radio", { name: "Light" })).toBeChecked();
+  });
+
+  it("starts at the figure M4.1 shipped", () => {
+    renderPanel(loaded());
+
+    expect(screen.getByRole("textbox", { name: /^Width/u })).toHaveValue("1200");
+    expect(screen.getByRole("textbox", { name: /^Height/u })).toHaveValue("640");
+    expect(screen.getByRole("textbox", { name: /^PNG DPI/u })).toHaveValue("300");
+  });
+
+  it("says DPI is metadata rather than a count of pixels", () => {
+    // A user who expects DPI alone to add pixels has been misled by the
+    // control, not by the file.
+    renderPanel(loaded());
+
+    expect(screen.getByText("metadata only")).toBeVisible();
+  });
+
+  it("reports every field a figure could not be built from", () => {
+    renderPanel(
+      loaded(),
+      { status: "idle" },
+      { widthPx: "0", heightPx: "", pngDpi: "12.5", theme: "light" },
+      "Width, Height, PNG DPI must be a whole number of at least 1.",
+    );
+
+    // The figure actions are closed, because there is no figure to draw.
+    for (const name of ["Export SVG…", "Export PNG…", "Copy plot"]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+    // The data actions are not: a width nobody could draw at says nothing
+    // about a list of numbers.
+    for (const name of ["Export CSV…", "Export TSV…"]) {
+      expect(screen.getByRole("button", { name })).toBeEnabled();
+    }
+    // And the reason is attached to the fields rather than only shown near
+    // them, so it is read out when focus arrives.
+    const width = screen.getByRole("textbox", { name: /^Width/u });
+    expect(width).toHaveAttribute("aria-invalid", "true");
+    expect(width).toHaveAccessibleDescription(
+      "Width, Height, PNG DPI must be a whole number of at least 1.",
+    );
+  });
+
+  it("reports what a figure was rendered as, and a data document that it was not one", () => {
+    renderPanel(loaded(), {
+      status: "saved",
+      format: "png",
+      fileName: "mscanvas-spectrum-3.png",
+      figure: { width: 1_200, height: 640, dpi: 300, theme: "light" },
+      pointCount: 1_000_000,
+    });
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Saved mscanvas-spectrum-3.png with 1,000,000 points, 1,200 by 640 pixels at 300 DPI, light theme.",
+    );
+  });
+
+  it("says an SVG has no physical resolution to report", () => {
+    renderPanel(loaded(), {
+      status: "saved",
+      format: "svg",
+      fileName: "mscanvas-spectrum-3.svg",
+      figure: { width: 800, height: 600, dpi: null, theme: "dark" },
+      pointCount: 12,
+    });
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("800 by 600 pixels, dark theme");
+    expect(status).not.toHaveTextContent("DPI");
+  });
+
+  it("reports a copied plot without naming a file", () => {
+    renderPanel(loaded(), {
+      status: "copied",
+      figure: { width: 1_200, height: 640, dpi: 300, theme: "dark" },
+      pointCount: 8,
+    });
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Copied the plot with 8 points, 1,200 by 640 pixels");
+    // No file was written, so there is nothing to name and nothing to find.
+    expect(status).not.toHaveTextContent("Saved");
+    expect(status).not.toHaveTextContent(".png");
+    // A result is still a result: it can be dismissed like any other.
+    expect(screen.getByRole("button", { name: "Dismiss export message" })).toBeVisible();
+  });
+
+  it("closes every figure and data action while a copy is running", () => {
+    renderPanel(loaded(), { status: "running", operation: "copy" });
+
+    for (const name of ["Export SVG…", "Export PNG…", "Export CSV…", "Export TSV…"]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+    const running = screen.getByRole("button", { name: "Copying plot…" });
+    expect(running).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Drawing the plot for the clipboard.");
+  });
+
+  it("closes every action while a PNG is being written and says which", () => {
+    renderPanel(loaded(), { status: "running", operation: "png" });
+
+    for (const name of ["Export SVG…", "Copy plot", "Export CSV…", "Export TSV…"]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+    expect(screen.getByRole("button", { name: "Exporting PNG…" })).toBeDisabled();
+  });
+
+  it("reports a copy that the clipboard refused", () => {
+    renderPanel(loaded(), {
+      status: "failed",
+      operation: "copy",
+      error: {
+        kind: "figure_clipboard_unavailable",
+        summary: "MSCanvas could not put the plot on the clipboard. Nothing was copied.",
+        detail: null,
+        retryable: true,
+      },
+    });
+
+    expect(screen.getByRole("status")).toHaveTextContent("Nothing was copied.");
+    // Retryable: the actions stay live, because trying again is the recovery.
+    expect(screen.getByRole("button", { name: "Copy plot" })).toBeEnabled();
+  });
+
+  it("hands each control back to the caller rather than deciding anything itself", () => {
+    const { onCopyPlot, onFigureSetting, onFigureTheme } = renderPanel(loaded());
+
+    fireEvent.change(screen.getByRole("textbox", { name: /^Width/u }), {
+      target: { value: "800" },
+    });
+    fireEvent.click(screen.getByRole("radio", { name: "Dark" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy plot" }));
+
+    expect(onFigureSetting.mock.calls).toEqual([["widthPx", "800"]]);
+    expect(onFigureTheme.mock.calls).toEqual([["dark"]]);
+    expect(onCopyPlot).toHaveBeenCalledOnce();
   });
 });

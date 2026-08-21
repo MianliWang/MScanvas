@@ -401,12 +401,65 @@ export type SpectrumExportOutcome =
       readonly status: "saved";
       readonly format: SpectrumExportFormat;
       readonly fileName: string;
+      /**
+       * What the figure was rendered as, for the formats that are figures.
+       *
+       * `null` for the data documents. A size, a resolution and a theme are
+       * properties of a drawing, and the same measurement comes out of CSV and
+       * TSV whatever the figure is being drawn at.
+       */
+      readonly figure: ExportedFigure | null;
       /** How many source points the document carries. */
       readonly pointCount: number;
     };
 
-/** The three documents one selected spectrum can be exported as. */
-export type SpectrumExportFormat = "svg" | "csv" | "tsv";
+/** What a figure output was rendered as, reported back rather than assumed. */
+export interface ExportedFigure {
+  readonly width: number;
+  readonly height: number;
+  /**
+   * The physical resolution recorded in the file, for the formats that record
+   * one. `null` for SVG, which has no pixels to describe.
+   */
+  readonly dpi: number | null;
+  readonly theme: FigureTheme;
+}
+
+/** The four documents one selected spectrum can be exported as. */
+export type SpectrumExportFormat = "svg" | "png" | "csv" | "tsv";
+
+/** The figure's own theme, which is not the application's. */
+export type FigureTheme = "light" | "dark";
+
+/**
+ * What a figure export is rendered with.
+ *
+ * Width and height are the final dimensions: an SVG is authored at exactly
+ * these figure units and a PNG contains exactly this many pixels. DPI is
+ * physical-resolution metadata and multiplies nothing -- it tells whatever
+ * opens the PNG how large the image is meant to be on paper, and it reaches
+ * neither the SVG nor the data documents.
+ */
+export interface FigureSettings {
+  readonly widthPx: number;
+  readonly heightPx: number;
+  readonly pngDpi: number;
+  readonly theme: FigureTheme;
+}
+
+/**
+ * Copying the plot either put an image on the clipboard or it did not.
+ *
+ * There is no cancelled case: no dialog is shown, because nothing is being
+ * named or saved. A failure arrives as a typed refusal rather than as an
+ * outcome.
+ */
+export interface SpectrumCopyOutcome {
+  readonly status: "copied";
+  readonly figure: ExportedFigure;
+  /** How many source points the copied figure was drawn from. */
+  readonly pointCount: number;
+}
 
 /**
  * A spectrum that exists but has no peaks is `spectrum` with `pointCount: 0`.

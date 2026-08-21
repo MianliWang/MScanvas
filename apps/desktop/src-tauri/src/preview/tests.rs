@@ -33,8 +33,8 @@ use super::drop_ingestion::{
 };
 use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, DropIngestionResultDto, DropScanLimitDto,
-    MAX_CONVERSION_QUEUE_ITEMS, MAX_WORKSPACE_DATASETS, PreviewErrorDto, SelectedFileDto,
-    SelectedSpectrumOutcomeDto, WorkspaceAddOutcomeDto, WorkspaceDropUpdateDto,
+    FigureSettingsDto, MAX_CONVERSION_QUEUE_ITEMS, MAX_WORKSPACE_DATASETS, PreviewErrorDto,
+    SelectedFileDto, SelectedSpectrumOutcomeDto, WorkspaceAddOutcomeDto, WorkspaceDropUpdateDto,
     WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto,
 };
 use super::dto::{
@@ -3589,6 +3589,11 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // never open one.
             "begin_selected_spectrum_export",
             "save_selected_spectrum_export",
+            // Copy plot needs neither phase: there is no destination to choose,
+            // so there is no dialog to gate and nothing to come back from. It
+            // takes the same token, shares the same one figure-operation lane,
+            // and answers whether the clipboard was written.
+            "copy_selected_spectrum_plot",
         ]
     );
     // The picker command is named for the workspace it fills rather than for
@@ -20505,6 +20510,16 @@ fn a_real_sciex_acquisition_runs_through_the_visible_workflow() {
 // what the retention was about.
 // ---------------------------------------------------------------------------
 
+/// The figure settings a panel starts with, which is what these tests export at.
+fn default_figure_settings() -> FigureSettingsDto {
+    FigureSettingsDto {
+        width_px: 1_200,
+        height_px: 640,
+        png_dpi: 300,
+        theme: "light".to_owned(),
+    }
+}
+
 /// Loads one spectrum and answers with the token the panel would hold.
 fn loaded_export_token(service: &PreviewService, handle: &str, index: u64) -> String {
     let outcome = service
@@ -20549,7 +20564,7 @@ fn a_spectrum_that_turns_out_unavailable_revokes_the_retained_one() {
         "the arrays are released once nothing names them"
     );
     let refusal = service
-        .begin_spectrum_export(&token, "svg")
+        .begin_spectrum_export(&token, "svg", &default_figure_settings())
         .expect_err("the old token names a spectrum this session no longer has");
     assert_eq!(refusal.kind, "spectrum_export_stale");
 }
@@ -20578,7 +20593,7 @@ fn a_spectrum_whose_read_fails_revokes_the_retained_one() {
     assert!(retained.upgrade().is_none());
     assert_eq!(
         service
-            .begin_spectrum_export(&token, "csv")
+            .begin_spectrum_export(&token, "csv", &default_figure_settings())
             .expect_err("stale")
             .kind,
         "spectrum_export_stale"
@@ -20602,7 +20617,7 @@ fn removing_the_previews_own_dataset_revokes_the_retained_spectrum() {
     assert!(retained.upgrade().is_none());
     assert_eq!(
         service
-            .begin_spectrum_export(&token, "svg")
+            .begin_spectrum_export(&token, "svg", &default_figure_settings())
             .expect_err("stale")
             .kind,
         "spectrum_export_stale"
@@ -20634,7 +20649,7 @@ fn removing_an_unrelated_dataset_leaves_the_retained_spectrum() {
         "the spectrum on screen is untouched by a removal elsewhere"
     );
     service
-        .begin_spectrum_export(&token, "svg")
+        .begin_spectrum_export(&token, "svg", &default_figure_settings())
         .expect("the spectrum on screen is still exportable");
 }
 
@@ -20653,7 +20668,7 @@ fn clearing_the_list_revokes_the_retained_spectrum() {
     assert!(retained.upgrade().is_none());
     assert_eq!(
         service
-            .begin_spectrum_export(&token, "tsv")
+            .begin_spectrum_export(&token, "tsv", &default_figure_settings())
             .expect_err("stale")
             .kind,
         "spectrum_export_stale"
@@ -20681,7 +20696,7 @@ fn opening_a_preview_revokes_whatever_the_last_one_left() {
     assert!(retained.upgrade().is_none());
     assert_eq!(
         service
-            .begin_spectrum_export(&token, "svg")
+            .begin_spectrum_export(&token, "svg", &default_figure_settings())
             .expect_err("stale")
             .kind,
         "spectrum_export_stale"
@@ -20706,7 +20721,7 @@ fn reading_the_roster_does_not_revoke_the_retained_spectrum() {
 
     assert!(service.retained_spectrum_weak().is_some());
     service
-        .begin_spectrum_export(&token, "svg")
+        .begin_spectrum_export(&token, "svg", &default_figure_settings())
         .expect("the spectrum a user is reading stays exportable");
 }
 
@@ -20721,7 +20736,7 @@ fn a_claimed_export_finishes_after_the_spectrum_it_names_is_revoked() {
     let token = loaded_export_token(&service, &selected.handle, 0);
 
     let reservation = service
-        .begin_spectrum_export(&token, "svg")
+        .begin_spectrum_export(&token, "svg", &default_figure_settings())
         .expect("the export begins");
     let claimed = service
         .claim_spectrum_export(&reservation)
@@ -20736,7 +20751,7 @@ fn a_claimed_export_finishes_after_the_spectrum_it_names_is_revoked() {
     );
     assert_eq!(
         service
-            .begin_spectrum_export(&token, "svg")
+            .begin_spectrum_export(&token, "svg", &default_figure_settings())
             .expect_err("a new export is refused")
             .kind,
         "spectrum_export_stale"
@@ -20772,13 +20787,13 @@ fn a_later_spectrum_installs_one_snapshot_and_keeps_no_history() {
     );
     assert_eq!(
         service
-            .begin_spectrum_export(&first, "svg")
+            .begin_spectrum_export(&first, "svg", &default_figure_settings())
             .expect_err("stale")
             .kind,
         "spectrum_export_stale"
     );
     service
-        .begin_spectrum_export(&second, "svg")
+        .begin_spectrum_export(&second, "svg", &default_figure_settings())
         .expect("the spectrum now on screen is the exportable one");
 }
 
@@ -20804,7 +20819,7 @@ fn choosing_another_file_through_the_picker_revokes_the_retained_spectrum() {
     assert!(retained.upgrade().is_none());
     assert_eq!(
         service
-            .begin_spectrum_export(&token, "svg")
+            .begin_spectrum_export(&token, "svg", &default_figure_settings())
             .expect_err("stale")
             .kind,
         "spectrum_export_stale"

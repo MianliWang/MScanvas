@@ -478,10 +478,12 @@ async fn save_workspace_conversion_diagnostics(
 async fn begin_selected_spectrum_export(
     export_token: String,
     format: String,
+    settings: preview::dto::FigureSettingsDto,
     service: State<'_, SharedService>,
 ) -> Result<String, PreviewErrorDto> {
     let service = Arc::clone(&service);
-    off_the_async_runtime(move || service.begin_spectrum_export(&export_token, &format)).await?
+    off_the_async_runtime(move || service.begin_spectrum_export(&export_token, &format, &settings))
+        .await?
 }
 
 /// Shows the native save dialog for one exact reservation and writes the file.
@@ -497,6 +499,24 @@ async fn begin_selected_spectrum_export(
 ///
 /// Cancelling is an ordinary outcome: nothing was created, nothing was written,
 /// and the spectrum on screen is exactly as it was.
+#[tauri::command]
+async fn copy_selected_spectrum_plot(
+    export_token: String,
+    settings: preview::dto::FigureSettingsDto,
+    app: tauri::AppHandle,
+    service: State<'_, SharedService>,
+) -> Result<preview::dto::SpectrumCopyOutcomeDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    // Rasterizing a large figure is real work, and the clipboard write is a
+    // platform call. Neither belongs on an async worker.
+    off_the_async_runtime(move || service.copy_spectrum_plot(&app, &export_token, &settings))
+        .await?
+}
+
+/// Shows the native save dialog for one exact reservation and writes the file.
+///
+/// See the command below for the save path this one deliberately does not have:
+/// Copy plot writes no file, so it needs no dialog, no name and no destination.
 #[tauri::command]
 async fn save_selected_spectrum_export(
     reservation_id: String,
@@ -830,13 +850,30 @@ const E2E_IPC_BOUNDARY_SCRIPT: &str = include_str!("e2e_boundary.js");
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
-    let builder =
-        builder.append_invoke_initialization_script(DROP_DOCUMENT_AUTHORITY_INITIALIZATION_SCRIPT);
+    let builder = builder
+        // Registered so Rust can write an image to the clipboard. The plugin's
+        // own commands are *not* granted to the webview: `capabilities/
+        // default.json` lists no permission, and Tauri denies every plugin
+        // command that is not listed. So this application can put a figure on
+        // the clipboard and has no capability to read one, which is the posture
+        // a scientific tool should have -- a clipboard read would be a window
+        // onto whatever the user last copied from somewhere else.
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .append_invoke_initialization_script(DROP_DOCUMENT_AUTHORITY_INITIALIZATION_SCRIPT);
     // Only under the `e2e` feature, which no release build enables. The script
     // it appends can answer this application's own commands from a table the
     // page can write, which is not a capability a shipped binary should carry.
     #[cfg(feature = "e2e")]
-    let builder = builder.append_invoke_initialization_script(E2E_IPC_BOUNDARY_SCRIPT);
+    let builder = builder
+        .append_invoke_initialization_script(E2E_IPC_BOUNDARY_SCRIPT)
+        .setup(|app| {
+            // One synthetic spectrum in the ordinary export slot, so a rendered
+            // test can reach the real export path on a machine with no
+            // ProteoWizard installation and no mzML file. Not a command: there
+            // is nothing here for a webview to call, in any build.
+            preview::seed_spectrum_for_e2e(&app.state::<SharedService>());
+            Ok(())
+        });
     builder
         .manage(SharedService::new(PreviewService::new(Box::new(
             ProteoWizardProvider::new(),
@@ -898,7 +935,8 @@ pub fn run() {
             begin_workspace_conversion_diagnostics_export,
             save_workspace_conversion_diagnostics,
             begin_selected_spectrum_export,
-            save_selected_spectrum_export
+            save_selected_spectrum_export,
+            copy_selected_spectrum_plot
         ])
         .run(tauri::generate_context!())
         .expect("failed to run the MSCanvas desktop application");

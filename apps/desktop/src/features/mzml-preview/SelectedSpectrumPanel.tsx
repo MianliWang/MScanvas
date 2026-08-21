@@ -1,27 +1,63 @@
-import type { SelectedSpectrum, SpectrumExportFormat } from "./contracts";
+import type {
+  ExportedFigure,
+  FigureTheme,
+  SelectedSpectrum,
+  SpectrumExportFormat,
+} from "./contracts";
 import { formatCount, formatIntensity, formatMz, formatRetentionTime } from "./format";
 import { StickSpectrum } from "./StickSpectrum";
-import type { SpectrumExportState, SpectrumState } from "./usePreviewWorkspace";
+import type {
+  FigureSettingsDraft,
+  FigureSettingsField,
+  SpectrumExportState,
+  SpectrumState,
+} from "./usePreviewWorkspace";
 
 /**
- * The three documents this panel can export, in the order they are offered.
+ * The figure formats, then the data formats, in the order they are offered.
  *
- * The figure first, because it is the one a reader looks at; the two data
- * formats after it, because they are the same measurement in two spellings.
+ * Grouped rather than listed, because they answer different questions. A figure
+ * is a drawing and the settings beside it decide how it looks; CSV and TSV are
+ * the measurement itself and nothing about a figure reaches them. A single row
+ * of five buttons would suggest the settings applied to all of them.
  */
-const EXPORT_FORMATS: readonly { readonly format: SpectrumExportFormat; readonly label: string }[] =
+const FIGURE_FORMATS: readonly { readonly format: SpectrumExportFormat; readonly label: string }[] =
   [
     { format: "svg", label: "Export SVG…" },
-    { format: "csv", label: "Export CSV…" },
-    { format: "tsv", label: "Export TSV…" },
+    { format: "png", label: "Export PNG…" },
   ];
+
+const DATA_FORMATS: readonly { readonly format: SpectrumExportFormat; readonly label: string }[] = [
+  { format: "csv", label: "Export CSV…" },
+  { format: "tsv", label: "Export TSV…" },
+];
+
+const FIGURE_THEMES: readonly { readonly theme: FigureTheme; readonly label: string }[] = [
+  { theme: "light", label: "Light" },
+  { theme: "dark", label: "Dark" },
+];
+
+const SETTING_FIELDS: readonly {
+  readonly field: FigureSettingsField;
+  readonly label: string;
+  readonly hint: string;
+}[] = [
+  { field: "widthPx", label: "Width", hint: "px" },
+  { field: "heightPx", label: "Height", hint: "px" },
+  { field: "pngDpi", label: "PNG DPI", hint: "metadata only" },
+];
 
 export interface SelectedSpectrumPanelProps {
   readonly state: SpectrumState;
   readonly onRetry: () => void;
   readonly exportState: SpectrumExportState;
   readonly onExport: (format: SpectrumExportFormat) => void;
+  readonly onCopyPlot: () => void;
   readonly onDismissExport: () => void;
+  readonly figureSettings: FigureSettingsDraft;
+  readonly figureSettingsProblem: string | null;
+  readonly onFigureSetting: (field: FigureSettingsField, value: string) => void;
+  readonly onFigureTheme: (theme: FigureTheme) => void;
 }
 
 export function SelectedSpectrumPanel({
@@ -29,7 +65,12 @@ export function SelectedSpectrumPanel({
   onRetry,
   exportState,
   onExport,
+  onCopyPlot,
   onDismissExport,
+  figureSettings,
+  figureSettingsProblem,
+  onFigureSetting,
+  onFigureTheme,
 }: SelectedSpectrumPanelProps) {
   return (
     <section aria-labelledby="selected-spectrum-heading" className="panel spectrum-panel">
@@ -48,8 +89,13 @@ export function SelectedSpectrumPanel({
         {state.status === "loaded" ? (
           <SpectrumExportActions
             exportState={exportState}
+            figureSettings={figureSettings}
+            figureSettingsProblem={figureSettingsProblem}
+            onCopyPlot={onCopyPlot}
             onDismiss={onDismissExport}
             onExport={onExport}
+            onFigureSetting={onFigureSetting}
+            onFigureTheme={onFigureTheme}
           />
         ) : null}
       </header>
@@ -61,33 +107,140 @@ export function SelectedSpectrumPanel({
 function SpectrumExportActions({
   exportState,
   onExport,
+  onCopyPlot,
   onDismiss,
+  figureSettings,
+  figureSettingsProblem,
+  onFigureSetting,
+  onFigureTheme,
 }: {
   readonly exportState: SpectrumExportState;
   readonly onExport: (format: SpectrumExportFormat) => void;
+  readonly onCopyPlot: () => void;
   readonly onDismiss: () => void;
+  readonly figureSettings: FigureSettingsDraft;
+  readonly figureSettingsProblem: string | null;
+  readonly onFigureSetting: (field: FigureSettingsField, value: string) => void;
+  readonly onFigureTheme: (theme: FigureTheme) => void;
 }) {
-  const exporting = exportState.status === "exporting";
+  const running = exportState.status === "running";
+  // A figure nothing can be drawn from is not offered. The data formats stay
+  // live: a width nobody could draw at says nothing about a list of numbers.
+  const figureBlocked = running || figureSettingsProblem !== null;
+  const problemId = "spectrum-figure-problem";
+
   return (
     <div className="spectrum-export">
-      <div className="spectrum-export-actions">
-        {EXPORT_FORMATS.map(({ format, label }) => (
+      <fieldset className="spectrum-figure-settings">
+        <legend>Figure</legend>
+        {SETTING_FIELDS.map(({ field, label, hint }) => (
+          <label className="spectrum-figure-field" key={field}>
+            <span>
+              {label} <span className="spectrum-figure-hint">{hint}</span>
+            </span>
+            <input
+              aria-describedby={figureSettingsProblem === null ? undefined : problemId}
+              aria-invalid={figureSettingsProblem === null ? undefined : true}
+              className="spectrum-figure-input"
+              inputMode="numeric"
+              // Text rather than `number`, so what the field holds is what the
+              // user typed. A number input silently discards what it cannot
+              // parse, which would leave the panel unable to say why an action
+              // is unavailable.
+              onChange={(event) => {
+                onFigureSetting(field, event.target.value);
+              }}
+              type="text"
+              value={figureSettings[field]}
+            />
+          </label>
+        ))}
+        <div className="spectrum-figure-field">
+          <span id="spectrum-figure-theme-label">Theme</span>
+          {/*
+            Two radios rather than a swatch. Which theme is selected has to be
+            readable without seeing colour, and the words are the same ones the
+            exported file records.
+          */}
+          <div aria-labelledby="spectrum-figure-theme-label" className="spectrum-figure-themes" role="radiogroup">
+            {FIGURE_THEMES.map(({ theme, label }) => (
+              <label className="spectrum-figure-theme" key={theme}>
+                <input
+                  checked={figureSettings.theme === theme}
+                  name="spectrum-figure-theme"
+                  onChange={() => {
+                    onFigureTheme(theme);
+                  }}
+                  type="radio"
+                  value={theme}
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        {/*
+          A live region, but not a second `status` landmark: the export result
+          below is the panel's status, and two of them would leave a reader --
+          and a test -- asking which one "the status" is. The fields point at
+          this with `aria-describedby`, so it is read when focus reaches them,
+          and `aria-live` is what makes a correction announced as it happens.
+        */}
+        <p aria-live="polite" className="spectrum-figure-problem" id={problemId}>
+          {figureSettingsProblem ?? ""}
+        </p>
+        <div className="spectrum-export-actions">
+          {FIGURE_FORMATS.map(({ format, label }) => (
+            <button
+              className="secondary-button"
+              // Every figure action while one is running. Rust holds a single
+              // figure-operation lane and refuses a second, so leaving the
+              // others live would offer an action already known to fail.
+              disabled={figureBlocked}
+              key={format}
+              onClick={() => {
+                onExport(format);
+              }}
+              type="button"
+            >
+              {running && exportState.operation === format
+                ? `Exporting ${format.toUpperCase()}…`
+                : label}
+            </button>
+          ))}
           <button
             className="secondary-button"
-            // All three while one is running. Rust holds a single export slot
-            // and refuses a second, so leaving the others live would offer an
-            // action already known to fail.
-            disabled={exporting}
-            key={format}
-            onClick={() => {
-              onExport(format);
-            }}
+            disabled={figureBlocked}
+            onClick={onCopyPlot}
             type="button"
           >
-            {exporting && exportState.format === format ? `Exporting ${format.toUpperCase()}…` : label}
+            {running && exportState.operation === "copy" ? "Copying plot…" : "Copy plot"}
           </button>
-        ))}
-      </div>
+        </div>
+      </fieldset>
+      <fieldset className="spectrum-data-actions">
+        <legend>Data</legend>
+        <div className="spectrum-export-actions">
+          {DATA_FORMATS.map(({ format, label }) => (
+            <button
+              className="secondary-button"
+              // Closed while a figure is running for the same reason: one lane.
+              // Not closed by a figure setting, because none of them reaches a
+              // data document.
+              disabled={running}
+              key={format}
+              onClick={() => {
+                onExport(format);
+              }}
+              type="button"
+            >
+              {running && exportState.operation === format
+                ? `Exporting ${format.toUpperCase()}…`
+                : label}
+            </button>
+          ))}
+        </div>
+      </fieldset>
       {/*
         A live region rather than a dialog. An export finishes while the user is
         looking at the spectrum, and interrupting them to say so would be a
@@ -106,6 +259,7 @@ function SpectrumExportActions({
         ) : null}
       </p>
       {exportState.status === "saved" ||
+      exportState.status === "copied" ||
       exportState.status === "cancelled" ||
       exportState.status === "failed" ? (
         <button className="link-button" onClick={onDismiss} type="button">
@@ -114,6 +268,12 @@ function SpectrumExportActions({
       ) : null}
     </div>
   );
+}
+
+/** How a figure's dimensions read in a sentence. */
+function describeFigure(figure: ExportedFigure): string {
+  const resolution = figure.dpi === null ? "" : ` at ${formatCount(figure.dpi)} DPI`;
+  return `${formatCount(figure.width)} by ${formatCount(figure.height)} pixels${resolution}, ${figure.theme} theme`;
 }
 
 /**
@@ -127,12 +287,18 @@ function describeExport(state: SpectrumExportState): string {
   switch (state.status) {
     case "idle":
       return "";
-    case "exporting":
-      return `Choose where to save the ${state.format.toUpperCase()} file.`;
+    case "running":
+      return state.operation === "copy"
+        ? "Drawing the plot for the clipboard."
+        : `Choose where to save the ${state.operation.toUpperCase()} file.`;
     case "cancelled":
       return "Export cancelled. Nothing was saved.";
     case "saved":
-      return `Saved ${state.fileName} with ${formatCount(state.pointCount)} points.`;
+      return state.figure === null
+        ? `Saved ${state.fileName} with ${formatCount(state.pointCount)} points.`
+        : `Saved ${state.fileName} with ${formatCount(state.pointCount)} points, ${describeFigure(state.figure)}.`;
+    case "copied":
+      return `Copied the plot with ${formatCount(state.pointCount)} points, ${describeFigure(state.figure)}.`;
     case "failed":
       return state.error.summary;
   }
