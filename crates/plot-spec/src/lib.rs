@@ -15,9 +15,10 @@
 //! drawing code. Sharing semantics is the requirement; sharing a drawing
 //! technology is not.
 //!
-//! Nothing in this crate is reachable from a user-facing surface yet. It is the
-//! foundation the figure-export milestone will be built on, proved on its own
-//! terms first.
+//! M4.0 built this crate and proved it in private, with nothing user-facing on
+//! top of it. M4.1 is the first slice a user can reach: the selected-spectrum
+//! export renders through `svg::render`, so the wording, the geometry and the
+//! refusals below are now what somebody sees in a file they saved.
 
 pub mod spec;
 pub mod svg;

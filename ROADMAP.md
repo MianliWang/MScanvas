@@ -31,14 +31,26 @@ This roadmap sequences product risk; it is not the authoritative feature definit
 
 ## M4 — Figure and data export
 
-The renderer foundation is selected and proved in private: one semantic
-specification, a repository-owned screen renderer and a repository-owned Rust
-export renderer, with no dependency added. Everything below is still
-unimplemented — selecting a renderer is not exporting a figure.
+The renderer foundation is selected and proved: one semantic specification, a
+repository-owned screen renderer and a repository-owned Rust export renderer,
+with no dependency added. The first visible slice has shipped.
 
-- Copy screenshot; PNG and SVG figure export.
-- Current/full range, light figure theme and underlying CSV/TSV export.
-- Linked chromatogram + spectrum figure template.
+**M4.0 — renderer selection.** Closed. See
+[ADR 0028](docs/architecture/adr/0028-figure-renderer-and-semantic-specification.md).
+
+**M4.1 — first visible spectrum export.** Closed. SVG figure export and
+underlying CSV/TSV export for the currently selected mzML spectrum, at full
+range, written from the complete spectrum Rust retained rather than from the
+arrays the interface drew. See
+[ADR 0029](docs/architecture/adr/0029-first-visible-spectrum-figure-and-data-export.md).
+
+**M4.2 — the rest of the export surface.** Not started.
+
+- Copy screenshot and PNG export, the latter on `resvg` called from Rust.
+- Dimensions, DPI and a user-selectable figure theme.
+- Current-range export, which needs a zoom/pan contract first.
+- Chromatogram data export, and a linked chromatogram + spectrum figure
+  template.
 
 ## M5 — Public beta hardening
 

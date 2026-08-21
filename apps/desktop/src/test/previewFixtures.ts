@@ -26,6 +26,8 @@ import type {
   SelectedFile,
   SelectedSpectrum,
   SelectedSpectrumOutcome,
+  SpectrumExportFormat,
+  SpectrumExportOutcome,
   SpectrumRow,
   WorkspaceAddOutcome,
   WorkspaceConversionState,
@@ -34,6 +36,15 @@ import type {
   WorkspaceOutputAdoptionResult,
   WorkspaceRoster,
 } from "../features/mzml-preview/contracts";
+
+/**
+ * How many points the fake says a complete exported spectrum carries.
+ *
+ * Deliberately larger than any array these fixtures transfer, so a test can
+ * tell an export that used Rust's retained spectrum from one that used the
+ * arrays this side received.
+ */
+export const FAKE_COMPLETE_SPECTRUM_POINTS = 1_000_000;
 
 export interface FakeWorkspaceDropTransport extends WorkspaceDropTransport {
   emit(update: WorkspaceDropUpdate): void;
@@ -276,6 +287,10 @@ export function buildSpectrum(index: number, pointCount: number): SelectedSpectr
 
   return {
     index,
+    // Distinct per spectrum, so a test that exports one and then selects
+    // another is exercising two different tokens rather than one that happens
+    // to work for both.
+    exportToken: `token-${index}`,
     scanNumber: index + 1,
     identifiers: [`controllerType=0 controllerNumber=1 scan=${index + 1}`],
     msLevel: 2,
@@ -441,6 +456,12 @@ function describeOrigin(origin: DatasetOrigin): string {
   return origin.length === 0 ? "Top level" : origin.join("\\");
 }
 
+/** One selected-spectrum export the fake was asked for. */
+export interface SpectrumExportRequest {
+  readonly exportToken: string;
+  readonly format: SpectrumExportFormat;
+}
+
 export interface FakePreviewApiOptions {
   readonly availability?: BackendAvailability | (() => Promise<BackendAvailability>);
   /** What the folder picker resolves to. `null` stands for a dismissed picker. */
@@ -448,6 +469,16 @@ export interface FakePreviewApiOptions {
     | BackendAvailability
     | null
     | (() => Promise<BackendAvailability | null>);
+  /**
+   * What one selected-spectrum export resolves to.
+   *
+   * Defaults to a saved SVG, because the ordinary path is the one most tests
+   * want. A test about cancelling, or about a refusal, supplies its own.
+   */
+  readonly spectrumExport?: (
+    exportToken: string,
+    format: SpectrumExportFormat,
+  ) => Promise<SpectrumExportOutcome>;
   /** What the session already holds when the webview mounts. */
   readonly initialDatasets?: readonly HeldFile[];
   /** What the conversion slot holds when the webview mounts. */
@@ -557,6 +588,15 @@ export interface FakePreviewApiOptions {
 }
 
 export interface FakePreviewApi extends PreviewApi {
+  /**
+   * Every selected-spectrum export this fake was asked for, in order.
+   *
+   * The token is recorded rather than the spectrum, because the token is the
+   * whole of what the webview may send: a test that asserts on it is asserting
+   * that the export named the spectrum Rust retained rather than anything this
+   * side reconstructed.
+   */
+  readonly spectrumExportRequests: SpectrumExportRequest[];
   readonly requestedSpectra: number[];
   readonly openCount: () => number;
   /** Every handle this fake was asked to read, in order. */
@@ -805,6 +845,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   const stopRequests: string[] = [];
   const adoptionRequests: string[] = [];
   const diagnosticsExportRequests: string[] = [];
+  const spectrumExportRequests: SpectrumExportRequest[] = [];
   // The diagnostics export slot, modelled the way Rust holds it: eligibility is
   // derived from the terminal queue rather than tracked, an export is a claim
   // that closes every other action on that queue, and the last result survives
@@ -989,6 +1030,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   };
 
   const fake: FakePreviewApi = {
+    spectrumExportRequests,
     requestedSpectra,
     openedHandles,
     openCount: () => openCount,
@@ -1271,6 +1313,25 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         options.stop === undefined ? conversion : await options.stop(operationId, publishConversion);
       publishConversion(settled);
       return conversionUpdate();
+    },
+    // Modelled as Rust behaves: the token names a snapshot Rust retained, and
+    // what comes back names the file and the number of points that went into
+    // it. Nothing here reads an array this fake holds.
+    exportSelectedSpectrum: async (exportToken, format) => {
+      spectrumExportRequests.push({ exportToken, format });
+      if (options.spectrumExport !== undefined) {
+        return options.spectrumExport(exportToken, format);
+      }
+      return {
+        status: "saved",
+        format,
+        fileName: `mscanvas-spectrum.${format}`,
+        // Deliberately not read from any array this fake holds. Rust writes the
+        // complete spectrum it retained, and a fake that answered with the
+        // length of the transferred arrays would model the defect rather than
+        // the behaviour.
+        pointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+      };
     },
     // Modelled as Rust behaves: the claim closes every other action on the
     // terminal queue for the whole of the export, and the result -- a name, a

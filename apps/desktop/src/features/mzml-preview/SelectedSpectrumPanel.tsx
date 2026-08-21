@@ -1,14 +1,36 @@
-import type { SelectedSpectrum } from "./contracts";
+import type { SelectedSpectrum, SpectrumExportFormat } from "./contracts";
 import { formatCount, formatIntensity, formatMz, formatRetentionTime } from "./format";
 import { StickSpectrum } from "./StickSpectrum";
-import type { SpectrumState } from "./usePreviewWorkspace";
+import type { SpectrumExportState, SpectrumState } from "./usePreviewWorkspace";
+
+/**
+ * The three documents this panel can export, in the order they are offered.
+ *
+ * The figure first, because it is the one a reader looks at; the two data
+ * formats after it, because they are the same measurement in two spellings.
+ */
+const EXPORT_FORMATS: readonly { readonly format: SpectrumExportFormat; readonly label: string }[] =
+  [
+    { format: "svg", label: "Export SVG…" },
+    { format: "csv", label: "Export CSV…" },
+    { format: "tsv", label: "Export TSV…" },
+  ];
 
 export interface SelectedSpectrumPanelProps {
   readonly state: SpectrumState;
   readonly onRetry: () => void;
+  readonly exportState: SpectrumExportState;
+  readonly onExport: (format: SpectrumExportFormat) => void;
+  readonly onDismissExport: () => void;
 }
 
-export function SelectedSpectrumPanel({ state, onRetry }: SelectedSpectrumPanelProps) {
+export function SelectedSpectrumPanel({
+  state,
+  onRetry,
+  exportState,
+  onExport,
+  onDismissExport,
+}: SelectedSpectrumPanelProps) {
   return (
     <section aria-labelledby="selected-spectrum-heading" className="panel spectrum-panel">
       <header className="panel-header compact">
@@ -16,10 +38,104 @@ export function SelectedSpectrumPanel({ state, onRetry }: SelectedSpectrumPanelP
           <h2 id="selected-spectrum-heading">Selected spectrum</h2>
           <p>{describe(state)}</p>
         </div>
+        {/*
+          Offered only for a spectrum that actually loaded. There is nothing to
+          export from a panel that is empty, loading, unavailable or failed, and
+          an action that is present and refuses is worse than one that is not
+          there. A spectrum with no peaks is loaded and *is* exportable: an
+          honest empty figure is a real answer about a sample.
+        */}
+        {state.status === "loaded" ? (
+          <SpectrumExportActions
+            exportState={exportState}
+            onDismiss={onDismissExport}
+            onExport={onExport}
+          />
+        ) : null}
       </header>
       <div className="spectrum-body">{renderBody(state, onRetry)}</div>
     </section>
   );
+}
+
+function SpectrumExportActions({
+  exportState,
+  onExport,
+  onDismiss,
+}: {
+  readonly exportState: SpectrumExportState;
+  readonly onExport: (format: SpectrumExportFormat) => void;
+  readonly onDismiss: () => void;
+}) {
+  const exporting = exportState.status === "exporting";
+  return (
+    <div className="spectrum-export">
+      <div className="spectrum-export-actions">
+        {EXPORT_FORMATS.map(({ format, label }) => (
+          <button
+            className="secondary-button"
+            // All three while one is running. Rust holds a single export slot
+            // and refuses a second, so leaving the others live would offer an
+            // action already known to fail.
+            disabled={exporting}
+            key={format}
+            onClick={() => {
+              onExport(format);
+            }}
+            type="button"
+          >
+            {exporting && exportState.format === format ? `Exporting ${format.toUpperCase()}…` : label}
+          </button>
+        ))}
+      </div>
+      {/*
+        A live region rather than a dialog. An export finishes while the user is
+        looking at the spectrum, and interrupting them to say so would be a
+        worse interruption than the file being saved was.
+      */}
+      <p className="spectrum-export-status" role="status">
+        {describeExport(exportState)}
+        {/* Both halves. The summary says what happened; the detail is where a
+            refusal puts the part the user has to act on -- above all that a
+            failed export could not remove the temporary file it left in their
+            folder. Rendering only the summary hid the one thing they could do
+            about it, which is the regression the conversion notice already
+            carries a comment about and the spectrum load state already avoids. */}
+        {exportState.status === "failed" && exportState.error.detail !== null ? (
+          <span className="notice-detail">{exportState.error.detail}</span>
+        ) : null}
+      </p>
+      {exportState.status === "saved" ||
+      exportState.status === "cancelled" ||
+      exportState.status === "failed" ? (
+        <button className="link-button" onClick={onDismiss} type="button">
+          Dismiss export message
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * What the export status region says.
+ *
+ * Never a path. A saved export names the file and how many points went into it,
+ * which is what a reader needs to know the document is the whole spectrum and
+ * not the drawing beside it.
+ */
+function describeExport(state: SpectrumExportState): string {
+  switch (state.status) {
+    case "idle":
+      return "";
+    case "exporting":
+      return `Choose where to save the ${state.format.toUpperCase()} file.`;
+    case "cancelled":
+      return "Export cancelled. Nothing was saved.";
+    case "saved":
+      return `Saved ${state.fileName} with ${formatCount(state.pointCount)} points.`;
+    case "failed":
+      return state.error.summary;
+  }
 }
 
 function describe(state: SpectrumState): string {

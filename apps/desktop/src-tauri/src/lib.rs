@@ -18,7 +18,7 @@ use preview::dto::{
     WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto,
     WorkspaceOutputAdoptionResultDto, WorkspaceRemoveResultDto, WorkspaceRosterDto,
     diagnostics_picker_unavailable, invalid_conversion_reservation,
-    invalid_workspace_drop_subscription,
+    invalid_workspace_drop_subscription, spectrum_picker_unavailable,
 };
 use preview::{PreviewService, ProteoWizardProvider, normalize_window_drop_event};
 
@@ -459,6 +459,95 @@ async fn save_workspace_conversion_diagnostics(
     .await?
 }
 
+/// Binds one selected-spectrum export and reserves the right to choose a file.
+///
+/// The webview names the spectrum by the opaque token it received with that
+/// spectrum's panel, and the format by one of three fixed words. It supplies no
+/// path, no arrays and no dataset handle: which measurement this writes was
+/// decided when Rust interpreted it, and a token from an earlier selection is
+/// refused rather than answered with whatever spectrum is current now.
+///
+/// Deliberately separate from choosing a destination, for the reason the
+/// diagnostics export gives: a webview can reload between any two IPC fetches,
+/// so Rust retains the reservation and a document that never receives the
+/// identifier can never open a picker.
+///
+/// Launches no process and changes no preview. Exporting a spectrum is not
+/// selecting one.
+#[tauri::command]
+async fn begin_selected_spectrum_export(
+    export_token: String,
+    format: String,
+    service: State<'_, SharedService>,
+) -> Result<String, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.begin_spectrum_export(&export_token, &format)).await?
+}
+
+/// Shows the native save dialog for one exact reservation and writes the file.
+///
+/// The webview names no path and receives none back: the answer carries the
+/// format, the file's own name and how many source points it holds, and nothing
+/// about the folder it went into.
+///
+/// Rust consumes and validates the claim **before** dispatching the dialog, so a
+/// reload or a second request that overtook it fails without opening one. The
+/// spectrum is taken at that moment too, so a selection landing while the dialog
+/// is open cannot change what is written.
+///
+/// Cancelling is an ordinary outcome: nothing was created, nothing was written,
+/// and the spectrum on screen is exactly as it was.
+#[tauri::command]
+async fn save_selected_spectrum_export(
+    reservation_id: String,
+    app: tauri::AppHandle,
+    service: State<'_, SharedService>,
+) -> Result<preview::dto::SpectrumExportOutcomeDto, PreviewErrorDto> {
+    let owner = main_window_handle(&app);
+    let service = Arc::clone(&service);
+    let claimed = service.claim_spectrum_export(&reservation_id)?;
+    let dialog = claimed.dialog();
+    let suggested = claimed.suggested_file_name();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    if app
+        .run_on_main_thread(move || {
+            let _ = sender.send(preview::dialog::choose_save_destination(
+                owner, dialog, &suggested,
+            ));
+        })
+        .is_err()
+    {
+        // The claim already took the slot. A dispatch that never happened
+        // leaves nothing to close it, so without this the session would hold a
+        // reservation whose dialog does not exist -- and every later export
+        // would stay refused until a reload.
+        service.cancel_spectrum_export(&reservation_id);
+        return Err(spectrum_picker_unavailable());
+    }
+
+    let claimed_reservation = reservation_id;
+    // The wait spans the modal dialog and then the write, neither of which is
+    // something to hold an async worker for.
+    off_the_async_runtime(move || {
+        let chosen = match receiver.recv().map_err(|_| spectrum_picker_unavailable())? {
+            Ok(chosen) => chosen,
+            Err(error) => {
+                // The dialog itself failed. That is a refusal of this export,
+                // not a write that went wrong, and the slot has to be released
+                // either way.
+                service.cancel_spectrum_export(&claimed_reservation);
+                return Err(error);
+            }
+        };
+        let Some(destination) = chosen else {
+            service.cancel_spectrum_export(&claimed_reservation);
+            return Ok(preview::dto::SpectrumExportOutcomeDto::Cancelled);
+        };
+        service.write_spectrum_export(&claimed, &destination)
+    })
+    .await?
+}
+
 /// Reads the session's one conversion slot.
 ///
 /// The authoritative answer about a conversion, and the only one that survives a
@@ -796,7 +885,9 @@ pub fn run() {
             stop_workspace_conversion_queue,
             adopt_workspace_conversion_outputs,
             begin_workspace_conversion_diagnostics_export,
-            save_workspace_conversion_diagnostics
+            save_workspace_conversion_diagnostics,
+            begin_selected_spectrum_export,
+            save_selected_spectrum_export
         ])
         .run(tauri::generate_context!())
         .expect("failed to run the MSCanvas desktop application");

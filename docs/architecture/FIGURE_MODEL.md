@@ -67,7 +67,7 @@ single-point and all-negative edges.
 | Screen | repository-owned TypeScript SVG, unchanged by M4.0 |
 | Export | repository-owned Rust, over `FigureSpec` |
 | Contract | `mscanvas-plot-spec`, owned in Rust where the data already is |
-| PNG (M4.1) | `resvg`, Apache-2.0 OR MIT, called from Rust |
+| PNG (M4.2) | `resvg`, Apache-2.0 OR MIT, called from Rust, still unadded |
 | Added dependencies | **none**, in either language |
 
 The two renderers share semantics and not drawing code. That is the point rather
@@ -98,9 +98,38 @@ what the data means.
 - Export runs headless. No window, no stylesheet, no mounted component tree, no
   browser screenshot.
 
+## First visible slice — M4.1
+
+Closed by [ADR 0029](adr/0029-first-visible-spectrum-figure-and-data-export.md).
+The selected mzML spectrum can be exported as an SVG figure, and the same
+spectrum's points as CSV or TSV.
+
+The property that milestone is about is where the data comes from. The webview
+receives at most `MAX_SPECTRUM_POINTS` of each array because that projection
+carries a *drawing*; the complete `SelectedSpectrumResult` stays in Rust, in one
+session slot, and the webview receives an opaque token naming it. An export
+command names a spectrum and never carries one, so what reaches the file cannot
+be what reached the browser — the defect would otherwise be silent, because the
+transferred arrays look complete for every spectrum smaller than the bound.
+
+The figure and the data document are **siblings over that one source**. The rows
+are not read out of SVG coordinates and the figure is not drawn from the rows.
+
+| | |
+| --- | --- |
+| Scope | the currently selected mzML spectrum, full range |
+| Figure | one panel, one measurement series, `DataScope::FullSource`, no visible domain |
+| Representation | `Unreported` — the backend emits no profile/centroid marker |
+| Units | `Unreported` on both axes — the backend emits no array unit |
+| Data schema | spectrum CSV/TSV v1: `#` metadata preamble, header row, one record per source point |
+| Saving | Rust-owned native dialog, no overwrite, private-sibling publication, no path crosses to React |
+| Figure size and theme | fixed 1200×640 light; a fixed theme is not FIG-005 |
+
 ## Still open
 
-Everything visible. FIG-001 through FIG-008 are unimplemented: there is no copy
-action, no export action, no save dialog, no PNG, no CSV/TSV, no saved
-specification and no composer. M4.0 selected the foundation and proved it in
-private; M4.1 is the first slice a user can reach.
+FIG-001 (copy screenshot), FIG-002 (PNG, M4.2) and FIG-006 through FIG-008 are
+unimplemented. FIG-004 is partial: selected-spectrum CSV/TSV exists, chromatogram
+data export does not. FIG-005 has no user-selectable theme. There is no
+current-range export, no zoom or pan, no TIC, BPC or XIC, no linked figure, no
+saved specification and no composer, and the screen renderer still does not
+consume `FigureSpec`.

@@ -3582,6 +3582,13 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // identifier can never open one.
             "begin_workspace_conversion_diagnostics_export",
             "save_workspace_conversion_diagnostics",
+            // The selected-spectrum export, in the same two-phase shape and for
+            // the same reason. The first command binds which spectrum -- by the
+            // opaque token that spectrum's panel received -- and the second is
+            // the dialog, so a document that never received the reservation can
+            // never open one.
+            "begin_selected_spectrum_export",
+            "save_selected_spectrum_export",
         ]
     );
     // The picker command is named for the workspace it fills rather than for

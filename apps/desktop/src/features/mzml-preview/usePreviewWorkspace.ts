@@ -9,6 +9,7 @@ import type {
   PreviewError,
   SelectedFile,
   SelectedSpectrum,
+  SpectrumExportFormat,
   WorkspaceDropRejectionReason,
   WorkspaceDropUpdate,
   WorkspaceOutputAdoptionResult,
@@ -69,6 +70,33 @@ export type SpectrumState =
   | { readonly status: "loaded"; readonly spectrum: SelectedSpectrum }
   | { readonly status: "unavailable"; readonly requestedIndex: number }
   | { readonly status: "failed"; readonly index: number; readonly error: PreviewError };
+
+/**
+ * What the selected spectrum's one export is doing.
+ *
+ * One at a time, because Rust holds one export slot and a second request while
+ * a native save dialog is open is refused there. Keeping the same rule here is
+ * what stops the interface offering an action that is already known to fail.
+ *
+ * `cancelled` is a resting state rather than an error: the dialog was shown and
+ * dismissed, nothing was created, and the spectrum on screen is exactly as it
+ * was.
+ */
+export type SpectrumExportState =
+  | { readonly status: "idle" }
+  | { readonly status: "exporting"; readonly format: SpectrumExportFormat }
+  | { readonly status: "cancelled" }
+  | {
+      readonly status: "saved";
+      readonly format: SpectrumExportFormat;
+      readonly fileName: string;
+      readonly pointCount: number;
+    }
+  | {
+      readonly status: "failed";
+      readonly format: SpectrumExportFormat;
+      readonly error: PreviewError;
+    };
 
 export type RosterLoadState =
   | { readonly status: "loading" }
@@ -228,6 +256,24 @@ export interface PreviewWorkspace {
   readonly dismissWorkspaceError: () => void;
   readonly selectSpectrum: (index: number) => void;
   readonly retrySpectrum: () => void;
+  /**
+   * What the selected spectrum's one export is doing.
+   *
+   * Reset whenever a different spectrum is loaded, so a result never outlives
+   * the measurement it describes.
+   */
+  readonly spectrumExport: SpectrumExportState;
+  /**
+   * Exports the loaded selected spectrum as one file.
+   *
+   * Binds the token the loaded spectrum carries at the moment it is invoked, so
+   * what is written is the spectrum the user was looking at. Nothing about the
+   * preview changes: exporting a spectrum is not selecting one, and the panel
+   * is exactly as it was when the dialog closes however it closes.
+   */
+  readonly exportSpectrum: (format: SpectrumExportFormat) => void;
+  /** Returns the export to rest after a result has been read. */
+  readonly dismissSpectrumExport: () => void;
   /**
    * Completes whichever render measurements are outstanding, once what they
    * measure is actually in the DOM. Called from a layout effect, never from a
@@ -1758,6 +1804,72 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     }
   }, [selectSpectrum, selectedIndex]);
 
+  const [spectrumExport, setSpectrumExport] = useState<SpectrumExportState>({ status: "idle" });
+  // A result belongs to the spectrum it describes. Loading another one clears
+  // it, so a panel can never show "saved 1,000,000 points" beside a different
+  // measurement -- which is the one way this surface could mislead about which
+  // spectrum a file holds.
+  const exportedSpectrumToken =
+    spectrum.status === "loaded" ? spectrum.spectrum.exportToken : null;
+  // The same token, readable from a callback that was created before the user
+  // moved. Clearing on change only covers a result that has already landed; a
+  // save that is still in flight lands afterwards, and without this it would be
+  // published against whatever spectrum is on screen by then.
+  const boundExportToken = useRef<string | null>(null);
+  useEffect(() => {
+    boundExportToken.current = exportedSpectrumToken;
+    setSpectrumExport({ status: "idle" });
+  }, [exportedSpectrumToken]);
+
+  const dismissSpectrumExport = useCallback(() => {
+    setSpectrumExport({ status: "idle" });
+  }, []);
+
+  const exportSpectrum = useCallback(
+    (format: SpectrumExportFormat) => {
+      // Read here rather than closed over, so the token is the one on screen at
+      // the moment the user acted. A spectrum that has since been replaced is
+      // refused by Rust rather than answered with the newer one.
+      if (spectrum.status !== "loaded") {
+        return;
+      }
+      if (spectrumExport.status === "exporting") {
+        return;
+      }
+      const token = spectrum.spectrum.exportToken;
+      setSpectrumExport({ status: "exporting", format });
+      void api
+        .exportSelectedSpectrum(token, format)
+        .then((outcome) => {
+          // Dropped rather than shown if the panel has moved on. The file was
+          // still written -- Rust decided that, not this -- but "Saved 1,000,000
+          // points" beside a spectrum those points did not come from is the one
+          // way this surface could mislead about which measurement a file holds,
+          // and a confirmation the user has to distrust is worth less than none.
+          if (boundExportToken.current !== token) {
+            return;
+          }
+          setSpectrumExport(
+            outcome.status === "cancelled"
+              ? { status: "cancelled" }
+              : {
+                  status: "saved",
+                  format: outcome.format,
+                  fileName: outcome.fileName,
+                  pointCount: outcome.pointCount,
+                },
+          );
+        })
+        .catch((cause: unknown) => {
+          if (boundExportToken.current !== token) {
+            return;
+          }
+          setSpectrumExport({ status: "failed", format, error: toPreviewError(cause) });
+        });
+    },
+    [api, spectrum, spectrumExport.status],
+  );
+
   // A conversion's report carries the installation sequence it ran at. If it is
   // newer than what this document has applied, the banner and everything read
   // from the previous installation are stale -- so the backend is re-read
@@ -1887,6 +1999,9 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     dismissWorkspaceError,
     selectSpectrum,
     retrySpectrum,
+    spectrumExport,
+    exportSpectrum,
+    dismissSpectrumExport,
     completeRenderMeasurements,
     recordMeasurement,
     conversion,

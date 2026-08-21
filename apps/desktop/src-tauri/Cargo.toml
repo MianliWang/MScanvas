@@ -15,6 +15,10 @@ tauri-build.workspace = true
 
 [dependencies]
 mscanvas-core = { path = "../../../crates/core" }
+# The semantic figure contract and its export renderer, both repository-owned.
+# M4.0 built them and proved them in private; this is the milestone that wires
+# them to a user-reachable action. No third-party dependency is added by it.
+mscanvas-plot-spec = { path = "../../../crates/plot-spec" }
 mscanvas-proteowizard = { path = "../../../crates/proteowizard" }
 serde.workspace = true
 tauri.workspace = true

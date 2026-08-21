@@ -153,10 +153,10 @@ recognized. See
 | ID | Feature | Priority | Acceptance summary |
 |---|---|---:|---|
 | FIG-001 | Copy screenshot | P0.5 | Copies the current plot without application chrome. |
-| FIG-002 | PNG export | P0.5 | Exports current/full range at selected dimensions and DPI. |
-| FIG-003 | SVG export | P0.5 | Vector output preserves labels, axes and plot semantics. |
-| FIG-004 | Underlying data export | P0.5 | Chromatogram/spectrum data can be exported as CSV/TSV with units. |
-| FIG-005 | Independent figure theme | P0.5 | Light publication output is possible while the app remains dark. |
+| FIG-002 | PNG export | P0.5 | Unimplemented; planned for M4.2. Exports current/full range at selected dimensions and DPI. |
+| FIG-003 | SVG export | P0.5 | **Implemented for the currently selected mzML spectrum, full range.** Vector output preserves labels, axes and plot semantics, carries the accessible title/description, contains no application chrome and no source path, and is rendered in Rust from the complete retained spectrum rather than from the screen. Fixed figure size and light theme; no current-range, dimension, DPI or theme control. |
+| FIG-004 | Underlying data export | P0.5 | **Partially implemented: selected-spectrum CSV/TSV only.** One record per complete source point in source order, with a metadata preamble carrying the schema version, spectrum index, point count and the unreported representation and unit states. Values round-trip the parsed `f64` exactly. Chromatogram data export does not exist. |
+| FIG-005 | Independent figure theme | P0.5 | Unimplemented as a user-selectable feature. The M4.1 export writes a fixed light figure while the application stays dark, which is the property rather than the control. |
 | FIG-006 | Linked two-panel figure | P1 | Chromatogram + selected spectrum share a reproducible figure specification. |
 | FIG-007 | Saved FigureSpec | P1 | Reopening a spec regenerates the same semantic figure from referenced artifacts. |
 | FIG-008 | Figure composer | P2 | Multi-panel layout is constrained, aligned and provenance-aware rather than a generic slide editor. |

@@ -376,7 +376,37 @@ export interface SelectedSpectrum {
   /** No array unit was emitted, so none may be displayed. */
   readonly valueUnitsKnown: boolean;
   readonly truncated: boolean;
+  /**
+   * Which retained spectrum an export of this panel would write.
+   *
+   * Opaque and session-scoped. It names the complete spectrum Rust kept, which
+   * is deliberately not the arrays beside it: `mz` and `intensity` are bounded
+   * for transfer and `truncated` says when that bound was reached, so they are
+   * a drawing rather than the measurement. An export sends this token and
+   * nothing else, so what reaches the file cannot be what reached the browser.
+   */
+  readonly exportToken: string;
 }
+
+/**
+ * What one selected-spectrum export did.
+ *
+ * `cancelled` is an outcome rather than an error: the save dialog was shown and
+ * closed, nothing was created, and the spectrum on screen is exactly as it was.
+ * A saved export names the file it wrote and never the folder it went into.
+ */
+export type SpectrumExportOutcome =
+  | { readonly status: "cancelled" }
+  | {
+      readonly status: "saved";
+      readonly format: SpectrumExportFormat;
+      readonly fileName: string;
+      /** How many source points the document carries. */
+      readonly pointCount: number;
+    };
+
+/** The three documents one selected spectrum can be exported as. */
+export type SpectrumExportFormat = "svg" | "csv" | "tsv";
 
 /**
  * A spectrum that exists but has no peaks is `spectrum` with `pointCount: 0`.
