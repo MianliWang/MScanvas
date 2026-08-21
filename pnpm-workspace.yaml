@@ -1,2 +1,17 @@
 packages:
   - apps/*
+# Which dependencies may run install scripts. Every entry is an explicit
+# decision rather than a blanket allowance: a package that runs code at install
+# time is a package that runs code on every machine that clones this repository.
+allowBuilds:
+  # WebDriver binaries for browsers this repository does not test in. The
+  # rendered QA suite drives Chrome; downloading an Edge or Firefox driver would
+  # be fetching an executable nothing here runs.
+  edgedriver: false
+  geckodriver: false
+  # Links its own platform binary at install time. It reaches this tree through
+  # `tsx`, which the QA harness needs directly and which Vite uses to read a
+  # TypeScript config. Before this suite existed it was only an unmet optional
+  # peer of Vite -- declared, never installed -- so granting it is a decision
+  # this suite forces rather than one it inherits.
+  esbuild: true

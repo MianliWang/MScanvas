@@ -491,6 +491,102 @@ def validate_test_support_stays_a_dev_dependency(errors: list[str]) -> None:
                 )
 
 
+def validate_e2e_capability_never_ships(errors: list[str]) -> None:
+    """The rendered-QA IPC boundary must never reach a shipped build.
+
+    Under the `e2e` feature the desktop crate appends one initialization script
+    that can answer the application's own commands from a table the page can
+    write. That is the whole point of it during a rendered test, and it is
+    exactly the capability a shipped binary must not carry: anything running in
+    the document could use it to make the interface believe whatever it liked.
+
+    Three things keep it out, and all three are one edit away from not doing so.
+    The feature must stay off by default. Every reference to the script must sit
+    directly under the `cfg` that gates it, because a reference that drifts out
+    from under the attribute compiles into every build without any other symptom.
+    And the boundary's own marker names must appear nowhere in the production
+    frontend, whose bundle ships whether the feature is on or not.
+
+    Checked here rather than remembered, because a binary that carries this and
+    a binary that does not look the same from the outside.
+    """
+    gate = '#[cfg(feature = "e2e")]'
+    markers = (
+        "__mscanvasIpcTable__",
+        "__mscanvasIpcCalls__",
+        "__mscanvasIpcSeed__",
+        "__mscanvasBoundary__",
+        "__mscanvasConsole__",
+    )
+
+    manifest = ROOT / "apps" / "desktop" / "src-tauri" / "Cargo.toml"
+    if manifest.is_file():
+        section = None
+        for number, line in enumerate(
+            manifest.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                section = stripped.strip("[]")
+                continue
+            if section != "features" or not stripped.startswith("default"):
+                continue
+            if "e2e" in stripped:
+                errors.append(
+                    f"apps/desktop/src-tauri/Cargo.toml:{number} enables the e2e "
+                    "feature by default; the rendered-QA IPC boundary would ship"
+                )
+
+    source = ROOT / "apps" / "desktop" / "src-tauri" / "src"
+    for rust in sorted(source.glob("**/*.rs")):
+        lines = rust.read_text(encoding="utf-8").splitlines()
+        for number, line in enumerate(lines, start=1):
+            if "e2e_boundary.js" not in line and "E2E_IPC_BOUNDARY_SCRIPT" not in line:
+                continue
+            above = number - 2
+            while above >= 0 and (
+                not lines[above].strip() or lines[above].strip().startswith("///")
+            ):
+                above -= 1
+            if above < 0 or lines[above].strip() != gate:
+                relative = rust.relative_to(ROOT).as_posix()
+                errors.append(
+                    f"{relative}:{number} names the rendered-QA IPC boundary without "
+                    f"{gate} on the line above it; it must not reach a shipped build"
+                )
+
+    frontend = ROOT / "apps" / "desktop" / "src"
+    for candidate in sorted(frontend.glob("**/*")):
+        if not candidate.is_file() or candidate.suffix not in {
+            ".ts",
+            ".tsx",
+            ".js",
+            ".jsx",
+            ".css",
+            ".html",
+        }:
+            continue
+        content = candidate.read_text(encoding="utf-8")
+        for marker in markers:
+            if marker in content:
+                relative = candidate.relative_to(ROOT).as_posix()
+                errors.append(
+                    f"{relative} names {marker}; the rendered-QA IPC boundary must "
+                    "stay out of the production frontend, which ships either way"
+                )
+
+    package = ROOT / "apps" / "desktop" / "package.json"
+    if package.is_file():
+        declared = json.loads(package.read_text(encoding="utf-8"))
+        for name in sorted(declared.get("dependencies", {})):
+            if name.startswith("@wdio/") or name in {"webdriverio", "tsx"}:
+                errors.append(
+                    f"apps/desktop/package.json declares {name} as a production "
+                    "dependency; the rendered-QA harness is a dev dependency of the "
+                    "repository, not of the application"
+                )
+
+
 def main() -> int:
     errors: list[str] = []
     validate_required(errors)
@@ -503,6 +599,7 @@ def main() -> int:
         validate_inline_run_rule(errors)
         validate_user_facing_strings(errors)
         validate_test_support_stays_a_dev_dependency(errors)
+        validate_e2e_capability_never_ships(errors)
 
     if errors:
         print("Repository validation failed:")

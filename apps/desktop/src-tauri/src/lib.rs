@@ -823,10 +823,21 @@ const fn main_window_handle(_app: &tauri::AppHandle) -> Option<isize> {
     None
 }
 
+/// The rendered-QA IPC boundary, compiled in only under the `e2e` feature.
+#[cfg(feature = "e2e")]
+const E2E_IPC_BOUNDARY_SCRIPT: &str = include_str!("e2e_boundary.js");
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .append_invoke_initialization_script(DROP_DOCUMENT_AUTHORITY_INITIALIZATION_SCRIPT)
+    let builder = tauri::Builder::default();
+    let builder =
+        builder.append_invoke_initialization_script(DROP_DOCUMENT_AUTHORITY_INITIALIZATION_SCRIPT);
+    // Only under the `e2e` feature, which no release build enables. The script
+    // it appends can answer this application's own commands from a table the
+    // page can write, which is not a capability a shipped binary should carry.
+    #[cfg(feature = "e2e")]
+    let builder = builder.append_invoke_initialization_script(E2E_IPC_BOUNDARY_SCRIPT);
+    builder
         .manage(SharedService::new(PreviewService::new(Box::new(
             ProteoWizardProvider::new(),
         ))))
