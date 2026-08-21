@@ -241,6 +241,16 @@ it truthfully. A joined series keeps its own semantics and is not asked the
 question — its samples are vertices of a line rather than marks measured from
 the baseline.
 
+Fixing only the export would have been worse than fixing neither. `StickSpectrum`
+draws the same measurement on screen, writes its coordinates to two decimals,
+and its caption said the deepest negative in each column is drawn below the zero
+line whatever the numbers were. A reader comparing the panel against the file
+they had just exported would have been told two different things about one
+spectrum. So the screen caption now asks its own drawing the same question, and
+through the same rounding the path is written with rather than a second copy of
+it. Both surfaces are right on their own terms; neither consumes the other's
+type, and that remains deliberate.
+
 ## M4.1-BLOCKER-B closure — a panel declares at least one series
 
 `PanelSpec` accepted an empty series vector, and the description then printed

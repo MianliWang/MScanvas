@@ -579,7 +579,7 @@ describe("mzML preview workspace", () => {
 
     expect(
       screen.getByText(
-        /2 of the points carry negative intensity; the deepest negative in each column is drawn below the zero line\./,
+        /2 of the points carry negative intensity\. The deepest negative in each column is drawn below the zero line\./,
       ),
     ).toBeVisible();
     // All four points are drawn; none is dropped for being below zero.
