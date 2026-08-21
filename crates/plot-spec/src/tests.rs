@@ -3413,7 +3413,9 @@ fn no_validated_type_has_an_unchecked_decode_door() {
                 "full_domain":{"low":0.0,"high":10.0},
                 "visible_domain":{"low":-5.0,"high":10.0},
                 "value_domain":{"low":0.0,"high":10.0},
-                "series":[],"markers":[]}"#
+                "series":[{"id":"a","role":"measurement",
+                           "scope":{"scope":"full_source"},
+                           "x":[0.0,10.0],"y":[1.0,2.0]}],"markers":[]}"#
         )
         .is_err(),
         "a window outside the source is not a panel",
@@ -4563,6 +4565,189 @@ fn a_measurement_below_drawable_resolution_is_disclosed_not_called_zero() {
     assert!(
         !joined.contains(unshowable),
         "a joined trace is not given the discrete rule: {joined:?}",
+    );
+}
+
+/// A negative is called visibly below zero only where it is drawn there.
+///
+/// M4.1-BLOCKER-A. The negative count read source signs, so a discrete mark
+/// whose projection collapses onto the baseline -- `-1` against `-1e20 .. 0`,
+/// where `project` returns exactly `zero_y` -- was reported as "shown below the
+/// zero line" while being drawn *on* it, contradicting the drawable-resolution
+/// sentence in the same `<desc>`. The measurement stays negative and stays
+/// disclosed; what changes is which sentence places it.
+#[test]
+fn a_negative_is_only_called_below_zero_where_it_is_drawn_below_zero() {
+    let below_zero = "are shown below the zero line";
+    let unshowable = "not zero but";
+    let centroid = |values: Vec<f64>, low: f64, high: f64| {
+        description_of(&svg::render(&figure_of(
+            PanelSpec::new(
+                PlotKind::Spectrum {
+                    representation: SpectrumRepresentation::Centroid,
+                },
+                AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+                AxisSpec::new(label("Intensity"), UnitState::Unreported),
+                domain(100.0, 200.0),
+                domain(low, high),
+                vec![series(vec![100.0, 200.0], values)],
+            )
+            .expect("a centroid panel"),
+        )))
+    };
+
+    // Collapsed only. Nothing is drawn below the line, so nothing says so --
+    // and the drawable-resolution sentence is what reports the measurement.
+    let collapsed = centroid(vec![-1.0, -1.0], -1.0e20, 0.0);
+    assert!(
+        !collapsed.contains(below_zero),
+        "a mark drawn on the line is not claimed to be below it: {collapsed:?}",
+    );
+    assert!(
+        collapsed.contains(unshowable),
+        "and it is still disclosed as a real measurement: {collapsed:?}",
+    );
+    assert!(
+        !collapsed.contains("Every drawn value is zero."),
+        "and never called zero: {collapsed:?}",
+    );
+
+    // An ordinary negative is drawn below the line and still says so.
+    let ordinary = centroid(vec![10.0, -40.0], -40.0, 90.0);
+    assert!(
+        ordinary.contains(below_zero),
+        "a visible negative keeps its disclosure: {ordinary:?}",
+    );
+    assert!(
+        !ordinary.contains(unshowable),
+        "and asks for no resolution caveat: {ordinary:?}",
+    );
+
+    // Mixed: the deepest is drawn, the shallowest collapses. Each sentence
+    // counts only its own, and together they account for both measurements.
+    let mixed = centroid(vec![-1.0e20, -1.0], -1.0e20, 0.0);
+    assert!(
+        mixed.contains(&format!(
+            "1 of the drawn values are negative and {below_zero}"
+        )),
+        "only the drawn negative is counted below the line: {mixed:?}",
+    );
+    assert!(
+        mixed.contains("1 drawn measurement is not zero but"),
+        "and only the collapsed one is counted as unshowable: {mixed:?}",
+    );
+
+    // A measured zero is neither, and a positive mark is neither.
+    let zeroed = centroid(vec![0.0, 0.0], 0.0, 1.0e20);
+    assert!(
+        !zeroed.contains(below_zero) && !zeroed.contains(unshowable),
+        "a measured zero triggers neither sentence: {zeroed:?}",
+    );
+    let positive = centroid(vec![10.0, 20.0], 0.0, 20.0);
+    assert!(
+        !positive.contains(below_zero) && !positive.contains(unshowable),
+        "an ordinary positive spectrum triggers neither: {positive:?}",
+    );
+
+    // A joined trace keeps its own semantics: its samples are vertices of a
+    // line rather than marks measured from the baseline, so the discrete
+    // question is not asked of it and its disclosure is unchanged.
+    let joined = description_of(&svg::render(&figure_of(
+        PanelSpec::new(
+            PlotKind::Chromatogram,
+            AxisSpec::new(label("Time"), UnitState::Unreported),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(0.0, 10.0),
+            domain(-1.0e20, 0.0),
+            vec![series(vec![0.0, 10.0], vec![-1.0, -1.0e20])],
+        )
+        .expect("a trace below zero"),
+    )));
+    assert!(
+        joined.contains(below_zero),
+        "a joined trace still reports its negatives: {joined:?}",
+    );
+}
+
+/// A panel of no series is not a panel.
+///
+/// M4.1-BLOCKER-B. `PanelSpec` accepted `series = []`, and the description then
+/// printed `Series: .` with no sentence explaining the blank plotting area --
+/// leaving a reader unable to tell a deliberately empty figure from a renderer
+/// that had failed. It is refused at the contract boundary instead, on every
+/// path that can build one.
+///
+/// A panel of no series is **not** an empty spectrum. A measurement that
+/// genuinely holds no peaks stays representable as one series carrying zero
+/// points, and that case is asserted here beside the refusal so the two can
+/// never be collapsed into one rule.
+#[test]
+fn a_panel_must_declare_at_least_one_series() {
+    let empty_panel = || {
+        PanelSpec::new(
+            PlotKind::Spectrum {
+                representation: SpectrumRepresentation::Centroid,
+            },
+            AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+            AxisSpec::new(label("Intensity"), UnitState::Unreported),
+            domain(100.0, 200.0),
+            domain(0.0, 90.0),
+            Vec::new(),
+        )
+    };
+
+    // The constructor.
+    assert_eq!(
+        empty_panel().expect_err("a panel of no series is refused"),
+        SpecError::PanelHasNoSeries,
+    );
+
+    // Standalone `PanelSpec` decoding, which validates on the way in.
+    let wire = r#"{"kind":{"kind":"chromatogram"},
+                   "x_axis":{"label":"t","unit":{"state":"unreported"}},
+                   "y_axis":{"label":"i","unit":{"state":"unreported"}},
+                   "full_domain":{"low":0.0,"high":10.0},
+                   "visible_domain":null,
+                   "value_domain":{"low":0.0,"high":10.0},
+                   "series":[],"markers":[]}"#;
+    assert!(
+        serde_json::from_str::<PanelSpec>(wire).is_err(),
+        "a decoded panel of no series is refused too",
+    );
+
+    // A whole decoded figure carrying one, through `FigureSpec::from_json`.
+    let figure = format!(
+        r#"{{"schema_version":{SCHEMA_VERSION},"theme":"light",
+             "size":{{"width":900.0,"height":500.0}},
+             "title":null,"caption":null,
+             "panels":[{wire}]}}"#
+    );
+    assert!(
+        FigureSpec::from_json(&figure).is_err(),
+        "and a figure carrying one is not a figure",
+    );
+
+    // An empty *measurement* remains valid, and remains describable: this is
+    // the honest answer for a spectrum that holds no peaks.
+    let empty_spectrum = PanelSpec::new(
+        PlotKind::Spectrum {
+            representation: SpectrumRepresentation::Unreported,
+        },
+        AxisSpec::new(label("m/z"), UnitState::Dimensionless),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(0.0, 1.0),
+        domain(0.0, 1.0),
+        vec![series(Vec::new(), Vec::new())],
+    )
+    .expect("one empty measurement series is a valid panel");
+    let described = description_of(&svg::render(&figure_of(empty_spectrum)));
+    assert!(
+        described.contains("&quot;measurement&quot; carries no points"),
+        "an empty spectrum says so by name: {described:?}",
+    );
+    assert!(
+        !described.contains("Series: ."),
+        "and never emits the malformed empty list: {described:?}",
     );
 }
 

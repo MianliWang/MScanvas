@@ -825,12 +825,46 @@ fn panel_description(
         ));
     }
 
-    let negatives = panel
-        .series
-        .iter()
-        .flat_map(|series| series.x().iter().zip(series.y().iter()))
-        .filter(|(at, value)| **value < 0.0 && **at >= drawn.low() && **at <= drawn.high())
-        .count();
+    // Counted over the marks the drawing actually places below the line, not
+    // over source signs.
+    //
+    // A discrete mark is a length measured from the zero line, and a negative
+    // one whose projection collapses onto that line is not drawn below it: it
+    // is drawn *on* it, as the tick. Counting it here told a reader that the
+    // figure shows something below zero which nobody looking at the figure can
+    // find, and contradicted the drawable-resolution sentence in the same
+    // description. Nothing is lost by dropping it, and that is the point -- the
+    // measurement is still negative and is still disclosed, by the sentence
+    // about drawable resolution, which counts exactly the marks this skips.
+    //
+    // A joined series keeps its own semantics and is not asked this question.
+    // Its samples are vertices of a line rather than marks measured from the
+    // baseline, and the line runs below zero between them whatever one vertex
+    // rounded to, so "is this mark below the line" is not a question its
+    // geometry answers.
+    let mut negatives = 0_usize;
+    for series in &panel.series {
+        let discrete = !panel.joins(series);
+        for (at, value) in series.x().iter().zip(series.y().iter()) {
+            if *value >= 0.0 || *at < drawn.low() || *at > drawn.high() {
+                continue;
+            }
+            if discrete
+                && draws_without_length(
+                    project(
+                        *value,
+                        panel.value_domain,
+                        frame.plot_bottom,
+                        frame.plot_top,
+                    ),
+                    frame.zero_y,
+                )
+            {
+                continue;
+            }
+            negatives += 1;
+        }
+    }
     // Whether this figure has a zero line at all. A joined trace is exempt from
     // the zero-baseline rule, so its value range may legitimately exclude zero
     // -- and where it does, the horizontal rule is pinned to the edge of the
