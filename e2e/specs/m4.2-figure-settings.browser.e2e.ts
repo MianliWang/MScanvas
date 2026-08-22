@@ -238,9 +238,30 @@ describe("M4.2 figure settings, in the rendered interface", () => {
         const described = await input.getAttribute("aria-describedby");
         expect(described).toBe("spectrum-figure-problem");
 
-        // And nothing was asked of the backend, because this side already knew.
+        // Nothing was asked of the backend for a *figure*, because this side
+        // already knew there was none to draw.
         expect(await argumentsOf("begin_selected_spectrum_export")).toEqual([]);
         expect(await argumentsOf("copy_selected_spectrum_plot")).toEqual([]);
+
+        // But a data export still works. Leaving those buttons enabled and
+        // having them do nothing would be worse than either offering them or
+        // closing them -- and a size and a theme are not properties of a
+        // measurement.
+        await setInvokeResult("save_selected_spectrum_export", {
+          status: "saved",
+          format: "csv",
+          fileName: "mscanvas-spectrum-0.csv",
+          figure: null,
+          pointCount: COMPLETE_POINT_COUNT,
+        });
+        await press("Export CSV…");
+        await browser.waitUntil(async () => (await statusText()).startsWith("Saved"), {
+          timeout: 15_000,
+        });
+        const data = await argumentsOf("begin_selected_spectrum_export");
+        expect(data).toHaveLength(1);
+        expect(data[0]?.["format"]).toBe("csv");
+
         expect(await unexpectedConsole()).toEqual([]);
       });
     }

@@ -21,7 +21,7 @@
     "e2e:browser": "wdio run ./e2e/wdio.browser.conf.ts",
     "qa:m4.1": "pnpm e2e:typecheck && pnpm e2e:browser",
     "e2e:typecheck": "tsc -p ./e2e/tsconfig.json --noEmit",
-    "e2e:build": "pnpm build && cargo build --release --features e2e,custom-protocol --bin mscanvas-desktop --target-dir target/e2e",
+    "e2e:build": "pnpm build && cargo build --release --features e2e --features tauri/custom-protocol --bin mscanvas-desktop --target-dir target/e2e",
     "e2e:tauri": "wdio run ./e2e/wdio.tauri.conf.ts",
     "e2e:native-save": "wdio run ./e2e/wdio.tauri.conf.ts --spec ./e2e/specs/m4.2-native-save.native.e2e.ts",
     "e2e:native-dialog": "powershell -NoProfile -ExecutionPolicy Bypass -File ./e2e/native/probe-save-dialog.ps1",

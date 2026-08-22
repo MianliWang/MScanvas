@@ -423,6 +423,35 @@ describe("selected spectrum export binding", () => {
     expect(result.current.spectrumExport.status).toBe("idle");
   });
 
+  it("still exports data while the figure settings describe no figure", async () => {
+    // The panel deliberately leaves the data actions live when a width is
+    // unusable, because a size and a theme are not properties of a measurement.
+    // An enabled button that silently does nothing is worse than either
+    // offering it or closing it.
+    const { api, result } = await loadedWorkspace();
+
+    act(() => {
+      result.current.setFigureSetting("widthPx", "0");
+    });
+    expect(result.current.resolvedFigureSettings).toBeNull();
+
+    act(() => {
+      result.current.exportSpectrum("csv");
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("saved");
+    });
+    expect(api.spectrumExportRequests.map((request) => request.format)).toEqual(["csv"]);
+
+    // The figure actions are still refused, because there is no figure.
+    act(() => {
+      result.current.exportSpectrum("png");
+      result.current.copySpectrumPlot();
+    });
+    expect(api.spectrumExportRequests).toHaveLength(1);
+    expect(api.spectrumCopyRequests).toEqual([]);
+  });
+
   it("carries a data export the same way whatever the figure is set to", async () => {
     // The transport is uniform, and Rust ignores what a data document has no
     // use for. What must not happen is a figure setting changing which

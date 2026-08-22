@@ -102,6 +102,7 @@ use super::dto::{
 use super::export::{
     BeginExportRefusal, ClaimedSpectrumExport, FigureFailure, SpectrumExportFormat,
     SpectrumExportSlot, data_document, figure_raster, png_document, svg_document,
+    within_raster_budget,
 };
 use super::figure::{FigureExportSettings, RasterFailure, SettingsRefusal};
 use super::installation::InstallationIdentity;
@@ -2064,7 +2065,21 @@ impl PreviewService {
         // are then held by the reservation rather than read again at write
         // time: the user is about to be in a modal dialog, and what is written
         // is what was asked for.
-        let settings = Self::figure_settings(settings)?;
+        //
+        // Only for the formats a figure setting reaches. A data document is the
+        // same measurement whatever the figure is being drawn at, so refusing
+        // one because a width is unusable would be refusing an export for a
+        // reason that has nothing to do with it.
+        let settings = if format.is_figure() {
+            Self::figure_settings(settings)?
+        } else {
+            FigureExportSettings::default()
+        };
+        // And the raster budget only where pixels are actually allocated. A
+        // vector document can describe a figure a raster one cannot hold.
+        if matches!(format, SpectrumExportFormat::Png) && !within_raster_budget(settings) {
+            return Err(Self::raster_budget_refusal());
+        }
         self.spectrum_export_slot()
             .begin(token, format, settings)
             .map(|reservation| reservation.as_wire())
@@ -2094,11 +2109,6 @@ impl PreviewService {
                     "That is not a figure size MSCanvas can draw. Width must be between 200 and \
                      20000, and height between 180 and 20000."
                 }
-                SettingsRefusal::RasterBudget => {
-                    "That figure is too large to turn into an image. Choose a width and height \
-                     whose product is at most 32 million pixels; the figure can still be \
-                     exported as SVG at any size."
-                }
                 SettingsRefusal::DpiOutOfRange => {
                     "That is not a resolution MSCanvas records. Choose a DPI between 72 and 1200."
                 }
@@ -2107,6 +2117,15 @@ impl PreviewService {
                 }
             })
         })
+    }
+
+    /// The refusal for a figure too large to hold as pixels.
+    fn raster_budget_refusal() -> PreviewErrorDto {
+        figure_settings_refused(
+            "That figure is too large to turn into an image. Choose a width and height \
+             whose product is at most 32 million pixels; the figure can still be \
+             exported as SVG at any size.",
+        )
     }
 
     /// What the interface is told a figure was rendered as.
@@ -4931,9 +4950,15 @@ impl PreviewService {
         handle: &str,
         index: u64,
     ) -> Result<SelectedSpectrumOutcomeDto, PreviewErrorDto> {
+        // Which spectrum the slot held when this read began. Two reads can be in
+        // flight, and the later one can reach the backend gate first and be the
+        // spectrum on screen by the time this one comes back to say it failed --
+        // so the revocation below is conditional on this read still owning what
+        // it is about to revoke.
+        let owned = self.spectrum_export_slot().current_token();
         let outcome = self.interpret_spectrum(handle, index);
         if !matches!(outcome, Ok(SelectedSpectrumOutcomeDto::Spectrum { .. })) {
-            self.spectrum_export_slot().forget();
+            self.spectrum_export_slot().forget_if_current(owned);
         }
         outcome
     }

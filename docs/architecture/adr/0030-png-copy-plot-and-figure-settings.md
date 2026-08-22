@@ -112,8 +112,8 @@ after:
 | | Bytes |
 |---|---|
 | M4.1 (`3527b77`) | 11,234,816 |
-| M4.2 | 15,102,976 |
-| Delta | +3,868,160 (+34.4%) |
+| M4.2 | 15,103,488 |
+| Delta | +3,868,672 (+34.4%) |
 
 An observation rather than a budget. Most of it is the raster stack: `resvg`
 brings `usvg`, `tiny-skia` and a font pipeline (`fontdb`, `rustybuzz`,
@@ -209,6 +209,13 @@ and an exhausted machine is not. It is a resource bound, not a service-level
 promise about what any particular machine can render: it is what this application
 is willing to try to allocate.
 
+And it is a question about the **output**, not about the figure. The settings
+constructor does not ask it: a 20,000 x 20,000 figure is a perfectly good vector
+document and this application will write one, so refusing those settings outright
+would refuse an SVG that renders — while telling the user, in the refusal itself,
+that the figure could still be exported as SVG at any size. PNG and `Copy plot`
+ask it, immediately before they allocate.
+
 DPI is closed at 72 and 1200. A number outside that describes no real output
 device and would be recorded in the file as a fact about one. 96, 150, 300 and
 600 are all inside it, and each is tested.
@@ -222,6 +229,12 @@ An export's settings are taken when its reservation is issued and held by the
 reservation. The user is about to be in a modal dialog, and a settings change
 that lands while they stand in it must not move an export that has already
 started onto a different figure. What is written is what was asked for.
+
+They are validated only for the formats that are figures. A data document is the
+same measurement whatever the figure is being drawn at, so a width nobody could
+draw at must not refuse a CSV -- and the panel, which deliberately leaves the
+data actions live in exactly that state, would otherwise be offering a button
+that silently did nothing.
 
 ## One figure-operation lane
 

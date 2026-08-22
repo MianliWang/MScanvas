@@ -97,6 +97,26 @@ export const DEFAULT_FIGURE_HEIGHT = 640;
 export const DEFAULT_PNG_DPI = 300;
 
 /**
+ * The settings a data export travels with.
+ *
+ * Nothing reads them: Rust validates and applies figure settings only for the
+ * formats that are figures. They exist because the transport is uniform, and
+ * this names the value rather than leaving a reader to wonder which figure a
+ * CSV was written at.
+ */
+const DEFAULT_FIGURE_SETTINGS: FigureSettings = {
+  widthPx: DEFAULT_FIGURE_WIDTH,
+  heightPx: DEFAULT_FIGURE_HEIGHT,
+  pngDpi: DEFAULT_PNG_DPI,
+  theme: "light",
+};
+
+/** Whether this format is drawn rather than written. */
+function isFigureFormat(format: SpectrumExportFormat): boolean {
+  return format === "svg" || format === "png";
+}
+
+/**
  * What the one figure-operation lane is doing, named the way the panel says it.
  *
  * One label rather than two parallel busy flags, because Rust has one lane: a
@@ -1972,8 +1992,15 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       // A figure the settings could not describe is not offered, so reaching
       // here with none means the panel and this disagree; refusing is the
       // honest end rather than sending Rust something to reject.
-      const settings = resolvedFigureSettings;
-      if (settings === null) {
+      //
+      // Only for the formats that *are* figures. The panel deliberately leaves
+      // the data actions live while a width is unusable -- a size and a theme
+      // are not properties of a measurement -- and returning here for them
+      // would make an enabled button do nothing at all, which is worse than
+      // either offering it or closing it. Rust ignores what a data document has
+      // no use for, so what travels with one is immaterial.
+      const settings = resolvedFigureSettings ?? DEFAULT_FIGURE_SETTINGS;
+      if (isFigureFormat(format) && resolvedFigureSettings === null) {
         return;
       }
       const token = spectrum.spectrum.exportToken;

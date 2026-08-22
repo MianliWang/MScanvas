@@ -99,8 +99,6 @@ impl Default for FigureExportSettings {
 pub(super) enum SettingsRefusal {
     /// Outside what a figure of this shape can be.
     SizeOutOfRange,
-    /// Describable as a vector, too large to rasterize.
-    RasterBudget,
     /// Not a physical resolution this boundary records.
     DpiOutOfRange,
     /// Not a theme this application has.
@@ -128,18 +126,18 @@ impl FigureExportSettings {
         if !(MIN_PNG_DPI..=MAX_PNG_DPI).contains(&png_dpi) {
             return Err(SettingsRefusal::DpiOutOfRange);
         }
-        // The vector contract first, because it is the narrower question and the
-        // one whose answer the SVG path also depends on. A size it refuses is
-        // not a size any format here can render.
-        let size = Self::size_of(width, height).ok_or(SettingsRefusal::SizeOutOfRange)?;
-        let _ = size;
-        // Then the raster budget, which only the pixel formats are bound by --
-        // and which is asked before anything is allocated rather than after a
-        // failed allocation, because a refusal is an answer and an exhausted
-        // machine is not.
-        if u64::from(width) * u64::from(height) > MAX_RASTER_PIXELS {
-            return Err(SettingsRefusal::RasterBudget);
-        }
+        // The vector contract, and only that. A size it refuses is not a size
+        // any format here can render.
+        //
+        // The raster budget is deliberately *not* asked here. It is a question
+        // about the output rather than about the figure: a vector document can
+        // honestly describe a 20,000 x 20,000 figure and this application will
+        // write one, so refusing those settings outright would refuse an SVG
+        // that is perfectly renderable -- and the refusal says the figure can
+        // still be exported as SVG at any size, which would then be false. The
+        // formats that have to hold every pixel ask `within_raster_budget`
+        // instead, before they allocate anything.
+        Self::size_of(width, height).ok_or(SettingsRefusal::SizeOutOfRange)?;
         Ok(Self {
             width,
             height,
@@ -484,7 +482,7 @@ mod tests {
 
     #[test]
     fn settings_refuse_what_no_figure_could_be() {
-        use SettingsRefusal::{DpiOutOfRange, RasterBudget, SizeOutOfRange, UnknownTheme};
+        use SettingsRefusal::{DpiOutOfRange, SizeOutOfRange, UnknownTheme};
 
         assert_eq!(
             FigureExportSettings::from_wire(0, 640, 300, "light"),
@@ -518,11 +516,11 @@ mod tests {
             FigureExportSettings::from_wire(1_200, 640, 300, "sepia"),
             Err(UnknownTheme)
         );
-        // Describable as a vector, too large to hold as pixels.
-        assert_eq!(
-            FigureExportSettings::from_wire(20_000, 20_000, 300, "light"),
-            Err(RasterBudget)
-        );
+        // Describable as a vector, and therefore accepted here: the raster
+        // budget is a question about the *output*, asked by the formats that
+        // have to hold every pixel, not by the figure itself.
+        FigureExportSettings::from_wire(20_000, 20_000, 300, "light")
+            .expect("the largest vector figure is a figure");
     }
 
     #[test]
@@ -538,11 +536,28 @@ mod tests {
         FigureExportSettings::from_wire(200, 180, 300, "light").expect("the minimum is a figure");
         // The largest that still fits the raster budget: 32 megapixels exactly.
         FigureExportSettings::from_wire(8_000, 4_000, 300, "light").expect("32 MP is inside");
-        assert_eq!(
-            FigureExportSettings::from_wire(8_000, 4_001, 300, "light"),
-            Err(SettingsRefusal::RasterBudget),
-            "one row past the budget is refused"
-        );
+    }
+
+    #[test]
+    fn the_raster_budget_is_asked_of_the_output_rather_than_the_figure() {
+        // A vector document can honestly describe a figure a raster one cannot
+        // hold. Refusing those settings outright would refuse an SVG that is
+        // perfectly renderable -- and the refusal that used to be produced said
+        // the figure could still be exported as SVG at any size, which retrying
+        // SVG would then have contradicted.
+        let vector_only =
+            FigureExportSettings::from_wire(20_000, 20_000, 300, "light").expect("a figure");
+        assert!(!super::super::export::within_raster_budget(vector_only));
+
+        let exactly_at_the_budget =
+            FigureExportSettings::from_wire(8_000, 4_000, 300, "light").expect("a figure");
+        assert!(super::super::export::within_raster_budget(
+            exactly_at_the_budget
+        ));
+
+        let one_row_past =
+            FigureExportSettings::from_wire(8_000, 4_001, 300, "light").expect("a figure");
+        assert!(!super::super::export::within_raster_budget(one_row_past));
     }
 
     #[test]

@@ -64,7 +64,9 @@ use mscanvas_proteowizard::{
 };
 
 use super::dialog::SaveDialogFacts;
-use super::figure::{FigureExportSettings, RasterFailure, encode_png, rasterize};
+use super::figure::{
+    FigureExportSettings, MAX_RASTER_PIXELS, RasterFailure, encode_png, rasterize,
+};
 use super::selection::DatasetId;
 
 /// The version this file's schema answers to.
@@ -394,6 +396,37 @@ impl SpectrumExportSlot {
         self.current = None;
     }
 
+    /// Which spectrum the slot holds, if it holds one.
+    ///
+    /// Read before a spectrum read begins so the revocation afterwards can tell
+    /// "the read I am revoking for is still the current one" from "something
+    /// newer arrived while I was waiting".
+    pub(super) fn current_token(&self) -> Option<SpectrumExportToken> {
+        self.current.as_ref().map(|snapshot| snapshot.token)
+    }
+
+    /// Forgets the retained spectrum only if it is still the one named here.
+    ///
+    /// Spectrum reads are not serialized against each other: two can be in
+    /// flight, and the later one can reach the backend gate first, install its
+    /// snapshot, and be the spectrum on screen by the time the earlier one comes
+    /// back to say it failed. Revoking unconditionally there would take away the
+    /// spectrum the user is actually looking at -- the panel keeps showing it,
+    /// because the frontend discards the superseded answer, and only the export
+    /// would fail, as stale, for a reason nothing on screen explains.
+    ///
+    /// Answers whether it dropped anything.
+    pub(super) fn forget_if_current(&mut self, expected: Option<SpectrumExportToken>) -> bool {
+        let Some(expected) = expected else {
+            return false;
+        };
+        if self.current_token() != Some(expected) {
+            return false;
+        }
+        self.current = None;
+        true
+    }
+
     /// Forgets the retained spectrum only if one of these datasets owns it.
     ///
     /// Removing rows around the preview is not a reason to revoke what the user
@@ -719,6 +752,16 @@ pub(super) enum FigureFailure {
     Unspecifiable,
     /// It could be specified, but not turned into pixels.
     Raster(RasterFailure),
+}
+
+/// Whether these settings describe a figure this boundary will rasterize.
+///
+/// Separate from the settings themselves, because it is a question about the
+/// *output* rather than about the figure: a vector document can honestly
+/// describe a 20,000 x 20,000 figure and this application will write one. Only
+/// the formats that have to hold every pixel are bound by the budget.
+pub(super) fn within_raster_budget(settings: FigureExportSettings) -> bool {
+    u64::from(settings.width()) * u64::from(settings.height()) <= MAX_RASTER_PIXELS
 }
 
 /// Renders one selected spectrum as the pixels a PNG or the clipboard receives.
@@ -1800,5 +1843,48 @@ mod tests {
         let mut pixels = vec![0; reader.output_buffer_size().expect("a bounded image")];
         let frame = reader.next_frame(&mut pixels).expect("the image decodes");
         assert_eq!(&pixels[..frame.buffer_size()], copied.rgba());
+    }
+
+    #[test]
+    fn a_failed_read_does_not_revoke_a_spectrum_that_arrived_after_it() {
+        // Spectrum reads are not serialized against each other. A later request
+        // can reach the backend gate first, install its snapshot and be the
+        // spectrum on screen by the time an earlier one comes back to say it
+        // failed. Revoking unconditionally there takes away the spectrum the
+        // user is actually looking at -- the panel keeps showing it, because the
+        // frontend discards the superseded answer, and only the export fails, as
+        // stale, for a reason nothing on screen explains.
+        let mut slot = SpectrumExportSlot::default();
+        let older = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
+        let newer = slot.install(owner(1), spectrum(2, vec![200.0], vec![2.0]));
+
+        // The older read finishes last and fails. It revokes only what it owned.
+        assert!(
+            !slot.forget_if_current(Some(older.token())),
+            "the older read no longer owns the slot"
+        );
+        assert_eq!(slot.current_token(), Some(newer.token()));
+        slot.begin(
+            &newer.token().as_wire(),
+            SpectrumExportFormat::Svg,
+            defaults(),
+        )
+        .expect("the spectrum on screen is still exportable");
+
+        // And when the failing read *is* the one that owns the slot, it does
+        // revoke -- which is the half that closes the lifecycle.
+        assert!(slot.forget_if_current(Some(newer.token())));
+        assert_eq!(slot.current_token(), None);
+    }
+
+    #[test]
+    fn revoking_against_nothing_revokes_nothing() {
+        // A read that began when the slot was empty owns nothing, so a failure
+        // afterwards must not take away whatever arrived in the meantime.
+        let mut slot = SpectrumExportSlot::default();
+        let arrived = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
+
+        assert!(!slot.forget_if_current(None));
+        assert_eq!(slot.current_token(), Some(arrived.token()));
     }
 }
