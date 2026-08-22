@@ -301,9 +301,15 @@ describe("screen reduction", () => {
     }
   });
 
+  // Deliberately not a multiple of the column width. At 10,000 points over 40
+  // columns each column starts on a multiple of 250, and an extreme sitting on
+  // one is kept as that column's *first* point whether or not the extremes are
+  // kept at all -- which would make these two tests pass for the wrong reason.
+  const INSIDE_A_COLUMN = 5_123;
+
   it("keeps a tall local peak that a column would otherwise hide", () => {
     const withPeak = many.map((each, index) =>
-      index === 5_000 ? { ...each, totalIonCurrent: 9_999_999 } : each,
+      index === INSIDE_A_COLUMN ? { ...each, totalIonCurrent: 9_999_999 } : each,
     );
     const reduced = reduceTrace(withPeak, "tic", full, 40);
 
@@ -315,7 +321,7 @@ describe("screen reduction", () => {
     // only each column's greatest value turns a line into an upper envelope and
     // silently removes every valley between two peaks.
     const withTrough = many.map((each, index) =>
-      index === 5_000 ? { ...each, totalIonCurrent: -42 } : each,
+      index === INSIDE_A_COLUMN ? { ...each, totalIonCurrent: -42 } : each,
     );
     const reduced = reduceTrace(withTrough, "tic", full, 40);
 
@@ -324,7 +330,7 @@ describe("screen reduction", () => {
 
   it("reduces the trace that is being drawn rather than the other one", () => {
     const shaped = many.map((each, index) =>
-      index === 5_000 ? { ...each, basePeakIntensity: 8_888 } : each,
+      index === INSIDE_A_COLUMN ? { ...each, basePeakIntensity: 8_888 } : each,
     );
 
     expect(reduceTrace(shaped, "bpc", full, 40).some((each) => each.basePeakIntensity === 8_888)).toBe(

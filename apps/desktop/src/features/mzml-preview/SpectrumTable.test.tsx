@@ -244,19 +244,39 @@ describe("bringing a row into view", () => {
   });
 
   it("stops a row's own header height above it rather than exactly at it", () => {
-    const top = scrollAfter((container) => {
-      const first = requireElement(container, '[data-row-position="0"]');
-      first.focus();
-      fireEvent.keyDown(first, { key: "End" });
-      // 399 rows down; come back up to row 100, which is above the fold.
-      for (let step = 0; step < 299; step += 1) {
-        fireEvent.keyDown(document.activeElement ?? first, { key: "ArrowUp" });
-      }
-    });
+    // Driven through the external-selection path rather than by walking the
+    // keyboard there: it is the same reveal, and three hundred synthetic key
+    // presses over a virtualized table are three hundred renders to assert one
+    // subtraction.
+    const rows = buildRows(400);
+    const table = { rows, totalRowCount: 400, truncated: false };
+    const { container, rerender } = renderTable(400);
+    const viewport = requireElement(container, ".spectrum-table-viewport");
+    Object.defineProperty(viewport, "clientHeight", { value: 330, configurable: true });
+
+    // Down the run, so the row that follows is above the fold.
+    rerender(
+      <SpectrumTable
+        onRendered={vi.fn()}
+        onSelect={vi.fn()}
+        selectedIndex={200}
+        table={table}
+      />,
+    );
+    expect(viewport.scrollTop).toBe(200 * 30 + 30 - (330 - 30));
+
+    rerender(
+      <SpectrumTable
+        onRendered={vi.fn()}
+        onSelect={vi.fn()}
+        selectedIndex={100}
+        table={table}
+      />,
+    );
 
     // Row 100 sits at 3,000; the reveal puts the scroll one row height above
     // it so the sticky header does not cover it.
-    expect(top).toBe(3_000 - 30);
+    expect(viewport.scrollTop).toBe(3_000 - 30);
   });
 
   it("reveals a selection made elsewhere without taking focus", () => {

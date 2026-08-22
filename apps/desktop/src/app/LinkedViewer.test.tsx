@@ -28,6 +28,12 @@ import { App } from "./App";
  * answer rather than keeping a selection of its own.
  */
 
+// Longer than the default five seconds. Every case here mounts the whole
+// application and opens a preview, which brings up three linked panels at once,
+// and under a parallel suite that occasionally takes longer than a default
+// `findBy` allows. The wait is about the machine, not about the product.
+vi.setConfig({ testTimeout: 30_000 });
+
 const PLOT_WIDTH = 1_000;
 const PADDING_LEFT = 64;
 const PADDING_RIGHT = 12;
