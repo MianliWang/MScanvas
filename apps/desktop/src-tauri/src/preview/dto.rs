@@ -1824,6 +1824,23 @@ pub struct ExportedFigureDto {
     pub theme: String,
 }
 
+/// What a figure put on the clipboard was.
+///
+/// Size and theme, and **no resolution**. The clipboard receives RGBA, a width
+/// and a height; there is no `pHYs` chunk and nowhere for one, so a field for a
+/// DPI here would be a field describing a property the artifact does not have.
+/// Its own type rather than the export one with a `None` in it, because a shape
+/// that cannot express the false claim is better than one that merely does not
+/// make it today.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CopiedFigureDto {
+    pub width: u32,
+    pub height: u32,
+    /// `light` or `dark`.
+    pub theme: String,
+}
+
 /// A copy-to-clipboard either put an image on the clipboard or it did not.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "camelCase")]
@@ -1832,7 +1849,7 @@ pub enum SpectrumCopyOutcomeDto {
     Copied {
         /// What was copied, so the interface can say it in the same words the
         /// figure settings use.
-        figure: ExportedFigureDto,
+        figure: CopiedFigureDto,
         /// How many source points the copied figure was drawn from.
         point_count: usize,
     },

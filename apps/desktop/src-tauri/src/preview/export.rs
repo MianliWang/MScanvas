@@ -64,9 +64,7 @@ use mscanvas_proteowizard::{
 };
 
 use super::dialog::SaveDialogFacts;
-use super::figure::{
-    FigureExportSettings, MAX_RASTER_PIXELS, RasterFailure, encode_png, rasterize,
-};
+use super::figure::{FigureRenderSettings, PngDpi, RasterFailure, encode_png, rasterize};
 use super::selection::DatasetId;
 
 /// The version this file's schema answers to.
@@ -298,7 +296,11 @@ enum ExportState {
         /// be in a modal dialog, and a settings change that lands in between
         /// must not move an export that has already started onto a different
         /// figure. What is written is what was asked for.
-        settings: FigureExportSettings,
+        settings: FigureRenderSettings,
+        /// The physical resolution this export records, for the one format
+        /// that records one. `None` for every other format, because there is
+        /// nowhere in them for it to live.
+        dpi: Option<PngDpi>,
     },
     /// A destination was chosen and the bytes are being written.
     Writing,
@@ -328,7 +330,8 @@ impl SpectrumReservationId {
 pub struct ClaimedSpectrumExport {
     pub(super) snapshot: SpectrumSnapshot,
     pub(super) format: SpectrumExportFormat,
-    pub(super) settings: FigureExportSettings,
+    pub(super) settings: FigureRenderSettings,
+    pub(super) dpi: Option<PngDpi>,
 }
 
 impl ClaimedSpectrumExport {
@@ -487,7 +490,8 @@ impl SpectrumExportSlot {
         &mut self,
         token: &str,
         format: SpectrumExportFormat,
-        settings: FigureExportSettings,
+        settings: FigureRenderSettings,
+        dpi: Option<PngDpi>,
     ) -> Result<SpectrumReservationId, BeginExportRefusal> {
         // Asked before whether anything else is running, because the two
         // refusals send the user somewhere different. "Already exporting" means
@@ -515,6 +519,7 @@ impl SpectrumExportSlot {
             snapshot,
             format,
             settings,
+            dpi,
         };
         Ok(reservation)
     }
@@ -532,6 +537,7 @@ impl SpectrumExportSlot {
             snapshot,
             format,
             settings,
+            dpi,
         } = &mut self.state
         else {
             return None;
@@ -544,6 +550,7 @@ impl SpectrumExportSlot {
             snapshot: snapshot.clone(),
             format: *format,
             settings: *settings,
+            dpi: *dpi,
         })
     }
 
@@ -640,7 +647,7 @@ pub(super) enum BeginExportRefusal {
 /// refused here rather than drawn into a figure that misstates it.
 pub(super) fn figure_spec(
     spectrum: &SelectedSpectrumResult,
-    settings: FigureExportSettings,
+    settings: FigureRenderSettings,
 ) -> Result<FigureSpec, SpecError> {
     // Exhaustive, with no wildcard arm. Both of these enumerations carry one
     // state today, and that is exactly why the match is written this way: a
@@ -738,7 +745,7 @@ fn value_domain_of(values: &[f64]) -> Result<Domain, SpecError> {
 /// Answers with the contract's refusal where the spectrum cannot be specified.
 pub(super) fn svg_document(
     spectrum: &SelectedSpectrumResult,
-    settings: FigureExportSettings,
+    settings: FigureRenderSettings,
 ) -> Result<String, SpecError> {
     Ok(mscanvas_plot_spec::svg::render(&figure_spec(
         spectrum, settings,
@@ -754,16 +761,6 @@ pub(super) enum FigureFailure {
     Raster(RasterFailure),
 }
 
-/// Whether these settings describe a figure this boundary will rasterize.
-///
-/// Separate from the settings themselves, because it is a question about the
-/// *output* rather than about the figure: a vector document can honestly
-/// describe a 20,000 x 20,000 figure and this application will write one. Only
-/// the formats that have to hold every pixel are bound by the budget.
-pub(super) fn within_raster_budget(settings: FigureExportSettings) -> bool {
-    u64::from(settings.width()) * u64::from(settings.height()) <= MAX_RASTER_PIXELS
-}
-
 /// Renders one selected spectrum as the pixels a PNG or the clipboard receives.
 ///
 /// The same `FigureSpec` and the same SVG the vector export writes, put on a
@@ -772,7 +769,7 @@ pub(super) fn within_raster_budget(settings: FigureExportSettings) -> bool {
 /// user would have no way to know which file they were holding.
 pub(super) fn figure_raster(
     spectrum: &SelectedSpectrumResult,
-    settings: FigureExportSettings,
+    settings: FigureRenderSettings,
 ) -> Result<super::figure::FigureRaster, FigureFailure> {
     let svg = svg_document(spectrum, settings).map_err(|_| FigureFailure::Unspecifiable)?;
     rasterize(&svg, settings.width(), settings.height()).map_err(FigureFailure::Raster)
@@ -781,10 +778,11 @@ pub(super) fn figure_raster(
 /// Renders one selected spectrum as the PNG document a user receives.
 pub(super) fn png_document(
     spectrum: &SelectedSpectrumResult,
-    settings: FigureExportSettings,
+    settings: FigureRenderSettings,
+    dpi: PngDpi,
 ) -> Result<Vec<u8>, FigureFailure> {
     let raster = figure_raster(spectrum, settings)?;
-    encode_png(&raster, settings.png_dpi()).map_err(FigureFailure::Raster)
+    encode_png(&raster, dpi.get()).map_err(FigureFailure::Raster)
 }
 
 /// Renders one selected spectrum as the data document a user receives.
@@ -888,8 +886,19 @@ mod tests {
     /// document. Settings are a control now, so the value they were implicitly
     /// using is named here -- the assertions below are unchanged because the
     /// default is unchanged.
-    fn defaults() -> FigureExportSettings {
-        FigureExportSettings::default()
+    fn defaults() -> FigureRenderSettings {
+        FigureRenderSettings::default()
+    }
+
+    /// One accepted physical resolution, for the one format that records one.
+    fn resolution(value: u32) -> PngDpi {
+        PngDpi::from_wire(value).expect("an accepted resolution")
+    }
+
+    /// The resolution a reservation for this format would carry: one for the
+    /// raster export, and none at all for the outputs that record none.
+    fn dpi_for(format: SpectrumExportFormat) -> Option<PngDpi> {
+        matches!(format, SpectrumExportFormat::Png).then(PngDpi::default)
     }
 
     fn owner(number: u64) -> DatasetId {
@@ -1298,7 +1307,7 @@ mod tests {
         let second = slot.install(owner(1), spectrum(2, vec![200.0], vec![2.0]));
         assert_ne!(stale, second.token().as_wire(), "each spectrum has its own");
         assert_eq!(
-            slot.begin(&stale, SpectrumExportFormat::Svg, defaults()),
+            slot.begin(&stale, SpectrumExportFormat::Svg, defaults(), None),
             Err(BeginExportRefusal::Stale),
             "the older spectrum is gone rather than answered with the newer one",
         );
@@ -1307,7 +1316,8 @@ mod tests {
             slot.begin(
                 &second.token().as_wire(),
                 SpectrumExportFormat::Csv,
-                defaults()
+                defaults(),
+                None,
             )
             .is_ok()
         );
@@ -1323,6 +1333,7 @@ mod tests {
                 &first.token().as_wire(),
                 SpectrumExportFormat::Csv,
                 defaults(),
+                None,
             )
             .expect("a reservation");
         let claimed = slot
@@ -1346,13 +1357,13 @@ mod tests {
         let snapshot = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let token = snapshot.token().as_wire();
         let first = slot
-            .begin(&token, SpectrumExportFormat::Svg, defaults())
+            .begin(&token, SpectrumExportFormat::Svg, defaults(), None)
             .expect("a reservation");
         // Unclaimed, so a second request supersedes it rather than being
         // refused -- which is what stops a reload between the two commands
         // wedging the slot for the rest of the session.
         let second = slot
-            .begin(&token, SpectrumExportFormat::Csv, defaults())
+            .begin(&token, SpectrumExportFormat::Csv, defaults(), None)
             .expect("an unclaimed reservation is superseded");
         assert!(
             slot.claim(&first.as_wire()).is_none(),
@@ -1372,23 +1383,23 @@ mod tests {
         let snapshot = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let token = snapshot.token().as_wire();
         let reservation = slot
-            .begin(&token, SpectrumExportFormat::Svg, defaults())
+            .begin(&token, SpectrumExportFormat::Svg, defaults(), None)
             .expect("a reservation");
         slot.claim(&reservation.as_wire()).expect("claimed");
         assert_eq!(
-            slot.begin(&token, SpectrumExportFormat::Csv, defaults()),
+            slot.begin(&token, SpectrumExportFormat::Csv, defaults(), None),
             Err(BeginExportRefusal::AlreadyExporting),
             "a dialog the user is standing in front of is not interrupted",
         );
         slot.begin_write();
         assert_eq!(
-            slot.begin(&token, SpectrumExportFormat::Csv, defaults()),
+            slot.begin(&token, SpectrumExportFormat::Csv, defaults(), None),
             Err(BeginExportRefusal::AlreadyExporting),
             "and neither are bytes going to disk",
         );
         assert!(slot.release_write(), "the write ends and the slot is free");
         assert!(
-            slot.begin(&token, SpectrumExportFormat::Tsv, defaults())
+            slot.begin(&token, SpectrumExportFormat::Tsv, defaults(), None)
                 .is_ok()
         );
     }
@@ -1400,7 +1411,7 @@ mod tests {
         let snapshot = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let token = snapshot.token().as_wire();
         let reservation = slot
-            .begin(&token, SpectrumExportFormat::Svg, defaults())
+            .begin(&token, SpectrumExportFormat::Svg, defaults(), None)
             .expect("a reservation");
         assert!(slot.cancel(&reservation.as_wire()));
         assert!(
@@ -1408,12 +1419,12 @@ mod tests {
             "cancelling a reservation that already ended changes nothing",
         );
         assert!(
-            slot.begin(&token, SpectrumExportFormat::Svg, defaults())
+            slot.begin(&token, SpectrumExportFormat::Svg, defaults(), None)
                 .is_ok()
         );
         slot.forget();
         assert_eq!(
-            slot.begin(&token, SpectrumExportFormat::Svg, defaults()),
+            slot.begin(&token, SpectrumExportFormat::Svg, defaults(), None),
             Err(BeginExportRefusal::Stale),
             "a forgotten spectrum is gone",
         );
@@ -1496,8 +1507,8 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// Settings that differ from the defaults in every field that has one.
-    fn other_settings() -> FigureExportSettings {
-        FigureExportSettings::from_wire(640, 480, 96, "dark").expect("a figure")
+    fn other_settings() -> FigureRenderSettings {
+        FigureRenderSettings::from_wire(640, 480, "dark").expect("a figure")
     }
 
     #[test]
@@ -1513,6 +1524,7 @@ mod tests {
                 &first.token().as_wire(),
                 SpectrumExportFormat::Png,
                 defaults(),
+                Some(PngDpi::default()),
             )
             .expect("the first export begins");
         slot.claim(&reservation.as_wire()).expect("claimed");
@@ -1524,7 +1536,8 @@ mod tests {
             slot.begin(
                 &first.token().as_wire(),
                 SpectrumExportFormat::Svg,
-                defaults()
+                defaults(),
+                None,
             ),
             Err(BeginExportRefusal::Stale),
             "the old token names a spectrum this session no longer has"
@@ -1535,7 +1548,8 @@ mod tests {
             slot.begin(
                 &second.token().as_wire(),
                 SpectrumExportFormat::Svg,
-                defaults()
+                defaults(),
+                None,
             ),
             Err(BeginExportRefusal::AlreadyExporting),
         );
@@ -1558,6 +1572,7 @@ mod tests {
                 &snapshot.token().as_wire(),
                 SpectrumExportFormat::Png,
                 defaults(),
+                Some(PngDpi::default()),
             )
             .expect("the export begins");
 
@@ -1565,8 +1580,11 @@ mod tests {
 
         assert_eq!(claimed.settings, defaults());
         assert_ne!(claimed.settings, other_settings());
+        assert_eq!(claimed.dpi, Some(PngDpi::default()));
         // And the bytes follow the claim rather than anything read again.
-        let asked = png_document(claimed.snapshot.spectrum(), claimed.settings).expect("a png");
+        let dpi = claimed.dpi.expect("a PNG reservation carries a resolution");
+        let asked =
+            png_document(claimed.snapshot.spectrum(), claimed.settings, dpi).expect("a png");
         let decoded = png::Decoder::new(std::io::Cursor::new(&asked));
         let reader = decoded.read_info().expect("the PNG parses");
         assert_eq!(reader.info().width, defaults().width());
@@ -1590,7 +1608,7 @@ mod tests {
             SpectrumExportFormat::Tsv,
         ] {
             assert_eq!(
-                slot.begin(&token, format, defaults()),
+                slot.begin(&token, format, defaults(), dpi_for(format)),
                 Err(BeginExportRefusal::AlreadyExporting),
                 "{format:?} waits for the copy"
             );
@@ -1603,7 +1621,7 @@ mod tests {
 
         // The refusals disturbed nothing: the copy still ends its own way.
         assert!(slot.release_write());
-        slot.begin(&token, SpectrumExportFormat::Svg, defaults())
+        slot.begin(&token, SpectrumExportFormat::Svg, defaults(), None)
             .expect("the lane is free again");
     }
 
@@ -1615,9 +1633,9 @@ mod tests {
 
         // Unclaimed: superseded rather than refused, which is the M4.1
         // semantics a reload between the two commands depends on.
-        slot.begin(&token, SpectrumExportFormat::Svg, defaults())
+        slot.begin(&token, SpectrumExportFormat::Svg, defaults(), None)
             .expect("a reservation is issued");
-        slot.begin(&token, SpectrumExportFormat::Csv, defaults())
+        slot.begin(&token, SpectrumExportFormat::Csv, defaults(), None)
             .expect("an unclaimed reservation is superseded");
         slot.begin_copy(&token)
             .expect("and a copy supersedes it too");
@@ -1625,7 +1643,7 @@ mod tests {
         // Writing: closed to everything.
         slot.begin_write();
         assert_eq!(
-            slot.begin(&token, SpectrumExportFormat::Svg, defaults()),
+            slot.begin(&token, SpectrumExportFormat::Svg, defaults(), None),
             Err(BeginExportRefusal::AlreadyExporting),
         );
         assert_eq!(
@@ -1652,20 +1670,32 @@ mod tests {
     }
 
     #[test]
-    fn the_svg_ignores_the_physical_resolution() {
+    fn the_svg_has_no_physical_resolution_to_ignore() {
         // DPI describes how large a raster image is meant to be on paper. A
-        // vector document has no pixels to describe, so a change to it must
-        // leave the SVG byte-identical -- otherwise the setting would be doing
-        // something nobody asked it to.
+        // vector document has no pixels to describe, and this is now stated in
+        // the types: `svg_document` takes a `FigureRenderSettings`, which has
+        // no resolution in it, so there is no value a caller could vary here to
+        // move the bytes. That is stronger than asserting two documents match,
+        // because a future author cannot reintroduce the dependency without
+        // changing the signature.
+        //
+        // What can still be asserted is the other half: the resolution the
+        // raster format does record changes only the record. The same figure
+        // asked for at 96 and at 600 differs in its bytes -- the `pHYs` chunk --
+        // and decodes to identical pixels.
         let source = spectrum(2, vec![100.0, 200.0], vec![3.0, 4.0]);
-        let at_ninety_six =
-            FigureExportSettings::from_wire(1_200, 640, 96, "light").expect("a figure");
-        let at_six_hundred =
-            FigureExportSettings::from_wire(1_200, 640, 600, "light").expect("a figure");
+        let settings = FigureRenderSettings::from_wire(400, 300, "light").expect("a figure");
 
+        let vector = svg_document(&source, settings).expect("an svg");
+        assert!(vector.contains("<svg"));
+
+        let at_ninety_six = png_document(&source, settings, resolution(96)).expect("a png");
+        let at_six_hundred = png_document(&source, settings, resolution(600)).expect("a png");
+        assert_ne!(at_ninety_six, at_six_hundred, "the record differs");
         assert_eq!(
-            svg_document(&source, at_ninety_six).expect("an svg"),
-            svg_document(&source, at_six_hundred).expect("an svg"),
+            decoded_pixels(&at_ninety_six),
+            decoded_pixels(&at_six_hundred),
+            "and nothing else does",
         );
     }
 
@@ -1679,11 +1709,24 @@ mod tests {
         let baseline_csv = data_document(&source, SpectrumExportFormat::Csv).expect("a document");
         let baseline_tsv = data_document(&source, SpectrumExportFormat::Tsv).expect("a document");
 
-        for settings in [
-            FigureExportSettings::from_wire(200, 180, 300, "light").expect("a figure"),
-            FigureExportSettings::from_wire(8_000, 4_000, 72, "dark").expect("a figure"),
-            FigureExportSettings::from_wire(1_200, 640, 1_200, "dark").expect("a figure"),
+        for (settings, dpi) in [
+            (
+                FigureRenderSettings::from_wire(200, 180, "light").expect("a figure"),
+                300,
+            ),
+            (
+                FigureRenderSettings::from_wire(8_000, 4_000, "dark").expect("a figure"),
+                72,
+            ),
+            (
+                FigureRenderSettings::from_wire(1_200, 640, "dark").expect("a figure"),
+                1_200,
+            ),
         ] {
+            // Read as well as varied, so the loop still moves every figure
+            // setting the boundary accepts and not merely the ones the vector
+            // document happens to consume.
+            resolution(dpi);
             // The figure is drawn differently every time, which is the point:
             // the data is asked for beside it and does not move.
             let figure = svg_document(&source, settings).expect("an svg");
@@ -1712,8 +1755,8 @@ mod tests {
             (900, 500, 600),
         ] {
             let settings =
-                FigureExportSettings::from_wire(width, height, dpi, "light").expect("a figure");
-            let bytes = png_document(&source, settings).expect("a png");
+                FigureRenderSettings::from_wire(width, height, "light").expect("a figure");
+            let bytes = png_document(&source, settings, resolution(dpi)).expect("a png");
 
             assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "the PNG signature");
             let decoder = png::Decoder::new(std::io::Cursor::new(&bytes));
@@ -1756,23 +1799,23 @@ mod tests {
         // implementation decides the glyphs, and this repository makes no claim
         // about that.
         let source = spectrum(6, vec![100.0, 200.0], vec![1.0, 2.0]);
-        let settings = FigureExportSettings::from_wire(400, 300, 300, "dark").expect("a figure");
+        let settings = FigureRenderSettings::from_wire(400, 300, "dark").expect("a figure");
 
         assert_eq!(
-            png_document(&source, settings).expect("a png"),
-            png_document(&source, settings).expect("a png"),
+            png_document(&source, settings, resolution(300)).expect("a png"),
+            png_document(&source, settings, resolution(300)).expect("a png"),
         );
     }
 
     #[test]
     fn a_light_png_differs_from_a_dark_one() {
         let source = spectrum(7, vec![100.0, 200.0], vec![1.0, 2.0]);
-        let light = FigureExportSettings::from_wire(400, 300, 300, "light").expect("a figure");
-        let dark = FigureExportSettings::from_wire(400, 300, 300, "dark").expect("a figure");
+        let light = FigureRenderSettings::from_wire(400, 300, "light").expect("a figure");
+        let dark = FigureRenderSettings::from_wire(400, 300, "dark").expect("a figure");
 
         assert_ne!(
-            png_document(&source, light).expect("a png"),
-            png_document(&source, dark).expect("a png"),
+            png_document(&source, light, resolution(300)).expect("a png"),
+            png_document(&source, dark, resolution(300)).expect("a png"),
         );
     }
 
@@ -1781,7 +1824,7 @@ mod tests {
         // The shapes the scientific tests already pin, put through the pixel
         // path as well -- an empty measurement, a single point, everything at
         // zero, and a range wide enough to collapse a mark onto the baseline.
-        let settings = FigureExportSettings::from_wire(400, 300, 300, "light").expect("a figure");
+        let settings = FigureRenderSettings::from_wire(400, 300, "light").expect("a figure");
         for source in [
             spectrum(0, Vec::new(), Vec::new()),
             spectrum(1, vec![100.0], vec![1.0]),
@@ -1789,7 +1832,8 @@ mod tests {
             spectrum(3, vec![100.0, 200.0], vec![-1.0, -1e20]),
             spectrum(4, vec![100.0, 200.0], vec![1.0, 1e20]),
         ] {
-            let bytes = png_document(&source, settings).expect("every specifiable figure draws");
+            let bytes = png_document(&source, settings, resolution(300))
+                .expect("every specifiable figure draws");
             assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
         }
     }
@@ -1822,27 +1866,30 @@ mod tests {
         // renderer, not a second size, and not DPI-dependent -- the clipboard
         // has no physical resolution to record.
         let source = spectrum(11, vec![100.0, 200.0], vec![4.0, 5.0]);
-        let at_ninety_six =
-            FigureExportSettings::from_wire(300, 200, 96, "dark").expect("a figure");
-        let at_six_hundred =
-            FigureExportSettings::from_wire(300, 200, 600, "dark").expect("a figure");
+        let settings = FigureRenderSettings::from_wire(300, 200, "dark").expect("a figure");
 
-        let copied = figure_raster(&source, at_ninety_six).expect("a raster");
+        // `figure_raster` takes no resolution, and that is the point: there is
+        // no argument here to get wrong. A clipboard image is RGBA and a size,
+        // with nowhere for a `pHYs` chunk to live.
+        let copied = figure_raster(&source, settings).expect("a raster");
         assert_eq!(copied.width(), 300);
         assert_eq!(copied.height(), 200);
 
-        // The same pixels whatever DPI says, because DPI is metadata a
-        // clipboard image does not carry.
-        let other = figure_raster(&source, at_six_hundred).expect("a raster");
-        assert_eq!(copied.rgba(), other.rgba());
+        // And the same pixels the PNG encodes, at either resolution.
+        for dpi in [96, 600] {
+            let encoded = png_document(&source, settings, resolution(dpi)).expect("a png");
+            assert_eq!(decoded_pixels(&encoded), copied.rgba());
+        }
+    }
 
-        // And the same pixels the PNG encodes.
-        let encoded = png_document(&source, at_ninety_six).expect("a png");
-        let decoder = png::Decoder::new(std::io::Cursor::new(&encoded));
+    /// The pixels a PNG actually contains, decoded from the final bytes.
+    fn decoded_pixels(bytes: &[u8]) -> Vec<u8> {
+        let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
         let mut reader = decoder.read_info().expect("the PNG parses");
         let mut pixels = vec![0; reader.output_buffer_size().expect("a bounded image")];
         let frame = reader.next_frame(&mut pixels).expect("the image decodes");
-        assert_eq!(&pixels[..frame.buffer_size()], copied.rgba());
+        pixels.truncate(frame.buffer_size());
+        pixels
     }
 
     #[test]
@@ -1868,6 +1915,7 @@ mod tests {
             &newer.token().as_wire(),
             SpectrumExportFormat::Svg,
             defaults(),
+            None,
         )
         .expect("the spectrum on screen is still exportable");
 

@@ -168,8 +168,35 @@ large the image is meant to be on paper.
 
 That is the only reading under which the two figure formats describe the same
 figure, and it is why the control is labelled `PNG DPI` with the words
-"metadata only" beside it: a user who expects DPI alone to add pixels has been
-misled by the control, not by the file.
+"PNG metadata only" beside it: a user who expects DPI alone to add pixels, or
+expects it to reach every figure, has been misled by the control rather than by
+the file.
+
+And because it belongs to one format, it is **read by one format**. `PngDpi` is
+its own type, constructed by the PNG export and by nothing else, so a resolution
+this boundary cannot record refuses a PNG and leaves `Export SVG…`, `Copy plot`,
+CSV and TSV exactly where they were. The alternative — one settings object whose
+construction validates every field — was what M4.2 shipped first, and it refused
+four working outputs over a number that could not have reached any of them.
+
+The same line is drawn in the interface: the resolution has its own problem
+message and its own `aria-describedby`, so a field that is fine is not marked
+wrong and a reader is not read a correction belonging to another field.
+
+### What each output consumes
+
+| | Width, height, theme | PNG DPI | Raster budget |
+|---|---|---|---|
+| `Export SVG…` | yes | — | — |
+| `Export PNG…` | yes | yes | yes |
+| `Copy plot` | yes | — | yes |
+| `Export CSV…` / `Export TSV…` | — | — | — |
+
+A cell that is not `yes` is a question the output is never asked, which is the
+same thing as saying it can never be refused over one. A PNG wrong in both of
+its own ways is refused over the **resolution first**: it is the smaller
+correction, and the size refusal still follows if it is still true. The order is
+asserted rather than left to fall out of the code.
 
 ### `pHYs`
 
@@ -215,6 +242,12 @@ document and this application will write one, so refusing those settings outrigh
 would refuse an SVG that renders — while telling the user, in the refusal itself,
 that the figure could still be exported as SVG at any size. PNG and `Copy plot`
 ask it, immediately before they allocate.
+
+`Copy plot` did not, in the first implementation of this milestone. The two
+paths validated independently, nothing said they had to agree, and a
+20 000 × 20 000 copy went to the rasterizer. Both now call one check;
+`check_repo.py` fails if either entry point stops calling it, and the real-Tauri
+suite drives the production copy command at that size and reads the refusal.
 
 DPI is closed at 72 and 1200. A number outside that describes no real output
 device and would be recorded in the file as a fact about one. 96, 150, 300 and
@@ -300,6 +333,13 @@ program on the machine would see.
 A clipboard held open by another program — a clipboard manager, a remote-desktop
 session — is a refusal rather than a failure: nothing was copied, the message
 says so, and the detail says to try again.
+
+Both halves have now been observed on this machine. During M4.2's implementation
+the session's clipboard could not be opened by *any* process, and the readback
+test skipped with that condition printed; on the closure-repair run it could,
+and the same test asserts an image of exactly the requested size with more than
+one colour in it. The skip path stays, because the condition is a property of
+the session rather than of the application.
 
 ## Production and E2E separation
 

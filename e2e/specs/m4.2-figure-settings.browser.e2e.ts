@@ -25,7 +25,8 @@ import { COMPLETE_POINT_COUNT, MZML_ROW, ipcTable } from "../support/fixtures";
 
 const EXPORT_BLOCK = ".spectrum-export";
 const STATUS = ".spectrum-export-status";
-const PROBLEM = ".spectrum-figure-problem";
+const PROBLEM = "#spectrum-figure-problem";
+const DPI_PROBLEM = "#spectrum-figure-dpi-problem";
 
 interface FigureSettings {
   readonly widthPx: number;
@@ -215,7 +216,6 @@ describe("M4.2 figure settings, in the rendered interface", () => {
     for (const [field, value] of [
       ["Width", "0"],
       ["Height", ""],
-      ["PNG DPI", "12.5"],
     ] as const) {
       it(`refuses every figure action while ${field} is "${value}"`, async () => {
         await open();
@@ -265,6 +265,94 @@ describe("M4.2 figure settings, in the rendered interface", () => {
         expect(await unexpectedConsole()).toEqual([]);
       });
     }
+
+    it("closes only the PNG export while PNG DPI is \"12.5\", and sends the rest", async () => {
+      // The resolution is written into one format's metadata and read by
+      // nothing else. An SVG has no pixels to give a physical size to, and a
+      // clipboard image is RGBA with nowhere for a `pHYs` chunk -- so closing
+      // those two over this number would take away two working operations for
+      // a reason that could not have reached either.
+      //
+      // Proven by running them, not by reading a `disabled` attribute: the
+      // question is what crosses the boundary.
+      await open();
+      await setField("PNG DPI", "12.5");
+
+      expect(await browser.$("button=Export PNG…").isEnabled()).toBe(false);
+      for (const action of ["Export SVG…", "Copy plot", "Export CSV…", "Export TSV…"]) {
+        expect(await browser.$(`button=${action}`).isEnabled()).toBe(true);
+      }
+
+      // The reason is on the field it belongs to, and the size fields beside it
+      // are not marked wrong, because nothing is wrong with them.
+      expect(await browser.$(DPI_PROBLEM).getText()).toContain("PNG DPI must be a whole number");
+      const dpiField = await fieldOf("PNG DPI");
+      expect(await dpiField.getAttribute("aria-invalid")).toBe("true");
+      expect(await dpiField.getAttribute("aria-describedby")).toBe("spectrum-figure-dpi-problem");
+      expect(await browser.$(PROBLEM).getText()).toBe("");
+      const widthField = await fieldOf("Width");
+      expect(await widthField.getAttribute("aria-invalid")).toBe(null);
+
+      // The SVG goes, carrying the figure that was asked for and the default
+      // resolution the uniform transport needs and neither side reads.
+      await press("Export SVG…");
+      await browser.waitUntil(async () => (await statusText()).startsWith("Saved"), {
+        timeout: 15_000,
+      });
+      const begun = await argumentsOf("begin_selected_spectrum_export");
+      expect(begun).toHaveLength(1);
+      expect(begun[0]?.["format"]).toBe("svg");
+      expect(begun[0]?.["settings"]).toEqual({
+        widthPx: 1_200,
+        heightPx: 640,
+        pngDpi: 300,
+        theme: "light",
+      });
+
+      // And so does the copy.
+      await browser.$("button=Dismiss export message").click();
+      await press("Copy plot");
+      await browser.waitUntil(async () => (await statusText()).startsWith("Copied"), {
+        timeout: 15_000,
+      });
+      const copied = await argumentsOf("copy_selected_spectrum_plot");
+      expect(copied).toHaveLength(1);
+      expect(copied[0]?.["settings"]).toEqual({
+        widthPx: 1_200,
+        heightPx: 640,
+        pngDpi: 300,
+        theme: "light",
+      });
+      // What comes back names no resolution, so neither does the sentence.
+      expect(await statusText()).not.toContain("DPI");
+
+      // The one action the number closes never asked.
+      expect(begun.map((call) => call["format"])).toEqual(["svg"]);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("sends a resolution only Rust can judge, rather than judging it here", async () => {
+      // 50 is a whole positive number. Whether a PNG can record it is a bound
+      // Rust holds, and duplicating it here would be a second copy to drift --
+      // so the export goes, carrying 50, and Rust answers.
+      await open();
+      await setField("PNG DPI", "50");
+
+      expect(await browser.$("button=Export PNG…").isEnabled()).toBe(true);
+      await press("Export PNG…");
+      await browser.waitUntil(async () => (await statusText()).startsWith("Saved"), {
+        timeout: 15_000,
+      });
+
+      const begun = await argumentsOf("begin_selected_spectrum_export");
+      expect(begun[0]?.["settings"]).toEqual({
+        widthPx: 1_200,
+        heightPx: 640,
+        pngDpi: 50,
+        theme: "light",
+      });
+      expect(await unexpectedConsole()).toEqual([]);
+    });
 
     it("offers the figure actions again once the settings describe one", async () => {
       await open();

@@ -99,17 +99,20 @@ pnpm e2e:native-save
 
 on a session where the application's dialog is drivable.
 
-**The clipboard image is not read back.** This Windows session cannot open the
-clipboard from *any* process: `System.Windows.Forms.Clipboard.SetImage` fails
-from PowerShell with "the requested clipboard operation failed", repeatedly, with
-no window holding it. That is a machine condition rather than anything about
-MSCanvas — and MSCanvas behaves correctly under it, refusing with a typed,
-retryable message that says nothing was copied and why.
+**The clipboard image is read back when the session allows it.** During M4.2's
+implementation this Windows session could not open the clipboard from *any*
+process: `System.Windows.Forms.Clipboard.SetImage` failed from PowerShell with
+"the requested clipboard operation failed", repeatedly, with no window holding
+it. That is a machine condition rather than anything about MSCanvas — and
+MSCanvas behaves correctly under it, refusing with a typed, retryable message
+that says nothing was copied and why.
 
 `m4.2-clipboard.tauri.e2e.ts` detects that condition before blaming the
-application and skips with the reason printed. It is a skip, not a pass: where
-the clipboard works it asserts an image is present, of exactly the requested
-size, with more than one colour in it.
+application and skips with the reason printed. On the closure-repair run the
+condition had cleared and both of its assertions ran and passed: an image is
+present, of exactly the requested size, with more than one colour in it, and the
+theme the user chose is the theme on the clipboard. The detection stays, because
+what it detects is a property of the session.
 
 ## What would close these
 

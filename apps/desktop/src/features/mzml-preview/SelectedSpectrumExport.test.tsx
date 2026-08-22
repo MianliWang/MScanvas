@@ -33,7 +33,8 @@ function renderPanel(
   state: SpectrumState,
   exportState: SpectrumExportState = { status: "idle" },
   draft: FigureSettingsDraft = DEFAULT_DRAFT,
-  problem: string | null = null,
+  renderProblem: string | null = null,
+  dpiProblem: string | null = null,
 ): {
   readonly onExport: ReturnType<typeof vi.fn>;
   readonly onDismiss: ReturnType<typeof vi.fn>;
@@ -50,13 +51,14 @@ function renderPanel(
     <SelectedSpectrumPanel
       exportState={exportState}
       figureSettings={draft}
-      figureSettingsProblem={problem}
       onCopyPlot={onCopyPlot}
       onDismissExport={onDismiss}
       onExport={onExport}
       onFigureSetting={onFigureSetting}
       onFigureTheme={onFigureTheme}
       onRetry={() => undefined}
+      pngDpiProblem={dpiProblem}
+      renderSettingsProblem={renderProblem}
       state={state}
     />,
   );
@@ -92,13 +94,14 @@ describe("selected spectrum export affordance", () => {
         <SelectedSpectrumPanel
           exportState={{ status: "idle" }}
           figureSettings={DEFAULT_DRAFT}
-          figureSettingsProblem={null}
           onCopyPlot={() => undefined}
           onDismissExport={() => undefined}
           onExport={() => undefined}
           onFigureSetting={() => undefined}
           onFigureTheme={() => undefined}
           onRetry={() => undefined}
+          pngDpiProblem={null}
+          renderSettingsProblem={null}
           state={state}
         />,
       );
@@ -290,12 +293,12 @@ describe("selected spectrum export affordance", () => {
     expect(screen.getByRole("textbox", { name: /^PNG DPI/u })).toHaveValue("300");
   });
 
-  it("says DPI is metadata rather than a count of pixels", () => {
-    // A user who expects DPI alone to add pixels has been misled by the
-    // control, not by the file.
+  it("says DPI is one format's metadata rather than a count of pixels", () => {
+    // Two things a user could be misled about by the control rather than by
+    // the file: that DPI alone adds pixels, and that it reaches every figure.
     renderPanel(loaded());
 
-    expect(screen.getByText("metadata only")).toBeVisible();
+    expect(screen.getByText("PNG metadata only")).toBeVisible();
   });
 
   it("reports every field a figure could not be built from", () => {
@@ -303,7 +306,8 @@ describe("selected spectrum export affordance", () => {
       loaded(),
       { status: "idle" },
       { widthPx: "0", heightPx: "", pngDpi: "12.5", theme: "light" },
-      "Width, Height, PNG DPI must be a whole number of at least 1.",
+      "Width, Height must be a whole number of at least 1.",
+      "PNG DPI must be a whole number of at least 1.",
     );
 
     // The figure actions are closed, because there is no figure to draw.
@@ -316,12 +320,59 @@ describe("selected spectrum export affordance", () => {
       expect(screen.getByRole("button", { name })).toBeEnabled();
     }
     // And the reason is attached to the fields rather than only shown near
-    // them, so it is read out when focus arrives.
+    // them, so it is read out when focus arrives -- each field carrying its
+    // own, rather than one sentence about every field there is.
     const width = screen.getByRole("textbox", { name: /^Width/u });
     expect(width).toHaveAttribute("aria-invalid", "true");
     expect(width).toHaveAccessibleDescription(
-      "Width, Height, PNG DPI must be a whole number of at least 1.",
+      "Width, Height must be a whole number of at least 1.",
     );
+    const dpi = screen.getByRole("textbox", { name: /^PNG DPI/u });
+    expect(dpi).toHaveAttribute("aria-invalid", "true");
+    expect(dpi).toHaveAccessibleDescription("PNG DPI must be a whole number of at least 1.");
+  });
+
+  it("closes only the PNG export when the resolution is the unusable field", () => {
+    // The Round-2 finding, as an affordance. DPI is written into one format's
+    // metadata and read by nothing else: an SVG has no pixels to give a
+    // physical size to, and a clipboard image is RGBA with nowhere for a
+    // `pHYs` chunk. Closing those two over this number would take away two
+    // working operations for a reason that could not have affected either.
+    renderPanel(
+      loaded(),
+      { status: "idle" },
+      { widthPx: "1200", heightPx: "640", pngDpi: "50", theme: "light" },
+      null,
+      "PNG DPI must be a whole number of at least 1.",
+    );
+
+    expect(screen.getByRole("button", { name: "Export PNG…" })).toBeDisabled();
+    for (const name of ["Export SVG…", "Copy plot", "Export CSV…", "Export TSV…"]) {
+      expect(screen.getByRole("button", { name })).toBeEnabled();
+    }
+    // And the width is not marked wrong, because nothing is wrong with it.
+    const width = screen.getByRole("textbox", { name: /^Width/u });
+    expect(width).not.toHaveAttribute("aria-invalid");
+    expect(width).toHaveAccessibleDescription("");
+  });
+
+  it("closes every figure action when the size is the unusable field", () => {
+    // The other half of the same split: a width nothing can be drawn at stops
+    // all three, because all three are drawings.
+    renderPanel(
+      loaded(),
+      { status: "idle" },
+      { widthPx: "", heightPx: "640", pngDpi: "300", theme: "light" },
+      "Width must be a whole number of at least 1.",
+      null,
+    );
+
+    for (const name of ["Export SVG…", "Export PNG…", "Copy plot"]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+    const dpi = screen.getByRole("textbox", { name: /^PNG DPI/u });
+    expect(dpi).not.toHaveAttribute("aria-invalid");
+    expect(dpi).toHaveAccessibleDescription("");
   });
 
   it("reports what a figure was rendered as, and a data document that it was not one", () => {
@@ -352,10 +403,10 @@ describe("selected spectrum export affordance", () => {
     expect(status).not.toHaveTextContent("DPI");
   });
 
-  it("reports a copied plot without naming a file", () => {
+  it("reports a copied plot without naming a file or a resolution", () => {
     renderPanel(loaded(), {
       status: "copied",
-      figure: { width: 1_200, height: 640, dpi: 300, theme: "dark" },
+      figure: { width: 1_200, height: 640, theme: "dark" },
       pointCount: 8,
     });
 
@@ -364,6 +415,9 @@ describe("selected spectrum export affordance", () => {
     // No file was written, so there is nothing to name and nothing to find.
     expect(status).not.toHaveTextContent("Saved");
     expect(status).not.toHaveTextContent(".png");
+    // And no DPI. A clipboard image is RGBA and a size, with nowhere for a
+    // `pHYs` chunk, so naming one would describe a property it does not have.
+    expect(status).not.toHaveTextContent("DPI");
     // A result is still a result: it can be dismissed like any other.
     expect(screen.getByRole("button", { name: "Dismiss export message" })).toBeVisible();
   });

@@ -78,7 +78,10 @@ export function ipcTable(options: { readonly emptySpectrum?: boolean } = {}) {
     // no dialog to gate and nothing to come back from.
     copy_selected_spectrum_plot: {
       status: "copied",
-      figure: { width: 1_200, height: 640, dpi: 300, theme: "light" },
+      // A size and a theme, as Rust answers. No resolution: the clipboard holds
+      // RGBA with nowhere for a `pHYs` chunk, so a fixture that reported one
+      // would be modelling a claim the product does not make.
+      figure: { width: 1_200, height: 640, theme: "light" },
       pointCount: COMPLETE_POINT_COUNT,
     },
   } as Record<string, unknown>;

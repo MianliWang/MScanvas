@@ -324,8 +324,14 @@ describe("selected spectrum export binding", () => {
     act(() => {
       result.current.setFigureSetting("widthPx", "0");
     });
-    expect(result.current.figureSettingsProblem).toBe("Width must be a whole number of at least 1.");
-    expect(result.current.resolvedFigureSettings).toBeNull();
+    expect(result.current.renderSettingsProblem).toBe(
+      "Width must be a whole number of at least 1.",
+    );
+    expect(result.current.resolvedRenderSettings).toBeNull();
+    // And the resolution beside it is untouched, because nothing is wrong with
+    // it: the two questions are answered separately.
+    expect(result.current.pngDpiProblem).toBeNull();
+    expect(result.current.resolvedPngDpi).toBe(300);
 
     act(() => {
       result.current.exportSpectrum("png");
@@ -433,7 +439,7 @@ describe("selected spectrum export binding", () => {
     act(() => {
       result.current.setFigureSetting("widthPx", "0");
     });
-    expect(result.current.resolvedFigureSettings).toBeNull();
+    expect(result.current.resolvedRenderSettings).toBeNull();
 
     act(() => {
       result.current.exportSpectrum("csv");
@@ -450,6 +456,126 @@ describe("selected spectrum export binding", () => {
     });
     expect(api.spectrumExportRequests).toHaveLength(1);
     expect(api.spectrumCopyRequests).toEqual([]);
+  });
+
+  it("sends the SVG and the copy while only the resolution is unusable", async () => {
+    // The Round-2 finding, at the boundary rather than at the button. DPI is
+    // written into one format's metadata and read by nothing else, so an
+    // unusable one must leave every other output exactly where it was --
+    // proven by activating them and reading what actually crossed, not by
+    // checking whether a button was enabled.
+    const { api, result } = await loadedWorkspace();
+
+    act(() => {
+      result.current.setFigureSetting("pngDpi", "");
+    });
+    expect(result.current.pngDpiProblem).toBe("PNG DPI must be a whole number of at least 1.");
+    expect(result.current.resolvedPngDpi).toBeNull();
+    // The figure itself is undisturbed.
+    expect(result.current.renderSettingsProblem).toBeNull();
+    expect(result.current.resolvedRenderSettings).toEqual({
+      widthPx: 1_200,
+      heightPx: 640,
+      theme: "light",
+    });
+
+    act(() => {
+      result.current.exportSpectrum("svg");
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("saved");
+    });
+    act(() => {
+      result.current.dismissSpectrumExport();
+    });
+    act(() => {
+      result.current.copySpectrumPlot();
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("copied");
+    });
+
+    // Both crossed, and both carried the figure that was asked for. The
+    // resolution they travel with is the default stand-in the uniform
+    // transport needs and neither output reads.
+    expect(api.spectrumExportRequests).toEqual([
+      { exportToken: "token-0", format: "svg", settings: FAKE_FIGURE_SETTINGS },
+    ]);
+    expect(api.spectrumCopyRequests).toEqual([
+      { exportToken: "token-0", settings: FAKE_FIGURE_SETTINGS },
+    ]);
+  });
+
+  it("sends a resolution only Rust can judge, and lets Rust judge it", async () => {
+    // The division of labour, stated as a test. 50 is a whole positive number,
+    // so this side has nothing to say about it; whether a PNG can record it is
+    // a bound Rust holds, and duplicating that bound here would be a second
+    // copy to drift. So every operation crosses, carrying the number that was
+    // typed -- and the one that writes it is the one Rust refuses.
+    const { api, result } = await loadedWorkspace();
+
+    act(() => {
+      result.current.setFigureSetting("pngDpi", "50");
+    });
+    expect(result.current.pngDpiProblem).toBeNull();
+    expect(result.current.resolvedPngDpi).toBe(50);
+
+    act(() => {
+      result.current.exportSpectrum("png");
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("saved");
+    });
+
+    expect(api.spectrumExportRequests).toEqual([
+      {
+        exportToken: "token-0",
+        format: "png",
+        settings: { widthPx: 1_200, heightPx: 640, pngDpi: 50, theme: "light" },
+      },
+    ]);
+  });
+
+  it("starts no PNG export while the resolution is unusable", async () => {
+    // The other half. The one output that writes the number is the one the
+    // number closes, and it is closed here rather than by a refusal Rust would
+    // have to send back.
+    const { api, result } = await loadedWorkspace();
+
+    act(() => {
+      result.current.setFigureSetting("pngDpi", "0");
+    });
+    act(() => {
+      result.current.exportSpectrum("png");
+    });
+
+    expect(api.spectrumExportRequests).toEqual([]);
+    expect(result.current.spectrumExport.status).toBe("idle");
+  });
+
+  it("says what was copied without claiming a resolution the clipboard has none of", async () => {
+    // A clipboard image is RGBA, a width and a height. There is no `pHYs`
+    // chunk and nowhere for one, so a confirmation naming a DPI would describe
+    // a property the artifact does not have -- and would go on saying 300
+    // while the user changed the field, because nothing ever read it.
+    const { result } = await loadedWorkspace();
+
+    act(() => {
+      result.current.setFigureSetting("pngDpi", "600");
+    });
+    act(() => {
+      result.current.copySpectrumPlot();
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("copied");
+    });
+
+    const outcome = result.current.spectrumExport;
+    expect(outcome.status).toBe("copied");
+    if (outcome.status === "copied") {
+      expect(outcome.figure).toEqual({ width: 1_200, height: 640, theme: "light" });
+      expect(outcome.figure).not.toHaveProperty("dpi");
+    }
   });
 
   it("carries a data export the same way whatever the figure is set to", async () => {

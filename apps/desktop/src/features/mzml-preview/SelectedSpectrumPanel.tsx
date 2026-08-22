@@ -1,4 +1,5 @@
 import type {
+  CopiedFigure,
   ExportedFigure,
   FigureTheme,
   SelectedSpectrum,
@@ -21,11 +22,22 @@ import type {
  * the measurement itself and nothing about a figure reaches them. A single row
  * of five buttons would suggest the settings applied to all of them.
  */
-const FIGURE_FORMATS: readonly { readonly format: SpectrumExportFormat; readonly label: string }[] =
-  [
-    { format: "svg", label: "Export SVG…" },
-    { format: "png", label: "Export PNG…" },
-  ];
+const FIGURE_FORMATS: readonly {
+  readonly format: SpectrumExportFormat;
+  readonly label: string;
+  /**
+   * Whether this output records the physical resolution.
+   *
+   * Only the raster one does. It decides which button an unusable DPI closes:
+   * an SVG has no pixels to give a physical size to, so stopping it over a
+   * resolution would be stopping it over a number that could not have reached
+   * it.
+   */
+  readonly recordsDpi: boolean;
+}[] = [
+  { format: "svg", label: "Export SVG…", recordsDpi: false },
+  { format: "png", label: "Export PNG…", recordsDpi: true },
+];
 
 const DATA_FORMATS: readonly { readonly format: SpectrumExportFormat; readonly label: string }[] = [
   { format: "csv", label: "Export CSV…" },
@@ -41,11 +53,16 @@ const SETTING_FIELDS: readonly {
   readonly field: FigureSettingsField;
   readonly label: string;
   readonly hint: string;
+  /** Which of the two problem messages describes this field. */
+  readonly problem: "render" | "dpi";
 }[] = [
-  { field: "widthPx", label: "Width", hint: "px" },
-  { field: "heightPx", label: "Height", hint: "px" },
-  { field: "pngDpi", label: "PNG DPI", hint: "metadata only" },
+  { field: "widthPx", label: "Width", hint: "px", problem: "render" },
+  { field: "heightPx", label: "Height", hint: "px", problem: "render" },
+  { field: "pngDpi", label: "PNG DPI", hint: "PNG metadata only", problem: "dpi" },
 ];
+
+const RENDER_PROBLEM_ID = "spectrum-figure-problem";
+const DPI_PROBLEM_ID = "spectrum-figure-dpi-problem";
 
 export interface SelectedSpectrumPanelProps {
   readonly state: SpectrumState;
@@ -55,7 +72,8 @@ export interface SelectedSpectrumPanelProps {
   readonly onCopyPlot: () => void;
   readonly onDismissExport: () => void;
   readonly figureSettings: FigureSettingsDraft;
-  readonly figureSettingsProblem: string | null;
+  readonly renderSettingsProblem: string | null;
+  readonly pngDpiProblem: string | null;
   readonly onFigureSetting: (field: FigureSettingsField, value: string) => void;
   readonly onFigureTheme: (theme: FigureTheme) => void;
 }
@@ -68,7 +86,8 @@ export function SelectedSpectrumPanel({
   onCopyPlot,
   onDismissExport,
   figureSettings,
-  figureSettingsProblem,
+  renderSettingsProblem,
+  pngDpiProblem,
   onFigureSetting,
   onFigureTheme,
 }: SelectedSpectrumPanelProps) {
@@ -90,12 +109,13 @@ export function SelectedSpectrumPanel({
           <SpectrumExportActions
             exportState={exportState}
             figureSettings={figureSettings}
-            figureSettingsProblem={figureSettingsProblem}
             onCopyPlot={onCopyPlot}
             onDismiss={onDismissExport}
             onExport={onExport}
             onFigureSetting={onFigureSetting}
             onFigureTheme={onFigureTheme}
+            pngDpiProblem={pngDpiProblem}
+            renderSettingsProblem={renderSettingsProblem}
           />
         ) : null}
       </header>
@@ -110,7 +130,8 @@ function SpectrumExportActions({
   onCopyPlot,
   onDismiss,
   figureSettings,
-  figureSettingsProblem,
+  renderSettingsProblem,
+  pngDpiProblem,
   onFigureSetting,
   onFigureTheme,
 }: {
@@ -119,28 +140,38 @@ function SpectrumExportActions({
   readonly onCopyPlot: () => void;
   readonly onDismiss: () => void;
   readonly figureSettings: FigureSettingsDraft;
-  readonly figureSettingsProblem: string | null;
+  readonly renderSettingsProblem: string | null;
+  readonly pngDpiProblem: string | null;
   readonly onFigureSetting: (field: FigureSettingsField, value: string) => void;
   readonly onFigureTheme: (theme: FigureTheme) => void;
 }) {
   const running = exportState.status === "running";
   // A figure nothing can be drawn from is not offered. The data formats stay
   // live: a width nobody could draw at says nothing about a list of numbers.
-  const figureBlocked = running || figureSettingsProblem !== null;
-  const problemId = "spectrum-figure-problem";
+  const figureBlocked = running || renderSettingsProblem !== null;
+  // And a resolution nothing could record closes the one output that records
+  // one. `Export SVG…` and `Copy plot` stay exactly where they were, because
+  // neither of them has ever read this number.
+  const rasterBlocked = figureBlocked || pngDpiProblem !== null;
+  const problems = { render: renderSettingsProblem, dpi: pngDpiProblem };
+  const problemIds = { render: RENDER_PROBLEM_ID, dpi: DPI_PROBLEM_ID };
 
   return (
     <div className="spectrum-export">
       <fieldset className="spectrum-figure-settings">
         <legend>Figure</legend>
-        {SETTING_FIELDS.map(({ field, label, hint }) => (
+        {SETTING_FIELDS.map(({ field, label, hint, problem }) => (
           <label className="spectrum-figure-field" key={field}>
             <span>
               {label} <span className="spectrum-figure-hint">{hint}</span>
             </span>
             <input
-              aria-describedby={figureSettingsProblem === null ? undefined : problemId}
-              aria-invalid={figureSettingsProblem === null ? undefined : true}
+              // Its own problem, not whichever one exists. A width that is
+              // perfectly fine must not be marked invalid because a resolution
+              // beside it is not, and a reader who lands on it must not be read
+              // a correction that belongs to another field.
+              aria-describedby={problems[problem] === null ? undefined : problemIds[problem]}
+              aria-invalid={problems[problem] === null ? undefined : true}
               className="spectrum-figure-input"
               inputMode="numeric"
               // Text rather than `number`, so what the field holds is what the
@@ -186,17 +217,27 @@ function SpectrumExportActions({
           this with `aria-describedby`, so it is read when focus reaches them,
           and `aria-live` is what makes a correction announced as it happens.
         */}
-        <p aria-live="polite" className="spectrum-figure-problem" id={problemId}>
-          {figureSettingsProblem ?? ""}
+        <p aria-live="polite" className="spectrum-figure-problem" id={RENDER_PROBLEM_ID}>
+          {renderSettingsProblem ?? ""}
+        </p>
+        {/*
+          The resolution's own region, for the same reason its fields point at
+          separate ones: it closes only `Export PNG…`, and a single sentence
+          naming every unusable field would be read out beside an SVG button
+          that nothing is stopping.
+        */}
+        <p aria-live="polite" className="spectrum-figure-problem" id={DPI_PROBLEM_ID}>
+          {pngDpiProblem ?? ""}
         </p>
         <div className="spectrum-export-actions">
-          {FIGURE_FORMATS.map(({ format, label }) => (
+          {FIGURE_FORMATS.map(({ format, label, recordsDpi }) => (
             <button
               className="secondary-button"
               // Every figure action while one is running. Rust holds a single
               // figure-operation lane and refuses a second, so leaving the
-              // others live would offer an action already known to fail.
-              disabled={figureBlocked}
+              // others live would offer an action already known to fail. Then
+              // the resolution, for the one output that writes it.
+              disabled={recordsDpi ? rasterBlocked : figureBlocked}
               key={format}
               onClick={() => {
                 onExport(format);
@@ -210,6 +251,8 @@ function SpectrumExportActions({
           ))}
           <button
             className="secondary-button"
+            // The figure only. A clipboard image carries no physical
+            // resolution, so an unusable one leaves this action live.
             disabled={figureBlocked}
             onClick={onCopyPlot}
             type="button"
@@ -273,7 +316,21 @@ function SpectrumExportActions({
 /** How a figure's dimensions read in a sentence. */
 function describeFigure(figure: ExportedFigure): string {
   const resolution = figure.dpi === null ? "" : ` at ${formatCount(figure.dpi)} DPI`;
-  return `${formatCount(figure.width)} by ${formatCount(figure.height)} pixels${resolution}, ${figure.theme} theme`;
+  return `${describeSize(figure)}${resolution}, ${figure.theme} theme`;
+}
+
+/**
+ * The same sentence for a copied figure, which has no resolution to name.
+ *
+ * Not `describeFigure` with a `null`: the type it takes has no `dpi` field at
+ * all, so a confirmation about the clipboard cannot be written to claim one.
+ */
+function describeCopiedFigure(figure: CopiedFigure): string {
+  return `${describeSize(figure)}, ${figure.theme} theme`;
+}
+
+function describeSize(figure: { readonly width: number; readonly height: number }): string {
+  return `${formatCount(figure.width)} by ${formatCount(figure.height)} pixels`;
 }
 
 /**
@@ -298,7 +355,7 @@ function describeExport(state: SpectrumExportState): string {
         ? `Saved ${state.fileName} with ${formatCount(state.pointCount)} points.`
         : `Saved ${state.fileName} with ${formatCount(state.pointCount)} points, ${describeFigure(state.figure)}.`;
     case "copied":
-      return `Copied the plot with ${formatCount(state.pointCount)} points, ${describeFigure(state.figure)}.`;
+      return `Copied the plot with ${formatCount(state.pointCount)} points, ${describeCopiedFigure(state.figure)}.`;
     case "failed":
       return state.error.summary;
   }

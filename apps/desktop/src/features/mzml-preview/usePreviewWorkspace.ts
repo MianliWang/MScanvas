@@ -5,6 +5,7 @@ import type { ConversionOperation } from "./useConversionOperation";
 import { useConversionOperation } from "./useConversionOperation";
 import type {
   BackendAvailability,
+  CopiedFigure,
   ExportedFigure,
   FigureSettings,
   FigureTheme,
@@ -139,7 +140,8 @@ export type SpectrumExportState =
     }
   | {
       readonly status: "copied";
-      readonly figure: ExportedFigure;
+      /** A size and a theme. A clipboard image records no resolution. */
+      readonly figure: CopiedFigure;
       readonly pointCount: number;
     }
   | {
@@ -167,6 +169,22 @@ export interface FigureSettingsDraft {
 export type FigureSettingsField = "widthPx" | "heightPx" | "pngDpi";
 
 /**
+ * What every figure output is drawn with: a size and a theme.
+ *
+ * The resolution is deliberately not in here, and the split is the whole point.
+ * PNG is the only output that records one -- an SVG has no pixels to give a
+ * physical size to, and a clipboard image is RGBA with nowhere for a `pHYs`
+ * chunk -- so a resolution nobody could use must close the PNG button and leave
+ * `Export SVG…` and `Copy plot` exactly where they were. Rust draws the same
+ * line, in the same two types.
+ */
+export interface FigureRenderSettings {
+  readonly widthPx: number;
+  readonly heightPx: number;
+  readonly theme: FigureTheme;
+}
+
+/**
  * Reads one field, accepting only a whole positive count.
  *
  * Shape only. Whether 4 is too small a width and whether 40,000 is too large a
@@ -184,24 +202,43 @@ function wholeCount(text: string): number | null {
   return Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
-/** The settings these fields describe, if they describe any. */
-export function resolveFigureSettings(draft: FigureSettingsDraft): FigureSettings | null {
+/** The figure these fields describe, if they describe one. */
+export function resolveRenderSettings(draft: FigureSettingsDraft): FigureRenderSettings | null {
   const widthPx = wholeCount(draft.widthPx);
   const heightPx = wholeCount(draft.heightPx);
-  const pngDpi = wholeCount(draft.pngDpi);
-  if (widthPx === null || heightPx === null || pngDpi === null) {
+  if (widthPx === null || heightPx === null) {
     return null;
   }
-  return { widthPx, heightPx, pngDpi, theme: draft.theme };
+  return { widthPx, heightPx, theme: draft.theme };
 }
 
-/** What is wrong with these fields, in the words the panel reads out. */
-export function describeFigureSettingsProblem(draft: FigureSettingsDraft): string | null {
+/** The physical resolution this field describes, if it describes one. */
+export function resolvePngDpi(draft: FigureSettingsDraft): number | null {
+  return wholeCount(draft.pngDpi);
+}
+
+/**
+ * The settings one operation travels with.
+ *
+ * The transport is uniform -- every figure command takes the same object -- so
+ * a resolution has to be in it even for the outputs that record none. Rust
+ * reads `pngDpi` for the PNG export and for nothing else, which is what makes
+ * the stand-in here harmless: an SVG or a copy sent beside an unusable DPI
+ * carries the default, and nothing on either side looks at it.
+ */
+function figureSettingsFor(
+  render: FigureRenderSettings,
+  pngDpi: number | null,
+): FigureSettings {
+  return { ...render, pngDpi: pngDpi ?? DEFAULT_PNG_DPI };
+}
+
+/** What is wrong with the size and theme, in the words the panel reads out. */
+export function describeRenderSettingsProblem(draft: FigureSettingsDraft): string | null {
   const wrong = (
     [
       ["widthPx", "Width"],
       ["heightPx", "Height"],
-      ["pngDpi", "PNG DPI"],
     ] as const
   )
     .filter(([field]) => wholeCount(draft[field]) === null)
@@ -210,6 +247,18 @@ export function describeFigureSettingsProblem(draft: FigureSettingsDraft): strin
     return null;
   }
   return `${wrong.join(", ")} must be a whole number of at least 1.`;
+}
+
+/**
+ * What is wrong with the resolution, said separately.
+ *
+ * Separately because it closes a different set of actions. One sentence naming
+ * every unusable field would be read out beside `Export SVG…` while that button
+ * is live, which would leave a user looking for the setting stopping an action
+ * that nothing is stopping.
+ */
+export function describePngDpiProblem(draft: FigureSettingsDraft): string | null {
+  return resolvePngDpi(draft) === null ? "PNG DPI must be a whole number of at least 1." : null;
 }
 
 export type RosterLoadState =
@@ -397,10 +446,19 @@ export interface PreviewWorkspace {
   readonly dismissSpectrumExport: () => void;
   /** The figure settings as the user is editing them. */
   readonly figureSettings: FigureSettingsDraft;
-  /** What those fields describe, or `null` while they describe nothing. */
-  readonly resolvedFigureSettings: FigureSettings | null;
-  /** What is wrong with them, in words a panel can read out. */
-  readonly figureSettingsProblem: string | null;
+  /** The figure they describe, or `null` while they describe none. */
+  readonly resolvedRenderSettings: FigureRenderSettings | null;
+  /** The resolution they describe, or `null` while they describe none. */
+  readonly resolvedPngDpi: number | null;
+  /**
+   * What is wrong with the size or theme, in words a panel can read out.
+   *
+   * Two problems rather than one, because they close different actions: this
+   * one stops every figure, and the resolution stops only the PNG.
+   */
+  readonly renderSettingsProblem: string | null;
+  /** What is wrong with the resolution, which only the PNG export reads. */
+  readonly pngDpiProblem: string | null;
   readonly setFigureSetting: (field: FigureSettingsField, value: string) => void;
   readonly setFigureTheme: (theme: FigureTheme) => void;
   /**
@@ -1948,14 +2006,16 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const setFigureTheme = useCallback((theme: FigureTheme) => {
     setFigureSettings((current) => ({ ...current, theme }));
   }, []);
-  const resolvedFigureSettings = useMemo(
-    () => resolveFigureSettings(figureSettings),
+  const resolvedRenderSettings = useMemo(
+    () => resolveRenderSettings(figureSettings),
     [figureSettings],
   );
-  const figureSettingsProblem = useMemo(
-    () => describeFigureSettingsProblem(figureSettings),
+  const resolvedPngDpi = useMemo(() => resolvePngDpi(figureSettings), [figureSettings]);
+  const renderSettingsProblem = useMemo(
+    () => describeRenderSettingsProblem(figureSettings),
     [figureSettings],
   );
+  const pngDpiProblem = useMemo(() => describePngDpiProblem(figureSettings), [figureSettings]);
 
   const [spectrumExport, setSpectrumExport] = useState<SpectrumExportState>({ status: "idle" });
   // A result belongs to the spectrum it describes. Loading another one clears
@@ -1999,10 +2059,19 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       // would make an enabled button do nothing at all, which is worse than
       // either offering it or closing it. Rust ignores what a data document has
       // no use for, so what travels with one is immaterial.
-      const settings = resolvedFigureSettings ?? DEFAULT_FIGURE_SETTINGS;
-      if (isFigureFormat(format) && resolvedFigureSettings === null) {
+      // And only what this format actually consumes. A PNG needs both; an SVG
+      // needs the figure and has no pixels to give a physical size to, so a
+      // resolution nobody could use must not stop it.
+      if (isFigureFormat(format) && resolvedRenderSettings === null) {
         return;
       }
+      if (format === "png" && resolvedPngDpi === null) {
+        return;
+      }
+      const settings =
+        resolvedRenderSettings === null
+          ? DEFAULT_FIGURE_SETTINGS
+          : figureSettingsFor(resolvedRenderSettings, resolvedPngDpi);
       const token = spectrum.spectrum.exportToken;
       setSpectrumExport({ status: "running", operation: format });
       void api
@@ -2039,7 +2108,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           });
         });
     },
-    [api, resolvedFigureSettings, spectrum, spectrumExport.status],
+    [api, resolvedPngDpi, resolvedRenderSettings, spectrum, spectrumExport.status],
   );
 
   /**
@@ -2056,10 +2125,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     if (spectrumExport.status === "running") {
       return;
     }
-    const settings = resolvedFigureSettings;
-    if (settings === null) {
+    // The figure, and nothing about a resolution. A clipboard image is RGBA
+    // and a size; there is no chunk for a physical resolution and nothing that
+    // would read one, so an unusable DPI must leave this action alone.
+    const render = resolvedRenderSettings;
+    if (render === null) {
       return;
     }
+    const settings = figureSettingsFor(render, resolvedPngDpi);
     const token = spectrum.spectrum.exportToken;
     setSpectrumExport({ status: "running", operation: "copy" });
     void api
@@ -2088,7 +2161,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           error: toPreviewError(cause),
         });
       });
-  }, [api, resolvedFigureSettings, spectrum, spectrumExport.status]);
+  }, [api, resolvedPngDpi, resolvedRenderSettings, spectrum, spectrumExport.status]);
 
   // A conversion's report carries the installation sequence it ran at. If it is
   // newer than what this document has applied, the banner and everything read
@@ -2224,8 +2297,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     copySpectrumPlot,
     dismissSpectrumExport,
     figureSettings,
-    resolvedFigureSettings,
-    figureSettingsProblem,
+    resolvedRenderSettings,
+    resolvedPngDpi,
+    renderSettingsProblem,
+    pngDpiProblem,
     setFigureSetting,
     setFigureTheme,
     completeRenderMeasurements,

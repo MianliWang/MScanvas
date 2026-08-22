@@ -84,11 +84,11 @@ use super::dto::{
     diagnostics_too_large, diagnostics_unavailable, invalid_diagnostics_reservation,
 };
 use super::dto::{
-    ExportedFigureDto, FigureSettingsDto, SpectrumCopyOutcomeDto, SpectrumExportOutcomeDto,
-    figure_clipboard_unavailable, figure_font_unavailable, figure_not_rasterizable,
-    figure_settings_refused, spectrum_destination_exists, spectrum_destination_unusable,
-    spectrum_export_in_progress, spectrum_export_refused, spectrum_export_stale,
-    spectrum_not_finalized, spectrum_not_written,
+    CopiedFigureDto, ExportedFigureDto, FigureSettingsDto, SpectrumCopyOutcomeDto,
+    SpectrumExportOutcomeDto, figure_clipboard_unavailable, figure_font_unavailable,
+    figure_not_rasterizable, figure_settings_refused, spectrum_destination_exists,
+    spectrum_destination_unusable, spectrum_export_in_progress, spectrum_export_refused,
+    spectrum_export_stale, spectrum_not_finalized, spectrum_not_written,
 };
 use super::dto::{
     FolderDiscoverySummaryDto, FolderImportReservationDto, FolderIngestionResultDto,
@@ -102,9 +102,10 @@ use super::dto::{
 use super::export::{
     BeginExportRefusal, ClaimedSpectrumExport, FigureFailure, SpectrumExportFormat,
     SpectrumExportSlot, data_document, figure_raster, png_document, svg_document,
-    within_raster_budget,
 };
-use super::figure::{FigureExportSettings, RasterFailure, SettingsRefusal};
+use super::figure::{
+    FigureRenderSettings, PngDpi, RasterFailure, SettingsRefusal, validate_raster_budget,
+};
 use super::installation::InstallationIdentity;
 use super::operation::{
     AdmittedDestination, CancellationFacts, ConversionQueue, ConversionSlot, ItemOutcome,
@@ -2057,7 +2058,7 @@ impl PreviewService {
         &self,
         token: &str,
         format: &str,
-        settings: &FigureSettingsDto,
+        settings_wire: &FigureSettingsDto,
     ) -> Result<String, PreviewErrorDto> {
         let format = SpectrumExportFormat::from_wire(format).ok_or_else(spectrum_export_stale)?;
         // Read before the reservation, so an export that could not have been
@@ -2066,22 +2067,31 @@ impl PreviewService {
         // time: the user is about to be in a modal dialog, and what is written
         // is what was asked for.
         //
-        // Only for the formats a figure setting reaches. A data document is the
-        // same measurement whatever the figure is being drawn at, so refusing
-        // one because a width is unusable would be refusing an export for a
-        // reason that has nothing to do with it.
+        // Each output is asked only about what it actually consumes, and that is
+        // the whole shape of this block. A data document is the same measurement
+        // whatever the figure is drawn at; a vector document has pixels neither
+        // to count against a budget nor to give a physical size to; only the
+        // raster one has both.
         let settings = if format.is_figure() {
-            Self::figure_settings(settings)?
+            Self::render_settings(settings_wire)?
         } else {
-            FigureExportSettings::default()
+            FigureRenderSettings::default()
         };
-        // And the raster budget only where pixels are actually allocated. A
-        // vector document can describe a figure a raster one cannot hold.
-        if matches!(format, SpectrumExportFormat::Png) && !within_raster_budget(settings) {
-            return Err(Self::raster_budget_refusal());
-        }
+        // Resolution and pixel budget, for the one export format with either.
+        //
+        // The order is deliberate and tested. A figure both too large to hold as
+        // pixels and asked for at an unusable resolution is refused over the
+        // resolution first: it is the smaller correction of the two, and the
+        // size refusal still follows if it is still true.
+        let dpi = if matches!(format, SpectrumExportFormat::Png) {
+            let dpi = Self::png_dpi(settings_wire)?;
+            Self::raster_budget(settings)?;
+            Some(dpi)
+        } else {
+            None
+        };
         self.spectrum_export_slot()
-            .begin(token, format, settings)
+            .begin(token, format, settings, dpi)
             .map(|reservation| reservation.as_wire())
             .map_err(|refusal| match refusal {
                 BeginExportRefusal::AlreadyExporting => spectrum_export_in_progress(),
@@ -2089,61 +2099,96 @@ impl PreviewService {
             })
     }
 
-    /// Reads one figure-settings object from the boundary, or refuses it.
+    /// Reads what every figure output is drawn with: a size and a theme.
     ///
     /// Every figure operation goes through here, so a number that could not
     /// produce a figure is refused once, in one place, before anything is
-    /// retained or allocated.
-    fn figure_settings(
+    /// retained or allocated. It deliberately does *not* read the DPI. An SVG
+    /// stopped over a resolution it does not record would be stopped over a
+    /// number that could not have changed it.
+    fn render_settings(
         settings: &FigureSettingsDto,
-    ) -> Result<FigureExportSettings, PreviewErrorDto> {
-        FigureExportSettings::from_wire(
-            settings.width_px,
-            settings.height_px,
-            settings.png_dpi,
-            &settings.theme,
-        )
-        .map_err(|refusal| {
-            figure_settings_refused(match refusal {
-                SettingsRefusal::SizeOutOfRange => {
-                    "That is not a figure size MSCanvas can draw. Width must be between 200 and \
-                     20000, and height between 180 and 20000."
-                }
-                SettingsRefusal::DpiOutOfRange => {
-                    "That is not a resolution MSCanvas records. Choose a DPI between 72 and 1200."
-                }
-                SettingsRefusal::UnknownTheme => {
-                    "MSCanvas draws figures in the light or the dark theme."
-                }
-            })
-        })
+    ) -> Result<FigureRenderSettings, PreviewErrorDto> {
+        FigureRenderSettings::from_wire(settings.width_px, settings.height_px, &settings.theme)
+            .map_err(Self::settings_refusal)
     }
 
-    /// The refusal for a figure too large to hold as pixels.
-    fn raster_budget_refusal() -> PreviewErrorDto {
-        figure_settings_refused(
-            "That figure is too large to turn into an image. Choose a width and height \
-             whose product is at most 32 million pixels; the figure can still be \
-             exported as SVG at any size.",
-        )
+    /// Reads the physical resolution, for the one output that records one.
+    fn png_dpi(settings: &FigureSettingsDto) -> Result<PngDpi, PreviewErrorDto> {
+        PngDpi::from_wire(settings.png_dpi).map_err(Self::settings_refusal)
+    }
+
+    /// Refuses a figure too large to hold as pixels.
+    ///
+    /// Asked by every operation that allocates a pixmap -- the PNG export and
+    /// the clipboard copy -- through one check, so the two cannot drift apart
+    /// again.
+    fn raster_budget(settings: FigureRenderSettings) -> Result<(), PreviewErrorDto> {
+        validate_raster_budget(settings).map_err(Self::settings_refusal)
+    }
+
+    /// The sentence for each way a figure could not be drawn as asked.
+    ///
+    /// Each names the number to change, because a reader told only that
+    /// something is wrong is left to guess which one it was.
+    fn settings_refusal(refusal: SettingsRefusal) -> PreviewErrorDto {
+        figure_settings_refused(match refusal {
+            SettingsRefusal::SizeOutOfRange => {
+                "That is not a figure size MSCanvas can draw. Width must be between 200 and \
+                 20000, and height between 180 and 20000."
+            }
+            SettingsRefusal::DpiOutOfRange => {
+                "That is not a resolution MSCanvas records. Choose a DPI between 72 and 1200."
+            }
+            SettingsRefusal::UnknownTheme => {
+                "MSCanvas draws figures in the light or the dark theme."
+            }
+            SettingsRefusal::RasterBudget => {
+                "That figure is too large to turn into an image. Choose a width and height whose \
+                 product is at most 32 million pixels; the figure can still be exported as SVG at \
+                 any size."
+            }
+        })
     }
 
     /// What the interface is told a figure was rendered as.
     fn exported_figure(
         format: SpectrumExportFormat,
-        settings: FigureExportSettings,
+        settings: FigureRenderSettings,
+        dpi: Option<PngDpi>,
     ) -> Option<ExportedFigureDto> {
         format.is_figure().then(|| ExportedFigureDto {
             width: settings.width(),
             height: settings.height(),
-            // Only the raster format records a physical resolution. Reporting
-            // one for SVG would describe a property the file does not have.
-            dpi: matches!(format, SpectrumExportFormat::Png).then(|| settings.png_dpi()),
-            theme: match settings.theme() {
-                FigureTheme::Light => "light".to_owned(),
-                FigureTheme::Dark => "dark".to_owned(),
-            },
+            // The resolution this export actually wrote, which only the raster
+            // format has. Reporting one for SVG would describe a property the
+            // file does not have.
+            dpi: dpi.map(PngDpi::get),
+            theme: Self::theme_name(settings),
         })
+    }
+
+    /// What the interface is told a *copied* figure was.
+    ///
+    /// Size and theme, and deliberately no resolution. The clipboard receives
+    /// RGBA, a width and a height; there is no `pHYs` chunk and nowhere for one,
+    /// so a confirmation naming a DPI would report a property the artifact does
+    /// not have. Its own constructor rather than the export one with a `None`
+    /// threaded through, because that is what stopped a PNG's semantics being
+    /// borrowed for an artifact that is not one.
+    fn copied_figure(settings: FigureRenderSettings) -> CopiedFigureDto {
+        CopiedFigureDto {
+            width: settings.width(),
+            height: settings.height(),
+            theme: Self::theme_name(settings),
+        }
+    }
+
+    fn theme_name(settings: FigureRenderSettings) -> String {
+        match settings.theme() {
+            FigureTheme::Light => "light".to_owned(),
+            FigureTheme::Dark => "dark".to_owned(),
+        }
     }
 
     /// Turns a figure refusal into this boundary's vocabulary.
@@ -2177,7 +2222,17 @@ impl PreviewService {
         token: &str,
         settings: &FigureSettingsDto,
     ) -> Result<SpectrumCopyOutcomeDto, PreviewErrorDto> {
-        let settings = Self::figure_settings(settings)?;
+        // The figure, and room for its pixels. No resolution: a clipboard image
+        // is RGBA, width and height, with nowhere for a `pHYs` chunk to live --
+        // so asking for one would refuse a copy over a number the copy does not
+        // use, and reporting one afterwards would describe the artifact falsely.
+        //
+        // The budget is asked here, through the same check PNG asks, and before
+        // anything is allocated. It was missing on this path: a 20,000 x 20,000
+        // figure -- which the vector contract quite correctly allows -- reached
+        // the rasterizer and attempted about 1.6 GiB of pixmap.
+        let settings = Self::render_settings(settings)?;
+        Self::raster_budget(settings)?;
         let snapshot = self
             .spectrum_export_slot()
             .begin_copy(token)
@@ -2203,8 +2258,7 @@ impl PreviewService {
             .map_err(|_| figure_clipboard_unavailable())?;
 
         Ok(SpectrumCopyOutcomeDto::Copied {
-            figure: Self::exported_figure(SpectrumExportFormat::Png, settings)
-                .expect("a figure format reports its figure"),
+            figure: Self::copied_figure(settings),
             point_count: snapshot.point_count(),
         })
     }
@@ -2258,7 +2312,11 @@ impl PreviewService {
                 .map_err(|_| spectrum_export_refused())?
                 .into_bytes(),
             SpectrumExportFormat::Png => {
-                png_document(spectrum, claimed.settings).map_err(Self::figure_failure)?
+                // The resolution validated when the export began, carried here
+                // rather than read again: the settings the user is about to
+                // save with are the ones they were shown in the dialog.
+                let dpi = claimed.dpi.expect("a PNG export reserved a resolution");
+                png_document(spectrum, claimed.settings, dpi).map_err(Self::figure_failure)?
             }
             // The data documents, which no figure setting reaches. The same
             // bytes come out of here whatever the figure is being drawn at,
@@ -2285,7 +2343,7 @@ impl PreviewService {
         Ok(SpectrumExportOutcomeDto::Saved {
             format: claimed.format.stable_id().to_owned(),
             file_name: bounded_text(&file_name.to_string_lossy(), MAX_CANDIDATE_NAME_CHARS),
-            figure: Self::exported_figure(claimed.format, claimed.settings),
+            figure: Self::exported_figure(claimed.format, claimed.settings, claimed.dpi),
             point_count: claimed.snapshot.point_count(),
         })
     }

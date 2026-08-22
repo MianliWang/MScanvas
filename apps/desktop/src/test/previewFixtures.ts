@@ -27,6 +27,7 @@ import type {
   SelectedSpectrum,
   SelectedSpectrumOutcome,
   SpectrumExportFormat,
+  CopiedFigure,
   ExportedFigure,
   FigureSettings,
   SpectrumCopyOutcome,
@@ -490,6 +491,20 @@ export function fakeExportedFigure(
     width: settings.widthPx,
     height: settings.heightPx,
     dpi: format === "png" ? settings.pngDpi : null,
+    theme: settings.theme,
+  };
+}
+
+/**
+ * What a fake copy reports having put on the clipboard.
+ *
+ * Modelled as Rust answers: a size and a theme. The resolution the settings
+ * carried is not reported back, because the artifact does not record one.
+ */
+export function fakeCopiedFigure(settings: FigureSettings): CopiedFigure {
+  return {
+    width: settings.widthPx,
+    height: settings.heightPx,
     theme: settings.theme,
   };
 }
@@ -1392,7 +1407,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
       }
       return {
         status: "copied",
-        figure: fakeExportedFigure(settings, "png"),
+        figure: fakeCopiedFigure(settings),
         pointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
       };
     },

@@ -413,6 +413,22 @@ export type SpectrumExportOutcome =
       readonly pointCount: number;
     };
 
+/**
+ * What a figure put on the clipboard was.
+ *
+ * A size and a theme, and **no resolution**. The clipboard receives RGBA, a
+ * width and a height; there is no `pHYs` chunk and nowhere for one, so a field
+ * for a DPI here would be a field describing a property the artifact does not
+ * have. Its own type rather than {@link ExportedFigure} with a `null` in it,
+ * because a shape that cannot express the false claim is better than one that
+ * merely does not make it today.
+ */
+export interface CopiedFigure {
+  readonly width: number;
+  readonly height: number;
+  readonly theme: FigureTheme;
+}
+
 /** What a figure output was rendered as, reported back rather than assumed. */
 export interface ExportedFigure {
   readonly width: number;
@@ -456,7 +472,7 @@ export interface FigureSettings {
  */
 export interface SpectrumCopyOutcome {
   readonly status: "copied";
-  readonly figure: ExportedFigure;
+  readonly figure: CopiedFigure;
   /** How many source points the copied figure was drawn from. */
   readonly pointCount: number;
 }

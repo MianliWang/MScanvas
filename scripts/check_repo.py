@@ -727,6 +727,43 @@ def validate_no_font_is_bundled_or_fetched(errors: list[str]) -> None:
                 )
 
 
+def validate_every_raster_entry_point_asks_the_budget(errors: list[str]) -> None:
+    """Both ways of asking for pixels ask whether they will fit first.
+
+    A figure this application will happily describe as a vector -- 20,000 by
+    20,000 -- is 400 megapixels as RGBA, about 1.6 GiB, and the honest answer to
+    a request for one is a refusal rather than an exhausted machine. The PNG
+    export asked. `Copy plot` did not, and the omission survived a review round
+    because the two paths validate independently and nothing said they had to
+    agree.
+
+    So the rule is written down: every command that turns wire settings into
+    pixels calls `Self::raster_budget` on the way. A guard rather than a type
+    because the check has to happen before anything is allocated, which is a
+    property of where the call is, not of what it returns.
+    """
+    source = ROOT / "apps" / "desktop" / "src-tauri" / "src" / "preview" / "service.rs"
+    if not source.is_file():
+        return
+    content = source.read_text(encoding="utf-8")
+    for command in ("begin_spectrum_export", "copy_spectrum_plot"):
+        start = content.find(f"pub fn {command}(")
+        if start < 0:
+            errors.append(
+                f"preview/service.rs no longer defines {command}; the raster budget "
+                "guard cannot see whether the pixels are still bounded"
+            )
+            continue
+        end = content.find("\n    pub fn ", start + 1)
+        body = content[start : end if end > 0 else len(content)]
+        if "Self::raster_budget(" not in body:
+            errors.append(
+                f"preview/service.rs::{command} does not call Self::raster_budget; a "
+                "figure the vector contract allows can be hundreds of megapixels, and "
+                "the refusal has to happen before the pixmap is allocated"
+            )
+
+
 def main() -> int:
     errors: list[str] = []
     validate_required(errors)
@@ -742,6 +779,7 @@ def main() -> int:
         validate_e2e_capability_never_ships(errors)
         validate_clipboard_stays_write_only(errors)
         validate_no_font_is_bundled_or_fetched(errors)
+        validate_every_raster_entry_point_asks_the_budget(errors)
 
     if errors:
         print("Repository validation failed:")

@@ -66,66 +66,65 @@ pub(super) const MAX_PNG_DPI: u32 = 1_200;
 /// can render: it is what this application is willing to try to allocate.
 pub(super) const MAX_RASTER_PIXELS: u64 = 32_000_000;
 
-/// What a figure export is rendered with.
+/// What every figure output is drawn with.
+///
+/// Width, height and theme, and deliberately nothing else. These are the
+/// properties *every* figure consumes -- an SVG at this size in this theme, a
+/// PNG of these pixels in this theme, a clipboard image of the same -- so they
+/// are the ones whose validity every figure output depends on.
+///
+/// DPI is not here, and that absence is the point. It is written into one
+/// format's metadata and read by nothing else, so making it a precondition for
+/// constructing *this* would make an unusable DPI refuse an SVG, which is the
+/// defect this type exists to make unrepresentable.
 ///
 /// Session state and nothing more. Nothing here is written to disk, and a
 /// restart begins at the defaults again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct FigureExportSettings {
+pub(super) struct FigureRenderSettings {
     width: u32,
     height: u32,
-    png_dpi: u32,
     theme: FigureTheme,
 }
 
-impl Default for FigureExportSettings {
+impl Default for FigureRenderSettings {
     fn default() -> Self {
         Self {
             width: DEFAULT_FIGURE_WIDTH,
             height: DEFAULT_FIGURE_HEIGHT,
-            png_dpi: DEFAULT_PNG_DPI,
             theme: FigureTheme::Light,
         }
     }
 }
 
-/// Why one settings object could not be accepted.
+/// Why one figure could not be drawn as asked.
 ///
 /// Separated from a single "invalid" because the interface says something
-/// different about each: a size the vector contract refuses is a different
-/// correction from one the raster budget refuses, and a reader who is told only
-/// that something is wrong has to guess which number to change.
+/// different about each, and a reader told only that something is wrong has to
+/// guess which number to change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SettingsRefusal {
     /// Outside what a figure of this shape can be.
     SizeOutOfRange,
-    /// Not a physical resolution this boundary records.
-    DpiOutOfRange,
     /// Not a theme this application has.
     UnknownTheme,
+    /// Not a physical resolution this boundary records. **PNG only.**
+    DpiOutOfRange,
+    /// Describable as a vector, too large to hold as pixels. **Raster only.**
+    RasterBudget,
 }
 
-impl FigureExportSettings {
-    /// Reads one settings object from the wire, refusing anything it is not.
+impl FigureRenderSettings {
+    /// Reads the properties every figure output consumes.
     ///
     /// The wire carries integers because these are counts of pixels, and a
-    /// fractional pixel is not a thing a user can have asked for. Everything is
-    /// checked here, once, so nothing downstream has to decide again whether a
-    /// number is usable.
-    pub(super) fn from_wire(
-        width: u32,
-        height: u32,
-        png_dpi: u32,
-        theme: &str,
-    ) -> Result<Self, SettingsRefusal> {
+    /// fractional pixel is not a thing a user can have asked for.
+    pub(super) fn from_wire(width: u32, height: u32, theme: &str) -> Result<Self, SettingsRefusal> {
         let theme = match theme {
             "light" => FigureTheme::Light,
             "dark" => FigureTheme::Dark,
             _ => return Err(SettingsRefusal::UnknownTheme),
         };
-        if !(MIN_PNG_DPI..=MAX_PNG_DPI).contains(&png_dpi) {
-            return Err(SettingsRefusal::DpiOutOfRange);
-        }
         // The vector contract, and only that. A size it refuses is not a size
         // any format here can render.
         //
@@ -133,15 +132,11 @@ impl FigureExportSettings {
         // about the output rather than about the figure: a vector document can
         // honestly describe a 20,000 x 20,000 figure and this application will
         // write one, so refusing those settings outright would refuse an SVG
-        // that is perfectly renderable -- and the refusal says the figure can
-        // still be exported as SVG at any size, which would then be false. The
-        // formats that have to hold every pixel ask `within_raster_budget`
-        // instead, before they allocate anything.
+        // that renders perfectly well.
         Self::size_of(width, height).ok_or(SettingsRefusal::SizeOutOfRange)?;
         Ok(Self {
             width,
             height,
-            png_dpi,
             theme,
         })
     }
@@ -176,10 +171,53 @@ impl FigureExportSettings {
     pub(super) const fn height(self) -> u32 {
         self.height
     }
+}
 
-    pub(super) const fn png_dpi(self) -> u32 {
-        self.png_dpi
+/// One physical resolution, for the one format that records one.
+///
+/// A separate type because it is a separate question. Constructing it is what
+/// PNG does and no other output does, so an unusable value refuses a PNG and
+/// leaves every other export alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct PngDpi(u32);
+
+impl Default for PngDpi {
+    fn default() -> Self {
+        Self(DEFAULT_PNG_DPI)
     }
+}
+
+impl PngDpi {
+    /// Reads one physical resolution, refusing anything outside the range this
+    /// boundary records.
+    pub(super) fn from_wire(dpi: u32) -> Result<Self, SettingsRefusal> {
+        if !(MIN_PNG_DPI..=MAX_PNG_DPI).contains(&dpi) {
+            return Err(SettingsRefusal::DpiOutOfRange);
+        }
+        Ok(Self(dpi))
+    }
+
+    pub(super) const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+/// Refuses a figure too large to hold as pixels, before any are allocated.
+///
+/// Every raster-producing operation asks this, and asks it in one place so the
+/// two cannot drift: PNG had the check and `Copy plot` did not, and the copy
+/// path would have attempted a 1.6 GiB pixmap for a figure the vector contract
+/// quite correctly allows.
+///
+/// A refusal is an answer; an exhausted machine is not.
+pub(super) fn validate_raster_budget(
+    settings: FigureRenderSettings,
+) -> Result<(), SettingsRefusal> {
+    let pixels = u64::from(settings.width()) * u64::from(settings.height());
+    if pixels > MAX_RASTER_PIXELS {
+        return Err(SettingsRefusal::RasterBudget);
+    }
+    Ok(())
 }
 
 /// Why a figure could not be turned into pixels.
@@ -470,72 +508,87 @@ mod tests {
 
     #[test]
     fn the_default_settings_are_the_figure_m4_1_shipped() {
-        let settings = FigureExportSettings::default();
+        let settings = FigureRenderSettings::default();
 
         assert_eq!(settings.width(), 1_200);
         assert_eq!(settings.height(), 640);
         assert_eq!(settings.theme(), FigureTheme::Light);
-        assert_eq!(settings.png_dpi(), 300);
         assert!((settings.size().width() - 1_200.0).abs() < f64::EPSILON);
         assert!((settings.size().height() - 640.0).abs() < f64::EPSILON);
+        assert_eq!(PngDpi::default().get(), 300);
     }
 
     #[test]
     fn settings_refuse_what_no_figure_could_be() {
-        use SettingsRefusal::{DpiOutOfRange, SizeOutOfRange, UnknownTheme};
+        use SettingsRefusal::{SizeOutOfRange, UnknownTheme};
 
         assert_eq!(
-            FigureExportSettings::from_wire(0, 640, 300, "light"),
+            FigureRenderSettings::from_wire(0, 640, "light"),
             Err(SizeOutOfRange)
         );
         assert_eq!(
-            FigureExportSettings::from_wire(1_200, 0, 300, "light"),
+            FigureRenderSettings::from_wire(1_200, 0, "light"),
             Err(SizeOutOfRange)
         );
         assert_eq!(
-            FigureExportSettings::from_wire(199, 640, 300, "light"),
+            FigureRenderSettings::from_wire(199, 640, "light"),
             Err(SizeOutOfRange)
         );
         assert_eq!(
-            FigureExportSettings::from_wire(1_200, 179, 300, "light"),
+            FigureRenderSettings::from_wire(1_200, 179, "light"),
             Err(SizeOutOfRange)
         );
         assert_eq!(
-            FigureExportSettings::from_wire(20_001, 640, 300, "light"),
+            FigureRenderSettings::from_wire(20_001, 640, "light"),
             Err(SizeOutOfRange)
         );
         assert_eq!(
-            FigureExportSettings::from_wire(1_200, 640, MIN_PNG_DPI - 1, "light"),
-            Err(DpiOutOfRange)
-        );
-        assert_eq!(
-            FigureExportSettings::from_wire(1_200, 640, MAX_PNG_DPI + 1, "light"),
-            Err(DpiOutOfRange)
-        );
-        assert_eq!(
-            FigureExportSettings::from_wire(1_200, 640, 300, "sepia"),
+            FigureRenderSettings::from_wire(1_200, 640, "sepia"),
             Err(UnknownTheme)
         );
         // Describable as a vector, and therefore accepted here: the raster
         // budget is a question about the *output*, asked by the formats that
         // have to hold every pixel, not by the figure itself.
-        FigureExportSettings::from_wire(20_000, 20_000, 300, "light")
+        FigureRenderSettings::from_wire(20_000, 20_000, "light")
             .expect("the largest vector figure is a figure");
+    }
+
+    #[test]
+    fn a_resolution_no_png_could_record_is_refused_and_reaches_nothing_else() {
+        // The resolution is its own type because it is its own question. An
+        // unusable one refuses the format that writes it, and there is no way
+        // to make it refuse anything else: nothing but a PNG constructs one.
+        assert_eq!(
+            PngDpi::from_wire(MIN_PNG_DPI - 1),
+            Err(SettingsRefusal::DpiOutOfRange)
+        );
+        assert_eq!(
+            PngDpi::from_wire(MAX_PNG_DPI + 1),
+            Err(SettingsRefusal::DpiOutOfRange)
+        );
+        assert_eq!(PngDpi::from_wire(0), Err(SettingsRefusal::DpiOutOfRange));
+        assert_eq!(PngDpi::from_wire(50), Err(SettingsRefusal::DpiOutOfRange));
+        // And the figure those same settings describe is untouched by it: an
+        // SVG or a clipboard copy asked for beside an unusable resolution is
+        // still a figure this application draws.
+        FigureRenderSettings::from_wire(1_200, 640, "light")
+            .expect("a figure is a figure whatever a resolution says");
     }
 
     #[test]
     fn settings_accept_the_conventional_resolutions_and_the_boundary_sizes() {
         for dpi in [MIN_PNG_DPI, 96, 150, 300, 600, MAX_PNG_DPI] {
-            FigureExportSettings::from_wire(1_200, 640, dpi, "light")
+            let accepted = PngDpi::from_wire(dpi)
                 .unwrap_or_else(|_| panic!("{dpi} DPI is a resolution this boundary records"));
+            assert_eq!(accepted.get(), dpi, "and it records the one that was asked");
         }
         for theme in ["light", "dark"] {
-            FigureExportSettings::from_wire(1_200, 640, 300, theme).expect("both themes exist");
+            FigureRenderSettings::from_wire(1_200, 640, theme).expect("both themes exist");
         }
         // The smallest figure the contract allows.
-        FigureExportSettings::from_wire(200, 180, 300, "light").expect("the minimum is a figure");
+        FigureRenderSettings::from_wire(200, 180, "light").expect("the minimum is a figure");
         // The largest that still fits the raster budget: 32 megapixels exactly.
-        FigureExportSettings::from_wire(8_000, 4_000, 300, "light").expect("32 MP is inside");
+        FigureRenderSettings::from_wire(8_000, 4_000, "light").expect("32 MP is inside");
     }
 
     #[test]
@@ -546,18 +599,22 @@ mod tests {
         // the figure could still be exported as SVG at any size, which retrying
         // SVG would then have contradicted.
         let vector_only =
-            FigureExportSettings::from_wire(20_000, 20_000, 300, "light").expect("a figure");
-        assert!(!super::super::export::within_raster_budget(vector_only));
+            FigureRenderSettings::from_wire(20_000, 20_000, "light").expect("a figure");
+        assert_eq!(
+            validate_raster_budget(vector_only),
+            Err(SettingsRefusal::RasterBudget)
+        );
 
         let exactly_at_the_budget =
-            FigureExportSettings::from_wire(8_000, 4_000, 300, "light").expect("a figure");
-        assert!(super::super::export::within_raster_budget(
-            exactly_at_the_budget
-        ));
+            FigureRenderSettings::from_wire(8_000, 4_000, "light").expect("a figure");
+        assert_eq!(validate_raster_budget(exactly_at_the_budget), Ok(()));
 
         let one_row_past =
-            FigureExportSettings::from_wire(8_000, 4_001, 300, "light").expect("a figure");
-        assert!(!super::super::export::within_raster_budget(one_row_past));
+            FigureRenderSettings::from_wire(8_000, 4_001, "light").expect("a figure");
+        assert_eq!(
+            validate_raster_budget(one_row_past),
+            Err(SettingsRefusal::RasterBudget)
+        );
     }
 
     #[test]
