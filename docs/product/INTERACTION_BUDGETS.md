@@ -11,6 +11,7 @@ Budgets are design hypotheses. Prototype tests may revise them, but regressions 
 | View TIC for a file | 1 row activation | 0 | 0 | Loading then trace/error |
 | View spectrum near an RT | 1 plot activation | 0 | 0 | Persistent marker and linked scan metadata |
 | Move to adjacent scan | 1 key/action | 0 | 0 | All linked views update |
+| Change the chromatogram range | 1 gesture or 1 action | 0 | 0 | Visible range stated; no backend read |
 | Convert all with defaults | at most 2 explicit actions | 0–1 | 0 | Scope/format/output summary before run |
 | Convert selected | selection + 1 primary action | 0–1 | 0 | Selected count and queued states |
 | Understand a common failure | 0 navigation steps | 0–1 | 0 | Cause, corrective action and expandable stderr |

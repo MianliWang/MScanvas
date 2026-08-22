@@ -25,7 +25,8 @@
     "e2e:tauri": "wdio run ./e2e/wdio.tauri.conf.ts",
     "e2e:native-save": "wdio run ./e2e/wdio.tauri.conf.ts --spec ./e2e/specs/m4.2-native-save.native.e2e.ts",
     "e2e:native-dialog": "powershell -NoProfile -ExecutionPolicy Bypass -File ./e2e/native/probe-save-dialog.ps1",
-    "qa:m4.2": "pnpm e2e:typecheck && pnpm e2e:browser && pnpm e2e:tauri && pnpm e2e:native-dialog"
+    "qa:m4.2": "pnpm e2e:typecheck && pnpm e2e:browser && pnpm e2e:tauri && pnpm e2e:native-dialog",
+    "qa:viewer-closure": "pnpm e2e:typecheck && pnpm e2e:browser && pnpm e2e:build && pnpm e2e:tauri"
   },
   "repository": {
     "type": "git",

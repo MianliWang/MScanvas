@@ -109,6 +109,21 @@ until this repository can convert one.
 
 **Success:** user can confirm identity and inspect a relevant scan without changing modes.
 
+**Built for mzML.** Steps 1 to 5 are reachable for a loaded mzML preview whose
+spectrum table arrived complete. The chromatogram is drawn from the per-scan
+values the table already carries, so no additional backend process runs for it,
+and the traces are not presented as a stored chromatogram record. Clicking the
+plot resolves the nearest scan out of the whole run rather than out of the
+reduced drawing, and commits the same selection the table commits. Selecting a
+scan does not disturb the range the user zoomed to; a selection outside it pans
+the least it can.
+
+What is still missing: a chromatogram for a vendor row without converting it
+first, XIC, and any export of the chromatogram itself. A preview whose spectrum
+table was truncated shows why TIC/BPC are unavailable rather than drawing the
+rows that did arrive. See
+[ADR 0031](../architecture/adr/0031-linked-chromatogram-and-selection.md).
+
 ## WF-004 — Convert a batch
 
 1. Choose selected/all scope.
@@ -266,8 +281,10 @@ What is still missing from steps 2 to 4: PNG is a save rather than a quick copy
 target, there is no range chooser because there is no zoom or pan to choose a
 range from, and step 4's export-specific preview does not exist -- the figure is
 described by its settings rather than shown before it is written. Neither a
-chromatogram nor a current-range export exists. See
-[ADR 0029](../architecture/adr/0029-first-visible-spectrum-figure-and-data-export.md).
+chromatogram export nor a current-range export exists -- though the range
+itself now does, as the chromatogram's committed visible domain. See
+[ADR 0029](../architecture/adr/0029-first-visible-spectrum-figure-and-data-export.md)
+and [ADR 0031](../architecture/adr/0031-linked-chromatogram-and-selection.md).
 
 **Success:** output is independent of app chrome/theme and corresponds to a defined PlotSpec/FigureSpec.
 

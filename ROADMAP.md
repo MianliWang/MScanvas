@@ -51,11 +51,35 @@ width, height, PNG DPI and figure theme that SVG honours too. The
 selected-spectrum snapshot lifecycle deferred by M4.1 is closed with it. See
 [ADR 0030](docs/architecture/adr/0030-png-copy-plot-and-figure-settings.md).
 
+**M2.x — Viewer Closure.** Closed. A TIC/BPC chromatogram for the loaded mzML
+preview, drawn from the per-scan values the spectrum table already carries, with
+zoom, pan and reset on the retention-time axis; bidirectional linked selection
+across the chromatogram, the scan table and the selected-spectrum panel; and
+explicit Previous/Next scan actions beside the table's existing keyboard model.
+VIEW-002, VIEW-005 and VIEW-006 are implemented for complete loaded spectrum
+tables under the documented preview bounds. The standalone `msaccess tic` query
+remains unused and evidence-gated, no chromatogram is claimed to be a stored
+record, and retention-time and intensity units remain unreported. See
+[ADR 0031](docs/architecture/adr/0031-linked-chromatogram-and-selection.md).
+
+**Navigation remains lazy, and no preview cache exists.** Selected spectra are
+loaded on explicit selection. ADR 0003 measured one process per selection at
+roughly 164--199 ms on the representative acquisition and found it viable;
+nothing in Viewer Closure changed that, and no bounded multi-spectrum cache was
+added. A cache changes memory retention, source invalidation, snapshot lifetime,
+export authority and stale-data behaviour, so it remains an optimization to
+revisit only if measured interaction evidence requires one -- not a completed
+feature.
+
 Still outside it, and unchanged:
 
-- Current-range export, which needs a zoom/pan contract first.
+- Current-range export, which now has the zoom/pan contract it needed:
+  the chromatogram's committed visible domain is semantic retention time held at
+  the workspace level, so M4.3 can ask for full range or current range without
+  reading SVG coordinates.
 - Chromatogram data export, and a linked chromatogram + spectrum figure
   template.
+- XIC (VIEW-007), spectrum zoom/pan, and multi-layer comparison.
 
 ## M5 — Public beta hardening
 

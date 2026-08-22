@@ -4359,3 +4359,84 @@ implemented and now configurable by size and theme. **FIG-004** is still partial
 **FIG-006** through **FIG-008** remain unimplemented, and there is no
 current-range or chromatogram export. See
 [ADR 0030](docs/architecture/adr/0030-png-copy-plot-and-figure-settings.md).
+
+## Viewer Closure completed on 2026-08-22
+
+| Command | Result |
+| --- | --- |
+| `cargo fmt --all --check` | Passed |
+| `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | Passed |
+| `cargo test --locked --workspace --all-targets` | Passed: 1,130 Rust tests |
+| `python -B scripts/check_repo.py` | Passed |
+| `pnpm lint` | Passed |
+| `pnpm typecheck` | Passed |
+| `pnpm test` | Passed: 726 frontend tests |
+| `pnpm build` | Passed |
+| `git diff --check` | Passed |
+| `pnpm e2e:typecheck` | Passed |
+| `pnpm e2e:browser` | Passed: 56 browser tests |
+| `pnpm e2e:build` | Passed |
+| `pnpm e2e:tauri` | Passed: 17 real-WebView2 tests, 2 environment skips |
+
+A loaded mzML preview now shows a TIC/BPC chromatogram, and selecting a scan
+means the same thing in all three views.
+
+Both traces are the per-scan values the spectrum table already carries:
+`totalIonCurrent` and `basePeakIntensity` against `retentionTime`. No preview
+operation was added. The standalone `msaccess tic` query stays unused and
+evidence-gated -- the representative acquisition returned exit 0 with no output
+for it -- and there is no accepted base peak chromatogram query to add. Nothing
+claims the source file contained a stored chromatogram, and nothing recomputes a
+trace from spectrum arrays, which would be one ProteoWizard process per scan for
+numbers that could disagree with the table beside them.
+
+A truncated spectrum table refuses the chromatogram and says why. Drawing the
+rows that did arrive would be a picture of a shorter experiment than the one
+that happened.
+
+Retention time and intensity carry no reported unit, and the axis says so.
+Minutes is the obvious guess and it is still a guess.
+
+The model holds one point per scan; the drawing holds far fewer. Each screen
+column keeps up to four of its own scans -- first, lowest, highest, last -- so a
+line is not turned into an upper envelope with its troughs removed, which is
+what the stick spectrum's per-sign rule would have done. No value is computed,
+so every vertex is a real scan, and a click resolves against the full model by
+binary search rather than against the drawing.
+
+One selected scan in the workspace. A plot click, a table click, Enter on a
+focused row and Previous/Next all commit through the same selection, reusing the
+established request-generation behaviour rather than adding a second race
+scheme. Arrow keys still move focus without reading anything.
+
+An external selection reveals its table row without taking focus, so the next
+key press still goes where the user is working. Writing that split surfaced a
+defect older than this milestone: the sticky header scrolls inside the same box
+as the rows, so a row brought to its own offset arrived underneath it. It now
+stops a header's height sooner.
+
+The chromatogram's committed visible domain is semantic retention time held at
+the workspace level, so M4.3 can ask for full range or current range without
+reading SVG coordinates. Gesture state stays in the renderer: a pan does not
+re-render the scan table once a frame.
+
+Observed at the representative 36,319-scan scale, as observations rather than
+thresholds: 343 ms from activating the row to three linked views, 22 table rows
+and 1,922 plot vertices in the document, 310 ms for four viewport actions, and
+zero backend calls for any of them.
+
+No preview cache was added. ADR 0003 measured one process per selection at
+roughly 164--199 ms on the representative acquisition and found it viable, and
+nothing here changed that. A cache remains an optimization to revisit, not a
+completed feature.
+
+Live backend evidence is **NOT RUN**: this machine has no ProteoWizard
+installation. The pinned tiny fixture's identity was verified -- 25,072 bytes,
+SHA-256 `711ac14b666f14817c208bd4d39b738e96ac827574c4639d8f8f6eebbfde9c83` --
+and it was never written to disk.
+
+**VIEW-002**, **VIEW-005** and **VIEW-006** are implemented for complete loaded
+mzML spectrum tables under the documented preview bounds. **VIEW-003** is
+unchanged. **VIEW-007** remains unimplemented, and no chromatogram export of any
+kind exists. See
+[ADR 0031](docs/architecture/adr/0031-linked-chromatogram-and-selection.md).

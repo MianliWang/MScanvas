@@ -146,7 +146,16 @@ See [ADR 0030](adr/0030-png-copy-plot-and-figure-settings.md).
 
 FIG-004 is partial: selected-spectrum CSV/TSV exists, chromatogram data export
 does not. FIG-006 through FIG-008 are unimplemented. There is no current-range
-export, no zoom or pan, no TIC, BPC or XIC, no linked figure, no saved
-specification and no composer, and the screen renderer still does not consume
-`FigureSpec` — screen and export agree by both being right rather than by
-sharing a type.
+export, no XIC, no linked figure, no saved specification and no composer, and
+the screen renderer still does not consume `FigureSpec` — screen and export
+agree by both being right rather than by sharing a type.
+
+A **TIC/BPC chromatogram now exists on screen**, with zoom, pan and reset on its
+retention-time axis, and nothing about it is exportable yet. It is deliberately
+outside this model: it is not built from a `FigureSpec`, it produces no figure
+and it writes no file. What it does establish is the input a current-range
+export will need — a committed visible domain in semantic retention time, held
+at the workspace level rather than recoverable from SVG coordinates. The
+selected-spectrum plot itself remains full-range: this milestone adds no
+spectrum zoom or pan. See
+[ADR 0031](adr/0031-linked-chromatogram-and-selection.md).

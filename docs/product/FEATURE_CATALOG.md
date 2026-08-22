@@ -57,12 +57,12 @@ table remains the target, including the unsupported portions called out below:
 | ID | Feature | Priority | Acceptance summary |
 |---|---|---:|---|
 | VIEW-001 | Metadata summary | P0 | Shows format/vendor, size, scan counts, MS levels, RT range and available instrument metadata. |
-| VIEW-002 | TIC/BPC | P0 | Toggle traces, zoom/pan/reset, inspect coordinates and select nearest scan. |
+| VIEW-002 | TIC/BPC | P0 | **Implemented** for complete loaded mzML spectrum tables under the documented preview bounds: toggle traces, zoom/pan/reset on the retention-time axis, inspect coordinates and select the nearest scan. Both traces are per-scan spectrum-table values -- `totalIonCurrent` and `basePeakIntensity` -- not a stored chromatogram record and not the evidence-gated `msaccess tic` query; retention time and intensity units are reported as unknown. A truncated table gets an explicit unavailable state. |
 | VIEW-003 | Spectrum view | P0 | Profile uses a line; centroid uses sticks; axes and units remain explicit. |
 | VIEW-004 | Scan table | P0 | Virtualized rows with scan, RT, MS level and precursor context. |
-| VIEW-005 | Linked selection | P0 | Selection synchronizes chromatogram marker, table row, spectrum and inspector in both directions. |
-| VIEW-006 | Keyboard scan navigation | P0 | Previous/next and table navigation work without pointer-only access. |
-| VIEW-007 | XIC | P1 | Typed m/z and tolerance produce a trace with explicit units/settings. |
+| VIEW-005 | Linked selection | P0 | **Implemented** for the chromatogram, the current scan table and the selected-spectrum panel. One selected scan in the workspace; every source commits through the same selection. An external selection reveals its table row without taking focus. |
+| VIEW-006 | Keyboard scan navigation | P0 | **Implemented**: the virtualized table keeps arrow/page/Home/End focus movement with Enter or Space to commit, and explicit Previous scan / Next scan actions walk table order. |
+| VIEW-007 | XIC | P1 | Not implemented. Typed m/z and tolerance produce a trace with explicit units/settings. |
 | VIEW-008 | Multi-layer comparison | P2 | Visibility, style and provenance remain inspectable per layer. |
 
 ## Conversion

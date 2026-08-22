@@ -86,8 +86,26 @@ Build a session workspace of local `.mzML` files and inspect one of them:
   output this preview reads does not carry them. That says nothing about whether
   the acquisition itself records them.
 
-Not implemented yet: vendor RAW preview; TIC, BPC and chromatogram views;
-directory-formatted acquisition recognition; filtering the workspace by
+A loaded mzML preview shows a **TIC/BPC chromatogram** beside its scan table.
+Both traces are the per-scan values the spectrum table already carries --
+`totalIonCurrent` and `basePeakIntensity` against retention time -- so no extra
+ProteoWizard process runs for it. It is **not** a stored chromatogram read out
+of the file, and the standalone `msaccess tic` query remains unused and
+evidence-gated. Retention time and intensity carry no reported unit, and the
+axis says so rather than guessing minutes. A preview whose spectrum table did
+not load completely gets an explicit unavailable state instead of a chromatogram
+of the rows that did arrive.
+
+Selecting a scan means the same thing everywhere: a click in the plot, a click
+or Enter in the table, and Previous/Next scan all commit the same selection, and
+the marker, the highlighted row and the spectrum panel follow it. Arrow keys
+still move focus in the table without reading anything, because each read is one
+ProteoWizard process. The chromatogram's retention-time axis zooms, pans and
+resets by pointer and by keyboard, and its range survives selecting scans and
+focusing a vendor row.
+
+Not implemented yet: vendor RAW preview; XIC, and any chromatogram export;
+spectrum zoom and pan; directory-formatted acquisition recognition; filtering the workspace by
 anything other than filename, and grouping it; a workspace that outlives the
 session, which includes remembering a search or a sort; conversion progress as a
 percentage; cancelling one item of a queue while the rest carry on; resuming a
@@ -95,8 +113,8 @@ stopped queue; a conversion queue that survives closing the application;
 diagnostics for anything but the latest attempt of each item, a diagnostics
 history, complete raw converter logs, and sending a diagnostics file anywhere;
 and every figure export but the selected spectrum's own SVG, PNG, CSV and TSV --
-there is no chromatogram and no current-range export, and figure settings are not
-remembered across a restart. mzXML output stays disabled and fail-closed until
+there is no chromatogram export and no current-range export, and figure settings
+are not remembered across a restart, nor is the chromatogram's range. mzXML output stays disabled and fail-closed until
 representative multi-source integrity checks pass.
 
 A conversion queue is reachable, and its limits are the claim. `Add files…`
@@ -194,6 +212,8 @@ yet. See [What works today](#what-works-today).
 - SVG and PNG figure export, `Copy plot`, and underlying CSV/TSV export for the
   selected spectrum, at a width, height, DPI and theme the user chooses
   (shipped); chromatogram data export and a linked figure still to come.
+- a TIC/BPC chromatogram with zoom, pan and reset, linked to the scan table and
+  the selected spectrum in both directions (shipped); XIC still to come.
 
 Analysis is deferred rather than prohibited. MSCanvas should reuse mature algorithms from OpenMS/pyOpenMS, matchms and other reviewed packages instead of reimplementing them.
 
