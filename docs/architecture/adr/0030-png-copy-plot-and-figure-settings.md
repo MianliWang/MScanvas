@@ -333,8 +333,25 @@ them in Chinese.
 
 **What this does not prove** is that ProteoWizard can read an mzML file. It was
 never meant to. The spectrum is synthetic and reaches the slot through the
-production parser; what is closed is the export and save residual, which is what
-M4.1 left unproved.
+production parser.
+
+### What is still open, and which half it belongs to
+
+On the machine this milestone was built on, the rendered suite cannot *complete*
+a save: with an export in flight and the application in its dialog phase, no
+file-dialog window appears anywhere in the desktop's window list.
+
+That left two candidates, and the rendered evidence could not tell them apart. So
+the production function was called directly: `choose_save_destination`, with the
+exact facts a PNG export uses, from an ordinary `cargo test` process with no
+`tauri-driver`, no WebDriver and no WebView, dismissed from outside by automation
+id `2`. It opened, was found by the title the application asked for, and returned
+the ordinary cancelled outcome — three consecutive times.
+
+So the production native save dialog is **functional**, and the gap is the
+WebDriver-managed session rather than the application. It is recorded as a
+bounded environment and automation residual, and it is not claimed as a passing
+end-to-end save.
 
 ## What M4.2 does not implement
 

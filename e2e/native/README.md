@@ -39,6 +39,43 @@ Pressing `Export PNG…` puts the application into its dialog phase — the pane
 says "Choose where to save the PNG file." — so the command runs, claims its
 reservation and dispatches the picker.
 
+## Which half is broken: the discriminator
+
+The rendered evidence alone could not say whether the missing dialog was the
+WebDriver-managed session or `choose_save_destination` itself, and calling one of
+them environmental without testing the other would have been a guess. So the
+production function was called directly.
+
+A temporary in-crate test invoked the exact production
+`preview::dialog::choose_save_destination`, with the exact `SaveDialogFacts` a
+PNG export uses (`SpectrumExportFormat::Png.dialog()`) and the ordinary proposed
+name `mscanvas-spectrum-0.png`, from an ordinary `cargo test` process — no
+`tauri-driver`, no WebDriver, no WebView. Nothing was reimplemented: if a dialog
+appeared, the production boundary opened it. `save-dialog.ps1` dismissed it from
+outside, selecting Cancel by automation id `2`.
+
+It passed, three consecutive times, in about six seconds each:
+
+```
+PROBE driver:  {"title":"Export spectrum figure","found":true,"invoked":true}
+PROBE outcome: Ok(None)
+```
+
+The dialog opened, UI Automation found it **by the title the application asked
+for**, Cancel was invoked by its stable id, and the production function returned
+the ordinary cancelled outcome — no path, and not an error.
+
+So the production native save dialog is functional. What does not work is the
+WebDriver-managed session, and that is where the residual lies.
+
+The owner-bound form was deliberately not exercised: a probe process has no
+application window, and a synthesised or borrowed HWND would be testing
+something the product never does.
+
+The probe itself was removed after it answered the question. Re-creating it is a
+short test that calls the function above and spawns `save-dialog.ps1`; it was not
+kept because it opens a real window and would hang a run whose dismissal failed.
+
 ## What is not proven, and why
 
 **The save is not completed by automation, and no file is written by a test.**
@@ -77,9 +114,10 @@ size, with more than one colour in it.
 ## What would close these
 
 For the save: a Windows session where the application's own dialog is visible to
-UI Automation while WebDriver drives the application. Everything else — the seed,
-the production path, the dialog driver, the PNG parser — already exists and is
-exercised.
+UI Automation *while WebDriver drives the application*. Everything else — the
+seed, the production path, the dialog function, the dialog driver, the PNG
+parser — already exists and is exercised, and the dialog function is now known to
+work when nothing is driving the application.
 
 For the clipboard: a session whose clipboard can be opened. The application is
 write-only and will stay that way, so the reading will always happen from a test
