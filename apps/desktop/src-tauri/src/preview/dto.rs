@@ -1882,6 +1882,11 @@ pub fn figure_clipboard_unavailable() -> PreviewErrorDto {
         "MSCanvas could not put the plot on the clipboard. Nothing was copied.",
         true,
     )
+    .with_detail(
+        "Another program is holding the clipboard. This is usually a clipboard manager \
+         or a remote-desktop session, and it usually clears in a moment -- copy the \
+         plot again.",
+    )
 }
 
 /// A selected-spectrum request either produced a spectrum or produced the

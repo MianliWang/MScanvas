@@ -1054,6 +1054,28 @@ button:disabled {
    reach nothing in a data document. A single row of five buttons would suggest
    otherwise. `fieldset` for the grouping semantics the legend gives, with its
    default chrome removed. */
+/* This header holds the figure controls, and they are taller than a title.
+   Two things follow, and both were defects before they were rules.
+
+   It may not shrink below its own content. Compressed to the header's minimum
+   the export block was still 144px tall inside a 46px line, and `align-items:
+   center` then centred it *outside* the panel -- the controls rendered above
+   the panel's own top edge, where nothing clips them because nothing contains
+   them.
+
+   And below the width where a title and the controls fit side by side, the
+   controls take their own row rather than squeezing the sentence about the
+   spectrum into nothing. */
+.spectrum-panel > .panel-header {
+  flex: none;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.spectrum-panel > .panel-header > .spectrum-export {
+  flex: 1 1 22rem;
+}
+
 .spectrum-figure-settings,
 .spectrum-data-actions {
   display: flex;
