@@ -179,23 +179,43 @@ describe("order", () => {
 });
 
 describe("the retention-time unit", () => {
-  it("reports the unit as unknown while the backend reports none", () => {
-    expect(readyModel([row({ index: 0 })]).retentionTimeUnitKnown).toBe(false);
+  it("draws the run the current boundary actually produces", () => {
+    // Every row unreported, which is the only state Rust can emit: `UnitState`
+    // has one variant. A ready model therefore *means* the unit is unreported,
+    // and both the axis and the readout say so from that one fact.
+    const model = readyModel([
+      row({ index: 0, retentionTime: { value: 0, unitKnown: false } }),
+      row({ index: 1, retentionTime: { value: 1, unitKnown: false } }),
+    ]);
+
+    expect(model.points).toHaveLength(2);
   });
 
-  it("only claims a unit when every row reported one", () => {
+  it("refuses a row that claims a unit, because nothing carries which one", () => {
+    // `unitKnown: true` names no unit. Labelling the axis with it is
+    // impossible, and labelling it "unit not reported" would contradict the
+    // row. There is no honest third option, so there is no chromatogram.
     expect(
-      readyModel([
-        row({ index: 0, retentionTime: { value: 0, unitKnown: true } }),
-        row({ index: 1, retentionTime: { value: 1, unitKnown: true } }),
-      ]).retentionTimeUnitKnown,
-    ).toBe(true);
+      buildChromatogramModel(
+        table([
+          row({ index: 0, retentionTime: { value: 0, unitKnown: false } }),
+          row({ index: 1, retentionTime: { value: 1, unitKnown: true } }),
+        ]),
+      ),
+    ).toEqual({ status: "unavailable", reason: "unsupported-retention-time-unit" });
+  });
+
+  it("refuses it just as firmly when every row claims one", () => {
+    // Deliberately not a special path. "They all agree" is a second, quieter
+    // way of reaching a state this build cannot describe.
     expect(
-      readyModel([
-        row({ index: 0, retentionTime: { value: 0, unitKnown: true } }),
-        row({ index: 1, retentionTime: { value: 1, unitKnown: false } }),
-      ]).retentionTimeUnitKnown,
-    ).toBe(false);
+      buildChromatogramModel(
+        table([
+          row({ index: 0, retentionTime: { value: 0, unitKnown: true } }),
+          row({ index: 1, retentionTime: { value: 1, unitKnown: true } }),
+        ]),
+      ),
+    ).toEqual({ status: "unavailable", reason: "unsupported-retention-time-unit" });
   });
 });
 

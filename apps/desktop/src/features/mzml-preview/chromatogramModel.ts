@@ -68,7 +68,18 @@ export type ChromatogramUnavailableReason =
   /** A row carried a retention time that cannot be placed on an axis. */
   | "unusable-retention-time"
   /** A row carried a total ion current or base peak intensity that cannot be drawn. */
-  | "unusable-intensity";
+  | "unusable-intensity"
+  /**
+   * A row said its retention time carries a unit, and this build cannot say
+   * which.
+   *
+   * `RetentionTime` on the wire is a value and a boolean. When the boolean is
+   * true there is nowhere in it for the unit's identity, so the axis could not
+   * be labelled with it -- and labelling the axis "unit not reported" while the
+   * file did report one would be as false as guessing minutes. The frontend
+   * type is simply wider than anything the boundary can currently produce.
+   */
+  | "unsupported-retention-time-unit";
 
 export type ChromatogramModel =
   | { readonly status: "unavailable"; readonly reason: ChromatogramUnavailableReason }
@@ -77,15 +88,25 @@ export type ChromatogramModel =
       /** Every scan, ordered for drawing. Never reduced — see {@link reduceTrace}. */
       readonly points: readonly ChromatogramPoint[];
       readonly fullDomain: RetentionTimeDomain;
-      /**
-       * Whether the source reported what the retention times are measured in.
-       *
-       * It does not, today. The axis says so rather than naming a unit, because
-       * a chromatogram labelled "minutes" on the strength of common instrument
-       * practice is a figure that states something the file never did.
-       */
-      readonly retentionTimeUnitKnown: boolean;
     };
+
+/*
+ * A ready model carries no unit field, and that absence is the contract.
+ *
+ * It used to carry `retentionTimeUnitKnown`, and every reader had to decide
+ * what to do with `true` -- which produced exactly the disagreement it invited:
+ * the axis stopped saying "unit not reported" while the readout beside it went
+ * on saying it. There was no honest third option, because `true` names no unit.
+ *
+ * So a ready model now *means* the retention-time unit is unreported. The axis
+ * and the readout read one fact, and there is no branch where they can differ.
+ * A row claiming a unit does not make a ready model at all.
+ *
+ * When a provider genuinely supplies one, the boundary has to widen first: a
+ * typed state carrying the identity -- `Unreported` or `Known(unit)` -- rather
+ * than a boolean with nothing behind it. This shape forces that change to be
+ * explicit rather than letting a `true` slip through half-supported.
+ */
 
 /**
  * How far into the full span a visible domain may narrow.
@@ -122,7 +143,6 @@ export function buildChromatogramModel(table: SpectrumTable): ChromatogramModel 
   }
 
   const points: ChromatogramPoint[] = [];
-  let unitKnown = true;
   for (let position = 0; position < table.rows.length; position += 1) {
     const row = table.rows[position];
     if (row === undefined) {
@@ -138,7 +158,12 @@ export function buildChromatogramModel(table: SpectrumTable): ChromatogramModel 
     if (!Number.isFinite(row.totalIonCurrent) || !Number.isFinite(row.basePeakIntensity)) {
       return { status: "unavailable", reason: "unusable-intensity" };
     }
-    unitKnown = unitKnown && row.retentionTime.unitKnown;
+    // One row is enough. There is no aggregate to take here: "every row said so"
+    // would be a second, quieter way of arriving at a state this build cannot
+    // describe, and the whole point is that it has no honest rendering.
+    if (row.retentionTime.unitKnown) {
+      return { status: "unavailable", reason: "unsupported-retention-time-unit" };
+    }
     points.push({
       spectrumIndex: row.index,
       tablePosition: position,
@@ -165,12 +190,7 @@ export function buildChromatogramModel(table: SpectrumTable): ChromatogramModel 
 
   const low = points[0]?.retentionTime ?? 0;
   const high = points[points.length - 1]?.retentionTime ?? 0;
-  return {
-    status: "ready",
-    points,
-    fullDomain: { low, high },
-    retentionTimeUnitKnown: unitKnown,
-  };
+  return { status: "ready", points, fullDomain: { low, high } };
 }
 
 /** The value one trace draws for one scan. Exactly the table's own number. */

@@ -103,6 +103,81 @@ afterEach(() => {
   cleanup();
 });
 
+describe("committing the same scan again", () => {
+  it("counts a second commit and brings its row back into view", async () => {
+    // End to end through the real workspace: one selected scan throughout, one
+    // backend read per commit, and the table showing the row each time it is
+    // asked for.
+    const api = createFakePreviewApi({ preview: buildPreview(400) });
+    await openTheFile(api);
+    givePlotABox();
+
+    clickScan(200, 400);
+    await waitFor(() => {
+      expect(api.requestedSpectra).toEqual([200]);
+    });
+    const viewport = document.querySelector(".spectrum-table-viewport") as HTMLElement;
+    Object.defineProperty(viewport, "clientHeight", { value: 330, configurable: true });
+    await waitFor(() => {
+      expect(rowFor(200)).toBeTruthy();
+    });
+
+    // The user scrolls the row away by hand and puts the keyboard on the plot.
+    act(() => {
+      viewport.scrollTop = 0;
+      fireEvent.scroll(viewport);
+    });
+    plot().focus();
+    expect(viewport.scrollTop).toBe(0);
+
+    // And clicks the very same scan again.
+    clickScan(200, 400);
+
+    await waitFor(() => {
+      expect(viewport.scrollTop).toBeGreaterThan(0);
+    });
+    // Still one selected scan, and the second commit was a real read rather
+    // than a duplicate suppressed as in-flight.
+    expect(api.requestedSpectra).toEqual([200, 200]);
+    expect(document.activeElement).toBe(plot());
+  });
+
+  it("does not count a commit for hovering, arrowing, zooming or panning", async () => {
+    // The revision has to mean one thing. If pointer movement or a viewport
+    // gesture advanced it, the table would scroll back to the selected row
+    // while the user was reading somewhere else.
+    const api = createFakePreviewApi({ preview: buildPreview(400) });
+    await openTheFile(api);
+    givePlotABox();
+
+    clickScan(100, 400);
+    await waitFor(() => {
+      expect(api.requestedSpectra).toEqual([100]);
+    });
+    const viewport = document.querySelector(".spectrum-table-viewport") as HTMLElement;
+    Object.defineProperty(viewport, "clientHeight", { value: 330, configurable: true });
+    act(() => {
+      viewport.scrollTop = 0;
+      fireEvent.scroll(viewport);
+    });
+
+    // Hover, an arrow-key focus move, and a viewport gesture. None of them
+    // selects anything.
+    fireEvent.pointerMove(plot(), { clientX: 500 });
+    const row = rowFor(0);
+    row.focus();
+    fireEvent.keyDown(row, { key: "ArrowDown" });
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset range" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(viewport.scrollTop).toBe(0);
+    expect(api.requestedSpectra).toEqual([100]);
+  });
+});
+
 describe("the chromatogram selects a scan", () => {
   it("commits one selection that every linked surface then shows", async () => {
     const api = createFakePreviewApi();

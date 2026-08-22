@@ -673,6 +673,7 @@ export function PreviewWorkspace() {
               onRendered={handleTableRendered}
               onSelect={workspace.selectSpectrum}
               selectedIndex={workspace.selectedIndex}
+              selectionRevision={workspace.selectionRevision}
               table={preview.preview.spectrumTable}
             />
             <SelectedSpectrumPanel

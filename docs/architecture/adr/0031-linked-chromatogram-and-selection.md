@@ -67,17 +67,54 @@ something did.
 
 This milestone does not add paging for truncated tables.
 
-## Units are not named
+## Units are not named, and a claimed unit is refused
 
-The measured `msaccess` formatter emits no retention-time unit, so
-`RetentionTimeDto.unit_known` is false and the axis says
-"Retention time — unit not reported". The intensity contract establishes no
-display unit either, so it says "Intensity — unit not reported".
+The measured `msaccess` formatter emits no retention-time unit. `UnitState` in
+`mscanvas-proteowizard` has exactly one variant, `NotEmitted`, and the single
+production projection `retention_time_dto` maps it to `unit_known: false`. So
+the current preview reports retention-time units as unreported, the axis says
+"Retention time — unit not reported", and the readout beside it says the same.
+The intensity contract establishes no display unit either, so it says
+"Intensity — unit not reported".
 
-Minutes is the obvious guess and it is still a guess. A chromatogram labelled
-in minutes states something the file did not, and a figure that states what it
-was not told is worse than one that admits the gap. The model only reports a
-known unit when **every** row reported one.
+Minutes is the obvious guess and it is still a guess. A chromatogram labelled in
+minutes states something the file did not, and a figure that states what it was
+not told is worse than one that admits the gap.
+
+### The frontend type is wider than the boundary, so the extra state fails closed
+
+`RetentionTime` crosses the wire as a value and a boolean. When that boolean is
+`true` there is **nowhere in it for the unit's identity** — no minute, no
+second, nothing. That state cannot be rendered honestly in either direction:
+labelling the axis with the unit is impossible, and labelling it "unit not
+reported" would contradict a row that said one *was* reported.
+
+An earlier shape tried to carry it anyway, as `retentionTimeUnitKnown` on the
+ready model, and produced exactly the disagreement it invited — the axis
+stopping its unreported-unit statement while the readout beside it went on
+making it.
+
+So a **ready chromatogram model carries no unit field at all**, and that absence
+is the contract: ready *means* the retention-time unit is unreported. A row
+claiming a unit does not produce a ready model; it produces `unavailable` with
+the reason `unsupported-retention-time-unit`, and the panel says that this build
+cannot identify the unit state precisely rather than that anything is wrong with
+the file. One row is enough — "every row agreed" is not a special path, because
+agreement does not supply the missing identity.
+
+This is currently **unreachable from production**: no Rust path can emit `true`,
+because the type it comes from has one variant. The failure closes a hole in the
+frontend's own contract rather than a defect a user can reach today.
+
+### What a future known unit requires
+
+Not this boolean. A provider that genuinely reports one needs the typed boundary
+widened first to carry the identity — conceptually `Unreported` or
+`Known(unit)` — so the axis can be labelled with the unit that was actually
+received. Failing closed here is what forces that to be an explicit change
+rather than a `true` slipping through half-supported.
+
+**No known-unit chromatogram is implemented.**
 
 ## Order: two different questions
 
@@ -161,7 +198,7 @@ commit. This is load-bearing — selection-following-focus would launch one
 ProteoWizard process per key press — and it is asserted in the unit suite and in
 the browser.
 
-### Reveal is not a focus move
+### Reveal is not a focus move, and it watches commits
 
 A selection made in the plot or with Previous/Next has to make its row visible:
 a marker pointing at a scan the table is not showing is a link the user cannot
@@ -171,6 +208,31 @@ their next key press somewhere they did not ask for.
 So `SpectrumTable` reveals: it scrolls the row into view and moves the roving
 tab stop, without calling `.focus()`. Only a keyboard move inside the table
 still focuses.
+
+Four facts about a row are distinct, and conflating any two of them has produced
+a defect here: **which row is selected**, **which row is the tab stop**,
+**whether it is visible**, and **whether it has DOM focus**.
+
+- Suppressing the reveal when the selected row was already the tab stop confused
+  the second with the third. `focusRow` is where the keyboard would land, not
+  what is on screen, so a row left at the tab stop and scrolled away by hand was
+  not revealed when it was selected.
+- Revealing on every change of selected *position* fixed that and left the
+  first unaccounted for. Selecting the scan that is already selected does not
+  move the position — but it is still a commit, and the user who scrolled that
+  row away and clicked the same scan again was asking to be shown it.
+
+So the reveal is keyed to `selectionRevision`, a monotonic count of **persistent
+selection commits** held beside `selectedIndex` in the workspace. It advances
+for a chromatogram click, a table click, Enter or Space on a row, Previous and
+Next, and for re-selecting the scan already selected. It does not advance for
+hover, arrow-key focus movement, pointer movement, zoom, pan or workspace-row
+focus, because none of those selects anything.
+
+There is still exactly one selected scan and one backend read per commit. A
+repeat click while the first read is still in flight is dropped by the existing
+in-flight guard before any of this, which is what keeps a double click one
+process.
 
 Writing that split surfaced a defect that predates this milestone. The sticky
 header scrolls **inside** the same box as the rows, so a row brought to exactly

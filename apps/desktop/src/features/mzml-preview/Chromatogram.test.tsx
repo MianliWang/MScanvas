@@ -186,6 +186,21 @@ describe("what the chromatogram draws", () => {
     expect(tracePaths()).toHaveLength(0);
   });
 
+  it("refuses a retention-time unit it cannot name, and says why without blaming the file", () => {
+    const claimsAUnit = buildRows(20).map((row, index) =>
+      index === 7 ? { ...row, retentionTime: { value: row.retentionTime.value, unitKnown: true } } : row,
+    );
+    renderChromatogram({ model: modelOf(claimsAUnit) });
+
+    expect(screen.getByText("TIC and BPC are unavailable for this preview.")).toBeVisible();
+    expect(screen.getByText(/cannot identify\s+precisely/u)).toBeVisible();
+    // Not the file's fault, and not a claim that the unit is unknown when the
+    // wire says one was reported.
+    expect(screen.queryByText(/malformed|corrupt|invalid file/iu)).toBeNull();
+    expect(tracePaths()).toHaveLength(0);
+    expect(screen.queryByRole("img", { name: "Chromatogram" })).toBeNull();
+  });
+
   it("says a run with no spectra has nothing to draw", () => {
     renderChromatogram({ model: modelOf([]) });
 

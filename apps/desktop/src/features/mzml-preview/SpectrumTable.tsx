@@ -44,6 +44,15 @@ const COLUMNS = [
 export interface SpectrumTableProps {
   readonly table: SpectrumTableModel;
   readonly selectedIndex: number | null;
+  /**
+   * How many persistent selection commits have happened.
+   *
+   * The reveal watches this as well as the row, because the two answer
+   * different questions. "Which row is selected" does not change when the same
+   * scan is selected again -- and by then the user may have scrolled it out of
+   * view, which is exactly when it has to come back.
+   */
+  readonly selectionRevision?: number;
   readonly onSelect: (index: number) => void;
   readonly onRendered: (renderedRowCount: number, milliseconds: number) => void;
 }
@@ -51,6 +60,7 @@ export interface SpectrumTableProps {
 export function SpectrumTable({
   table,
   selectedIndex,
+  selectionRevision = 0,
   onSelect,
   onRendered,
 }: SpectrumTableProps) {
@@ -169,19 +179,22 @@ export function SpectrumTable({
   // A selection that did not come from this table -- the chromatogram, or
   // Previous/Next -- still has to be visible here.
   //
-  // Every change of selected position reveals, unconditionally. An earlier
-  // version skipped the reveal when the selected row was already the roving tab
-  // stop, on the reasoning that a commit made with Enter needs no scroll. That
-  // confused two different things: `focusRow` is where the keyboard would land,
-  // not what is on screen. Leave the tab stop on a row, scroll it out of view by
-  // hand, then select that same row from the chromatogram, and the positions
-  // match while the row is nowhere to be seen -- so the reveal was suppressed
-  // exactly when it was needed.
+  // Keyed to selection *commits*, not only to the selected value. Four facts
+  // about a row are distinct, and this effect has been wrong about two of them
+  // in turn: which row is selected, which row is the tab stop, whether the row
+  // is visible, and whether it has DOM focus.
   //
-  // Revealing unconditionally is safe because `revealRow` is already the right
+  // An earlier version skipped the reveal when the selected row was already the
+  // tab stop -- but `focusRow` is where the keyboard would land, not what is on
+  // screen. Revealing on every position change fixed that and left a second
+  // gap: selecting the scan that is already selected does not move the
+  // position, so a user who selects a scan, scrolls its row away and clicks the
+  // same scan again was asking for it back and getting nothing. The revision
+  // makes that commit visible here.
+  //
+  // Revealing on every commit is safe because `revealRow` is already the right
   // shape: it scrolls only when the row is outside the viewport, and it never
-  // takes DOM focus. A commit from a visible focused row therefore still moves
-  // nothing.
+  // takes DOM focus. A commit from a visible focused row still moves nothing.
   const selectedPosition =
     selectedIndex === null ? -1 : table.rows.findIndex((row) => row.index === selectedIndex);
   const reveal = useRef(revealRow);
@@ -194,7 +207,7 @@ export function SpectrumTable({
       // scrolled to.
       reveal.current(selectedPosition);
     }
-  }, [selectedPosition]);
+  }, [selectedPosition, selectionRevision]);
 
   /**
    * Arrow keys move focus without selecting. Selection is committed with Enter

@@ -300,6 +300,20 @@ export interface PreviewWorkspace {
   readonly preview: PreviewState;
   readonly spectrum: SpectrumState;
   readonly selectedIndex: number | null;
+  /**
+   * How many persistent selection commits this session has made.
+   *
+   * Monotonic, and deliberately not the selected index. Selecting the scan that
+   * is already selected is still a commit -- the user asked for that scan
+   * again -- and a surface that only watches the value cannot tell it happened.
+   * The scan table needs to: it has to bring the row back into view, and by
+   * then the user may have scrolled it away.
+   *
+   * It changes for every commit and for nothing else. Hover, arrow-key focus
+   * movement, pointer movement, zoom, pan and workspace-row focus all leave it
+   * alone, because none of them selects anything.
+   */
+  readonly selectionRevision: number;
   readonly measurements: readonly PreviewMeasurement[];
   /**
    * Whether a backend request is outstanding, including while the folder picker
@@ -531,6 +545,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const [workspaceError, setWorkspaceError] = useState<PreviewError | null>(null);
   const [spectrum, setSpectrum] = useState<SpectrumState>({ status: "none" });
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [selectionRevision, setSelectionRevision] = useState(0);
   // TIC alone to begin with. Both traces at once is a comparison a reader asks
   // for, not the first thing they should have to disentangle, and the total ion
   // current is the summary of a scan rather than one feature of it.
@@ -1950,6 +1965,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       const token = spectrumToken.current;
       inFlightSpectrum.current = { index, token };
       setSelectedIndex(index);
+      // Every guard above has passed, so this is a commit. Counted here rather
+      // than derived from the index, because re-selecting the scan already
+      // selected is a commit whose index does not move.
+      setSelectionRevision((revision) => revision + 1);
       setSpectrum({ status: "loading", index });
       beginViewerRequest();
       void api
@@ -2374,6 +2393,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     exportSpectrum,
     copySpectrumPlot,
     dismissSpectrumExport,
+    selectionRevision,
     chromatogramTraces,
     toggleChromatogramTrace,
     chromatogramVisibleDomain,

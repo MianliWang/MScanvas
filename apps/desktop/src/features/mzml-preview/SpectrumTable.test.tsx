@@ -279,6 +279,57 @@ describe("bringing a row into view", () => {
     expect(viewport.scrollTop).toBe(3_000 - 30);
   });
 
+  it("reveals the selected row again when the same scan is committed a second time", () => {
+    // Selecting the scan that is already selected does not move the selected
+    // position, so a reveal that watches only the position cannot see it. The
+    // user can: they selected the scan, scrolled its row away, and clicked the
+    // same scan again -- which is a request to be shown it, not a no-op.
+    const table = { rows: buildRows(400), totalRowCount: 400, truncated: false };
+    const { container, rerender } = renderTable(400);
+    const viewport = requireElement(container, ".spectrum-table-viewport");
+    Object.defineProperty(viewport, "clientHeight", { value: 330, configurable: true });
+
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    outside.focus();
+
+    // The first commit needs no scroll: row 5 sits at 150 and the rows area
+    // covers 0 to 300, so it is already on screen.
+    rerender(
+      <SpectrumTable
+        onRendered={vi.fn()}
+        onSelect={vi.fn()}
+        selectedIndex={5}
+        selectionRevision={1}
+        table={table}
+      />,
+    );
+    expect(viewport.scrollTop).toBe(0);
+
+    // The user scrolls it far out of view.
+    viewport.scrollTop = 6_000;
+    fireEvent.scroll(viewport);
+
+    // And commits the very same scan again: the index does not move, the
+    // revision does.
+    rerender(
+      <SpectrumTable
+        onRendered={vi.fn()}
+        onSelect={vi.fn()}
+        selectedIndex={5}
+        selectionRevision={2}
+        table={table}
+      />,
+    );
+
+    // Back in view, a header's height clear of the sticky header, and the
+    // keyboard still on the control the user pressed.
+    expect(viewport.scrollTop).toBe(150 - 30);
+    expect(requireElement(container, '[data-row-position="5"]')).toHaveAttribute("tabindex", "0");
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
+  });
+
   it("reveals a selected row the user has scrolled away from, even at the tab stop", () => {
     // The roving tab stop is where the keyboard would land, not what is on
     // screen. Leave it on a row, scroll that row out of view by hand, then

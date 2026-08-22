@@ -249,6 +249,14 @@ const UNAVAILABLE: Record<
     summary: "TIC and BPC are unavailable for this preview.",
     detail: "A scan reported a total ion current or base peak intensity that cannot be drawn.",
   },
+  "unsupported-retention-time-unit": {
+    summary: "TIC and BPC are unavailable for this preview.",
+    detail:
+      "This preview reports a retention-time unit state that this build cannot identify " +
+      "precisely, so the traces are not drawn. Nothing is wrong with the file: what MSCanvas " +
+      "receives says that a unit was reported without saying which, and an axis cannot be " +
+      "labelled with a unit that was never named.",
+  },
 };
 
 /** What the caption says the traces are, which is deliberately specific. */
@@ -714,9 +722,7 @@ function ChromatogramPlot({
             Beside it, what the traces are made of -- the same sentence that
             used to sit in the header, moved here so the panel spends its
             height on the plot rather than on a second title line. */}
-        Retention time
-        {model.retentionTimeUnitKnown ? "" : " — unit not reported"} · Intensity — unit not
-        reported ·{" "}
+        Retention time — unit not reported · Intensity — unit not reported ·{" "}
         <span className="chromatogram-range">
           Showing {domain.low.toFixed(4)} to {domain.high.toFixed(4)}
           {zoomedIn ? "" : " (full range)"}
