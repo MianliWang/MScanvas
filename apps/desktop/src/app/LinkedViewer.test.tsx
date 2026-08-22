@@ -45,7 +45,11 @@ function renderApp(api: PreviewApi): void {
 async function openTheFile(api: PreviewApi): Promise<void> {
   renderApp(api);
   fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
-  await screen.findByRole("grid", { name: "Spectra" });
+  // A longer wait than the default second. Opening a preview here mounts the
+  // whole viewer -- three panels, one of which sorts every scan -- and under a
+  // parallel suite that occasionally takes longer than a default `findBy`
+  // allows. The wait is about the machine, not about the product.
+  await screen.findByRole("grid", { name: "Spectra" }, { timeout: 10_000 });
 }
 
 function plot(): HTMLElement {

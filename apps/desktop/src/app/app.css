@@ -926,14 +926,45 @@ button:disabled {
      them: the run's shape, the scans it is made of, and the one scan they
      chose. The chromatogram takes the smallest share, because it is a locator
      rather than the thing being read. */
-  grid-template-rows: minmax(0, 0.9fr) minmax(0, 1.15fr) minmax(0, 1fr);
+  /* Floors rather than shares alone, and a scrollbar when the window cannot
+     meet them.
+
+     The column is about 478px tall at a 768px window and now holds three
+     panels. A share of that can leave a panel shorter than the controls it
+     contains, and these panels clip: a control that does not fit is not
+     smaller, it is gone. So each row keeps what its own chrome measures --
+     190px for the chromatogram's header of three control groups plus a 52px
+     plot, an axis caption and a readout; 116px for the table's header and one
+     complete row; 202px for the selected spectrum's figure and data controls,
+     which are 162px of header by themselves. Their floors and gaps come to
+     524px, so at 1366x768 this column scrolls by about 46px.
+
+     That is the honest trade for a third linked view in a shell that is
+     exactly the window's height. The alternative -- giving each panel a share
+     and letting the shortest clip -- hides controls rather than moving them. */
+  grid-template-rows: minmax(190px, 0.95fr) minmax(116px, 1.15fr) minmax(202px, 1fr);
   gap: 8px;
+  overflow-y: auto;
 }
 
 .chromatogram-panel {
   display: flex;
   min-height: 0;
   flex-direction: column;
+}
+
+/* The same treatment the selected-spectrum header needed. The controls beside
+   the title are taller than a title, so a header that does not grow to fit them
+   centres them outside itself; below the width where both fit on one line they
+   take their own row. */
+.chromatogram-panel > .panel-header {
+  flex: none;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.chromatogram-panel > .panel-header > .chromatogram-controls {
+  flex: 1 1 22rem;
 }
 
 .chromatogram-controls {
@@ -944,20 +975,14 @@ button:disabled {
 }
 
 .chromatogram-traces,
-.chromatogram-scan-steps {
+.chromatogram-scan-steps,
+.chromatogram-viewport-actions {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 2px 8px 4px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-}
-
-.chromatogram-traces > legend,
-.chromatogram-scan-steps > legend {
-  padding: 0 4px;
-  color: var(--color-text-tertiary);
-  font-size: 11px;
 }
 
 .chromatogram-trace-toggle {
@@ -990,8 +1015,8 @@ button:disabled {
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  padding: 8px 12px 10px;
-  gap: 6px;
+  padding: 6px 12px 8px;
+  gap: 4px;
   overflow: hidden;
 }
 
@@ -1004,7 +1029,10 @@ button:disabled {
 }
 
 .chromatogram-svg {
-  min-height: 60px;
+  /* Low enough that the axis caption, the readout and the viewport actions
+     below it are never the things a short panel clips: a plot that has shrunk
+     is still a plot, and a control that has been clipped away is gone. */
+  min-height: 52px;
   flex: 1;
   width: 100%;
   /* The wheel zooms rather than scrolling the page, and a horizontal drag pans
@@ -1072,6 +1100,9 @@ button:disabled {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  padding: 2px 8px 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
 }
 
 .spectrum-table {
@@ -1408,7 +1439,7 @@ button:disabled {
        identity header inside its two 1px borders: 280 + 8 + 54 = 342. Its
        details may scroll, but the acquisition they describe is never clipped
        away. */
-    grid-template-rows: minmax(342px, 0.9fr) minmax(354px, 1.6fr);
+    grid-template-rows: minmax(342px, 0.9fr) minmax(524px, 1.6fr);
     /* Two in-flow notices leave about 520px for this box at 960x640, while the
        complete narrow evidence contract needs 544px: 16px padding, 342px for
        the sidebar, its 8px gap, and 178px for the viewer below. The document
@@ -1439,15 +1470,9 @@ button:disabled {
        workspace layout owns a scrollbar at this breakpoint: the alternative is
        a chromatogram squeezed until neither its axis nor its controls can be
        read, which is not a smaller version of the view but a different one. */
-    grid-template-rows: minmax(168px, 0.9fr) minmax(116px, 1.15fr) minmax(54px, 1fr);
+    grid-template-rows: minmax(190px, 0.9fr) minmax(116px, 1.15fr) minmax(202px, 1fr);
   }
 
-  .chromatogram-controls {
-    /* Narrow, the traces and the scan steps stack rather than compete with the
-       heading for one line. */
-    flex-direction: column;
-    align-items: stretch;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

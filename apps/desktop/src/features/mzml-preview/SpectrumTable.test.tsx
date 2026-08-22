@@ -210,3 +210,80 @@ describe("spectrum table rows", () => {
     expect(within(selected[0] as HTMLElement).getByText("Selected,")).toBeInTheDocument();
   });
 });
+
+describe("bringing a row into view", () => {
+  /**
+   * The scroll position after a reveal, given a viewport that holds ten rows.
+   *
+   * jsdom lays nothing out, so the height the component would measure is
+   * stubbed. What is under test is arithmetic, not layout: where the component
+   * decides to put the scroll for a row it wants seen.
+   */
+  function scrollAfter(action: (container: HTMLElement) => void, rowCount = 400): number {
+    const { container } = renderTable(rowCount);
+    const viewport = requireElement(container, ".spectrum-table-viewport");
+    Object.defineProperty(viewport, "clientHeight", { value: 330, configurable: true });
+    action(container);
+    return viewport.scrollTop;
+  }
+
+  it("keeps a row clear of the header it would otherwise arrive under", () => {
+    // The header is sticky *inside* this scrolling box, so a row scrolled to
+    // exactly its own offset arrives beneath it: focused, announced, and not
+    // visible. The reveal stops a header's worth sooner, which is what the
+    // opposite edge already did.
+    const top = scrollAfter((container) => {
+      const first = requireElement(container, '[data-row-position="0"]');
+      first.focus();
+      // Down past the fold, then back up to the top row.
+      fireEvent.keyDown(first, { key: "End" });
+      fireEvent.keyDown(document.activeElement ?? first, { key: "Home" });
+    });
+
+    expect(top).toBe(0);
+  });
+
+  it("stops a row's own header height above it rather than exactly at it", () => {
+    const top = scrollAfter((container) => {
+      const first = requireElement(container, '[data-row-position="0"]');
+      first.focus();
+      fireEvent.keyDown(first, { key: "End" });
+      // 399 rows down; come back up to row 100, which is above the fold.
+      for (let step = 0; step < 299; step += 1) {
+        fireEvent.keyDown(document.activeElement ?? first, { key: "ArrowUp" });
+      }
+    });
+
+    // Row 100 sits at 3,000; the reveal puts the scroll one row height above
+    // it so the sticky header does not cover it.
+    expect(top).toBe(3_000 - 30);
+  });
+
+  it("reveals a selection made elsewhere without taking focus", () => {
+    // The linked-viewer rule: a chromatogram click or Previous/Next has to make
+    // its row visible, and must not move the keyboard away from the control the
+    // user is operating.
+    const { container, rerender } = renderTable(400);
+    const viewport = requireElement(container, ".spectrum-table-viewport");
+    Object.defineProperty(viewport, "clientHeight", { value: 330, configurable: true });
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    outside.focus();
+
+    rerender(
+      <SpectrumTable
+        onRendered={vi.fn()}
+        onSelect={vi.fn()}
+        selectedIndex={200}
+        table={{ rows: buildRows(400), totalRowCount: 400, truncated: false }}
+      />,
+    );
+
+    expect(viewport.scrollTop).toBeGreaterThan(0);
+    expect(document.activeElement).toBe(outside);
+    // And the roving tab stop moved, so tabbing in afterwards lands on the
+    // selected row rather than back at the top.
+    expect(requireElement(container, '[data-row-position="200"]')).toHaveAttribute("tabindex", "0");
+    outside.remove();
+  });
+});

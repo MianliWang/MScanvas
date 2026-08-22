@@ -64,6 +64,9 @@ const TRACES: readonly {
   { trace: "bpc", label: "BPC", shortLabel: "BPC", dash: "7 4" },
 ];
 
+/** Stands in while nothing is loaded; the plot is not rendered then. */
+const ZERO_DOMAIN: RetentionTimeDomain = { low: 0, high: 0 };
+
 export interface TraceVisibility {
   readonly tic: boolean;
   readonly bpc: boolean;
@@ -97,34 +100,113 @@ export function Chromatogram({
   canSelectPrevious,
   canSelectNext,
 }: ChromatogramProps) {
+  const fullDomain = model.status === "ready" ? model.fullDomain : ZERO_DOMAIN;
+  /**
+   * The viewport while a gesture is happening.
+   *
+   * A wheel or a drag produces dozens of events a second, and putting each one
+   * through the workspace would re-render the scan table and the spectrum panel
+   * for every frame of a pan. So the gesture moves this, and what the workspace
+   * learns is the semantic domain the gesture arrived at.
+   *
+   * Held by the panel rather than by the plot so the zoom controls can share
+   * the header row with the trace and scan groups: three short groups on one
+   * line cost this panel about 60px of a roughly 480px viewer column, and a
+   * fourth row below the plot cost it 43 more.
+   */
+  const [gestureDomain, setGestureDomain] = useState<RetentionTimeDomain | null>(null);
+  const commitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const domain = gestureDomain ?? visibleDomain ?? fullDomain;
+
+  useEffect(
+    () => () => {
+      if (commitTimer.current !== null) {
+        clearTimeout(commitTimer.current);
+      }
+    },
+    [],
+  );
+
+  /** Publishes what a gesture arrived at, and hands the viewport back. */
+  const commit = useCallback(
+    (next: RetentionTimeDomain) => {
+      if (commitTimer.current !== null) {
+        clearTimeout(commitTimer.current);
+        commitTimer.current = null;
+      }
+      setGestureDomain(null);
+      onVisibleDomainChange(isFullDomain(next, fullDomain) ? null : next);
+    },
+    [fullDomain, onVisibleDomainChange],
+  );
+
+  /** Moves the viewport now and publishes it once the gesture settles. */
+  const moveViewport = useCallback(
+    (next: RetentionTimeDomain) => {
+      setGestureDomain(next);
+      if (commitTimer.current !== null) {
+        clearTimeout(commitTimer.current);
+      }
+      commitTimer.current = setTimeout(() => {
+        commitTimer.current = null;
+        setGestureDomain(null);
+        onVisibleDomainChange(isFullDomain(next, fullDomain) ? null : next);
+      }, COMMIT_DELAY_MS);
+    },
+    [fullDomain, onVisibleDomainChange],
+  );
+
+  const zoomedIn = !isFullDomain(visibleDomain, fullDomain) || gestureDomain !== null;
+
   return (
     <section aria-labelledby="chromatogram-heading" className="panel chromatogram-panel">
+      {/* One line, and every control on it. The viewer is three stacked
+          panels in a column that is about 480px tall at a 768px window, so
+          what this panel spends on chrome it takes from the scan table and the
+          spectrum below it. A locator earns less of that than the things being
+          read, which is why the source sentence lives under the plot with the
+          axis rather than as a second header line. */}
       <header className="panel-header compact">
-        <div>
-          <h2 id="chromatogram-heading">Chromatogram</h2>
-          <p>{describeSource(model)}</p>
-        </div>
+        <h2 id="chromatogram-heading">Chromatogram</h2>
         {model.status === "ready" ? (
-          <ChromatogramControls
-            canSelectNext={canSelectNext}
-            canSelectPrevious={canSelectPrevious}
-            onSelectNext={onSelectNext}
-            onSelectPrevious={onSelectPrevious}
-            onToggleTrace={onToggleTrace}
-            traces={traces}
-          />
+          <div className="chromatogram-controls">
+            <ChromatogramControls
+              canSelectNext={canSelectNext}
+              canSelectPrevious={canSelectPrevious}
+              onSelectNext={onSelectNext}
+              onSelectPrevious={onSelectPrevious}
+              onToggleTrace={onToggleTrace}
+              traces={traces}
+            />
+            <ViewportActions
+              canReset={zoomedIn}
+              onReset={() => {
+                commit(fullDomain);
+              }}
+              onZoomIn={() => {
+                commit(zoomDomain(domain, fullDomain, STEP_ZOOM, 0.5));
+              }}
+              onZoomOut={() => {
+                commit(zoomDomain(domain, fullDomain, 1 / STEP_ZOOM, 0.5));
+              }}
+            />
+          </div>
         ) : null}
       </header>
       <div className="chromatogram-body">
         {model.status === "ready" ? (
           <ChromatogramPlot
+            commit={commit}
+            domain={domain}
             labelledBy="chromatogram-heading"
             model={model}
+            moveViewport={moveViewport}
             onSelect={onSelect}
             onVisibleDomainChange={onVisibleDomainChange}
             selectedIndex={selectedIndex}
             traces={traces}
             visibleDomain={visibleDomain}
+            zoomedIn={zoomedIn}
           />
         ) : (
           <div className="empty-state">
@@ -195,9 +277,11 @@ function ChromatogramControls({
   readonly canSelectNext: boolean;
 }) {
   return (
-    <div className="chromatogram-controls">
+    <>
       <fieldset className="chromatogram-traces">
-        <legend>Traces</legend>
+        {/* Named for a screen reader without spending a line on it. A group of
+            controls still needs to say what it groups. */}
+        <legend className="visually-hidden">Traces</legend>
         {TRACES.map(({ trace, label }) => (
           <label className="chromatogram-trace-toggle" key={trace}>
             <input
@@ -223,7 +307,7 @@ function ChromatogramControls({
         ))}
       </fieldset>
       <fieldset className="chromatogram-scan-steps">
-        <legend>Scan</legend>
+        <legend className="visually-hidden">Scan</legend>
         <button
           className="secondary-button"
           disabled={!canSelectPrevious}
@@ -241,7 +325,35 @@ function ChromatogramControls({
           Next scan
         </button>
       </fieldset>
-    </div>
+    </>
+  );
+}
+
+/** Zoom and reset, rendered by the plot because only it knows the range. */
+function ViewportActions({
+  onZoomIn,
+  onZoomOut,
+  onReset,
+  canReset,
+}: {
+  readonly onZoomIn: () => void;
+  readonly onZoomOut: () => void;
+  readonly onReset: () => void;
+  readonly canReset: boolean;
+}) {
+  return (
+    <fieldset className="chromatogram-viewport-actions">
+      <legend className="visually-hidden">Range</legend>
+      <button className="secondary-button" onClick={onZoomIn} type="button">
+        Zoom in
+      </button>
+      <button className="secondary-button" onClick={onZoomOut} type="button">
+        Zoom out
+      </button>
+      <button className="secondary-button" disabled={!canReset} onClick={onReset} type="button">
+        Reset range
+      </button>
+    </fieldset>
   );
 }
 
@@ -258,6 +370,10 @@ function ChromatogramPlot({
   selectedIndex,
   onSelect,
   labelledBy,
+  domain,
+  commit,
+  moveViewport,
+  zoomedIn,
 }: {
   readonly model: Extract<ChromatogramModel, { status: "ready" }>;
   readonly traces: TraceVisibility;
@@ -266,61 +382,16 @@ function ChromatogramPlot({
   readonly selectedIndex: number | null;
   readonly onSelect: (index: number) => void;
   readonly labelledBy: string;
+  readonly domain: RetentionTimeDomain;
+  readonly commit: (next: RetentionTimeDomain) => void;
+  readonly moveViewport: (next: RetentionTimeDomain) => void;
+  readonly zoomedIn: boolean;
 }) {
   const { points, fullDomain } = model;
   const plotRef = useRef<SVGSVGElement | null>(null);
 
-  /**
-   * The viewport while a gesture is happening.
-   *
-   * A wheel or a drag produces dozens of events a second, and putting each one
-   * through the workspace would re-render the scan table and the spectrum panel
-   * for every frame of a pan. So the gesture moves this, and what the workspace
-   * learns is the semantic domain the gesture arrived at.
-   */
-  const [gestureDomain, setGestureDomain] = useState<RetentionTimeDomain | null>(null);
-  const commitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const domain = gestureDomain ?? visibleDomain ?? fullDomain;
   const domainRef = useRef(domain);
   domainRef.current = domain;
-
-  useEffect(
-    () => () => {
-      if (commitTimer.current !== null) {
-        clearTimeout(commitTimer.current);
-      }
-    },
-    [],
-  );
-
-  /** Publishes what a gesture arrived at, and hands the viewport back. */
-  const commit = useCallback(
-    (next: RetentionTimeDomain) => {
-      if (commitTimer.current !== null) {
-        clearTimeout(commitTimer.current);
-        commitTimer.current = null;
-      }
-      setGestureDomain(null);
-      onVisibleDomainChange(isFullDomain(next, fullDomain) ? null : next);
-    },
-    [fullDomain, onVisibleDomainChange],
-  );
-
-  /** Moves the viewport now and publishes it once the gesture settles. */
-  const moveViewport = useCallback(
-    (next: RetentionTimeDomain) => {
-      setGestureDomain(next);
-      if (commitTimer.current !== null) {
-        clearTimeout(commitTimer.current);
-      }
-      commitTimer.current = setTimeout(() => {
-        commitTimer.current = null;
-        setGestureDomain(null);
-        onVisibleDomainChange(isFullDomain(next, fullDomain) ? null : next);
-      }, COMMIT_DELAY_MS);
-    },
-    [fullDomain, onVisibleDomainChange],
-  );
 
   const [hover, setHover] = useState<Hover | null>(null);
   const hoverFrame = useRef<number | null>(null);
@@ -555,8 +626,6 @@ function ChromatogramPlot({
     event.preventDefault();
   };
 
-  const zoomedIn = !isFullDomain(visibleDomain, fullDomain) || gestureDomain !== null;
-
   return (
     <div className="chromatogram-plot">
       <svg
@@ -641,48 +710,22 @@ function ChromatogramPlot({
       <p className="chromatogram-axis-caption">
         {/* The unit state, said rather than assumed. Nothing in the accepted
             contract establishes what these numbers are measured in, and a
-            chromatogram labelled "minutes" states something the file did not. */}
+            chromatogram labelled "minutes" states something the file did not.
+            Beside it, what the traces are made of -- the same sentence that
+            used to sit in the header, moved here so the panel spends its
+            height on the plot rather than on a second title line. */}
         Retention time
         {model.retentionTimeUnitKnown ? "" : " — unit not reported"} · Intensity — unit not
-        reported
+        reported ·{" "}
+        <span className="chromatogram-range">
+          Showing {domain.low.toFixed(4)} to {domain.high.toFixed(4)}
+          {zoomedIn ? "" : " (full range)"}
+        </span>{" "}
+        · {describeSource(model)}
       </p>
       <p aria-live="polite" className="chromatogram-readout" id="chromatogram-readout">
         {hover === null ? describeSelection(selectedPoint) : describePoint(hover.point, "Hovering")}
       </p>
-      <div className="chromatogram-viewport-actions">
-        <button
-          className="secondary-button"
-          onClick={() => {
-            commit(zoomDomain(domain, fullDomain, STEP_ZOOM, 0.5));
-          }}
-          type="button"
-        >
-          Zoom in
-        </button>
-        <button
-          className="secondary-button"
-          onClick={() => {
-            commit(zoomDomain(domain, fullDomain, 1 / STEP_ZOOM, 0.5));
-          }}
-          type="button"
-        >
-          Zoom out
-        </button>
-        <button
-          className="secondary-button"
-          disabled={!zoomedIn}
-          onClick={() => {
-            commit(fullDomain);
-          }}
-          type="button"
-        >
-          Reset range
-        </button>
-        <span className="chromatogram-range">
-          Showing {domain.low.toFixed(4)} to {domain.high.toFixed(4)}
-          {zoomedIn ? "" : " (full range)"}
-        </span>
-      </div>
     </div>
   );
 }

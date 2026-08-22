@@ -140,9 +140,14 @@ export function SpectrumTable({
         ROW_HEIGHT,
         (viewport.clientHeight || viewportHeight) - HEADER_HEIGHT,
       );
-      if (top < viewport.scrollTop) {
-        viewport.scrollTop = top;
-        setScrollTop(top);
+      // The sticky header sits inside this scrolling box, so a row brought to
+      // exactly `scrollTop` arrives underneath it: present, focused, and not
+      // visible. Stopping a header's worth sooner is what the lower branch
+      // already does for the bottom edge.
+      if (top - HEADER_HEIGHT < viewport.scrollTop) {
+        const next = Math.max(0, top - HEADER_HEIGHT);
+        viewport.scrollTop = next;
+        setScrollTop(next);
       } else if (top + ROW_HEIGHT > viewport.scrollTop + height) {
         const next = top + ROW_HEIGHT - height;
         viewport.scrollTop = next;
