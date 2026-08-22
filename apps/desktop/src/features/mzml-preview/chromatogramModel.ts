@@ -216,24 +216,41 @@ export function nearestPoint(
     return null;
   }
   const at = lowerBound(points, retentionTime);
-  const after = points[at];
-  const before = points[at - 1];
-  let winner: ChromatogramPoint;
-  if (before === undefined) {
-    winner = after as ChromatogramPoint;
-  } else if (after === undefined) {
-    winner = before;
-  } else {
-    const toBefore = retentionTime - before.retentionTime;
-    const toAfter = after.retentionTime - retentionTime;
-    winner =
-      toBefore < toAfter ? before : toAfter < toBefore ? after : preferred(before, after);
+  // Both neighbours are reduced to their group's earliest row *before* anything
+  // is compared. Several scans can share a retention time, and the member the
+  // search lands on depends on which side the probe approached from: `after` is
+  // the first of its group and `before` is the last of its own. Comparing those
+  // two table positions is comparing the wrong pair -- at an exact midpoint it
+  // can pick the upper retention time even though the lower group holds the
+  // earlier row -- so the tie rule is applied to the two canonical rows.
+  const before = canonical(points, points[at - 1]);
+  const after = canonical(points, points[at]);
+  if (before === null) {
+    return after;
   }
-  // Several scans can share the winning retention time, and the one the search
-  // happened to land on is not an answer -- it depends on which side of the
-  // group the probe approached from. The sort put them in table order, so the
-  // first of them is the earliest row, every time.
-  return points[lowerBound(points, winner.retentionTime)] ?? winner;
+  if (after === null) {
+    return before;
+  }
+  const toBefore = retentionTime - before.retentionTime;
+  const toAfter = after.retentionTime - retentionTime;
+  if (toBefore < toAfter) {
+    return before;
+  }
+  if (toAfter < toBefore) {
+    return after;
+  }
+  return preferred(before, after);
+}
+
+/** The earliest table row among the scans sharing this one's retention time. */
+function canonical(
+  points: readonly ChromatogramPoint[],
+  point: ChromatogramPoint | undefined,
+): ChromatogramPoint | null {
+  if (point === undefined) {
+    return null;
+  }
+  return points[lowerBound(points, point.retentionTime)] ?? point;
 }
 
 /** Of two equally good candidates, the one this module always chooses. */

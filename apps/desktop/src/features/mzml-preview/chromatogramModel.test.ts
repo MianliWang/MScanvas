@@ -229,6 +229,37 @@ describe("nearest scan", () => {
     expect(nearestPoint(points, 100)?.spectrumIndex).toBe(2);
   });
 
+  it("compares the earliest row of each equally near group, not whichever member the search met", () => {
+    // The lower group's *last* member is what a binary search lands beside, and
+    // the upper group's *first*. Comparing those two decides the tie on rows
+    // that are not the ones the rule is about: here the lower group holds
+    // position 1 and the upper holds 50, so the lower group must win -- but its
+    // last member is position 100, which would lose.
+    const groups = [
+      point({ retentionTime: 10, tablePosition: 1, spectrumIndex: 11 }),
+      point({ retentionTime: 10, tablePosition: 100, spectrumIndex: 12 }),
+      point({ retentionTime: 20, tablePosition: 50, spectrumIndex: 13 }),
+    ];
+
+    const answer = nearestPoint(groups, 15);
+    expect(answer?.retentionTime).toBe(10);
+    expect(answer?.tablePosition).toBe(1);
+  });
+
+  it("lets the upper group win when its earliest row is the earlier one", () => {
+    // The same rule, the other way round. Not "prefer the lower retention
+    // time": the retention times are equally near, and the table position
+    // decides.
+    const groups = [
+      point({ retentionTime: 10, tablePosition: 80, spectrumIndex: 21 }),
+      point({ retentionTime: 20, tablePosition: 2, spectrumIndex: 22 }),
+    ];
+
+    const answer = nearestPoint(groups, 15);
+    expect(answer?.retentionTime).toBe(20);
+    expect(answer?.tablePosition).toBe(2);
+  });
+
   it("answers the earlier table row when scans share a retention time", () => {
     const shared = [
       point({ retentionTime: 5, tablePosition: 3, spectrumIndex: 30 }),

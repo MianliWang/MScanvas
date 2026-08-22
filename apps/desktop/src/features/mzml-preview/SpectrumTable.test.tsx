@@ -279,6 +279,69 @@ describe("bringing a row into view", () => {
     expect(viewport.scrollTop).toBe(3_000 - 30);
   });
 
+  it("reveals a selected row the user has scrolled away from, even at the tab stop", () => {
+    // The roving tab stop is where the keyboard would land, not what is on
+    // screen. Leave it on a row, scroll that row out of view by hand, then
+    // select the same row from the chromatogram: the positions match while the
+    // row is nowhere to be seen, which is exactly when the reveal is needed.
+    const table = { rows: buildRows(400), totalRowCount: 400, truncated: false };
+    const { container, rerender } = renderTable(400);
+    const viewport = requireElement(container, ".spectrum-table-viewport");
+    Object.defineProperty(viewport, "clientHeight", { value: 330, configurable: true });
+
+    // The tab stop walks to row 5, which stays in view.
+    const first = requireElement(container, '[data-row-position="0"]');
+    first.focus();
+    for (let step = 0; step < 5; step += 1) {
+      fireEvent.keyDown(document.activeElement ?? first, { key: "ArrowDown" });
+    }
+    expect(requireElement(container, '[data-row-position="5"]')).toHaveAttribute("tabindex", "0");
+
+    // The user scrolls it far out of view, and moves the keyboard elsewhere.
+    viewport.scrollTop = 6_000;
+    fireEvent.scroll(viewport);
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    outside.focus();
+
+    // And selects that same row from another surface.
+    rerender(
+      <SpectrumTable onRendered={vi.fn()} onSelect={vi.fn()} selectedIndex={5} table={table} />,
+    );
+
+    // Row 5 sits at 150, revealed a header's height above it.
+    expect(viewport.scrollTop).toBe(150 - 30);
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
+  });
+
+  it("moves nothing when a visible focused row commits its own selection", () => {
+    // The other half: revealing unconditionally must not scroll under a user
+    // who pressed Enter on a row they were already looking at, and must not
+    // take the keyboard off it.
+    const table = { rows: buildRows(400), totalRowCount: 400, truncated: false };
+    const { container, rerender } = renderTable(400);
+    const viewport = requireElement(container, ".spectrum-table-viewport");
+    Object.defineProperty(viewport, "clientHeight", { value: 330, configurable: true });
+
+    const first = requireElement(container, '[data-row-position="0"]');
+    first.focus();
+    for (let step = 0; step < 3; step += 1) {
+      fireEvent.keyDown(document.activeElement ?? first, { key: "ArrowDown" });
+    }
+    const focused = document.activeElement;
+    const before = viewport.scrollTop;
+    fireEvent.keyDown(document.activeElement ?? first, { key: "Enter" });
+
+    rerender(
+      <SpectrumTable onRendered={vi.fn()} onSelect={vi.fn()} selectedIndex={3} table={table} />,
+    );
+
+    expect(viewport.scrollTop).toBe(before);
+    expect(document.activeElement).toBe(focused);
+    expect(requireElement(container, '[data-row-position="3"]')).toHaveAttribute("tabindex", "0");
+  });
+
   it("reveals a selection made elsewhere without taking focus", () => {
     // The linked-viewer rule: a chromatogram click or Previous/Next has to make
     // its row visible, and must not move the keyboard away from the control the
