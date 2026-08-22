@@ -94,10 +94,10 @@ percentage; cancelling one item of a queue while the rest carry on; resuming a
 stopped queue; a conversion queue that survives closing the application;
 diagnostics for anything but the latest attempt of each item, a diagnostics
 history, complete raw converter logs, and sending a diagnostics file anywhere;
-and every figure export but the selected spectrum's own SVG, CSV and TSV --
-there is no PNG, no clipboard, no chromatogram and no current-range export.
-mzXML output stays disabled and fail-closed until representative multi-source
-integrity checks pass.
+and every figure export but the selected spectrum's own SVG, PNG, CSV and TSV --
+there is no chromatogram and no current-range export, and figure settings are not
+remembered across a restart. mzXML output stays disabled and fail-closed until
+representative multi-source integrity checks pass.
 
 A conversion queue is reachable, and its limits are the claim. `Add files…`
 admits regular `.mzML` files plus three precisely evidenced vendor families —
@@ -191,8 +191,9 @@ yet. See [What works today](#what-works-today).
 - conversion to mzML through user-installed ProteoWizard, with mzXML gated behind
   representative multi-source integrity checks;
 - queue, cancellation, retry and actionable errors;
-- SVG figure export and underlying CSV/TSV export for the selected spectrum
-  (shipped); PNG, copy-to-clipboard and chromatogram data export still to come.
+- SVG and PNG figure export, `Copy plot`, and underlying CSV/TSV export for the
+  selected spectrum, at a width, height, DPI and theme the user chooses
+  (shipped); chromatogram data export and a linked figure still to come.
 
 Analysis is deferred rather than prohibited. MSCanvas should reuse mature algorithms from OpenMS/pyOpenMS, matchms and other reviewed packages instead of reimplementing them.
 

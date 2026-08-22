@@ -67,8 +67,8 @@ single-point and all-negative edges.
 | Screen | repository-owned TypeScript SVG, unchanged by M4.0 |
 | Export | repository-owned Rust, over `FigureSpec` |
 | Contract | `mscanvas-plot-spec`, owned in Rust where the data already is |
-| PNG (M4.2) | `resvg`, Apache-2.0 OR MIT, called from Rust, still unadded |
-| Added dependencies | **none**, in either language |
+| PNG | `resvg` 0.48.1, Apache-2.0 OR MIT, called from Rust — added in M4.2 |
+| Added dependencies | none in M4.0; three in M4.2, all Rust and all for pixels |
 
 The two renderers share semantics and not drawing code. That is the point rather
 than a compromise: the screen answers a pointer sixty times a second and the
@@ -123,13 +123,30 @@ are not read out of SVG coordinates and the figure is not drawn from the rows.
 | Units | `Unreported` on both axes — the backend emits no array unit |
 | Data schema | spectrum CSV/TSV v1: `#` metadata preamble, header row, one record per source point |
 | Saving | Rust-owned native dialog, no overwrite, private-sibling publication, no path crosses to React |
-| Figure size and theme | fixed 1200×640 light; a fixed theme is not FIG-005 |
+| Figure size and theme | M4.1 fixed 1200×640 light; **M4.2 makes both the user's**, defaulting to the same figure |
+
+## Second slice — M4.2
+
+PNG, `Copy plot`, and the figure settings all three figure outputs share.
+
+| | |
+| --- | --- |
+| Raster pipeline | `FigureSpec` → the same deterministic SVG → `resvg` → RGBA8 → `png` |
+| Second renderer | **none** — PNG is the vector figure on a pixel grid, and `Copy plot` is that path stopped one step earlier |
+| Width and height | the final dimensions: an SVG is authored at them, a PNG contains exactly that many pixels |
+| DPI | metadata only, written to `pHYs` as `round(dpi / 0.0254)` pixels a metre; it reaches neither the SVG nor the data documents |
+| Raster bound | 32 megapixels, checked before allocation — a vector document can describe a figure a raster one cannot hold |
+| Typography | the machine's own fonts; no font is vendored or fetched, and a machine that resolves none refuses the raster formats and keeps SVG |
+| Clipboard | write-only, from Rust; the interface never receives an image and has no capability to read one |
+| Determinism | same bytes for the same figure **within one environment**; no cross-machine claim, because installed fonts decide glyphs |
+
+See [ADR 0030](adr/0030-png-copy-plot-and-figure-settings.md).
 
 ## Still open
 
-FIG-001 (copy screenshot), FIG-002 (PNG, M4.2) and FIG-006 through FIG-008 are
-unimplemented. FIG-004 is partial: selected-spectrum CSV/TSV exists, chromatogram
-data export does not. FIG-005 has no user-selectable theme. There is no
-current-range export, no zoom or pan, no TIC, BPC or XIC, no linked figure, no
-saved specification and no composer, and the screen renderer still does not
-consume `FigureSpec`.
+FIG-004 is partial: selected-spectrum CSV/TSV exists, chromatogram data export
+does not. FIG-006 through FIG-008 are unimplemented. There is no current-range
+export, no zoom or pan, no TIC, BPC or XIC, no linked figure, no saved
+specification and no composer, and the screen renderer still does not consume
+`FigureSpec` — screen and export agree by both being right rather than by
+sharing a type.
