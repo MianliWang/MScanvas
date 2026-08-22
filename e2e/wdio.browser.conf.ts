@@ -15,7 +15,12 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const DEV_SERVER_URL = "http://127.0.0.1:1420";
+// Not Tauri's conventional 1420. Windows reserves dynamic TCP ranges for
+// Hyper-V, and on a machine where one of them covers 1420 a dev server cannot
+// bind it at all -- the failure is `EACCES` before anything under test has run.
+// This suite needs *a* port rather than that one, so it names one outside every
+// reserved range and leaves the application's own configuration alone.
+const DEV_SERVER_URL = "http://127.0.0.1:5273";
 
 export const config: WebdriverIO.Config = {
   runner: "local",
@@ -70,7 +75,7 @@ export const config: WebdriverIO.Config = {
         // nothing to do with the application under test. One process, one
         // dependency, one failure mode.
         devServer: {
-          command: "node ./node_modules/vite/bin/vite.js --host 127.0.0.1 --port 1420",
+          command: "node ./node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5273",
           cwd: resolve(HERE, "..", "apps", "desktop"),
           timeoutMs: 120_000,
           reuseExistingServer: true,

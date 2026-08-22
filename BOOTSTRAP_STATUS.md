@@ -4310,3 +4310,52 @@ is partial — selected-spectrum CSV/TSV only, no chromatogram data export.
 **FIG-001**, **FIG-002** and **FIG-006** through **FIG-008** remain
 unimplemented, and **FIG-005** has no user-selectable theme. See
 [ADR 0029](docs/architecture/adr/0029-first-visible-spectrum-figure-and-data-export.md).
+
+### M4.2 — PNG, Copy plot and figure settings
+
+The selected spectrum can now be exported as PNG and copied to the clipboard,
+and the figure all three formats draw is a size and a theme the user chooses.
+
+PNG is not a second renderer. It is the same `FigureSpec`, through the same
+deterministic SVG, put on a pixel grid: `resvg` parses the document this
+application already writes, and the encoder records the requested physical
+resolution. `Copy plot` is that path stopped one step earlier, at the RGBA
+buffer — a test asserts the copy's pixels and the PNG's decoded pixels are
+byte-identical. Two renderers would be two answers to what the figure says.
+
+Width and height are the final dimensions; a user who asks for 1200 × 640
+receives 1200 × 640. DPI is physical-resolution metadata, written to `pHYs`, and
+multiplies nothing — it reaches neither the SVG nor the data documents, and a
+test pins that CSV and TSV come out byte-identical while the figure is drawn at
+three different sizes, resolutions and themes. The defaults are the figure M4.1
+shipped.
+
+The raster formats carry their own budget of 32 megapixels, asked before
+anything is allocated: a vector document can honestly describe a 20,000 × 20,000
+figure and a raster one has to hold it at four bytes a pixel. DPI is closed at
+72 and 1200.
+
+Typography comes from the machine. A rasterizer that cannot resolve a font does
+not fail — it draws everything except the words — so the question is asked before
+rendering and answered with a typed refusal that points at SVG, which needs no
+typeface because it keeps the text as text. No font is vendored and none is
+fetched.
+
+The clipboard is write-only. The pixels are built and handed over entirely in
+Rust; the interface never receives an image, and no capability grants this
+application the ability to read a clipboard.
+
+The M4.1 snapshot-lifecycle debt is closed with it. Revocation is now Rust's
+decision, taken at the event, over six paths — including one found while writing
+the tests: choosing another file through the single-file picker empties the whole
+workspace without going through the clear path. Every lifecycle test asserts two
+separate things: that the old token is refused, and that a `Weak` fails to
+upgrade. Only the second proves the arrays were released.
+
+**FIG-001** is implemented as `Copy plot` from the scientific export renderer.
+**FIG-002** is implemented for the full selected spectrum. **FIG-003** is
+implemented and now configurable by size and theme. **FIG-004** is still partial
+— selected-spectrum CSV/TSV only. **FIG-005** is implemented, Light and Dark.
+**FIG-006** through **FIG-008** remain unimplemented, and there is no
+current-range or chromatogram export. See
+[ADR 0030](docs/architecture/adr/0030-png-copy-plot-and-figure-settings.md).

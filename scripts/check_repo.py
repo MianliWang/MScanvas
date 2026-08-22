@@ -491,6 +491,50 @@ def validate_test_support_stays_a_dev_dependency(errors: list[str]) -> None:
                 )
 
 
+def _gated_lines(lines: list[str], gate: str) -> set[int]:
+    """Which lines sit under a `cfg` attribute.
+
+    An attribute gates the item that follows it, and that item is not always one
+    line: a gated builder statement runs through a chain of calls and a closure
+    before its semicolon, and the mention that matters is inside the closure.
+    So the region runs from the attribute to wherever the item actually ends --
+    the brace depth returning to where it started, on a line that closes
+    something.
+
+    Checking only the line directly beneath the attribute would be a rule the
+    code cannot follow, and a rule nobody can follow is a rule that gets
+    deleted.
+    """
+    gated: set[int] = set()
+    depth = 0
+    pending = False
+    inside = False
+    opened_at = 0
+    for number, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        change = line.count("{") - line.count("}")
+        if stripped == gate:
+            gated.add(number)
+            pending = True
+            continue
+        if pending and not stripped:
+            continue
+        if pending:
+            pending = False
+            inside = True
+            opened_at = depth
+        if inside:
+            gated.add(number)
+            depth += change
+            if depth <= opened_at and (
+                stripped.endswith(";") or stripped.endswith("}") or stripped.endswith("},")
+            ):
+                inside = False
+            continue
+        depth += change
+    return gated
+
+
 def validate_e2e_capability_never_ships(errors: list[str]) -> None:
     """The rendered-QA IPC boundary must never reach a shipped build.
 
@@ -518,6 +562,11 @@ def validate_e2e_capability_never_ships(errors: list[str]) -> None:
         "__mscanvasBoundary__",
         "__mscanvasConsole__",
     )
+    # Names that must sit under the gate wherever they are written, and must
+    # never reach the registration list. The synthetic spectrum is not a
+    # command: there is nothing for a webview to call, and the registration list
+    # is byte-identical in every build. That is the property here.
+    seeded = ("e2e_seed", "seed_spectrum_for_e2e", "install_seeded_spectrum")
 
     manifest = ROOT / "apps" / "desktop" / "src-tauri" / "Cargo.toml"
     if manifest.is_file():
@@ -538,24 +587,41 @@ def validate_e2e_capability_never_ships(errors: list[str]) -> None:
                 )
 
     source = ROOT / "apps" / "desktop" / "src-tauri" / "src"
+    host = source / "lib.rs"
+    if host.is_file():
+        text = host.read_text(encoding="utf-8")
+        registered = text.partition("generate_handler![")[2].partition("]")[0]
+        for name in seeded:
+            if name in registered:
+                errors.append(
+                    f"apps/desktop/src-tauri/src/lib.rs registers {name} as a command; the "
+                    "synthetic spectrum is installed at startup under the e2e feature and "
+                    "is deliberately not callable from any document"
+                )
+
+    watched = ("e2e_boundary.js", "E2E_IPC_BOUNDARY_SCRIPT", *seeded)
     for rust in sorted(source.glob("**/*.rs")):
+        # The module that *is* the seed is gated at its declaration, which the
+        # scan below sees where that declaration is written; inside it every
+        # mention is already behind that gate.
+        if rust.name == "e2e_seed.rs":
+            continue
         lines = rust.read_text(encoding="utf-8").splitlines()
+        gated = _gated_lines(lines, gate)
         for number, line in enumerate(lines, start=1):
-            if "e2e_boundary.js" not in line and "E2E_IPC_BOUNDARY_SCRIPT" not in line:
+            if not any(name in line for name in watched):
                 continue
-            above = number - 2
-            while above >= 0 and (
-                not lines[above].strip() or lines[above].strip().startswith("///")
-            ):
-                above -= 1
-            if above < 0 or lines[above].strip() != gate:
+            if line.lstrip().startswith("//"):
+                continue
+            if number not in gated:
                 relative = rust.relative_to(ROOT).as_posix()
                 errors.append(
-                    f"{relative}:{number} names the rendered-QA IPC boundary without "
-                    f"{gate} on the line above it; it must not reach a shipped build"
+                    f"{relative}:{number} names test-only rendered-QA machinery outside "
+                    f"{gate}; it must not reach a shipped build"
                 )
 
     frontend = ROOT / "apps" / "desktop" / "src"
+    markers = (*markers, *seeded)
     for candidate in sorted(frontend.glob("**/*")):
         if not candidate.is_file() or candidate.suffix not in {
             ".ts",
@@ -587,6 +653,117 @@ def validate_e2e_capability_never_ships(errors: list[str]) -> None:
                 )
 
 
+def validate_clipboard_stays_write_only(errors: list[str]) -> None:
+    """This application may put a figure on the clipboard and may not read one.
+
+    `Copy plot` builds its pixels in Rust and hands them to the plugin's Rust
+    API. The webview never receives an image and never needs one, so it is
+    granted no clipboard capability at all -- Tauri denies every plugin command
+    that a capability does not list, and `capabilities/default.json` lists none.
+
+    That posture is worth checking rather than remembering, because it is one
+    line away from not holding. A clipboard *read* would be a window onto
+    whatever the user last copied from somewhere else, which a scientific tool
+    has no business seeing; a generic write command reachable from the document
+    would let anything running there replace what the user copied. And the
+    JavaScript guest plugin is how both usually arrive, so it must not become a
+    dependency of the application either.
+    """
+    for capability in sorted((ROOT / "apps" / "desktop" / "src-tauri" / "capabilities").glob("*.json")):
+        declared = json.loads(capability.read_text(encoding="utf-8"))
+        relative = capability.relative_to(ROOT).as_posix()
+        for permission in declared.get("permissions", []):
+            name = permission if isinstance(permission, str) else permission.get("identifier", "")
+            if "clipboard" in name:
+                errors.append(
+                    f"{relative} grants {name}; the webview is given no clipboard "
+                    "capability, and the image is written from Rust"
+                )
+
+    package = ROOT / "apps" / "desktop" / "package.json"
+    if package.is_file():
+        declared = json.loads(package.read_text(encoding="utf-8"))
+        for section in ("dependencies", "devDependencies"):
+            for name in sorted(declared.get(section, {})):
+                if "clipboard" in name:
+                    errors.append(
+                        f"apps/desktop/package.json declares {name} in {section}; the "
+                        "clipboard is reached from Rust, and a guest plugin here would "
+                        "be a clipboard surface inside the document"
+                    )
+
+
+def validate_no_font_is_bundled_or_fetched(errors: list[str]) -> None:
+    """A figure's typography comes from the machine, not from this repository.
+
+    Rasterizing text needs a real typeface, and there are two wrong ways to get
+    one: ship a font file, which is a third-party binary with its own licence
+    inside a repository that vendors none, or fetch one at runtime, which makes
+    an exported figure depend on a network this application never uses. The
+    right way is the platform's own font database, and the honest failure when
+    that resolves nothing is to refuse the raster formats and keep SVG.
+
+    Checked here because both wrong ways look like small conveniences.
+    """
+    skip = {"node_modules", "target", ".git", "dist"}
+    for candidate in sorted(ROOT.glob("**/*")):
+        if any(part in skip for part in candidate.parts) or not candidate.is_file():
+            continue
+        if candidate.suffix.lower() in {".ttf", ".otf", ".ttc", ".woff", ".woff2", ".eot"}:
+            errors.append(
+                f"{candidate.relative_to(ROOT).as_posix()} is a font file; figure text is "
+                "drawn with the fonts the machine already has"
+            )
+
+    for source in sorted((ROOT / "apps" / "desktop" / "src").glob("**/*")):
+        if not source.is_file() or source.suffix not in {".ts", ".tsx", ".css", ".html"}:
+            continue
+        content = source.read_text(encoding="utf-8")
+        for marker in ("fonts.googleapis.com", "fonts.gstatic.com", "@font-face"):
+            if marker in content:
+                errors.append(
+                    f"{source.relative_to(ROOT).as_posix()} references {marker}; a figure's "
+                    "typography must not depend on a network request"
+                )
+
+
+def validate_every_raster_entry_point_asks_the_budget(errors: list[str]) -> None:
+    """Both ways of asking for pixels ask whether they will fit first.
+
+    A figure this application will happily describe as a vector -- 20,000 by
+    20,000 -- is 400 megapixels as RGBA, about 1.6 GiB, and the honest answer to
+    a request for one is a refusal rather than an exhausted machine. The PNG
+    export asked. `Copy plot` did not, and the omission survived a review round
+    because the two paths validate independently and nothing said they had to
+    agree.
+
+    So the rule is written down: every command that turns wire settings into
+    pixels calls `Self::raster_budget` on the way. A guard rather than a type
+    because the check has to happen before anything is allocated, which is a
+    property of where the call is, not of what it returns.
+    """
+    source = ROOT / "apps" / "desktop" / "src-tauri" / "src" / "preview" / "service.rs"
+    if not source.is_file():
+        return
+    content = source.read_text(encoding="utf-8")
+    for command in ("begin_spectrum_export", "copy_spectrum_plot"):
+        start = content.find(f"pub fn {command}(")
+        if start < 0:
+            errors.append(
+                f"preview/service.rs no longer defines {command}; the raster budget "
+                "guard cannot see whether the pixels are still bounded"
+            )
+            continue
+        end = content.find("\n    pub fn ", start + 1)
+        body = content[start : end if end > 0 else len(content)]
+        if "Self::raster_budget(" not in body:
+            errors.append(
+                f"preview/service.rs::{command} does not call Self::raster_budget; a "
+                "figure the vector contract allows can be hundreds of megapixels, and "
+                "the refusal has to happen before the pixmap is allocated"
+            )
+
+
 def main() -> int:
     errors: list[str] = []
     validate_required(errors)
@@ -600,6 +777,9 @@ def main() -> int:
         validate_user_facing_strings(errors)
         validate_test_support_stays_a_dev_dependency(errors)
         validate_e2e_capability_never_ships(errors)
+        validate_clipboard_stays_write_only(errors)
+        validate_no_font_is_bundled_or_fetched(errors)
+        validate_every_raster_entry_point_asks_the_budget(errors)
 
     if errors:
         print("Repository validation failed:")

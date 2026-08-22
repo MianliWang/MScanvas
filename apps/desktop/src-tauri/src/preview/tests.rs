@@ -33,9 +33,9 @@ use super::drop_ingestion::{
 };
 use super::dto::{
     BackendAvailabilityDto, BackendFailureDto, DropIngestionResultDto, DropScanLimitDto,
-    MAX_CONVERSION_QUEUE_ITEMS, MAX_WORKSPACE_DATASETS, PreviewErrorDto, SelectedFileDto,
-    SelectedSpectrumOutcomeDto, WorkspaceAddOutcomeDto, WorkspaceDropUpdateDto,
-    WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto,
+    FigureSettingsDto, MAX_CONVERSION_QUEUE_ITEMS, MAX_WORKSPACE_DATASETS, PreviewErrorDto,
+    SelectedFileDto, SelectedSpectrumOutcomeDto, SpectrumExportOutcomeDto, WorkspaceAddOutcomeDto,
+    WorkspaceDropUpdateDto, WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto,
 };
 use super::dto::{
     ConversionConflictPolicyDto, ConversionDiagnosticsExportDto, ConversionDiagnosticsStateDto,
@@ -3589,6 +3589,11 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // never open one.
             "begin_selected_spectrum_export",
             "save_selected_spectrum_export",
+            // Copy plot needs neither phase: there is no destination to choose,
+            // so there is no dialog to gate and nothing to come back from. It
+            // takes the same token, shares the same one figure-operation lane,
+            // and answers whether the clipboard was written.
+            "copy_selected_spectrum_plot",
         ]
     );
     // The picker command is named for the workspace it fills rather than for
@@ -20488,4 +20493,532 @@ fn a_real_sciex_acquisition_runs_through_the_visible_workflow() {
         update.diagnostics.eligible_item_count
     );
     assert_eq!(update.diagnostics.eligible_item_count, 0);
+}
+
+// ---------------------------------------------------------------------------
+// The retained selected spectrum, and how long it is retained for.
+//
+// The slot's contract is one sentence -- it holds the spectrum the loaded panel
+// names -- and M4.1 enforced only half of it. Installing a newer spectrum
+// replaced the old one, but every *other* way a panel stops naming one left the
+// complete arrays in memory with nothing on screen pointing at them. These are
+// the other ways.
+//
+// Two things are asserted throughout, because they are different claims. That
+// the old token is refused proves the slot stopped *naming* the spectrum. That a
+// `Weak` fails to upgrade proves the arrays were *released*. Only the second is
+// what the retention was about.
+// ---------------------------------------------------------------------------
+
+/// The figure settings a panel starts with, which is what these tests export at.
+fn default_figure_settings() -> FigureSettingsDto {
+    FigureSettingsDto {
+        width_px: 1_200,
+        height_px: 640,
+        png_dpi: 300,
+        theme: "light".to_owned(),
+    }
+}
+
+/// Loads one spectrum and answers with the token the panel would hold.
+fn loaded_export_token(service: &PreviewService, handle: &str, index: u64) -> String {
+    let outcome = service
+        .load_spectrum(handle, index)
+        .expect("the spectrum loads");
+    let SelectedSpectrumOutcomeDto::Spectrum { spectrum } = outcome else {
+        panic!("a present spectrum is not the unavailable outcome");
+    };
+    spectrum.export_token.clone()
+}
+
+fn one_spectrum() -> Response {
+    Response::File(selected_spectrum_output(
+        0,
+        &[(100.5, 10.0), (200.25, 40.0)],
+    ))
+}
+
+/// The figure settings a panel would send with these fields in them.
+fn figure_settings(width_px: u32, height_px: u32, png_dpi: u32) -> FigureSettingsDto {
+    FigureSettingsDto {
+        width_px,
+        height_px,
+        png_dpi,
+        theme: "light".to_owned(),
+    }
+}
+
+/// One loaded spectrum, and the token the panel would hold for it.
+fn one_loaded_spectrum() -> (TestFile, PreviewService, String) {
+    let file = TestFile::new("figure-settings");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let token = loaded_export_token(&service, &selected.handle, 0);
+    (file, service, token)
+}
+
+/// Begins one export and releases the lane again, so the next can be asked for.
+///
+/// The lane is single: a reservation left standing would make every later
+/// begin in the same test refuse as "already exporting", which is a true
+/// refusal about the wrong thing.
+fn begin_and_release(
+    service: &PreviewService,
+    token: &str,
+    format: &str,
+    settings: &FigureSettingsDto,
+) -> Result<(), PreviewErrorDto> {
+    let reservation = service.begin_spectrum_export(token, format, settings)?;
+    service.cancel_spectrum_export(&reservation);
+    Ok(())
+}
+
+#[test]
+fn a_resolution_no_png_could_record_stops_the_png_and_nothing_else() {
+    // The Round-2 finding. DPI is written into one format's metadata and read
+    // by nothing else: an SVG has no pixels to give a physical size to, and a
+    // data document is not a drawing at all. Refusing them over this number
+    // would refuse three working exports for a reason that could not have
+    // affected any of them.
+    let (_file, service, token) = one_loaded_spectrum();
+    let unusable = figure_settings(1_200, 640, 50);
+
+    for format in ["svg", "csv", "tsv"] {
+        begin_and_release(&service, &token, format, &unusable)
+            .unwrap_or_else(|refusal| panic!("{format} records no resolution: {refusal:?}"));
+    }
+
+    let refusal = service
+        .begin_spectrum_export(&token, "png", &unusable)
+        .expect_err("50 DPI is below what this boundary records");
+    assert_eq!(refusal.kind, "figure_settings_refused");
+    assert!(
+        refusal.summary.contains("between 72 and 1200"),
+        "the refusal names the number to change: {:?}",
+        refusal.summary,
+    );
+}
+
+#[test]
+fn every_conventional_resolution_is_accepted_and_the_two_just_outside_are_not() {
+    let (_file, service, token) = one_loaded_spectrum();
+
+    for dpi in [72, 96, 150, 300, 600, 1_200] {
+        begin_and_release(&service, &token, "png", &figure_settings(1_200, 640, dpi))
+            .unwrap_or_else(|refusal| {
+                panic!("{dpi} DPI is a resolution a PNG records: {refusal:?}")
+            });
+    }
+    for dpi in [71, 1_201] {
+        let refusal = service
+            .begin_spectrum_export(&token, "png", &figure_settings(1_200, 640, dpi))
+            .unwrap_err();
+        assert_eq!(refusal.kind, "figure_settings_refused", "{dpi} DPI");
+    }
+}
+
+#[test]
+fn a_figure_too_large_to_hold_as_pixels_is_still_a_vector_document() {
+    // A vector document can honestly describe a 20,000 x 20,000 figure, and
+    // this application will write one. The raster budget is a question about
+    // the output rather than about the figure, so it stops the outputs that
+    // have to hold every pixel and leaves the one that does not.
+    let (_file, service, token) = one_loaded_spectrum();
+    let enormous = figure_settings(20_000, 20_000, 300);
+
+    begin_and_release(&service, &token, "svg", &enormous)
+        .expect("the largest vector figure is a vector document");
+
+    let refusal = service
+        .begin_spectrum_export(&token, "png", &enormous)
+        .expect_err("400 megapixels is not an image this machine should attempt");
+    assert_eq!(refusal.kind, "figure_settings_refused");
+    assert!(
+        refusal.summary.contains("32 million pixels"),
+        "the refusal names the ceiling: {:?}",
+        refusal.summary,
+    );
+    // And it says the export that *is* available, which is the one that was
+    // just proven to work.
+    assert!(refusal.summary.contains("SVG"), "{:?}", refusal.summary);
+}
+
+#[test]
+fn the_raster_budget_boundary_is_the_stated_one() {
+    // Exactly 32,000,000 pixels is inside. One row more is not. A ceiling
+    // stated in a refusal and enforced a pixel away from it would be a
+    // sentence a user could follow and still be refused.
+    let (_file, service, token) = one_loaded_spectrum();
+
+    begin_and_release(&service, &token, "png", &figure_settings(8_000, 4_000, 300))
+        .expect("32,000,000 pixels exactly is inside the budget");
+
+    let refusal = service
+        .begin_spectrum_export(&token, "png", &figure_settings(8_000, 4_001, 300))
+        .expect_err("one row past the ceiling is past it");
+    assert_eq!(refusal.kind, "figure_settings_refused");
+    assert!(refusal.summary.contains("32 million pixels"));
+}
+
+#[test]
+fn a_png_wrong_in_both_ways_is_refused_over_the_resolution_first() {
+    // Both refusals are true, so the order is a choice rather than an
+    // accident, and it is asserted here because a user acting on the first
+    // sentence and then being told a second one is a worse experience than
+    // being told the smaller correction first. Fixing the resolution then
+    // leaves the size refusal, which is still true.
+    let (_file, service, token) = one_loaded_spectrum();
+
+    let both_wrong = figure_settings(20_000, 20_000, 50);
+    let refusal = service
+        .begin_spectrum_export(&token, "png", &both_wrong)
+        .expect_err("neither the resolution nor the size can be honoured");
+    assert!(
+        refusal.summary.contains("between 72 and 1200"),
+        "the resolution is named first: {:?}",
+        refusal.summary,
+    );
+
+    let size_still_wrong = figure_settings(20_000, 20_000, 300);
+    let refusal = service
+        .begin_spectrum_export(&token, "png", &size_still_wrong)
+        .expect_err("the size was not fixed by fixing the resolution");
+    assert!(
+        refusal.summary.contains("32 million pixels"),
+        "and then the size: {:?}",
+        refusal.summary,
+    );
+}
+
+#[test]
+fn a_saved_png_reports_the_resolution_it_recorded_and_an_svg_reports_none() {
+    // What the interface is told, checked against what was written. The
+    // reservation carries the resolution the export began with, so the
+    // confirmation describes the file rather than whatever the fields say by
+    // the time it appears.
+    let (file, service, token) = one_loaded_spectrum();
+    let folder = file.path.parent().expect("a folder");
+
+    let reservation = service
+        .begin_spectrum_export(&token, "png", &figure_settings(400, 300, 600))
+        .expect("the export begins");
+    let claimed = service
+        .claim_spectrum_export(&reservation)
+        .expect("the reservation is claimable once");
+    let outcome = service
+        .write_spectrum_export(&claimed, &folder.join("figure-settings.png"))
+        .expect("the file is written");
+    let SpectrumExportOutcomeDto::Saved { figure, .. } = outcome else {
+        panic!("a written export is saved");
+    };
+    let figure = figure.expect("a PNG is a figure");
+    assert_eq!(figure.width, 400);
+    assert_eq!(figure.height, 300);
+    assert_eq!(figure.dpi, Some(600));
+
+    let reservation = service
+        .begin_spectrum_export(&token, "svg", &figure_settings(400, 300, 600))
+        .expect("the export begins");
+    let claimed = service
+        .claim_spectrum_export(&reservation)
+        .expect("claimable");
+    let outcome = service
+        .write_spectrum_export(&claimed, &folder.join("figure-settings.svg"))
+        .expect("the file is written");
+    let SpectrumExportOutcomeDto::Saved { figure, .. } = outcome else {
+        panic!("a written export is saved");
+    };
+    let figure = figure.expect("an SVG is a figure");
+    assert_eq!(
+        figure.dpi, None,
+        "a vector document records no physical resolution, whatever was asked for"
+    );
+}
+
+#[test]
+fn a_spectrum_that_turns_out_unavailable_revokes_the_retained_one() {
+    let file = TestFile::new("lifecycle-unavailable");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
+        one_spectrum(),
+        Response::NoOutput,
+    ])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let token = loaded_export_token(&service, &selected.handle, 0);
+    let retained = service
+        .retained_spectrum_weak()
+        .expect("a loaded spectrum is retained");
+
+    let outcome = service
+        .load_spectrum(&selected.handle, 1)
+        .expect("an absent index is an answer, not a failure");
+    assert!(matches!(
+        outcome,
+        SelectedSpectrumOutcomeDto::Unavailable { .. }
+    ));
+
+    assert!(
+        retained.upgrade().is_none(),
+        "the arrays are released once nothing names them"
+    );
+    let refusal = service
+        .begin_spectrum_export(&token, "svg", &default_figure_settings())
+        .expect_err("the old token names a spectrum this session no longer has");
+    assert_eq!(refusal.kind, "spectrum_export_stale");
+}
+
+#[test]
+fn a_spectrum_whose_read_fails_revokes_the_retained_one() {
+    let file = TestFile::new("lifecycle-failed");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
+        one_spectrum(),
+        Response::Error(PreviewErrorDto::new(
+            "spectrum_failed",
+            "the read did not complete",
+            true,
+        )),
+    ])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let token = loaded_export_token(&service, &selected.handle, 0);
+    let retained = service
+        .retained_spectrum_weak()
+        .expect("a loaded spectrum is retained");
+
+    service
+        .load_spectrum(&selected.handle, 1)
+        .expect_err("the read fails");
+
+    assert!(retained.upgrade().is_none());
+    assert_eq!(
+        service
+            .begin_spectrum_export(&token, "csv", &default_figure_settings())
+            .expect_err("stale")
+            .kind,
+        "spectrum_export_stale"
+    );
+}
+
+#[test]
+fn removing_the_previews_own_dataset_revokes_the_retained_spectrum() {
+    let file = TestFile::new("lifecycle-remove-own");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let token = loaded_export_token(&service, &selected.handle, 0);
+    let retained = service
+        .retained_spectrum_weak()
+        .expect("a loaded spectrum is retained");
+
+    service
+        .remove_datasets(std::slice::from_ref(&selected.handle))
+        .expect("the row is removed");
+
+    assert!(retained.upgrade().is_none());
+    assert_eq!(
+        service
+            .begin_spectrum_export(&token, "svg", &default_figure_settings())
+            .expect_err("stale")
+            .kind,
+        "spectrum_export_stale"
+    );
+}
+
+#[test]
+fn removing_an_unrelated_dataset_leaves_the_retained_spectrum() {
+    // The frontend keeps the preview open when a row *around* it goes, and this
+    // is the half of the invariant that says so. A slot that forgot on any
+    // removal would refuse the next export of a spectrum still on screen.
+    let file = TestFile::new("lifecycle-remove-other");
+    let sibling = file.sibling("other.mzML");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    // Added as a batch, because accepting a file one at a time is the picker
+    // path and that replaces the whole selection.
+    service.add_files_now(&[file.path.clone(), sibling]);
+    let roster = service.roster();
+    let read = roster.datasets[0].handle.clone();
+    let unrelated = roster.datasets[1].handle.clone();
+    let token = loaded_export_token(&service, &read, 0);
+
+    service
+        .remove_datasets(std::slice::from_ref(&unrelated))
+        .expect("the other row is removed");
+
+    assert!(
+        service.retained_spectrum_weak().is_some(),
+        "the spectrum on screen is untouched by a removal elsewhere"
+    );
+    service
+        .begin_spectrum_export(&token, "svg", &default_figure_settings())
+        .expect("the spectrum on screen is still exportable");
+}
+
+#[test]
+fn clearing_the_list_revokes_the_retained_spectrum() {
+    let file = TestFile::new("lifecycle-clear");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let token = loaded_export_token(&service, &selected.handle, 0);
+    let retained = service
+        .retained_spectrum_weak()
+        .expect("a loaded spectrum is retained");
+
+    service.clear_workspace().expect("the list clears");
+
+    assert!(retained.upgrade().is_none());
+    assert_eq!(
+        service
+            .begin_spectrum_export(&token, "tsv", &default_figure_settings())
+            .expect_err("stale")
+            .kind,
+        "spectrum_export_stale"
+    );
+}
+
+#[test]
+fn opening_a_preview_revokes_whatever_the_last_one_left() {
+    // Whatever happens next. An open takes the current preview off the screen
+    // before it can succeed or fail, so the retained spectrum stops being named
+    // at that moment -- which is why this asserts it against an open that does
+    // not even complete.
+    let file = TestFile::new("lifecycle-open");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let token = loaded_export_token(&service, &selected.handle, 0);
+    let retained = service
+        .retained_spectrum_weak()
+        .expect("a loaded spectrum is retained");
+
+    service
+        .open_preview(&selected.handle)
+        .expect_err("this fake has no further response to give");
+
+    assert!(retained.upgrade().is_none());
+    assert_eq!(
+        service
+            .begin_spectrum_export(&token, "svg", &default_figure_settings())
+            .expect_err("stale")
+            .kind,
+        "spectrum_export_stale"
+    );
+}
+
+#[test]
+fn reading_the_roster_does_not_revoke_the_retained_spectrum() {
+    // The Rust-side shape of the M4.1 invariant that focus is not a revocation.
+    // Moving the keyboard to a vendor row while the preview stays visible calls
+    // no command that changes the selection; what it does reach is the roster,
+    // and the spectrum has to survive that.
+    let file = TestFile::new("lifecycle-focus");
+    let sibling = file.sibling("beside.mzML");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    service.add_files_now(&[file.path.clone(), sibling]);
+    let read = service.roster().datasets[0].handle.clone();
+    let token = loaded_export_token(&service, &read, 0);
+
+    let roster = service.roster();
+    assert_eq!(roster.datasets.len(), 2);
+
+    assert!(service.retained_spectrum_weak().is_some());
+    service
+        .begin_spectrum_export(&token, "svg", &default_figure_settings())
+        .expect("the spectrum a user is reading stays exportable");
+}
+
+#[test]
+fn a_claimed_export_finishes_after_the_spectrum_it_names_is_revoked() {
+    // The exception the whole design turns on. Revocation ends the ability to
+    // start something new; it does not reach into an operation the user already
+    // committed to, which holds its own handle and finishes from that.
+    let file = TestFile::new("lifecycle-claimed");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let token = loaded_export_token(&service, &selected.handle, 0);
+
+    let reservation = service
+        .begin_spectrum_export(&token, "svg", &default_figure_settings())
+        .expect("the export begins");
+    let claimed = service
+        .claim_spectrum_export(&reservation)
+        .expect("the reservation is claimed");
+
+    // The user is standing in a save dialog when the list is cleared.
+    service.clear_workspace().expect("the list clears");
+
+    assert!(
+        service.retained_spectrum_weak().is_none(),
+        "the slot holds nothing current"
+    );
+    assert_eq!(
+        service
+            .begin_spectrum_export(&token, "svg", &default_figure_settings())
+            .expect_err("a new export is refused")
+            .kind,
+        "spectrum_export_stale"
+    );
+
+    let destination = file.directory.join("claimed.svg");
+    service
+        .write_spectrum_export(&claimed, &destination)
+        .expect("the claimed export still writes the spectrum it named");
+    let written = fs::read_to_string(&destination).expect("the file exists");
+    assert!(written.contains("<svg"), "{written:.60}");
+}
+
+#[test]
+fn a_later_spectrum_installs_one_snapshot_and_keeps_no_history() {
+    let file = TestFile::new("lifecycle-replace");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
+        one_spectrum(),
+        Response::File(selected_spectrum_output(1, &[(300.5, 5.0)])),
+    ])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let first = loaded_export_token(&service, &selected.handle, 0);
+    let retained = service
+        .retained_spectrum_weak()
+        .expect("a loaded spectrum is retained");
+
+    let second = loaded_export_token(&service, &selected.handle, 1);
+
+    assert_ne!(first, second, "each retained spectrum has its own name");
+    assert!(
+        retained.upgrade().is_none(),
+        "the replaced spectrum is released rather than accumulated"
+    );
+    assert_eq!(
+        service
+            .begin_spectrum_export(&first, "svg", &default_figure_settings())
+            .expect_err("stale")
+            .kind,
+        "spectrum_export_stale"
+    );
+    service
+        .begin_spectrum_export(&second, "svg", &default_figure_settings())
+        .expect("the spectrum now on screen is the exportable one");
+}
+
+#[test]
+fn choosing_another_file_through_the_picker_revokes_the_retained_spectrum() {
+    // The single-file picker replaces the whole selection rather than adding to
+    // it, so the dataset the retained spectrum came from stops existing. This
+    // path empties the workspace without going through `clear_workspace`, which
+    // is exactly why it needs its own revocation and its own test.
+    let file = TestFile::new("lifecycle-replace-selection");
+    let another = file.sibling("another.mzML");
+    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let token = loaded_export_token(&service, &selected.handle, 0);
+    let retained = service
+        .retained_spectrum_weak()
+        .expect("a loaded spectrum is retained");
+
+    service
+        .accept_file(&another)
+        .expect("the new file is chosen");
+
+    assert!(retained.upgrade().is_none());
+    assert_eq!(
+        service
+            .begin_spectrum_export(&token, "svg", &default_figure_settings())
+            .expect_err("stale")
+            .kind,
+        "spectrum_export_stale"
+    );
 }

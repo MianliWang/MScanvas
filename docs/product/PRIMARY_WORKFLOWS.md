@@ -253,16 +253,20 @@ exists but could not be read. See
 4. Preview the export-specific render.
 5. Export image and optionally underlying data.
 
-**Implemented today (M4.1):** step 5, both halves, for the selected spectrum
-only -- reached directly, without the chooser steps 2 to 4 describe. The `Selected spectrum` panel offers `Export SVG…`,
-`Export CSV…` and `Export TSV…` once a spectrum has loaded — including one that
+**Implemented today (M4.2):** step 2's quick-copy half as `Copy plot`, step 3's
+dimensions and theme, and step 5, both halves -- for the selected spectrum only. The `Selected spectrum` panel offers `Export SVG…`,
+`Export PNG…`, `Copy plot`, `Export CSV…` and `Export TSV…` once a spectrum has
+loaded, beside a width, a height, a PNG DPI and a Light/Dark figure theme — including one that
 loaded with no peaks, which exports an honest empty figure. Each writes one file
 through a Rust-owned save dialog that replaces nothing; a dismissed dialog is an
 ordinary outcome and leaves the spectrum exactly as it was. What is written is
 the complete spectrum Rust read, not the bounded arrays the interface drew from.
 
-Steps 2 to 4 do not exist yet -- no quick copy, no PNG, no range, dimension or
-theme chooser -- and neither does a chromatogram or current-range export. See
+What is still missing from steps 2 to 4: PNG is a save rather than a quick copy
+target, there is no range chooser because there is no zoom or pan to choose a
+range from, and step 4's export-specific preview does not exist -- the figure is
+described by its settings rather than shown before it is written. Neither a
+chromatogram nor a current-range export exists. See
 [ADR 0029](../architecture/adr/0029-first-visible-spectrum-figure-and-data-export.md).
 
 **Success:** output is independent of app chrome/theme and corresponds to a defined PlotSpec/FigureSpec.

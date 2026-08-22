@@ -648,9 +648,15 @@ export function PreviewWorkspace() {
             />
             <SelectedSpectrumPanel
               exportState={workspace.spectrumExport}
+              figureSettings={workspace.figureSettings}
+              onCopyPlot={workspace.copySpectrumPlot}
               onDismissExport={workspace.dismissSpectrumExport}
               onExport={workspace.exportSpectrum}
+              onFigureSetting={workspace.setFigureSetting}
+              onFigureTheme={workspace.setFigureTheme}
               onRetry={workspace.retrySpectrum}
+              pngDpiProblem={workspace.pngDpiProblem}
+              renderSettingsProblem={workspace.renderSettingsProblem}
               state={spectrum}
             />
           </div>

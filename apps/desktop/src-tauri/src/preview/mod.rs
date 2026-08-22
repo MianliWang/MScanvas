@@ -36,7 +36,15 @@ pub mod dto;
 /// Private to this module. The webview learns that an export is possible and
 /// what one wrote; it never receives the spectrum's complete arrays, a path, or
 /// the folder a file was saved in. See ADR 0029.
+/// One synthetic selected spectrum for the rendered tests, compiled in only
+/// under the non-default `e2e` feature. Not a command, and not reachable from
+/// the webview in any build. See the module for what it deliberately is not.
+#[cfg(feature = "e2e")]
+mod e2e_seed;
 mod export;
+/// Figure output settings, and the rasterizer that turns one exported SVG into
+/// pixels for PNG and the clipboard.
+mod figure;
 mod installation;
 mod operation;
 pub mod selection;
@@ -48,3 +56,9 @@ mod tests;
 pub use backend::ProteoWizardProvider;
 pub(crate) use drop_ingestion::normalize_window_drop_event;
 pub use service::PreviewService;
+
+/// Installs the rendered tests' synthetic spectrum. See `e2e_seed`.
+#[cfg(feature = "e2e")]
+pub fn seed_spectrum_for_e2e(service: &PreviewService) {
+    e2e_seed::install(service);
+}

@@ -22,6 +22,8 @@ import { PreviewApiProvider, type PreviewApi } from "./api";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
 import {
   FAKE_COMPLETE_SPECTRUM_POINTS,
+  FAKE_FIGURE_SETTINGS,
+  fakeExportedFigure,
   createFakePreviewApi,
   selectedFile,
   shimadzuDataset,
@@ -89,7 +91,10 @@ describe("selected spectrum export binding", () => {
 
     // The export named the spectrum that is on screen, not the row that has
     // the keyboard.
-    expect(api.spectrumExportRequests).toEqual([{ exportToken: bound, format: "csv" }]);
+    // The figure settings travel with it, exactly as the panel holds them.
+    expect(api.spectrumExportRequests).toEqual([
+      { exportToken: bound, format: "csv", settings: FAKE_FIGURE_SETTINGS },
+    ]);
     // And the preview is exactly as it was: exporting a spectrum is not
     // selecting one, and no reload was provoked by it.
     expect(result.current.preview.status).toBe("loaded");
@@ -184,7 +189,7 @@ describe("selected spectrum export binding", () => {
     let finishExport = (): void => undefined;
     const api = createFakePreviewApi({
       initialDatasets: [{ file: selectedFile, parents: [] }],
-      spectrumExport: async (_token, format) => {
+      spectrumExport: async (_token, format, settings) => {
         await new Promise<void>((resolve) => {
           finishExport = resolve;
         });
@@ -192,6 +197,7 @@ describe("selected spectrum export binding", () => {
           status: "saved",
           format,
           fileName: `mscanvas-spectrum.${format}`,
+          figure: fakeExportedFigure(settings, format),
           pointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
         };
       },
@@ -217,7 +223,7 @@ describe("selected spectrum export binding", () => {
       result.current.exportSpectrum("csv");
     });
     await waitFor(() => {
-      expect(result.current.spectrumExport.status).toBe("exporting");
+      expect(result.current.spectrumExport.status).toBe("running");
     });
 
     // The user moves on while the write is still running.
@@ -237,5 +243,372 @@ describe("selected spectrum export binding", () => {
     // The file was written. It is simply not this spectrum's file, so this
     // spectrum says nothing about it.
     expect(result.current.spectrumExport.status).toBe("idle");
+  });
+
+  /** Drives one workspace to a loaded spectrum and answers with its hook. */
+  async function loadedWorkspace(options: Parameters<typeof createFakePreviewApi>[0] = {}) {
+    const api = createFakePreviewApi({
+      initialDatasets: [{ file: selectedFile, parents: [] }],
+      ...options,
+    });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => {
+      expect(result.current.roster.datasets).toHaveLength(1);
+    });
+    act(() => {
+      result.current.activateDataset(selectedFile.handle);
+    });
+    await waitFor(() => {
+      expect(result.current.preview.status).toBe("loaded");
+    });
+    act(() => {
+      result.current.selectSpectrum(0);
+    });
+    await waitFor(() => {
+      expect(result.current.spectrum.status).toBe("loaded");
+    });
+    return { api, result };
+  }
+
+  it("sends the figure settings the user chose", async () => {
+    const { api, result } = await loadedWorkspace();
+
+    act(() => {
+      result.current.setFigureSetting("widthPx", "800");
+      result.current.setFigureSetting("heightPx", "600");
+      result.current.setFigureSetting("pngDpi", "600");
+      result.current.setFigureTheme("dark");
+    });
+    act(() => {
+      result.current.exportSpectrum("png");
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("saved");
+    });
+
+    expect(api.spectrumExportRequests).toEqual([
+      {
+        exportToken: "token-0",
+        format: "png",
+        settings: { widthPx: 800, heightPx: 600, pngDpi: 600, theme: "dark" },
+      },
+    ]);
+  });
+
+  it("copies the plot with the same token and settings a save would use", async () => {
+    const { api, result } = await loadedWorkspace();
+
+    act(() => {
+      result.current.setFigureTheme("dark");
+    });
+    act(() => {
+      result.current.copySpectrumPlot();
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("copied");
+    });
+
+    // The token the loaded spectrum carries, and no path, no name, no format.
+    expect(api.spectrumCopyRequests).toEqual([
+      {
+        exportToken: "token-0",
+        settings: { widthPx: 1_200, heightPx: 640, pngDpi: 300, theme: "dark" },
+      },
+    ]);
+    expect(api.spectrumExportRequests).toEqual([]);
+  });
+
+  it("starts no operation at all while the settings describe no figure", async () => {
+    const { api, result } = await loadedWorkspace();
+
+    act(() => {
+      result.current.setFigureSetting("widthPx", "0");
+    });
+    expect(result.current.renderSettingsProblem).toBe(
+      "Width must be a whole number of at least 1.",
+    );
+    expect(result.current.resolvedRenderSettings).toBeNull();
+    // And the resolution beside it is untouched, because nothing is wrong with
+    // it: the two questions are answered separately.
+    expect(result.current.pngDpiProblem).toBeNull();
+    expect(result.current.resolvedPngDpi).toBe(300);
+
+    act(() => {
+      result.current.exportSpectrum("png");
+      result.current.copySpectrumPlot();
+    });
+
+    // Nothing reached the boundary. A refusal Rust would have had to send back
+    // is a round trip for something this side already knew.
+    expect(api.spectrumExportRequests).toEqual([]);
+    expect(api.spectrumCopyRequests).toEqual([]);
+    expect(result.current.spectrumExport.status).toBe("idle");
+  });
+
+  it("keeps the settings an operation was started with when they change under it", async () => {
+    let finish = (): void => undefined;
+    const { api, result } = await loadedWorkspace({
+      spectrumExport: async (_token, format, settings) => {
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        return {
+          status: "saved",
+          format,
+          fileName: `mscanvas-spectrum.${format}`,
+          figure: fakeExportedFigure(settings, format),
+          pointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+        };
+      },
+    });
+
+    act(() => {
+      result.current.exportSpectrum("png");
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("running");
+    });
+
+    // The user changes their mind while the dialog is open.
+    act(() => {
+      result.current.setFigureSetting("widthPx", "4000");
+      result.current.setFigureTheme("dark");
+    });
+    await act(async () => {
+      finish();
+      await Promise.resolve();
+    });
+
+    // What was asked for is what was sent, and what came back describes it.
+    expect(api.spectrumExportRequests[0]?.settings).toEqual(FAKE_FIGURE_SETTINGS);
+    const outcome = result.current.spectrumExport;
+    expect(outcome.status).toBe("saved");
+    if (outcome.status === "saved") {
+      expect(outcome.figure).toEqual({ width: 1_200, height: 640, dpi: 300, theme: "light" });
+    }
+  });
+
+  it("drops a copy result that lands after a different spectrum has loaded", async () => {
+    // The same binding discipline a save has. The clipboard was written, but a
+    // "copied" message beside a spectrum those pixels did not come from would
+    // say the wrong thing about what is on the clipboard.
+    let finishCopy = (): void => undefined;
+    const { result } = await loadedWorkspace({
+      spectrumCopy: async (_token, settings) => {
+        await new Promise<void>((resolve) => {
+          finishCopy = resolve;
+        });
+        return {
+          status: "copied",
+          figure: fakeExportedFigure(settings, "png"),
+          pointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+        };
+      },
+    });
+
+    act(() => {
+      result.current.copySpectrumPlot();
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("running");
+    });
+
+    act(() => {
+      result.current.selectSpectrum(1);
+    });
+    await waitFor(() => {
+      expect(result.current.spectrum.status).toBe("loaded");
+    });
+    expect(result.current.spectrumExport.status).toBe("idle");
+
+    await act(async () => {
+      finishCopy();
+      await Promise.resolve();
+    });
+
+    expect(result.current.spectrumExport.status).toBe("idle");
+  });
+
+  it("still exports data while the figure settings describe no figure", async () => {
+    // The panel deliberately leaves the data actions live when a width is
+    // unusable, because a size and a theme are not properties of a measurement.
+    // An enabled button that silently does nothing is worse than either
+    // offering it or closing it.
+    const { api, result } = await loadedWorkspace();
+
+    act(() => {
+      result.current.setFigureSetting("widthPx", "0");
+    });
+    expect(result.current.resolvedRenderSettings).toBeNull();
+
+    act(() => {
+      result.current.exportSpectrum("csv");
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("saved");
+    });
+    expect(api.spectrumExportRequests.map((request) => request.format)).toEqual(["csv"]);
+
+    // The figure actions are still refused, because there is no figure.
+    act(() => {
+      result.current.exportSpectrum("png");
+      result.current.copySpectrumPlot();
+    });
+    expect(api.spectrumExportRequests).toHaveLength(1);
+    expect(api.spectrumCopyRequests).toEqual([]);
+  });
+
+  it("sends the SVG and the copy while only the resolution is unusable", async () => {
+    // The Round-2 finding, at the boundary rather than at the button. DPI is
+    // written into one format's metadata and read by nothing else, so an
+    // unusable one must leave every other output exactly where it was --
+    // proven by activating them and reading what actually crossed, not by
+    // checking whether a button was enabled.
+    const { api, result } = await loadedWorkspace();
+
+    act(() => {
+      result.current.setFigureSetting("pngDpi", "");
+    });
+    expect(result.current.pngDpiProblem).toBe("PNG DPI must be a whole number of at least 1.");
+    expect(result.current.resolvedPngDpi).toBeNull();
+    // The figure itself is undisturbed.
+    expect(result.current.renderSettingsProblem).toBeNull();
+    expect(result.current.resolvedRenderSettings).toEqual({
+      widthPx: 1_200,
+      heightPx: 640,
+      theme: "light",
+    });
+
+    act(() => {
+      result.current.exportSpectrum("svg");
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("saved");
+    });
+    act(() => {
+      result.current.dismissSpectrumExport();
+    });
+    act(() => {
+      result.current.copySpectrumPlot();
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("copied");
+    });
+
+    // Both crossed, and both carried the figure that was asked for. The
+    // resolution they travel with is the default stand-in the uniform
+    // transport needs and neither output reads.
+    expect(api.spectrumExportRequests).toEqual([
+      { exportToken: "token-0", format: "svg", settings: FAKE_FIGURE_SETTINGS },
+    ]);
+    expect(api.spectrumCopyRequests).toEqual([
+      { exportToken: "token-0", settings: FAKE_FIGURE_SETTINGS },
+    ]);
+  });
+
+  it("sends a resolution only Rust can judge, and lets Rust judge it", async () => {
+    // The division of labour, stated as a test. 50 is a whole positive number,
+    // so this side has nothing to say about it; whether a PNG can record it is
+    // a bound Rust holds, and duplicating that bound here would be a second
+    // copy to drift. So every operation crosses, carrying the number that was
+    // typed -- and the one that writes it is the one Rust refuses.
+    const { api, result } = await loadedWorkspace();
+
+    act(() => {
+      result.current.setFigureSetting("pngDpi", "50");
+    });
+    expect(result.current.pngDpiProblem).toBeNull();
+    expect(result.current.resolvedPngDpi).toBe(50);
+
+    act(() => {
+      result.current.exportSpectrum("png");
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("saved");
+    });
+
+    expect(api.spectrumExportRequests).toEqual([
+      {
+        exportToken: "token-0",
+        format: "png",
+        settings: { widthPx: 1_200, heightPx: 640, pngDpi: 50, theme: "light" },
+      },
+    ]);
+  });
+
+  it("starts no PNG export while the resolution is unusable", async () => {
+    // The other half. The one output that writes the number is the one the
+    // number closes, and it is closed here rather than by a refusal Rust would
+    // have to send back.
+    const { api, result } = await loadedWorkspace();
+
+    act(() => {
+      result.current.setFigureSetting("pngDpi", "0");
+    });
+    act(() => {
+      result.current.exportSpectrum("png");
+    });
+
+    expect(api.spectrumExportRequests).toEqual([]);
+    expect(result.current.spectrumExport.status).toBe("idle");
+  });
+
+  it("says what was copied without claiming a resolution the clipboard has none of", async () => {
+    // A clipboard image is RGBA, a width and a height. There is no `pHYs`
+    // chunk and nowhere for one, so a confirmation naming a DPI would describe
+    // a property the artifact does not have -- and would go on saying 300
+    // while the user changed the field, because nothing ever read it.
+    const { result } = await loadedWorkspace();
+
+    act(() => {
+      result.current.setFigureSetting("pngDpi", "600");
+    });
+    act(() => {
+      result.current.copySpectrumPlot();
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("copied");
+    });
+
+    const outcome = result.current.spectrumExport;
+    expect(outcome.status).toBe("copied");
+    if (outcome.status === "copied") {
+      expect(outcome.figure).toEqual({ width: 1_200, height: 640, theme: "light" });
+      expect(outcome.figure).not.toHaveProperty("dpi");
+    }
+  });
+
+  it("carries a data export the same way whatever the figure is set to", async () => {
+    // The transport is uniform, and Rust ignores what a data document has no
+    // use for. What must not happen is a figure setting changing which
+    // measurement, or how much of it, is written.
+    const { api, result } = await loadedWorkspace();
+
+    act(() => {
+      result.current.exportSpectrum("csv");
+    });
+    await waitFor(() => {
+      expect(result.current.spectrumExport.status).toBe("saved");
+    });
+    act(() => {
+      result.current.setFigureSetting("widthPx", "4000");
+      result.current.setFigureTheme("dark");
+    });
+    act(() => {
+      result.current.exportSpectrum("csv");
+    });
+    await waitFor(() => {
+      expect(api.spectrumExportRequests).toHaveLength(2);
+    });
+
+    const [first, second] = api.spectrumExportRequests;
+    expect(first?.exportToken).toBe(second?.exportToken);
+    expect(first?.format).toBe("csv");
+    expect(second?.format).toBe("csv");
+    // A data export reports no figure, whatever the figure settings are.
+    const outcome = result.current.spectrumExport;
+    if (outcome.status === "saved") {
+      expect(outcome.figure).toBeNull();
+    }
   });
 });

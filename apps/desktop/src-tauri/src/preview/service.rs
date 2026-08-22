@@ -84,22 +84,27 @@ use super::dto::{
     diagnostics_too_large, diagnostics_unavailable, invalid_diagnostics_reservation,
 };
 use super::dto::{
+    CopiedFigureDto, ExportedFigureDto, FigureSettingsDto, SpectrumCopyOutcomeDto,
+    SpectrumExportOutcomeDto, figure_clipboard_unavailable, figure_font_unavailable,
+    figure_not_rasterizable, figure_settings_refused, spectrum_destination_exists,
+    spectrum_destination_unusable, spectrum_export_in_progress, spectrum_export_refused,
+    spectrum_export_stale, spectrum_not_finalized, spectrum_not_written,
+};
+use super::dto::{
     FolderDiscoverySummaryDto, FolderImportReservationDto, FolderIngestionResultDto,
     FolderScanLimitDto, SelectedFileDto, import_superseded, invalid_folder_import_reservation,
 };
 use super::dto::{MAX_WORKSPACE_DATASETS, backend_quarantined, conversion_not_stoppable};
 use super::dto::{
-    SpectrumExportOutcomeDto, spectrum_destination_exists, spectrum_destination_unusable,
-    spectrum_export_in_progress, spectrum_export_refused, spectrum_export_stale,
-    spectrum_not_finalized, spectrum_not_written,
-};
-use super::dto::{
     WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto, adoption_in_progress,
     adoption_superseded, outputs_not_adoptable,
 };
 use super::export::{
-    BeginExportRefusal, ClaimedSpectrumExport, SpectrumExportFormat, SpectrumExportSlot,
-    data_document, svg_document,
+    BeginExportRefusal, ClaimedSpectrumExport, FigureFailure, SpectrumExportFormat,
+    SpectrumExportSlot, data_document, figure_raster, png_document, svg_document,
+};
+use super::figure::{
+    FigureRenderSettings, PngDpi, RasterFailure, SettingsRefusal, validate_raster_budget,
 };
 use super::installation::InstallationIdentity;
 use super::operation::{
@@ -115,6 +120,7 @@ use super::selection::{
     lock_against_replacement, open_conversion_source, relative_contexts, revalidate,
     selected_file_dto, source_kind_dto, unknown_dataset,
 };
+use mscanvas_plot_spec::spec::FigureTheme;
 
 /// The name the native save dialog offers for a diagnostics export.
 ///
@@ -2014,6 +2020,34 @@ impl PreviewService {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// A handle on the retained spectrum that does not keep it alive.
+    ///
+    /// Test-only. Revocation is about releasing two `f64` arrays, and every
+    /// other observation a test can make -- a stale token, a refused export --
+    /// proves only that the slot stopped *naming* them. This is what proves
+    /// they are gone.
+    #[cfg(test)]
+    pub(super) fn retained_spectrum_weak(
+        &self,
+    ) -> Option<std::sync::Weak<mscanvas_proteowizard::SelectedSpectrumResult>> {
+        self.spectrum_export_slot().weak_current()
+    }
+
+    /// Retains one synthetic spectrum as if a read had produced it.
+    ///
+    /// Compiled in only under the `e2e` feature. It installs through the
+    /// ordinary slot and does nothing else: every operation afterwards is the
+    /// production path, against a snapshot that reached the slot the same way a
+    /// real one does.
+    #[cfg(feature = "e2e")]
+    pub(super) fn install_seeded_spectrum(
+        &self,
+        owner: super::selection::DatasetId,
+        spectrum: mscanvas_proteowizard::SelectedSpectrumResult,
+    ) {
+        self.spectrum_export_slot().install(owner, spectrum);
+    }
+
     /// Starts one export of one named spectrum, answering with its reservation.
     ///
     /// # Errors
@@ -2024,15 +2058,209 @@ impl PreviewService {
         &self,
         token: &str,
         format: &str,
+        settings_wire: &FigureSettingsDto,
     ) -> Result<String, PreviewErrorDto> {
         let format = SpectrumExportFormat::from_wire(format).ok_or_else(spectrum_export_stale)?;
+        // Read before the reservation, so an export that could not have been
+        // rendered is refused before a dialog is offered for it. The settings
+        // are then held by the reservation rather than read again at write
+        // time: the user is about to be in a modal dialog, and what is written
+        // is what was asked for.
+        //
+        // Each output is asked only about what it actually consumes, and that is
+        // the whole shape of this block. A data document is the same measurement
+        // whatever the figure is drawn at; a vector document has pixels neither
+        // to count against a budget nor to give a physical size to; only the
+        // raster one has both.
+        let settings = if format.is_figure() {
+            Self::render_settings(settings_wire)?
+        } else {
+            FigureRenderSettings::default()
+        };
+        // Resolution and pixel budget, for the one export format with either.
+        //
+        // The order is deliberate and tested. A figure both too large to hold as
+        // pixels and asked for at an unusable resolution is refused over the
+        // resolution first: it is the smaller correction of the two, and the
+        // size refusal still follows if it is still true.
+        let dpi = if matches!(format, SpectrumExportFormat::Png) {
+            let dpi = Self::png_dpi(settings_wire)?;
+            Self::raster_budget(settings)?;
+            Some(dpi)
+        } else {
+            None
+        };
         self.spectrum_export_slot()
-            .begin(token, format)
+            .begin(token, format, settings, dpi)
             .map(|reservation| reservation.as_wire())
             .map_err(|refusal| match refusal {
                 BeginExportRefusal::AlreadyExporting => spectrum_export_in_progress(),
                 BeginExportRefusal::Stale => spectrum_export_stale(),
             })
+    }
+
+    /// Reads what every figure output is drawn with: a size and a theme.
+    ///
+    /// Every figure operation goes through here, so a number that could not
+    /// produce a figure is refused once, in one place, before anything is
+    /// retained or allocated. It deliberately does *not* read the DPI. An SVG
+    /// stopped over a resolution it does not record would be stopped over a
+    /// number that could not have changed it.
+    fn render_settings(
+        settings: &FigureSettingsDto,
+    ) -> Result<FigureRenderSettings, PreviewErrorDto> {
+        FigureRenderSettings::from_wire(settings.width_px, settings.height_px, &settings.theme)
+            .map_err(Self::settings_refusal)
+    }
+
+    /// Reads the physical resolution, for the one output that records one.
+    fn png_dpi(settings: &FigureSettingsDto) -> Result<PngDpi, PreviewErrorDto> {
+        PngDpi::from_wire(settings.png_dpi).map_err(Self::settings_refusal)
+    }
+
+    /// Refuses a figure too large to hold as pixels.
+    ///
+    /// Asked by every operation that allocates a pixmap -- the PNG export and
+    /// the clipboard copy -- through one check, so the two cannot drift apart
+    /// again.
+    fn raster_budget(settings: FigureRenderSettings) -> Result<(), PreviewErrorDto> {
+        validate_raster_budget(settings).map_err(Self::settings_refusal)
+    }
+
+    /// The sentence for each way a figure could not be drawn as asked.
+    ///
+    /// Each names the number to change, because a reader told only that
+    /// something is wrong is left to guess which one it was.
+    fn settings_refusal(refusal: SettingsRefusal) -> PreviewErrorDto {
+        figure_settings_refused(match refusal {
+            SettingsRefusal::SizeOutOfRange => {
+                "That is not a figure size MSCanvas can draw. Width must be between 200 and \
+                 20000, and height between 180 and 20000."
+            }
+            SettingsRefusal::DpiOutOfRange => {
+                "That is not a resolution MSCanvas records. Choose a DPI between 72 and 1200."
+            }
+            SettingsRefusal::UnknownTheme => {
+                "MSCanvas draws figures in the light or the dark theme."
+            }
+            SettingsRefusal::RasterBudget => {
+                "That figure is too large to turn into an image. Choose a width and height whose \
+                 product is at most 32 million pixels; the figure can still be exported as SVG at \
+                 any size."
+            }
+        })
+    }
+
+    /// What the interface is told a figure was rendered as.
+    fn exported_figure(
+        format: SpectrumExportFormat,
+        settings: FigureRenderSettings,
+        dpi: Option<PngDpi>,
+    ) -> Option<ExportedFigureDto> {
+        format.is_figure().then(|| ExportedFigureDto {
+            width: settings.width(),
+            height: settings.height(),
+            // The resolution this export actually wrote, which only the raster
+            // format has. Reporting one for SVG would describe a property the
+            // file does not have.
+            dpi: dpi.map(PngDpi::get),
+            theme: Self::theme_name(settings),
+        })
+    }
+
+    /// What the interface is told a *copied* figure was.
+    ///
+    /// Size and theme, and deliberately no resolution. The clipboard receives
+    /// RGBA, a width and a height; there is no `pHYs` chunk and nowhere for one,
+    /// so a confirmation naming a DPI would report a property the artifact does
+    /// not have. Its own constructor rather than the export one with a `None`
+    /// threaded through, because that is what stopped a PNG's semantics being
+    /// borrowed for an artifact that is not one.
+    fn copied_figure(settings: FigureRenderSettings) -> CopiedFigureDto {
+        CopiedFigureDto {
+            width: settings.width(),
+            height: settings.height(),
+            theme: Self::theme_name(settings),
+        }
+    }
+
+    fn theme_name(settings: FigureRenderSettings) -> String {
+        match settings.theme() {
+            FigureTheme::Light => "light".to_owned(),
+            FigureTheme::Dark => "dark".to_owned(),
+        }
+    }
+
+    /// Turns a figure refusal into this boundary's vocabulary.
+    fn figure_failure(failure: FigureFailure) -> PreviewErrorDto {
+        match failure {
+            FigureFailure::Unspecifiable => spectrum_export_refused(),
+            FigureFailure::Raster(RasterFailure::NoUsableFont) => figure_font_unavailable(),
+            FigureFailure::Raster(_) => figure_not_rasterizable(),
+        }
+    }
+
+    /// Draws the named spectrum's figure and puts it on the system clipboard.
+    ///
+    /// The same figure a PNG export writes, from the same snapshot, at the same
+    /// size and theme. The pixels never cross to the webview: the interface asks
+    /// for a copy and is told whether one happened, which is all it needs and
+    /// all it is given.
+    ///
+    /// Shares the one figure-operation lane with the save exports, because a
+    /// rasterization is the expensive part of both and two at once would be two
+    /// of them competing for memory.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a token this session no longer holds, a second concurrent figure
+    /// operation, settings no figure can be drawn at, a machine with no usable
+    /// font, and a clipboard that would not take the image.
+    pub fn copy_spectrum_plot(
+        &self,
+        app: &tauri::AppHandle,
+        token: &str,
+        settings: &FigureSettingsDto,
+    ) -> Result<SpectrumCopyOutcomeDto, PreviewErrorDto> {
+        // The figure, and room for its pixels. No resolution: a clipboard image
+        // is RGBA, width and height, with nowhere for a `pHYs` chunk to live --
+        // so asking for one would refuse a copy over a number the copy does not
+        // use, and reporting one afterwards would describe the artifact falsely.
+        //
+        // The budget is asked here, through the same check PNG asks, and before
+        // anything is allocated. It was missing on this path: a 20,000 x 20,000
+        // figure -- which the vector contract quite correctly allows -- reached
+        // the rasterizer and attempted about 1.6 GiB of pixmap.
+        let settings = Self::render_settings(settings)?;
+        Self::raster_budget(settings)?;
+        let snapshot = self
+            .spectrum_export_slot()
+            .begin_copy(token)
+            .map_err(|refusal| match refusal {
+                BeginExportRefusal::AlreadyExporting => spectrum_export_in_progress(),
+                BeginExportRefusal::Stale => spectrum_export_stale(),
+            })?;
+        // Released however this ends, including a panic in the rasterizer. A
+        // lane left claimed would refuse every later figure operation for the
+        // rest of the session.
+        let _in_flight = SpectrumExportInFlight(self);
+
+        // Rendered from the snapshot the claim took, off the locks. The
+        // spectrum on screen may be replaced while this runs; what is copied is
+        // the one the user asked for.
+        let raster = figure_raster(snapshot.spectrum(), settings).map_err(Self::figure_failure)?;
+        let (width, height) = (raster.width(), raster.height());
+        let image = tauri::image::Image::new_owned(raster.into_rgba(), width, height);
+
+        use tauri_plugin_clipboard_manager::ClipboardExt;
+        app.clipboard()
+            .write_image(&image)
+            .map_err(|_| figure_clipboard_unavailable())?;
+
+        Ok(SpectrumCopyOutcomeDto::Copied {
+            figure: Self::copied_figure(settings),
+            point_count: snapshot.point_count(),
+        })
     }
 
     /// Claims one issued reservation so its save dialog may be shown.
@@ -2080,10 +2308,22 @@ impl PreviewService {
 
         let spectrum = claimed.snapshot.spectrum();
         let bytes = match claimed.format {
-            SpectrumExportFormat::Svg => {
-                svg_document(spectrum).map_err(|_| spectrum_export_refused())?
+            SpectrumExportFormat::Svg => svg_document(spectrum, claimed.settings)
+                .map_err(|_| spectrum_export_refused())?
+                .into_bytes(),
+            SpectrumExportFormat::Png => {
+                // The resolution validated when the export began, carried here
+                // rather than read again: the settings the user is about to
+                // save with are the ones they were shown in the dialog.
+                let dpi = claimed.dpi.expect("a PNG export reserved a resolution");
+                png_document(spectrum, claimed.settings, dpi).map_err(Self::figure_failure)?
             }
-            format => data_document(spectrum, format).ok_or_else(spectrum_export_refused)?,
+            // The data documents, which no figure setting reaches. The same
+            // bytes come out of here whatever the figure is being drawn at,
+            // because a size and a theme are not properties of a measurement.
+            format => data_document(spectrum, format)
+                .ok_or_else(spectrum_export_refused)?
+                .into_bytes(),
         };
 
         let (parent, file_name) = match (destination.parent(), destination.file_name()) {
@@ -2098,11 +2338,12 @@ impl PreviewService {
         // underneath it.
         let (root, _identity, _held) =
             admit_destination_root(parent).map_err(|_| spectrum_destination_unusable())?;
-        write_new_local_file(&root, file_name, bytes.as_bytes()).map_err(spectrum_write_failure)?;
+        write_new_local_file(&root, file_name, &bytes).map_err(spectrum_write_failure)?;
 
         Ok(SpectrumExportOutcomeDto::Saved {
             format: claimed.format.stable_id().to_owned(),
             file_name: bounded_text(&file_name.to_string_lossy(), MAX_CANDIDATE_NAME_CHARS),
+            figure: Self::exported_figure(claimed.format, claimed.settings, claimed.dpi),
             point_count: claimed.snapshot.point_count(),
         })
     }
@@ -3700,6 +3941,9 @@ impl PreviewService {
             return Err(conversion_busy());
         }
         let mut removed = Vec::new();
+        // The same rows, as identities. The export slot answers a question the
+        // handle strings cannot: is the spectrum it retains one of these.
+        let mut removed_ids = Vec::new();
         let mut unknown = Vec::new();
         // The same handle twice is one row to remove, not one removal and one
         // stale handle. A selection can hold a row once; a caller assembling a
@@ -3717,12 +3961,18 @@ impl PreviewService {
                     // facts all go together.
                     workspace.revoke(id, RevocationReason::Removed);
                     removed.push(handle.clone());
+                    removed_ids.push(id);
                 }
                 None => unknown.push(handle.clone()),
             }
         }
         let roster = roster_of(&workspace);
         drop(workspace);
+        // After the workspace lock, because the export slot is a leaf. Removing
+        // rows *around* the preview is not a revocation: the frontend keeps the
+        // preview open in exactly that case, and a slot that forgot anyway
+        // would refuse the next export of a spectrum still on screen.
+        self.spectrum_export_slot().forget_if_owned_by(&removed_ids);
         let result = WorkspaceRemoveResultDto {
             roster,
             removed_handles: removed,
@@ -3766,6 +4016,9 @@ impl PreviewService {
         workspace.clear(RevocationReason::Cleared);
         let roster = roster_of(&workspace);
         drop(workspace);
+        // Every row is gone, so whatever the slot held is owned by a dataset
+        // this session no longer has.
+        self.spectrum_export_slot().forget();
         drop(batch);
         self.drop_updates.publish_terminal_with_busy(
             delivery,
@@ -4102,6 +4355,12 @@ impl PreviewService {
         // leaves the workspace exactly as it was, because this line returns
         // before anything below it runs.
         let accepted = accept_mzml_file(path)?;
+        // This path replaces the whole selection -- the clear below empties the
+        // workspace -- so the dataset the retained spectrum came from is about
+        // to stop existing. Revoked here, after the inspection that can refuse
+        // the path and before the workspace lock, because the export slot is a
+        // leaf and this is the last point at which no other lock is held.
+        self.spectrum_export_slot().forget();
         let mut workspace = self.workspace();
         // Everything the previous selection owned goes at once: its row, its
         // preview facts, the identity lease that kept its file's identity its
@@ -4511,6 +4770,13 @@ impl PreviewService {
     }
 
     pub fn open_preview(&self, handle: &str) -> Result<PreviewDto, PreviewErrorDto> {
+        // First, and whatever happens next. Opening a preview takes the current
+        // one off the screen before this call can succeed or fail -- the panel
+        // has no loaded spectrum from here on either way -- so the retained
+        // spectrum stops being the one anything names at the same moment.
+        // Re-opening the same dataset is no exception: that clears the selection
+        // too, and a spectrum nobody has selected is not one to keep.
+        self.spectrum_export_slot().forget();
         // Asked before anything else. Once a stop could not be confirmed this
         // session does not start another process at all, and a preview is a
         // process.
@@ -4727,9 +4993,36 @@ impl PreviewService {
         })
     }
 
-    /// Loads exactly one spectrum by zero-based index. Requests stay direct and
-    /// uncached in this slice.
+    /// Loads exactly one spectrum by zero-based index.
+    ///
+    /// Wraps the read so the export slot's invariant is decided in one place.
+    /// Every way this can end other than a spectrum -- unavailable, or any
+    /// refusal at all -- leaves the panel with nothing loaded, and the retained
+    /// spectrum has to go with it. Deciding that here rather than in each branch
+    /// below is what stops the next branch somebody adds from quietly keeping a
+    /// spectrum alive that nothing on screen names.
+    ///
+    /// A claimed export is untouched: it holds its own handle and finishes.
     pub fn load_spectrum(
+        &self,
+        handle: &str,
+        index: u64,
+    ) -> Result<SelectedSpectrumOutcomeDto, PreviewErrorDto> {
+        // Which spectrum the slot held when this read began. Two reads can be in
+        // flight, and the later one can reach the backend gate first and be the
+        // spectrum on screen by the time this one comes back to say it failed --
+        // so the revocation below is conditional on this read still owning what
+        // it is about to revoke.
+        let owned = self.spectrum_export_slot().current_token();
+        let outcome = self.interpret_spectrum(handle, index);
+        if !matches!(outcome, Ok(SelectedSpectrumOutcomeDto::Spectrum { .. })) {
+            self.spectrum_export_slot().forget_if_current(owned);
+        }
+        outcome
+    }
+
+    /// The read itself. Requests stay direct and uncached in this slice.
+    fn interpret_spectrum(
         &self,
         handle: &str,
         index: u64,
@@ -4909,7 +5202,7 @@ impl PreviewService {
                     // export identifies this spectrum rather than
                     // reconstructing one from the arrays it is about to
                     // receive, which may be a prefix of them.
-                    let snapshot = self.spectrum_export_slot().install(spectrum);
+                    let snapshot = self.spectrum_export_slot().install(id, spectrum);
                     let projected = selected_spectrum_dto(
                         snapshot.spectrum(),
                         &redactor,

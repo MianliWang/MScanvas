@@ -31,11 +31,19 @@ and a debug binary built with `--features e2e`.
 
 ## The `e2e` Cargo feature
 
-Off by default, and never enabled for a release build. It compiles in exactly
-one thing: an initialization script that can answer this application's own
-commands from a table the page can write. That is a capability a shipped binary
-must not carry — anything running in the document could use it to make the
-interface believe whatever it liked.
+Off by default, and never enabled for a release build. It compiles in two
+things:
+
+- an initialization script that can answer this application's own commands from
+  a table the page can write;
+- **one synthetic spectrum**, installed into the ordinary export slot at startup,
+  so a rendered test can reach the real export path on a machine with no
+  ProteoWizard installation and no mzML file.
+
+Both are capabilities a shipped binary must not carry — anything running in the
+document could use the first to make the interface believe whatever it liked.
+Neither is a command: there is nothing for a webview to call, and the
+registration list is byte-identical in every build.
 
 Nothing else about the binary changes. The WebDriver session itself is external
 (`tauri-driver` in front of the platform WebDriver), so no server, port, or
@@ -48,6 +56,12 @@ $ cargo build -p mscanvas-desktop --bin mscanvas-desktop
 $ strings target/debug/mscanvas-desktop.exe | grep -c __mscanvasIpcTable__
 0
 ```
+
+`scripts/check_repo.py` checks all of it rather than trusting it: the feature
+staying off by default, every test-only symbol sitting inside its `cfg`, the seed
+never reaching the registration list, no marker in the production frontend, no
+clipboard permission or package, and no font vendored or fetched. Each guard was
+verified by making the violation and watching it fail.
 
 ## What is real in the Tauri layer, and what is not
 

@@ -44,10 +44,15 @@ range, written from the complete spectrum Rust retained rather than from the
 arrays the interface drew. See
 [ADR 0029](docs/architecture/adr/0029-first-visible-spectrum-figure-and-data-export.md).
 
-**M4.2 — the rest of the export surface.** Not started.
+**M4.2 — PNG, Copy plot and figure settings.** Closed. PNG export and
+`Copy plot` for the currently selected mzML spectrum at full range, both
+rasterizing the same semantic figure the SVG export writes, plus user-selectable
+width, height, PNG DPI and figure theme that SVG honours too. The
+selected-spectrum snapshot lifecycle deferred by M4.1 is closed with it. See
+[ADR 0030](docs/architecture/adr/0030-png-copy-plot-and-figure-settings.md).
 
-- Copy screenshot and PNG export, the latter on `resvg` called from Rust.
-- Dimensions, DPI and a user-selectable figure theme.
+Still outside it, and unchanged:
+
 - Current-range export, which needs a zoom/pan contract first.
 - Chromatogram data export, and a linked chromatogram + spectrum figure
   template.

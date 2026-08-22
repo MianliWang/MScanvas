@@ -27,6 +27,10 @@ import type {
   SelectedSpectrum,
   SelectedSpectrumOutcome,
   SpectrumExportFormat,
+  CopiedFigure,
+  ExportedFigure,
+  FigureSettings,
+  SpectrumCopyOutcome,
   SpectrumExportOutcome,
   SpectrumRow,
   WorkspaceAddOutcome,
@@ -460,6 +464,49 @@ function describeOrigin(origin: DatasetOrigin): string {
 export interface SpectrumExportRequest {
   readonly exportToken: string;
   readonly format: SpectrumExportFormat;
+  /** What the figure was asked to look like, exactly as the panel sent it. */
+  readonly settings: FigureSettings;
+}
+
+/** One `Copy plot`, as it reached the boundary. */
+export interface SpectrumCopyRequest {
+  readonly exportToken: string;
+  readonly settings: FigureSettings;
+}
+
+/** The figure every fixture exports at unless a test says otherwise. */
+export const FAKE_FIGURE_SETTINGS: FigureSettings = {
+  widthPx: 1_200,
+  heightPx: 640,
+  pngDpi: 300,
+  theme: "light",
+};
+
+/** What a fake figure export reports having rendered. */
+export function fakeExportedFigure(
+  settings: FigureSettings,
+  format: SpectrumExportFormat,
+): ExportedFigure {
+  return {
+    width: settings.widthPx,
+    height: settings.heightPx,
+    dpi: format === "png" ? settings.pngDpi : null,
+    theme: settings.theme,
+  };
+}
+
+/**
+ * What a fake copy reports having put on the clipboard.
+ *
+ * Modelled as Rust answers: a size and a theme. The resolution the settings
+ * carried is not reported back, because the artifact does not record one.
+ */
+export function fakeCopiedFigure(settings: FigureSettings): CopiedFigure {
+  return {
+    width: settings.widthPx,
+    height: settings.heightPx,
+    theme: settings.theme,
+  };
 }
 
 export interface FakePreviewApiOptions {
@@ -478,7 +525,18 @@ export interface FakePreviewApiOptions {
   readonly spectrumExport?: (
     exportToken: string,
     format: SpectrumExportFormat,
+    settings: FigureSettings,
   ) => Promise<SpectrumExportOutcome>;
+  /**
+   * What `Copy plot` answers with.
+   *
+   * Defaults to a copy that happened. A test about a clipboard that refused
+   * supplies its own.
+   */
+  readonly spectrumCopy?: (
+    exportToken: string,
+    settings: FigureSettings,
+  ) => Promise<SpectrumCopyOutcome>;
   /** What the session already holds when the webview mounts. */
   readonly initialDatasets?: readonly HeldFile[];
   /** What the conversion slot holds when the webview mounts. */
@@ -597,6 +655,8 @@ export interface FakePreviewApi extends PreviewApi {
    * side reconstructed.
    */
   readonly spectrumExportRequests: SpectrumExportRequest[];
+  /** Every `Copy plot` this fake was asked for, in order. */
+  readonly spectrumCopyRequests: SpectrumCopyRequest[];
   readonly requestedSpectra: number[];
   readonly openCount: () => number;
   /** Every handle this fake was asked to read, in order. */
@@ -846,6 +906,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   const adoptionRequests: string[] = [];
   const diagnosticsExportRequests: string[] = [];
   const spectrumExportRequests: SpectrumExportRequest[] = [];
+  const spectrumCopyRequests: SpectrumCopyRequest[] = [];
   // The diagnostics export slot, modelled the way Rust holds it: eligibility is
   // derived from the terminal queue rather than tracked, an export is a claim
   // that closes every other action on that queue, and the last result survives
@@ -1031,6 +1092,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
 
   const fake: FakePreviewApi = {
     spectrumExportRequests,
+    spectrumCopyRequests,
     requestedSpectra,
     openedHandles,
     openCount: () => openCount,
@@ -1317,19 +1379,35 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     // Modelled as Rust behaves: the token names a snapshot Rust retained, and
     // what comes back names the file and the number of points that went into
     // it. Nothing here reads an array this fake holds.
-    exportSelectedSpectrum: async (exportToken, format) => {
-      spectrumExportRequests.push({ exportToken, format });
+    exportSelectedSpectrum: async (exportToken, format, settings) => {
+      spectrumExportRequests.push({ exportToken, format, settings });
       if (options.spectrumExport !== undefined) {
-        return options.spectrumExport(exportToken, format);
+        return options.spectrumExport(exportToken, format, settings);
       }
       return {
         status: "saved",
         format,
         fileName: `mscanvas-spectrum.${format}`,
+        // Reported back as Rust does, and only for the formats that are
+        // figures: a size and a theme are not properties of a data document.
+        figure: format === "svg" || format === "png" ? fakeExportedFigure(settings, format) : null,
         // Deliberately not read from any array this fake holds. Rust writes the
         // complete spectrum it retained, and a fake that answered with the
         // length of the transferred arrays would model the defect rather than
         // the behaviour.
+        pointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
+      };
+    },
+    // Modelled as Rust behaves: the pixels never cross this boundary. What
+    // comes back says what was drawn and how many points it was drawn from.
+    copySelectedSpectrumPlot: async (exportToken, settings) => {
+      spectrumCopyRequests.push({ exportToken, settings });
+      if (options.spectrumCopy !== undefined) {
+        return options.spectrumCopy(exportToken, settings);
+      }
+      return {
+        status: "copied",
+        figure: fakeCopiedFigure(settings),
         pointCount: FAKE_COMPLETE_SPECTRUM_POINTS,
       };
     },
