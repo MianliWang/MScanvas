@@ -21,6 +21,15 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # external (`tauri-driver`), so nothing else about the binary changes.
 e2e = []
 
+# The frontend comes from the embedded bundle rather than a dev server.
+#
+# `tauri::is_dev()` is `!cfg!(feature = "custom-protocol")`, so this is the
+# switch between "load `devUrl`" and "load what was built in". A release build
+# has it on. The rendered tests turn it on too, which is what lets them drive
+# the shipped composition -- the real protocol, the real bundle -- instead of a
+# window pointed at a development server that has to exist first.
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build.workspace = true
 

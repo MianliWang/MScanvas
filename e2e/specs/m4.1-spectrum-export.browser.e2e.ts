@@ -33,6 +33,15 @@ const EXPORT_BLOCK = ".spectrum-export";
 const STATUS = ".spectrum-export-status";
 const FORMATS = ["SVG", "CSV", "TSV"] as const;
 
+/** Every action the panel offers, in the order a reader meets them. */
+const CONTROLS = [
+  "Export SVG…",
+  "Export PNG…",
+  "Copy plot",
+  "Export CSV…",
+  "Export TSV…",
+] as const;
+
 const VIEWPORTS = [
   { name: "1366x768", width: 1366, height: 768 },
   { name: "1920x1080", width: 1920, height: 1080 },
@@ -76,6 +85,53 @@ async function exportButton(
   return buttonLabelled(`Export ${format}…`);
 }
 
+/**
+ * The lowest point the panel can be scrolled to.
+ *
+ * A panel that scrolls has content below its visible edge, and that content is
+ * reachable. Demanding that every control fit inside the visible rectangle
+ * would be demanding that a 640px-tall window show a plot and five actions at
+ * once -- which it cannot, and which is why the panel scrolls.
+ */
+async function panelReach(): Promise<number> {
+  return browser.execute((css: string) => {
+    const node = document.querySelector(css);
+    if (node === null) {
+      return 0;
+    }
+    return node.getBoundingClientRect().top + node.scrollHeight;
+  }, PANEL);
+}
+
+/** One figure field's box, found by the label a person reads on it. */
+async function boxOfField(label: string): Promise<{
+  readonly width: number;
+  readonly height: number;
+  readonly left: number;
+  readonly right: number;
+}> {
+  return browser.execute((name: string) => {
+    const field = [...document.querySelectorAll("label")].find((candidate) =>
+      (candidate.textContent ?? "").trim().startsWith(name),
+    );
+    const input = field?.querySelector("input");
+    const box = input?.getBoundingClientRect();
+    return box === undefined
+      ? { width: 0, height: 0, left: 0, right: 0 }
+      : { width: box.width, height: box.height, left: box.left, right: box.right };
+  }, label);
+}
+
+/** Puts the keyboard on one control without activating it. */
+async function focusButton(label: string): Promise<void> {
+  await browser.execute((name: string) => {
+    const button = [...document.querySelectorAll("button")].find(
+      (candidate) => (candidate.textContent ?? "").trim() === name,
+    );
+    button?.focus();
+  }, label);
+}
+
 async function statusText(): Promise<string> {
   return (await browser.$(STATUS).getText()).trim();
 }
@@ -100,25 +156,43 @@ describe("M4.1 selected-spectrum export, rendered", () => {
         expect(panel.width).toBeGreaterThan(0);
         expect(panel.height).toBeGreaterThan(0);
 
+        // How far the panel can be scrolled to, which is where its content
+        // actually ends. A control below the visible edge of a scrolling panel
+        // is reachable; one above its top edge, or past its side, is not -- and
+        // that is the distinction these assertions have to make rather than
+        // demanding everything fit a 640px-tall window at once.
+        const reach = await panelReach();
+
         const block = await boxOf(EXPORT_BLOCK);
         // Per edge, so a failure names which way a control escaped rather than
         // reporting `false`.
         expect(block.left).toBeGreaterThanOrEqual(panel.left - 0.5);
         expect(block.right).toBeLessThanOrEqual(panel.right + 0.5);
         expect(block.top).toBeGreaterThanOrEqual(panel.top - 0.5);
-        expect(block.bottom).toBeLessThanOrEqual(panel.bottom + 0.5);
+        expect(block.bottom).toBeLessThanOrEqual(reach + 0.5);
 
-        for (const format of FORMATS) {
-          const button = await boxOfButton(`Export ${format}…`);
+        for (const control of CONTROLS) {
+          const button = await boxOfButton(control);
           // Every edge, not just the right one. A control pushed above a
-          // header's top edge is as clipped as one pushed past its right.
+          // header's top edge is as unreachable as one pushed past its right --
+          // nothing clips it because nothing contains it.
           expect(button.left).toBeGreaterThanOrEqual(panel.left - 0.5);
           expect(button.right).toBeLessThanOrEqual(panel.right + 0.5);
           expect(button.top).toBeGreaterThanOrEqual(panel.top - 0.5);
-          expect(button.bottom).toBeLessThanOrEqual(panel.bottom + 0.5);
+          expect(button.bottom).toBeLessThanOrEqual(reach + 0.5);
           // A control with no area is a control nobody can press.
           expect(button.width).toBeGreaterThan(0);
           expect(button.height).toBeGreaterThan(0);
+        }
+
+        // The figure fields are controls too, and the ones most likely to be
+        // squeezed to nothing by a narrow window.
+        for (const field of ["Width", "Height", "PNG DPI"]) {
+          const box = await boxOfField(field);
+          expect(box.width).toBeGreaterThan(0);
+          expect(box.height).toBeGreaterThan(0);
+          expect(box.left).toBeGreaterThanOrEqual(panel.left - 0.5);
+          expect(box.right).toBeLessThanOrEqual(panel.right + 0.5);
         }
 
         // Scoped to this surface rather than to the document. The workspace
@@ -171,24 +245,34 @@ describe("M4.1 selected-spectrum export, rendered", () => {
       await open();
       await loadSpectrum();
 
-      const svg = await exportButton("SVG");
-      await svg?.click();
-      // The click both activates and focuses; from here Tab must walk the
-      // group in document order.
-      await browser.keys(["Tab"]);
+      // Focused rather than clicked, because a click would start an export and
+      // this test is about tab order. `Export SVG…` is the first action after
+      // the figure fields.
+      await focusButton("Export SVG…");
       expect(await focusedTag()).toBe("BUTTON");
-      expect(await focusedName()).toContain("Export CSV");
-      const csvTreatment = await focusedTreatment();
-      expect(csvTreatment.visible).toBe(true);
 
-      await browser.keys(["Tab"]);
-      expect(await focusedName()).toContain("Export TSV");
-      const tsvTreatment = await focusedTreatment();
-      expect(tsvTreatment.visible).toBe(true);
+      // Document order through the whole group: the figure actions, then the
+      // data ones.
+      for (const next of ["Export PNG", "Copy plot", "Export CSV", "Export TSV"]) {
+        await browser.keys(["Tab"]);
+        expect(await focusedName()).toContain(next);
+        const treatment = await focusedTreatment();
+        expect(treatment.visible).toBe(true);
+      }
 
-      // Not trapped: Tab leaves the group.
+      // Not trapped: Tab leaves the group. Asked of the focused *element*
+      // rather than of its text, because once focus reaches the document body
+      // the accessible name is the whole page -- which contains every label
+      // here and would make a substring check pass for the wrong reason.
       await browser.keys(["Tab"]);
-      expect(await focusedName()).not.toContain("Export TSV");
+      const stillOnLastAction = await browser.execute(() => {
+        const active = document.activeElement;
+        return (
+          active instanceof HTMLButtonElement &&
+          (active.textContent ?? "").trim() === "Export TSV…"
+        );
+      });
+      expect(stillOnLastAction).toBe(false);
     });
 
     it("activates the focused control with the keyboard", async () => {
@@ -223,6 +307,10 @@ describe("M4.1 selected-spectrum export, rendered", () => {
           status: "saved",
           format: lower,
           fileName: `mscanvas-spectrum-0.${lower}`,
+          // A data document reports no figure; the vector one reports its size
+          // and theme and no physical resolution.
+          figure:
+            lower === "svg" ? { width: 1_200, height: 640, dpi: null, theme: "light" } : null,
           pointCount: COMPLETE_POINT_COUNT,
         });
 

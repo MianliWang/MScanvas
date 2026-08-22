@@ -190,11 +190,14 @@ describe("M4.1 on the real Tauri WebView, with a spectrum loaded", () => {
       await browser.execute(() => (document.activeElement?.textContent ?? "").trim()),
     ).toContain("Export SVG");
 
+    // The figure actions come first now, so the next stop after SVG is PNG.
+    // M4.2 added them; the property under test -- that Tab walks the group in
+    // document order -- is unchanged.
     await browser.keys(["Tab"]);
     const focused = await browser.execute(() =>
       (document.activeElement?.textContent ?? "").trim(),
     );
-    expect(focused).toContain("Export CSV");
+    expect(focused).toContain("Export PNG");
   });
 
   it("invokes the export commands through the real transport", async () => {

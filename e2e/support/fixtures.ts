@@ -1,5 +1,5 @@
 /**
- * What the mocked Tauri backend answers, for the rendered M4.1 QA run.
+ * What the mocked Tauri backend answers, for the rendered QA run.
  *
  * Built from the repository's own preview fixtures rather than from hand-typed
  * literals, so the shapes a rendered test drives are the shapes the unit suite
@@ -71,7 +71,23 @@ export function ipcTable(options: { readonly emptySpectrum?: boolean } = {}) {
       status: "saved",
       format: "svg",
       fileName: "mscanvas-spectrum-0.svg",
+      figure: { width: 1_200, height: 640, dpi: null, theme: "light" },
+      pointCount: COMPLETE_POINT_COUNT,
+    },
+    // One command rather than two: a copy chooses no destination, so there is
+    // no dialog to gate and nothing to come back from.
+    copy_selected_spectrum_plot: {
+      status: "copied",
+      figure: { width: 1_200, height: 640, dpi: 300, theme: "light" },
       pointCount: COMPLETE_POINT_COUNT,
     },
   } as Record<string, unknown>;
 }
+
+/** The figure settings the panel starts at, as they cross the boundary. */
+export const DEFAULT_FIGURE_SETTINGS = {
+  widthPx: 1_200,
+  heightPx: 640,
+  pngDpi: 300,
+  theme: "light",
+} as const;
