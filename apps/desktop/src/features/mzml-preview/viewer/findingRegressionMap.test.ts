@@ -74,14 +74,23 @@ describe("the PR #72 findings, and what now prevents each", () => {
   });
 
   it("3. a repeated commit of the same scan is a new event", () => {
-    const first = consumeSelection(initialSelectionConsumer, {
+    // The revisions come from the reducer, which is the only thing that hands
+    // them out -- so two producers cannot reuse one and make a real selection
+    // look like one a consumer already acted on.
+    const state = viewerInteractionReducer(loaded(), {
+      type: "selection-committed",
       index: 4,
-      revision: 1,
       retentionTime: 20,
     });
-    const again = consumeSelection(first.consumer, { index: 4, revision: 2, retentionTime: 20 });
+    const again = viewerInteractionReducer(state, {
+      type: "selection-committed",
+      index: 4,
+      retentionTime: 20,
+    });
 
-    expect(again.consumed).not.toBeNull();
+    const first = consumeSelection(initialSelectionConsumer, state.selection);
+    expect(first.consumed).not.toBeNull();
+    expect(consumeSelection(first.consumer, again.selection).consumed).not.toBeNull();
   });
 
   it("4. a retention-time unit this build cannot name produces no model", () => {
@@ -109,6 +118,7 @@ describe("the PR #72 findings, and what now prevents each", () => {
     // did not. `consumeSelection` is the whole rule, and it belongs to no
     // surface, so wiring a new consumer is one call rather than a new idea.
     const selection = { index: 4, revision: 1, retentionTime: 20 };
+    // One revision in the state; each consumer keeps its own bookmark into it.
     const table = consumeSelection(initialSelectionConsumer, selection);
     const plot = consumeSelection(initialSelectionConsumer, selection);
 
@@ -138,7 +148,6 @@ describe("the PR #72 findings, and what now prevents each", () => {
     const selected = viewerInteractionReducer(gesturing, {
       type: "selection-committed",
       index: 1,
-      revision: 1,
       retentionTime: 90,
     });
 
@@ -148,7 +157,6 @@ describe("the PR #72 findings, and what now prevents each", () => {
   it("9. hover does not survive a viewport change", () => {
     const hovering = viewerInteractionReducer(loaded(), {
       type: "hover-established",
-      retentionTime: 42,
       spectrumIndex: 8,
     });
     const zoomed = viewerInteractionReducer(hovering, {

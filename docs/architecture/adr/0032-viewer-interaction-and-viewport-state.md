@@ -88,11 +88,32 @@ not committed until it settles.
 Exactly one `selectedIndex`, and exactly one monotonic `selectionRevision`.
 Re-selecting the scan already selected is a **new commit**.
 
+The revision is assigned by the reducer, like a gesture epoch and for the same
+reason. Several producers commit selections — the plot, the scan table,
+Previous and Next — and if each supplied a number they could reuse one, or a
+preview change could restart the count. A consumer holding that bookmark would
+then treat a real, different selection as one it had already acted on and
+silently not reveal: findings 3 and 5 returning through the door the contract
+would have left open. Both counters also carry across a preview change, because
+a consumer's bookmark can outlive the preview it was made under.
+
 ### E — hover
 
-Transient coordinate inspection. No selection authority, no backend read, no
-workspace state. It stores the pointer's retention time and the scan it resolved
-to — never a scaled screen coordinate, which is what made finding 9 possible.
+Transient coordinate inspection: **the resolved scan, and nothing else.**
+
+Not a scaled screen coordinate, which is what made finding 9 possible. And not
+the pointer's own retention time either: the readout names a scan and the guide
+rule is drawn at that scan's position, so the pointer's exact coordinate is
+never displayed — carrying it would make every frame of a pointer move a
+different state.
+
+Because a scan is all it holds, re-establishing the same one returns the same
+state **by identity**. A renderer may resolve the nearest scan on every pointer
+frame and dispatch freely: what reaches the contract is "the pointer crossed
+into another scan", not "the pointer moved". Continuous cursor coordinates stay
+in the renderer, where `apps/desktop/AGENTS.md` requires them
+("Avoid storing pointer-move and cursor-frame data in React state") and where
+the spectrum-viewer skill puts them.
 
 ### F — render geometry (`viewer/renderGeometry.ts`)
 
@@ -130,8 +151,10 @@ Correctness here may not rest on `clearTimeout` winning a race. A timer is an
 adapter: it eventually emits an event, and whether that event still means
 anything is the reducer's decision.
 
-Epochs are assigned by the reducer, not supplied by callers. Two adapters
-allocating from one counter is exactly the race the epoch exists to remove.
+Epochs are assigned by the reducer, not supplied by callers, and so are
+selection revisions. Two adapters allocating from one counter is exactly the
+race these identifiers exist to remove; a contract that hands that job back to
+its callers has not removed it.
 
 ### What is not a commit
 
@@ -279,6 +302,10 @@ R1 must:
 
 - hold one `ViewerInteractionState` per loaded preview and dispatch the events
   above rather than inventing effect-level rules;
+- keep continuous pointer coordinates in a renderer-local ref, resolve the
+  nearest scan there, and dispatch `hover-established` with the resolved scan.
+  The reducer already makes a repeat free, but the raw coordinates must not
+  reach it;
 - translate adapters into events: a wheel debounce emits `gesture-settled` with
   the epoch it was scheduled under, a drag end emits it directly, a keyboard
   step emits `viewport-step`;
@@ -297,5 +324,6 @@ R1 may not:
 - add a second selection authority or a second viewport authority;
 - derive an extent from anything but clipped geometry;
 - resolve a scan from reduced or boundary vertices;
-- store a scaled coordinate in hover;
+- store a scaled coordinate, or a raw pointer coordinate, in hover;
+- allocate a selection revision or a gesture epoch outside the reducer;
 - rely on `clearTimeout` for correctness.

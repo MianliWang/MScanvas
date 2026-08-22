@@ -40,21 +40,38 @@ export interface Selection {
    * Selecting the scan that is already selected is a new commit -- the user
    * asked for that scan again -- and a consumer watching the index cannot tell
    * that happened. Both linked views watch this instead.
+   *
+   * Assigned here, like a gesture epoch, and for the same reason. Several
+   * producers commit selections -- the plot, the scan table, Previous and Next
+   * -- and if each supplied a number they could reuse one, or a preview change
+   * could reset it. A consumer that had already bookmarked that value would
+   * then treat a real, different selection as one it had acted on, and silently
+   * not reveal: the defect this contract exists to make unrepresentable,
+   * reintroduced through the door the contract left open.
    */
   readonly revision: number;
   readonly retentionTime: number;
 }
 
 /**
- * Transient coordinate inspection.
+ * Transient coordinate inspection: which scan the pointer is over.
  *
- * The pointer's retention time and the scan it resolved to -- not a scaled
- * screen coordinate. PR #72 stored the scaled x, which a keyboard zoom then
- * invalidated without clearing, leaving a guide rule at a stale position and a
- * readout naming a scan no longer under the cursor.
+ * The resolved scan, and nothing else. Not a scaled screen coordinate -- PR #72
+ * stored the scaled x, which a keyboard zoom invalidated without clearing,
+ * leaving a guide rule at a stale position and a readout naming a scan no longer
+ * under the cursor. And not the pointer's own retention time either, for a
+ * second reason: the readout names a scan and the guide rule is drawn at that
+ * scan's position, so the pointer's exact coordinate is never displayed, and
+ * carrying it here would make every frame of a pointer move a different state.
+ *
+ * Because a scan is all this holds, re-establishing the same one is a no-op by
+ * identity. A renderer may therefore resolve the nearest scan on every pointer
+ * frame and dispatch freely: the state changes only when the pointer crosses
+ * from one scan to another, which is bounded by the run rather than by the
+ * pointer's sampling rate. Continuous cursor coordinates stay in the renderer,
+ * where `apps/desktop/AGENTS.md` requires them to stay.
  */
 export interface Hover {
-  readonly retentionTime: number;
   readonly spectrumIndex: number;
 }
 
@@ -74,6 +91,8 @@ export interface ViewerInteractionState {
   readonly hover: Hover | null;
   /** The epoch the next gesture will be given. Monotonic, never reused. */
   readonly nextGestureEpoch: number;
+  /** The revision the next selection commit will be given. Never reused. */
+  readonly nextSelectionRevision: number;
 }
 
 export const initialViewerInteractionState: ViewerInteractionState = {
@@ -83,6 +102,7 @@ export const initialViewerInteractionState: ViewerInteractionState = {
   selection: null,
   hover: null,
   nextGestureEpoch: 1,
+  nextSelectionRevision: 1,
 };
 
 export type ViewerEvent =
@@ -103,17 +123,19 @@ export type ViewerEvent =
   /** A keyboard step or a button: committed immediately, with no gesture. */
   | { readonly type: "viewport-step"; readonly domain: RetentionTimeDomain }
   | { readonly type: "viewport-reset" }
+  /**
+   * A persistent selection commit.
+   *
+   * No revision: the reducer assigns it. Producers say *what* was selected, and
+   * the one thing that can tell two commits apart is not theirs to invent.
+   */
   | {
       readonly type: "selection-committed";
       readonly index: number;
-      readonly revision: number;
       readonly retentionTime: number;
     }
-  | {
-      readonly type: "hover-established";
-      readonly retentionTime: number;
-      readonly spectrumIndex: number;
-    }
+  /** The pointer is over this scan. Dispatch freely; see {@link Hover}. */
+  | { readonly type: "hover-established"; readonly spectrumIndex: number }
   | { readonly type: "hover-cleared" };
 
 /**
@@ -133,6 +155,10 @@ export function viewerInteractionReducer(
       // previous one must not be able to commit into this one -- which the
       // epoch advance below guarantees without depending on a timer being
       // cleared in time.
+      //
+      // Both counters carry across rather than restarting. A consumer's
+      // bookmark may outlive the preview it was made under, and a restarted
+      // counter would let a new commit collide with it.
       return {
         fullDomain: event.fullDomain,
         committedDomain: null,
@@ -140,6 +166,7 @@ export function viewerInteractionReducer(
         selection: null,
         hover: null,
         nextGestureEpoch: state.nextGestureEpoch + 1,
+        nextSelectionRevision: state.nextSelectionRevision,
       };
 
     case "preview-closed":
@@ -150,6 +177,7 @@ export function viewerInteractionReducer(
         selection: null,
         hover: null,
         nextGestureEpoch: state.nextGestureEpoch + 1,
+        nextSelectionRevision: state.nextSelectionRevision,
       };
 
     case "gesture-started": {
@@ -228,12 +256,13 @@ export function viewerInteractionReducer(
     case "selection-committed": {
       const selection: Selection = {
         index: event.index,
-        revision: event.revision,
+        revision: state.nextSelectionRevision,
         retentionTime: event.retentionTime,
       };
+      const nextSelectionRevision = state.nextSelectionRevision + 1;
       const full = state.fullDomain;
       if (full === null) {
-        return { ...state, selection, gesture: null, hover: null };
+        return { ...state, selection, nextSelectionRevision, gesture: null, hover: null };
       }
       // Precedence, in order, and the order is the contract:
       //
@@ -248,6 +277,7 @@ export function viewerInteractionReducer(
       return {
         ...state,
         selection,
+        nextSelectionRevision,
         gesture: null,
         hover: null,
         committedDomain: revealed === null ? null : committed(revealed, full),
@@ -258,10 +288,14 @@ export function viewerInteractionReducer(
       if (state.fullDomain === null) {
         return state;
       }
-      return {
-        ...state,
-        hover: { retentionTime: event.retentionTime, spectrumIndex: event.spectrumIndex },
-      };
+      // The same scan is the same state. Returned by identity so a renderer can
+      // dispatch on every pointer frame without any consumer re-rendering: what
+      // reaches this contract is "the pointer crossed into another scan", not
+      // "the pointer moved".
+      if (state.hover?.spectrumIndex === event.spectrumIndex) {
+        return state;
+      }
+      return { ...state, hover: { spectrumIndex: event.spectrumIndex } };
     }
 
     case "hover-cleared":

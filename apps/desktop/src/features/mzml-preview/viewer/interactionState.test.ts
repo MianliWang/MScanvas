@@ -30,11 +30,12 @@ function committed(state: ViewerInteractionState, domain: RetentionTimeDomain) {
 describe("selection", () => {
   it("commits while idle, leaving a full-range viewport alone", () => {
     const state = run(
-      [{ type: "selection-committed", index: 7, revision: 1, retentionTime: 50 }],
+      [{ type: "selection-committed", index: 7, retentionTime: 50 }],
       loaded(),
     );
 
     expect(state.selection).toEqual({ index: 7, revision: 1, retentionTime: 50 });
+    expect(state.nextSelectionRevision).toBe(2);
     // Every scan is already on screen, so there is nothing to reveal.
     expect(state.committedDomain).toBeNull();
   });
@@ -42,7 +43,7 @@ describe("selection", () => {
   it("reveals a scan outside the committed viewport, keeping the span", () => {
     const zoomed = committed(loaded(), { low: 10, high: 30 });
     const state = run(
-      [{ type: "selection-committed", index: 9, revision: 1, retentionTime: 80 }],
+      [{ type: "selection-committed", index: 9, retentionTime: 80 }],
       zoomed,
     );
 
@@ -55,28 +56,62 @@ describe("selection", () => {
   it("leaves the viewport alone for a scan already inside it", () => {
     const zoomed = committed(loaded(), { low: 10, high: 30 });
     const state = run(
-      [{ type: "selection-committed", index: 9, revision: 1, retentionTime: 20 }],
+      [{ type: "selection-committed", index: 9, retentionTime: 20 }],
       zoomed,
     );
 
     expect(state.committedDomain).toEqual(zoomed.committedDomain);
   });
 
-  it("treats the same index with a newer revision as a new commit", () => {
+  it("treats the same index committed again as a new commit", () => {
     // The defect that survived two repairs in PR #72. Which scan is selected
     // does not change; the fact that the user asked for it again does.
     const first = run(
-      [{ type: "selection-committed", index: 4, revision: 10, retentionTime: 50 }],
+      [{ type: "selection-committed", index: 4, retentionTime: 50 }],
       loaded(),
     );
     const second = run(
-      [{ type: "selection-committed", index: 4, revision: 11, retentionTime: 50 }],
+      [{ type: "selection-committed", index: 4, retentionTime: 50 }],
       first,
     );
 
     expect(second.selection?.index).toBe(4);
-    expect(second.selection?.revision).toBe(11);
+    expect(second.selection?.revision).toBe((first.selection?.revision as number) + 1);
     expect(second.selection).not.toBe(first.selection);
+  });
+
+  it("assigns every revision itself, and never reuses one", () => {
+    // Several producers commit selections. If any of them supplied the number,
+    // two could reuse one -- and a consumer holding that bookmark would treat a
+    // real, different selection as one it had already acted on, which is the
+    // defect this contract exists to make unrepresentable.
+    let state = loaded();
+    const seen = new Set<number>();
+    for (const index of [1, 1, 2, 2, 2, 3]) {
+      state = run([{ type: "selection-committed", index, retentionTime: index }], state);
+      const revision = state.selection?.revision as number;
+      expect(seen.has(revision)).toBe(false);
+      seen.add(revision);
+    }
+    expect(seen.size).toBe(6);
+  });
+
+  it("keeps counting across a preview change, so no bookmark can collide", () => {
+    // A consumer's bookmark may outlive the preview it was made under. A
+    // counter that restarted would let a new commit land on it.
+    const before = run(
+      [{ type: "selection-committed", index: 1, retentionTime: 10 }],
+      loaded(),
+    );
+    const after = run(
+      [
+        { type: "preview-loaded", fullDomain: { low: 0, high: 10 } },
+        { type: "selection-committed", index: 1, retentionTime: 5 },
+      ],
+      before,
+    );
+
+    expect(after.selection?.revision).toBeGreaterThan(before.selection?.revision as number);
   });
 });
 
@@ -93,7 +128,7 @@ describe("selection against a gesture in flight", () => {
     const epoch = activeGestureEpoch(wheeling) as number;
 
     const selected = run(
-      [{ type: "selection-committed", index: 9, revision: 1, retentionTime: 80 }],
+      [{ type: "selection-committed", index: 9, retentionTime: 80 }],
       wheeling,
     );
 
@@ -126,7 +161,7 @@ describe("selection against a gesture in flight", () => {
     expect(dragging.gesture).not.toBeNull();
 
     const selected = run(
-      [{ type: "selection-committed", index: 3, revision: 1, retentionTime: 10 }],
+      [{ type: "selection-committed", index: 3, retentionTime: 10 }],
       dragging,
     );
 
@@ -157,7 +192,7 @@ describe("a gesture after a selection", () => {
   it("is authoritative, and the consumed revision does not pull the viewport back", () => {
     const zoomed = committed(loaded(), { low: 10, high: 30 });
     const selected = run(
-      [{ type: "selection-committed", index: 9, revision: 1, retentionTime: 20 }],
+      [{ type: "selection-committed", index: 9, retentionTime: 20 }],
       zoomed,
     );
 
@@ -182,7 +217,7 @@ describe("a gesture after a selection", () => {
   it("is superseded by the next revision, which may reveal again", () => {
     const zoomed = committed(loaded(), { low: 70, high: 90 });
     const state = run(
-      [{ type: "selection-committed", index: 9, revision: 2, retentionTime: 5 }],
+      [{ type: "selection-committed", index: 9, retentionTime: 5 }],
       zoomed,
     );
 
@@ -255,7 +290,7 @@ describe("reset and preview lifetime", () => {
       [
         { type: "viewport-step", domain: { low: 10, high: 30 } },
         { type: "gesture-started", domain: { low: 12, high: 26 } },
-        { type: "hover-established", retentionTime: 20, spectrumIndex: 3 },
+        { type: "hover-established", spectrumIndex: 3 },
         { type: "viewport-reset" },
       ],
       loaded(),
@@ -270,8 +305,8 @@ describe("reset and preview lifetime", () => {
     const busy = run(
       [
         { type: "viewport-step", domain: { low: 10, high: 30 } },
-        { type: "selection-committed", index: 4, revision: 1, retentionTime: 20 },
-        { type: "hover-established", retentionTime: 22, spectrumIndex: 5 },
+        { type: "selection-committed", index: 4, retentionTime: 20 },
+        { type: "hover-established", spectrumIndex: 5 },
       ],
       loaded(),
     );
@@ -300,7 +335,7 @@ describe("reset and preview lifetime", () => {
       { type: "gesture-started", domain: { low: 0, high: 1 } },
       { type: "viewport-step", domain: { low: 0, high: 1 } },
       { type: "viewport-reset" },
-      { type: "hover-established", retentionTime: 1, spectrumIndex: 0 },
+      { type: "hover-established", spectrumIndex: 0 },
     ] satisfies ViewerEvent[]) {
       expect(viewerInteractionReducer(empty, event)).toBe(empty);
     }
@@ -308,19 +343,38 @@ describe("reset and preview lifetime", () => {
 });
 
 describe("hover", () => {
-  it("is established by a pointer and stores no screen coordinate", () => {
+  it("is established by a pointer and stores only the scan it resolved to", () => {
     const state = run(
-      [{ type: "hover-established", retentionTime: 42, spectrumIndex: 8 }],
+      [{ type: "hover-established", spectrumIndex: 8 }],
       loaded(),
     );
 
-    expect(state.hover).toEqual({ retentionTime: 42, spectrumIndex: 8 });
+    expect(state.hover).toEqual({ spectrumIndex: 8 });
+  });
+
+  it("is the same state when the pointer stays over one scan", () => {
+    // A renderer may resolve the nearest scan on every pointer frame. What
+    // reaches this contract is a crossing from one scan to another, not a
+    // movement -- so a consumer of this state does not re-render at the
+    // pointer's sampling rate, and continuous coordinates stay in the renderer
+    // where `apps/desktop/AGENTS.md` requires them.
+    const hovering = run([{ type: "hover-established", spectrumIndex: 8 }], loaded());
+
+    for (let frame = 0; frame < 10; frame += 1) {
+      expect(
+        viewerInteractionReducer(hovering, { type: "hover-established", spectrumIndex: 8 }),
+      ).toBe(hovering);
+    }
+    // Crossing into another scan is a change.
+    expect(
+      viewerInteractionReducer(hovering, { type: "hover-established", spectrumIndex: 9 }),
+    ).not.toBe(hovering);
   });
 
   it("is cleared by a keyboard zoom or step", () => {
     const state = run(
       [
-        { type: "hover-established", retentionTime: 42, spectrumIndex: 8 },
+        { type: "hover-established", spectrumIndex: 8 },
         { type: "viewport-step", domain: { low: 30, high: 50 } },
       ],
       loaded(),
@@ -332,7 +386,7 @@ describe("hover", () => {
   it("is cleared by a gesture beginning and by its settle", () => {
     const started = run(
       [
-        { type: "hover-established", retentionTime: 42, spectrumIndex: 8 },
+        { type: "hover-established", spectrumIndex: 8 },
         { type: "gesture-started", domain: { low: 30, high: 50 } },
       ],
       loaded(),
@@ -341,7 +395,7 @@ describe("hover", () => {
 
     const settled = run(
       [
-        { type: "hover-established", retentionTime: 42, spectrumIndex: 8 },
+        { type: "hover-established", spectrumIndex: 8 },
         { type: "gesture-settled", epoch: activeGestureEpoch(started) as number },
       ],
       started,
@@ -352,7 +406,7 @@ describe("hover", () => {
   it("is cleared by a reset and by a selection", () => {
     const afterReset = run(
       [
-        { type: "hover-established", retentionTime: 42, spectrumIndex: 8 },
+        { type: "hover-established", spectrumIndex: 8 },
         { type: "viewport-reset" },
       ],
       loaded(),
@@ -361,8 +415,8 @@ describe("hover", () => {
 
     const afterSelection = run(
       [
-        { type: "hover-established", retentionTime: 42, spectrumIndex: 8 },
-        { type: "selection-committed", index: 8, revision: 1, retentionTime: 42 },
+        { type: "hover-established", spectrumIndex: 8 },
+        { type: "selection-committed", index: 8, retentionTime: 42 },
       ],
       loaded(),
     );
@@ -371,7 +425,7 @@ describe("hover", () => {
 
   it("never selects anything", () => {
     const state = run(
-      [{ type: "hover-established", retentionTime: 42, spectrumIndex: 8 }],
+      [{ type: "hover-established", spectrumIndex: 8 }],
       loaded(),
     );
 
