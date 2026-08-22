@@ -51,11 +51,34 @@ width, height, PNG DPI and figure theme that SVG honours too. The
 selected-spectrum snapshot lifecycle deferred by M4.1 is closed with it. See
 [ADR 0030](docs/architecture/adr/0030-png-copy-plot-and-figure-settings.md).
 
+**Viewer Closure R0 — the interaction and viewport state contract.** Closed, and
+deliberately not visible. A first attempt at the linked TIC/BPC viewer
+(PR #72) worked but drew nine real, reachable review findings across four rounds
+-- a suppressed reveal, a late tie-break, a repeated commit nobody could see, a
+stale settle overwriting a selection, an off-screen peak setting the y axis --
+which read together were one thing: nothing said who owned the viewport, the
+selection or the geometry. That PR is frozen as evidence rather than repaired a
+tenth time.
+
+R0 is the model those findings were about, written as pure TypeScript with no
+React, no DOM and no timers: six separated state layers, one committed viewport
+and one transient gesture with an epoch, one selection with a monotonic commit
+revision that any number of linked views may consume, hover that cannot outlive
+a viewport change, and geometry in which the visible value range comes from the
+clipped polyline rather than from source points outside it. See
+[ADR 0032](docs/architecture/adr/0032-viewer-interaction-and-viewport-state.md).
+
+**VIEW-002, VIEW-005 and VIEW-006 remain unimplemented.** R0 ships no
+chromatogram, no linked selection and no keyboard navigation; it ships the
+contract the next slice builds them against.
+
 Still outside it, and unchanged:
 
-- Current-range export, which needs a zoom/pan contract first.
+- Current-range export, which needs the committed viewport R0 defines and a
+  visible viewer to choose one in.
 - Chromatogram data export, and a linked chromatogram + spectrum figure
   template.
+- XIC, spectrum zoom/pan, and multi-layer comparison.
 
 ## M5 — Public beta hardening
 
