@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import { usePreviewApi } from "./api";
+import type { TraceVisibility } from "./Chromatogram";
+import type { ChromatogramTrace, RetentionTimeDomain } from "./chromatogramModel";
+import { adjacentSpectrumIndex } from "./chromatogramModel";
 import type { ConversionOperation } from "./useConversionOperation";
 import { useConversionOperation } from "./useConversionOperation";
 import type {
@@ -14,6 +17,7 @@ import type {
   SelectedFile,
   SelectedSpectrum,
   SpectrumExportFormat,
+  SpectrumRow,
   WorkspaceDropRejectionReason,
   WorkspaceDropUpdate,
   WorkspaceOutputAdoptionResult,
@@ -111,6 +115,14 @@ const DEFAULT_FIGURE_SETTINGS: FigureSettings = {
   pngDpi: DEFAULT_PNG_DPI,
   theme: "light",
 };
+
+/**
+ * The rows the linked views walk while nothing is loaded.
+ *
+ * A shared frozen array rather than a fresh `[]` each render, so the memoized
+ * work downstream of it does not invalidate on every pass.
+ */
+const EMPTY_ROWS: readonly SpectrumRow[] = Object.freeze([]);
 
 /** Whether this format is drawn rather than written. */
 function isFigureFormat(format: SpectrumExportFormat): boolean {
@@ -444,6 +456,32 @@ export interface PreviewWorkspace {
   readonly copySpectrumPlot: () => void;
   /** Returns the export to rest after a result has been read. */
   readonly dismissSpectrumExport: () => void;
+  /** Which chromatogram traces are drawn. Session state, never written down. */
+  readonly chromatogramTraces: TraceVisibility;
+  readonly toggleChromatogramTrace: (trace: ChromatogramTrace) => void;
+  /**
+   * The chromatogram's committed retention-time viewport, or `null` for the
+   * whole run.
+   *
+   * Semantic rather than pixels, and held here rather than inside the plot,
+   * because it is the answer to "what range is the user looking at" — the
+   * question a current-range export will have to ask. What is deliberately
+   * *not* here is the gesture: a wheel or a drag moves the plot's own state and
+   * publishes a domain when it settles, so a pan does not re-render the scan
+   * table once a frame.
+   */
+  readonly chromatogramVisibleDomain: RetentionTimeDomain | null;
+  readonly setChromatogramVisibleDomain: (domain: RetentionTimeDomain | null) => void;
+  /**
+   * The scan before or after the selected one, in the order the table shows.
+   *
+   * They commit through `selectSpectrum` like every other selection source, so
+   * there is still one selected scan and one backend read per selection.
+   */
+  readonly selectPreviousScan: () => void;
+  readonly selectNextScan: () => void;
+  readonly canSelectPreviousScan: boolean;
+  readonly canSelectNextScan: boolean;
   /** The figure settings as the user is editing them. */
   readonly figureSettings: FigureSettingsDraft;
   /** The figure they describe, or `null` while they describe none. */
@@ -493,6 +531,15 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const [workspaceError, setWorkspaceError] = useState<PreviewError | null>(null);
   const [spectrum, setSpectrum] = useState<SpectrumState>({ status: "none" });
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  // TIC alone to begin with. Both traces at once is a comparison a reader asks
+  // for, not the first thing they should have to disentangle, and the total ion
+  // current is the summary of a scan rather than one feature of it.
+  const [chromatogramTraces, setChromatogramTraces] = useState<TraceVisibility>({
+    tic: true,
+    bpc: false,
+  });
+  const [chromatogramVisibleDomain, setChromatogramVisibleDomain] =
+    useState<RetentionTimeDomain | null>(null);
   const [measurements, setMeasurements] = useState<readonly PreviewMeasurement[]>([]);
 
   const [roster, dispatchRoster] = useReducer(rosterReducer, initialRosterState);
@@ -740,6 +787,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     setPreview({ status: "empty" });
     setSpectrum({ status: "none" });
     setSelectedIndex(null);
+    // The viewport belongs to the preview that was on screen. A range chosen in
+    // one run means nothing in another, and a retained one would silently
+    // become a claim about a file it was never chosen for.
+    setChromatogramVisibleDomain(null);
   }, []);
 
   /**
@@ -1056,6 +1107,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       setPreview({ status: "opening" });
       setSpectrum({ status: "none" });
       setSelectedIndex(null);
+      setChromatogramVisibleDomain(null);
       openHandle.current = handle;
       activeOpen.current = { token, handle };
       // Said here, where a read actually begins, rather than by whatever asked
@@ -1991,6 +2043,32 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     }
   }, [selectSpectrum, selectedIndex]);
 
+  const toggleChromatogramTrace = useCallback((trace: ChromatogramTrace) => {
+    setChromatogramTraces((current) => ({ ...current, [trace]: !current[trace] }));
+  }, []);
+
+  /**
+   * The rows the linked views navigate, or none while no preview is loaded.
+   *
+   * Read from the preview rather than copied into state of its own: a second
+   * copy of the scan table is a second thing to keep in step with the first.
+   */
+  const previewRows = preview.status === "loaded" ? preview.preview.spectrumTable.rows : EMPTY_ROWS;
+  const previousScanIndex = adjacentSpectrumIndex(previewRows, selectedIndex, -1);
+  const nextScanIndex = adjacentSpectrumIndex(previewRows, selectedIndex, 1);
+
+  const selectPreviousScan = useCallback(() => {
+    if (previousScanIndex !== null) {
+      selectSpectrum(previousScanIndex);
+    }
+  }, [previousScanIndex, selectSpectrum]);
+
+  const selectNextScan = useCallback(() => {
+    if (nextScanIndex !== null) {
+      selectSpectrum(nextScanIndex);
+    }
+  }, [nextScanIndex, selectSpectrum]);
+
   // Session state, deliberately not persisted: a figure size is a decision
   // about one export, and a size silently restored from a previous run is a
   // property of a file nobody chose for it.
@@ -2296,6 +2374,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     exportSpectrum,
     copySpectrumPlot,
     dismissSpectrumExport,
+    chromatogramTraces,
+    toggleChromatogramTrace,
+    chromatogramVisibleDomain,
+    setChromatogramVisibleDomain,
+    selectPreviousScan,
+    selectNextScan,
+    canSelectPreviousScan: previousScanIndex !== null,
+    canSelectNextScan: nextScanIndex !== null,
     figureSettings,
     resolvedRenderSettings,
     resolvedPngDpi,

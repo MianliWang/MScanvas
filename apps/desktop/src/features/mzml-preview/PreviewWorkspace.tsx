@@ -7,6 +7,9 @@ import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
 import { PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel } from "./SelectedSpectrumPanel";
+import { Chromatogram } from "./Chromatogram";
+import type { ChromatogramModel } from "./chromatogramModel";
+import { buildChromatogramModel } from "./chromatogramModel";
 import { SpectrumTable } from "./SpectrumTable";
 import { formatCount, formatDatasetLabel } from "./format";
 import { rosterProjection, type WorkspaceNotice } from "./rosterSelection";
@@ -35,10 +38,23 @@ const DROP_BUSY_STATUS =
   "Another drop is already being processed. Wait for it to finish or clear the workspace.";
 
 /** The session workspace: a curated roster of mzML files, and one open preview. */
+/** What the chromatogram is while no preview is loaded. Never rendered. */
+const UNLOADED_CHROMATOGRAM: ChromatogramModel = { status: "unavailable", reason: "no-spectra" };
+
 export function PreviewWorkspace() {
   const workspace = usePreviewWorkspace();
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
   const [restoreAddFolderFocusToken, setRestoreAddFolderFocusToken] = useState(0);
+  // Derived from the preview that is on screen, rather than fetched or held as
+  // a second copy of the table. Memoized because building it walks and sorts
+  // every scan, and the table beside it re-renders on every scroll.
+  const chromatogram = useMemo(
+    () =>
+      preview.status === "loaded"
+        ? buildChromatogramModel(preview.preview.spectrumTable)
+        : UNLOADED_CHROMATOGRAM,
+    [preview],
+  );
   const [restoreAddFilesFocusToken, setRestoreAddFilesFocusToken] = useState(0);
 
   // Derived once per roster change and handed down, so the rows the list
@@ -640,6 +656,19 @@ export function PreviewWorkspace() {
 
         {preview.status === "loaded" ? (
           <div className="viewer-stack">
+            <Chromatogram
+              canSelectNext={workspace.canSelectNextScan}
+              canSelectPrevious={workspace.canSelectPreviousScan}
+              model={chromatogram}
+              onSelect={workspace.selectSpectrum}
+              onSelectNext={workspace.selectNextScan}
+              onSelectPrevious={workspace.selectPreviousScan}
+              onToggleTrace={workspace.toggleChromatogramTrace}
+              onVisibleDomainChange={workspace.setChromatogramVisibleDomain}
+              selectedIndex={workspace.selectedIndex}
+              traces={workspace.chromatogramTraces}
+              visibleDomain={workspace.chromatogramVisibleDomain}
+            />
             <SpectrumTable
               onRendered={handleTableRendered}
               onSelect={workspace.selectSpectrum}

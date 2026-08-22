@@ -922,8 +922,156 @@ button:disabled {
 .viewer-stack {
   display: grid;
   min-height: 0;
-  grid-template-rows: minmax(0, 1.15fr) minmax(0, 1fr);
+  /* Three linked views, top to bottom in the order a reader moves through
+     them: the run's shape, the scans it is made of, and the one scan they
+     chose. The chromatogram takes the smallest share, because it is a locator
+     rather than the thing being read. */
+  grid-template-rows: minmax(0, 0.9fr) minmax(0, 1.15fr) minmax(0, 1fr);
   gap: 8px;
+}
+
+.chromatogram-panel {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.chromatogram-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.chromatogram-traces,
+.chromatogram-scan-steps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.chromatogram-traces > legend,
+.chromatogram-scan-steps > legend {
+  padding: 0 4px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.chromatogram-trace-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.chromatogram-trace-toggle > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* The legend's own line, drawn with the same dash the trace uses. Colour is
+   never the only difference between the two traces. */
+.chromatogram-swatch {
+  width: 24px;
+  height: 8px;
+}
+
+.chromatogram-swatch > path {
+  stroke: currentcolor;
+  stroke-width: 2;
+}
+
+.chromatogram-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  padding: 8px 12px 10px;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.chromatogram-plot {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chromatogram-svg {
+  min-height: 60px;
+  flex: 1;
+  width: 100%;
+  /* The wheel zooms rather than scrolling the page, and a horizontal drag pans
+     rather than selecting text or starting a browser gesture. */
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.chromatogram-svg:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.chromatogram-axes line {
+  stroke: var(--color-border-strong);
+  stroke-width: 1;
+}
+
+.chromatogram-axes text {
+  fill: var(--color-text-tertiary);
+  font-size: 10px;
+}
+
+.chromatogram-trace {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
+.chromatogram-trace-bpc {
+  stroke: var(--color-text-secondary);
+}
+
+.chromatogram-selected line {
+  stroke: var(--color-accent);
+  stroke-width: 2;
+}
+
+.chromatogram-selected rect {
+  fill: var(--color-accent);
+}
+
+.chromatogram-hover line {
+  stroke: var(--color-text-tertiary);
+  stroke-dasharray: 3 3;
+  stroke-width: 1;
+}
+
+.chromatogram-axis-caption,
+.chromatogram-readout,
+.chromatogram-range {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.chromatogram-readout {
+  min-height: 14px;
+  color: var(--color-text-secondary);
+}
+
+.chromatogram-viewport-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
 .spectrum-table {
@@ -1260,7 +1408,7 @@ button:disabled {
        identity header inside its two 1px borders: 280 + 8 + 54 = 342. Its
        details may scroll, but the acquisition they describe is never clipped
        away. */
-    grid-template-rows: minmax(342px, 0.9fr) minmax(178px, 1.6fr);
+    grid-template-rows: minmax(342px, 0.9fr) minmax(354px, 1.6fr);
     /* Two in-flow notices leave about 520px for this box at 960x640, while the
        complete narrow evidence contract needs 544px: 16px padding, 342px for
        the sidebar, its 8px gap, and 178px for the viewer below. The document
@@ -1282,9 +1430,23 @@ button:disabled {
        viewer remainder. Reserve 116px for the rendered Spectra header, the
        30px sticky table header, one complete 30px data row and the panel
        borders. The selected-spectrum panel keeps its 52px header and borders.
-       Their 8px gap makes this stack's outer floor 178px above. Any extra
-       height still follows the established 1.15:1 ratio. */
-    grid-template-rows: minmax(116px, 1.15fr) minmax(54px, 1fr);
+       The chromatogram above them keeps 168px: its 52px header and borders,
+       the 60px the plot floors at, and the two caption lines and the viewport
+       actions below it. Their two 8px gaps make this stack's outer floor 354px.
+       Any extra height still follows the established ratio.
+
+       That floor is above what a 640px-tall window has left, which is why the
+       workspace layout owns a scrollbar at this breakpoint: the alternative is
+       a chromatogram squeezed until neither its axis nor its controls can be
+       read, which is not a smaller version of the view but a different one. */
+    grid-template-rows: minmax(168px, 0.9fr) minmax(116px, 1.15fr) minmax(54px, 1fr);
+  }
+
+  .chromatogram-controls {
+    /* Narrow, the traces and the scan steps stack rather than compete with the
+       heading for one line. */
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 

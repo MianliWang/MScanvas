@@ -359,7 +359,8 @@ describe("narrow desktop layout markup", () => {
     // The two are pinned together because they are one decision: a track
     // shorter than the panel's own minimum clamps the panel back to a height
     // its chrome does not fit in, which is the original defect by another
-    // route.
+    // route. Viewer Closure raised the viewer track from 178px to 354px for
+    // the chromatogram the stack now begins with.
     const app = mountStyles(appStyles);
 
     expect(requireStyleRule(app, ".dataset-roster-panel").style.getPropertyValue("min-height")).toBe(
@@ -369,7 +370,7 @@ describe("narrow desktop layout markup", () => {
       requireMediaRule(app, "(max-width: 1120px)", ".workspace-layout").style.getPropertyValue(
         "grid-template-rows",
       ),
-    ).toBe("minmax(342px, 0.9fr) minmax(178px, 1.6fr)");
+    ).toBe("minmax(342px, 0.9fr) minmax(354px, 1.6fr)");
     // And what the column cannot fit is clipped here rather than pushing the
     // shell past the viewport.
     expect(requireStyleRule(app, ".workspace-sidebar").style.getPropertyValue("overflow")).toBe(
@@ -401,22 +402,29 @@ describe("narrow desktop layout markup", () => {
       requireMediaRule(app, "(max-width: 1120px)", ".workspace-layout").style.getPropertyValue(
         "grid-template-rows",
       ),
-    ).toBe("minmax(342px, 0.9fr) minmax(178px, 1.6fr)");
+    ).toBe("minmax(342px, 0.9fr) minmax(354px, 1.6fr)");
     expect(
       requireMediaRule(app, "(max-width: 1120px)", ".viewer-stack").style.getPropertyValue(
         "grid-template-rows",
       ),
-    ).toBe("minmax(116px, 1.15fr) minmax(54px, 1fr)");
+    ).toBe("minmax(168px, 0.9fr) minmax(116px, 1.15fr) minmax(54px, 1fr)");
   });
 
   it("keeps the complete loaded viewer reachable when shell notices shorten the workspace", () => {
     // At 960x640 the persistent backend notice and a folder-import notice take
     // two approximately 31px lines. After the 58px toolbar, only about 520px
-    // remains for a workspace whose complete narrow evidence is 544px tall:
-    // 16px padding + 342px sidebar + 8px gap + (116px table + 8px gap +
-    // 54px selected-spectrum header). The document intentionally cannot
-    // scroll, so the narrow workspace must both reserve the complete viewer
-    // stack and own the resulting small vertical overflow.
+    // remains for a workspace whose complete narrow evidence is now 720px
+    // tall: 16px padding + 342px sidebar + 8px gap + (168px chromatogram +
+    // 8px gap + 116px table + 8px gap + 54px selected-spectrum header). The
+    // document intentionally cannot scroll, so the narrow workspace must both
+    // reserve the complete viewer stack and own the resulting vertical
+    // overflow.
+    //
+    // The chromatogram's 168px is its 52px header and borders, the 60px its
+    // plot floors at, and the caption and viewport actions below it. Squeezing
+    // it under that gives an axis whose labels overlap and controls that wrap
+    // out of reach -- not a smaller version of the view but a different one --
+    // so the overflow is the honest trade at the minimum window.
     const app = mountStyles(appStyles);
     const workspace = requireMediaRule(
       app,
@@ -425,14 +433,14 @@ describe("narrow desktop layout markup", () => {
     ).style;
 
     expect(workspace.getPropertyValue("grid-template-rows")).toBe(
-      "minmax(342px, 0.9fr) minmax(178px, 1.6fr)",
+      "minmax(342px, 0.9fr) minmax(354px, 1.6fr)",
     );
     expect(workspace.getPropertyValue("overflow-y")).toBe("auto");
     expect(
       requireMediaRule(app, "(max-width: 1120px)", ".viewer-stack").style.getPropertyValue(
         "grid-template-rows",
       ),
-    ).toBe("minmax(116px, 1.15fr) minmax(54px, 1fr)");
+    ).toBe("minmax(168px, 0.9fr) minmax(116px, 1.15fr) minmax(54px, 1fr)");
     expect(requireStyleRule(app, ".viewer-stack").style.getPropertyValue("gap")).toBe("8px");
   });
 

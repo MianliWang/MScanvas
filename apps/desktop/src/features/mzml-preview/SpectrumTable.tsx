@@ -111,11 +111,23 @@ export function SpectrumTable({
     viewport?.querySelector<HTMLElement>(`[data-row-position="${focusRow}"]`)?.focus();
   }, [focusRow, start, end]);
 
-  const moveFocus = useCallback(
+  /**
+   * Brings a row into view and moves the tab stop to it, without taking focus.
+   *
+   * Split from {@link moveFocus} because who asked matters. A selection made in
+   * the chromatogram, or with Previous/Next, has to reveal its row -- a marker
+   * pointing at a scan the table is not showing is a link the user cannot
+   * follow. But taking DOM focus out of the control they are operating would
+   * mean the next arrow key went somewhere they did not expect, and a button
+   * they were about to press again would no longer be under the keyboard.
+   *
+   * The roving tab stop still moves, so tabbing into the table afterwards lands
+   * on the selected row rather than back at the top.
+   */
+  const revealRow = useCallback(
     (position: number) => {
       const clamped = Math.min(rowCount - 1, Math.max(0, position));
       setFocusRow(clamped);
-      pendingFocus.current = true;
       const viewport = viewportRef.current;
       if (viewport === null) {
         return;
@@ -139,6 +151,29 @@ export function SpectrumTable({
     },
     [rowCount, viewportHeight],
   );
+
+  /** The same reveal, plus the focus that only a keyboard move inside the table earns. */
+  const moveFocus = useCallback(
+    (position: number) => {
+      pendingFocus.current = true;
+      revealRow(position);
+    },
+    [revealRow],
+  );
+
+  // A selection that did not come from this table -- the chromatogram, or
+  // Previous/Next -- still has to be visible here. Revealed rather than
+  // focused, and only when the row is not already the tab stop, so a commit
+  // made with Enter on the focused row does not re-scroll under the user.
+  const selectedPosition = selectedIndex === null ? -1 : table.rows.findIndex((row) => row.index === selectedIndex);
+  useEffect(() => {
+    if (selectedPosition >= 0 && selectedPosition !== focusRow) {
+      revealRow(selectedPosition);
+    }
+    // Only when the selection moves. Following `focusRow` as well would undo an
+    // arrow-key move by scrolling back to the selected row.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPosition, revealRow]);
 
   /**
    * Arrow keys move focus without selecting. Selection is committed with Enter

@@ -64,6 +64,17 @@ async function openTheFile(api: PreviewApi): Promise<void> {
   fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
 }
 
+/**
+ * The selected-spectrum plot, named apart from the chromatogram beside it.
+ *
+ * The workspace draws two graphics now. A bare `img` query would resolve to
+ * whichever came first in the document, which is not a question any of these
+ * tests is asking.
+ */
+async function findSpectrumPlot(): Promise<HTMLElement> {
+  return screen.findByRole("img", { name: /^Spectrum /u });
+}
+
 function selectRowByIdentifier(identifier: string): void {
   const grid = screen.getByRole("grid", { name: "Spectra" });
   fireEvent.click(within(grid).getByText(identifier));
@@ -477,7 +488,7 @@ describe("mzML preview workspace", () => {
     );
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
-    await screen.findByRole("img");
+    await findSpectrumPlot();
 
     await waitFor(() => {
       expect(screen.getByText("Row select to rendered").nextElementSibling).not.toHaveTextContent(
@@ -575,7 +586,7 @@ describe("mzML preview workspace", () => {
     await screen.findByRole("grid", { name: "Spectra" });
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
-    await screen.findByRole("img");
+    await findSpectrumPlot();
 
     expect(
       screen.getByText(
@@ -596,7 +607,7 @@ describe("mzML preview workspace", () => {
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=3");
 
-    expect(await screen.findByRole("img")).toHaveAccessibleName(
+    expect(await findSpectrumPlot()).toHaveAccessibleName(
       "Spectrum 2, MS2, 12 points. m/z ranges from 300.0000 to 305.5000. The most intense peak reported for this spectrum is 507.00 at m/z 305.5000. This file does not report whether these are profile samples or centroided peaks.",
     );
     expect(screen.getByText(/Drawn as 12 sticks, one per point\./)).toBeVisible();
@@ -618,7 +629,7 @@ describe("mzML preview workspace", () => {
 
     expect(await screen.findByText("This spectrum has no peaks")).toBeVisible();
     // No plot, and no base peak invented for a spectrum that has none.
-    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /^Spectrum /u })).toBeNull();
     expect(screen.queryByText("Base peak")).not.toBeInTheDocument();
     expect(screen.queryByText("m/z range")).not.toBeInTheDocument();
     expect(screen.getByText("Points").nextElementSibling).toHaveTextContent("0");
@@ -647,7 +658,7 @@ describe("mzML preview workspace", () => {
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
 
-    const plot = await screen.findByRole("img");
+    const plot = await findSpectrumPlot();
     expect(plot).toHaveAccessibleName(/most intense peak reported for this spectrum is 4\.200e\+6/);
     expect(plot).toHaveAccessibleName(/The drawing covers the first 8 of those points\./);
     // The tallest point in the prefix is never presented as the spectrum's.
@@ -830,7 +841,7 @@ describe("mzML preview workspace", () => {
     await screen.findByRole("grid", { name: "Spectra" });
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
-    await screen.findByRole("img");
+    await findSpectrumPlot();
 
     // Retention time carries no unit, so it says so instead of guessing one —
     // in the detail panel and beside the table's own values.
@@ -1800,7 +1811,8 @@ describe("the session workspace roster", () => {
     // doing, what the search found, what the last workspace action did,
     // whether a folder scan is running, what native drop is doing, and what
     // the one conversion is doing.
-    expect(regions()).toHaveLength(6);
+    const before = regions();
+    expect(before).toHaveLength(6);
 
     fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
 
@@ -1809,8 +1821,14 @@ describe("the session workspace roster", () => {
         "Workspace: Added 2 files.",
       );
     });
-    // The same six regions, with new text in one of them.
-    expect(regions()).toHaveLength(6);
+    // The very same nodes, with new text in one of them -- asserted by identity
+    // rather than by counting, because opening a preview mounts a viewer that
+    // has polite regions of its own. What must never happen is one of *these*
+    // being replaced, which is what a reader would miss.
+    for (const region of before) {
+      expect(region).toBeInTheDocument();
+    }
+    expect(regions()).toEqual(expect.arrayContaining(before));
   });
 
   it("does not claim the session is empty before its list has been read", async () => {
