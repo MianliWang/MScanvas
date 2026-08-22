@@ -666,6 +666,7 @@ export function PreviewWorkspace() {
               onToggleTrace={workspace.toggleChromatogramTrace}
               onVisibleDomainChange={workspace.setChromatogramVisibleDomain}
               selectedIndex={workspace.selectedIndex}
+              selectionRevision={workspace.selectionRevision}
               traces={workspace.chromatogramTraces}
               visibleDomain={workspace.chromatogramVisibleDomain}
             />

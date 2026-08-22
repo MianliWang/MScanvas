@@ -234,11 +234,34 @@ repeat click while the first read is still in flight is dropped by the existing
 in-flight guard before any of this, which is what keeps a double click one
 process.
 
-Writing that split surfaced a defect that predates this milestone. The sticky
-header scrolls **inside** the same box as the rows, so a row brought to exactly
-its own offset arrives underneath it — focused, announced and invisible. The
-reveal now stops a header's height sooner, which is what the opposite edge
-already did.
+Both linked views consume that revision: the scan table to scroll its row into
+view, and the chromatogram to pan its marker back. Passing it to one and not the
+other is the shape of omission this milestone shipped twice, which is why the
+test suite carries a matrix over every commit source rather than a case per
+surface.
+
+### Where a revealed row goes, and one wrong turn on the way there
+
+The header is `position: sticky`, so it stays in normal flow: it occupies its own
+`ROW_HEIGHT` at the top of the track, and the row canvas begins after it. A row
+at canvas offset `top` therefore renders at
+
+```
+viewport y = HEADER_HEIGHT + top - scrollTop
+```
+
+and is clear of the header exactly when `top >= scrollTop`. Revealing it is
+`scrollTop = top`, which lands it on the header's bottom edge.
+
+An intermediate version of this milestone subtracted the header again here, on a
+misreading of a WebDriver failure. A click had been intercepted by the column
+header — but the element had been positioned by the driver's own
+`scrollIntoView`, which puts a target at the container's top edge and therefore
+under a sticky header. That is the driver's geometry, not this function's, and
+the two are now distinguished in the tests: the browser case scrolls the
+container directly and asserts against measured rectangles, and the component
+cases derive their expectations from where a row renders rather than from the
+formula inside the reveal.
 
 ### Previous and Next walk table order
 

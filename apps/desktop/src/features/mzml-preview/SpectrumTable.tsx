@@ -150,14 +150,22 @@ export function SpectrumTable({
         ROW_HEIGHT,
         (viewport.clientHeight || viewportHeight) - HEADER_HEIGHT,
       );
-      // The sticky header sits inside this scrolling box, so a row brought to
-      // exactly `scrollTop` arrives underneath it: present, focused, and not
-      // visible. Stopping a header's worth sooner is what the lower branch
-      // already does for the bottom edge.
-      if (top - HEADER_HEIGHT < viewport.scrollTop) {
-        const next = Math.max(0, top - HEADER_HEIGHT);
-        viewport.scrollTop = next;
-        setScrollTop(next);
+      // `top` is the row's offset inside the canvas, and the canvas begins
+      // after the header: the header is `position: sticky`, which keeps it in
+      // normal flow and gives it its own 30px at the top of the track. So a row
+      // at `scrollTop` renders at viewport y = HEADER_HEIGHT -- immediately
+      // below the sticky header, and fully visible.
+      //
+      // Subtracting the header here would subtract it a second time and scroll
+      // a row that was already clear of it up by a further row. An earlier
+      // version of this milestone did exactly that, on a misreading of a
+      // WebDriver failure: the click that was intercepted had been positioned
+      // by the driver's own `scrollIntoView`, which puts an element at the
+      // container's top edge and therefore under the sticky header. That is the
+      // driver's geometry, not this function's.
+      if (top < viewport.scrollTop) {
+        viewport.scrollTop = top;
+        setScrollTop(top);
       } else if (top + ROW_HEIGHT > viewport.scrollTop + height) {
         const next = top + ROW_HEIGHT - height;
         viewport.scrollTop = next;

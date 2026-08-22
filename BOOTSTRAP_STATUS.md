@@ -4410,10 +4410,19 @@ established request-generation behaviour rather than adding a second race
 scheme. Arrow keys still move focus without reading anything.
 
 An external selection reveals its table row without taking focus, so the next
-key press still goes where the user is working. Writing that split surfaced a
-defect older than this milestone: the sticky header scrolls inside the same box
-as the rows, so a row brought to its own offset arrived underneath it. It now
-stops a header's height sooner.
+key press still goes where the user is working. Review found that reveal wrong
+three times over before it was right: suppressed when the selected row happened
+to be the roving tab stop, then blind to a second commit of the same scan, and
+then -- on the chromatogram side -- blind to it there too. Both linked views now
+consume one monotonic count of persistent selection commits, and a matrix over
+every commit source is in the suite so the next omission is visible rather than
+found twice.
+
+The reveal's geometry was also wrong for a while, from misreading a WebDriver
+failure: a click intercepted by the sticky header had been positioned by the
+driver's own `scrollIntoView`, not by the application. The header is
+`position: sticky` and stays in normal flow, so the row canvas begins after it
+and `scrollTop = top` already lands a row on the header's bottom edge.
 
 The chromatogram's committed visible domain is semantic retention time held at
 the workspace level, so M4.3 can ask for full range or current range without

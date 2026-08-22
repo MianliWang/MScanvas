@@ -212,71 +212,139 @@ describe("spectrum table rows", () => {
 });
 
 describe("bringing a row into view", () => {
-  /**
-   * The scroll position after a reveal, given a viewport that holds ten rows.
+  /*
+   * Where a row actually renders, which is what these cases are derived from
+   * rather than from the arithmetic inside `revealRow`.
    *
-   * jsdom lays nothing out, so the height the component would measure is
-   * stubbed. What is under test is arithmetic, not layout: where the component
-   * decides to put the scroll for a row it wants seen.
+   * The scrolling box holds a track; the track holds the sticky header and then
+   * the canvas. `position: sticky` keeps the header in normal flow, so it has
+   * its own ROW_HEIGHT at the top of the track and the canvas begins after it.
+   * A row at canvas offset `top` therefore renders at
+   *
+   *     viewport y = HEADER_HEIGHT + top - scrollTop
+   *
+   * and is clear of the sticky header exactly when `top >= scrollTop`. Every
+   * expectation below is that sentence, not a copy of the implementation.
    */
-  function scrollAfter(action: (container: HTMLElement) => void, rowCount = 400): number {
-    const { container } = renderTable(rowCount);
-    const viewport = requireElement(container, ".spectrum-table-viewport");
-    Object.defineProperty(viewport, "clientHeight", { value: 330, configurable: true });
-    action(container);
-    return viewport.scrollTop;
+  const HEADER = 30;
+  const ROW = 30;
+
+  /** Where the reveal leaves a row on screen, in viewport pixels. */
+  function viewportYOf(position: number, scrollTop: number): number {
+    return HEADER + position * ROW - scrollTop;
   }
 
-  it("keeps a row clear of the header it would otherwise arrive under", () => {
-    // The header is sticky *inside* this scrolling box, so a row scrolled to
-    // exactly its own offset arrives beneath it: focused, announced, and not
-    // visible. The reveal stops a header's worth sooner, which is what the
-    // opposite edge already did.
-    const top = scrollAfter((container) => {
-      const first = requireElement(container, '[data-row-position="0"]');
-      first.focus();
-      // Down past the fold, then back up to the top row.
-      fireEvent.keyDown(first, { key: "End" });
-      fireEvent.keyDown(document.activeElement ?? first, { key: "Home" });
-    });
+  it("leaves a row that already begins immediately below the sticky header", () => {
+    // CASE A, and the one that distinguishes the defect. Row 10 sits at 300;
+    // with the scroll at 300 it renders at y = 30, touching the header's bottom
+    // edge and entirely visible. Subtracting the header again would scroll to
+    // 270 and move a row nobody needed moved.
+    const { container, rerender } = renderTable(400);
+    const viewport = requireElement(container, ".spectrum-table-viewport");
+    Object.defineProperty(viewport, "clientHeight", { value: 330, configurable: true });
+    viewport.scrollTop = 300;
+    fireEvent.scroll(viewport);
 
-    expect(top).toBe(0);
+    rerender(
+      <SpectrumTable
+        onRendered={vi.fn()}
+        onSelect={vi.fn()}
+        selectedIndex={10}
+        selectionRevision={1}
+        table={{ rows: buildRows(400), totalRowCount: 400, truncated: false }}
+      />,
+    );
+
+    expect(viewport.scrollTop).toBe(300);
+    expect(viewportYOf(10, viewport.scrollTop)).toBe(HEADER);
   });
 
-  it("stops a row's own header height above it rather than exactly at it", () => {
-    // Driven through the external-selection path rather than by walking the
-    // keyboard there: it is the same reveal, and three hundred synthetic key
-    // presses over a virtualized table are three hundred renders to assert one
-    // subtraction.
-    const rows = buildRows(400);
-    const table = { rows, totalRowCount: 400, truncated: false };
+  it("reveals a row genuinely hidden beneath the sticky header, and no further", () => {
+    // CASE B. Row 9 sits at 270; with the scroll at 300 it would render at
+    // y = 0, underneath the header. Revealed, it must sit at the header's
+    // bottom edge -- not a row above it.
+    const { container, rerender } = renderTable(400);
+    const viewport = requireElement(container, ".spectrum-table-viewport");
+    Object.defineProperty(viewport, "clientHeight", { value: 330, configurable: true });
+    viewport.scrollTop = 300;
+    fireEvent.scroll(viewport);
+    expect(viewportYOf(9, 300)).toBe(0);
+
+    rerender(
+      <SpectrumTable
+        onRendered={vi.fn()}
+        onSelect={vi.fn()}
+        selectedIndex={9}
+        selectionRevision={1}
+        table={{ rows: buildRows(400), totalRowCount: 400, truncated: false }}
+      />,
+    );
+
+    expect(viewportYOf(9, viewport.scrollTop)).toBe(HEADER);
+    expect(viewport.scrollTop).toBe(270);
+  });
+
+  it("reveals a row below the fold with the smallest scroll that shows all of it", () => {
+    // CASE C. The rows have `clientHeight - HEADER` to live in, so the last
+    // fully visible row ends exactly at the viewport's bottom edge.
     const { container, rerender } = renderTable(400);
     const viewport = requireElement(container, ".spectrum-table-viewport");
     Object.defineProperty(viewport, "clientHeight", { value: 330, configurable: true });
 
-    // Down the run, so the row that follows is above the fold.
     rerender(
       <SpectrumTable
         onRendered={vi.fn()}
         onSelect={vi.fn()}
-        selectedIndex={200}
-        table={table}
+        selectedIndex={20}
+        selectionRevision={1}
+        table={{ rows: buildRows(400), totalRowCount: 400, truncated: false }}
       />,
     );
-    expect(viewport.scrollTop).toBe(200 * 30 + 30 - (330 - 30));
+
+    // Its bottom edge lands on the viewport's, and not a pixel past it.
+    expect(viewportYOf(20, viewport.scrollTop) + ROW).toBe(330);
+    // And the row above it is still whole, so this was the smallest move.
+    expect(viewportYOf(19, viewport.scrollTop)).toBeGreaterThanOrEqual(HEADER);
+  });
+
+  it("moves nothing for a row already whole in the middle of the viewport", () => {
+    // CASE D.
+    const { container, rerender } = renderTable(400);
+    const viewport = requireElement(container, ".spectrum-table-viewport");
+    Object.defineProperty(viewport, "clientHeight", { value: 330, configurable: true });
+    viewport.scrollTop = 300;
+    fireEvent.scroll(viewport);
 
     rerender(
       <SpectrumTable
         onRendered={vi.fn()}
         onSelect={vi.fn()}
-        selectedIndex={100}
-        table={table}
+        selectedIndex={14}
+        selectionRevision={1}
+        table={{ rows: buildRows(400), totalRowCount: 400, truncated: false }}
       />,
     );
 
-    // Row 100 sits at 3,000; the reveal puts the scroll one row height above
-    // it so the sticky header does not cover it.
-    expect(viewport.scrollTop).toBe(3_000 - 30);
+    expect(viewport.scrollTop).toBe(300);
+  });
+
+  it("does not jump an extra row when the keyboard walks up to the header edge", () => {
+    // The user-visible shape of the same defect: arrowing upwards past the top
+    // of the viewport should bring one row into view at a time, not two.
+    const { container } = renderTable(400);
+    const viewport = requireElement(container, ".spectrum-table-viewport");
+    Object.defineProperty(viewport, "clientHeight", { value: 330, configurable: true });
+    viewport.scrollTop = 300;
+    fireEvent.scroll(viewport);
+
+    // Focus row 10, which is the first row clear of the header at this scroll.
+    const row = requireElement(container, '[data-row-position="10"]');
+    row.focus();
+    fireEvent.keyDown(row, { key: "ArrowUp" });
+
+    // One row of movement, and row 9 now sits exactly at the header's edge.
+    expect(viewport.scrollTop).toBe(270);
+    expect(viewportYOf(9, viewport.scrollTop)).toBe(HEADER);
   });
 
   it("reveals the selected row again when the same scan is committed a second time", () => {
@@ -322,9 +390,9 @@ describe("bringing a row into view", () => {
       />,
     );
 
-    // Back in view, a header's height clear of the sticky header, and the
+    // Back in view, sitting at the sticky header's bottom edge, and the
     // keyboard still on the control the user pressed.
-    expect(viewport.scrollTop).toBe(150 - 30);
+    expect(viewport.scrollTop).toBe(150);
     expect(requireElement(container, '[data-row-position="5"]')).toHaveAttribute("tabindex", "0");
     expect(document.activeElement).toBe(outside);
     outside.remove();
@@ -360,8 +428,8 @@ describe("bringing a row into view", () => {
       <SpectrumTable onRendered={vi.fn()} onSelect={vi.fn()} selectedIndex={5} table={table} />,
     );
 
-    // Row 5 sits at 150, revealed a header's height above it.
-    expect(viewport.scrollTop).toBe(150 - 30);
+    // Row 5 sits at 150, revealed to the sticky header's bottom edge.
+    expect(viewport.scrollTop).toBe(150);
     expect(document.activeElement).toBe(outside);
     outside.remove();
   });

@@ -466,6 +466,129 @@ describe("the linked chromatogram, rendered", () => {
     });
   });
 
+  describe("reveal geometry, measured", () => {
+    /*
+     * Two different scrolls are easy to confuse, and confusing them once
+     * already produced a wrong fix in this milestone.
+     *
+     * WebDriver's own `scrollIntoView` — which it performs implicitly before
+     * clicking an element it considers out of view — places the element at the
+     * container's top edge, which in this table is *underneath* the sticky
+     * header. A click intercepted by the column header after such a scroll says
+     * nothing about `revealRow`.
+     *
+     * MSCanvas's reveal is a different calculation. The header is
+     * `position: sticky`, so it stays in normal flow and the row canvas begins
+     * after it; a row at canvas offset `top` renders at
+     * `header.height + top - scrollTop`, and is clear of the header exactly
+     * when `top >= scrollTop`.
+     *
+     * So these cases scroll the container directly and then let the application
+     * reveal, and they assert against measured rectangles rather than against
+     * scrollTop arithmetic. Nothing here uses the driver's scrollIntoView as
+     * the mechanism under test.
+     */
+    async function tableGeometry(): Promise<{
+      readonly headerBottom: number;
+      readonly viewportTop: number;
+      readonly viewportBottom: number;
+      readonly scrollTop: number;
+      readonly selectedTop: number;
+      readonly selectedBottom: number;
+      readonly selectedPosition: number | null;
+    }> {
+      return browser.execute(() => {
+        const viewport = document.querySelector(".spectrum-table-viewport");
+        const header = document.querySelector(".spectrum-table-head");
+        const selected = document.querySelector('div.spectrum-table-row[aria-selected="true"]');
+        const viewportBox = viewport?.getBoundingClientRect();
+        const headerBox = header?.getBoundingClientRect();
+        const selectedBox = selected?.getBoundingClientRect();
+        const position = selected?.getAttribute("data-row-position");
+        return {
+          headerBottom: headerBox?.bottom ?? 0,
+          viewportTop: viewportBox?.top ?? 0,
+          viewportBottom: viewportBox?.bottom ?? 0,
+          scrollTop: viewport?.scrollTop ?? 0,
+          selectedTop: selectedBox?.top ?? 0,
+          selectedBottom: selectedBox?.bottom ?? 0,
+          selectedPosition:
+            position === undefined || position === null ? null : Number(position),
+        };
+      });
+    }
+
+    /** Scrolls the table itself, the way a user's wheel would. */
+    async function scrollTableTo(scrollTop: number): Promise<void> {
+      await browser.execute((top: number) => {
+        const viewport = document.querySelector(".spectrum-table-viewport");
+        if (viewport !== null) {
+          viewport.scrollTop = top;
+          viewport.dispatchEvent(new Event("scroll", { bubbles: true }));
+        }
+      }, scrollTop);
+    }
+
+    it("puts a revealed row exactly at the sticky header's bottom edge", async () => {
+      // Discriminating, and measured rather than computed. Scrolled to the end
+      // of a short table, row 4 is above the fold; revealing it must place its
+      // top on the header's bottom edge. Subtracting the header a second time
+      // would scroll a row further and leave the row one row-height lower --
+      // which is what the equality below would catch.
+      await open();
+      await scrollTableTo(1_000);
+
+      const at = await pointAt(4 / 5);
+      await browser.action("pointer").move({ x: at.x, y: at.y }).down().up().perform();
+      await browser.waitUntil(async () => (await selectedRowPosition()) === 4, {
+        timeout: 10_000,
+        timeoutMsg: "the click never selected scan 4",
+      });
+
+      const geometry = await tableGeometry();
+      expect(geometry.selectedTop).toBeCloseTo(geometry.headerBottom, 0);
+      // And it is on screen rather than scrolled past the end of the box. The
+      // bottom edge is deliberately not asserted: at this window the table's
+      // row area is 29px, one pixel less than a row, so no row can fit inside
+      // it whole -- the component floors the usable height at one row rather
+      // than dividing by zero.
+      expect(geometry.selectedTop).toBeLessThan(geometry.viewportBottom);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("does not move a row that already begins immediately below the header", async () => {
+      // The case the wrong geometry got wrong: a row exactly at the header's
+      // bottom edge is fully visible, and revealing it must be a no-op.
+      await open();
+
+      // Select a scan, then scroll the table so that its row sits exactly at
+      // the header's bottom edge, and commit the same scan again.
+      await browser.$('div.spectrum-table-row[data-row-position="2"]').click();
+      await browser.waitUntil(async () => (await selectedRowPosition()) === 2, {
+        timeout: 10_000,
+      });
+
+      // Row 2 sits at canvas offset 60; a scroll of exactly 60 puts it against
+      // the header.
+      await scrollTableTo(60);
+      const before = await tableGeometry();
+      expect(before.selectedTop).toBeCloseTo(before.headerBottom, 0);
+
+      // Commit it again from the chromatogram — a new commit, and one the
+      // reveal will act on.
+      const at = await pointAt(2 / 5);
+      await browser.action("pointer").move({ x: at.x, y: at.y }).down().up().perform();
+      await browser.waitUntil(async () => (await selectedRowPosition()) === 2, {
+        timeout: 10_000,
+      });
+
+      const after = await tableGeometry();
+      // The scroll did not move, and the row is still against the header.
+      expect(after.scrollTop).toBe(before.scrollTop);
+      expect(after.selectedTop).toBeCloseTo(after.headerBottom, 0);
+    });
+  });
+
   describe("linked selection", () => {
     it("keeps the table, the plot and the spectrum on one scan in both directions", async () => {
       await open();

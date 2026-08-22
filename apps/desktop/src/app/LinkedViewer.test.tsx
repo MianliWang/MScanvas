@@ -50,11 +50,20 @@ function renderApp(api: PreviewApi): void {
 
 async function openTheFile(api: PreviewApi): Promise<void> {
   renderApp(api);
-  fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
-  // A longer wait than the default second. Opening a preview here mounts the
-  // whole viewer -- three panels, one of which sorts every scan -- and under a
-  // parallel suite that occasionally takes longer than a default `findBy`
-  // allows. The wait is about the machine, not about the product.
+  // Waited for rather than clicked as soon as it appears. `Add files…` is
+  // `disabled` while the backend availability probe is in flight, so a click
+  // that lands first is dropped by the browser and the workspace stays empty --
+  // which showed up as this file intermittently timing out with `openCount()`
+  // still at zero. The race is in the harness, not in the product: the control
+  // correctly refuses to be pressed rather than accepting a press and doing
+  // nothing.
+  const add = await screen.findByRole("button", { name: "Add files…" });
+  await waitFor(() => {
+    expect(add).toBeEnabled();
+  });
+  fireEvent.click(add);
+  // A longer wait than the default second: opening a preview here mounts the
+  // whole viewer, three panels at once.
   await screen.findByRole("grid", { name: "Spectra" }, { timeout: 10_000 });
 }
 
@@ -86,6 +95,11 @@ function clickScan(index: number, rowCount: number): void {
   fireEvent.pointerUp(plot(), { clientX, button: 0, pointerId: 1 });
 }
 
+/** What the chromatogram's readout currently says. */
+async function readoutText(): Promise<string> {
+  return (document.querySelector(".chromatogram-readout")?.textContent ?? "").trim();
+}
+
 /** How wide a "Showing a to b" caption says the viewport is. */
 function spanOf(caption: string): number {
   const [, low, high] = /Showing ([\d.]+) to ([\d.]+)/u.exec(caption) ?? [];
@@ -101,6 +115,134 @@ function rowFor(index: number): HTMLElement {
 afterEach(() => {
   vi.restoreAllMocks();
   cleanup();
+});
+
+describe("the selection-commit matrix", () => {
+  /**
+   * What every persistent commit source does, and what every transient action
+   * does not.
+   *
+   * Written as a matrix because the two defects this milestone shipped were
+   * both omissions rather than mistakes: one linked view consumed the commit
+   * and the other did not. A table over the sources makes the next omission
+   * visible instead of leaving it to be found twice.
+   *
+   * The columns are: the selected index moves to the named scan; the scan
+   * table reveals; the chromatogram may reveal; exactly one backend read.
+   */
+  const COMMITS = [
+    {
+      what: "a chromatogram click",
+      commit: () => {
+        clickScan(3, 6);
+      },
+      scan: 3,
+    },
+    {
+      what: "a table click",
+      commit: () => {
+        fireEvent.click(rowFor(2));
+      },
+      scan: 2,
+    },
+    {
+      what: "Enter on a focused row",
+      commit: () => {
+        const row = rowFor(3);
+        row.focus();
+        fireEvent.keyDown(row, { key: "Enter" });
+      },
+      scan: 3,
+    },
+    {
+      what: "Space on a focused row",
+      commit: () => {
+        const row = rowFor(4);
+        row.focus();
+        fireEvent.keyDown(row, { key: " " });
+      },
+      scan: 4,
+    },
+  ] as const;
+
+  for (const { what, commit, scan } of COMMITS) {
+    it(`treats ${what} as one commit that every linked view sees`, async () => {
+      // The default six-row preview: these cases are about which surfaces see
+      // one commit, and a longer run would only make mounting the application
+      // twenty-odd times slower.
+      const api = createFakePreviewApi();
+      await openTheFile(api);
+      givePlotABox();
+
+      commit();
+
+      await waitFor(() => {
+        expect(api.requestedSpectra).toEqual([scan]);
+      });
+      // The scan table marks it, and the chromatogram names it.
+      await waitFor(() => {
+        expect(rowFor(scan)).toHaveAttribute("aria-selected", "true");
+      });
+      expect(await readoutText()).toContain(`index ${String(scan)},`);
+    });
+  }
+
+  it("treats Previous and Next as commits too", async () => {
+    const api = createFakePreviewApi();
+    await openTheFile(api);
+
+    fireEvent.click(rowFor(1));
+    await waitFor(() => {
+      expect(api.requestedSpectra).toEqual([1]);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Next scan" }));
+    await waitFor(() => {
+      expect(api.requestedSpectra).toEqual([1, 2]);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Previous scan" }));
+    await waitFor(() => {
+      expect(api.requestedSpectra).toEqual([1, 2, 1]);
+    });
+
+    expect(await readoutText()).toContain("index 1,");
+  });
+
+  it("treats hover, focus movement and viewport gestures as no commit at all", async () => {
+    // None of these selects anything, so none of them may read the backend or
+    // move a linked view as though a selection had happened.
+    const api = createFakePreviewApi({ preview: buildPreview(400) });
+    await openTheFile(api);
+    givePlotABox();
+
+    fireEvent.click(rowFor(1));
+    await waitFor(() => {
+      expect(api.requestedSpectra).toEqual([1]);
+    });
+    const viewport = document.querySelector(".spectrum-table-viewport") as HTMLElement;
+    Object.defineProperty(viewport, "clientHeight", { value: 330, configurable: true });
+    act(() => {
+      viewport.scrollTop = 3_000;
+      fireEvent.scroll(viewport);
+    });
+
+    fireEvent.pointerMove(plot(), { clientX: 500 });
+    const row = rowFor(100);
+    row.focus();
+    for (const key of ["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End"]) {
+      fireEvent.keyDown(document.activeElement ?? row, { key });
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset range" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // One read, from the one commit at the top.
+    expect(api.requestedSpectra).toEqual([1]);
+    // And the selection is still scan 1: nothing above moved it.
+    expect(await readoutText()).toContain("index 1,");
+  });
 });
 
 describe("committing the same scan again", () => {

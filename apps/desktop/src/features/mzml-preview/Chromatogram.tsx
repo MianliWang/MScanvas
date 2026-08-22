@@ -80,6 +80,15 @@ export interface ChromatogramProps {
   readonly visibleDomain: RetentionTimeDomain | null;
   readonly onVisibleDomainChange: (domain: RetentionTimeDomain | null) => void;
   readonly selectedIndex: number | null;
+  /**
+   * How many persistent selection commits have happened.
+   *
+   * The same count the scan table watches, for the same reason. Which scan is
+   * selected does not change when the same scan is selected again, and by then
+   * the user may have panned its marker off screen -- which is exactly when it
+   * has to come back.
+   */
+  readonly selectionRevision?: number;
   readonly onSelect: (index: number) => void;
   readonly onSelectPrevious: () => void;
   readonly onSelectNext: () => void;
@@ -94,6 +103,7 @@ export function Chromatogram({
   visibleDomain,
   onVisibleDomainChange,
   selectedIndex,
+  selectionRevision = 0,
   onSelect,
   onSelectPrevious,
   onSelectNext,
@@ -204,6 +214,7 @@ export function Chromatogram({
             onSelect={onSelect}
             onVisibleDomainChange={onVisibleDomainChange}
             selectedIndex={selectedIndex}
+            selectionRevision={selectionRevision}
             traces={traces}
             visibleDomain={visibleDomain}
             zoomedIn={zoomedIn}
@@ -376,6 +387,7 @@ function ChromatogramPlot({
   visibleDomain,
   onVisibleDomainChange,
   selectedIndex,
+  selectionRevision,
   onSelect,
   labelledBy,
   domain,
@@ -388,6 +400,7 @@ function ChromatogramPlot({
   readonly visibleDomain: RetentionTimeDomain | null;
   readonly onVisibleDomainChange: (domain: RetentionTimeDomain | null) => void;
   readonly selectedIndex: number | null;
+  readonly selectionRevision: number;
   readonly onSelect: (index: number) => void;
   readonly labelledBy: string;
   readonly domain: RetentionTimeDomain;
@@ -447,18 +460,31 @@ function ChromatogramPlot({
   // A selection can arrive from the scan table or from Previous/Next, and land
   // outside the stretch the plot is showing. Panning to it is right; resetting
   // the zoom is not -- the user chose that span, and selecting a scan is not a
-  // request to stop looking at it. Keyed by the scan so a pan the user then
-  // makes is not undone on the next render.
-  const revealed = useRef<number | null>(null);
+  // request to stop looking at it.
+  //
+  // Keyed to the selection *commit*, not to which scan is selected. Both halves
+  // of that matter:
+  //
+  // - a pan or a zoom the user makes afterwards must not be undone, so a render
+  //   carrying the same commit reveals nothing. That is why a guard exists at
+  //   all;
+  // - but committing the same scan again is a new commit, and the user who
+  //   panned its marker away and selected it again was asking to be shown it.
+  //   Guarding on the spectrum index alone could not tell those two apart.
+  //
+  // The revision is the one the scan table consumes. There is one persistent
+  // selection and one count of its commits; this is a second reader of them,
+  // not a second authority.
+  const consumedRevision = useRef<number | null>(null);
   useEffect(() => {
     if (selectedPoint === null) {
-      revealed.current = null;
+      consumedRevision.current = null;
       return;
     }
-    if (revealed.current === selectedPoint.spectrumIndex) {
+    if (consumedRevision.current === selectionRevision) {
       return;
     }
-    revealed.current = selectedPoint.spectrumIndex;
+    consumedRevision.current = selectionRevision;
     // Nothing to reveal at full range: every scan is already on screen.
     if (visibleDomain === null) {
       return;
@@ -467,7 +493,7 @@ function ChromatogramPlot({
     if (next !== visibleDomain) {
       onVisibleDomainChange(next);
     }
-  }, [selectedPoint, visibleDomain, fullDomain, onVisibleDomainChange]);
+  }, [selectedPoint, selectionRevision, visibleDomain, fullDomain, onVisibleDomainChange]);
 
   /** The retention time under a pointer, in the plot's own units. */
   const retentionTimeAt = useCallback((clientX: number): number | null => {

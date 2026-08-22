@@ -70,6 +70,7 @@ function renderChromatogram(
     onSelectNext,
     canSelectPrevious: false,
     canSelectNext: true,
+    selectionRevision: 0,
   } satisfies Parameters<typeof Chromatogram>[0];
   const view = render(<Chromatogram {...base} {...overrides} />);
   return {
@@ -468,7 +469,7 @@ describe("revealing a selection that is off screen", () => {
     onVisibleDomainChange.mockClear();
 
     // A selection from somewhere else: the table, or Previous/Next.
-    rerender({ selectedIndex: 45 });
+    rerender({ selectedIndex: 45, selectionRevision: 1 });
 
     await waitFor(() => {
       expect(onVisibleDomainChange).toHaveBeenCalled();
@@ -480,13 +481,94 @@ describe("revealing a selection that is off screen", () => {
     expect(45 * 0.0125).toBeLessThanOrEqual(domain.high);
   });
 
-  it("leaves the viewport alone when the selection is already inside it", () => {
+  it("reveals the marker again when the same scan is committed after a pan", () => {
+    // The symmetric case to the scan table's. Which scan is selected does not
+    // change when the same scan is selected again, so a reveal guarded on the
+    // spectrum index cannot see the commit -- and by then the user may have
+    // panned the marker off screen, which is exactly when they want it back.
+    const visible = { low: 0, high: 0.05 };
+    const { onVisibleDomainChange, rerender } = renderChromatogram({
+      visibleDomain: visible,
+      selectedIndex: 4,
+      selectionRevision: 1,
+    });
+    onVisibleDomainChange.mockClear();
+
+    // The user pans until scan 4 is outside the viewport. No new commit, so
+    // nothing pulls the viewport back.
+    const panned = { low: 0.3, high: 0.35 };
+    rerender({ visibleDomain: panned, selectedIndex: 4, selectionRevision: 1 });
+    expect(onVisibleDomainChange).not.toHaveBeenCalled();
+
+    // And commits the very same scan again from the table.
+    rerender({ visibleDomain: panned, selectedIndex: 4, selectionRevision: 2 });
+
+    const domain = onVisibleDomainChange.mock.calls.at(-1)?.[0] as RetentionTimeDomain;
+    expect(domain).not.toBeNull();
+    // The span the user chose is kept, and the zoom is not reset to full range.
+    expect(domain.high - domain.low).toBeCloseTo(0.05, 6);
+    expect(4 * 0.0125).toBeGreaterThanOrEqual(domain.low);
+    expect(4 * 0.0125).toBeLessThanOrEqual(domain.high);
+  });
+
+  it("stays where the user panned it while no new commit arrives", () => {
+    // The reason a guard exists at all. Renders, viewport changes and gesture
+    // domains all re-run this effect; none of them is a selection.
+    const { onVisibleDomainChange, rerender } = renderChromatogram({
+      visibleDomain: { low: 0, high: 0.05 },
+      selectedIndex: 4,
+      selectionRevision: 1,
+    });
+    onVisibleDomainChange.mockClear();
+
+    for (const low of [0.1, 0.2, 0.3, 0.4]) {
+      rerender({
+        visibleDomain: { low, high: low + 0.05 },
+        selectedIndex: 4,
+        selectionRevision: 1,
+      });
+    }
+
+    expect(onVisibleDomainChange).not.toHaveBeenCalled();
+  });
+
+  it("reveals a newly selected scan as well", () => {
+    // A different scan is a different index and a new commit; both change.
+    const { onVisibleDomainChange, rerender } = renderChromatogram({
+      visibleDomain: { low: 0, high: 0.05 },
+      selectedIndex: 1,
+      selectionRevision: 1,
+    });
+    onVisibleDomainChange.mockClear();
+
+    rerender({ visibleDomain: { low: 0, high: 0.05 }, selectedIndex: 45, selectionRevision: 2 });
+
+    const domain = onVisibleDomainChange.mock.calls.at(-1)?.[0] as RetentionTimeDomain;
+    expect(45 * 0.0125).toBeGreaterThanOrEqual(domain.low);
+    expect(45 * 0.0125).toBeLessThanOrEqual(domain.high);
+  });
+
+  it("changes nothing at full range, however many times a scan is committed", () => {
+    const { onVisibleDomainChange, rerender } = renderChromatogram({
+      visibleDomain: null,
+      selectedIndex: 4,
+      selectionRevision: 1,
+    });
+    onVisibleDomainChange.mockClear();
+
+    rerender({ visibleDomain: null, selectedIndex: 4, selectionRevision: 2 });
+    rerender({ visibleDomain: null, selectedIndex: 45, selectionRevision: 3 });
+
+    expect(onVisibleDomainChange).not.toHaveBeenCalled();
+  });
+
+  it("leaves a viewport alone when the selection is already inside it", () => {
     const { onVisibleDomainChange, rerender } = renderChromatogram({
       visibleDomain: { low: 0, high: 0.2 },
     });
     onVisibleDomainChange.mockClear();
 
-    rerender({ selectedIndex: 4 });
+    rerender({ selectedIndex: 4, selectionRevision: 1 });
 
     expect(onVisibleDomainChange).not.toHaveBeenCalled();
   });
@@ -495,7 +577,7 @@ describe("revealing a selection that is off screen", () => {
     const { onVisibleDomainChange, rerender } = renderChromatogram({ visibleDomain: null });
     onVisibleDomainChange.mockClear();
 
-    rerender({ selectedIndex: 45 });
+    rerender({ selectedIndex: 45, selectionRevision: 1 });
 
     expect(onVisibleDomainChange).not.toHaveBeenCalled();
   });
