@@ -17,6 +17,8 @@ import type {
 } from "./viewer/scanModel";
 import { nearestScan } from "./viewer/scanModel";
 import { panDomain, zoomDomain } from "./viewer/viewport";
+import type { ViewportAction } from "./viewer/viewportAction";
+import { applyViewportAction, planViewportAction } from "./viewer/viewportAction";
 import type { TraceVisibility } from "./usePreviewWorkspace";
 
 /**
@@ -38,8 +40,6 @@ const CLICK_SLOP = 4;
 
 /** What one wheel notch does to the visible span. */
 const WHEEL_ZOOM = 0.85;
-/** What the keyboard and the buttons do, which is a larger deliberate step. */
-const STEP_ZOOM = 0.6;
 /** What one pan step moves, as a fraction of the visible span. */
 const PAN_STEP = 0.25;
 
@@ -74,6 +74,22 @@ const TRACES: readonly {
 }[] = [
   { trace: "tic", label: "TIC", dash: undefined, pointRadius: 4 },
   { trace: "bpc", label: "BPC", dash: "7 4", pointRadius: 7.5 },
+];
+
+/**
+ * The visible viewport controls, in the order they are offered.
+ *
+ * One list so the three share a rule rather than three call sites that could
+ * drift -- which is how `Reset range` came to be the only one of them telling
+ * the truth about being inert.
+ */
+const VIEWPORT_CONTROLS: readonly {
+  readonly action: ViewportAction;
+  readonly label: string;
+}[] = [
+  { action: "zoom-in", label: "Zoom in" },
+  { action: "zoom-out", label: "Zoom out" },
+  { action: "reset", label: "Reset range" },
 ];
 
 export interface ChromatogramProps {
@@ -117,10 +133,31 @@ export const Chromatogram = memo(function Chromatogram({
 }: ChromatogramProps) {
   const domain = renderedDomain(interaction);
   const full = interaction.fullDomain;
-  const zoomedOut =
+  /**
+   * Whether the caption says "(full range)".
+   *
+   * A projection for a sentence, kept apart from what the buttons may claim.
+   * Both ask about the range, and it was tempting to let one answer serve both
+   * -- but "the whole run is on screen" and "this control would change what is
+   * on screen" are different questions, and the second is now one rule shared
+   * by three controls.
+   */
+  const showingFullRange =
     domain === null ||
     full === null ||
     (domain.low <= full.low && domain.high >= full.high);
+
+  /**
+   * What each visible viewport control would do, planned from the state this
+   * render is drawing.
+   *
+   * Three bounded projections per render, and nothing a pointer frame touches.
+   */
+  const viewportPlans = {
+    "zoom-in": planViewportAction(interaction, "zoom-in"),
+    "zoom-out": planViewportAction(interaction, "zoom-out"),
+    reset: planViewportAction(interaction, "reset"),
+  } as const;
 
   return (
     <section aria-labelledby="chromatogram-heading" className="panel chromatogram-panel">
@@ -161,34 +198,21 @@ export const Chromatogram = memo(function Chromatogram({
             </fieldset>
             <fieldset className="chromatogram-viewport-actions">
               <legend className="visually-hidden">Range</legend>
-              <button
-                className="secondary-button"
-                onClick={() => {
-                  step(readInteraction(), dispatch, "in");
-                }}
-                type="button"
-              >
-                Zoom in
-              </button>
-              <button
-                className="secondary-button"
-                onClick={() => {
-                  step(readInteraction(), dispatch, "out");
-                }}
-                type="button"
-              >
-                Zoom out
-              </button>
-              <button
-                className="secondary-button"
-                disabled={zoomedOut}
-                onClick={() => {
-                  dispatch({ type: "viewport-reset" });
-                }}
-                type="button"
-              >
-                Reset range
-              </button>
+              {VIEWPORT_CONTROLS.map(({ action, label }) => (
+                <button
+                  className="secondary-button"
+                  disabled={!viewportPlans[action].available}
+                  key={action}
+                  onClick={() => {
+                    // Planned again against the live state, not against the
+                    // `disabled` this render computed.
+                    applyViewportAction(readInteraction(), dispatch, action);
+                  }}
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
             </fieldset>
           </div>
         ) : null}
@@ -205,7 +229,7 @@ export const Chromatogram = memo(function Chromatogram({
             readInteraction={readInteraction}
             selected={interaction.selection?.index ?? null}
             traces={traces}
-            zoomedOut={zoomedOut}
+            showingFullRange={showingFullRange}
           />
         ) : model.status === "ready" ? (
           // The model is read and the interaction has not adopted it yet. The
@@ -264,23 +288,6 @@ const UNAVAILABLE: Record<
   },
 };
 
-/** A keyboard or button zoom, committed at once because it is deliberate. */
-function step(
-  state: ViewerInteractionState,
-  dispatch: (event: ViewerEvent) => ViewerInteractionState,
-  direction: "in" | "out",
-): void {
-  const full = state.fullDomain;
-  const shown = renderedDomain(state);
-  if (full === null || shown === null) {
-    return;
-  }
-  dispatch({
-    type: "viewport-step",
-    domain: zoomDomain(shown, full, direction === "in" ? STEP_ZOOM : 1 / STEP_ZOOM, 0.5),
-  });
-}
-
 interface PlotProps {
   readonly points: readonly ScanPoint[];
   readonly domain: RetentionTimeDomain;
@@ -288,7 +295,7 @@ interface PlotProps {
   readonly traces: TraceVisibility;
   readonly selected: number | null;
   readonly hover: number | null;
-  readonly zoomedOut: boolean;
+  readonly showingFullRange: boolean;
   readonly dispatch: (event: ViewerEvent) => ViewerInteractionState;
   readonly readInteraction: () => ViewerInteractionState;
   readonly onSelect: (index: number) => void;
@@ -301,7 +308,7 @@ function ChromatogramPlot({
   traces,
   selected,
   hover,
-  zoomedOut,
+  showingFullRange,
   dispatch,
   readInteraction,
   onSelect,
@@ -664,11 +671,11 @@ function ChromatogramPlot({
     switch (event.key) {
       case "+":
       case "=":
-        step(state, dispatch, "in");
+        applyViewportAction(state, dispatch, "zoom-in");
         break;
       case "-":
       case "_":
-        step(state, dispatch, "out");
+        applyViewportAction(state, dispatch, "zoom-out");
         break;
       case "ArrowLeft":
         dispatch({ type: "viewport-step", domain: panDomain(shown, runDomain, -PAN_STEP) });
@@ -678,7 +685,7 @@ function ChromatogramPlot({
         break;
       case "Home":
       case "0":
-        dispatch({ type: "viewport-reset" });
+        applyViewportAction(state, dispatch, "reset");
         break;
       default:
         return;
@@ -824,7 +831,7 @@ function ChromatogramPlot({
         Retention time — unit not reported · Intensity — unit not reported ·{" "}
         <span className="chromatogram-range">
           Showing {domain.low.toFixed(4)} to {domain.high.toFixed(4)}
-          {zoomedOut ? " (full range)" : ""}
+          {showingFullRange ? " (full range)" : ""}
         </span>{" "}
         · Per-scan values from the loaded spectrum table, across{" "}
         {formatCount(points.length)} scans. Not a stored chromatogram record.

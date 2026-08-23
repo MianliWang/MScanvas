@@ -107,9 +107,18 @@ async function openTheViewer(preview: PreviewApi): Promise<void> {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(await screen.findByRole("button", { name: "Preview focused" }));
-  await screen.findByRole("grid", { name: "Spectra" });
-  await screen.findByRole("img", { name: "Chromatogram" });
+  /*
+   * Longer than the one-second default, because mounting this document is not
+   * one await. The backend verdict, the workspace roster and the native-drop
+   * subscription all settle before a row can be activated, and the preview that
+   * follows carries the whole spectrum table -- 36,319 rows in one of the cases
+   * below. Observed timing out once under load at the default, which is a flake
+   * in the harness rather than anything the product did.
+   */
+  const SETTLING = { timeout: 15_000 } as const;
+  fireEvent.click(await screen.findByRole("button", { name: "Preview focused" }, SETTLING));
+  await screen.findByRole("grid", { name: "Spectra" }, SETTLING);
+  await screen.findByRole("img", { name: "Chromatogram" }, SETTLING);
   givePlotABox();
 }
 

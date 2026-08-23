@@ -809,6 +809,135 @@ describe("the linked viewer, rendered", () => {
     });
   });
 
+  describe("the viewport control group, rendered", () => {
+    /*
+     * A button that is enabled is a claim, and only a browser can say whether
+     * pressing it did anything. The rule under all of it is one sentence: a
+     * visible viewport action is available exactly when applying it would change
+     * the range on screen.
+     */
+    const CONTROLS = ["Zoom in", "Zoom out", "Reset range"] as const;
+
+    async function controlStates(): Promise<Record<string, boolean>> {
+      return browser.execute((labels: readonly string[]) => {
+        const buttons = [...document.querySelectorAll("button")];
+        const state: Record<string, boolean> = {};
+        for (const label of labels) {
+          const found = buttons.find(
+            (button) => (button.textContent ?? "").trim() === label,
+          );
+          state[label] = found !== undefined && !found.disabled;
+        }
+        return state;
+      }, CONTROLS) as Promise<Record<string, boolean>>;
+    }
+
+    it("offers only the action that can do anything when the whole run is shown", async () => {
+      // The state the viewer opens in.
+      await openTheViewer({ scans: SCANS });
+
+      expect(await rangeCaption()).toContain("full range");
+      expect(await controlStates()).toEqual({
+        "Zoom in": true,
+        "Zoom out": false,
+        "Reset range": false,
+      });
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("offers the other two as soon as there is something to go back to", async () => {
+      await openTheViewer({ scans: SCANS });
+      const full = await visibleSpan();
+
+      await browser.$("button=Zoom in").click();
+
+      await browser.waitUntil(async () => (await visibleSpan()) < full, {
+        timeout: 10_000,
+        timeoutMsg: "Zoom in did not narrow the range",
+      });
+      expect(await rangeCaption()).not.toContain("full range");
+      expect(await controlStates()).toEqual({
+        "Zoom in": true,
+        "Zoom out": true,
+        "Reset range": true,
+      });
+    });
+
+    it("stops offering to zoom in at the narrowest viewport the run allows", async () => {
+      // Driven there by pressing the button, not by naming a range.
+      await openTheViewer({ scans: SCANS });
+      for (let step = 0; step < 60; step += 1) {
+        if (!(await controlStates())["Zoom in"]) {
+          break;
+        }
+        await browser.$("button=Zoom in").click();
+      }
+
+      const states = await controlStates();
+      expect(states["Zoom in"]).toBe(false);
+      // And the way back out is still open.
+      expect(states["Zoom out"]).toBe(true);
+      expect(states["Reset range"]).toBe(true);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("offers nothing for a run whose one scan has no width to zoom", async () => {
+      await openTheViewer({ scans: 1 });
+
+      // The measurement is on screen. There is nothing to zoom, which is not
+      // the same as nothing to see.
+      expect(
+        await browser.execute(
+          () => document.querySelectorAll("circle.chromatogram-point").length,
+        ),
+      ).toBe(1);
+      expect(await controlStates()).toEqual({
+        "Zoom in": false,
+        "Zoom out": false,
+        "Reset range": false,
+      });
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("makes every control it offers change the range it reports", async () => {
+      // The user-facing property, over the whole group and in three states.
+      await openTheViewer({ scans: SCANS });
+
+      const reachStates: (() => Promise<void>)[] = [
+        async () => {
+          // The opening state, unchanged.
+        },
+        async () => {
+          await browser.$("button=Zoom in").click();
+        },
+        async () => {
+          for (let step = 0; step < 60; step += 1) {
+            if (!(await controlStates())["Zoom in"]) {
+              break;
+            }
+            await browser.$("button=Zoom in").click();
+          }
+        },
+      ];
+
+      for (const reach of reachStates) {
+        await reach();
+        for (const label of CONTROLS) {
+          if (!(await controlStates())[label]) {
+            continue;
+          }
+          const before = await rangeCaption();
+          await browser.$(`button=${label}`).click();
+          await browser.waitUntil(async () => (await rangeCaption()) !== before, {
+            timeout: 10_000,
+            timeoutMsg: `${label} was offered and changed nothing`,
+          });
+        }
+      }
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+  });
+
   describe("a run of a single scan", () => {
     /*
      * A complete acquisition of exactly one spectrum. `clipTrace` answers with

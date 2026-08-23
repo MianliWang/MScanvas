@@ -719,18 +719,6 @@ describe("moving the viewport", () => {
     expect(state().committedDomain).toBeNull();
   });
 
-  it("offers the same range actions as buttons", () => {
-    renderChromatogram();
-    expect(screen.getByRole("button", { name: "Reset range" })).toBeDisabled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
-    expect(state().committedDomain).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Reset range" })).toBeEnabled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Reset range" }));
-    expect(state().committedDomain).toBeNull();
-  });
-
   it("says which stretch of the run is on screen", () => {
     renderChromatogram();
     expect(screen.getByText(/\(full range\)/u)).toBeVisible();
@@ -939,5 +927,170 @@ describe("a run of a single scan", () => {
     expect(glyphs()).toHaveLength(0);
     expect(tracePaths()).toHaveLength(1);
     expect(tracePaths()[0]?.getAttribute("d")).toContain("L");
+  });
+});
+
+/*
+ * What the viewport controls claim, and whether pressing them does it.
+ *
+ * The rule is one sentence -- a visible viewport action is available exactly
+ * when applying it would change the range on screen -- and the cases below are
+ * the states a user actually reaches, not an enumeration of boundaries the
+ * component was told to look for.
+ */
+describe("the viewport control group", () => {
+  const CONTROLS = ["Zoom in", "Zoom out", "Reset range"] as const;
+
+  function control(label: (typeof CONTROLS)[number]): HTMLButtonElement {
+    return screen.getByRole("button", { name: label }) as HTMLButtonElement;
+  }
+
+  function enabledControls(): string[] {
+    return CONTROLS.filter((label) => !control(label).disabled);
+  }
+
+  /** Presses a control without going through the roles that would refuse. */
+  function press(label: (typeof CONTROLS)[number]): void {
+    fireEvent.click(control(label));
+  }
+
+  it("offers only the one action that can do anything when the whole run is shown", () => {
+    // The state the viewer opens in, and the one most users see first.
+    renderChromatogram();
+
+    expect(enabledControls()).toEqual(["Zoom in"]);
+    expect(screen.getByText(/\(full range\)/u)).toBeVisible();
+  });
+
+  it("offers the other two as soon as there is something to go back to", () => {
+    renderChromatogram();
+    const full = shown();
+
+    press("Zoom in");
+
+    const narrowed = shown();
+    expect(narrowed.high - narrowed.low).toBeLessThan(full.high - full.low);
+    expect(enabledControls()).toEqual(["Zoom in", "Zoom out", "Reset range"]);
+  });
+
+  it("stops offering to zoom in at the narrowest viewport the run allows", () => {
+    // Driven there by pressing the button, not by naming a range.
+    renderChromatogram();
+    for (let step = 0; step < 200 && !control("Zoom in").disabled; step += 1) {
+      press("Zoom in");
+    }
+
+    expect(control("Zoom in")).toBeDisabled();
+    // And the way back is still open.
+    expect(control("Zoom out")).toBeEnabled();
+    expect(control("Reset range")).toBeEnabled();
+  });
+
+  it("offers nothing for a run whose scans all share one retention time", () => {
+    // The single-scan run: a real acquisition, with a value and a visible mark,
+    // and no width to zoom into or out of.
+    renderChromatogram({ model: runOf([{ rt: 4, tic: 9_000, bpc: 700 }]) });
+
+    expect(enabledControls()).toEqual([]);
+    // The measurement is still on screen. There is nothing to zoom, which is
+    // not the same as nothing to see.
+    expect(document.querySelectorAll("circle.chromatogram-point")).toHaveLength(1);
+  });
+
+  it("makes every control it offers do something, and every one it refuses do nothing", () => {
+    /*
+     * The user-facing property, asserted over the whole group in several
+     * states: an enabled control changes the range on screen, and a disabled one
+     * changes no state at all.
+     */
+    renderChromatogram();
+    const states = [
+      () => undefined,
+      () => {
+        press("Zoom in");
+      },
+      () => {
+        for (let step = 0; step < 200 && !control("Zoom in").disabled; step += 1) {
+          press("Zoom in");
+        }
+      },
+    ];
+
+    for (const reach of states) {
+      reach();
+      for (const label of CONTROLS) {
+        const before = state();
+        const shownBefore = shown();
+        if (control(label).disabled) {
+          // A disabled button is refused by the DOM, and the operation refuses
+          // it too -- so neither the range nor the state moves.
+          act(() => {
+            control(label).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          });
+          expect(state(), `${label} while disabled`).toBe(before);
+          continue;
+        }
+        press(label);
+        const shownAfter = shown();
+        expect(
+          shownAfter.low !== shownBefore.low || shownAfter.high !== shownBefore.high,
+          `${label} while enabled`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("plans again when it is pressed, rather than trusting the render that drew it", () => {
+    /*
+     * The interval between the render that computed `disabled` and the press
+     * that arrives: a settling gesture, a selection's reveal, a preview
+     * replaced. Here the state is moved inside the same batch as the click, so
+     * the button is still rendered enabled while the live state says its action
+     * would do nothing.
+     *
+     * A handler that dispatched what its render had decided would produce a new
+     * state object for a transition nobody would see.
+     */
+    renderChromatogram();
+    press("Zoom in");
+    expect(control("Reset range")).toBeEnabled();
+
+    let afterReset: ViewerInteractionState | null = null;
+    act(() => {
+      afterReset = controller?.dispatch({ type: "viewport-reset" }) ?? null;
+      control("Reset range").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(afterReset).not.toBeNull();
+    expect(state()).toBe(afterReset);
+    expect(control("Reset range")).toBeDisabled();
+  });
+
+  it("takes the same rule from the keyboard, without inventing a transition", () => {
+    // The keys stay the keys. What they must not do is move the viewport where
+    // a press of the same action would have been refused.
+    renderChromatogram();
+    const before = state();
+
+    fireEvent.keyDown(plot(), { key: "-" });
+    expect(state()).toBe(before);
+    fireEvent.keyDown(plot(), { key: "Home" });
+    expect(state()).toBe(before);
+
+    fireEvent.keyDown(plot(), { key: "+" });
+    expect(state()).not.toBe(before);
+    expect(control("Zoom out")).toBeEnabled();
+
+    fireEvent.keyDown(plot(), { key: "Home" });
+    expect(shown()).toEqual(renderedDomain(state()));
+    expect(control("Reset range")).toBeDisabled();
+  });
+
+  it("says nothing about the range when there is no chromatogram to have one", () => {
+    renderChromatogram({ model: runOfRows(20, true) });
+
+    for (const label of CONTROLS) {
+      expect(screen.queryByRole("button", { name: label })).toBeNull();
+    }
   });
 });
