@@ -356,6 +356,15 @@ export interface PreviewWorkspace {
    */
   readonly dispatchViewerEvent: (event: ViewerEvent) => ViewerInteractionState;
   /**
+   * The interaction state as it stands right now.
+   *
+   * For a native listener, which runs between renders and would otherwise
+   * decide from whatever the state was when its closure was made. It reads the
+   * same held value {@link dispatchViewerEvent} writes, so it is a second
+   * reader rather than a second authority.
+   */
+  readonly readViewerInteraction: () => ViewerInteractionState;
+  /**
    * The scan the session has selected, projected from the interaction state.
    *
    * Not a second field that something has to keep in step with it: there is one
@@ -591,7 +600,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * 0032 exists to make unrepresentable.
    */
   const viewer = useViewerInteraction();
-  const { dispatch: dispatchViewerEvent } = viewer;
+  const { dispatch: dispatchViewerEvent, current: readViewerInteraction } = viewer;
   /**
    * The selected scan, read from the one place it is decided.
    *
@@ -2476,6 +2485,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     scanModel,
     viewerInteraction: viewer.state,
     dispatchViewerEvent,
+    readViewerInteraction,
     selectedIndex,
     measurements,
     backendBusy,

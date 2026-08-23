@@ -1,0 +1,738 @@
+/**
+ * The visible viewer, against the contract it is an adapter over.
+ *
+ * Almost nothing here is a claim about arithmetic: the clipping, the extent,
+ * the reduction, the nearest-scan resolution and every interaction transition
+ * are settled in `viewer/`. What these tests establish is that this component
+ * asks those questions rather than answering them again -- which is exactly
+ * where PR #72 went wrong, one seam at a time.
+ *
+ * So the cases are chosen to fail if a value is taken from the wrong field, an
+ * extent from the wrong geometry, a scan from the drawing, a range from a field
+ * the component picked itself, or an epoch from anywhere but the reducer.
+ */
+
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { useLayoutEffect, useState } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { Chromatogram } from "./Chromatogram";
+import type { SpectrumRow } from "./contracts";
+import type { TraceVisibility } from "./usePreviewWorkspace";
+import type { ViewerInteractionState } from "./viewer/interactionState";
+import { renderedDomain } from "./viewer/interactionState";
+import { buildPreviewScanModel } from "./viewer/previewScanModel";
+import type { RetentionTimeDomain, ScanModel } from "./viewer/scanModel";
+import type { ViewerInteractionController } from "./viewer/useViewerInteraction";
+import { useViewerInteraction } from "./viewer/useViewerInteraction";
+import { buildRows } from "../../test/previewFixtures";
+
+const TIC_ONLY: TraceVisibility = { tic: true, bpc: false };
+const BPC_ONLY: TraceVisibility = { tic: false, bpc: true };
+const BOTH: TraceVisibility = { tic: true, bpc: true };
+const NEITHER: TraceVisibility = { tic: false, bpc: false };
+
+/** The plot's own width, in client pixels, so viewBox units are 1:1 with them. */
+const PLOT_PIXELS = 1_000;
+const PADDING_LEFT = 64;
+const DRAWN_WIDTH = PLOT_PIXELS - PADDING_LEFT - 12;
+
+interface Scan {
+  readonly rt: number;
+  readonly tic: number;
+  readonly bpc: number;
+}
+
+/** A run with exactly the per-scan values a case needs. */
+function runOf(scans: readonly Scan[], truncated = false): ScanModel {
+  const rows: SpectrumRow[] = scans.map((scan, index) => ({
+    index,
+    identifier: `controllerType=0 controllerNumber=1 scan=${String(index + 1)}`,
+    scanNumber: index + 1,
+    msLevel: 1,
+    retentionTime: { value: scan.rt, unitKnown: false },
+    basePeakMz: 400,
+    basePeakIntensity: scan.bpc,
+    totalIonCurrent: scan.tic,
+    precursorMz: null,
+  }));
+  return buildPreviewScanModel({
+    rows,
+    totalRowCount: truncated ? rows.length * 10 : rows.length,
+    truncated,
+  });
+}
+
+function runOfRows(rowCount: number, truncated = false): ScanModel {
+  const rows = buildRows(rowCount);
+  return buildPreviewScanModel({
+    rows,
+    totalRowCount: truncated ? rowCount * 10 : rowCount,
+    truncated,
+  });
+}
+
+let controller: ViewerInteractionController | null = null;
+
+function Harness({
+  model,
+  initialTraces,
+  onSelect,
+  onToggleTrace,
+}: {
+  readonly model: ScanModel;
+  readonly initialTraces: TraceVisibility;
+  readonly onSelect: (index: number) => void;
+  readonly onToggleTrace: (trace: keyof TraceVisibility) => void;
+}) {
+  const viewer = useViewerInteraction();
+  controller = viewer;
+  const [traces, setTraces] = useState(initialTraces);
+  const { dispatch } = viewer;
+  // The same announcement the workspace makes, in the same phase, so the first
+  // painted frame already has an axis.
+  useLayoutEffect(() => {
+    if (model.status === "ready") {
+      dispatch({ type: "preview-loaded", fullDomain: model.fullDomain });
+    }
+  }, [dispatch, model]);
+  return (
+    <Chromatogram
+      dispatch={viewer.dispatch}
+      interaction={viewer.state}
+      model={model}
+      onSelect={onSelect}
+      onToggleTrace={(trace) => {
+        onToggleTrace(trace);
+        setTraces((current) => ({ ...current, [trace]: !current[trace] }));
+      }}
+      readInteraction={viewer.current}
+      traces={traces}
+    />
+  );
+}
+
+function renderChromatogram(
+  options: { readonly model?: ScanModel; readonly traces?: TraceVisibility } = {},
+) {
+  const onSelect = vi.fn();
+  const onToggleTrace = vi.fn();
+  const model = options.model ?? runOfRows(50);
+  render(
+    <Harness
+      initialTraces={options.traces ?? TIC_ONLY}
+      model={model}
+      onSelect={onSelect}
+      onToggleTrace={onToggleTrace}
+    />,
+  );
+  if (model.status === "ready") {
+    givePlotABox();
+  }
+  return { onSelect, onToggleTrace, model };
+}
+
+/**
+ * A plot element with a real box, because jsdom gives every element a zero one.
+ *
+ * Every pointer interaction converts a client x into a retention time through
+ * this rectangle, so without it the whole interaction surface would resolve to
+ * one coordinate and every test would pass for the wrong reason.
+ */
+function givePlotABox(): void {
+  vi.spyOn(plot(), "getBoundingClientRect").mockReturnValue({
+    x: 0,
+    y: 0,
+    left: 0,
+    top: 0,
+    right: PLOT_PIXELS,
+    bottom: 210,
+    width: PLOT_PIXELS,
+    height: 210,
+    toJSON: () => ({}),
+  } as DOMRect);
+}
+
+function plot(): HTMLElement {
+  return screen.getByRole("img", { name: "Chromatogram" });
+}
+
+function state(): ViewerInteractionState {
+  if (controller === null) {
+    throw new Error("no controller");
+  }
+  return controller.state;
+}
+
+function send(event: Parameters<ViewerInteractionController["dispatch"]>[0]): void {
+  act(() => {
+    controller?.dispatch(event);
+  });
+}
+
+function tracePaths(): NodeListOf<Element> {
+  return document.querySelectorAll("path.chromatogram-trace");
+}
+
+/** The top value label, which is what the axis claims the tallest thing is. */
+function axisHigh(): string {
+  return document.querySelectorAll("text.chromatogram-value-label")[0]?.textContent ?? "";
+}
+
+function axisLow(): string {
+  return document.querySelectorAll("text.chromatogram-value-label")[1]?.textContent ?? "";
+}
+
+/** Where a retention time falls, in client pixels, under the range on screen. */
+function clientXFor(retentionTime: number, domain: RetentionTimeDomain): number {
+  const fraction = (retentionTime - domain.low) / (domain.high - domain.low);
+  return PADDING_LEFT + fraction * DRAWN_WIDTH;
+}
+
+function shown(): RetentionTimeDomain {
+  const domain = renderedDomain(state());
+  if (domain === null) {
+    throw new Error("nothing is on screen");
+  }
+  return domain;
+}
+
+beforeEach(() => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+});
+
+afterEach(() => {
+  vi.runOnlyPendingTimers();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  cleanup();
+  controller = null;
+});
+
+describe("what the traces are made of", () => {
+  it("draws TIC from the total ion current", () => {
+    renderChromatogram({ model: runOf([{ rt: 0, tic: 500, bpc: 90 }, { rt: 1, tic: 400, bpc: 80 }]) });
+
+    // Discriminating: derived from the base peak instead, the axis would say 90.
+    expect(axisHigh()).toBe("500.00");
+  });
+
+  it("draws BPC from the base peak intensity", () => {
+    renderChromatogram({
+      model: runOf([{ rt: 0, tic: 500, bpc: 90 }, { rt: 1, tic: 400, bpc: 80 }]),
+      traces: BPC_ONLY,
+    });
+
+    expect(axisHigh()).toBe("90.00");
+  });
+
+  it("scales both traces together when both are drawn", () => {
+    renderChromatogram({
+      model: runOf([{ rt: 0, tic: 500, bpc: 90 }, { rt: 1, tic: 400, bpc: 80 }]),
+      traces: BOTH,
+    });
+
+    expect(tracePaths()).toHaveLength(2);
+    expect(axisHigh()).toBe("500.00");
+    // Zero is always in it, so a flat trace high above the axis is not drawn as
+    // structure.
+    expect(axisLow()).toBe("0");
+  });
+
+  it("says the values come from the loaded table and are not a stored record", () => {
+    renderChromatogram();
+
+    expect(screen.getByText(/Per-scan values from the loaded spectrum table/u)).toBeVisible();
+    expect(screen.getByText(/Not a stored chromatogram record\./u)).toBeVisible();
+  });
+
+  it("says neither axis carries a unit", () => {
+    renderChromatogram();
+
+    expect(
+      screen.getByText(/Retention time — unit not reported · Intensity — unit not reported/u),
+    ).toBeVisible();
+  });
+});
+
+describe("what is drawn, and what the axis says about it", () => {
+  it("never lets a scan outside the viewport set the value axis", () => {
+    /*
+     * The failure that re-scoped this milestone, reproduced against the visible
+     * component. A tall peak at RT 9 and an ordinary stretch at RT 10-13:
+     * zooming into the stretch is the most ordinary thing anyone does with a
+     * chromatogram, and PR #72 answered it by flattening every visible feature
+     * and labelling the axis 9,000,000.
+     */
+    renderChromatogram({
+      model: runOf([
+        { rt: 9, tic: 9_000_000, bpc: 9_000_000 },
+        { rt: 10, tic: 90, bpc: 90 },
+        { rt: 11, tic: 100, bpc: 100 },
+        { rt: 12, tic: 110, bpc: 110 },
+        { rt: 13, tic: 120, bpc: 120 },
+      ]),
+    });
+
+    send({ type: "viewport-step", domain: { low: 10, high: 13 } });
+
+    expect(axisHigh()).not.toBe("9.000e+6");
+    expect(axisHigh()).toBe("120.00");
+  });
+
+  it("does let the height where the line crosses the edge set it", () => {
+    // The other half, and the reason the rule is "the clipped polyline" rather
+    // than "only real scans inside": the line really does reach that height on
+    // screen, halfway between 9,000,000 and 90.
+    renderChromatogram({
+      model: runOf([
+        { rt: 9, tic: 9_000_000, bpc: 9_000_000 },
+        { rt: 10, tic: 90, bpc: 90 },
+        { rt: 11, tic: 100, bpc: 100 },
+        { rt: 12, tic: 110, bpc: 110 },
+        { rt: 13, tic: 120, bpc: 120 },
+      ]),
+    });
+
+    send({ type: "viewport-step", domain: { low: 9.5, high: 13 } });
+
+    expect(axisHigh()).toBe("4.500e+6");
+  });
+
+  it("keeps the visible extremes through the screen reduction", () => {
+    const scans: Scan[] = [];
+    for (let index = 0; index < 8_000; index += 1) {
+      scans.push({ rt: index, tic: 100 + (index % 50), bpc: 10 });
+    }
+    scans[4_321] = { rt: 4_321, tic: 5_000_000, bpc: 10 };
+    renderChromatogram({ model: runOf(scans) });
+
+    // One spike in a column crowded with lower neighbours, and it is still what
+    // the axis is scaled to.
+    expect(axisHigh()).toBe("5.000e+6");
+  });
+
+  it("draws one path per trace rather than one node per scan", () => {
+    renderChromatogram({ model: runOfRows(20_000), traces: BOTH });
+
+    expect(tracePaths()).toHaveLength(2);
+    expect(document.querySelectorAll("svg.chromatogram-svg circle")).toHaveLength(0);
+    for (const path of tracePaths()) {
+      // A screen budget rather than the run's size: at most four vertices per
+      // column, over 900 columns.
+      const vertices = (path.getAttribute("d") ?? "").split(/[ML]/u).length - 1;
+      expect(vertices).toBeLessThanOrEqual(3_600);
+    }
+  });
+
+  it("draws a single scan without producing an unusable coordinate", () => {
+    renderChromatogram({ model: runOf([{ rt: 4, tic: 0, bpc: 0 }]) });
+
+    const path = tracePaths()[0]?.getAttribute("d") ?? "";
+    expect(path).not.toContain("NaN");
+    expect(path).not.toContain("Infinity");
+    expect(axisHigh()).toBe("0");
+  });
+
+  it("draws a run of negative values below zero rather than clipping them", () => {
+    renderChromatogram({
+      model: runOf([
+        { rt: 0, tic: -40, bpc: -40 },
+        { rt: 1, tic: 60, bpc: 60 },
+      ]),
+    });
+
+    expect(axisLow()).toBe("-40.00");
+    expect(axisHigh()).toBe("60.00");
+  });
+});
+
+describe("trace visibility", () => {
+  it("starts on TIC alone and hands a toggle back rather than deciding it", () => {
+    const { onToggleTrace } = renderChromatogram();
+
+    expect(screen.getByRole("checkbox", { name: /TIC/u })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /BPC/u })).not.toBeChecked();
+    expect(tracePaths()).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /BPC/u }));
+
+    expect(onToggleTrace.mock.calls).toEqual([["bpc"]]);
+    expect(tracePaths()).toHaveLength(2);
+  });
+
+  it("tells the two traces apart by more than colour", () => {
+    renderChromatogram({ traces: BOTH });
+
+    expect(tracePaths()[0]).not.toHaveAttribute("stroke-dasharray");
+    expect(tracePaths()[1]).toHaveAttribute("stroke-dasharray", "7 4");
+  });
+
+  it("says so on purpose when both traces are hidden", () => {
+    renderChromatogram({ traces: NEITHER });
+
+    expect(tracePaths()).toHaveLength(0);
+    expect(screen.getByText("Both traces are hidden.")).toBeInTheDocument();
+    // The plot stays: the axis is still the run's, and this is still where a
+    // scan is chosen.
+    expect(plot()).toBeVisible();
+  });
+});
+
+describe("coordinate inspection", () => {
+  it("reports the nearest scan from the full model without selecting it", () => {
+    const { onSelect } = renderChromatogram();
+
+    fireEvent.pointerMove(plot(), { clientX: clientXFor(10 * 0.0125, shown()) });
+
+    expect(screen.getByText(/Hovering index 10, scan 11, MS2/u)).toBeVisible();
+    expect(state().hover?.spectrumIndex).toBe(10);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("reports both per-scan values whichever trace is drawn", () => {
+    renderChromatogram();
+
+    fireEvent.pointerMove(plot(), { clientX: 500 });
+
+    // The fixture's two series are far apart on purpose -- TIC in the ten
+    // thousands, BPC in the thousands -- so a readout that confused them could
+    // not match.
+    expect(screen.getByText(/TIC 100\d\d, BPC 10\d\d\./u)).toBeVisible();
+  });
+
+  it("is a no-op by identity while the pointer stays over one scan", () => {
+    // A renderer may resolve the nearest scan on every pointer frame. What
+    // reaches the contract is the pointer crossing into another scan, and this
+    // is what keeps a linked view from re-rendering at the cursor's frequency.
+    renderChromatogram();
+    const at = clientXFor(10 * 0.0125, shown());
+    fireEvent.pointerMove(plot(), { clientX: at });
+    const established = state();
+
+    fireEvent.pointerMove(plot(), { clientX: at + 1 });
+    fireEvent.pointerMove(plot(), { clientX: at - 1 });
+
+    expect(state()).toBe(established);
+  });
+
+  it("does not survive a viewport change under it", () => {
+    renderChromatogram();
+    fireEvent.pointerMove(plot(), { clientX: clientXFor(10 * 0.0125, shown()) });
+    expect(state().hover).not.toBeNull();
+
+    send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
+
+    expect(state().hover).toBeNull();
+    expect(document.querySelector("g.chromatogram-hover")).toBeNull();
+    expect(screen.queryByText(/^Hovering/u)).toBeNull();
+  });
+
+  it("survives a gesture that resolves to the range already shown", () => {
+    // Not an enumeration of events: a drag further left at the left edge clamps
+    // to what is already drawn, nothing moves on screen, and an observation
+    // made a moment earlier is still accurate.
+    renderChromatogram();
+    fireEvent.pointerMove(plot(), { clientX: clientXFor(10 * 0.0125, shown()) });
+
+    send({ type: "gesture-started", domain: { low: -100, high: 1_000 } });
+
+    expect(state().hover?.spectrumIndex).toBe(10);
+    expect(document.querySelector("g.chromatogram-hover")).not.toBeNull();
+  });
+
+  it("lets the next pointer frame establish a fresh observation", () => {
+    renderChromatogram();
+    fireEvent.pointerMove(plot(), { clientX: clientXFor(10 * 0.0125, shown()) });
+    send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
+    expect(state().hover).toBeNull();
+
+    fireEvent.pointerMove(plot(), { clientX: clientXFor(0.2, shown()) });
+
+    expect(state().hover).not.toBeNull();
+    expect(screen.getByText(/^Hovering index 16,/u)).toBeVisible();
+  });
+
+  it("draws the guide from the scan's place under the range on screen now", () => {
+    // Never from a coordinate scaled when the observation was made: a zoom
+    // would leave the rule standing somewhere the scan no longer is.
+    renderChromatogram();
+    fireEvent.pointerMove(plot(), { clientX: clientXFor(10 * 0.0125, shown()) });
+    const before = document.querySelector("g.chromatogram-hover line")?.getAttribute("x1");
+
+    // Re-establish under a narrower range: the same scan, a different place.
+    send({ type: "viewport-step", domain: { low: 0.1, high: 0.2 } });
+    fireEvent.pointerMove(plot(), { clientX: clientXFor(10 * 0.0125, shown()) });
+
+    expect(state().hover?.spectrumIndex).toBe(10);
+    expect(document.querySelector("g.chromatogram-hover line")?.getAttribute("x1")).not.toBe(
+      before,
+    );
+  });
+
+  it("stops reporting a scan once the pointer leaves", () => {
+    renderChromatogram();
+    fireEvent.pointerMove(plot(), { clientX: 500 });
+    expect(screen.getByText(/^Hovering/u)).toBeVisible();
+
+    fireEvent.pointerLeave(plot());
+
+    expect(state().hover).toBeNull();
+    expect(screen.queryByText(/^Hovering/u)).toBeNull();
+  });
+});
+
+describe("choosing a scan", () => {
+  it("commits the nearest scan exactly once", () => {
+    const { onSelect } = renderChromatogram();
+    const at = clientXFor(30 * 0.0125, shown());
+
+    fireEvent.pointerDown(plot(), { button: 0, clientX: at, pointerId: 1 });
+    fireEvent.pointerUp(plot(), { button: 0, clientX: at, pointerId: 1 });
+
+    expect(onSelect.mock.calls).toEqual([[30]]);
+  });
+
+  it("resolves the click against every scan rather than the drawn vertices", () => {
+    // The drawing has far fewer vertices than the run has scans, and its edges
+    // carry interpolated points that are not scans at all. Resolving there
+    // would silently select a neighbour, and more often the larger the run.
+    const { onSelect } = renderChromatogram({ model: runOfRows(20_000) });
+    const target = 12_345;
+    const at = clientXFor(target * 0.0125, shown());
+
+    fireEvent.pointerDown(plot(), { button: 0, clientX: at, pointerId: 1 });
+    fireEvent.pointerUp(plot(), { button: 0, clientX: at, pointerId: 1 });
+
+    expect(onSelect.mock.calls).toEqual([[target]]);
+  });
+
+  it("still selects when the pointer only trembled", () => {
+    const { onSelect } = renderChromatogram();
+
+    fireEvent.pointerDown(plot(), { button: 0, clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(plot(), { clientX: 502, pointerId: 1 });
+    fireEvent.pointerUp(plot(), { button: 0, clientX: 502, pointerId: 1 });
+
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("draws the selected scan as a rule and a glyph, not a colour", () => {
+    renderChromatogram();
+    send({ type: "selection-committed", index: 20, retentionTime: 20 * 0.0125 });
+
+    const marker = document.querySelector("g.chromatogram-selected");
+    expect(marker?.querySelector("line")).not.toBeNull();
+    expect(marker?.querySelector("rect")).not.toBeNull();
+    expect(screen.getByText(/Selected index 20, scan 21, MS1/u)).toBeVisible();
+  });
+
+  it("draws no marker while nothing is selected", () => {
+    renderChromatogram();
+
+    expect(document.querySelector("g.chromatogram-selected")).toBeNull();
+    expect(screen.getByText(/^No scan selected\./u)).toBeVisible();
+  });
+});
+
+describe("moving the viewport", () => {
+  it("shows a wheel gesture before it is committed, and commits it when it settles", () => {
+    renderChromatogram();
+    const full = shown();
+
+    fireEvent.wheel(plot(), { clientX: 500, deltaY: -240 });
+
+    // The transient range is what is drawn; the committed one is still the
+    // whole run, which is what a current-range export would later read.
+    expect(state().gesture).not.toBeNull();
+    expect(state().committedDomain).toBeNull();
+    expect(renderedDomain(state())?.high).toBeLessThan(full.high);
+
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    expect(state().gesture).toBeNull();
+    expect(state().committedDomain).not.toBeNull();
+    expect(state().committedDomain?.high).toBeLessThan(full.high);
+  });
+
+  it("lets a selection made mid-wheel win over the settle that arrives later", () => {
+    /*
+     * PR #72 finding 8, at the visible adapter. The debounce is an adapter: it
+     * eventually emits a settle for the epoch it was scheduled under, and by
+     * then a selection has dropped that gesture. The late settle addresses an
+     * epoch that no longer exists.
+     *
+     * Deliberately not tested by cancelling the timer: correctness may not rest
+     * on `clearTimeout` winning a race.
+     */
+    renderChromatogram();
+    fireEvent.wheel(plot(), { clientX: 500, deltaY: -240 });
+    expect(state().gesture).not.toBeNull();
+
+    // A scan at the far end of the run, outside the transient range.
+    send({ type: "selection-committed", index: 49, retentionTime: 49 * 0.0125 });
+    const afterSelection = state();
+
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    expect(state()).toBe(afterSelection);
+  });
+
+  it("pans on a drag without changing the span, and does not select", () => {
+    const { onSelect } = renderChromatogram();
+    send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
+    const before = shown();
+
+    fireEvent.pointerDown(plot(), { button: 0, clientX: 700, pointerId: 1 });
+    fireEvent.pointerMove(plot(), { clientX: 500, pointerId: 1 });
+    fireEvent.pointerUp(plot(), { button: 0, clientX: 500, pointerId: 1 });
+
+    const after = state().committedDomain;
+    expect(after).not.toBeNull();
+    expect(after?.low).toBeGreaterThan(before.low);
+    expect((after?.high ?? 0) - (after?.low ?? 0)).toBeCloseTo(before.high - before.low, 9);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("computes each drag frame from where the press began, not from the last one", () => {
+    // Two routes to the same displacement land on the same range, so a long
+    // drag accumulates no drift.
+    renderChromatogram();
+    send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
+
+    fireEvent.pointerDown(plot(), { button: 0, clientX: 700, pointerId: 1 });
+    fireEvent.pointerMove(plot(), { clientX: 500, pointerId: 1 });
+    fireEvent.pointerUp(plot(), { button: 0, clientX: 500, pointerId: 1 });
+    const direct = state().committedDomain;
+
+    send({ type: "viewport-reset" });
+    send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
+    fireEvent.pointerDown(plot(), { button: 0, clientX: 700, pointerId: 2 });
+    fireEvent.pointerMove(plot(), { clientX: 640, pointerId: 2 });
+    fireEvent.pointerMove(plot(), { clientX: 580, pointerId: 2 });
+    fireEvent.pointerMove(plot(), { clientX: 500, pointerId: 2 });
+    fireEvent.pointerUp(plot(), { button: 0, clientX: 500, pointerId: 2 });
+
+    expect(state().committedDomain?.low).toBeCloseTo(direct?.low ?? 0, 12);
+    expect(state().committedDomain?.high).toBeCloseTo(direct?.high ?? 0, 12);
+  });
+
+  it("abandons a cancelled drag rather than committing it", () => {
+    renderChromatogram();
+    send({ type: "viewport-step", domain: { low: 0.1, high: 0.3 } });
+    const committed = state().committedDomain;
+
+    fireEvent.pointerDown(plot(), { button: 0, clientX: 700, pointerId: 1 });
+    fireEvent.pointerMove(plot(), { clientX: 500, pointerId: 1 });
+    fireEvent.pointerCancel(plot(), { clientX: 500, pointerId: 1 });
+
+    expect(state().gesture).toBeNull();
+    expect(state().committedDomain).toEqual(committed);
+  });
+
+  it("zooms, pans and resets from the keyboard", () => {
+    renderChromatogram();
+    const full = shown();
+    plot().focus();
+
+    fireEvent.keyDown(plot(), { key: "+" });
+    expect(state().committedDomain).not.toBeNull();
+    const zoomed = state().committedDomain;
+    const span = (zoomed?.high ?? 0) - (zoomed?.low ?? 0);
+    expect(span).toBeLessThan(full.high - full.low);
+
+    fireEvent.keyDown(plot(), { key: "ArrowRight" });
+    const panned = state().committedDomain;
+    expect(panned?.low).toBeGreaterThan(zoomed?.low ?? 0);
+    expect((panned?.high ?? 0) - (panned?.low ?? 0)).toBeCloseTo(span, 9);
+
+    fireEvent.keyDown(plot(), { key: "Home" });
+    expect(state().committedDomain).toBeNull();
+  });
+
+  it("offers the same range actions as buttons", () => {
+    renderChromatogram();
+    expect(screen.getByRole("button", { name: "Reset range" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(state().committedDomain).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Reset range" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset range" }));
+    expect(state().committedDomain).toBeNull();
+  });
+
+  it("says which stretch of the run is on screen", () => {
+    renderChromatogram();
+    expect(screen.getByText(/\(full range\)/u)).toBeVisible();
+
+    send({ type: "viewport-step", domain: { low: 0.1, high: 0.2 } });
+
+    expect(screen.getByText(/Showing 0\.1000 to 0\.2000/u)).toBeVisible();
+    expect(screen.queryByText(/\(full range\)/u)).toBeNull();
+  });
+});
+
+describe("when there is no chromatogram", () => {
+  it("refuses a table the preview did not load whole, and says why", () => {
+    renderChromatogram({ model: runOfRows(20, true) });
+
+    expect(screen.getByText("TIC and BPC are unavailable for this preview.")).toBeVisible();
+    expect(screen.getByText(/did not load the complete table/u)).toBeVisible();
+    expect(screen.queryByRole("img", { name: "Chromatogram" })).toBeNull();
+    expect(tracePaths()).toHaveLength(0);
+    // And no controls for a range that does not exist.
+    expect(screen.queryByRole("button", { name: "Zoom in" })).toBeNull();
+  });
+
+  it("refuses a retention-time unit it cannot name, without blaming the file", () => {
+    const rows = buildRows(20).map((row, index) =>
+      index === 7
+        ? { ...row, retentionTime: { value: row.retentionTime.value, unitKnown: true } }
+        : row,
+    );
+    renderChromatogram({
+      model: buildPreviewScanModel({ rows, totalRowCount: rows.length, truncated: false }),
+    });
+
+    expect(screen.getByText("TIC and BPC are unavailable for this preview.")).toBeVisible();
+    expect(screen.getByText(/cannot identify\s+precisely/u)).toBeVisible();
+    expect(screen.queryByText(/malformed|corrupt|invalid file/iu)).toBeNull();
+  });
+
+  it("says a run with no spectra has nothing to draw", () => {
+    renderChromatogram({ model: runOf([]) });
+
+    expect(screen.getByText("This run has no spectra.")).toBeVisible();
+  });
+});
+
+describe("reaching the plot without a pointer", () => {
+  it("is focusable and describes the selected scan where a reader will find it", () => {
+    renderChromatogram();
+    send({ type: "selection-committed", index: 20, retentionTime: 20 * 0.0125 });
+
+    plot().focus();
+
+    expect(document.activeElement).toBe(plot());
+    expect(plot()).toHaveAttribute("aria-describedby", "chromatogram-readout");
+    expect(document.querySelector("#chromatogram-readout")?.textContent).toMatch(
+      /^Selected index 20,/u,
+    );
+  });
+
+  it("keeps the readout out of every live region", () => {
+    // Which scan the pointer is over changes on most pointer frames at a
+    // full-run zoom. A region that announced each of them would be noise.
+    renderChromatogram();
+    fireEvent.pointerMove(plot(), { clientX: 500 });
+
+    const readout = document.querySelector("#chromatogram-readout");
+    expect(readout).not.toBeNull();
+    expect(readout?.closest("[aria-live]")).toBeNull();
+  });
+});

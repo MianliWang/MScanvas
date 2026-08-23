@@ -359,7 +359,9 @@ describe("narrow desktop layout markup", () => {
     // The two are pinned together because they are one decision: a track
     // shorter than the panel's own minimum clamps the panel back to a height
     // its chrome does not fit in, which is the original defect by another
-    // route.
+    // route. Viewer Closure R1 raised the viewer track from 178px to 526px:
+    // the chromatogram the stack now begins with, and floors for the two
+    // panels below it that clip rather than shrink.
     const app = mountStyles(appStyles);
 
     expect(requireStyleRule(app, ".dataset-roster-panel").style.getPropertyValue("min-height")).toBe(
@@ -369,7 +371,7 @@ describe("narrow desktop layout markup", () => {
       requireMediaRule(app, "(max-width: 1120px)", ".workspace-layout").style.getPropertyValue(
         "grid-template-rows",
       ),
-    ).toBe("minmax(342px, 0.9fr) minmax(178px, 1.6fr)");
+    ).toBe("minmax(342px, 0.9fr) minmax(526px, 1.6fr)");
     // And what the column cannot fit is clipped here rather than pushing the
     // shell past the viewport.
     expect(requireStyleRule(app, ".workspace-sidebar").style.getPropertyValue("overflow")).toBe(
@@ -401,22 +403,30 @@ describe("narrow desktop layout markup", () => {
       requireMediaRule(app, "(max-width: 1120px)", ".workspace-layout").style.getPropertyValue(
         "grid-template-rows",
       ),
-    ).toBe("minmax(342px, 0.9fr) minmax(178px, 1.6fr)");
+    ).toBe("minmax(342px, 0.9fr) minmax(526px, 1.6fr)");
     expect(
       requireMediaRule(app, "(max-width: 1120px)", ".viewer-stack").style.getPropertyValue(
         "grid-template-rows",
       ),
-    ).toBe("minmax(116px, 1.15fr) minmax(54px, 1fr)");
+    ).toBe("minmax(186px, 0.9fr) minmax(122px, 1.15fr) minmax(202px, 1fr)");
   });
 
   it("keeps the complete loaded viewer reachable when shell notices shorten the workspace", () => {
     // At 960x640 the persistent backend notice and a folder-import notice take
     // two approximately 31px lines. After the 58px toolbar, only about 520px
-    // remains for a workspace whose complete narrow evidence is 544px tall:
-    // 16px padding + 342px sidebar + 8px gap + (116px table + 8px gap +
-    // 54px selected-spectrum header). The document intentionally cannot
-    // scroll, so the narrow workspace must both reserve the complete viewer
-    // stack and own the resulting small vertical overflow.
+    // remains for a workspace whose complete narrow evidence is now 892px tall:
+    // 16px padding + 342px sidebar + 8px gap + (186px chromatogram + 8px gap +
+    // 122px table + 8px gap + 202px selected spectrum). The document
+    // intentionally cannot scroll, so the narrow workspace must both reserve
+    // the complete viewer stack and own the resulting vertical overflow.
+    //
+    // Every one of those floors is measured rather than guessed, at 1366x768
+    // and again at 960x640: the chromatogram's header of two control groups is
+    // 60px and its body 124px, of which the plot floors at 52px and the axis
+    // caption and readout take the rest; the scan table's header is 60px beside
+    // its own two buttons, and 30px of sticky column header plus one complete
+    // 30px row is the least that is still a table. Under those the bodies clip,
+    // and a clipped caption or a clipped control is gone rather than small.
     const app = mountStyles(appStyles);
     const workspace = requireMediaRule(
       app,
@@ -425,14 +435,14 @@ describe("narrow desktop layout markup", () => {
     ).style;
 
     expect(workspace.getPropertyValue("grid-template-rows")).toBe(
-      "minmax(342px, 0.9fr) minmax(178px, 1.6fr)",
+      "minmax(342px, 0.9fr) minmax(526px, 1.6fr)",
     );
     expect(workspace.getPropertyValue("overflow-y")).toBe("auto");
     expect(
       requireMediaRule(app, "(max-width: 1120px)", ".viewer-stack").style.getPropertyValue(
         "grid-template-rows",
       ),
-    ).toBe("minmax(116px, 1.15fr) minmax(54px, 1fr)");
+    ).toBe("minmax(186px, 0.9fr) minmax(122px, 1.15fr) minmax(202px, 1fr)");
     expect(requireStyleRule(app, ".viewer-stack").style.getPropertyValue("gap")).toBe("8px");
   });
 
