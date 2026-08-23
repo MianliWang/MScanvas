@@ -176,11 +176,19 @@ the dispatch's own answer. A 120ms timer then emits `gesture-settled(epoch)`.
 Resetting that timer is an efficiency; a stale settle is a reducer no-op by
 identity, so correctness does not rest on `clearTimeout`.
 
-**Drag.** A press is not yet a pan. Past a 4px slop threshold the first move
-dispatches `gesture-started` and keeps the reducer-assigned epoch; every later
-move computes `panDomain` from the domain the press began in and the **total**
-displacement, so a long drag accumulates no drift. Pointer up settles, pointer
-cancel cancels.
+**Drag.** A press is not yet a pan. Past a 4px slop threshold on the **x** axis
+the first move dispatches `gesture-started` and keeps the reducer-assigned epoch;
+every later move computes `panDomain` from the domain the press began in and the
+**total** displacement, so a long drag accumulates no drift. Pointer up settles,
+pointer cancel cancels.
+
+Two thresholds rather than one, because they answer different questions. Only
+sideways travel can pan this plot, so that is what starts a gesture. But whether
+the release is still a *click* is decided at pointer up against travel in **both**
+directions: a press dragged 60px straight down starts no gesture — there is no
+vertical pan to start — and must not commit a selection either, because every
+selection is one ProteoWizard process and the user who dragged the pointer away
+was not asking for one.
 
 **Keyboard and buttons.** `+`/`=`, `-`/`_`, Left, Right, Home and `0` on the
 focused plot, and Zoom in / Zoom out / Reset range as visible controls. All are
@@ -292,6 +300,10 @@ this slice does not claim:
 - the table stays windowed;
 - nearest-scan is a binary search over the full model;
 - pointer motion issues **zero** backend calls; so do zoom, pan and reset;
+- the linear walk Previous and Next need to find the selected row is memoized on
+  the table and the selected index, so it stays off the cursor's path — a
+  selection near the end of a large table would otherwise have put two
+  whole-table walks into most pointer frames;
 - **no cache of any kind was added.** None is authorized by R1.
 
 Hover is the one thing that happens at pointer frequency, and at a full-run zoom

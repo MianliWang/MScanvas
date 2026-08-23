@@ -2209,8 +2209,29 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     setChromatogramTraces((current) => ({ ...current, [trace]: !current[trace] }));
   }, []);
 
-  const previousScanIndex = adjacentScan(previewRows, selectedIndex, -1);
-  const nextScanIndex = adjacentScan(previewRows, selectedIndex, 1);
+  /**
+   * The scans either side of the selected one, kept off the cursor's path.
+   *
+   * `adjacentScan` walks the table to find the selected row, because the table's
+   * order is the order Previous and Next mean and nothing promises the indices
+   * are a gapless ascending run. That walk is linear, and this hook re-renders
+   * whenever the pointer crosses from one scan to another -- which at a full-run
+   * zoom over a large acquisition is most pointer frames. Unmemoized, a
+   * selection near the end of a 36,319-row table put two whole-table walks into
+   * every one of them.
+   *
+   * Neither input changes on a hover, so the memo answers without walking
+   * anything.
+   */
+  const scanSteps = useMemo(
+    () => ({
+      previous: adjacentScan(previewRows, selectedIndex, -1),
+      next: adjacentScan(previewRows, selectedIndex, 1),
+    }),
+    [previewRows, selectedIndex],
+  );
+  const previousScanIndex = scanSteps.previous;
+  const nextScanIndex = scanSteps.next;
 
   const selectPreviousScan = useCallback(() => {
     if (previousScanIndex !== null) {

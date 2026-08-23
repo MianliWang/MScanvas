@@ -506,6 +506,7 @@ function ChromatogramPlot({
   const drag = useRef<{
     readonly pointerId: number;
     readonly originX: number;
+    readonly originY: number;
     readonly start: RetentionTimeDomain;
     epoch: number | null;
     moved: boolean;
@@ -522,6 +523,7 @@ function ChromatogramPlot({
     drag.current = {
       pointerId: event.pointerId,
       originX: event.clientX,
+      originY: event.clientY,
       start: shown,
       epoch: null,
       moved: false,
@@ -540,8 +542,10 @@ function ChromatogramPlot({
       return;
     }
     const moved = event.clientX - active.originX;
-    // A press that has not travelled is still a click. Without a threshold a
-    // one-pixel tremor between press and release would pan instead of select.
+    // A press that has not travelled sideways is not a pan. Without a threshold
+    // a one-pixel tremor between press and release would pan instead of select;
+    // whether the release is still a *click* is decided at pointer up, against
+    // travel in both directions.
     if (!active.moved && Math.abs(moved) < CLICK_SLOP) {
       return;
     }
@@ -575,6 +579,15 @@ function ChromatogramPlot({
       if (active.epoch !== null) {
         dispatch({ type: "gesture-settled", epoch: active.epoch });
       }
+      return;
+    }
+    // A press that travelled past the slop is not a click, whichever way it
+    // went. Only sideways travel can pan, so a vertical drag starts no gesture
+    // -- but it is still a drag, and releasing it must not commit a selection
+    // the user did not ask for. Every selection is one ProteoWizard process.
+    if (
+      Math.hypot(event.clientX - active.originX, event.clientY - active.originY) >= CLICK_SLOP
+    ) {
       return;
     }
     // A click, resolved against the full model. The drawing has fewer vertices

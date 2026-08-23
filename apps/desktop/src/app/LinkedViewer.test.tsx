@@ -42,6 +42,29 @@ import { App } from "./App";
  */
 let tableRenders = 0;
 
+/**
+ * How many times the workspace walked the table to find the selected row.
+ *
+ * `adjacentScan` is linear, because Previous and Next walk the table's own order
+ * and nothing promises the indices are a gapless ascending run. That walk must
+ * not be on the cursor's path.
+ */
+let adjacencyWalks = 0;
+
+vi.mock("../features/mzml-preview/viewer/scanModel", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../features/mzml-preview/viewer/scanModel")>();
+  return {
+    ...actual,
+    adjacentScan: (
+      ...args: Parameters<typeof actual.adjacentScan>
+    ): ReturnType<typeof actual.adjacentScan> => {
+      adjacencyWalks += 1;
+      return actual.adjacentScan(...args);
+    },
+  };
+});
+
 vi.mock("../features/mzml-preview/SpectrumTable", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../features/mzml-preview/SpectrumTable")>();
   return {
@@ -152,6 +175,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   cleanup();
   tableRenders = 0;
+  adjacencyWalks = 0;
 });
 
 describe("the linked viewer", () => {
@@ -405,6 +429,34 @@ describe("what a moving pointer costs", () => {
     expect(readout()).toMatch(/^Hovering index 29,/u);
     expect(tableRenders).toBe(settled);
     expect(preview.requestedSpectra).toEqual([]);
+  });
+
+  it("does not walk the table to find the selected row on the cursor's path", async () => {
+    /*
+     * A hover crossing re-renders the workspace, and the workspace is where
+     * Previous and Next resolve their neighbours -- a linear walk each, over a
+     * table that can hold tens of thousands of rows, with the worst case being
+     * a scan selected near the end. Neither input changes on a hover, so the
+     * answer is memoized and this count must not move.
+     */
+    const preview = api();
+    await openTheViewer(preview);
+    const grid = screen.getByRole("grid", { name: "Spectra" });
+    fireEvent.click(within(grid).getByText("controllerType=0 controllerNumber=1 scan=1"));
+    await waitFor(() => {
+      expect(selectedRowPosition()).toBe(0);
+    });
+    await screen.findByRole("img", { name: /^Spectrum 0,/u });
+    const settled = adjacencyWalks;
+
+    act(() => {
+      for (let scan = 5; scan < 40; scan += 1) {
+        fireEvent.pointerMove(plot(), { clientX: clientXFor(scan * RT_STEP) });
+      }
+    });
+
+    expect(readout()).toMatch(/^Hovering index 39,/u);
+    expect(adjacencyWalks).toBe(settled);
   });
 
   it("asks the backend for nothing while the viewport moves", async () => {

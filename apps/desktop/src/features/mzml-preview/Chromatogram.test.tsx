@@ -514,11 +514,30 @@ describe("choosing a scan", () => {
   it("still selects when the pointer only trembled", () => {
     const { onSelect } = renderChromatogram();
 
-    fireEvent.pointerDown(plot(), { button: 0, clientX: 500, pointerId: 1 });
-    fireEvent.pointerMove(plot(), { clientX: 502, pointerId: 1 });
-    fireEvent.pointerUp(plot(), { button: 0, clientX: 502, pointerId: 1 });
+    fireEvent.pointerDown(plot(), { button: 0, clientX: 500, clientY: 100, pointerId: 1 });
+    fireEvent.pointerMove(plot(), { clientX: 502, clientY: 101, pointerId: 1 });
+    fireEvent.pointerUp(plot(), { button: 0, clientX: 502, clientY: 101, pointerId: 1 });
 
     expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not select when the press was dragged away, even straight down", () => {
+    /*
+     * Only sideways travel can pan this plot, so a vertical drag starts no
+     * gesture -- but it is still a drag. Releasing it must not commit a
+     * selection, because every selection is one ProteoWizard process and the
+     * user who dragged the pointer away was not asking for one.
+     */
+    const { onSelect } = renderChromatogram();
+    const before = state();
+
+    fireEvent.pointerDown(plot(), { button: 0, clientX: 500, clientY: 100, pointerId: 1 });
+    fireEvent.pointerMove(plot(), { clientX: 501, clientY: 160, pointerId: 1 });
+    fireEvent.pointerUp(plot(), { button: 0, clientX: 501, clientY: 160, pointerId: 1 });
+
+    expect(onSelect).not.toHaveBeenCalled();
+    // And no gesture was invented for a direction this plot does not pan in.
+    expect(state()).toBe(before);
   });
 
   it("draws the selected scan as a rule and a glyph, not a colour", () => {
