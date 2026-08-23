@@ -4450,6 +4450,30 @@ scrolls by about 48px. That is the honest trade for a third linked view in a
 shell that is exactly the window's height; giving each panel a share and letting
 the shortest clip hides controls rather than moving them.
 
+### The visible adapter, closed separately
+
+The first delivery of this slice ran to a fourth review round. Its last finding
+was that the viewport control group advertised `Zoom in` and `Zoom out` as
+available where pressing them changed nothing: at full range — the state the
+viewer opens in — and in both directions for a run whose scans share one
+retention time. Beside them `Reset range` computed its own disabled state and
+told the truth, which is what made the group inconsistent rather than merely
+quiet.
+
+That pull request was frozen at its reviewed head as evidence rather than patched
+a fifth time, and **Viewer Closure R1.1** was branched directly from that exact
+head so the whole slice arrives together rather than as a replayed history.
+
+R1.1 replaces three separate availability answers with one rule: **a visible
+viewport action is available exactly when applying it would change the effective
+rendered domain.** Every boundary follows without being named. The comparison is
+between rendered domains rather than between the arithmetic's own output, and
+that distinction is load-bearing: canonical clamping recovers a low edge as
+`full.high - span`, which rounds, so a run of 0.0125 to 453.9875 comes back as
+0.012499999999988631 — a change by the naive comparison, and no change at all
+once the reducer has committed it. Asking what the reducer would render removes
+the question instead of approximating it, and needs no epsilon.
+
 ### Still not implemented
 
 XIC, spectrum zoom and pan, multi-layer comparison, chromatogram data or figure

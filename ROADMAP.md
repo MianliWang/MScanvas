@@ -87,6 +87,19 @@ none of it reads the backend. R1 is a wiring slice over ADR 0032, and adds no
 Rust change, no backend query, no cache and no dependency. See
 [ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
 
+**Viewer Closure R1.1 — the visible adapter.** Closed with R1. The first review
+of the visible viewer ran to a fourth round, and its last finding was that the
+viewport control group advertised `Zoom in` and `Zoom out` as available where
+pressing them changed nothing — in the state the viewer opens in, and for a run
+whose scans share one retention time. That PR was frozen as evidence rather than
+patched again, and R1.1 was taken from its exact reviewed head so the whole slice
+arrives together.
+
+R1.1 replaces three separate availability answers with one rule: a visible
+viewport action is available exactly when applying it would change the effective
+rendered domain. Every boundary follows from it without being named. See
+[ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
+
 Still outside it, and unchanged:
 
 - Current-range export. The committed viewport R0 defined is now a range a user

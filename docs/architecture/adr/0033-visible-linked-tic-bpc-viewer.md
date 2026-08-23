@@ -307,6 +307,66 @@ The operation remains the safety boundary. The rendered capability is the
 truthful affordance, and a disabled step stays where it was rather than
 disappearing.
 
+## What a viewport control says it can do
+
+`Zoom in`, `Zoom out` and `Reset range` share one rule:
+
+> **A visible viewport action is available exactly when applying it would change
+> the effective rendered domain.**
+
+Not a list of boundaries. Every boundary falls out of the rule without being
+named — full range has nothing wider to show, the narrowest viewport has nothing
+narrower, a run whose scans share one retention time has neither, and a viewport
+already showing the whole run has nothing to reset to. The three controls come
+from one table and one planner, `planViewportAction`, so they cannot drift apart
+the way they had: `Reset range` computed its own disabled state and told the
+truth while the two zoom controls claimed to be available wherever they could be
+pressed. `Zoom out` did that in the state the viewer *opens* in.
+
+The planner is a projection and is never stored. It takes the interaction state
+and an action, asks `zoomDomain` for the candidate range, and then asks the
+**reducer** what that event would actually render. Both readers use it: the
+render for `disabled`, and the press for whether to dispatch at all — planned
+again from the live state, because the state can move between the render that
+drew a button and the press that reaches it, and a boolean captured by an older
+render is a claim about a state that has gone.
+
+### Equality is by value, on the rendered domain
+
+Both halves of that sentence are load-bearing, and the second one is the part
+that is easy to get wrong.
+
+Comparing `zoomDomain`'s own output against the range on screen would have
+reintroduced the defect on a large class of runs. Canonical clamping recovers the
+low edge as `full.high - span`, and that subtraction rounds: a run of 0.0125 to
+453.9875 comes back as a low of 0.012499999999988631. Against the range on screen
+that reads as a change — so `Zoom out` would have claimed availability — and the
+reducer then recognises the result as the whole run, commits `null`, and shows
+exactly what was already there. Asking what the reducer would *render* removes
+the question rather than approximating an answer to it, and needs no epsilon.
+
+By value, because the arithmetic is deterministic: a clamp that lands on the
+range already shown produces the same numbers in a new object, and comparing
+references would call that a change.
+
+### The caption keeps its own projection
+
+The axis caption still decides for itself whether to say "(full range)". Two
+rules about one range is a maintenance hazard, so what makes keeping both safe is
+written down rather than assumed: every path that sets a viewport goes through
+`clampDomain`, so the rendered domain is always *inside* the run — and for a
+range that is inside, "covers the whole run" and "is the whole run" are the same
+predicate. `Reset range` is therefore available exactly when the caption does not
+say "(full range)". A test pins the containment, so a future change that let a
+rendered domain escape the run would show up there rather than as two controls
+disagreeing.
+
+### What this rule is not about
+
+Pointer gestures. A wheel zoom that clamps at a boundary is a gesture reaching
+the edge of the run, not a control advertising something it cannot do, and
+nothing about wheel or drag availability changed.
+
 ## The R1 consumer set
 
 **One selection revision, any number of consumers, no second authority.**
