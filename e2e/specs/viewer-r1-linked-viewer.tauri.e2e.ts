@@ -35,6 +35,11 @@ async function selectedRowPosition(): Promise<number | null> {
   });
 }
 
+/** What the selected-spectrum panel says it is doing, in its own words. */
+async function panelState(): Promise<string> {
+  return (await browser.$("section.spectrum-panel .panel-header p").getText()).trim();
+}
+
 async function spectrumReads(): Promise<number[]> {
   return (await ipcCalls())
     .filter((call) => call.command === "load_selected_spectrum")
@@ -69,6 +74,26 @@ async function pointAt(fraction: number): Promise<{ readonly x: number; readonly
     x: Math.round(box.left + (64 / 1_000) * box.width + drawn * fraction),
     y: Math.round(box.top + box.height / 2),
   };
+}
+
+/**
+ * Takes the pointer off the plot, so the readout reports the selection again.
+ *
+ * A real move rather than a synthesised event: React listens for pointer exits
+ * at the document root, and a non-bubbling event dispatched on the element never
+ * reaches it.
+ */
+async function leaveThePlot(): Promise<void> {
+  const box = await browser.execute((css: string) => {
+    const rect = document.querySelector(css)?.getBoundingClientRect();
+    return rect === undefined
+      ? { left: 0, top: 0, width: 0, height: 0 }
+      : { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+  }, PLOT);
+  await browser
+    .action("pointer")
+    .move({ x: Math.round(box.left + box.width / 2), y: Math.max(1, Math.round(box.top) - 6) })
+    .perform();
 }
 
 describe("the linked viewer on the real Tauri WebView", () => {
@@ -141,20 +166,43 @@ describe("the linked viewer on the real Tauri WebView", () => {
     });
     const selected = await selectedRowPosition();
 
-    // Exactly one read, for the scan the click resolved to, and it settled.
+    // Exactly one read, for the scan the click resolved to.
     const reads = await spectrumReads();
     expect(reads).toEqual([selected]);
     await browser.$("//h2[normalize-space()='Selected spectrum']").waitForDisplayed({
       timeout: 30_000,
     });
-    await browser.waitUntil(
-      async () =>
-        (await browser.$("section.spectrum-panel").getText()).includes("Points") ||
-        (await browser.$("section.spectrum-panel").getText()).includes("no peaks"),
-      { timeout: 30_000, timeoutMsg: "the spectrum never settled" },
+
+    /*
+     * And it settled into a typed outcome.
+     *
+     * Which outcome is a property of the machine rather than of the transport:
+     * this suite answers the roster and the preview because reading them needs
+     * a ProteoWizard installation and an mzML file, and leaves this one command
+     * real -- so on a machine without either, the honest terminal state is a
+     * typed refusal. What must be true everywhere is that the panel leaves
+     * `loading`, which is the only state that means the reply never came back
+     * through the production path.
+     */
+    await browser.waitUntil(async () => !(await panelState()).startsWith("Loading spectrum"), {
+      timeout: 60_000,
+      timeoutMsg: "the selected-spectrum request never came back",
+    });
+    expect(await panelState()).toMatch(
+      new RegExp(
+        `^Spectrum ${String(selected)}( is not in this run| could not be loaded)?$`,
+        "u",
+      ),
     );
 
-    // And the linked views agree.
+    // And the linked views agree. The readout names the hovered scan while a
+    // pointer is on the plot, because that is what hover is for; off the plot it
+    // names the selection, which is what persists.
+    await leaveThePlot();
+    await browser.waitUntil(async () => (await readout()).startsWith("Selected index "), {
+      timeout: 30_000,
+      timeoutMsg: "the plot never reported the selected scan",
+    });
     expect(await readout()).toContain(`Selected index ${String(selected)},`);
     expect(
       await browser.execute(() => document.querySelector("g.chromatogram-selected") !== null),

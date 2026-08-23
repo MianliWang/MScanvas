@@ -109,6 +109,28 @@ until this repository can convert one.
 
 **Success:** user can confirm identity and inspect a relevant scan without changing modes.
 
+**Implemented for mzML, end to end.** Activating a row reads the file once; the
+run summary, the chromatogram, the scan table and the selected-spectrum panel are
+what comes back. TIC and BPC are drawn from the loaded spectrum table — each
+scan's own total ion current and base peak intensity at its own retention time —
+and the caption says exactly that, that neither axis carries a unit, and that
+this is not a stored chromatogram record. A preview that did not load the
+complete table draws no trace at all and says why, while its scan table stays
+usable.
+
+Step 4 works from either direction and step 5 has one authority behind it: the
+pointer reports the nearest scan without selecting it, a click or a table row or
+`Previous scan`/`Next scan` commits one selection, and the marker, the row and
+the spectrum all follow that one commit. A scan selected again after being
+scrolled or panned out of view is brought back; a viewport the user chose is
+never reset to do it. The plot zooms, pans and resets by wheel, drag, keyboard
+and visible button, and none of that reads the backend.
+
+Still missing from the acquisition view: XIC, spectrum zoom and pan, multi-layer
+comparison, and any export of the chromatogram or of the range on screen. See
+[ADR 0032](../architecture/adr/0032-viewer-interaction-and-viewport-state.md) and
+[ADR 0033](../architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
+
 ## WF-004 — Convert a batch
 
 1. Choose selected/all scope.
@@ -263,10 +285,11 @@ ordinary outcome and leaves the spectrum exactly as it was. What is written is
 the complete spectrum Rust read, not the bounded arrays the interface drew from.
 
 What is still missing from steps 2 to 4: PNG is a save rather than a quick copy
-target, there is no range chooser because there is no zoom or pan to choose a
-range from, and step 4's export-specific preview does not exist -- the figure is
-described by its settings rather than shown before it is written. Neither a
-chromatogram nor a current-range export exists. See
+target, there is no range chooser -- the chromatogram now has a zoom and a pan,
+and the viewport they settle on is the authority a current-range export will
+read, but no export consumes it yet -- and step 4's export-specific preview does
+not exist: the figure is described by its settings rather than shown before it is
+written. Neither a chromatogram nor a current-range export exists. See
 [ADR 0029](../architecture/adr/0029-first-visible-spectrum-figure-and-data-export.md).
 
 **Success:** output is independent of app chrome/theme and corresponds to a defined PlotSpec/FigureSpec.

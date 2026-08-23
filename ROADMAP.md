@@ -68,14 +68,29 @@ a viewport change, and geometry in which the visible value range comes from the
 clipped polyline rather than from source points outside it. See
 [ADR 0032](docs/architecture/adr/0032-viewer-interaction-and-viewport-state.md).
 
-**VIEW-002, VIEW-005 and VIEW-006 remain unimplemented.** R0 ships no
-chromatogram, no linked selection and no keyboard navigation; it ships the
-contract the next slice builds them against.
+**Viewer Closure R1 — the visible linked TIC/BPC viewer.** Closed.
+**VIEW-002, VIEW-005 and VIEW-006 are implemented.** The viewer column is three
+linked panels: the run's shape over retention time, the scans it is made of, and
+the one scan the user chose.
+
+TIC and BPC are per-scan values projected from the loaded spectrum table — each
+scan's own total ion current and base peak intensity, at its own retention time.
+Not a stored chromatogram record, and the caption says so; neither axis carries a
+unit, because nothing that crosses the boundary establishes one. A preview that
+did not load the complete table draws no trace at all and says why.
+
+There is one selected scan and one commit revision, held by R0's reducer: a
+click in the plot, a click or Enter in the table, and Previous/Next all commit
+through one operation, and the marker, the row and the spectrum follow that one
+commit. The plot zooms, pans and resets by wheel, drag, keyboard and button, and
+none of it reads the backend. R1 is a wiring slice over ADR 0032, and adds no
+Rust change, no backend query, no cache and no dependency. See
+[ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
 
 Still outside it, and unchanged:
 
-- Current-range export, which needs the committed viewport R0 defines and a
-  visible viewer to choose one in.
+- Current-range export. The committed viewport R0 defined is now a range a user
+  can actually choose, and the handoff is tested — but no export consumes it.
 - Chromatogram data export, and a linked chromatogram + spectrum figure
   template.
 - XIC, spectrum zoom/pan, and multi-layer comparison.

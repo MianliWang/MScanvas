@@ -198,7 +198,11 @@ function shown(): RetentionTimeDomain {
 }
 
 beforeEach(() => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
+  // Not `shouldAdvanceTime`. The wheel's settle is scheduled 120ms out, and a
+  // clock that advances with real time could fire it between two lines of a
+  // test -- which would make "the gesture has not settled yet" a statement
+  // about how fast this machine is.
+  vi.useFakeTimers();
 });
 
 afterEach(() => {

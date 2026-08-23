@@ -4359,3 +4359,101 @@ implemented and now configurable by size and theme. **FIG-004** is still partial
 **FIG-006** through **FIG-008** remain unimplemented, and there is no
 current-range or chromatogram export. See
 [ADR 0030](docs/architecture/adr/0030-png-copy-plot-and-figure-settings.md).
+
+## Viewer Closure R1 — the visible linked TIC/BPC viewer, 2026-08-23
+
+`VIEW-002`, `VIEW-005` and `VIEW-006` are implemented. The viewer column is
+three linked panels: the run's shape over retention time, the scans it is made
+of, and the one scan the user chose.
+
+**R0 decided the semantics; this slice is the wiring.** Every rule that looks
+like a decision here was taken in
+[ADR 0032](docs/architecture/adr/0032-viewer-interaction-and-viewport-state.md)
+as pure code with no React, no DOM and no timers — what a viewport is, when a
+hover stops being true, who allocates a selection revision, which of two viewport
+authorities wins, and where a visible value range comes from.
+[ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md) records
+only the visible adapter over it.
+
+**TIC and BPC are per-scan values projected from the loaded spectrum table.**
+Each scan's own total ion current and base peak intensity, at its own retention
+time. Not a stored chromatogram record, and the visible caption says so. **No
+Rust production change, no new preview operation, no new backend query, no cache,
+no dependency.** Nothing here claims the standalone `msaccess` TIC query
+succeeded; ADR 0003's posture is unchanged. Retention time and intensity are
+displayed as unreported, because nothing that crosses the boundary establishes
+either.
+
+**One selected scan, in one place.** The workspace's own `selectedIndex` is gone;
+the reducer's selection is the authority and every reader is a projection of it.
+Three surfaces commit through one operation, after every existing request guard,
+and the reducer allocates the revision. A repeat still in flight allocates
+neither a revision nor a second ProteoWizard process; the same scan committed
+again after its read settled is a new commit that linked views may reveal for.
+The existing per-request token still decides which backend reply may be shown —
+two race mechanisms, two questions, deliberately not merged.
+
+**A truncated preview draws no chromatogram at all.** A prefix drawn as a
+chromatogram is a picture of a shorter experiment than the one that happened. The
+scan table beside it stays usable and says that the end of its loaded rows is not
+the end of the run.
+
+### What the rendered evidence establishes
+
+**Frontend suite: 830 tests**, up from 739. The clipped-extent regression is
+reproduced at the visible component — a 9,000,000 peak at RT 9 outside a 10–13
+viewport must not label the axis, and the interpolated height where the line
+crosses the edge must, because it is on screen.
+
+**Browser QA: 30 rendered cases** at 1366×768, 1920×1080 and 960×640, with real
+hover, click, wheel, drag, keyboard and table interaction. Three are new and each
+pins a finding at the layer that produced it: a wheel gesture losing to a
+selection committed before its debounce fires, with the stale timer then allowed
+to fire rather than cancelled; a hover dropped by the axis moving under it and
+re-established by the next pointer frame, beside its companion showing a clamped
+gesture keeps one; and reveal geometry measured against real rectangles rather
+than through WebDriver's own `scrollIntoView`, which places a target at the
+container's top edge and therefore under a sticky header. Zero newly introduced
+console errors, warnings, unhandled rejections or uncaught exceptions.
+
+**Scale QA at the measured representative 36,319 scans.** Observations on this
+machine, not thresholds: 21 rendered table rows, 1 trace path, 1,921 drawn
+vertices, 15 SVG nodes, about 0.6 s from activation to a drawn viewer and about
+0.2 s from click to a selected row. Structure is what is asserted — the table
+stays windowed, the trace stays one path with a bounded vertex count, a click
+still resolves against every scan, and neither pointer motion nor any viewport
+change asks the backend for anything.
+
+**Real-Tauri QA: 5 cases** in WebView2 inside the real Rust process, with
+`load_selected_spectrum` left real — the chromatogram drawn from the document's
+own preview, both traces toggled, a click crossing the production IPC boundary
+with the right index and settling into a typed outcome, `Previous scan` and
+`Next scan` on the same transport, and the viewport moving without a single IPC
+call.
+
+**Live ProteoWizard evidence: NOT RUN.** No usable installation and no lawfully
+acquired pinned mzML fixture were available in this environment, and the
+representative 208 MiB acquisition was deliberately not downloaded for ceremony.
+Nothing in this slice depends on one: the viewer's source is the spectrum table
+the existing preview already transfers, and no backend command was added or
+changed.
+
+### Layout, measured rather than assumed
+
+At 1366×768 and again at 960×640: the chromatogram floors at 186px (a 60px header
+of two control groups and a 124px body — padding, the 52px the plot floors at,
+the axis caption's two lines and the readout), the scan table at 122px (a 60px
+header beside its two buttons, the 30px sticky column header and one complete
+30px row), and the selected spectrum at 202px. With two 8px gaps that is 526px
+against a column that measures 478px, so the viewer column owns a scrollbar and
+scrolls by about 48px. That is the honest trade for a third linked view in a
+shell that is exactly the window's height; giving each panel a share and letting
+the shortest clip hides controls rather than moving them.
+
+### Still not implemented
+
+XIC, spectrum zoom and pan, multi-layer comparison, chromatogram data or figure
+export, current-range export of anything, the linked two-panel figure, a saved
+`FigureSpec`, a figure composer, vendor-format direct preview and a preview
+cache. `ViewerInteractionState.committedDomain` is the authority a current-range
+export will consume, and the handoff is tested; the export is not built.

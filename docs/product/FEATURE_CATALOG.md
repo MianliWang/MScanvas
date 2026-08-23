@@ -57,13 +57,49 @@ table remains the target, including the unsupported portions called out below:
 | ID | Feature | Priority | Acceptance summary |
 |---|---|---:|---|
 | VIEW-001 | Metadata summary | P0 | Shows format/vendor, size, scan counts, MS levels, RT range and available instrument metadata. |
-| VIEW-002 | TIC/BPC | P0 | Toggle traces, zoom/pan/reset, inspect coordinates and select nearest scan. |
+| VIEW-002 | TIC/BPC | P0 | **Implemented for a completely loaded mzML spectrum table.** Toggle traces, zoom/pan/reset, inspect coordinates and select nearest scan. |
 | VIEW-003 | Spectrum view | P0 | Profile uses a line; centroid uses sticks; axes and units remain explicit. |
 | VIEW-004 | Scan table | P0 | Virtualized rows with scan, RT, MS level and precursor context. |
-| VIEW-005 | Linked selection | P0 | Selection synchronizes chromatogram marker, table row, spectrum and inspector in both directions. |
-| VIEW-006 | Keyboard scan navigation | P0 | Previous/next and table navigation work without pointer-only access. |
+| VIEW-005 | Linked selection | P0 | **Implemented across the chromatogram, the loaded scan table and the selected-spectrum panel.** Selection synchronizes chromatogram marker, table row, spectrum and inspector in both directions. |
+| VIEW-006 | Keyboard scan navigation | P0 | **Implemented.** Previous/next and table navigation work without pointer-only access. |
 | VIEW-007 | XIC | P1 | Typed m/z and tolerance produce a trace with explicit units/settings. |
 | VIEW-008 | Multi-layer comparison | P2 | Visibility, style and provenance remain inspectable per layer. |
+
+Implementation notes for the three viewer features Viewer Closure closed follow.
+The acceptance table remains the target, including the parts called out below.
+
+- **VIEW-002 — Implemented, with a named source and a named refusal.** TIC and
+  BPC are **per-scan values projected from the loaded spectrum table** — each
+  scan's own total ion current and base peak intensity, at its own retention
+  time. They are not a stored chromatogram record, no backend chromatogram query
+  exists, and the visible caption says both. Retention time and intensity are
+  displayed as unreported, because nothing that crosses the boundary establishes
+  either. The traces toggle independently, the retention-time viewport zooms,
+  pans and resets by wheel, drag, keyboard and button, the pointer reports the
+  nearest scan, and a click selects it. A preview that did not load the complete
+  spectrum table produces **no chromatogram at all** rather than a prefix drawn
+  as the whole run, and says so; the same applies to a retention time that cannot
+  be placed on an axis, an intensity that cannot be drawn, and a retention-time
+  unit this build cannot name. See
+  [ADR 0032](../architecture/adr/0032-viewer-interaction-and-viewport-state.md)
+  and [ADR 0033](../architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
+- **VIEW-005 — Implemented for three surfaces.** One persistent selection with
+  one monotonic commit revision, held in one place: the chromatogram marker, the
+  scan table's row and the selected-spectrum panel all follow it, and a selection
+  committed on any of them reaches the others. Selecting the scan already
+  selected is a new commit, so a marker or a row the user has since scrolled or
+  panned away comes back. A reveal never takes keyboard focus from the control
+  that committed the selection. The inspector half of the acceptance line is the
+  selected-spectrum panel; there is no separate annotation inspector yet.
+- **VIEW-006 — Implemented for the loaded scan table.** Arrow, Page, Home and End
+  move focus without selecting — each selection is one ProteoWizard process, and
+  selection-following-focus would launch one per key press — and Enter or Space
+  commits. `Previous scan` and `Next scan` step through the table's own order.
+  Where a preview loaded only part of the table, the interface says that the end
+  of the loaded rows is not the end of the run.
+
+Still unimplemented across the viewer: XIC (VIEW-007), spectrum zoom and pan,
+multi-layer comparison (VIEW-008), and any chromatogram or current-range export.
 
 ## Conversion
 
