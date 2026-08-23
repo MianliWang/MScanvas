@@ -417,26 +417,41 @@ function ChromatogramPlot({
   const selectedPoint = selected === null ? null : (byIndex.get(selected) ?? null);
   const hoveredPoint = hover === null ? null : (byIndex.get(hover) ?? null);
 
+  /**
+   * Where a client x falls across the drawn area, as a fraction of it.
+   *
+   * The one mapping from a screen coordinate into the plot, so the scan a hover
+   * resolves to and the retention time a wheel holds under the pointer cannot
+   * come to disagree about where the pointer is. `null` when there is nothing
+   * measurable on screen, which each caller answers in its own terms.
+   */
+  const plotFractionAt = useCallback((clientX: number): number | null => {
+    const element = plotRef.current;
+    if (element === null) {
+      return null;
+    }
+    const box = element.getBoundingClientRect();
+    if (box.width === 0) {
+      return null;
+    }
+    const viewBoxX = ((clientX - box.left) / box.width) * PLOT_WIDTH;
+    return clamp01((viewBoxX - PADDING_LEFT) / USABLE_WIDTH);
+  }, []);
+
   /** The retention time under a pointer, read against the range on screen now. */
   const retentionTimeAt = useCallback(
     (clientX: number): number | null => {
-      const element = plotRef.current;
-      if (element === null) {
-        return null;
-      }
-      const box = element.getBoundingClientRect();
-      if (box.width === 0) {
+      const fraction = plotFractionAt(clientX);
+      if (fraction === null) {
         return null;
       }
       const shown = renderedDomain(readInteraction());
       if (shown === null) {
         return null;
       }
-      const viewBoxX = ((clientX - box.left) / box.width) * PLOT_WIDTH;
-      const fraction = clamp01((viewBoxX - PADDING_LEFT) / USABLE_WIDTH);
       return shown.low + fraction * (shown.high - shown.low);
     },
-    [readInteraction],
+    [plotFractionAt, readInteraction],
   );
 
   /**
@@ -517,17 +532,10 @@ function ChromatogramPlot({
         return;
       }
       const state = readInteraction();
-      const box = element.getBoundingClientRect();
-      const anchor =
-        box.width === 0
-          ? 0.5
-          : (((event.clientX - box.left) / box.width) * PLOT_WIDTH - PADDING_LEFT) /
-            USABLE_WIDTH;
-      const plan = planWheelGesture(
-        state,
-        event.deltaY < 0 ? "in" : "out",
-        clamp01(anchor),
-      );
+      // The centre when there is nothing to measure against, which is the same
+      // anchor a keyboard zoom uses and the only honest guess available.
+      const anchor = plotFractionAt(event.clientX) ?? 0.5;
+      const plan = planWheelGesture(state, event.deltaY < 0 ? "in" : "out", anchor);
       if (plan.event === null) {
         // Not ours. The run cannot go any further this way, so the browser
         // keeps the event and the column below can still be scrolled with it.
@@ -545,7 +553,7 @@ function ChromatogramPlot({
     return () => {
       element.removeEventListener("wheel", onWheel);
     };
-  }, [dispatch, readInteraction, scheduleSettle]);
+  }, [dispatch, plotFractionAt, readInteraction, scheduleSettle]);
 
   /**
    * A press that has not travelled yet.
