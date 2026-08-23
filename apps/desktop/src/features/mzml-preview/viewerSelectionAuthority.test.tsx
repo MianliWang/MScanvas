@@ -22,12 +22,14 @@ import { describe, expect, it } from "vitest";
 
 import type { PreviewApi } from "./api";
 import { PreviewApiProvider } from "./api";
-import type { Preview, SelectedSpectrumOutcome } from "./contracts";
+import type { BackendAvailability, Preview, SelectedSpectrumOutcome } from "./contracts";
 import type { WorkspaceDropTransport } from "./dropTransport";
 import { WorkspaceDropTransportProvider } from "./dropTransport";
-import { usePreviewWorkspace } from "./usePreviewWorkspace";
+import { canStartSpectrumSelection, usePreviewWorkspace } from "./usePreviewWorkspace";
 import { activeGestureEpoch, renderedDomain } from "./viewer/interactionState";
+import type { Deferred, FakePreviewApiOptions } from "../../test/previewFixtures";
 import {
+  availableBackend,
   buildPreview,
   buildRows,
   buildSpectrum,
@@ -35,9 +37,12 @@ import {
   createFakeWorkspaceDropTransport,
   deferred,
   previewError,
+  queueItem,
+  queueOf,
   secondFile,
   selectedFile,
   shimadzuDataset,
+  unavailableBackend,
 } from "../../test/previewFixtures";
 
 const VENDOR_ROW = shimadzuDataset(9);
@@ -62,16 +67,64 @@ function mount(
   options: {
     readonly preview?: Preview | (() => Promise<Preview>);
     readonly spectrum?: (index: number) => Promise<SelectedSpectrumOutcome>;
+    readonly availability?: () => Promise<BackendAvailability>;
+    readonly conversion?: FakePreviewApiOptions["conversion"];
   } = {},
 ) {
   const api = createFakePreviewApi({
     initialDatasets: [selectedFile, VENDOR_ROW],
     preview: options.preview ?? buildPreview(6),
     ...(options.spectrum === undefined ? {} : { spectrum: options.spectrum }),
+    ...(options.availability === undefined ? {} : { availability: options.availability }),
+    ...(options.conversion === undefined ? {} : { conversion: options.conversion }),
   });
   const rendered = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
   return { api, ...rendered };
 }
+
+/**
+ * A session whose backend verdict this test decides, one check at a time.
+ *
+ * The mount check answers at once so a preview can be opened; every later check
+ * is handed back for the test to settle, which is what holds the backend lane
+ * busy for as long as an assertion needs.
+ */
+function decidedBackend(later: readonly BackendAvailability[]) {
+  const pending: Deferred<BackendAvailability>[] = [];
+  let checks = 0;
+  return {
+    pending,
+    availability: () => {
+      checks += 1;
+      if (checks === 1) {
+        return Promise.resolve(availableBackend);
+      }
+      const answer = later[checks - 2];
+      if (answer !== undefined) {
+        return Promise.resolve(answer);
+      }
+      const held = deferred<BackendAvailability>();
+      pending.push(held);
+      return held.promise;
+    },
+  };
+}
+
+/** A conversion that reaches the running slot and stays there. */
+const RUNNING_QUEUE: FakePreviewApiOptions["conversion"] = (_request, publish) =>
+  new Promise(() => {
+    publish({
+      status: "running",
+      operationId: "1",
+      queue: {
+        ...queueOf([queueItem(VENDOR_ROW.handle, VENDOR_ROW.fileName, {
+          state: "running",
+          attempts: 1,
+        })]),
+        currentIndex: 0,
+      },
+    });
+  });
 
 async function openThePreview(
   result: { current: Workspace },
@@ -477,5 +530,257 @@ describe("trace visibility", () => {
       result.current.toggleChromatogramTrace("tic");
     });
     expect(result.current.chromatogramTraces).toEqual({ tic: false, bpc: true });
+  });
+});
+
+/*
+ * A control that advertises availability has to tell the truth.
+ *
+ * `Previous scan` and `Next scan` were the first viewer controls to compute a
+ * `disabled` state, and they computed it from adjacency alone -- so while a
+ * conversion queue owned the backend lane they stayed enabled and did nothing,
+ * for as long as the queue ran. What they were missing is the same rule
+ * `selectSpectrum` guards itself with, and the repair is that both now read it
+ * from one place.
+ *
+ * The matrix below pins both directions. Under-gating is the finding; the case
+ * that pins over-gating is the one at the end, and it is load-bearing.
+ */
+describe("the global spectrum-selection lane", () => {
+  const FREE = {
+    hasLoadedPreview: true,
+    backendUsable: true,
+    backendBusy: false,
+    conversionBusy: false,
+  } as const;
+
+  it("is available with a loaded run, a usable backend and both lanes free", () => {
+    expect(canStartSpectrumSelection(FREE)).toBe(true);
+  });
+
+  it("is unavailable for each thing that stops a selection reaching its target", () => {
+    const blockers = [
+      { name: "no loaded run", lane: { ...FREE, hasLoadedPreview: false } },
+      { name: "backend not usable", lane: { ...FREE, backendUsable: false } },
+      { name: "backend lane busy", lane: { ...FREE, backendBusy: true } },
+      { name: "conversion lane busy", lane: { ...FREE, conversionBusy: true } },
+    ];
+
+    for (const blocker of blockers) {
+      expect(canStartSpectrumSelection(blocker.lane), blocker.name).toBe(false);
+    }
+  });
+});
+
+describe("what a scan step says it can do", () => {
+  it("offers both steps, and takes them, while the lane is free", async () => {
+    const { result, api } = mount();
+    await openThePreview(result);
+    await select(result, 2);
+    await waitFor(() => {
+      expect(result.current.spectrum.status).toBe("loaded");
+    });
+
+    expect(result.current.spectrumSelectionAvailable).toBe(true);
+    expect(result.current.canSelectPreviousScan).toBe(true);
+    expect(result.current.canSelectNextScan).toBe(true);
+
+    await act(async () => {
+      result.current.selectNextScan();
+      await Promise.resolve();
+    });
+
+    expect(result.current.selectedIndex).toBe(3);
+    expect(api.requestedSpectra).toEqual([2, 3]);
+  });
+
+  it("takes both steps back off while an installation check owns the backend lane", async () => {
+    const backend = decidedBackend([]);
+    const { result, api } = mount({ availability: backend.availability });
+    await openThePreview(result);
+    await select(result, 2);
+    await waitFor(() => {
+      expect(result.current.spectrum.status).toBe("loaded");
+    });
+    const revision = result.current.viewerInteraction.selection?.revision ?? 0;
+
+    act(() => {
+      result.current.checkBackend();
+    });
+    await waitFor(() => {
+      expect(result.current.backendBusy).toBe(true);
+    });
+
+    expect(result.current.spectrumSelectionAvailable).toBe(false);
+    expect(result.current.canSelectPreviousScan).toBe(false);
+    expect(result.current.canSelectNextScan).toBe(false);
+    // And the operation refuses too, so the disabled state is a report of the
+    // guard rather than the safety boundary itself.
+    await act(async () => {
+      result.current.selectNextScan();
+      result.current.selectSpectrum(3);
+      await Promise.resolve();
+    });
+    expect(result.current.viewerInteraction.selection?.revision).toBe(revision);
+    expect(api.requestedSpectra).toEqual([2]);
+
+    await act(async () => {
+      backend.pending[0]?.resolve(availableBackend);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(result.current.canSelectNextScan).toBe(true);
+    });
+  });
+
+  it("takes both steps back off for as long as a conversion queue runs", async () => {
+    // The state the finding was about. A queue is not a momentary race: it owns
+    // the one backend lane for as long as it takes to convert an acquisition,
+    // and a button that stayed enabled through that did nothing every time it
+    // was pressed.
+    const { result, api } = mount({ conversion: RUNNING_QUEUE });
+    await openThePreview(result);
+    await select(result, 2);
+    await waitFor(() => {
+      expect(result.current.spectrum.status).toBe("loaded");
+    });
+    const revision = result.current.viewerInteraction.selection?.revision ?? 0;
+
+    act(() => {
+      result.current.conversion.convert([VENDOR_ROW.handle]);
+    });
+    await waitFor(() => {
+      expect(result.current.conversion.busy).toBe(true);
+    });
+
+    expect(result.current.spectrumSelectionAvailable).toBe(false);
+    expect(result.current.canSelectPreviousScan).toBe(false);
+    expect(result.current.canSelectNextScan).toBe(false);
+    await act(async () => {
+      result.current.selectNextScan();
+      result.current.selectSpectrum(3);
+      await Promise.resolve();
+    });
+    expect(result.current.viewerInteraction.selection?.revision).toBe(revision);
+    expect(api.requestedSpectra).toEqual([2]);
+    // The run it is a viewer of is untouched: the queue took the lane, not the
+    // preview.
+    expect(result.current.preview.status).toBe("loaded");
+    expect(result.current.selectedIndex).toBe(2);
+  });
+
+  it("takes both steps back off once the backend is resolved unavailable", async () => {
+    const backend = decidedBackend([unavailableBackend]);
+    const { result, api } = mount({ availability: backend.availability });
+    await openThePreview(result);
+    await select(result, 2);
+    await waitFor(() => {
+      expect(result.current.spectrum.status).toBe("loaded");
+    });
+    const revision = result.current.viewerInteraction.selection?.revision ?? 0;
+
+    act(() => {
+      result.current.checkBackend();
+    });
+    await waitFor(() => {
+      expect(result.current.backendBusy).toBe(false);
+    });
+
+    // The table stays on screen -- nothing about the reading became untrue --
+    // so there is still something to step through, and the steps still have to
+    // say they cannot.
+    expect(result.current.preview.status).toBe("loaded");
+    expect(result.current.spectrumSelectionAvailable).toBe(false);
+    expect(result.current.canSelectPreviousScan).toBe(false);
+    expect(result.current.canSelectNextScan).toBe(false);
+    await act(async () => {
+      result.current.selectNextScan();
+      result.current.selectSpectrum(3);
+      await Promise.resolve();
+    });
+    expect(result.current.viewerInteraction.selection?.revision).toBe(revision);
+    expect(api.requestedSpectra).toEqual([2]);
+  });
+
+  it("still refuses a step the table has no row for, with the lane free", async () => {
+    const { result } = mount();
+    await openThePreview(result);
+
+    await select(result, 0);
+    expect(result.current.spectrumSelectionAvailable).toBe(true);
+    expect(result.current.canSelectPreviousScan).toBe(false);
+    expect(result.current.canSelectNextScan).toBe(true);
+
+    await waitFor(() => {
+      expect(result.current.spectrum.status).toBe("loaded");
+    });
+    await select(result, 5);
+    expect(result.current.canSelectPreviousScan).toBe(true);
+    expect(result.current.canSelectNextScan).toBe(false);
+  });
+
+  it("keeps stepping to a different scan while an earlier read is unresolved", async () => {
+    /*
+     * Load-bearing, and the reason this is not `canPreview`.
+     *
+     * `canPreview` includes `previewBackendBusy`, which is true from the moment
+     * a selected-spectrum read starts until it settles. But a selection of a
+     * *different* scan is allowed to supersede an unresolved one -- that is what
+     * `spectrumToken` is for, and the A -> B contract this milestone tests
+     * elsewhere. Gating a scan step on it would take away a step the operation
+     * would have accepted, and would do it during the very window in which a
+     * user who picked the wrong scan is most likely to reach for it.
+     */
+    const replies = [
+      deferred<SelectedSpectrumOutcome>(),
+      deferred<SelectedSpectrumOutcome>(),
+    ];
+    let asked = 0;
+    const { result, api } = mount({
+      spectrum: () => {
+        const reply = replies[asked];
+        asked += 1;
+        return reply?.promise ?? Promise.reject(new Error("one reply per selection"));
+      },
+    });
+    await openThePreview(result);
+    await select(result, 2);
+
+    // A is out there and unresolved, so the broad preview lane reports busy.
+    expect(result.current.previewBackendBusy).toBe(true);
+    expect(result.current.spectrum.status).toBe("loading");
+    // The scan lane does not, because a different scan may still supersede it.
+    expect(result.current.spectrumSelectionAvailable).toBe(true);
+    expect(result.current.canSelectNextScan).toBe(true);
+    const first = result.current.viewerInteraction.selection?.revision ?? 0;
+
+    await act(async () => {
+      result.current.selectNextScan();
+      await Promise.resolve();
+    });
+
+    expect(result.current.selectedIndex).toBe(3);
+    expect(result.current.viewerInteraction.selection?.revision).toBeGreaterThan(first);
+    expect(api.requestedSpectra).toEqual([2, 3]);
+
+    // B settles and is shown; A settles afterwards and cannot take it back.
+    await act(async () => {
+      replies[1]?.resolve({ outcome: "spectrum", spectrum: buildSpectrum(3, 6) });
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(result.current.spectrum.status).toBe("loaded");
+    });
+    await act(async () => {
+      replies[0]?.resolve({ outcome: "spectrum", spectrum: buildSpectrum(2, 6) });
+      await Promise.resolve();
+    });
+
+    expect(result.current.selectedIndex).toBe(3);
+    expect(
+      result.current.spectrum.status === "loaded"
+        ? result.current.spectrum.spectrum.index
+        : null,
+    ).toBe(3);
   });
 });

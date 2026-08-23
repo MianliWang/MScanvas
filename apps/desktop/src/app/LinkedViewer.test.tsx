@@ -22,13 +22,16 @@ import type { PreviewApi } from "../features/mzml-preview/api";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
 import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTransport";
 import type { SpectrumTableProps } from "../features/mzml-preview/SpectrumTable";
+import type { BackendAvailability } from "../features/mzml-preview/contracts";
 import {
+  availableBackend,
   buildPreview,
   buildRows,
   createFakePreviewApi,
   createFakeWorkspaceDropTransport,
   selectedFile,
   shimadzuDataset,
+  unavailableBackend,
 } from "../test/previewFixtures";
 import { App } from "./App";
 
@@ -86,10 +89,13 @@ const DRAWN_WIDTH = PLOT_PIXELS - PADDING_LEFT - 12;
 /** `buildRows` places scan n at n × 0.0125. */
 const RT_STEP = 0.0125;
 
-function api(): ReturnType<typeof createFakePreviewApi> {
+function api(
+  options: { readonly availability?: () => Promise<BackendAvailability> } = {},
+): ReturnType<typeof createFakePreviewApi> {
   return createFakePreviewApi({
     initialDatasets: [selectedFile, VENDOR_ROW],
     preview: buildPreview(SCAN_COUNT),
+    ...(options.availability === undefined ? {} : { availability: options.availability }),
   });
 }
 
@@ -361,6 +367,43 @@ describe("the linked viewer", () => {
       expect(selectedRowPosition()).toBe(10);
     });
     expect(preview.requestedSpectra).toEqual([10, 11, 10]);
+  });
+
+  it("renders the scan steps disabled once the backend is resolved unavailable", async () => {
+    /*
+     * The rendered end of the affordance rule. The lane matrix beside the hook
+     * pins every blocker; this pins that the capability actually reaches the
+     * `disabled` attribute of the two buttons the finding was about, with the
+     * table still on screen behind them.
+     */
+    let checks = 0;
+    const preview = api({
+      availability: () => {
+        checks += 1;
+        return Promise.resolve(checks === 1 ? availableBackend : unavailableBackend);
+      },
+    });
+    await openTheViewer(preview);
+    const grid = screen.getByRole("grid", { name: "Spectra" });
+    fireEvent.click(within(grid).getByText("controllerType=0 controllerNumber=1 scan=2"));
+    await waitFor(() => {
+      expect(selectedRowPosition()).toBe(1);
+    });
+    await screen.findByRole("img", { name: /^Spectrum 1,/u });
+    expect(screen.getByRole("button", { name: "Previous scan" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Next scan" })).toBeEnabled();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Check again" })[0] as HTMLElement);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Next scan" })).toBeDisabled();
+    });
+    expect(screen.getByRole("button", { name: "Previous scan" })).toBeDisabled();
+    // Still there, and still spatially where they were: an action that cannot
+    // act right now is disabled rather than removed.
+    expect(screen.getByRole("grid", { name: "Spectra" })).toBeVisible();
+    expect(selectedRowPosition()).toBe(1);
+    expect(preview.requestedSpectra).toEqual([1]);
   });
 
   it("leaves the loaded viewer exactly as it was when a vendor row takes focus", async () => {

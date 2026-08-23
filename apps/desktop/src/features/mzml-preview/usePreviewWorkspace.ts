@@ -157,6 +157,58 @@ export interface TraceVisibility {
  */
 const INITIAL_TRACES: TraceVisibility = { tic: true, bpc: false };
 
+/**
+ * What a selection needs before it can look at a target at all.
+ *
+ * The four facts `selectSpectrum` reads before it has considered *which* row
+ * was asked for. They are about the lane rather than about the row: a run to
+ * select from, a backend worth launching, and neither of the two things that
+ * own the one backend lane already doing so.
+ */
+export interface SpectrumSelectionLane {
+  /** Whether a run's spectrum table is loaded to select a row of. */
+  readonly hasLoadedPreview: boolean;
+  /** Whether this session's own verdict says the backend can be launched. */
+  readonly backendUsable: boolean;
+  /** Whether an installation check or change owns the backend lane. */
+  readonly backendBusy: boolean;
+  /** Whether a conversion owns it. */
+  readonly conversionBusy: boolean;
+}
+
+/**
+ * Whether a selection could reach its target-specific checks right now.
+ *
+ * One rule with two readers, and that is the whole reason it is a function.
+ * The operation asks it from refs, inside a handler that may be several
+ * commits older than the truth; the interface asks it from rendered state, to
+ * decide whether a control may advertise itself as available. Two handwritten
+ * expressions that merely looked alike is how a button came to say a scan step
+ * was available for the length of a conversion queue and do nothing when it
+ * was pressed.
+ *
+ * Deliberately **not** in it:
+ *
+ * - whether an adjacent row exists, or the requested row is in the table, or
+ *   that exact row is already being read. Those are questions about a target,
+ *   and a control that had to predict them would be predicting a different
+ *   thing for every target;
+ * - whether another selected-spectrum read is unresolved. A newer selection of
+ *   a *different* scan is allowed to supersede an older one -- that is the
+ *   contract `spectrumToken` exists for, and disabling a scan step for it
+ *   would take away a step the operation would have accepted. It is why this
+ *   is not `canPreview`, which includes exactly that and several policies
+ *   belonging to other actions.
+ */
+export function canStartSpectrumSelection(lane: SpectrumSelectionLane): boolean {
+  return (
+    lane.hasLoadedPreview &&
+    lane.backendUsable &&
+    !lane.backendBusy &&
+    !lane.conversionBusy
+  );
+}
+
 /** Whether this format is drawn rather than written. */
 function isFigureFormat(format: SpectrumExportFormat): boolean {
   return format === "svg" || format === "png";
@@ -540,6 +592,21 @@ export interface PreviewWorkspace {
    */
   readonly selectPreviousScan: () => void;
   readonly selectNextScan: () => void;
+  /**
+   * Whether a selection could reach its target-specific checks right now.
+   *
+   * The rendered reading of the same rule `selectSpectrum` guards itself with.
+   * A control that advertises availability has to tell the truth about the
+   * lane; what it cannot be asked to predict is a target -- whether a
+   * particular row is in the table, or is already being read.
+   */
+  readonly spectrumSelectionAvailable: boolean;
+  /**
+   * Whether a scan step can act: the lane, and a row to step to.
+   *
+   * Both halves. Adjacency alone left the buttons enabled and silently inert
+   * for the length of a conversion queue.
+   */
   readonly canSelectPreviousScan: boolean;
   readonly canSelectNextScan: boolean;
   /** The figure settings as the user is editing them. */
@@ -1999,24 +2066,33 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const selectSpectrum = useCallback(
     (index: number) => {
       const handle = openHandle.current;
-      if (handle === null) {
-        return;
-      }
+      // The lane, from the refs rather than from the render: this handler can
+      // be several commits older than the truth, and for a click that arrives
+      // during an installation change that is exactly the wrong answer.
+      //
       // Reading a row is backend work, so "one outstanding backend request"
       // has to cover it or it means nothing. Started while an installation is
       // being probed, this either reads the backend being replaced or queues
       // behind the change and then fails on it -- one process launch either
-      // way, for a result that was never going to be shown.
-      if (backendBusyRef.current || conversionBusyRef.current) {
-        return;
-      }
-      // And a backend this session has stopped trusting is not one to launch a
-      // read against. A preview loaded before a stop stays on screen -- nothing
-      // about it became untrue -- so its table is still there to click, and
-      // every click would replace the spectrum beside it with a refusal the
-      // user can do nothing about. Read from the same verdict the banner shows,
-      // so the row and the banner cannot come to disagree.
-      if (!backendUsableRef.current) {
+      // way, for a result that was never going to be shown. And a backend this
+      // session has stopped trusting is not one to launch a read against: a
+      // preview loaded before a stop stays on screen -- nothing about it became
+      // untrue -- so its table is still there to click, and every click would
+      // replace the spectrum beside it with a refusal the user can do nothing
+      // about. The verdict is the one the banner shows, so the row and the
+      // banner cannot come to disagree.
+      //
+      // The null handle is written out as well as passed in, because it is what
+      // narrows the handle for the read below.
+      if (
+        handle === null ||
+        !canStartSpectrumSelection({
+          hasLoadedPreview: handle !== null,
+          backendUsable: backendUsableRef.current,
+          backendBusy: backendBusyRef.current,
+          conversionBusy: conversionBusyRef.current,
+        })
+      ) {
         return;
       }
       // A repeat of the row already being read is dropped. Every selection is
@@ -2494,6 +2570,42 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   // asking and leaving a panel loading for the length of a conversion.
   const conversionBusyRef = conversion.busyRef;
 
+  /**
+   * The same lane rule, from the facts a render can see.
+   *
+   * Each fact is the rendered half of the ref the operation reads: `backend`
+   * and `backendUsableRef` are written together in `showBackend`, `backendBusy`
+   * and `backendBusyRef` in `markBackendBusy`. Two of them are deliberately
+   * narrower than their ref, and both narrow the same way -- towards refusing:
+   *
+   * - a loaded preview rather than a retained handle. A handle outlives the
+   *   reading it was made for, so that a backend change can offer "read this
+   *   again"; but with no table on screen there is no row to step to, and no
+   *   control to advertise;
+   * - the interface's own conversion-busy rather than the queue slot's. It
+   *   also covers a retry or an adoption this document has dispatched and not
+   *   been answered on, which is what every other action here treats as
+   *   converting.
+   *
+   * Narrower is the safe direction: a control may refuse where the operation
+   * would have accepted, and the reverse is the defect this rule exists for.
+   *
+   * One edge is not covered, and is named rather than glossed. `convert` claims
+   * the conversion lane in a ref the moment it dispatches, and the rendered
+   * busy follows only when the slot is read back -- so between those two there
+   * is a window in which the operation refuses and this says available. It is
+   * the same window every conversion-gated control in this interface has,
+   * `Preview focused` included, and closing it belongs to the conversion lane's
+   * own contract rather than to this adapter.
+   */
+  const spectrumSelectionAvailable = canStartSpectrumSelection({
+    hasLoadedPreview: preview.status === "loaded",
+    backendUsable:
+      backend.status === "resolved" && backend.availability.state === "available",
+    backendBusy,
+    conversionBusy: conversion.busy,
+  });
+
   const activeDataset = useMemo(
     () => roster.datasets.find((dataset) => dataset.handle === roster.active) ?? null,
     [roster.active, roster.datasets],
@@ -2558,8 +2670,9 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     toggleChromatogramTrace,
     selectPreviousScan,
     selectNextScan,
-    canSelectPreviousScan: previousScanIndex !== null,
-    canSelectNextScan: nextScanIndex !== null,
+    spectrumSelectionAvailable,
+    canSelectPreviousScan: spectrumSelectionAvailable && previousScanIndex !== null,
+    canSelectNextScan: spectrumSelectionAvailable && nextScanIndex !== null,
     figureSettings,
     resolvedRenderSettings,
     resolvedPngDpi,

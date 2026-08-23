@@ -240,6 +240,57 @@ model.points -> clipTrace(points, trace, renderedDomain)
   Space commit;
 - the table stays virtualized.
 
+## What a scan step says it can do
+
+`Previous scan` and `Next scan` are the first viewer controls to compute a
+`disabled` state, and a control that advertises availability has to tell the
+truth about it. Their capability is therefore two facts, not one:
+
+```
+canSelectNextScan = spectrumSelectionAvailable && nextScanIndex !== null
+```
+
+`spectrumSelectionAvailable` is the **global start lane** of the
+selected-spectrum operation: a loaded run to select a row of, a backend this
+session's verdict says is worth launching, and neither of the two things that
+own the one backend lane already doing so. One rule, `canStartSpectrumSelection`,
+with two readers — the operation asks it from refs inside a handler that may be
+several commits older than the truth, and the interface asks it from rendered
+state. Two handwritten expressions that merely looked alike is how the buttons
+came to advertise a scan step for the length of a conversion queue and do nothing
+when they were pressed.
+
+The rule is deliberately **not** `canPreview`, and the difference is not
+cosmetic. `canPreview` includes `previewBackendBusy`, which is true from the
+moment a selected-spectrum read starts until it settles — but a selection of a
+*different* scan is allowed to supersede an unresolved one. That is what
+`spectrumToken` exists for, and it is the A → B contract this ADR records above.
+Gating a scan step on it would take away a step the operation would have
+accepted, during the very window in which a user who picked the wrong scan is
+most likely to reach for it. `canPreview` also carries policy belonging to other
+actions, which a scan step has no business inheriting.
+
+What the rule does **not** try to answer is anything about a target: whether an
+adjacent row exists is the step's own second fact, and whether the requested row
+is in the table, or is that exact row already being read, are the operation's
+target-specific checks. A control cannot be asked to predict a different answer
+for every target; it can only be asked not to lie about the lane.
+
+Two of the rendered facts are narrower than the ref the operation reads, and both
+narrow towards refusing: a loaded preview rather than a retained handle — a
+handle outlives the reading it was made for so that a backend change can offer
+"read this again", but with no table on screen there is no row to step to — and
+the interface's own conversion-busy rather than the queue slot's, which also
+covers a retry or an adoption this document has dispatched and not been answered
+on. The one edge the rendered form does not cover is the moment between
+dispatching a conversion and reading the slot back, which every
+conversion-gated control in this interface shares and which is not this adapter's
+to change.
+
+The operation remains the safety boundary. The rendered capability is the
+truthful affordance, and a disabled step stays where it was rather than
+disappearing.
+
 ## The R1 consumer set
 
 **One selection revision, any number of consumers, no second authority.**
