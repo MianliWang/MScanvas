@@ -1076,6 +1076,26 @@ button:disabled {
   stroke: var(--color-chart-secondary);
 }
 
+/* The degenerate form of a connected trace: one visible vertex, painted as the
+   point it is rather than as a line with nowhere to go. A complete acquisition
+   of a single spectrum has a value and an axis, and a path whose only command
+   is a moveto strokes nothing.
+
+   Told apart from each other by fill and size, not by colour: a one-scan run
+   can carry the same number in both series, and the two marks then land on one
+   coordinate. A filled disc inside an open ring is still two marks. */
+.chromatogram-point {
+  fill: var(--color-chart-line);
+  stroke: var(--color-chart-line);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.chromatogram-point-bpc {
+  fill: none;
+  stroke: var(--color-chart-secondary);
+}
+
 .chromatogram-selected line {
   stroke: var(--color-accent);
   stroke-width: 2;

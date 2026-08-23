@@ -73,9 +73,16 @@ describe(`the linked viewer at ${String(REPRESENTATIVE_SCANS)} scans`, () => {
     // thousands.
     expect(measured.rows).toBeGreaterThan(0);
     expect(measured.rows).toBeLessThan(200);
-    // One path for the one visible trace, and no node per scan.
+    // One path for the one visible trace, and no node per scan. The point glyph
+    // belongs to a trace whose *visible geometry* is a single vertex; a run of
+    // 36,319 scans has a line, and must not become a scatter plot.
     expect(measured.paths).toBe(1);
     expect(measured.circles).toBe(0);
+    expect(
+      await browser.execute(
+        () => document.querySelectorAll("circle.chromatogram-point").length,
+      ),
+    ).toBe(0);
     // A screen budget rather than the run's size: at most four vertices per
     // column, over 900 columns.
     expect(measured.vertices).toBeLessThanOrEqual(3_600);

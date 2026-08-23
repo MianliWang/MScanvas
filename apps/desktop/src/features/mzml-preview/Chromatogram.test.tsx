@@ -16,6 +16,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { useLayoutEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import appStyles from "../../app/app.css?raw";
 import { Chromatogram } from "./Chromatogram";
 import type { SpectrumRow } from "./contracts";
 import type { TraceVisibility } from "./usePreviewWorkspace";
@@ -157,6 +158,28 @@ function plot(): HTMLElement {
   return screen.getByRole("img", { name: "Chromatogram" });
 }
 
+const mountedStyles: HTMLStyleElement[] = [];
+
+/** The application's own stylesheet, for a rule a coordinate cannot express. */
+function mountAppStyles(): void {
+  const style = document.createElement("style");
+  style.textContent = appStyles;
+  document.head.append(style);
+  mountedStyles.push(style);
+}
+
+/** What the mounted stylesheet declares for one selector. */
+function styleOf(selector: string): CSSStyleDeclaration {
+  const rule = mountedStyles
+    .flatMap((style) => [...(style.sheet?.cssRules ?? [])])
+    .find(
+      (candidate): candidate is CSSStyleRule =>
+        "selectorText" in candidate && (candidate as CSSStyleRule).selectorText === selector,
+    );
+  expect(rule, `Expected a CSS rule for ${selector}`).toBeDefined();
+  return (rule as CSSStyleRule).style;
+}
+
 function state(): ViewerInteractionState {
   if (controller === null) {
     throw new Error("no controller");
@@ -210,6 +233,9 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   cleanup();
+  for (const style of mountedStyles.splice(0)) {
+    style.remove();
+  }
   controller = null;
 });
 
@@ -327,15 +353,6 @@ describe("what is drawn, and what the axis says about it", () => {
       const vertices = (path.getAttribute("d") ?? "").split(/[ML]/u).length - 1;
       expect(vertices).toBeLessThanOrEqual(3_600);
     }
-  });
-
-  it("draws a single scan without producing an unusable coordinate", () => {
-    renderChromatogram({ model: runOf([{ rt: 4, tic: 0, bpc: 0 }]) });
-
-    const path = tracePaths()[0]?.getAttribute("d") ?? "";
-    expect(path).not.toContain("NaN");
-    expect(path).not.toContain("Infinity");
-    expect(axisHigh()).toBe("0");
   });
 
   it("draws a run of negative values below zero rather than clipping them", () => {
@@ -782,5 +799,145 @@ describe("reaching the plot without a pointer", () => {
     const readout = document.querySelector("#chromatogram-readout");
     expect(readout).not.toBeNull();
     expect(readout?.closest("[aria-live]")).toBeNull();
+  });
+});
+
+describe("a run of a single scan", () => {
+  /*
+   * A complete acquisition of exactly one spectrum has a correct value and a
+   * correct axis, and for a while it drew neither. `clipTrace` answers with one
+   * real source vertex -- which is right -- and the renderer serialized it as
+   * `M x y`, a path whose only command is a moveto and which strokes nothing.
+   * So the panel showed a labelled axis over an empty plot for a run that had a
+   * measurement.
+   *
+   * The vertex is where the scan is, at the value it carries. The point is
+   * painted there and nowhere else: nothing invents a second x to give a line
+   * command a length, because a horizontal segment across the plot would be a
+   * retention-time extent this run does not have.
+   */
+
+  /** Where a single scan lands: the domain has no width, so it is centred. */
+  const ONLY_X = 526;
+  /** The top of the drawing area, which is where the extent's maximum sits. */
+  const TOP_Y = 12;
+  /** The bottom of it, which is where zero sits when zero is all there is. */
+  const BASELINE_Y = 180;
+
+  function glyphs(): { r: string; cx: string; cy: string; className: string }[] {
+    return [...document.querySelectorAll("circle.chromatogram-point")].map((node) => ({
+      r: node.getAttribute("r") ?? "",
+      cx: node.getAttribute("cx") ?? "",
+      cy: node.getAttribute("cy") ?? "",
+      className: node.getAttribute("class") ?? "",
+    }));
+  }
+
+  it("draws the one scan's total ion current as a visible mark", () => {
+    renderChromatogram({ model: runOf([{ rt: 4, tic: 9_000, bpc: 700 }]) });
+
+    // The science is unchanged: a ready model, and an axis that reaches the
+    // value the scan carries.
+    expect(axisHigh()).toBe("9000");
+    expect(axisLow()).toBe("0");
+
+    // One mark, for the one active trace, at the vertex's own coordinate.
+    const drawn = glyphs();
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0]?.className).toContain("chromatogram-point-tic");
+    expect(Number(drawn[0]?.cx)).toBeCloseTo(ONLY_X, 6);
+    expect(Number(drawn[0]?.cy)).toBeCloseTo(TOP_Y, 6);
+    expect(Number.isFinite(Number(drawn[0]?.cx))).toBe(true);
+    expect(Number.isFinite(Number(drawn[0]?.cy))).toBe(true);
+    // Paint geometry, not a degenerate one: a mark with no radius is a mark
+    // nobody can see.
+    expect(Number(drawn[0]?.r)).toBeGreaterThan(0);
+
+    // And it is the *trace* that is visible. A strokeless `M x y` path is not a
+    // representation of the measurement, and neither is a marker for something
+    // else: nothing is selected and nothing is hovered here.
+    expect(tracePaths()).toHaveLength(0);
+    expect(document.querySelector("g.chromatogram-selected")).toBeNull();
+    expect(document.querySelector("g.chromatogram-hover")).toBeNull();
+  });
+
+  it("draws the base peak the same way when that is the active trace", () => {
+    renderChromatogram({
+      model: runOf([{ rt: 4, tic: 9_000, bpc: 700 }]),
+      traces: BPC_ONLY,
+    });
+
+    expect(axisHigh()).toBe("700.00");
+    const drawn = glyphs();
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0]?.className).toContain("chromatogram-point-bpc");
+    expect(Number(drawn[0]?.cy)).toBeCloseTo(TOP_Y, 6);
+    expect(Number(drawn[0]?.r)).toBeGreaterThan(0);
+  });
+
+  it("draws both series at their own values when both are active", () => {
+    renderChromatogram({
+      model: runOf([{ rt: 4, tic: 9_000, bpc: 3_000 }]),
+      traces: BOTH,
+    });
+
+    const drawn = glyphs();
+    expect(drawn).toHaveLength(2);
+    // Scaled together, as they are when they are lines: the axis is the run's,
+    // and each mark is at its own series' value.
+    expect(Number(drawn[0]?.cy)).toBeCloseTo(TOP_Y, 6);
+    expect(Number(drawn[1]?.cy)).toBeCloseTo(TOP_Y + (6_000 / 9_000) * 168, 6);
+    expect(Number(drawn[0]?.cx)).toBeCloseTo(ONLY_X, 6);
+    expect(Number(drawn[1]?.cx)).toBeCloseTo(ONLY_X, 6);
+  });
+
+  it("keeps the two series apart without colour when they share a coordinate", () => {
+    // A scan whose total ion current *is* its base peak. Both marks land on one
+    // point, and reducing that to a single indistinguishable dot would lose one
+    // of the two things the reader asked to see.
+    mountAppStyles();
+    renderChromatogram({
+      model: runOf([{ rt: 4, tic: 5_000, bpc: 5_000 }]),
+      traces: BOTH,
+    });
+
+    const drawn = glyphs();
+    expect(drawn).toHaveLength(2);
+    expect(Number(drawn[0]?.cx)).toBeCloseTo(Number(drawn[1]?.cx), 6);
+    expect(Number(drawn[0]?.cy)).toBeCloseTo(Number(drawn[1]?.cy), 6);
+    // Two non-colour distinctions, and the second is what stops a larger ring
+    // simply covering the disc inside it.
+    expect(Number(drawn[0]?.r)).not.toBeCloseTo(Number(drawn[1]?.r), 6);
+    expect(styleOf(".chromatogram-point").fill).not.toBe("none");
+    expect(styleOf(".chromatogram-point-bpc").fill).toBe("none");
+  });
+
+  it("draws a measured zero on the baseline rather than drawing nothing", () => {
+    // Zero is a measurement. A run whose only scan reported no signal has to
+    // look different from a run this build refused to draw.
+    renderChromatogram({ model: runOf([{ rt: 4, tic: 0, bpc: 0 }]) });
+
+    const drawn = glyphs();
+    expect(drawn).toHaveLength(1);
+    expect(Number(drawn[0]?.cy)).toBeCloseTo(BASELINE_Y, 6);
+    expect(Number(drawn[0]?.r)).toBeGreaterThan(0);
+    expect(axisHigh()).toBe("0");
+  });
+
+  it("draws no mark for a trace that is not active", () => {
+    renderChromatogram({ model: runOf([{ rt: 4, tic: 9_000, bpc: 700 }]), traces: NEITHER });
+
+    expect(glyphs()).toHaveLength(0);
+    expect(screen.getByText("Both traces are hidden.")).toBeInTheDocument();
+  });
+
+  it("goes back to one path per trace as soon as there is a line to draw", () => {
+    // The point is for the case that has no line, and for nothing else. Two
+    // scans are a line, and a run of many is still one node.
+    renderChromatogram({ model: runOf([{ rt: 4, tic: 9_000, bpc: 700 }, { rt: 5, tic: 8_000, bpc: 600 }]) });
+
+    expect(glyphs()).toHaveLength(0);
+    expect(tracePaths()).toHaveLength(1);
+    expect(tracePaths()[0]?.getAttribute("d")).toContain("L");
   });
 });

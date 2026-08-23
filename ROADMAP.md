@@ -99,6 +99,14 @@ Still outside it, and unchanged:
 
 - Windows installer/signing plan, accessibility pass, crash/error diagnostics and public fixtures.
 - Saved settings, layout persistence and beta feedback instrumentation that remains local-first.
+- **Viewer selection-availability affordance consistency.** Deferred from Viewer
+  Closure R1 with a recorded reason. The scan table's rows and the
+  chromatogram's plot are both clickable throughout, and a click on either
+  commits nothing while the selected-spectrum lane is blocked — a running
+  conversion, an installation check, a backend resolved unavailable — without
+  either surface saying so. Decide consistently how both communicate temporary
+  unavailability, while preserving the hover, zoom and pan that need no backend.
+  See [ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
 
 ## M6 — Artifact and QC foundation
 

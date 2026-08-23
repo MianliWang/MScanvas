@@ -212,12 +212,28 @@ model.points -> clipTrace(points, trace, renderedDomain)
              -> SVG path
 ```
 
-- one `<path>` per active trace, and a small fixed number of axis, marker and
-  guide nodes. Never a node per scan;
+- a trace has three drawing cardinalities, and only two of them are a polyline.
+  No visible vertex draws nothing; two or more draw one `<path>`, never a node
+  per scan. **One** visible vertex is the degenerate case and is drawn as a
+  point at exactly that vertex's own coordinate — a complete acquisition of a
+  single spectrum has a correct value and a correct axis, and `M x y` alone
+  strokes nothing, so the panel drew a labelled axis over an empty plot for a
+  run that had a measurement. Nothing invents a second x to give a line command
+  a length: a horizontal segment would be a retention-time extent the run does
+  not have, and would read as a scan that lasted. The point is rendering
+  geometry and only that — it creates no `ScanPoint`, changes no
+  `VisibleVertex`, is never resolved against by `nearestScan`, and does not
+  touch the extent. A measured zero is drawn on the baseline rather than not
+  drawn at all;
+- a small fixed number of axis, marker and guide nodes;
 - TIC solid and BPC dashed, in different colours **and** different dash patterns,
-  so the two are told apart without seeing colour. The trace colours are the
-  screen's design-system tokens and are deliberately not bound to the M4 figure
-  Light/Dark export setting, which describes a document rather than a screen;
+  so the two are told apart without seeing colour. Their point form keeps the
+  same invariant by fill and size — a filled disc and a larger open ring —
+  because a single-scan run can carry the same number in both series, and the
+  two marks then land on one coordinate; a disc inside a ring is still two
+  marks. The trace colours are the screen's design-system tokens and are
+  deliberately not bound to the M4 figure Light/Dark export setting, which
+  describes a document rather than a screen;
 - the selected scan is a vertical rule **plus** a glyph, for the same reason;
 - both traces hidden is an intentional visual state that keeps the axes, the
   markers and the navigation surface, and says "Both traces are hidden.";
@@ -441,6 +457,32 @@ the same transport, and the viewport moving without a single IPC call.
 
 **Live ProteoWizard evidence:** see BOOTSTRAP_STATUS for what was and was not run
 in this environment.
+
+## Deferred: telling a click surface that selection is unavailable
+
+Recorded rather than carried silently.
+
+The scan table's rows and the chromatogram's plot are both clickable throughout,
+and a click on either commits nothing while the selected-spectrum lane is blocked
+— a running conversion, an installation check, a backend resolved unavailable.
+Neither surface says so. The behaviour predates this milestone in the table and
+arrives with the plot in it, and it is one question rather than two: making one
+of them speak up while the other stays silent, one panel below, would be worse
+than the consistent silence they have now.
+
+It is deliberately a different question from the one this milestone closed.
+`Previous scan` and `Next scan` render a *computed availability claim*, and that
+claim was false; a plain click surface makes no claim at all. Fixing the claim
+was a wiring correction. Deciding how a click surface communicates temporary
+unavailability — and doing it for both surfaces, without taking away the
+hover, zoom and pan that need no backend — is a product decision about the whole
+viewer.
+
+**Target: M5 public-beta interaction hardening — viewer selection-availability
+affordance consistency**, or an earlier dedicated bounded viewer-affordance slice
+if it is pulled forward. **Scope:** decide consistently how the table-row and
+chromatogram click surfaces communicate temporary selected-spectrum
+unavailability, while preserving backend-free hover, zoom and pan.
 
 ## What R1 does not implement
 

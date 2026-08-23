@@ -24,6 +24,7 @@ import {
   ipcCalls,
 } from "../support/harness";
 import { MZML_ROW, VENDOR_ROW, ipcTable } from "../support/fixtures";
+import type { Box } from "../support/viewer";
 import {
   AXIS_CAPTION,
   CHROMATOGRAM,
@@ -36,6 +37,7 @@ import {
   clickThePlotAt,
   leaveThePlot,
   openTheViewer,
+  plotBox,
   pointAt,
   pointAtRetentionTime,
   rangeCaption,
@@ -804,6 +806,153 @@ describe("the linked viewer, rendered", () => {
       // loaded, not to the row that has focus.
       expect(viewerReads(await ipcCalls())).toBe(before);
       expect(await unexpectedConsole()).toEqual([]);
+    });
+  });
+
+  describe("a run of a single scan", () => {
+    /*
+     * A complete acquisition of exactly one spectrum. `clipTrace` answers with
+     * one real source vertex, and a path whose only command is a moveto strokes
+     * nothing -- so the panel drew a labelled axis over an empty plot for a run
+     * that had a measurement. Only a browser can say whether the repair put
+     * anything on screen, because "visible" is a paint question.
+     */
+    async function markBox(selector: string): Promise<Box | null> {
+      return browser.execute((css: string) => {
+        const node = document.querySelector(css);
+        if (node === null) {
+          return null;
+        }
+        const rect = node.getBoundingClientRect();
+        return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+      }, selector) as Promise<Box | null>;
+    }
+
+    /** The plot's drawing area in page pixels, from its own viewBox padding. */
+    async function drawingArea(): Promise<Box> {
+      const box = await plotBox();
+      const left = box.left + (64 / 1_000) * box.width;
+      const top = box.top + (12 / 210) * box.height;
+      return {
+        left,
+        top,
+        width: ((1_000 - 64 - 12) / 1_000) * box.width,
+        height: ((180 - 12) / 210) * box.height,
+      };
+    }
+
+    function overlaps(one: Box, other: Box): boolean {
+      return (
+        one.left < other.left + other.width &&
+        one.left + one.width > other.left &&
+        one.top < other.top + other.height &&
+        one.top + one.height > other.top
+      );
+    }
+
+    it("puts a visible mark on screen for the one scan it has", async () => {
+      await openTheViewer({ scans: 1 });
+
+      // Nothing is selected, and nothing needs to be: the trace has to
+      // represent its own measurement.
+      expect(await selectedRowPosition()).toBeNull();
+      expect(
+        await browser.execute(() => document.querySelector("g.chromatogram-selected") !== null),
+      ).toBe(false);
+
+      const marks = await browser.execute(() =>
+        [...document.querySelectorAll("circle.chromatogram-point")].map(
+          (node) => node.getAttribute("class") ?? "",
+        ),
+      );
+      expect(marks).toHaveLength(1);
+      expect(marks[0]).toContain("chromatogram-point-tic");
+
+      const mark = await markBox("circle.chromatogram-point");
+      expect(mark).not.toBeNull();
+      // Paint geometry rather than a point with no size.
+      expect(mark?.width ?? 0).toBeGreaterThan(0);
+      expect(mark?.height ?? 0).toBeGreaterThan(0);
+      // And it is inside the plot rather than somewhere off it.
+      expect(overlaps(mark as Box, await drawingArea())).toBe(true);
+
+      // The axis and the caption are unchanged by any of it.
+      const values = await browser.execute(() =>
+        [...document.querySelectorAll("text.chromatogram-value-label")].map(
+          (node) => node.textContent ?? "",
+        ),
+      );
+      expect(values[0]).toBe("5000");
+      expect(values[1]).toBe("0");
+      const caption = await browser.$(AXIS_CAPTION).getText();
+      expect(caption).toContain("Per-scan values from the loaded spectrum table");
+      expect(caption).toContain("Retention time — unit not reported");
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("marks each series, told apart by more than colour", async () => {
+      await openTheViewer({ scans: 1 });
+      await browser.$("//span[normalize-space()='BPC']/preceding-sibling::input").click();
+
+      await browser.waitUntil(
+        async () =>
+          (await browser.execute(
+            () => document.querySelectorAll("circle.chromatogram-point").length,
+          )) === 2,
+        { timeout: 10_000, timeoutMsg: "the second series never drew a mark" },
+      );
+
+      const painted = await browser.execute(() =>
+        [...document.querySelectorAll("circle.chromatogram-point")].map((node) => {
+          const style = getComputedStyle(node);
+          const rect = node.getBoundingClientRect();
+          return {
+            radius: node.getAttribute("r") ?? "",
+            fill: style.fill,
+            stroke: style.stroke,
+            width: rect.width,
+            height: rect.height,
+          };
+        }),
+      );
+
+      expect(painted).toHaveLength(2);
+      for (const mark of painted) {
+        expect(mark.width).toBeGreaterThan(0);
+        expect(mark.height).toBeGreaterThan(0);
+      }
+      // Two non-colour distinctions: one is filled and the other is an open
+      // ring, and they are different sizes. Colour differs too, and is not what
+      // this rests on.
+      expect(painted[0]?.radius).not.toBe(painted[1]?.radius);
+      expect(painted[0]?.fill).not.toBe("none");
+      expect(painted[1]?.fill).toBe("none");
+
+      // Switching the first off leaves the second, still visible.
+      await browser.$("//span[normalize-space()='TIC']/preceding-sibling::input").click();
+      await browser.waitUntil(
+        async () =>
+          (await browser.execute(
+            () => document.querySelectorAll("circle.chromatogram-point").length,
+          )) === 1,
+        { timeout: 10_000, timeoutMsg: "the first series never went away" },
+      );
+      const remaining = await markBox("circle.chromatogram-point");
+      expect(remaining?.width ?? 0).toBeGreaterThan(0);
+      expect(remaining?.height ?? 0).toBeGreaterThan(0);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("goes back to a line as soon as there is one to draw", async () => {
+      // The mark is for the case that has no line, and for nothing else.
+      await openTheViewer({ scans: SCANS });
+
+      expect(
+        await browser.execute(
+          () => document.querySelectorAll("circle.chromatogram-point").length,
+        ),
+      ).toBe(0);
+      expect((await plotNodeCounts()).paths).toBe(1);
     });
   });
 

@@ -60,9 +60,20 @@ const TRACES: readonly {
   readonly label: string;
   /** The dash pattern, so the two traces are told apart without colour. */
   readonly dash: string | undefined;
+  /**
+   * The radius of the point this trace draws when it has one visible vertex.
+   *
+   * Two sizes rather than one, and the stylesheet fills one and leaves the
+   * other open. A run of a single scan can carry the same value in both series
+   * -- a scan whose total ion current *is* its base peak -- and the two marks
+   * then land on the same coordinate. A filled disc inside an open ring is
+   * still two marks, told apart by fill and size rather than by colour, which
+   * is the same rule the solid and dashed lines follow.
+   */
+  readonly pointRadius: number;
 }[] = [
-  { trace: "tic", label: "TIC", dash: undefined },
-  { trace: "bpc", label: "BPC", dash: "7 4" },
+  { trace: "tic", label: "TIC", dash: undefined, pointRadius: 4 },
+  { trace: "bpc", label: "BPC", dash: "7 4", pointRadius: 7.5 },
 ];
 
 export interface ChromatogramProps {
@@ -338,15 +349,43 @@ function ChromatogramPlot({
 
   const scale = useMemo(() => scaleFor(domain, extent), [domain, extent]);
 
-  const paths = useMemo(
+  /**
+   * How each active trace is painted: as a line, or as the one point it is.
+   *
+   * A trace has three drawing cardinalities, and only two of them are a
+   * polyline. No visible vertex draws nothing. Two or more draw the joined path
+   * -- one node per trace, because a node per scan would be 36,319 elements for
+   * the repository's representative acquisition. **One** visible vertex is the
+   * degenerate case, and it is a real one: a complete acquisition of a single
+   * spectrum has a correct value and a correct axis, and `M x y` alone strokes
+   * nothing, so the panel drew a labelled axis over an empty plot for a run that
+   * had a measurement.
+   *
+   * The point is painted at exactly that vertex's own coordinate. Nothing
+   * invents a second x to give an SVG line command a length: a horizontal
+   * segment across the plot would be a retention-time extent this run does not
+   * have, and would read as a scan that lasted.
+   *
+   * The glyph is rendering geometry and only that. It creates no `ScanPoint`,
+   * changes no `VisibleVertex`, is never resolved against by `nearestScan`, and
+   * does not touch the extent. It is how one vertex that already exists is
+   * painted.
+   */
+  const marks = useMemo(
     () =>
-      drawn.map((each) => ({
-        trace: each.trace,
-        dash: each.dash,
-        // One path per trace. A node per scan would be 36,319 elements for the
-        // repository's representative acquisition.
-        d: pathOf(each.vertices, scale),
-      })),
+      drawn.map((each) => {
+        const only = each.vertices.length === 1 ? each.vertices[0] : undefined;
+        return {
+          trace: each.trace,
+          dash: each.dash,
+          pointRadius: each.pointRadius,
+          point:
+            only === undefined
+              ? null
+              : { x: scale.x(only.retentionTime), y: scale.y(only.value) },
+          d: only === undefined ? pathOf(each.vertices, scale) : "",
+        };
+      }),
     [drawn, scale],
   );
 
@@ -712,13 +751,23 @@ function ChromatogramPlot({
           )}
         </g>
         <g clipPath="url(#chromatogram-clip)">
-          {paths.map((each) =>
-            each.d === "" ? null : (
-              <path
-                className={`chromatogram-trace chromatogram-trace-${each.trace}`}
-                d={each.d}
+          {marks.map((each) =>
+            each.point === null ? (
+              each.d === "" ? null : (
+                <path
+                  className={`chromatogram-trace chromatogram-trace-${each.trace}`}
+                  d={each.d}
+                  key={each.trace}
+                  strokeDasharray={each.dash}
+                />
+              )
+            ) : (
+              <circle
+                className={`chromatogram-point chromatogram-point-${each.trace}`}
+                cx={each.point.x}
+                cy={each.point.y}
                 key={each.trace}
-                strokeDasharray={each.dash}
+                r={each.pointRadius}
               />
             ),
           )}
