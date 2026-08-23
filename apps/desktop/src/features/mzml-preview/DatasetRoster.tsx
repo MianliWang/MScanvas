@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useRef } from "react";
 import type { ChangeEvent, KeyboardEvent, MouseEvent } from "react";
 
 import { SOURCE_KIND_LABEL, isConvertibleSourceKind } from "./contracts";
@@ -138,7 +138,15 @@ const CLEAR_DURING_DROP_IMPORT_DESCRIPTION =
  * One accessible list, one roving tab stop, and no route by which moving around
  * it reads a file. Reading one is `Preview focused` or Enter, and nothing else.
  */
-export function DatasetRoster({
+/**
+ * The session's workspace, memoized.
+ *
+ * The viewer beside it publishes a new interaction state whenever the pointer
+ * crosses from one scan to another, which at a full-run zoom is most pointer
+ * frames. None of that reaches these props, and the list is not windowed --
+ * this is what keeps a thousand rows out of the cursor's frame budget.
+ */
+export const DatasetRoster = memo(function DatasetRoster({
   state,
   projection,
   load,
@@ -1175,4 +1183,4 @@ export function DatasetRoster({
       )}
     </section>
   );
-}
+})

@@ -926,6 +926,33 @@ button:disabled {
   gap: 8px;
 }
 
+/* The scan-step actions sit beside this panel's heading, and two buttons are
+   taller than a title line. The same treatment the selected-spectrum header
+   needed, and for the same reason: a header that does not grow to fit its
+   controls centres them outside itself, where nothing clips them because
+   nothing contains them. Below the width where the sentence and the buttons fit
+   on one line, the buttons take their own row rather than squeezing the
+   sentence about the run into nothing. */
+.spectrum-table-panel > .panel-header {
+  flex: none;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+/* Grouped rather than listed, so a screen reader is told these two are one
+   control set. `fieldset` for the semantics the legend gives, with its default
+   chrome replaced by the panel's own. */
+.spectrum-scan-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 2px 8px 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
 .spectrum-table {
   display: flex;
   min-height: 0;

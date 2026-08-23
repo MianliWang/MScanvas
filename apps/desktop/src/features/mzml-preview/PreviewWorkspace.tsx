@@ -641,9 +641,13 @@ export function PreviewWorkspace() {
         {preview.status === "loaded" ? (
           <div className="viewer-stack">
             <SpectrumTable
+              canSelectNext={workspace.canSelectNextScan}
+              canSelectPrevious={workspace.canSelectPreviousScan}
               onRendered={handleTableRendered}
               onSelect={workspace.selectSpectrum}
-              selectedIndex={workspace.selectedIndex}
+              onSelectNext={workspace.selectNextScan}
+              onSelectPrevious={workspace.selectPreviousScan}
+              selection={workspace.viewerInteraction.selection}
               table={preview.preview.spectrumTable}
             />
             <SelectedSpectrumPanel

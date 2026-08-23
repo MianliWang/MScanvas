@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { SpectrumRow, SpectrumTable as SpectrumTableModel } from "./contracts";
 import {
@@ -7,6 +7,9 @@ import {
   formatMz,
   formatRetentionTimeValue,
 } from "./format";
+import type { Selection, SelectionConsumer } from "./viewer/interactionState";
+import { consumeSelection, initialSelectionConsumer } from "./viewer/interactionState";
+import { revealScrollTop } from "./viewer/renderGeometry";
 
 /** Fixed row height keeps the windowing arithmetic exact. Mirrored in CSS. */
 const ROW_HEIGHT = 30;
@@ -43,22 +46,55 @@ const COLUMNS = [
 
 export interface SpectrumTableProps {
   readonly table: SpectrumTableModel;
-  readonly selectedIndex: number | null;
+  /**
+   * The one persistent selection, as the interaction reducer holds it.
+   *
+   * The whole commit rather than the index alone, because the two answer
+   * different questions. "Which row is selected" does not change when the same
+   * scan is selected again -- and by then the user may have scrolled it out of
+   * view, which is exactly when it has to come back. The revision is what makes
+   * that commit visible here; see {@link consumeSelection}.
+   */
+  readonly selection: Selection | null;
   readonly onSelect: (index: number) => void;
   readonly onRendered: (renderedRowCount: number, milliseconds: number) => void;
+  /**
+   * Steps to the scan before or after the selected one, in this table's order.
+   *
+   * Rendered here rather than beside the plot because the order they walk is
+   * this table's, and because a preview whose chromatogram cannot be drawn
+   * still has rows to step through.
+   */
+  readonly onSelectPrevious: () => void;
+  readonly onSelectNext: () => void;
+  readonly canSelectPrevious: boolean;
+  readonly canSelectNext: boolean;
 }
 
-export function SpectrumTable({
+/**
+ * The run's scans, windowed.
+ *
+ * Memoized because the viewer above it publishes a new interaction state
+ * whenever the pointer crosses from one scan to another, which at a full-run
+ * zoom is most pointer frames. None of that reaches this table's props, and
+ * this is what makes "does not reach" mean "does not re-render".
+ */
+export const SpectrumTable = memo(function SpectrumTable({
   table,
-  selectedIndex,
+  selection,
   onSelect,
   onRendered,
+  onSelectPrevious,
+  onSelectNext,
+  canSelectPrevious,
+  canSelectNext,
 }: SpectrumTableProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(FALLBACK_VIEWPORT_HEIGHT);
   const [focusRow, setFocusRow] = useState(0);
   const pendingFocus = useRef(false);
+  const selectedIndex = selection?.index ?? null;
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
@@ -79,13 +115,14 @@ export function SpectrumTable({
     };
   }, []);
 
-  const rowCount = table.rows.length;
+  const rows = table.rows;
+  const rowCount = rows.length;
   /** What the viewport has left for rows once the header has its row. */
   const rowsHeight = Math.max(ROW_HEIGHT, viewportHeight - HEADER_HEIGHT);
   const visibleCount = Math.ceil(rowsHeight / ROW_HEIGHT) + OVERSCAN * 2;
   const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
   const end = Math.min(rowCount, start + visibleCount);
-  const rendered = table.rows.slice(start, end);
+  const rendered = rows.slice(start, end);
   // Exactly one rendered row carries the tab stop. Extending the window to
   // reach a focused row that has been scrolled far away would mount every row
   // in between, so the stop moves to the nearest rendered row instead.
@@ -111,34 +148,78 @@ export function SpectrumTable({
     viewport?.querySelector<HTMLElement>(`[data-row-position="${focusRow}"]`)?.focus();
   }, [focusRow, start, end]);
 
-  const moveFocus = useCallback(
+  /**
+   * Brings a row into view and moves the tab stop to it, without taking focus.
+   *
+   * Where the scroll goes is `revealScrollTop`'s answer and nothing else's:
+   * this table's header is `position: sticky`, so it stays in normal flow and
+   * the row canvas already begins after it, and a second copy of that
+   * arithmetic here is how the header came to be subtracted twice once before.
+   *
+   * DOM focus is deliberately not moved. A selection made in the plot, or with
+   * Previous/Next, has to reveal its row -- a marker pointing at a scan the
+   * table is not showing is a link the user cannot follow -- but taking focus
+   * out of the control they are operating would send the next key press
+   * somewhere they did not ask for. The roving tab stop still moves, so tabbing
+   * in afterwards lands on the selected row.
+   */
+  const revealRow = useCallback(
     (position: number) => {
       const clamped = Math.min(rowCount - 1, Math.max(0, position));
       setFocusRow(clamped);
-      pendingFocus.current = true;
       const viewport = viewportRef.current;
       if (viewport === null) {
         return;
       }
-      const top = clamped * ROW_HEIGHT;
-      // What the rows have, not what the viewport has: the header covers the
-      // first row's worth of it wherever the scroll happens to be, so a row
-      // brought to the bottom edge has to stop that much sooner.
-      const height = Math.max(
-        ROW_HEIGHT,
-        (viewport.clientHeight || viewportHeight) - HEADER_HEIGHT,
+      const next = revealScrollTop(
+        {
+          rowHeight: ROW_HEIGHT,
+          headerHeight: HEADER_HEIGHT,
+          viewportHeight: viewport.clientHeight || viewportHeight,
+        },
+        clamped,
+        viewport.scrollTop,
       );
-      if (top < viewport.scrollTop) {
-        viewport.scrollTop = top;
-        setScrollTop(top);
-      } else if (top + ROW_HEIGHT > viewport.scrollTop + height) {
-        const next = top + ROW_HEIGHT - height;
+      if (next !== viewport.scrollTop) {
         viewport.scrollTop = next;
         setScrollTop(next);
       }
     },
     [rowCount, viewportHeight],
   );
+
+  /** The same reveal, plus the focus only a keyboard move inside the table earns. */
+  const moveFocus = useCallback(
+    (position: number) => {
+      pendingFocus.current = true;
+      revealRow(position);
+    },
+    [revealRow],
+  );
+
+  /**
+   * This table's bookmark into the one selection revision.
+   *
+   * Not a second selection: there is one commit count in the interaction state,
+   * and `consumeSelection` decides whether this surface has acted on the
+   * current one. A new revision is acted on including when it names the scan
+   * already selected; the same revision is never acted on twice however many
+   * renders, resizes or gesture domains arrive in between, which is what keeps
+   * a scroll the user made from being undone.
+   */
+  const consumer = useRef<SelectionConsumer>(initialSelectionConsumer);
+  useEffect(() => {
+    const outcome = consumeSelection(consumer.current, selection);
+    consumer.current = outcome.consumer;
+    if (outcome.consumed === null) {
+      return;
+    }
+    const position = rows.findIndex((row) => row.index === outcome.consumed?.index);
+    if (position < 0) {
+      return;
+    }
+    revealRow(position);
+  }, [revealRow, rows, selection]);
 
   /**
    * Arrow keys move focus without selecting. Selection is committed with Enter
@@ -169,14 +250,14 @@ export function SpectrumTable({
           break;
         case "Enter":
         case " ":
-          onSelect(table.rows[position]?.index ?? 0);
+          onSelect(rows[position]?.index ?? 0);
           break;
         default:
           return;
       }
       event.preventDefault();
     },
-    [moveFocus, onSelect, rowCount, rowsHeight, table.rows],
+    [moveFocus, onSelect, rowCount, rows, rowsHeight],
   );
 
   return (
@@ -196,12 +277,36 @@ export function SpectrumTable({
             {" · retention times have no unit because the file reports none"}
           </p>
         </div>
+        {/* Beside the heading rather than under the plot: these step through
+            this table's order, and they stay available for a preview whose
+            chromatogram cannot be drawn at all. */}
+        <fieldset className="spectrum-scan-steps">
+          <legend className="visually-hidden">Scan navigation</legend>
+          <button
+            className="secondary-button"
+            disabled={!canSelectPrevious}
+            onClick={onSelectPrevious}
+            type="button"
+          >
+            Previous scan
+          </button>
+          <button
+            className="secondary-button"
+            disabled={!canSelectNext}
+            onClick={onSelectNext}
+            type="button"
+          >
+            Next scan
+          </button>
+        </fieldset>
       </header>
 
       {table.truncated ? (
         <p className="notice notice-warning" role="note">
           This run has more spectra than one preview transfers. The rows below are the first{" "}
-          {formatCount(rowCount)} and are not the whole table.
+          {formatCount(rowCount)} and are not the whole table. Previous scan and Next scan
+          step through these rows and stop at the end of them, which is not the end of the
+          run.
         </p>
       ) : null}
 
@@ -274,7 +379,7 @@ export function SpectrumTable({
       </div>
     </section>
   );
-}
+});
 
 interface SpectrumTableRowProps {
   readonly row: SpectrumRow;

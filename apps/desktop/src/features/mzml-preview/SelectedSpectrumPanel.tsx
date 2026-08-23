@@ -1,3 +1,5 @@
+import { memo } from "react";
+
 import type {
   CopiedFigure,
   ExportedFigure,
@@ -78,7 +80,15 @@ export interface SelectedSpectrumPanelProps {
   readonly onFigureTheme: (theme: FigureTheme) => void;
 }
 
-export function SelectedSpectrumPanel({
+/**
+ * The one spectrum the session has selected, and its exports.
+ *
+ * Memoized because the viewer above it publishes a new interaction state
+ * whenever the pointer crosses from one scan to another, which at a full-run
+ * zoom is most pointer frames. None of that reaches these props, and this is
+ * what makes "does not reach" mean "does not re-render".
+ */
+export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel({
   state,
   onRetry,
   exportState,
@@ -122,7 +132,7 @@ export function SelectedSpectrumPanel({
       <div className="spectrum-body">{renderBody(state, onRetry)}</div>
     </section>
   );
-}
+})
 
 function SpectrumExportActions({
   exportState,
