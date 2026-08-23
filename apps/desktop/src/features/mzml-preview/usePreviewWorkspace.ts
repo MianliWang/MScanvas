@@ -2202,9 +2202,42 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     ],
   );
 
+  /**
+   * The scientific model of what is on screen.
+   *
+   * Built once per loaded preview and not again: not for a pointer move, not
+   * for a zoom, not for a hover, and not when the selected spectrum finishes
+   * loading. `preview` is replaced only when a different reading arrives, so
+   * its identity is the identity of the run.
+   */
+  const scanModel = useMemo(
+    () =>
+      preview.status === "loaded"
+        ? buildPreviewScanModel(preview.preview.spectrumTable)
+        : UNLOADED_SCAN_MODEL,
+    [preview],
+  );
+
+  /**
+   * Whether the viewer has a run to draw and has not been told about it yet.
+   *
+   * The run's domain reaches the interaction in a layout effect, so the commit
+   * that first renders a loaded preview draws the plot's placeholder rather
+   * than the plot. Nobody sees that -- a layout effect's update is flushed
+   * before the browser paints -- but a stopwatch stopped there would time
+   * everything except the drawing.
+   */
+  const viewerAwaitingDomain = scanModel.status === "ready" && viewer.state.fullDomain === null;
+
   const completeRenderMeasurements = useCallback(() => {
     const openPending = pendingOpenRender.current;
-    if (openPending !== null) {
+    // The open measurement names the moment the preview is on screen, and the
+    // chromatogram is part of what is on screen. Left standing until the plot
+    // itself has been committed, because otherwise this would exclude the
+    // clipping, the reduction and the path -- and would exclude more of them
+    // the larger the run, which is the one size where the number is worth
+    // having.
+    if (openPending !== null && !viewerAwaitingDomain) {
       pendingOpenRender.current = null;
       recordMeasurement(
         "openToFirstPreview",
@@ -2221,29 +2254,13 @@ export function usePreviewWorkspace(): PreviewWorkspace {
         `Selecting row ${String(spectrumPending.index)} through that spectrum being in the document.`,
       );
     }
-  }, [recordMeasurement]);
+  }, [recordMeasurement, viewerAwaitingDomain]);
 
   const retrySpectrum = useCallback(() => {
     if (selectedIndex !== null) {
       selectSpectrum(selectedIndex);
     }
   }, [selectSpectrum, selectedIndex]);
-
-  /**
-   * The scientific model of what is on screen.
-   *
-   * Built once per loaded preview and not again: not for a pointer move, not
-   * for a zoom, not for a hover, and not when the selected spectrum finishes
-   * loading. `preview` is replaced only when a different reading arrives, so
-   * its identity is the identity of the run.
-   */
-  const scanModel = useMemo(
-    () =>
-      preview.status === "loaded"
-        ? buildPreviewScanModel(preview.preview.spectrumTable)
-        : UNLOADED_SCAN_MODEL,
-    [preview],
-  );
 
   /**
    * The rows the linked views navigate, or none while no preview is loaded.

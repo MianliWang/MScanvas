@@ -54,6 +54,33 @@ let tableRenders = 0;
  */
 let adjacencyWalks = 0;
 
+/**
+ * What the document held at the moment each measurement was appended.
+ *
+ * `appendMeasurement` runs inside the state updater, which React calls while
+ * rendering the commit *after* the one that scheduled it -- so the DOM it can
+ * see is the commit the measurement was taken in. That is the one instant at
+ * which "was the plot drawn yet" is answerable from outside.
+ */
+const measuredWith: { readonly name: string; readonly plotDrawn: boolean }[] = [];
+
+vi.mock("../features/mzml-preview/instrumentation", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../features/mzml-preview/instrumentation")>();
+  return {
+    ...actual,
+    appendMeasurement: (
+      ...args: Parameters<typeof actual.appendMeasurement>
+    ): ReturnType<typeof actual.appendMeasurement> => {
+      measuredWith.push({
+        name: args[1].name,
+        plotDrawn: document.querySelector("path.chromatogram-trace") !== null,
+      });
+      return actual.appendMeasurement(...args);
+    },
+  };
+});
+
 vi.mock("../features/mzml-preview/viewer/scanModel", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../features/mzml-preview/viewer/scanModel")>();
@@ -191,6 +218,7 @@ afterEach(() => {
   cleanup();
   tableRenders = 0;
   adjacencyWalks = 0;
+  measuredWith.length = 0;
 });
 
 describe("the linked viewer", () => {
@@ -552,5 +580,100 @@ describe("what a moving pointer costs", () => {
     await waitFor(() => {
       expect(preview.requestedSpectra).toEqual([12_345]);
     });
+  });
+});
+
+describe("what the open measurement waits for", () => {
+  /*
+   * `Open to first preview` names the moment the preview is on screen, and the
+   * chromatogram is part of what is on screen.
+   *
+   * The run's domain reaches the interaction in a layout effect, so the commit
+   * that first renders a loaded preview draws the plot's placeholder rather than
+   * the plot. Nobody sees that -- a layout effect's update is flushed before the
+   * browser paints -- but a stopwatch stopped there would time everything except
+   * the clipping, the reduction and the path, and would exclude more of them the
+   * larger the run, which is the one size where the number is worth having.
+   *
+   * So the pending measurement is left standing until the plot's own commit.
+   * The risk that creates is the opposite one, and it is the one worth testing:
+   * a measurement that waits for something never coming is a measurement nobody
+   * ever gets.
+   */
+  function openMeasurement(): string {
+    return screen.getByText("Open to first preview").nextElementSibling?.textContent ?? "";
+  }
+
+  it("takes it with the plot on screen rather than with its placeholder", async () => {
+    const preview = api();
+    await openTheViewer(preview);
+
+    expect(screen.getByRole("img", { name: "Chromatogram" })).toBeVisible();
+    expect(document.querySelector("path.chromatogram-trace")).not.toBeNull();
+    expect(openMeasurement()).not.toBe("Not measured yet");
+
+    // The discriminating half. Stopping the clock in the commit that renders
+    // the placeholder would time everything except the drawing -- and would be
+    // invisible once everything has settled, which is why this looks at the
+    // document as the measurement was appended rather than afterwards.
+    const opens = measuredWith.filter((entry) => entry.name === "openToFirstPreview");
+    expect(opens.length).toBeGreaterThan(0);
+    for (const open of opens) {
+      expect(open.plotDrawn, "the trace was not drawn when the open was timed").toBe(true);
+    }
+  });
+
+  it("still takes it for a preview that has no chromatogram to wait for", async () => {
+    /*
+     * A truncated table draws no trace at all. Waiting for a plot that is never
+     * coming would strand the metric for exactly the previews whose tables are
+     * largest -- which is the failure the repair could have introduced, so it is
+     * the one pinned here.
+     */
+    const truncated = createFakePreviewApi({
+      initialDatasets: [selectedFile, VENDOR_ROW],
+      preview: {
+        ...buildPreview(SCAN_COUNT),
+        spectrumTable: {
+          rows: buildRows(SCAN_COUNT),
+          totalRowCount: SCAN_COUNT * 10,
+          truncated: true,
+        },
+      },
+    });
+    render(
+      <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+        <PreviewApiProvider value={truncated}>
+          <App />
+        </PreviewApiProvider>
+      </WorkspaceDropTransportProvider>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Preview focused" }, { timeout: 15_000 }),
+    );
+    await screen.findByRole("grid", { name: "Spectra" }, { timeout: 15_000 });
+
+    expect(screen.queryByRole("img", { name: "Chromatogram" })).toBeNull();
+    await waitFor(() => {
+      expect(openMeasurement()).not.toBe("Not measured yet");
+    });
+  });
+
+  it("takes it again for the next preview", async () => {
+    const preview = api();
+    await openTheViewer(preview);
+    const first = openMeasurement();
+    expect(first).not.toBe("Not measured yet");
+
+    // A second reading of the same row, which is a whole new open.
+    fireEvent.click(screen.getByText(VENDOR_ROW.fileName));
+    fireEvent.click(screen.getByText(selectedFile.fileName));
+    fireEvent.click(screen.getByRole("button", { name: "Preview focused" }));
+
+    await screen.findByRole("img", { name: "Chromatogram" }, { timeout: 15_000 });
+    await waitFor(() => {
+      expect(openMeasurement()).not.toBe("Not measured yet");
+    });
+    expect(document.querySelector("path.chromatogram-trace")).not.toBeNull();
   });
 });
