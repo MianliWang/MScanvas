@@ -170,11 +170,16 @@ would leave the rule standing where the scan no longer is, with nothing to clear
 it. So the marker is derived from the scan's own retention time at draw time,
 every time, and a test pins its position across a viewport change.
 
-**Wheel.** `zoomDomain` about the pointer, then `gesture-started` if no gesture is
-active and `gesture-moved(epoch, …)` otherwise, with the epoch read back out of
-the dispatch's own answer. A 120ms timer then emits `gesture-settled(epoch)`.
+**Wheel.** One notch is planned before it is claimed. `planWheelGesture` asks
+`zoomDomain` for the candidate range about the pointer and then asks the reducer
+what that gesture would leave on screen once it settles; if that is the range
+already shown, the adapter cancels nothing and dispatches nothing. Otherwise it
+calls `preventDefault`, then `gesture-started` if no gesture is active and
+`gesture-moved(epoch, …)` otherwise, with the epoch read back out of the
+dispatch's own answer. A 120ms timer then emits `gesture-settled(epoch)`.
 Resetting that timer is an efficiency; a stale settle is a reducer no-op by
-identity, so correctness does not rest on `clearTimeout`.
+identity, so correctness does not rest on `clearTimeout`. Why the claim comes
+second, and never before the plan, is [below](#who-owns-a-pointer-gesture).
 
 **Drag.** A press is not yet a pan. Past a 4px slop threshold on the **x** axis
 the first move dispatches `gesture-started` and keeps the reducer-assigned epoch;
@@ -361,11 +366,120 @@ say "(full range)". A test pins the containment, so a future change that let a
 rendered domain escape the run would show up there rather than as two controls
 disagreeing.
 
-### What this rule is not about
+### The same question, asked of a gesture
 
-Pointer gestures. A wheel zoom that clamps at a boundary is a gesture reaching
-the edge of the run, not a control advertising something it cannot do, and
-nothing about wheel or drag availability changed.
+R1 shipped the wheel as a gesture that always claimed the event it was given, and
+R1.1 left that alone deliberately: a wheel clamping at a boundary is not a control
+advertising something it cannot do. What it *is*, once the panel sits in a column
+that scrolls, is an event held and not used — which is a different defect with
+the same cure. [Who owns a pointer gesture](#who-owns-a-pointer-gesture) states
+the rule the wheel now shares, and what it does not share.
+
+## Who owns a pointer gesture
+
+The viewport controls' rule is about a button's claim to be pressable. The same
+question is asked of the wheel, where the claim is a stronger one:
+
+> **MSCanvas may claim a wheel event only when applying it through the canonical
+> interaction contract would change the effective rendered domain.**
+
+Cancelling a wheel event is a claim on it. The chromatogram sits at the top of
+`.viewer-stack`, which scrolls: at 1366×768 with a real run loaded, the stack's
+content is taller than the box it is in, and the wheel is how a reader reaches
+the scan table and the selected-spectrum panel below the plot. A wheel the viewer
+cancels and then does not use is a wheel that neither zoomed nor scrolled — so
+the adapter plans first and claims second, and when it cannot consume the gesture
+productively it does **not** call `preventDefault`, does **not** dispatch, and
+leaves ordinary browser and ancestor scrolling available.
+
+Not dispatching is half of the rule rather than a detail. An input this viewer
+did not consume must leave nothing behind: no gesture, no epoch, no settle timer
+that a later, real gesture would have to survive.
+
+### The comparison is shared, and the gesture is projected through its settle
+
+`planRenderedDomainTransition` is the one place the question "would this event
+change the range on screen" is answered, and both the button planner and the
+wheel planner call it. What the wheel needs that a button does not is the
+**settle**.
+
+A gesture's rendered domain is the clamped range it is holding. A *committed*
+viewport goes through one more normalisation, where a range covering the whole
+run becomes `null` — the run itself. Those differ, and the difference is exactly
+the floating-point case that decides the button rule. For a run of 0.0125 to
+453.9875, an outward notch at full range produces a gesture domain whose low edge
+is `0.012499999999988631`, because clamping recovers a low as `full.high - span`
+and that subtraction rounds. Compared as a transient that is a change — of one
+part in a hundred million million, which no screen has ever shown — and the wheel
+would be claimed for it, which is the defect wearing the repair's clothes.
+Settled, the run comes back exactly, and the honest answer is that nothing moved.
+
+So the planner applies the event, settles any gesture the reducer left active,
+and compares rendered domains by value. Events that are not gestures settle
+nothing and take the same path unchanged.
+
+### Where the wheel is and is not the buttons
+
+Shared: the productivity question, and nothing else. A wheel keeps its own step
+(0.85 per notch against the buttons' 0.6), its own anchor — the retention time
+under the pointer stays under the pointer, where a button always zooms about the
+centre — and its own transient-gesture lifecycle with a reducer-assigned epoch
+and a 120ms settle. The epoch is read out of the state, never allocated by the
+adapter, so a notch cannot address a gesture that is not its own.
+
+| State | Wheel in | Wheel out |
+|---|---|---|
+| positive-span run, whole run shown *(the opening state)* | **claimed** | released |
+| an ordinary subrange | **claimed** | **claimed** |
+| the narrowest viewport the wheel can reach | released | **claimed** |
+| a run whose scans share one retention time | released | released |
+| no run loaded | released | released |
+
+A notch with `deltaY === 0` is not a zoom in either direction and is left alone
+before anything is planned.
+
+### The boundary converges rather than latching
+
+`zoomDomain` floors the span it asks for rather than refusing, so a pointer that
+moves between notches can leave the viewport a few parts in a quadrillion away
+from where the floor was reached, and the next notch is then a real — and
+completely invisible — change that the rule claims. It claims it once: the
+arithmetic has converged by the following notch, and every later one is released.
+The bound is what matters for the defect, and it is pinned by a test rather than
+argued: the wheel comes free, and the range does not creep while it does.
+
+### Drag, and touch
+
+**Drag is unchanged and needed no repair.** The pan adapter cancels nothing — it
+takes a pointer capture and releases it, and calls `preventDefault` nowhere — so
+it never held an event it did not use.
+
+**Touch scrolling over the plot is suppressed statically**, by
+`.chromatogram-svg { touch-action: none }`, and R1.2 does not change that. It is
+not the same shape of defect: `touch-action` is a declared intent to handle
+touch gestures rather than a per-event claim made after the fact, and making it
+conditional would require deciding what a touch drag over a chromatogram *means*
+for this product — a pan, a scroll, or a selection — which is new product
+semantics rather than adapter closure. Recorded here so the gap is visible, and
+left for the interaction pass that owns touch.
+
+### What the harness can and cannot prove
+
+Stated plainly, because the evidence stops short of the thing the rule is
+ultimately about.
+
+**Proven.** That the listener shipped in the built bundle, registered non-passive
+on the real element, reaches the same verdict the contract does; that
+`WheelEvent.defaultPrevented` is false at every boundary and true wherever the
+notch moves the axis; that nothing is dispatched for an unclaimed notch; and that
+`.viewer-stack` really does have somewhere to scroll to at 1366×768.
+
+**Not proven.** That an uncancelled wheel then scrolls that column. A WebDriver
+`dispatchEvent` is not a user gesture, and neither headless Chrome nor WebView2
+performs a native scroll for one however the listener answers. No test here
+claims a synthetic wheel scrolled anything. What is left is the browser's own
+contract for an uncancelled wheel over a scrollable ancestor, and the measured
+overflow is what gives that contract something to act on.
 
 ## The R1 consumer set
 
@@ -427,6 +541,9 @@ this slice does not claim:
 - the table stays windowed;
 - nearest-scan is a binary search over the full model;
 - pointer motion issues **zero** backend calls; so do zoom, pan and reset;
+- deciding whether the viewer owns a wheel notch costs one reducer application
+  and one settle of the result, both pure and both over a handful of numbers;
+  nothing is measured, allocated per scan, or read from the DOM to answer it;
 - the linear walk Previous and Next need to find the selected row is memoized on
   the table and the selected index, so it stays off the cursor's path — a
   selection near the end of a large table would otherwise have put two
@@ -487,33 +604,46 @@ cannot be drawn still has rows to step through.
 
 ## Evidence
 
-**Frontend suite:** 830 tests. New: the adapter's field mapping and every
-refusal; the controller's synchronous answer, its ref/state agreement and its
-identity no-op; one-selection-authority, the in-flight repeat, the refused index,
-the preview lifecycle and vendor-row focus at the hook; the chromatogram's data
-sources, the clipped-extent regression and its interpolation companion, the
-reduction, hover validity, click resolution, both gestures, the keyboard and
-every unavailable state; the table's reveal geometry and consumer; and the
-three-view linked flow with a render count taken inside a memo boundary.
+**Frontend suite:** 924 tests, counted at the close of R1.2. From R1: the
+adapter's field mapping and every refusal; the controller's synchronous answer,
+its ref/state agreement and its identity no-op; one-selection-authority, the
+in-flight repeat, the refused index, the preview lifecycle and vendor-row focus
+at the hook; the chromatogram's data sources, the clipped-extent regression and
+its interpolation companion, the reduction, hover validity, click resolution,
+both gestures, the keyboard and every unavailable state; the table's reveal
+geometry and consumer; and the three-view linked flow with a render count taken
+inside a memo boundary. From R1.1: a planner matrix over the viewport states,
+each answer also checked against an independently constructed event, and the
+render-versus-press interval. From R1.2: the same matrix for the wheel,
+including the state no component can be put in — a viewer with no run loaded,
+which draws no plot for a wheel to arrive at — and twelve cases at the
+production adapter that assert the interaction state and
+`WheelEvent.defaultPrevented` separately, because whether the viewport moved and
+who the input belonged to are different failures.
 
-**Browser QA:** 30 rendered cases at 1366×768, 1920×1080 and 960×640, with real
-hover, click, wheel, drag, keyboard and table interaction — including the
-gesture-versus-selection race driven inside one script so it fits inside the
+**Browser QA:** 46 rendered viewer cases at 1366×768, 1920×1080 and 960×640,
+with real hover, click, wheel, drag, keyboard and table interaction — including
+the gesture-versus-selection race driven inside one script so it fits inside the
 debounce, the hover invariant and its clamped-domain companion, and reveal
 geometry measured against real rectangles rather than through the driver's own
-`scrollIntoView`. Zero newly introduced console errors, warnings, unhandled
-rejections or uncaught exceptions.
+`scrollIntoView`. R1.2 adds the wheel's ownership at every boundary and every
+productive notch, taken from `WheelEvent.defaultPrevented` against the built
+bundle, with `.viewer-stack`'s overflow measured at 1366×768 so the claim has a
+column it would actually cost something. Zero newly introduced console errors,
+warnings, unhandled rejections or uncaught exceptions.
 
 **Scale QA:** the measured representative 36,319 scans. Observations, not SLAs:
 21 rendered table rows, 1 trace path, 1,921 drawn vertices, 15 SVG nodes, ~0.6s
 from activation to a drawn viewer, ~0.2s from click to a selected row, and zero
 backend calls from any pointer or viewport interaction.
 
-**Real Tauri QA:** the shipped bundle in WebView2 inside the real Rust process,
-with `load_selected_spectrum` left real — the chromatogram drawn from the
+**Real Tauri QA:** 20 cases — the shipped bundle in WebView2 inside the real Rust
+process, with `load_selected_spectrum` left real: the chromatogram drawn from the
 document's own preview, both traces toggled, a click in the plot crossing the
 production IPC boundary with the right index and settling, Previous/Next using
-the same transport, and the viewport moving without a single IPC call.
+the same transport, the viewport moving without a single IPC call, and one
+bounded wheel-ownership case whose only instrument is a dispatched event and its
+own `defaultPrevented`.
 
 **Live ProteoWizard evidence:** see BOOTSTRAP_STATUS for what was and was not run
 in this environment.

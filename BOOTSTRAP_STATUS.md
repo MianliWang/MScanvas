@@ -4474,6 +4474,38 @@ that distinction is load-bearing: canonical clamping recovers a low edge as
 once the reducer has committed it. Asking what the reducer would render removes
 the question instead of approximating it, and needs no epsilon.
 
+### The wheel, released at the boundary
+
+R1.1's pull request was frozen at its reviewed head in turn, and **Viewer Closure
+R1.2** was branched directly from that head. Its round-2 review found one real,
+reachable problem of the same family a layer down: the chromatogram cancelled the
+browser's default action for every non-zero wheel delta, including where
+canonical arithmetic proves the viewport cannot move. Measured above, the viewer
+column scrolls by about 48px at 1366×768 — so a reader at full range turning the
+wheel over the plot to reach the scan table got no zoom, because there is none to
+give, and no scroll either, because the event had already been claimed.
+
+R1.2 makes ownership a consequence of the same rule the buttons follow:
+**MSCanvas may claim a wheel event only when applying it through the canonical
+interaction contract would change the effective rendered domain.** Both planners
+now share one projection. A gesture is projected through its *settle* before the
+comparison, because an unsettled gesture keeps the clamped range it holds while a
+committed one is normalised, and it is exactly there that the 0.0125 run's
+recovered low edge would have re-created the defect inside its own repair. Where
+the viewer does not claim the notch it also dispatches nothing: an input it did
+not consume leaves no gesture and no epoch behind.
+
+The evidence stops where the harness does, and that is recorded rather than
+glossed. `WheelEvent.defaultPrevented` is asserted in a real browser against the
+built bundle at every boundary and every productive notch, and `.viewer-stack` is
+measured to have somewhere to scroll to. That an uncancelled wheel then scrolls
+it is the browser's own contract: a WebDriver-dispatched wheel is not a user
+gesture and performs no native scroll, so no test here claims one did. Touch
+scrolling over the plot remains statically suppressed by `touch-action: none`,
+which is a declared intent rather than a per-event claim, and deciding what a
+touch drag over a chromatogram means is product semantics this slice does not
+open.
+
 ### Still not implemented
 
 XIC, spectrum zoom and pan, multi-layer comparison, chromatogram data or figure

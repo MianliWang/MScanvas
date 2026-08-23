@@ -100,6 +100,20 @@ viewport action is available exactly when applying it would change the effective
 rendered domain. Every boundary follows from it without being named. See
 [ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
 
+**Viewer Closure R1.2 — pointer-gesture ownership.** Closed with R1. R1.1's pull
+request was frozen at its reviewed head in turn, and R1.2 was taken from that
+head. The chromatogram had been cancelling the browser's default action for every
+non-zero wheel delta, including where the viewport provably cannot move — so at
+full range, on a laptop window where the viewer column scrolls, a wheel over the
+plot neither zoomed nor let the reader reach the panels below it.
+
+R1.2 makes wheel ownership a consequence of R1.1's rule: MSCanvas may claim a
+wheel event only when applying it through the canonical interaction contract
+would change the effective rendered domain. Where it cannot, it cancels nothing
+and dispatches nothing, and ordinary scrolling stays available. Touch scrolling
+over the plot remains statically suppressed and is recorded as open. See
+[ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
+
 Still outside it, and unchanged:
 
 - Current-range export. The committed viewport R0 defined is now a range a user
@@ -112,6 +126,14 @@ Still outside it, and unchanged:
 
 - Windows installer/signing plan, accessibility pass, crash/error diagnostics and public fixtures.
 - Saved settings, layout persistence and beta feedback instrumentation that remains local-first.
+- **Touch gestures over the chromatogram.** The plot declares
+  `touch-action: none`, so a touch drag over it scrolls nothing, and unlike a
+  wheel that is a static declaration rather than a claim made per event. Closing
+  it means deciding what a touch drag over a chromatogram means — a pan, a
+  scroll, or a selection — which is product semantics rather than adapter
+  wiring. Recorded by Viewer Closure R1.2, which closed the wheel and left this
+  as it found it. See
+  [ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
 - **Viewer selection-availability affordance consistency.** Deferred from Viewer
   Closure R1 with a recorded reason. The scan table's rows and the
   chromatogram's plot are both clickable throughout, and a click on either
