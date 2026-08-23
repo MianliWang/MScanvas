@@ -76,6 +76,25 @@ async function pointAt(fraction: number): Promise<{ readonly x: number; readonly
   };
 }
 
+/** Dispatches one cancelable wheel and reports whether the viewer took it. */
+async function wheelClaim(clientX: number, deltaY: number): Promise<boolean> {
+  return browser.execute(
+    (css: string, x: number, delta: number) => {
+      const event = new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        deltaY: delta,
+      });
+      document.querySelector(css)?.dispatchEvent(event);
+      return event.defaultPrevented;
+    },
+    PLOT,
+    clientX,
+    deltaY,
+  ) as Promise<boolean>;
+}
+
 /**
  * Takes the pointer off the plot, so the readout reports the selection again.
  *
@@ -246,5 +265,39 @@ describe("the linked viewer on the real Tauri WebView", () => {
     });
 
     expect((await ipcCalls()).length).toBe(before);
+  });
+
+  it("hands a wheel it cannot use back to the WebView", async () => {
+    /*
+     * The ownership rule, in the shell that ships. One bounded case, using
+     * nothing but a dispatched event and its own `defaultPrevented` -- no
+     * production hook exists for this and none was added for it.
+     *
+     * What it cannot show, here as in the browser suite: that the uncancelled
+     * wheel then scrolls anything. A dispatched event is not a user gesture and
+     * WebView2 performs no native scroll for one. That an uncancelled wheel
+     * scrolls a scrollable ancestor is the engine's own contract; what is worth
+     * proving in WebView2 is that the shipped listener answers the same way the
+     * contract does.
+     */
+    if (!(await rangeCaption()).includes("full range")) {
+      await browser.$("button=Reset range").click();
+      await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
+        timeout: 30_000,
+        timeoutMsg: "the run never came back to full range",
+      });
+    }
+    const at = await pointAt(0.5);
+    const full = await rangeCaption();
+
+    expect(await wheelClaim(at.x, 240)).toBe(false);
+    expect(await rangeCaption()).toBe(full);
+
+    // And the notch that can do something is still the viewer's.
+    expect(await wheelClaim(at.x, -240)).toBe(true);
+    await browser.waitUntil(async () => (await rangeCaption()) !== full, {
+      timeout: 30_000,
+      timeoutMsg: "a claimed wheel changed nothing in WebView2",
+    });
   });
 });

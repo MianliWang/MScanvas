@@ -938,6 +938,140 @@ describe("the linked viewer, rendered", () => {
     });
   });
 
+  describe("who owns a wheel, rendered", () => {
+    /*
+     * Cancelling a wheel event is a claim on it, and the viewer column scrolls.
+     * A wheel MSCanvas cancels and then does not use is a wheel that neither
+     * zoomed nor scrolled, which is the defect this closes.
+     *
+     * What a browser can settle that a jsdom cannot: that the column really does
+     * have somewhere to scroll to at a window people use, and that the listener
+     * shipped in the built bundle -- registered non-passive, on the real element,
+     * with the real box under a real pointer position -- reaches the same verdict
+     * the contract does.
+     *
+     * What it cannot settle, stated plainly rather than glossed: a WebDriver
+     * `dispatchEvent` is not a user gesture, and this engine performs no native
+     * scrolling for one however the listener answers. So `defaultPrevented` is
+     * the evidence here, and nothing below claims a synthetic wheel scrolled
+     * anything. Whether an uncancelled wheel then scrolls the column is the
+     * browser's own contract, and the measured overflow is what makes that
+     * contract have something to act on.
+     */
+
+    /** Dispatches one cancelable wheel and reports whether the viewer took it. */
+    async function wheelClaim(clientX: number, deltaY: number): Promise<boolean> {
+      return browser.execute(
+        (css: string, x: number, delta: number) => {
+          const event = new WheelEvent("wheel", {
+            bubbles: true,
+            cancelable: true,
+            clientX: x,
+            deltaY: delta,
+          });
+          document.querySelector(css)?.dispatchEvent(event);
+          return event.defaultPrevented;
+        },
+        PLOT,
+        clientX,
+        deltaY,
+      ) as Promise<boolean>;
+    }
+
+    /** What the viewer column can scroll, in real pixels. */
+    async function stackOverflow(): Promise<{
+      readonly scrollHeight: number;
+      readonly clientHeight: number;
+      readonly overflowY: string;
+    }> {
+      return browser.execute(() => {
+        const stack = document.querySelector<HTMLElement>("div.viewer-stack");
+        return {
+          scrollHeight: stack?.scrollHeight ?? 0,
+          clientHeight: stack?.clientHeight ?? 0,
+          overflowY: stack === null ? "" : getComputedStyle(stack).overflowY,
+        };
+      });
+    }
+
+    const IN = -240;
+    const OUT = 240;
+
+    it("has a column with somewhere to scroll to at 1366x768", async () => {
+      // The reason the claim matters. On the laptop window this product is
+      // measured against, the three panels do not all fit, and the wheel is how
+      // a reader reaches the ones below.
+      await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+
+      const stack = await stackOverflow();
+      expect(stack.overflowY).toBe("auto");
+      expect(stack.clientHeight).toBeGreaterThan(0);
+      expect(stack.scrollHeight).toBeGreaterThan(stack.clientHeight);
+    });
+
+    it("does not claim a wheel that cannot widen the run, and moves nothing", async () => {
+      await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+      const at = await pointAt(0.5);
+      const before = await rangeCaption();
+      expect(before).toContain("full range");
+
+      expect(await wheelClaim(at.x, OUT)).toBe(false);
+
+      expect(await rangeCaption()).toBe(before);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("claims a wheel that narrows it, and moves the range with it", async () => {
+      await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+      const at = await pointAt(0.5);
+      const full = await visibleSpan();
+
+      expect(await wheelClaim(at.x, IN)).toBe(true);
+
+      await browser.waitUntil(async () => (await visibleSpan()) < full, {
+        timeout: 10_000,
+        timeoutMsg: "a claimed wheel changed nothing",
+      });
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("stops claiming inward wheels at the narrowest viewport the run allows", async () => {
+      // Driven there by turning the wheel, not by naming a range.
+      await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+      const at = await pointAt(0.5);
+      let claimed = 0;
+      for (let notch = 0; notch < 120; notch += 1) {
+        if (!(await wheelClaim(at.x, IN))) {
+          break;
+        }
+        claimed += 1;
+      }
+      expect(claimed).toBeGreaterThan(0);
+
+      expect(await wheelClaim(at.x, IN)).toBe(false);
+      // And the way back out is still the viewer's.
+      expect(await wheelClaim(at.x, OUT)).toBe(true);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("claims neither direction for a run whose one scan has no width to zoom", async () => {
+      await openTheViewer({ width: 1_366, height: 768, scans: 1 });
+      const at = await pointAt(0.5);
+
+      expect(await wheelClaim(at.x, IN)).toBe(false);
+      expect(await wheelClaim(at.x, OUT)).toBe(false);
+
+      // And the measurement is still drawn. Nothing to zoom is not nothing to
+      // see, and releasing the wheel did not cost the glyph.
+      expect(
+        await browser.execute(
+          () => document.querySelectorAll("circle.chromatogram-point").length,
+        ),
+      ).toBe(1);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+  });
+
   describe("a run of a single scan", () => {
     /*
      * A complete acquisition of exactly one spectrum. `clipTrace` answers with

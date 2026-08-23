@@ -16,9 +16,13 @@ import type {
   TraceKind,
 } from "./viewer/scanModel";
 import { nearestScan } from "./viewer/scanModel";
-import { panDomain, zoomDomain } from "./viewer/viewport";
+import { panDomain } from "./viewer/viewport";
 import type { ViewportAction } from "./viewer/viewportAction";
-import { applyViewportAction, planViewportAction } from "./viewer/viewportAction";
+import {
+  applyViewportAction,
+  planViewportAction,
+  planWheelGesture,
+} from "./viewer/viewportAction";
 import type { TraceVisibility } from "./usePreviewWorkspace";
 
 /**
@@ -38,8 +42,6 @@ const USABLE_HEIGHT = BASELINE_Y - PADDING_TOP;
 /** How far a pointer may move between press and release and still be a click. */
 const CLICK_SLOP = 4;
 
-/** What one wheel notch does to the visible span. */
-const WHEEL_ZOOM = 0.85;
 /** What one pan step moves, as a fraction of the visible span. */
 const PAN_STEP = 0.25;
 
@@ -494,9 +496,17 @@ function ChromatogramPlot({
     [],
   );
 
-  // Attached by hand because React's own wheel listener is passive, so
-  // `preventDefault` inside `onWheel` cannot stop the page scrolling under a
-  // zoom gesture.
+  /*
+   * Attached by hand because React's own wheel listener is passive, so
+   * `preventDefault` inside `onWheel` could not stop the page scrolling under a
+   * zoom gesture.
+   *
+   * Which is the whole reason the order below matters. Cancelling a wheel event
+   * is a claim on it, and this panel sits at the top of a column that scrolls:
+   * a wheel cancelled and then not used is a wheel that neither zoomed nor
+   * scrolled. So the claim is made *after* the contract has said the gesture
+   * would move the axis, never before.
+   */
   useEffect(() => {
     const element = plotRef.current;
     if (element === null) {
@@ -506,34 +516,30 @@ function ChromatogramPlot({
       if (event.deltaY === 0) {
         return;
       }
-      event.preventDefault();
       const state = readInteraction();
-      const runDomain = state.fullDomain;
-      const shown = renderedDomain(state);
-      if (runDomain === null || shown === null) {
-        return;
-      }
       const box = element.getBoundingClientRect();
       const anchor =
         box.width === 0
           ? 0.5
           : (((event.clientX - box.left) / box.width) * PLOT_WIDTH - PADDING_LEFT) /
             USABLE_WIDTH;
-      const next = zoomDomain(
-        shown,
-        runDomain,
-        event.deltaY < 0 ? WHEEL_ZOOM : 1 / WHEEL_ZOOM,
+      const plan = planWheelGesture(
+        state,
+        event.deltaY < 0 ? "in" : "out",
         clamp01(anchor),
       );
+      if (plan.event === null) {
+        // Not ours. The run cannot go any further this way, so the browser
+        // keeps the event and the column below can still be scrolled with it.
+        // Nothing is dispatched either: an input this viewer did not consume
+        // must not leave a gesture, or an epoch, behind.
+        return;
+      }
+      event.preventDefault();
       // The epoch is the reducer's to hand out. An adapter that allocated one
       // could address a gesture that is not its own, which is exactly the race
       // an epoch exists to remove.
-      const epoch = activeGestureEpoch(state);
-      const after =
-        epoch === null
-          ? dispatch({ type: "gesture-started", domain: next })
-          : dispatch({ type: "gesture-moved", epoch, domain: next });
-      scheduleSettle(activeGestureEpoch(after));
+      scheduleSettle(activeGestureEpoch(dispatch(plan.event)));
     };
     element.addEventListener("wheel", onWheel, { passive: false });
     return () => {

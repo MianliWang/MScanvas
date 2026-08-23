@@ -1094,3 +1094,251 @@ describe("the viewport control group", () => {
     }
   });
 });
+
+/*
+ * Who owns a wheel event.
+ *
+ * Cancelling one is a claim on it, and this panel sits at the top of a column
+ * that scrolls. A wheel cancelled and then not used is a wheel that neither
+ * zoomed nor scrolled -- so the rule is the same one the buttons follow, asked
+ * of a gesture instead of a press: the viewer owns a wheel exactly when putting
+ * it through the contract would change the range on screen.
+ *
+ * Every case asserts both halves, because they are different failures. Whether
+ * the viewport moved is the product's behaviour; whether the event was cancelled
+ * is who the input belonged to.
+ */
+describe("who owns a wheel", () => {
+  /** Sends one real cancelable wheel event to the production listener. */
+  function wheel(options: { readonly deltaY: number; readonly clientX?: number }): WheelEvent {
+    const event = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      clientX: options.clientX ?? 500,
+      deltaY: options.deltaY,
+    });
+    act(() => {
+      plot().dispatchEvent(event);
+    });
+    return event;
+  }
+
+  const IN = -240;
+  const OUT = 240;
+
+  it("claims a wheel that narrows the run, and moves the axis with it", () => {
+    renderChromatogram();
+    const before = shown();
+
+    const event = wheel({ deltaY: IN });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(state().gesture).not.toBeNull();
+    expect(shown().high - shown().low).toBeLessThan(before.high - before.low);
+  });
+
+  it("leaves a wheel that cannot widen the run to the browser", () => {
+    // The state the viewer opens in, and the one a reader is in when they want
+    // to look at the panels below.
+    renderChromatogram();
+    const before = state();
+
+    const event = wheel({ deltaY: OUT });
+
+    expect(event.defaultPrevented).toBe(false);
+    // And nothing was left behind: no gesture, no epoch, no settle.
+    expect(state()).toBe(before);
+    expect(state().gesture).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(state()).toBe(before);
+  });
+
+  it("leaves it to the browser for a run whose low edge cannot be recovered exactly", () => {
+    /*
+     * The case that decides how the question is asked, and the reason the plan
+     * is projected through the gesture's *settle*.
+     *
+     * A gesture's rendered domain is the clamped range it holds, and canonical
+     * clamping recovers a low edge as `full.high - span`, which rounds: for a
+     * run of 0.0125 to 453.9875 the zoom-out candidate comes back as
+     * 0.012499999999988631. Compared as a transient that is a change -- of one
+     * part in a hundred million million -- and the wheel would be claimed for
+     * it, which is this whole defect wearing its repair's clothes. Settled, the
+     * run comes back exactly, and the honest answer is that nothing moved.
+     */
+    renderChromatogram({
+      model: runOf([
+        { rt: 0.0125, tic: 10, bpc: 5 },
+        { rt: 453.9875, tic: 20, bpc: 6 },
+      ]),
+    });
+    const before = state();
+    expect(shown()).toEqual({ low: 0.0125, high: 453.9875 });
+
+    const event = wheel({ deltaY: OUT });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(state()).toBe(before);
+  });
+
+  it("claims both directions once there is a subrange to move within", () => {
+    renderChromatogram();
+    wheel({ deltaY: IN });
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    const subrange = shown();
+    expect(subrange.high - subrange.low).toBeLessThan(50 * 0.0125);
+
+    const outward = wheel({ deltaY: OUT });
+    expect(outward.defaultPrevented).toBe(true);
+    expect(shown().high - shown().low).toBeGreaterThan(subrange.high - subrange.low);
+
+    const inward = wheel({ deltaY: IN });
+    expect(inward.defaultPrevented).toBe(true);
+  });
+
+  it("stops claiming inward wheels at the narrowest viewport, and still claims outward ones", () => {
+    renderChromatogram();
+    for (let step = 0; step < 200; step += 1) {
+      const event = wheel({ deltaY: IN });
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      if (!event.defaultPrevented) {
+        break;
+      }
+    }
+    const atFloor = state();
+
+    const inward = wheel({ deltaY: IN });
+    expect(inward.defaultPrevented).toBe(false);
+    expect(state()).toBe(atFloor);
+
+    const outward = wheel({ deltaY: OUT });
+    expect(outward.defaultPrevented).toBe(true);
+  });
+
+  it("leaves both directions to the browser for a run with no width to zoom", () => {
+    // The single-scan run: a real acquisition with a value and a visible mark,
+    // and nothing to zoom into or out of in either direction.
+    renderChromatogram({ model: runOf([{ rt: 4, tic: 9_000, bpc: 700 }]) });
+    const before = state();
+
+    const inward = wheel({ deltaY: IN });
+    const outward = wheel({ deltaY: OUT });
+
+    expect(inward.defaultPrevented).toBe(false);
+    expect(outward.defaultPrevented).toBe(false);
+    expect(state()).toBe(before);
+    expect(state().gesture).toBeNull();
+    // And the measurement is still on screen.
+    expect(document.querySelectorAll("circle.chromatogram-point")).toHaveLength(1);
+  });
+
+  it("ignores a wheel with no vertical delta at all", () => {
+    renderChromatogram();
+    const before = state();
+
+    const event = wheel({ deltaY: 0 });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(state()).toBe(before);
+  });
+
+  it("holds the retention time under the pointer, wherever the pointer is", () => {
+    // Pointer-anchored zoom, unchanged. The button planner's centre anchor is a
+    // different gesture and must not be substituted for this one.
+    for (const [name, fraction] of [
+      ["left", 0],
+      ["centre", 0.5],
+      ["right", 1],
+    ] as const) {
+      cleanup();
+      renderChromatogram();
+      const before = shown();
+      const held = before.low + (before.high - before.low) * fraction;
+
+      const event = wheel({ deltaY: IN, clientX: clientXFor(held, before) });
+
+      expect(event.defaultPrevented, name).toBe(true);
+      const after = shown();
+      expect(after.high - after.low, name).toBeLessThan(before.high - before.low);
+      // The retention time the pointer was over is still where the pointer is.
+      const heldFraction = (held - after.low) / (after.high - after.low);
+      expect(heldFraction, name).toBeCloseTo(fraction, 6);
+    }
+  });
+
+  it("does not touch a gesture already in flight when the next notch is inert", () => {
+    /*
+     * A physical wheel keeps turning after the run has run out. The gesture the
+     * productive notches started stays exactly as the reducer left it, the
+     * settle they scheduled stays authoritative, and the inert notches leave
+     * nothing behind -- no epoch, no move, and no claim on the event.
+     */
+    renderChromatogram();
+    let productive = 0;
+    for (let step = 0; step < 200; step += 1) {
+      const event = wheel({ deltaY: IN });
+      if (!event.defaultPrevented) {
+        break;
+      }
+      productive += 1;
+    }
+    expect(productive).toBeGreaterThan(0);
+    const mid = state();
+    expect(mid.gesture).not.toBeNull();
+    const epoch = mid.gesture?.epoch;
+
+    const inert = wheel({ deltaY: IN });
+
+    expect(inert.defaultPrevented).toBe(false);
+    expect(state()).toBe(mid);
+    expect(state().gesture?.epoch).toBe(epoch);
+
+    // The settle the productive notches scheduled still commits their range.
+    const transient = shown();
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(state().gesture).toBeNull();
+    expect(renderedDomain(state())).toEqual(transient);
+  });
+
+  it("still commits a claimed wheel when it settles", () => {
+    renderChromatogram();
+    const full = shown();
+
+    wheel({ deltaY: IN });
+
+    expect(state().gesture).not.toBeNull();
+    expect(state().committedDomain).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(state().gesture).toBeNull();
+    expect(state().committedDomain).not.toBeNull();
+    expect(state().committedDomain?.high).toBeLessThan(full.high);
+  });
+
+  it("still loses to a selection committed before its settle", () => {
+    // PR #72 finding 8, unchanged: the planner decides only whether this wheel
+    // would move the axis. Precedence is still the reducer's.
+    renderChromatogram();
+    const claimed = wheel({ deltaY: IN });
+    expect(claimed.defaultPrevented).toBe(true);
+    expect(state().gesture).not.toBeNull();
+
+    send({ type: "selection-committed", index: 49, retentionTime: 49 * 0.0125 });
+    const afterSelection = state();
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(state()).toBe(afterSelection);
+  });
+});
