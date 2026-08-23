@@ -30,6 +30,7 @@ import { activeGestureEpoch, renderedDomain } from "./viewer/interactionState";
 import {
   buildPreview,
   buildRows,
+  buildSpectrum,
   createFakePreviewApi,
   createFakeWorkspaceDropTransport,
   deferred,
@@ -184,6 +185,58 @@ describe("one selection authority", () => {
     );
   });
 
+  it("does not let a superseded read overwrite the selection that replaced it", async () => {
+    /*
+     * The two race mechanisms answer different questions and both have to hold.
+     * The interaction revision decides whether a linked view has acted on a
+     * commit; the request token decides which backend reply may be shown. Select
+     * A, then B before A settles: B is the selection, and neither A's success
+     * nor A's failure may move it.
+     */
+    const replies = [
+      deferred<SelectedSpectrumOutcome>(),
+      deferred<SelectedSpectrumOutcome>(),
+    ];
+    let asked = 0;
+    const { result, api } = mount({
+      spectrum: () => {
+        const reply = replies[asked];
+        asked += 1;
+        return reply?.promise ?? Promise.reject(new Error("one reply per selection"));
+      },
+    });
+    await openThePreview(result);
+
+    await select(result, 1);
+    await select(result, 4);
+    expect(result.current.selectedIndex).toBe(4);
+    expect(api.requestedSpectra).toEqual([1, 4]);
+    const committed = result.current.viewerInteraction.selection;
+
+    // B lands first and is shown.
+    await act(async () => {
+      replies[1]?.resolve({ outcome: "spectrum", spectrum: buildSpectrum(4, 6) });
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(result.current.spectrum.status).toBe("loaded");
+    });
+
+    // A lands afterwards, and then fails on a retry of the same stale token.
+    await act(async () => {
+      replies[0]?.resolve({ outcome: "spectrum", spectrum: buildSpectrum(1, 6) });
+      await Promise.resolve();
+    });
+
+    expect(result.current.selectedIndex).toBe(4);
+    expect(result.current.viewerInteraction.selection).toBe(committed);
+    expect(
+      result.current.spectrum.status === "loaded"
+        ? result.current.spectrum.spectrum.index
+        : null,
+    ).toBe(4);
+  });
+
   it("keeps the selected scan when its read fails", async () => {
     // A failure is a fact about the read, not about what the user chose. The
     // panel shows its typed outcome and the selection stays where they put it.
@@ -289,6 +342,33 @@ describe("the viewer's own lifecycle", () => {
 
     expect(result.current.viewerInteraction).toBe(loaded);
     expect(result.current.viewerInteraction.committedDomain).toBeNull();
+  });
+
+  it("closes the interaction when the workspace is cleared", async () => {
+    const { result } = mount();
+    await openThePreview(result);
+    await select(result, 2);
+    act(() => {
+      result.current.dispatchViewerEvent({
+        type: "viewport-step",
+        domain: { low: 0.01, high: 0.03 },
+      });
+    });
+    expect(result.current.viewerInteraction.selection).not.toBeNull();
+
+    await act(async () => {
+      result.current.clearList();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(result.current.preview.status).toBe("empty");
+    });
+
+    expect(result.current.viewerInteraction.fullDomain).toBeNull();
+    expect(result.current.viewerInteraction.committedDomain).toBeNull();
+    expect(result.current.viewerInteraction.selection).toBeNull();
+    expect(result.current.selectedIndex).toBeNull();
+    expect(result.current.scanModel.status).toBe("unavailable");
   });
 
   it("leaves the loaded viewer alone when a vendor row takes focus", async () => {
