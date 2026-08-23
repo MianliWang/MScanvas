@@ -107,13 +107,52 @@ rule is drawn at that scan's position, so the pointer's exact coordinate is
 never displayed — carrying it would make every frame of a pointer move a
 different state.
 
-Because a scan is all it holds, re-establishing the same one returns the same
-state **by identity**. A renderer may resolve the nearest scan on every pointer
-frame and dispatch freely: what reaches the contract is "the pointer crossed
-into another scan", not "the pointer moved". Continuous cursor coordinates stay
-in the renderer, where `apps/desktop/AGENTS.md` requires them
-("Avoid storing pointer-move and cursor-frame data in React state") and where
-the spectrum-viewer skill puts them.
+Because a scan is all it holds, re-establishing the same one under an unchanged
+domain returns the same state **by identity**. A renderer may resolve the
+nearest scan on every pointer frame and dispatch freely, including while a
+gesture is moving: what reaches the contract is "the pointer crossed into
+another scan", not "the pointer moved". Continuous cursor coordinates stay in
+the renderer, where `apps/desktop/AGENTS.md` requires them ("Avoid storing
+pointer-move and cursor-frame data in React state") and where the
+spectrum-viewer skill puts them.
+
+#### Validity is an invariant, not a list of events
+
+**A hover observation is made under one effective rendered domain, and is valid
+only while that domain is unchanged.**
+
+Which scan sits under a fixed pointer is a question about the axis. Move the
+axis and the answer is about the past — so any transition that changes
+`renderedDomain` invalidates hover, through **one centralized rule** applied to
+every transition rather than a clause in each event's branch.
+
+That shape is the correction, not the behaviour. The rule was written as an
+enumeration of events twice and was wrong both times:
+
+- PR #72 kept hover across a **committed** zoom (finding 9);
+- the first draft of this contract kept it across a **transient**
+  `gesture-moved` (R0 finding 10), because the enumeration listed committed
+  changes and a gesture move is not one.
+
+A list has to be added to when an event is added; an invariant does not. A
+future event that moves the rendered domain inherits the invalidation by passing
+through the same finalizer, without its author needing to know the rule exists.
+
+`gesture-moved` is deliberately **not** special-cased, and a test proves the
+difference: a drag further left at the left edge clamps to the range already
+shown, nothing moves on screen, and the observation is kept. Domain equality is
+compared by value, because a clamp that lands on the current range produces the
+same numbers in a new object and comparing references would call that a change —
+the enumeration mistake in another form.
+
+Invalidation is not a ban. A later pointer frame may establish a fresh
+observation under the new domain immediately, so inspection stays responsive
+while a gesture is moving.
+
+One clear remains outside the invariant, and for a different reason:
+`preview-loaded` and `preview-closed` drop hover because it names a scan *of the
+preview that was loaded*, and two previews can share a retention-time domain
+while their scan indices mean different scans.
 
 ### F — render geometry (`viewer/renderGeometry.ts`)
 
@@ -284,6 +323,16 @@ so it cannot drift from the code it describes.
 | 8 | A selection cancels a pending gesture before it can settle | `viewerInteractionReducer` |
 | 9 | Hover does not survive a viewport change | `viewerInteractionReducer` |
 
+R0's own review then found a tenth, distinct from finding 9 rather than a
+restatement of it:
+
+| # | Finding | Root cause | Invariant | Test |
+|---|---|---|---|---|
+| 10 | Hover survived `gesture-moved` under a different rendered domain | Invalidation was expressed as an enumerated event list rather than a validity rule | A transition that changes `renderedDomain` invalidates hover, centrally | `interactionState.test.ts` — "does not survive a gesture that moves the axis under it", "survives a gesture move that resolves to the same axis", the rendered-domain invariant matrix; `findingRegressionMap.test.ts` — cases 10 and 10b |
+
+The pair matters: case 10 proves the invalidation happens, and case 10b proves
+it is caused by the domain rather than by the event's name.
+
 ## What R0 deliberately is not
 
 No visible implementation. No chromatogram UI, no linked-selection wiring, no
@@ -305,7 +354,8 @@ R1 must:
 - keep continuous pointer coordinates in a renderer-local ref, resolve the
   nearest scan there, and dispatch `hover-established` with the resolved scan.
   The reducer already makes a repeat free, but the raw coordinates must not
-  reach it;
+  reach it. Dispatching during a moving gesture is allowed: an observation made
+  under a domain that then moves is invalidated for you;
 - translate adapters into events: a wheel debounce emits `gesture-settled` with
   the epoch it was scheduled under, a drag end emits it directly, a keyboard
   step emits `viewport-step`;
@@ -326,4 +376,6 @@ R1 may not:
 - resolve a scan from reduced or boundary vertices;
 - store a scaled coordinate, or a raw pointer coordinate, in hover;
 - allocate a selection revision or a gesture epoch outside the reducer;
+- add a cross-cutting rule to an event's own branch when it belongs in the
+  finalizer;
 - rely on `clearTimeout` for correctness.

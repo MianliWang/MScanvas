@@ -56,20 +56,32 @@ export interface Selection {
 /**
  * Transient coordinate inspection: which scan the pointer is over.
  *
+ * **An observation made under one effective rendered domain**, and valid only
+ * while that domain is unchanged. Which scan sits under a fixed pointer depends
+ * entirely on what the axis is showing, so the moment the axis moves the
+ * observation describes the past.
+ *
+ * That validity is not enforced here or in any event's own branch. It is one
+ * invariant applied to every transition -- see {@link finalize} -- because
+ * expressing it as a list of events is what let it be got wrong twice: PR #72
+ * kept hover across a committed zoom, and the first draft of this contract kept
+ * it across a transient `gesture-moved`. A list has to be added to; an invariant
+ * does not.
+ *
  * The resolved scan, and nothing else. Not a scaled screen coordinate -- PR #72
  * stored the scaled x, which a keyboard zoom invalidated without clearing,
- * leaving a guide rule at a stale position and a readout naming a scan no longer
- * under the cursor. And not the pointer's own retention time either, for a
- * second reason: the readout names a scan and the guide rule is drawn at that
+ * leaving a guide rule at a stale position. And not the pointer's own retention
+ * time either: the readout names a scan and the guide rule is drawn at that
  * scan's position, so the pointer's exact coordinate is never displayed, and
  * carrying it here would make every frame of a pointer move a different state.
  *
- * Because a scan is all this holds, re-establishing the same one is a no-op by
- * identity. A renderer may therefore resolve the nearest scan on every pointer
- * frame and dispatch freely: the state changes only when the pointer crosses
- * from one scan to another, which is bounded by the run rather than by the
- * pointer's sampling rate. Continuous cursor coordinates stay in the renderer,
- * where `apps/desktop/AGENTS.md` requires them to stay.
+ * Because a scan is all this holds, re-establishing the same one under an
+ * unchanged domain is a no-op by identity. A renderer may therefore resolve the
+ * nearest scan on every pointer frame and dispatch freely, including while a
+ * gesture is moving: what reaches this contract is the pointer crossing from
+ * one scan to another, bounded by the run rather than by the pointer's sampling
+ * rate. Continuous cursor coordinates stay in the renderer, where
+ * `apps/desktop/AGENTS.md` requires them to stay.
  */
 export interface Hover {
   readonly spectrumIndex: number;
@@ -143,8 +155,73 @@ export type ViewerEvent =
  *
  * Total and deterministic: every event produces a state, and an event that no
  * longer applies produces the state it was given, unchanged by identity.
+ *
+ * Two layers. `reduceCore` performs the event's own transition; `finalize`
+ * enforces what is true of every transition regardless of which event caused
+ * it. Cross-cutting rules live in the second layer so that adding an event
+ * cannot forget them.
  */
 export function viewerInteractionReducer(
+  state: ViewerInteractionState,
+  event: ViewerEvent,
+): ViewerInteractionState {
+  return finalize(state, reduceCore(state, event));
+}
+
+/**
+ * What is true after any transition, whatever produced it.
+ *
+ * One rule today: **a hover observation is valid only while the effective
+ * rendered domain is unchanged from the one it was established under.** Which
+ * scan is under a fixed pointer is a question about the axis, so a changed axis
+ * makes the answer stale.
+ *
+ * Enforced here rather than in each event's branch, and that is the whole point
+ * of this function. The rule was written as a list of events twice and was
+ * wrong both times -- once in PR #72 (a committed zoom kept hover) and once in
+ * the first draft of this contract (a transient `gesture-moved` kept it). A
+ * list has to be remembered when an event is added. This does not: a future
+ * event that moves the rendered domain inherits the invalidation by passing
+ * through here, without its author knowing the rule exists.
+ *
+ * Note what is *not* here: `gesture-moved` is not special-cased. A move that
+ * clamps to the same effective domain -- dragging further left at the left edge
+ * -- changes nothing on screen, so an observation made a moment earlier is
+ * still accurate and is kept.
+ */
+function finalize(
+  previous: ViewerInteractionState,
+  candidate: ViewerInteractionState,
+): ViewerInteractionState {
+  // An exact no-op stays exactly that, so callers can compare by identity.
+  if (candidate === previous) {
+    return previous;
+  }
+  if (sameDomain(renderedDomain(previous), renderedDomain(candidate))) {
+    return candidate;
+  }
+  return candidate.hover === null ? candidate : { ...candidate, hover: null };
+}
+
+/**
+ * Whether two rendered domains are the same range.
+ *
+ * By value. The reducer's domain arithmetic is a deterministic numeric
+ * transformation, so a clamp that lands on the range already shown produces the
+ * same numbers in a new object -- and comparing references would call that a
+ * change, which is exactly the enumeration mistake in another form.
+ */
+function sameDomain(
+  left: RetentionTimeDomain | null,
+  right: RetentionTimeDomain | null,
+): boolean {
+  if (left === null || right === null) {
+    return left === right;
+  }
+  return left.low === right.low && left.high === right.high;
+}
+
+function reduceCore(
   state: ViewerInteractionState,
   event: ViewerEvent,
 ): ViewerInteractionState {
@@ -159,6 +236,12 @@ export function viewerInteractionReducer(
       // Both counters carry across rather than restarting. A consumer's
       // bookmark may outlive the preview it was made under, and a restarted
       // counter would let a new commit collide with it.
+      //
+      // Hover is cleared here for a reason of its own rather than because the
+      // domain moved: a hover names a scan *of the preview that was loaded*, and
+      // a different run's scan indices are different scans. Two previews can
+      // share a retention-time domain, so the domain invariant would not catch
+      // this one.
       return {
         fullDomain: event.fullDomain,
         committedDomain: null,
@@ -189,9 +272,6 @@ export function viewerInteractionReducer(
         ...state,
         gesture: { epoch: state.nextGestureEpoch, domain: clampDomain(event.domain, full) },
         nextGestureEpoch: state.nextGestureEpoch + 1,
-        // A gesture beginning ends inspection: the user has stopped pointing at
-        // a scan and started moving the axis.
-        hover: null,
       };
     }
 
@@ -218,7 +298,6 @@ export function viewerInteractionReducer(
         ...state,
         committedDomain: committed(state.gesture.domain, full),
         gesture: null,
-        hover: null,
       };
     }
 
@@ -238,19 +317,14 @@ export function viewerInteractionReducer(
       // A keyboard step or a button supersedes anything in flight, for the same
       // reason a selection does: it is a later, deliberate instruction about
       // the same viewport.
-      return {
-        ...state,
-        committedDomain: committed(event.domain, full),
-        gesture: null,
-        hover: null,
-      };
+      return { ...state, committedDomain: committed(event.domain, full), gesture: null };
     }
 
     case "viewport-reset": {
       if (state.fullDomain === null) {
         return state;
       }
-      return { ...state, committedDomain: null, gesture: null, hover: null };
+      return { ...state, committedDomain: null, gesture: null };
     }
 
     case "selection-committed": {
@@ -262,7 +336,7 @@ export function viewerInteractionReducer(
       const nextSelectionRevision = state.nextSelectionRevision + 1;
       const full = state.fullDomain;
       if (full === null) {
-        return { ...state, selection, nextSelectionRevision, gesture: null, hover: null };
+        return { ...state, selection, nextSelectionRevision, gesture: null };
       }
       // Precedence, in order, and the order is the contract:
       //
@@ -270,8 +344,11 @@ export function viewerInteractionReducer(
       //    than left to settle later, so its pending settle becomes a stale
       //    epoch and can no longer overwrite what follows;
       // 2. the reveal is computed against the *committed* viewport, which is
-      //    now the only viewport there is;
-      // 3. hover is cleared, because the axis may have just moved under it.
+      //    now the only viewport there is.
+      //
+      // Hover is not touched here. If the reveal moves the axis the invariant
+      // drops it; if the selected scan was already on screen nothing moved, and
+      // an observation of what the pointer is over is still true.
       const base = state.committedDomain;
       const revealed = base === null ? null : revealDomain(base, full, event.retentionTime);
       return {
@@ -279,7 +356,6 @@ export function viewerInteractionReducer(
         selection,
         nextSelectionRevision,
         gesture: null,
-        hover: null,
         committedDomain: revealed === null ? null : committed(revealed, full),
       };
     }
@@ -291,7 +367,8 @@ export function viewerInteractionReducer(
       // The same scan is the same state. Returned by identity so a renderer can
       // dispatch on every pointer frame without any consumer re-rendering: what
       // reaches this contract is "the pointer crossed into another scan", not
-      // "the pointer moved".
+      // "the pointer moved". The domain has not moved either -- establishing a
+      // hover is not a viewport change -- so the finalizer keeps that identity.
       if (state.hover?.spectrumIndex === event.spectrumIndex) {
         return state;
       }

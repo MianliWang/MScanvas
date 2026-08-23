@@ -352,6 +352,26 @@ describe("hover", () => {
     expect(state.hover).toEqual({ spectrumIndex: 8 });
   });
 
+  it("may be re-established under the new axis after one is invalidated", () => {
+    // Invalidation is not a ban. A pointer frame resolving a scan under the new
+    // domain establishes a fresh observation immediately, so inspection stays
+    // responsive while a gesture is moving.
+    const gesturing = run([{ type: "gesture-started", domain: { low: 10, high: 30 } }], loaded());
+    const epoch = activeGestureEpoch(gesturing) as number;
+    const moved = run(
+      [
+        { type: "hover-established", spectrumIndex: 8 },
+        { type: "gesture-moved", epoch, domain: { low: 60, high: 80 } },
+      ],
+      gesturing,
+    );
+    expect(moved.hover).toBeNull();
+
+    expect(run([{ type: "hover-established", spectrumIndex: 21 }], moved).hover).toEqual({
+      spectrumIndex: 21,
+    });
+  });
+
   it("is the same state when the pointer stays over one scan", () => {
     // A renderer may resolve the nearest scan on every pointer frame. What
     // reaches this contract is a crossing from one scan to another, not a
@@ -383,44 +403,94 @@ describe("hover", () => {
     expect(state.hover).toBeNull();
   });
 
-  it("is cleared by a gesture beginning and by its settle", () => {
-    const started = run(
-      [
-        { type: "hover-established", spectrumIndex: 8 },
-        { type: "gesture-started", domain: { low: 30, high: 50 } },
-      ],
+  it("does not survive a gesture that moves the axis under it", () => {
+    // The Round-2 finding. A hover names the scan under a fixed pointer, and
+    // which scan that is depends entirely on what the axis is showing -- so a
+    // move that shifts the axis makes the observation describe the past.
+    const gesturing = run(
+      [{ type: "gesture-started", domain: { low: 10, high: 30 } }],
       loaded(),
     );
-    expect(started.hover).toBeNull();
+    const epoch = activeGestureEpoch(gesturing) as number;
+    const hovering = run([{ type: "hover-established", spectrumIndex: 8 }], gesturing);
+    expect(hovering.hover).toEqual({ spectrumIndex: 8 });
 
-    const settled = run(
-      [
-        { type: "hover-established", spectrumIndex: 8 },
-        { type: "gesture-settled", epoch: activeGestureEpoch(started) as number },
-      ],
-      started,
+    const moved = run(
+      [{ type: "gesture-moved", epoch, domain: { low: 60, high: 80 } }],
+      hovering,
     );
-    expect(settled.hover).toBeNull();
+
+    expect(renderedDomain(moved)).toEqual({ low: 60, high: 80 });
+    expect(moved.hover).toBeNull();
   });
 
-  it("is cleared by a reset and by a selection", () => {
-    const afterReset = run(
-      [
-        { type: "hover-established", spectrumIndex: 8 },
-        { type: "viewport-reset" },
-      ],
-      loaded(),
-    );
-    expect(afterReset.hover).toBeNull();
+  it("survives a gesture move that resolves to the same axis", () => {
+    // The counterexample, and the reason this is an invariant rather than a
+    // list of event names. Dragging further left at the left edge clamps to the
+    // range already shown: nothing moved, so an observation made a moment ago
+    // is still true.
+    const gesturing = run([{ type: "gesture-started", domain: { low: 0, high: 20 } }], loaded());
+    const epoch = activeGestureEpoch(gesturing) as number;
+    const hovering = run([{ type: "hover-established", spectrumIndex: 3 }], gesturing);
 
-    const afterSelection = run(
-      [
-        { type: "hover-established", spectrumIndex: 8 },
-        { type: "selection-committed", index: 8, retentionTime: 42 },
-      ],
-      loaded(),
+    const moved = run(
+      [{ type: "gesture-moved", epoch, domain: { low: -5, high: 15 } }],
+      hovering,
     );
-    expect(afterSelection.hover).toBeNull();
+
+    expect(renderedDomain(moved)).toEqual({ low: 0, high: 20 });
+    expect(moved.hover).toEqual({ spectrumIndex: 3 });
+  });
+
+  it("survives a settle, which commits what was already on screen", () => {
+    // Settling does not move anything: the gesture's range becomes the
+    // committed one. An enumerated rule cleared hover here; the invariant does
+    // not, because there is nothing stale about the observation.
+    const gesturing = run([{ type: "gesture-started", domain: { low: 30, high: 50 } }], loaded());
+    const epoch = activeGestureEpoch(gesturing) as number;
+    const hovering = run([{ type: "hover-established", spectrumIndex: 8 }], gesturing);
+
+    const settled = run([{ type: "gesture-settled", epoch }], hovering);
+
+    expect(renderedDomain(settled)).toEqual({ low: 30, high: 50 });
+    expect(settled.hover).toEqual({ spectrumIndex: 8 });
+  });
+
+  it("is cleared by a reset that actually resets something", () => {
+    const zoomed = committed(loaded(), { low: 30, high: 50 });
+    const hovering = run([{ type: "hover-established", spectrumIndex: 8 }], zoomed);
+
+    expect(run([{ type: "viewport-reset" }], hovering).hover).toBeNull();
+    // And a reset at full range moves nothing, so it takes nothing away.
+    const atFull = run([{ type: "hover-established", spectrumIndex: 8 }], loaded());
+    expect(run([{ type: "viewport-reset" }], atFull).hover).toEqual({ spectrumIndex: 8 });
+  });
+
+  it("is cleared by a selection whose reveal moves the axis, and not otherwise", () => {
+    const zoomed = committed(loaded(), { low: 10, high: 30 });
+    const hovering = run([{ type: "hover-established", spectrumIndex: 8 }], zoomed);
+
+    // A selection off screen pans to it, so the observation is stale.
+    expect(
+      run([{ type: "selection-committed", index: 9, retentionTime: 80 }], hovering).hover,
+    ).toBeNull();
+    // One already on screen moves nothing.
+    expect(
+      run([{ type: "selection-committed", index: 9, retentionTime: 20 }], hovering).hover,
+    ).toEqual({ spectrumIndex: 8 });
+  });
+
+  it("is cleared by a new preview even when the axis happens to match", () => {
+    // The one clear that is not about the axis. A hover names a scan of the
+    // preview that was loaded, and a different run's indices are different
+    // scans -- so two previews sharing a retention-time domain must not share
+    // an observation.
+    const hovering = run([{ type: "hover-established", spectrumIndex: 8 }], loaded());
+
+    const reloaded = run([{ type: "preview-loaded", fullDomain: FULL }], hovering);
+    expect(renderedDomain(reloaded)).toEqual(FULL);
+    expect(reloaded.hover).toBeNull();
+    expect(run([{ type: "preview-closed" }], hovering).hover).toBeNull();
   });
 
   it("never selects anything", () => {
@@ -432,6 +502,115 @@ describe("hover", () => {
     expect(state.selection).toBeNull();
   });
 });
+
+describe("the rendered-domain invariant, over every transition", () => {
+  /**
+   * The table this invariant is stated as, rather than the list of events it
+   * used to be.
+   *
+   * Each row is a transition, the domain before and after, and therefore
+   * whether an observation made beforehand can still be true. Two rows exist
+   * only to prove the event's name is not the authority: the same event appears
+   * with and without a domain change, and hover follows the domain.
+   */
+  const CASES: readonly {
+    readonly what: string;
+    readonly from: () => ViewerInteractionState;
+    readonly event: ViewerEvent;
+    readonly movesTheAxis: boolean;
+  }[] = [
+    {
+      what: "gesture-moved onto a different range",
+      from: () => run([{ type: "gesture-started", domain: { low: 10, high: 30 } }], loaded()),
+      event: { type: "gesture-moved", epoch: 2, domain: { low: 60, high: 80 } },
+      movesTheAxis: true,
+    },
+    {
+      what: "gesture-moved clamped onto the same range",
+      from: () => run([{ type: "gesture-started", domain: { low: 0, high: 20 } }], loaded()),
+      event: { type: "gesture-moved", epoch: 2, domain: { low: -5, high: 15 } },
+      movesTheAxis: false,
+    },
+    {
+      what: "gesture-settled, which commits what is already shown",
+      from: () => run([{ type: "gesture-started", domain: { low: 30, high: 50 } }], loaded()),
+      event: { type: "gesture-settled", epoch: 2 },
+      movesTheAxis: false,
+    },
+    {
+      what: "viewport-step onto a different range",
+      from: loaded,
+      event: { type: "viewport-step", domain: { low: 30, high: 50 } },
+      movesTheAxis: true,
+    },
+    {
+      what: "viewport-step clamped onto the range already shown",
+      from: () => committed(loaded(), { low: 0, high: 20 }),
+      event: { type: "viewport-step", domain: { low: -10, high: 10 } },
+      movesTheAxis: false,
+    },
+    {
+      what: "viewport-reset from a zoom",
+      from: () => committed(loaded(), { low: 30, high: 50 }),
+      event: { type: "viewport-reset" },
+      movesTheAxis: true,
+    },
+    {
+      what: "viewport-reset at full range",
+      from: loaded,
+      event: { type: "viewport-reset" },
+      movesTheAxis: false,
+    },
+    {
+      what: "selection-committed needing a reveal",
+      from: () => committed(loaded(), { low: 10, high: 30 }),
+      event: { type: "selection-committed", index: 9, retentionTime: 80 },
+      movesTheAxis: true,
+    },
+    {
+      what: "selection-committed needing no reveal",
+      from: () => committed(loaded(), { low: 10, high: 30 }),
+      event: { type: "selection-committed", index: 9, retentionTime: 20 },
+      movesTheAxis: false,
+    },
+  ];
+
+  for (const { what, from, event, movesTheAxis } of CASES) {
+    it(`${movesTheAxis ? "invalidates" : "keeps"} a hover across ${what}`, () => {
+      const hovering = run([{ type: "hover-established", spectrumIndex: 8 }], from());
+      expect(hovering.hover).toEqual({ spectrumIndex: 8 });
+      const before = renderedDomain(hovering);
+
+      const after = run([event], hovering);
+
+      expect(sameRange(renderedDomain(after), before)).toBe(!movesTheAxis);
+      expect(after.hover).toEqual(movesTheAxis ? null : { spectrumIndex: 8 });
+    });
+  }
+
+  it("takes a hover away whenever the axis moves, whatever moved it", () => {
+    // The invariant as one statement over the whole table: no case exists in
+    // which the rendered domain changed and an observation survived.
+    for (const { from, event } of CASES) {
+      const hovering = run([{ type: "hover-established", spectrumIndex: 8 }], from());
+      const after = run([event], hovering);
+      if (!sameRange(renderedDomain(after), renderedDomain(hovering))) {
+        expect(after.hover).toBeNull();
+      }
+    }
+  });
+});
+
+/** Whether two rendered domains are the same range, by value. */
+function sameRange(
+  left: RetentionTimeDomain | null,
+  right: RetentionTimeDomain | null,
+): boolean {
+  if (left === null || right === null) {
+    return left === right;
+  }
+  return left.low === right.low && left.high === right.high;
+}
 
 describe("the rendered viewport", () => {
   it("is the gesture while one is in progress, and the commit otherwise", () => {

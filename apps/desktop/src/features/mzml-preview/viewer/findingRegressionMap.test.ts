@@ -21,6 +21,7 @@ import {
   viewerInteractionReducer,
 } from "./interactionState";
 import type { ViewerInteractionState } from "./interactionState";
+import { renderedDomain } from "./interactionState";
 import { clipTrace, revealScrollTop, visibleExtent } from "./renderGeometry";
 import { buildScanModel, nearestScan } from "./scanModel";
 import type { ScanPoint } from "./scanModel";
@@ -165,6 +166,61 @@ describe("the PR #72 findings, and what now prevents each", () => {
     });
 
     expect(zoomed.hover).toBeNull();
+  });
+});
+
+/**
+ * R0's own review found one more, and it is distinct evidence rather than a
+ * restatement of finding 9.
+ *
+ * Finding 9 was about a *committed* zoom or pan. This one is about a
+ * *transient* gesture move, which the first draft of this contract did not
+ * cover -- because the rule had been written as a list of events, and a list
+ * has to be added to.
+ */
+describe("the R0 Round-2 finding", () => {
+  it("10. hover does not survive a transient gesture that moves the axis", () => {
+    const gesturing = viewerInteractionReducer(loaded(), {
+      type: "gesture-started",
+      domain: { low: 10, high: 30 },
+    });
+    const epoch = activeGestureEpoch(gesturing) as number;
+    const hovering = viewerInteractionReducer(gesturing, {
+      type: "hover-established",
+      spectrumIndex: 8,
+    });
+
+    const moved = viewerInteractionReducer(hovering, {
+      type: "gesture-moved",
+      epoch,
+      domain: { low: 60, high: 80 },
+    });
+
+    expect(renderedDomain(moved)).toEqual({ low: 60, high: 80 });
+    expect(moved.hover).toBeNull();
+  });
+
+  it("10b. and the event's name is not what decides it", () => {
+    // The same event, clamped onto the range already shown. If this cleared
+    // hover too, the rule would be enumeration wearing an invariant's clothes.
+    const gesturing = viewerInteractionReducer(loaded(), {
+      type: "gesture-started",
+      domain: { low: 0, high: 20 },
+    });
+    const epoch = activeGestureEpoch(gesturing) as number;
+    const hovering = viewerInteractionReducer(gesturing, {
+      type: "hover-established",
+      spectrumIndex: 3,
+    });
+
+    const moved = viewerInteractionReducer(hovering, {
+      type: "gesture-moved",
+      epoch,
+      domain: { low: -5, high: 15 },
+    });
+
+    expect(renderedDomain(moved)).toEqual({ low: 0, high: 20 });
+    expect(moved.hover).toEqual({ spectrumIndex: 3 });
   });
 });
 
