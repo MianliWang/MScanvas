@@ -616,7 +616,7 @@ inside a memo boundary. From R1.1: a planner matrix over the viewport states,
 each answer also checked against an independently constructed event, and the
 render-versus-press interval. From R1.2: the same matrix for the wheel,
 including the state no component can be put in — a viewer with no run loaded,
-which draws no plot for a wheel to arrive at — and twelve cases at the
+which draws no plot for a wheel to arrive at — and eleven cases at the
 production adapter that assert the interaction state and
 `WheelEvent.defaultPrevented` separately, because whether the viewport moved and
 who the input belonged to are different failures.
