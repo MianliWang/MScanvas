@@ -531,6 +531,31 @@ describe("choosing a scan", () => {
     expect(screen.getByText(/Selected index 20, scan 21, MS1/u)).toBeVisible();
   });
 
+  it("keeps the marker where the scan is under the range on screen now", () => {
+    /*
+     * The selected scan is persistent and, unlike a hover, is *not* invalidated
+     * by the axis moving -- correctly, because the user still selected it. So a
+     * coordinate scaled when the selection was made and kept would leave the
+     * rule standing where the scan no longer is, and nothing would clear it.
+     * The marker is therefore derived from the scan's own retention time at
+     * draw time, every time.
+     */
+    renderChromatogram();
+    send({ type: "selection-committed", index: 20, retentionTime: 20 * 0.0125 });
+    const before = document.querySelector("g.chromatogram-selected line")?.getAttribute("x1");
+
+    send({ type: "viewport-step", domain: { low: 0.2, high: 0.3 } });
+
+    const after = document.querySelector("g.chromatogram-selected line")?.getAttribute("x1");
+    expect(after).not.toBe(before);
+    // 0.25 falls at the middle of a 0.2-0.3 range, which is the middle of the
+    // drawing area: 64 + 924 / 2.
+    expect(Number(after)).toBeCloseTo(526, 0);
+    expect(document.querySelector("g.chromatogram-selected rect")?.getAttribute("x")).toBe(
+      String(Number(after) - 4.5),
+    );
+  });
+
   it("draws no marker while nothing is selected", () => {
     renderChromatogram();
 

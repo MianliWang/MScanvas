@@ -156,6 +156,20 @@ PR #72's rule standing where the scan no longer was. Pointer leave and blur
 dispatch `hover-cleared`; no other hover lifetime rule exists outside the
 reducer's finalizer.
 
+Writing the mutation for that last sentence turned up something worth recording.
+**A cached hover coordinate is no longer reachable**, because ADR 0032's
+finalizer drops a hover on any change of `renderedDomain`, and the x scale
+depends on nothing else — so an observation is always drawn under the very domain
+it was made in, and a cache of it cannot be stale. The invariant removed the
+defect class rather than a test catching an instance of it.
+
+The reachable member of that class is the **selected marker**, which is
+persistent and deliberately *not* invalidated by the axis moving — the user still
+selected that scan. A coordinate scaled when the selection was made and kept
+would leave the rule standing where the scan no longer is, with nothing to clear
+it. So the marker is derived from the scan's own retention time at draw time,
+every time, and a test pins its position across a viewport change.
+
 **Wheel.** `zoomDomain` about the pointer, then `gesture-started` if no gesture is
 active and `gesture-moved(epoch, …)` otherwise, with the epoch read back out of
 the dispatch's own answer. A 120ms timer then emits `gesture-settled(epoch)`.
