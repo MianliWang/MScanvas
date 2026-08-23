@@ -24,6 +24,16 @@ const CALL_LOG = "__mscanvasIpcCalls__";
 /** Where the browser-side answer table lives. */
 const TABLE = "__mscanvasIpcTable__";
 
+/**
+ * Where the answer table lives on `window`.
+ *
+ * Exported so a spec can build a very large answer *in the page* rather than
+ * shipping it through an init script. A 36,319-row spectrum table is megabytes
+ * of JSON; generating it where it is used keeps the driver payload small and
+ * the fixture deterministic.
+ */
+export const IPC_TABLE_KEY = TABLE;
+
 /** Where the browser-side console ledger lives. */
 const CONSOLE_LOG = "__mscanvasConsole__";
 
