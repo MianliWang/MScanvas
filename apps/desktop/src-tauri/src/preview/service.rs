@@ -109,8 +109,8 @@ use super::dto::{
 };
 use super::export::{
     BeginExportRefusal, ClaimedChromatogramExport, ClaimedSpectrumExport, FigureFailure,
-    ScientificExportSlots, SpectrumExportFormat, data_document, figure_raster, png_document,
-    png_of, raster_of, svg_document,
+    PreviewOpenTicket, ScientificExportSlots, SpectrumExportFormat, data_document, figure_raster,
+    png_document, png_of, raster_of, svg_document,
 };
 use super::figure::{
     FigureRenderSettings, PngDpi, RasterFailure, SettingsRefusal, validate_raster_budget,
@@ -2093,14 +2093,22 @@ impl PreviewService {
         )
     }
 
+    /// Retains one synthetic chromatogram as if a preview open had produced it.
+    ///
+    /// Through the ordinary ordering rule rather than around it: the seed takes
+    /// a preview-open ticket and reconciles against it, exactly as a real open
+    /// does. There is no installation path that skips the ticket -- the
+    /// installation itself is private to the export module -- so a fixture
+    /// cannot leave production with a weaker order than the one it is testing.
     #[cfg(feature = "e2e")]
     pub(super) fn install_seeded_chromatogram(
         &self,
         owner: super::selection::DatasetId,
         source: super::chromatogram::ChromatogramSource,
     ) {
-        self.spectrum_export_slot()
-            .install_chromatogram(owner, source);
+        let mut slots = self.spectrum_export_slot();
+        let ticket = slots.begin_preview_open();
+        slots.reconcile_preview_chromatogram(ticket, owner, Some(source));
     }
 
     /// Starts one export of one named spectrum, answering with its reservation.
@@ -2439,24 +2447,32 @@ impl PreviewService {
     /// show. A truncated viewer has no chromatogram and no chromatogram export.
     ///
     /// Answers the opaque name the webview receives, or `None` where there is
-    /// nothing to name. Either way the previous chromatogram is gone: a token
-    /// naming a run that is no longer loaded must fail as stale rather than
-    /// quietly export whatever is loaded now.
+    /// nothing to name. The previous chromatogram is already gone by this point:
+    /// the ticket this open took at its beginning revoked it there, because a
+    /// token naming a run the user is no longer looking at must fail as stale
+    /// rather than quietly export whatever happens to be loaded now.
+    ///
+    /// `ticket` is what decides whether this completion may speak at all. The
+    /// per-dataset request epoch checked before this cannot: two opens of two
+    /// *different* datasets are each the newest request for their own dataset,
+    /// so by that test both are current and whichever finishes last would own
+    /// the one chromatogram the session has -- which is the older one whenever
+    /// the newer open is the faster read.
     fn reconcile_chromatogram_export(
         &self,
+        ticket: PreviewOpenTicket,
         owner: DatasetId,
         rows: &Arc<Vec<TableRowFacts>>,
         truncated: bool,
     ) -> Option<String> {
+        // Decided before the lock: whether a run is one the viewer would draw is
+        // a question about the science, and the answer does not depend on what
+        // any other open is doing. What must not be split is the ownership test
+        // and the installation, and those are one call below.
         let source = ChromatogramSource::from_rows(rows, truncated);
-        let mut slots = self.spectrum_export_slot();
-        match source {
-            Some(source) => Some(slots.install_chromatogram(owner, source).token().as_wire()),
-            None => {
-                slots.forget_chromatogram();
-                None
-            }
-        }
+        self.spectrum_export_slot()
+            .reconcile_preview_chromatogram(ticket, owner, source)
+            .map(|snapshot| snapshot.token().as_wire())
     }
 
     /// Binds one chromatogram export and reserves the one scientific lane.
@@ -5142,6 +5158,29 @@ impl PreviewService {
             .workspace()
             .begin_open_request(id)
             .ok_or_else(unknown_dataset)?;
+        // And claimed in the *global* order too, which is a different question
+        // from the one above and has to be asked separately.
+        //
+        // The epoch says whether this is the newest request for this dataset.
+        // The ticket says whether this is the preview open the session is
+        // currently on -- across every dataset, because there is only one
+        // chromatogram the user is looking at and only one that may be
+        // exported. Two opens of two different files are each current by the
+        // epoch and cannot both be current by this.
+        //
+        // Taken here, before the backend wait and before any process starts, so
+        // that beginning a newer open supersedes the older one's chromatogram at
+        // the moment the user asks rather than whenever the read happens to
+        // finish. That matches the webview exactly: it raises its own counter
+        // before it calls, and the preview it replaced never comes back.
+        //
+        // Not taken for a vendor row or a handle the session does not have.
+        // Neither of those opens anything -- the frontend refuses a vendor
+        // activation outright, and both return above -- so neither is a reason
+        // to take away the chromatogram of the preview still on screen.
+        //
+        // The export slots are a leaf, and this holds nothing else.
+        let preview_open = self.spectrum_export_slot().begin_preview_open();
         // Taken after the epoch and before anything is established about the
         // file, so what is checked describes the moment the read actually
         // begins rather than the moment the request arrived.
@@ -5309,13 +5348,20 @@ impl PreviewService {
         let described =
             dataset_dto(&workspace, id).unwrap_or_else(|| selected_file_dto(id, &file, None));
         drop(workspace);
-        // After the workspace lock, because the export slots are a leaf.
+        // After the workspace lock, because the export slots are a leaf. Every
+        // path here takes them in that order and none takes them together, so
+        // there is no inversion to reason about.
         //
-        // Install *or* revoke, never neither: opening a preview whose run has
-        // no chromatogram must take away the one that was there, or the webview
-        // would keep a token naming a run it is no longer looking at.
-        let chromatogram_export_token =
-            self.reconcile_chromatogram_export(id, &table_rows, spectrum_table.truncated);
+        // Install *or* revoke, never neither -- and only if this open is still
+        // the one the session is on. A completion that a newer open has passed
+        // installs nothing and revokes nothing: the answer it is carrying is one
+        // the webview has already decided not to look at.
+        let chromatogram_export_token = self.reconcile_chromatogram_export(
+            preview_open,
+            id,
+            &table_rows,
+            spectrum_table.truncated,
+        );
 
         Ok(PreviewDto {
             installation_generation: generation,

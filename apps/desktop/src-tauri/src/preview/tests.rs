@@ -32,10 +32,11 @@ use super::drop_ingestion::{
     expand_drop_paths_with_budget_using, normalize_window_drop_event,
 };
 use super::dto::{
-    BackendAvailabilityDto, BackendFailureDto, DropIngestionResultDto, DropScanLimitDto,
-    FigureSettingsDto, MAX_CONVERSION_QUEUE_ITEMS, MAX_WORKSPACE_DATASETS, PreviewErrorDto,
-    SelectedFileDto, SelectedSpectrumOutcomeDto, SpectrumExportOutcomeDto, WorkspaceAddOutcomeDto,
-    WorkspaceDropUpdateDto, WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto,
+    BackendAvailabilityDto, BackendFailureDto, ChromatogramRangeDto, ChromatogramTracesDto,
+    DropIngestionResultDto, DropScanLimitDto, FigureSettingsDto, MAX_CONVERSION_QUEUE_ITEMS,
+    MAX_WORKSPACE_DATASETS, PreviewErrorDto, SelectedFileDto, SelectedSpectrumOutcomeDto,
+    SpectrumExportOutcomeDto, WorkspaceAddOutcomeDto, WorkspaceDropUpdateDto,
+    WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto,
 };
 use super::dto::{
     ConversionConflictPolicyDto, ConversionDiagnosticsExportDto, ConversionDiagnosticsStateDto,
@@ -21031,4 +21032,508 @@ fn choosing_another_file_through_the_picker_revokes_the_retained_spectrum() {
             .kind,
         "spectrum_export_stale"
     );
+}
+
+// -------------------------------------- which preview open owns the chromatogram
+
+/// Holds every read of one named file until the test lets it go.
+///
+/// `BlockFirstProvider` blocks whichever read arrives first, which is the wrong
+/// shape for a test that has to establish a preview *before* the one it means to
+/// catch half-way. This one names its victim.
+struct BlockOneSourceProvider {
+    inner: FakeProvider,
+    blocked: PathBuf,
+    started: mpsc::Sender<()>,
+    release: Mutex<Option<mpsc::Receiver<()>>>,
+}
+
+impl PreviewProvider for BlockOneSourceProvider {
+    fn use_installation(&self, _home: Option<PathBuf>) {}
+
+    fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
+        self.inner.availability()
+    }
+
+    fn run(
+        &self,
+        source: &Path,
+        operation: &PreviewOperation,
+    ) -> Result<OperationAttempt, PreviewErrorDto> {
+        // By name rather than by whole path: the service revalidates what it
+        // was given, so what reaches a provider is not byte-identical to the
+        // path a test handed to `add_dataset`.
+        if source.file_name() == self.blocked.file_name()
+            && let Some(release) = self.release.lock().expect("test lock").take()
+        {
+            let _ = self.started.send(());
+            release
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the test released the gate rather than timing out");
+        }
+        self.inner.run(source, operation)
+    }
+}
+
+fn full_run_range() -> ChromatogramRangeDto {
+    ChromatogramRangeDto {
+        scope: "full".to_owned(),
+        low: None,
+        high: None,
+    }
+}
+
+const fn both_traces() -> ChromatogramTracesDto {
+    ChromatogramTracesDto {
+        tic: true,
+        bpc: true,
+    }
+}
+
+/// Whether this token still names a run this session would export.
+fn chromatogram_export_refusal(service: &PreviewService, token: &str) -> Option<String> {
+    match service.begin_chromatogram_export(
+        token,
+        "csv",
+        &full_run_range(),
+        both_traces(),
+        &default_figure_settings(),
+    ) {
+        Ok(reservation) => {
+            // Returned to idle, so one probe does not decide the next one's
+            // answer by leaving the lane reserved.
+            service.cancel_chromatogram_export(&reservation);
+            None
+        }
+        Err(error) => Some(error.kind),
+    }
+}
+
+/// Opening another run moves the one chromatogram export onto it.
+#[test]
+fn opening_another_run_moves_the_chromatogram_export_to_the_visible_one() {
+    let file = TestFile::new("chromatogram-owner");
+    let other = file.copy("other.mzML");
+    let mut responses = open_responses();
+    responses.extend(open_responses());
+    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let first = service.add_dataset(&file.path).expect("added");
+    let second = service.add_dataset(&other).expect("added");
+
+    let opened = service
+        .open_preview(&first.handle)
+        .expect("the first opens");
+    let replaced = opened
+        .chromatogram_export_token
+        .expect("a run the viewer draws has a chromatogram export");
+    assert_eq!(chromatogram_export_refusal(&service, &replaced), None);
+
+    let opened = service
+        .open_preview(&second.handle)
+        .expect("the second opens");
+    let visible = opened
+        .chromatogram_export_token
+        .expect("and so does the run that replaced it");
+
+    assert_ne!(visible, replaced, "a new run is named by a new token");
+    assert_eq!(chromatogram_export_refusal(&service, &visible), None);
+    assert_eq!(
+        chromatogram_export_refusal(&service, &replaced),
+        Some("chromatogram_export_stale".to_owned()),
+        "a token naming a run nobody is looking at exports nothing",
+    );
+}
+
+/// The chromatogram goes when the *next* open begins, not when it finishes.
+///
+/// The webview raises its own counter before it calls and takes the previous
+/// preview off the screen there; a session that waited for the reply would go on
+/// offering an export of a run nothing is showing, for as long as a large file
+/// takes to read.
+#[test]
+fn beginning_another_open_revokes_the_chromatogram_before_the_read_returns() {
+    let file = TestFile::new("chromatogram-begin-revokes");
+    let other = file.copy("other.mzML");
+    let mut responses = open_responses();
+    responses.extend(open_responses());
+    let (started, observe_start) = mpsc::channel();
+    let (release, wait_for_release) = mpsc::channel();
+    let service = Arc::new(PreviewService::new(Box::new(BlockOneSourceProvider {
+        inner: FakeProvider::available(responses),
+        blocked: other.clone(),
+        started,
+        release: Mutex::new(Some(wait_for_release)),
+    })));
+    let first = service.add_dataset(&file.path).expect("added");
+    let second = service.add_dataset(&other).expect("added");
+
+    let replaced = service
+        .open_preview(&first.handle)
+        .expect("the first opens")
+        .chromatogram_export_token
+        .expect("a run the viewer draws has a chromatogram export");
+    assert_eq!(chromatogram_export_refusal(&service, &replaced), None);
+
+    let opening = {
+        let service = Arc::clone(&service);
+        let handle = second.handle.clone();
+        std::thread::spawn(move || service.open_preview(&handle))
+    };
+    observe_start
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the second open reached the provider");
+
+    assert_eq!(
+        chromatogram_export_refusal(&service, &replaced),
+        Some("chromatogram_export_stale".to_owned()),
+        "the run being replaced stopped being exportable when the open began",
+    );
+
+    release.send(()).expect("the provider is still waiting");
+    let visible = opening
+        .join()
+        .expect("the second open finished")
+        .expect("the second opens")
+        .chromatogram_export_token
+        .expect("and it has a chromatogram of its own");
+    assert_eq!(chromatogram_export_refusal(&service, &visible), None);
+}
+
+/// A row removed while its open was reading leaves no chromatogram behind.
+///
+/// The completion is refused by the per-dataset check before it reaches the
+/// export slots -- the dataset it describes is gone -- so nothing installs, and
+/// the run it replaced is not resurrected either.
+#[test]
+fn a_dataset_removed_while_it_was_opening_installs_no_chromatogram() {
+    let file = TestFile::new("chromatogram-removed-while-opening");
+    let other = file.copy("other.mzML");
+    let mut responses = open_responses();
+    responses.extend(open_responses());
+    let (started, observe_start) = mpsc::channel();
+    let (release, wait_for_release) = mpsc::channel();
+    let service = Arc::new(PreviewService::new(Box::new(BlockOneSourceProvider {
+        inner: FakeProvider::available(responses),
+        blocked: other.clone(),
+        started,
+        release: Mutex::new(Some(wait_for_release)),
+    })));
+    let first = service.add_dataset(&file.path).expect("added");
+    let second = service.add_dataset(&other).expect("added");
+
+    let replaced = service
+        .open_preview(&first.handle)
+        .expect("the first opens")
+        .chromatogram_export_token
+        .expect("a run the viewer draws has a chromatogram export");
+
+    let opening = {
+        let service = Arc::clone(&service);
+        let handle = second.handle.clone();
+        std::thread::spawn(move || service.open_preview(&handle))
+    };
+    observe_start
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the second open reached the provider");
+
+    service
+        .remove_datasets(std::slice::from_ref(&second.handle))
+        .expect("a row not being converted is the user's to remove");
+    release.send(()).expect("the provider is still waiting");
+    assert!(
+        opening.join().expect("the second open finished").is_err(),
+        "an open of a row the session no longer has records nothing",
+    );
+
+    assert_eq!(
+        chromatogram_export_refusal(&service, &replaced),
+        Some("chromatogram_export_stale".to_owned()),
+        "and the run it replaced is not restored",
+    );
+}
+
+/// Holds the first read of each of two named files until the test lets it go.
+///
+/// Two independent gates rather than one, because the interleaving below needs
+/// both opens parked at once: one released into its completion while the other
+/// is held at the point where it has already taken its ticket.
+struct GateTwoSourcesProvider {
+    inner: FakeProvider,
+    first: PathBuf,
+    second: PathBuf,
+    started: mpsc::Sender<&'static str>,
+    first_release: Mutex<Option<mpsc::Receiver<()>>>,
+    second_release: Mutex<Option<mpsc::Receiver<()>>>,
+}
+
+impl PreviewProvider for GateTwoSourcesProvider {
+    fn use_installation(&self, _home: Option<PathBuf>) {}
+
+    fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
+        self.inner.availability()
+    }
+
+    fn run(
+        &self,
+        source: &Path,
+        operation: &PreviewOperation,
+    ) -> Result<OperationAttempt, PreviewErrorDto> {
+        let gate = if source.file_name() == self.first.file_name() {
+            Some(("first", &self.first_release))
+        } else if source.file_name() == self.second.file_name() {
+            Some(("second", &self.second_release))
+        } else {
+            None
+        };
+        if let Some((name, gate)) = gate
+            && let Some(release) = gate.lock().expect("test lock").take()
+        {
+            let _ = self.started.send(name);
+            release
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the test released the gate rather than timing out");
+        }
+        self.inner.run(source, operation)
+    }
+}
+
+/// The ordering rule holds through the real command, not only the slot.
+///
+/// The slot's own tests drive [`ScientificExportSlots`] directly. This one goes
+/// through `open_preview` twice, concurrently, so what is pinned is the wiring
+/// as well as the rule: that an open takes its ticket before its read, that the
+/// completion carries that same ticket to the reconcile, and that a run the
+/// session has moved past is not the exportable one afterwards.
+///
+/// The older open is held in its read until the newer one has been started, and
+/// the assertion is taken while the newer one is still reading -- the window in
+/// which the session is between previews and has nothing to export at all. The
+/// invariant does not depend on which thread wins anything: whatever order the
+/// two completions arrive in, the replaced run is never what an export names.
+/// Repeated, because a race only has to go one way once for the defect to be
+/// real.
+#[test]
+fn an_open_completing_as_a_newer_one_begins_never_installs_over_it() {
+    for _ in 0..40 {
+        let file = TestFile::new("chromatogram-reconcile-seam");
+        let other = file.copy("other.mzML");
+        let mut responses = open_responses();
+        responses.extend(open_responses());
+        let (started, observe_start) = mpsc::channel();
+        let (release_older, older_waits) = mpsc::channel();
+        let (release_newer, newer_waits) = mpsc::channel();
+        let service = Arc::new(PreviewService::new(Box::new(GateTwoSourcesProvider {
+            inner: FakeProvider::available(responses),
+            first: file.path.clone(),
+            second: other.clone(),
+            started,
+            first_release: Mutex::new(Some(older_waits)),
+            second_release: Mutex::new(Some(newer_waits)),
+        })));
+        let first = service.add_dataset(&file.path).expect("added");
+        let second = service.add_dataset(&other).expect("added");
+
+        // The older open takes its ticket and parks in its read.
+        let older = {
+            let service = Arc::clone(&service);
+            let handle = first.handle.clone();
+            std::thread::spawn(move || service.open_preview(&handle))
+        };
+        assert_eq!(
+            observe_start
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the older open reached the provider"),
+            "first",
+        );
+
+        // The newer open is a live thread already waiting, so that releasing the
+        // older one puts the two into the workspace lock together rather than
+        // paying for a thread to be created first.
+        let (start_newer, newer_may_start) = mpsc::channel();
+        let newer = {
+            let service = Arc::clone(&service);
+            let handle = second.handle.clone();
+            std::thread::spawn(move || {
+                newer_may_start
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("the test started it");
+                service.open_preview(&handle)
+            })
+        };
+        release_older.send(()).expect("the older open is waiting");
+        start_newer.send(()).expect("the newer open is waiting");
+
+        let replaced = older
+            .join()
+            .expect("the older open finished")
+            .expect("its own dataset is still the newest request for itself")
+            .chromatogram_export_token;
+        assert_eq!(
+            observe_start
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the newer open reached the provider"),
+            "second",
+        );
+
+        // The newer open has its ticket and has not finished reading, so the
+        // session is between previews and has nothing to export -- whether the
+        // older completion was refused outright or installed and was revoked by
+        // the newer beginning.
+        if let Some(replaced) = replaced.as_deref() {
+            assert_eq!(
+                chromatogram_export_refusal(&service, replaced),
+                Some("chromatogram_export_stale".to_owned()),
+                "a run a newer open has already begun over is not the exportable one",
+            );
+        }
+
+        release_newer.send(()).expect("the newer open is waiting");
+        let visible = newer
+            .join()
+            .expect("the newer open finished")
+            .expect("the newest open answers")
+            .chromatogram_export_token
+            .expect("and it names the run on screen");
+        assert_eq!(chromatogram_export_refusal(&service, &visible), None);
+    }
+}
+
+/// Emptying the list while an open was reading leaves no chromatogram behind.
+///
+/// The Remove case's sibling, and the one §20 of this milestone's lifecycle
+/// rules asks for by name. Clearing revokes what the slots hold; what has to
+/// hold as well is that the read still in flight cannot put one back afterwards.
+/// It cannot, and the reason is the per-dataset check rather than the ticket:
+/// the dataset the completion describes is no longer registered, so it is
+/// refused before it reaches the export slots at all.
+#[test]
+fn clearing_the_list_while_a_run_was_opening_installs_no_chromatogram() {
+    let file = TestFile::new("chromatogram-cleared-while-opening");
+    let other = file.copy("other.mzML");
+    let mut responses = open_responses();
+    responses.extend(open_responses());
+    let (started, observe_start) = mpsc::channel();
+    let (release, wait_for_release) = mpsc::channel();
+    let service = Arc::new(PreviewService::new(Box::new(BlockOneSourceProvider {
+        inner: FakeProvider::available(responses),
+        blocked: other.clone(),
+        started,
+        release: Mutex::new(Some(wait_for_release)),
+    })));
+    let first = service.add_dataset(&file.path).expect("added");
+    let second = service.add_dataset(&other).expect("added");
+
+    let replaced = service
+        .open_preview(&first.handle)
+        .expect("the first opens")
+        .chromatogram_export_token
+        .expect("a run the viewer draws has a chromatogram export");
+
+    let opening = {
+        let service = Arc::clone(&service);
+        let handle = second.handle.clone();
+        std::thread::spawn(move || service.open_preview(&handle))
+    };
+    observe_start
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the second open reached the provider");
+
+    service.clear_workspace().expect("the list clears");
+    release.send(()).expect("the provider is still waiting");
+    assert!(
+        opening.join().expect("the second open finished").is_err(),
+        "an open of a row the session no longer has records nothing",
+    );
+
+    assert_eq!(
+        chromatogram_export_refusal(&service, &replaced),
+        Some("chromatogram_export_stale".to_owned()),
+        "and a completion from before the clear does not put one back",
+    );
+}
+
+/// Focusing a vendor row is not a preview open.
+///
+/// Nothing is opened -- the frontend refuses the activation outright and Rust
+/// refuses the call -- so the mzML preview stays on screen and its chromatogram
+/// stays exportable. A ticket taken here would take an export away from a run
+/// the user never navigated away from.
+#[test]
+fn refusing_a_vendor_row_leaves_the_visible_chromatogram_exportable() {
+    let file = TestFile::new("chromatogram-vendor-focus");
+    let acquisition = file.thermo_raw("acquisition.raw");
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    let visible = service
+        .open_preview(&selected.handle)
+        .expect("the mzML row opens")
+        .chromatogram_export_token
+        .expect("a run the viewer draws has a chromatogram export");
+    let vendor = add_one_acquisition(&service, &acquisition);
+
+    assert_eq!(
+        service
+            .open_preview(&vendor)
+            .expect_err("nothing in this product reads a vendor acquisition")
+            .kind,
+        "dataset_not_previewable",
+    );
+
+    assert_eq!(
+        chromatogram_export_refusal(&service, &visible),
+        None,
+        "the preview on screen never went away",
+    );
+}
+
+/// Two opens of one dataset are still ordered by the per-dataset request epoch.
+///
+/// The global preview-open ticket answers a different question and does not
+/// replace this one: the epoch decides which read may commit facts for a
+/// dataset, and the older of two reads of one file must still be refused there
+/// rather than reconciled against by the spectrum that follows.
+#[test]
+fn two_opens_of_one_dataset_are_still_decided_by_the_request_epoch() {
+    let file = TestFile::new("chromatogram-same-dataset-order");
+    let mut responses = open_responses();
+    responses.extend(open_responses());
+    let (started, observe_start) = mpsc::channel();
+    let (release, wait_for_release) = mpsc::channel();
+    let service = Arc::new(PreviewService::new(Box::new(BlockFirstProvider {
+        inner: FakeProvider::available(responses),
+        started,
+        release: Mutex::new(Some(wait_for_release)),
+    })));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let open = || {
+        let service = Arc::clone(&service);
+        let handle = selected.handle.clone();
+        std::thread::spawn(move || service.open_preview(&handle))
+    };
+
+    let older = open();
+    observe_start
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the first open reached the provider");
+    let newer = open();
+    wait_for_requests(&service, &selected.handle, 2);
+    release.send(()).expect("the provider is still waiting");
+
+    assert_eq!(
+        older
+            .join()
+            .expect("the older open finished")
+            .expect_err("its result is no longer the one the user wants")
+            .kind,
+        "selection_superseded",
+    );
+    let visible = newer
+        .join()
+        .expect("the newer open finished")
+        .expect("the request the user is waiting for is the one that answers")
+        .chromatogram_export_token
+        .expect("and it names the run on screen");
+
+    assert_eq!(chromatogram_export_refusal(&service, &visible), None);
 }

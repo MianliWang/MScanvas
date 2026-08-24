@@ -609,6 +609,19 @@ export interface PreviewWorkspace {
    */
   readonly spectrumExport: SpectrumExportState;
   /**
+   * Whether the session's one scientific export lane is occupied.
+   *
+   * One answer for both surfaces, because Rust has one lane: while a
+   * chromatogram is being saved or copied the selected spectrum's actions are
+   * unavailable, and while a spectrum is being saved or copied the
+   * chromatogram's are. Derived from the two export states rather than stored
+   * beside them, so it cannot drift from either.
+   *
+   * Availability only. Neither surface shows the other's result or the other's
+   * status message: what is shared is the lane, not what happened in it.
+   */
+  readonly scientificExportBusy: boolean;
+  /**
    * The opaque name of the chromatogram this run may be exported as.
    *
    * `null` where Rust issued none, which is exactly where the viewer draws no
@@ -2433,7 +2446,35 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   );
   const pngDpiProblem = useMemo(() => describePngDpiProblem(figureSettings), [figureSettings]);
 
+  // ------------------------------------------------- scientific exports
+  //
+  // Two states, and they stay two. A selected spectrum and a chromatogram
+  // publish different results, bind different tokens and say different things
+  // about what was written, so one state standing for both would have to invent
+  // a result for whichever surface did not run.
+  //
+  // They are declared together because there is exactly one lane underneath
+  // them, and the projection below has to be able to see both.
   const [spectrumExport, setSpectrumExport] = useState<SpectrumExportState>({ status: "idle" });
+  const [chromatogramExport, setChromatogramExport] = useState<ChromatogramExportState>({
+    status: "idle",
+  });
+  /**
+   * Whether the session's one scientific export lane is occupied.
+   *
+   * Derived, and deliberately not stored. Rust holds a single lane across both
+   * surfaces -- two native save dialogs for one window is not a state this
+   * application can be in -- so "may another scientific export begin now" has
+   * one answer, and a third state machine here could only disagree with it.
+   *
+   * It governs *availability* and nothing else. Each surface keeps its own
+   * result, its own status message and its own token binding, because each of
+   * those is a fact about that surface rather than about the lane. And Rust
+   * remains the safety boundary: this is what makes the interface truthful, not
+   * what makes it safe.
+   */
+  const scientificExportBusy =
+    spectrumExport.status === "running" || chromatogramExport.status === "running";
   // A result belongs to the spectrum it describes. Loading another one clears
   // it, so a panel can never show "saved 1,000,000 points" beside a different
   // measurement -- which is the one way this surface could mislead about which
@@ -2462,7 +2503,12 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       if (spectrum.status !== "loaded") {
         return;
       }
-      if (spectrumExport.status === "running") {
+      // The one scientific lane, whichever surface is holding it. A
+      // chromatogram export running is exactly as much a reason not to start
+      // this one as a spectrum export running: Rust refuses either way, and
+      // offering an action already known to be refused is offering something
+      // that cannot work.
+      if (scientificExportBusy) {
         return;
       }
       // A figure the settings could not describe is not offered, so reaching
@@ -2524,21 +2570,21 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           });
         });
     },
-    [api, resolvedPngDpi, resolvedRenderSettings, spectrum, spectrumExport.status],
+    [api, resolvedPngDpi, resolvedRenderSettings, scientificExportBusy, spectrum],
   );
 
   /**
    * Puts the loaded spectrum's figure on the system clipboard.
    *
-   * The same lane as an export, because Rust has one: a copy while a save is
-   * running is refused there, and offering it here would be offering an action
-   * already known to fail.
+   * The same lane as an export, because Rust has one: a copy while any
+   * scientific save is running is refused there, and offering it here would be
+   * offering an action already known to fail.
    */
   const copySpectrumPlot = useCallback(() => {
     if (spectrum.status !== "loaded") {
       return;
     }
-    if (spectrumExport.status === "running") {
+    if (scientificExportBusy) {
       return;
     }
     // The figure, and nothing about a resolution. A clipboard image is RGBA
@@ -2577,13 +2623,10 @@ export function usePreviewWorkspace(): PreviewWorkspace {
           error: toPreviewError(cause),
         });
       });
-  }, [api, resolvedPngDpi, resolvedRenderSettings, spectrum, spectrumExport.status]);
+  }, [api, resolvedPngDpi, resolvedRenderSettings, scientificExportBusy, spectrum]);
 
   // ------------------------------------------------- chromatogram export
 
-  const [chromatogramExport, setChromatogramExport] = useState<ChromatogramExportState>({
-    status: "idle",
-  });
   const [chromatogramRangeScope, setChromatogramRangeScope] =
     useState<ChromatogramRangeScope>("full");
   // Rust's answer, forwarded. `null` is a run with no chromatogram -- a table
@@ -2646,7 +2689,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       }
       // One scientific lane, and Rust owns it. Offering an action already known
       // to be refused there would be offering something that cannot work.
-      if (chromatogramExport.status === "running" || spectrumExport.status === "running") {
+      if (scientificExportBusy) {
         return;
       }
       const drawing = isChromatogramFigureFormat(format);
@@ -2707,12 +2750,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     },
     [
       api,
-      chromatogramExport.status,
       chromatogramExportToken,
       chromatogramRange,
       resolvedPngDpi,
       resolvedRenderSettings,
-      spectrumExport.status,
+      scientificExportBusy,
       visibleTraces,
     ],
   );
@@ -2722,7 +2764,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     if (token === null) {
       return;
     }
-    if (chromatogramExport.status === "running" || spectrumExport.status === "running") {
+    if (scientificExportBusy) {
       return;
     }
     const render = resolvedRenderSettings;
@@ -2763,12 +2805,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       });
   }, [
     api,
-    chromatogramExport.status,
     chromatogramExportToken,
     chromatogramRange,
     resolvedPngDpi,
     resolvedRenderSettings,
-    spectrumExport.status,
+    scientificExportBusy,
     visibleTraces,
   ]);
 
@@ -2950,6 +2991,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     selectSpectrum,
     retrySpectrum,
     spectrumExport,
+    scientificExportBusy,
     exportSpectrum,
     copySpectrumPlot,
     dismissSpectrumExport,

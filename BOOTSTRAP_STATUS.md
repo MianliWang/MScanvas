@@ -4580,6 +4580,24 @@ version 1 reader genuinely cannot decode what this build writes.
 
 **One scientific export lane** now serves both surfaces, so two save dialogs
 cannot be open at once and a clipboard rasterization cannot race a file write.
+Because the lane is one, the interface says so once: a single derived
+`scientificExportBusy` projection closes both panels' figure, data and copy
+controls while either surface owns the lane, rather than leaving the other
+visibly live to reach Rust and come back refused. Availability is all that is
+shared -- each surface keeps its own result, status message and token binding,
+and neither panel is hidden while the other runs.
+
+**Which preview open owns the chromatogram** is a separate question from which
+read may commit facts for a dataset, and it now has its own answer. The
+per-dataset request epoch cannot order two opens of two *different* files --
+each is the newest request for its own dataset -- so every preview open takes a
+session-global ticket at its beginning, which revokes the previous chromatogram
+at that moment rather than when the new read returns. The ownership test and the
+snapshot installation happen in one critical section of the export slot, so a
+completion the session has passed can neither install nor revoke, and a newer
+open that fails leaves no chromatogram rather than resurrecting the old one --
+exactly what the webview does with the preview itself. An export already claimed
+still finishes from the snapshot it began on.
 
 ### Still not implemented
 

@@ -35,6 +35,11 @@ function renderPanel(
   draft: FigureSettingsDraft = DEFAULT_DRAFT,
   renderProblem: string | null = null,
   dpiProblem: string | null = null,
+  // What the composition passes: the lane is busy while *either* surface owns
+  // it, and this panel's own running state is one of the two ways it can be.
+  // Defaulted from that so every case written before the lane was shared keeps
+  // saying exactly what it said.
+  scientificExportBusy: boolean = exportState.status === "running",
 ): {
   readonly onExport: ReturnType<typeof vi.fn>;
   readonly onDismiss: ReturnType<typeof vi.fn>;
@@ -59,6 +64,7 @@ function renderPanel(
       onRetry={() => undefined}
       pngDpiProblem={dpiProblem}
       renderSettingsProblem={renderProblem}
+      scientificExportBusy={scientificExportBusy}
       state={state}
     />,
   );
@@ -102,6 +108,7 @@ describe("selected spectrum export affordance", () => {
           onRetry={() => undefined}
           pngDpiProblem={null}
           renderSettingsProblem={null}
+          scientificExportBusy={false}
           state={state}
         />,
       );

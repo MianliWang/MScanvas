@@ -59,6 +59,19 @@ const DATA_FORMATS: readonly {
 
 export interface ChromatogramExportPanelProps {
   readonly exportState: ChromatogramExportState;
+  /**
+   * Whether the session's one scientific export lane is occupied.
+   *
+   * Not this panel's own state. The selected spectrum shares the lane, so its
+   * save or copy closes these actions exactly as one of this panel's own would
+   * -- otherwise a button that is visibly available reaches Rust and comes back
+   * refused, which is a failure the interface caused rather than reported.
+   *
+   * Availability only. What this panel *says* still comes from `exportState`:
+   * a running label names the operation this surface started, and a spectrum's
+   * result is never shown here.
+   */
+  readonly scientificExportBusy: boolean;
   readonly rangeScope: ChromatogramRangeScope;
   readonly onRangeScope: (scope: ChromatogramRangeScope) => void;
   /**
@@ -82,6 +95,7 @@ export interface ChromatogramExportPanelProps {
 
 export function ChromatogramExportPanel({
   exportState,
+  scientificExportBusy,
   rangeScope,
   onRangeScope,
   committedDomain,
@@ -95,10 +109,17 @@ export function ChromatogramExportPanel({
   onFigureSetting,
   onFigureTheme,
 }: ChromatogramExportPanelProps) {
+  // What this surface is doing, which is what its labels are allowed to say.
   const running = exportState.status === "running";
   // A figure nothing can be drawn from is not offered. The data formats stay
   // live: a width nobody could draw at says nothing about a list of numbers.
-  const figureBlocked = running || renderSettingsProblem !== null;
+  //
+  // The lane is asked about first, and it is the *shared* lane rather than this
+  // surface's own state. The settings rules below are unchanged and independent
+  // of it: an unusable width still closes only the figures, an unusable
+  // resolution still closes only the raster, and neither of them has anything
+  // to do with the selected spectrum's settings.
+  const figureBlocked = scientificExportBusy || renderSettingsProblem !== null;
   const rasterBlocked = figureBlocked || pngDpiProblem !== null;
   // A panel of no series is refused by the contract, so a figure with neither
   // trace visible is not offered either. The data exports are untouched.
@@ -156,9 +177,10 @@ export function ChromatogramExportPanel({
           {FIGURE_FORMATS.map(({ format, label, recordsDpi }) => (
             <button
               className="secondary-button"
-              // Every figure action while one is running. Rust holds a single
-              // scientific export lane and refuses a second, so leaving the
-              // others live would offer an action already known to fail.
+              // Every figure action while any scientific export is running --
+              // this panel's own or the selected spectrum's. Rust holds a
+              // single lane across both surfaces and refuses a second, so
+              // leaving these live would offer an action already known to fail.
               disabled={(recordsDpi ? rasterBlocked : figureBlocked) || nothingDrawn}
               key={format}
               onClick={() => {
@@ -195,7 +217,7 @@ export function ChromatogramExportPanel({
               // Closed while any scientific export is running, for the same one
               // lane. Not closed by a figure setting, because none of them
               // reaches a data document, and not by a hidden trace either.
-              disabled={running}
+              disabled={scientificExportBusy}
               key={format}
               onClick={() => {
                 onExport(format);

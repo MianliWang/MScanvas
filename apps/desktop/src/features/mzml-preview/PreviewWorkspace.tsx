@@ -669,6 +669,7 @@ export function PreviewWorkspace() {
                     pngDpiProblem={workspace.pngDpiProblem}
                     rangeScope={workspace.chromatogramRangeScope}
                     renderSettingsProblem={workspace.renderSettingsProblem}
+                    scientificExportBusy={workspace.scientificExportBusy}
                     traces={workspace.chromatogramTraces}
                   />
                 ) : null
@@ -717,6 +718,7 @@ export function PreviewWorkspace() {
               onRetry={workspace.retrySpectrum}
               pngDpiProblem={workspace.pngDpiProblem}
               renderSettingsProblem={workspace.renderSettingsProblem}
+              scientificExportBusy={workspace.scientificExportBusy}
               state={spectrum}
             />
           </div>

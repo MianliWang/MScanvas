@@ -288,6 +288,23 @@ impl ChromatogramSnapshot {
     }
 }
 
+/// Which preview open owns the right to name the session's chromatogram.
+///
+/// **Not a dataset, not a request epoch, not a backend generation and not a
+/// path.** The per-dataset request epoch answers "may these facts commit for
+/// *this* dataset", and two opens of two different datasets are each current by
+/// it at the same time -- correctly, because they are answers to different
+/// questions. There is only ever one chromatogram a webview is looking at, so
+/// installing one has to be decided by a single order across every open, and
+/// that order is this.
+///
+/// It is session-scoped, monotonic, and never crosses to the webview. The
+/// frontend keeps its own counter for discarding stale replies; the two
+/// independently encode the same latest-open-wins semantic at their own
+/// boundary, and neither gets to tell the other which completion is current.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct PreviewOpenTicket(u64);
+
 /// One session-scoped name for one retained chromatogram.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct ChromatogramExportToken(u64);
@@ -367,6 +384,15 @@ pub(super) struct ScientificExportSlots {
     /// webview received is not a reason to open an export door onto a
     /// capability the product does not otherwise have.
     chromatogram: Option<ChromatogramSnapshot>,
+    /// The next preview open's ticket, and the one that has the chromatogram.
+    ///
+    /// Kept here rather than beside the workspace because this is the thing
+    /// being ordered: the question is which completion may install a
+    /// chromatogram, and the answer has to be read and acted on without letting
+    /// go in between. A generation compared under one lock and installed under
+    /// another is the same race with an extra step.
+    next_preview_open: u64,
+    latest_preview_open: PreviewOpenTicket,
     lane: ExportState,
 }
 
@@ -443,6 +469,10 @@ impl Default for ScientificExportSlots {
             next_reservation: 1,
             spectrum: None,
             chromatogram: None,
+            // Tickets are issued from one, so the ticket nothing holds is zero
+            // and no open can ever be mistaken for the session's initial state.
+            next_preview_open: 1,
+            latest_preview_open: PreviewOpenTicket(0),
             lane: ExportState::Idle,
         }
     }
@@ -479,12 +509,86 @@ impl ScientificExportSlots {
         snapshot
     }
 
+    /// Starts one preview open and hands back the ticket that names it.
+    ///
+    /// Two things happen here, and they are one decision. This open becomes the
+    /// only one that may install a chromatogram, and the chromatogram the
+    /// previous open installed stops being current **immediately** -- not when
+    /// this one succeeds, because it may not succeed, and the preview it
+    /// replaced is already off the screen either way. A newer open that fails
+    /// leaves no chromatogram at all rather than resurrecting the old one, which
+    /// is exactly what the webview does with the preview itself.
+    ///
+    /// An export already begun is untouched. It holds its own snapshot, taken
+    /// when its reservation was issued, and moving the viewer is not a reason to
+    /// cancel a file that is already being written.
+    pub(super) fn begin_preview_open(&mut self) -> PreviewOpenTicket {
+        let ticket = PreviewOpenTicket(self.next_preview_open);
+        self.next_preview_open = self
+            .next_preview_open
+            .checked_add(1)
+            .expect("a session opens fewer than u64::MAX previews");
+        self.latest_preview_open = ticket;
+        self.chromatogram = None;
+        ticket
+    }
+
+    /// Installs, or revokes, the chromatogram one *completed* preview open owns.
+    ///
+    /// The ownership test and the installation are one critical section on
+    /// purpose. Reading "am I still the latest open", letting go, and installing
+    /// afterwards is the race this exists to close: a newer open can begin in
+    /// that gap and the older completion would still win.
+    ///
+    /// Which is why there is no way to ask the question on its own. The slot
+    /// answers "may this open install", never "is this open current", and the
+    /// installer below is private -- so the two halves cannot be taken apart at
+    /// a call site. Splitting them means adding to this type, where it is
+    /// visible, rather than reordering two lines somewhere else.
+    ///
+    /// Three outcomes, and the difference between the last two is the whole
+    /// point:
+    ///
+    /// - **stale** -- another open has begun since. Nothing is touched. An older
+    ///   completion may not install, and may not revoke either: the chromatogram
+    ///   it would be taking away belongs to the preview the user is looking at.
+    /// - **current, with a source** -- it becomes the one a new export may name.
+    /// - **current, with none** -- this run has no chromatogram on screen, so the
+    ///   session has none. Install *or* revoke, never neither.
+    pub(super) fn reconcile_preview_chromatogram(
+        &mut self,
+        ticket: PreviewOpenTicket,
+        owner: DatasetId,
+        source: Option<ChromatogramSource>,
+    ) -> Option<ChromatogramSnapshot> {
+        // Asked and acted on without letting go, which is the whole mechanism.
+        // `&mut self` is the slot's lock: no other open can begin between this
+        // comparison and the write below, so there is no window in which a
+        // completion that read "I am current" installs after it stopped being.
+        if ticket != self.latest_preview_open {
+            return None;
+        }
+        match source {
+            Some(source) => Some(self.install_chromatogram(owner, source)),
+            None => {
+                self.chromatogram = None;
+                None
+            }
+        }
+    }
+
     /// Retains one chromatogram as the one a new export may name.
     ///
     /// Takes the source already decided to be exportable rather than deciding
     /// here: whether a run is one the viewer would draw is a scientific
     /// question, and it is answered where the science is.
-    pub(super) fn install_chromatogram(
+    ///
+    /// Private, and that is load-bearing. Every production installation goes
+    /// through [`Self::reconcile_preview_chromatogram`], so there is no path by
+    /// which a completion can install without first proving it is the open the
+    /// session is currently on -- the ordering rule cannot be forgotten at a
+    /// call site because there are no call sites outside this file.
+    fn install_chromatogram(
         &mut self,
         owner: DatasetId,
         source: ChromatogramSource,
@@ -512,6 +616,16 @@ impl ScientificExportSlots {
     /// Forgets the retained chromatogram.
     pub(super) fn forget_chromatogram(&mut self) {
         self.chromatogram = None;
+    }
+
+    /// Which chromatogram the slot holds, if it holds one.
+    ///
+    /// Test-only. Every production reader names a token and is answered by
+    /// [`Self::chromatogram_for`]; this exists so a test can say "and now there
+    /// is none at all", which is a state no token could describe.
+    #[cfg(test)]
+    pub(super) fn current_chromatogram_token(&self) -> Option<ChromatogramExportToken> {
+        self.chromatogram.as_ref().map(ChromatogramSnapshot::token)
     }
 
     /// Which spectrum the slot holds, if it holds one.
@@ -2653,5 +2767,332 @@ mod tests {
 
         assert!(slots.claim_chromatogram(&reservation.as_wire()).is_none());
         assert!(slots.claim_spectrum(&reservation.as_wire()).is_some());
+    }
+
+    // ------------------------------------- which preview open owns the chromatogram
+
+    /// A second exportable run, told apart from the first by how long it is.
+    fn other_chromatogram() -> ChromatogramSource {
+        let rows = std::sync::Arc::new(vec![
+            super::super::service::TableRowFacts::for_test(0, Some(1), 1, 10.0, false, 100.0, 40.0),
+            super::super::service::TableRowFacts::for_test(
+                1,
+                Some(2),
+                1,
+                20.0,
+                false,
+                300.0,
+                120.0,
+            ),
+            super::super::service::TableRowFacts::for_test(
+                2,
+                Some(3),
+                1,
+                30.0,
+                false,
+                500.0,
+                220.0,
+            ),
+        ]);
+        ChromatogramSource::from_rows(&rows, false).expect("an exportable run")
+    }
+
+    /// One whole preview open, in the two halves the service performs it in.
+    fn preview_open(
+        slots: &mut ScientificExportSlots,
+        dataset: DatasetId,
+        source: Option<ChromatogramSource>,
+    ) -> Option<ChromatogramSnapshot> {
+        let ticket = slots.begin_preview_open();
+        slots.reconcile_preview_chromatogram(ticket, dataset, source)
+    }
+
+    /// An older open cannot install over the preview the user is looking at.
+    ///
+    /// Round 2 of M4.3's review found this, and two *different* datasets are
+    /// what make it reachable. The per-dataset request epoch is not an ordering
+    /// between them: each open is the newest request for its own dataset, so
+    /// both are current by that test, and whichever completion arrived last used
+    /// to own the one chromatogram the session has -- which is the older open
+    /// whenever the newer file is the faster read.
+    #[test]
+    fn an_older_preview_open_cannot_install_over_a_newer_one() {
+        let mut slots = ScientificExportSlots::default();
+        // Both opens begin, in the order the user asked for them.
+        let older = slots.begin_preview_open();
+        let newer = slots.begin_preview_open();
+
+        // The newer one is the faster read and comes back first.
+        let visible = slots
+            .reconcile_preview_chromatogram(newer, owner(2), Some(other_chromatogram()))
+            .expect("the open the user is waiting for installs");
+
+        // The older one comes back afterwards, carrying a perfectly valid
+        // description of a dataset that is still registered.
+        assert!(
+            slots
+                .reconcile_preview_chromatogram(older, owner(1), Some(seeded_chromatogram()))
+                .is_none(),
+            "an open the session has already passed installs nothing",
+        );
+        assert_eq!(slots.current_chromatogram_token(), Some(visible.token()));
+        // And what the webview is holding still names the run on its screen.
+        assert_eq!(
+            slots
+                .chromatogram_for(&visible.token().as_wire())
+                .expect("the visible run is still exportable")
+                .source()
+                .scan_count(),
+            3,
+        );
+    }
+
+    /// While a newer open is still reading, the session has no chromatogram.
+    ///
+    /// The other order of the same race, and the one that says what "newer open
+    /// wins" has to mean: not "the newest completion wins", which is the defect,
+    /// but "only the newest *intent* may speak at all". This mirrors the webview
+    /// exactly -- it is in its opening state, showing neither run.
+    #[test]
+    fn an_older_open_finishing_first_installs_nothing_and_revokes_the_previous_run() {
+        let mut slots = ScientificExportSlots::default();
+        let previous = preview_open(&mut slots, owner(1), Some(seeded_chromatogram()))
+            .expect("a run on screen");
+        let previous_token = previous.token().as_wire();
+
+        let older = slots.begin_preview_open();
+        let newer = slots.begin_preview_open();
+        // Beginning took the previous run away at the moment the user asked,
+        // rather than whenever a read happens to finish.
+        assert_eq!(slots.current_chromatogram_token(), None);
+        assert_eq!(
+            slots
+                .begin_chromatogram_copy(&previous_token, full_range(), tic_only())
+                .err(),
+            Some(BeginExportRefusal::Stale),
+        );
+
+        // The older open finishes while the newer one is still reading.
+        assert!(
+            slots
+                .reconcile_preview_chromatogram(older, owner(1), Some(seeded_chromatogram()))
+                .is_none(),
+        );
+        assert_eq!(
+            slots.current_chromatogram_token(),
+            None,
+            "a run the user has moved past does not become the exportable one",
+        );
+
+        // Then the open they are actually waiting for lands.
+        let visible = slots
+            .reconcile_preview_chromatogram(newer, owner(2), Some(other_chromatogram()))
+            .expect("the newest open installs");
+        assert_eq!(slots.current_chromatogram_token(), Some(visible.token()));
+    }
+
+    /// A newer open that fails does not resurrect the run it replaced.
+    ///
+    /// The webview does not either: it shows the failure, not the preview from
+    /// before. Restoring the old chromatogram here would leave Rust offering an
+    /// export of a run that is no longer on any screen.
+    #[test]
+    fn a_newer_preview_open_that_fails_leaves_no_chromatogram_at_all() {
+        let mut slots = ScientificExportSlots::default();
+        let previous = preview_open(&mut slots, owner(1), Some(seeded_chromatogram()))
+            .expect("a run on screen");
+        let previous_token = previous.token().as_wire();
+
+        // It begins and never comes back: an unreadable file, a backend that
+        // stopped, a source that changed underneath it.
+        let _abandoned = slots.begin_preview_open();
+
+        assert_eq!(slots.current_chromatogram_token(), None);
+        assert_eq!(
+            slots.begin_chromatogram(
+                &previous_token,
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                defaults(),
+                None,
+            ),
+            Err(BeginExportRefusal::Stale),
+        );
+    }
+
+    /// The current open of a run with no chromatogram leaves the session none.
+    ///
+    /// Install *or* revoke, never neither. A truncated table, an empty run or
+    /// one whose retention times this build cannot read has no chromatogram on
+    /// screen, and keeping the previous one would let an export reach a run the
+    /// viewer stopped drawing.
+    #[test]
+    fn the_current_open_of_an_ineligible_run_revokes_the_previous_chromatogram() {
+        let mut slots = ScientificExportSlots::default();
+        preview_open(&mut slots, owner(1), Some(seeded_chromatogram())).expect("a run on screen");
+
+        assert!(preview_open(&mut slots, owner(2), None).is_none());
+        assert_eq!(slots.current_chromatogram_token(), None);
+    }
+
+    /// A *stale* open of an ineligible run revokes nothing.
+    ///
+    /// This is the distinction the whole rule turns on. "Current and ineligible"
+    /// means the session has no chromatogram; "stale, whatever it found" means
+    /// this completion has no say at all -- and letting it revoke would take the
+    /// export away from the run the user is looking at, for a reason nothing on
+    /// screen could explain.
+    #[test]
+    fn a_stale_open_of_an_ineligible_run_does_not_revoke_the_visible_one() {
+        let mut slots = ScientificExportSlots::default();
+        let older = slots.begin_preview_open();
+        let newer = slots.begin_preview_open();
+        let visible = slots
+            .reconcile_preview_chromatogram(newer, owner(2), Some(other_chromatogram()))
+            .expect("the newest open installs");
+
+        // The older read finished, and its run has no chromatogram.
+        assert!(
+            slots
+                .reconcile_preview_chromatogram(older, owner(1), None)
+                .is_none(),
+        );
+
+        assert_eq!(
+            slots.current_chromatogram_token(),
+            Some(visible.token()),
+            "a completion the session has passed revokes nothing",
+        );
+    }
+
+    /// The ticket test and the installation never come apart.
+    ///
+    /// A completion that decided it was current, let the slot go, and installed
+    /// afterwards would be the same race with one more step in it: a newer open
+    /// can begin in that gap and the older completion would still win. Driven
+    /// from two threads through one lock, the invariant is unconditional --
+    /// whichever order the lock grants, an open a newer one has passed never
+    /// leaves its run as the exportable one.
+    #[test]
+    fn a_completion_racing_a_newer_open_never_leaves_the_older_run_installed() {
+        use std::sync::Mutex;
+
+        for _ in 0..200 {
+            let slots = Arc::new(Mutex::new(ScientificExportSlots::default()));
+            let older = slots
+                .lock()
+                .expect("an uncontended lock")
+                .begin_preview_open();
+
+            let completing = {
+                let slots = Arc::clone(&slots);
+                std::thread::spawn(move || {
+                    slots
+                        .lock()
+                        .expect("the other thread does not panic")
+                        .reconcile_preview_chromatogram(
+                            older,
+                            owner(1),
+                            Some(seeded_chromatogram()),
+                        )
+                })
+            };
+            let opening = {
+                let slots = Arc::clone(&slots);
+                std::thread::spawn(move || {
+                    slots
+                        .lock()
+                        .expect("the other thread does not panic")
+                        .begin_preview_open()
+                })
+            };
+            completing.join().expect("the completion finished");
+            opening.join().expect("the newer open began");
+
+            assert_eq!(
+                slots
+                    .lock()
+                    .expect("both threads finished")
+                    .current_chromatogram_token(),
+                None,
+                "either the completion installed and the newer open took it away, or the \
+                 completion was already stale -- both leave nothing exportable",
+            );
+        }
+    }
+
+    /// An export already claimed finishes from the run it was begun on.
+    ///
+    /// ADR 0029's principle, across a preview replacement: the snapshot is taken
+    /// when the reservation is issued and is never rebound. Opening another run
+    /// while the picker is open moves what a *new* export would name; it does
+    /// not cancel a file the user is in the middle of choosing a destination
+    /// for, and it does not switch that file onto different science.
+    #[test]
+    fn a_claimed_chromatogram_export_survives_a_newer_preview_open() {
+        let mut slots = ScientificExportSlots::default();
+        let visible = preview_open(&mut slots, owner(1), Some(seeded_chromatogram()))
+            .expect("a run on screen");
+        let visible_token = visible.token().as_wire();
+        let reservation = slots
+            .begin_chromatogram(
+                &visible_token,
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                defaults(),
+                None,
+            )
+            .expect("a reservation");
+        let claimed = slots
+            .claim_chromatogram(&reservation.as_wire())
+            .expect("its dialog");
+
+        // The user opens another run while that dialog is still open.
+        let next = slots.begin_preview_open();
+        let installed = slots
+            .reconcile_preview_chromatogram(next, owner(2), Some(other_chromatogram()))
+            .expect("the newer open installs");
+
+        // What is being written is still the run it was begun from.
+        assert_eq!(claimed.snapshot.source().scan_count(), 2);
+        // And the lane is still committed, so the newly visible run cannot
+        // start a second export over the top of it.
+        assert_eq!(
+            slots.begin_chromatogram(
+                &installed.token().as_wire(),
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                defaults(),
+                None,
+            ),
+            Err(BeginExportRefusal::AlreadyExporting),
+        );
+
+        // Once it ends, the newly visible run exports and the replaced one is
+        // stale for anything new.
+        slots.begin_write();
+        assert!(slots.release_write());
+        assert!(
+            slots
+                .begin_chromatogram(
+                    &installed.token().as_wire(),
+                    ChromatogramExportFormat::Csv,
+                    full_range(),
+                    tic_only(),
+                    defaults(),
+                    None,
+                )
+                .is_ok(),
+        );
+        slots.cancel(&reservation.as_wire());
+        assert_eq!(
+            slots
+                .begin_chromatogram_copy(&visible_token, full_range(), tic_only())
+                .err(),
+            Some(BeginExportRefusal::Stale),
+        );
     }
 }

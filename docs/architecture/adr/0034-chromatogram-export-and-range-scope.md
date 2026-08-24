@@ -85,6 +85,59 @@ A stale token is **refused**, never rebound. Exporting "whatever is loaded now"
 under a token that named something else is the one failure a scientific export
 must not have.
 
+## Which preview open owns the chromatogram
+
+There is one chromatogram the user is looking at, so which completed read may
+install one has to be decided by a single order across **every** open. The
+per-dataset request epoch is not that order, and cannot be made into it: it
+answers *may these facts commit for this dataset*, and two opens of two
+different files are each the newest request for their own dataset at the same
+time — correctly. Left to decide the shared slot, the winner would be whichever
+read happened to finish last, which is the older open whenever the newer file is
+the faster read.
+
+So the two questions are answered by two mechanisms, and they are not
+interchangeable:
+
+| | question | scope |
+| --- | --- | --- |
+| dataset request epoch | which read may commit facts for *one* dataset? | per dataset |
+| preview-open ticket | which committed preview may own the *session's* chromatogram? | global |
+
+Every mzML preview open takes a `PreviewOpenTicket` at its **beginning**, before
+the backend work. The ticket is session-scoped, monotonic, and never crosses to
+the webview: it is not a dataset id, not a backend generation and not a path.
+
+Taking one revokes the previous chromatogram **immediately**, rather than when
+the new read succeeds. That is the semantic the visible preview already has: the
+webview raises its own counter before it calls, the replaced preview leaves the
+screen at that moment, and a newer open that *fails* shows its failure rather
+than restoring what it replaced. Rust matches it — a failed newer open leaves no
+chromatogram at all — because offering an export of a run nothing is showing is
+the same defect as a stale token.
+
+The ownership test and the installation are **one critical section** of the
+export slot. Compare, unlock, install later is the same race with an extra step
+in it: a newer open begins in the gap and the older completion still wins. The
+slot therefore offers no way to ask the question on its own — it answers "may
+this open install", never "is this open current", and the installer is private —
+so the two halves cannot be taken apart at a call site.
+
+Three outcomes, and the last two are what the rule turns on:
+
+- **stale** — nothing is touched. An older completion may not install, and may
+  not *revoke* either: the chromatogram it would take away belongs to the
+  preview on screen.
+- **current, with an eligible source** — it becomes the one a new export names.
+- **current, ineligible** — truncated, empty, or unusable retention times: the
+  session has none. Install *or* revoke, never neither.
+
+Two things are deliberately outside this order. Focusing a vendor row is not a
+preview open — nothing is opened, the loaded preview stays on screen, and its
+token stays valid. And an export already **claimed** finishes from the snapshot
+it was begun on: opening another run moves what a *new* export would name, and
+does not cancel a file the user is choosing a destination for.
+
 ## One scientific export lane
 
 Two visible export surfaces now exist. Rust holds **one** answer to "may another
@@ -100,6 +153,26 @@ write state are shared. ADR 0029's semantics are unchanged and now hold across
 kinds: a newer begin supersedes an **unclaimed** reservation — so a document that
 asked and then reloaded leaves nothing behind — and nothing supersedes a
 reservation that has been claimed, because claiming is what opens a dialog.
+
+Because the lane is one, the interface says so once. `scientificExportBusy` is a
+**derived projection** — either surface running — and not a third stored state:
+the two source-specific export states stay separate, because their result, their
+status message and their token binding are facts about a surface rather than
+about the lane, and a stored third could only disagree with them. Both surfaces'
+callbacks read the projection and both panels render it, so while either is
+running the other's figure, data and copy controls are unavailable rather than
+visibly live and refused on arrival.
+
+What is shared is **availability and nothing else**. Neither panel shows the
+other's status message or the other's result, and neither is hidden while the
+other runs — a control that vanished mid-write would move everything below it
+for a user who has not navigated anywhere. The settings rules are unchanged and
+apply on top: an unusable width still closes only the figures, an unusable
+resolution still closes only the raster, and neither surface's settings reach
+the other's exports.
+
+Rust remains the safety boundary. This is what makes the interface truthful, not
+what makes it safe.
 
 ## Full run, or current range
 
@@ -353,29 +426,56 @@ consistency, and touch gestures over the chromatogram.
 
 ## Evidence
 
-**Rust:** 1,186 tests. The chromatogram module's own thirty-one cover
+**Rust:** 1,202 tests. The chromatogram module's own thirty-one cover
 eligibility, ordering, range resolution and refusal, the schema, number
 round-tripping, real-scans-only, the zero-row range, the value window and the
 9,000,000 regression, the trace set and the one-scan run. The export lane's
 cover both directions of the cross-source refusal, supersession, claim identity,
-token staleness and dataset-scoped revocation. The contract's own cover the two
-new shapes and everything they must still refuse.
+token staleness and dataset-scoped revocation.
 
-**Frontend:** 991 tests, eighteen of them at the shipped composition — the token
+Fourteen of them cover preview-open ownership: the older open that cannot
+install over a newer one, the older open finishing first while the newer one is
+still reading, the newer open that fails leaving nothing rather than the run it
+replaced, current-and-ineligible revoking against stale-and-anything mutating
+nothing, a claimed export finishing from its begin-time snapshot across a
+replacement, revocation at begin rather than at completion, a vendor row that is
+not a preview open, two opens of one dataset still decided by the request epoch,
+Remove and Clear during a read, and one concurrent case at the real command
+boundary. The contract's own cover the two new shapes and everything they must
+still refuse.
+
+**Frontend:** 998 tests, eighteen of them at the shipped composition — the token
 sent, the committed range rather than a transient one, the traces on screen, the
 lane, the surface absent where there is no chromatogram, and a zero-scan range
-reported as the success it is.
+reported as the success it is. Seven cover the shared lane in both directions:
+four on the callbacks, where a refusal means no operation is dispatched at all,
+and three on the rendered panels, where it means a control the user meets is
+closed rather than live and refused on arrival.
 
 **Browser QA:** 15 rendered cases at 1366×768, 1920×1080 and 960×640 — the closed
 disclosure costing the measured layout nothing, every control inside its panel,
 and what actually crossed the boundary. Zero newly introduced console errors,
 warnings, unhandled rejections or exceptions.
 
-**Real Tauri QA:** 4 cases with `begin_chromatogram_export` and
-`copy_chromatogram_plot` left real, against a seeded run installed through the
-production parser and the ordinary eligibility.
+**Real Tauri QA:** 5 spec files on WebView2, including the 4 chromatogram cases
+with `begin_chromatogram_export` and `copy_chromatogram_plot` left real, against
+a seeded run installed through the production parser and the ordinary
+eligibility — and now through the ordinary preview-open ticket as well, because
+the seed reconciles rather than installing directly.
 
-**Fourteen mutations**, applied and restored byte-for-byte.
+**Twenty-three mutations**, applied and restored byte-for-byte. The nine added
+for export ownership cover both directions of the shared lane in the callbacks
+and in each panel, the absent ticket check, a stale completion allowed to
+revoke, a begin that does not revoke, the ticket standing in for the per-dataset
+epoch, and a begin that cancels a claimed export.
+
+One of the nine — check-then-act split across two acquisitions of the export
+slot — is **not killed by a test**, and is closed structurally instead: the slot
+answers "may this open install" and never "is this open current", and the
+installer is private, so writing the split means adding public surface to
+`ScientificExportSlots` rather than reordering two lines at a call site. The
+window a split would open is narrower than a thread wake, so a test that claimed
+to catch it would be claiming more than it could show.
 
 **Live ProteoWizard evidence: NOT RUN**, and not required: the export semantics
 depend on retained facts rather than on a backend read.

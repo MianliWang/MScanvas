@@ -132,6 +132,48 @@ function panTo(retentionTime: number): void {
   fireEvent.pointerUp(plot(), { button: 0, clientX: to, clientY: 100, pointerId: 1 });
 }
 
+/** The selected spectrum's own panel, which shares the one export lane. */
+function spectrumPanel(): HTMLElement {
+  const found = document.querySelector("section.spectrum-panel");
+  if (found === null) {
+    throw new Error("the selected spectrum panel is not on screen");
+  }
+  return found as HTMLElement;
+}
+
+/** One of the selected spectrum's controls, scoped away from this panel's. */
+function spectrumButton(name: string): HTMLButtonElement {
+  return within(spectrumPanel()).getByRole("button", { name }) as HTMLButtonElement;
+}
+
+/** Reads one spectrum, so the other surface has exports to offer. */
+async function selectAScan(): Promise<void> {
+  const grid = screen.getByRole("grid", { name: "Spectra" });
+  const rows = within(grid).getAllByRole("row");
+  fireEvent.click(rows[1] as HTMLElement);
+  await waitFor(() => {
+    expect(within(spectrumPanel()).queryByRole("button", { name: "Copy plot" })).not.toBeNull();
+  }, SETTLING);
+}
+
+/** Every scientific action the selected spectrum offers. */
+const SPECTRUM_ACTIONS = [
+  "Export SVG\u2026",
+  "Export PNG\u2026",
+  "Export CSV\u2026",
+  "Export TSV\u2026",
+  "Copy plot",
+] as const;
+
+/** Every scientific action this panel offers. */
+const CHROMATOGRAM_ACTIONS = [
+  "Export SVG\u2026",
+  "Export PNG\u2026",
+  "Export CSV\u2026",
+  "Export TSV\u2026",
+  "Copy plot",
+] as const;
+
 describe("what the chromatogram can be exported as", () => {
   it("offers nothing where the viewer draws no chromatogram", async () => {
     // A truncated table has no chromatogram on screen, and Rust issues no token
@@ -556,6 +598,122 @@ describe("what the chromatogram can be exported as", () => {
     expect(screen.getByRole("button", { name: "Export" }).getAttribute("aria-expanded")).toBe(
       "true",
     );
+  });
+
+  it("closes the selected spectrum's actions while a chromatogram export runs", async () => {
+    /*
+     * The half Round 2 of M4.3's review found. One lane means both surfaces are
+     * unavailable while either owns it -- otherwise a visibly available button
+     * reaches Rust and comes back refused, which is a failure this interface
+     * caused rather than reported.
+     *
+     * Both panels stay on screen and stay where they are. Hiding one would move
+     * everything below it while a file is being written, and the user has not
+     * navigated anywhere.
+     */
+    let release: (() => void) | null = null;
+    const preview = api({
+      chromatogramExport: () =>
+        new Promise((resolve) => {
+          release = () => {
+            resolve({ status: "cancelled" });
+          };
+        }),
+    });
+    await openTheViewer(preview);
+    await selectAScan();
+    openExport();
+
+    for (const name of SPECTRUM_ACTIONS) {
+      expect(spectrumButton(name).disabled).toBe(false);
+    }
+
+    fireEvent.click(button("Export CSV\u2026"));
+    await waitFor(() => {
+      expect(button("Export TSV\u2026").disabled).toBe(true);
+    });
+
+    for (const name of SPECTRUM_ACTIONS) {
+      expect(spectrumButton(name).disabled).toBe(true);
+    }
+    // Present, not hidden, and saying nothing about an export it did not start.
+    expect(within(spectrumPanel()).getByRole("status").textContent ?? "").not.toContain(
+      "chromatogram",
+    );
+
+    act(() => {
+      release?.();
+    });
+    await waitFor(() => {
+      expect(spectrumButton("Export CSV\u2026").disabled).toBe(false);
+    });
+    for (const name of CHROMATOGRAM_ACTIONS) {
+      expect(button(name).disabled).toBe(false);
+    }
+  });
+
+  it("closes this panel's actions while a selected-spectrum export runs", async () => {
+    // The other direction of the same lane. Neither surface is the privileged
+    // one, and a test that pinned only one of them would let the pair drift.
+    let release: (() => void) | null = null;
+    const preview = api({
+      spectrumExport: () =>
+        new Promise((resolve) => {
+          release = () => {
+            resolve({ status: "cancelled" });
+          };
+        }),
+    });
+    await openTheViewer(preview);
+    await selectAScan();
+    openExport();
+
+    for (const name of CHROMATOGRAM_ACTIONS) {
+      expect(button(name).disabled).toBe(false);
+    }
+
+    fireEvent.click(spectrumButton("Export CSV\u2026"));
+    await waitFor(() => {
+      expect(spectrumButton("Export TSV\u2026").disabled).toBe(true);
+    });
+
+    for (const name of CHROMATOGRAM_ACTIONS) {
+      expect(button(name).disabled).toBe(true);
+    }
+    // A closed control sends nothing, rather than sending and being ignored.
+    fireEvent.click(button("Export TSV\u2026"));
+    expect(preview.chromatogramExportRequests).toEqual([]);
+    // And this panel is still describing its own range rather than the other
+    // surface's export.
+    expect(exportStatus()).not.toContain("spectrum");
+
+    act(() => {
+      release?.();
+    });
+    await waitFor(() => {
+      expect(button("Export TSV\u2026").disabled).toBe(false);
+    });
+  });
+
+  it("keeps the settings rules independent of the surface that is not running", async () => {
+    // Availability is what the lane shares. An unusable figure size is a fact
+    // about a figure, not about the lane: it still closes the figures on both
+    // panels and still leaves both panels' data exports open, exactly as before.
+    const preview = api();
+    await openTheViewer(preview);
+    await selectAScan();
+    openExport();
+
+    fireEvent.change(within(panel()).getByRole("textbox", { name: /^Width/u }), {
+      target: { value: "" },
+    });
+
+    await waitFor(() => {
+      expect(button("Export SVG\u2026").disabled).toBe(true);
+    });
+    expect(button("Export CSV\u2026").disabled).toBe(false);
+    expect(spectrumButton("Export CSV\u2026").disabled).toBe(false);
+    expect(spectrumButton("Export SVG\u2026").disabled).toBe(true);
   });
 
   it("does not pan on a press the export surface owns", async () => {

@@ -54,6 +54,19 @@ export interface SelectedSpectrumPanelProps {
   readonly state: SpectrumState;
   readonly onRetry: () => void;
   readonly exportState: SpectrumExportState;
+  /**
+   * Whether the session's one scientific export lane is occupied.
+   *
+   * Not this panel's own state. The chromatogram shares the lane, so its save
+   * or copy closes these actions exactly as one of this panel's own would --
+   * otherwise a button that is visibly available reaches Rust and comes back
+   * refused, which is a failure the interface caused rather than reported.
+   *
+   * Availability only. What this panel *says* still comes from `exportState`:
+   * a running label names the operation this surface started, and a
+   * chromatogram's result is never shown here.
+   */
+  readonly scientificExportBusy: boolean;
   readonly onExport: (format: SpectrumExportFormat) => void;
   readonly onCopyPlot: () => void;
   readonly onDismissExport: () => void;
@@ -76,6 +89,7 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel({
   state,
   onRetry,
   exportState,
+  scientificExportBusy,
   onExport,
   onCopyPlot,
   onDismissExport,
@@ -110,6 +124,7 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel({
             onFigureTheme={onFigureTheme}
             pngDpiProblem={pngDpiProblem}
             renderSettingsProblem={renderSettingsProblem}
+            scientificExportBusy={scientificExportBusy}
           />
         ) : null}
       </header>
@@ -120,6 +135,7 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel({
 
 function SpectrumExportActions({
   exportState,
+  scientificExportBusy,
   onExport,
   onCopyPlot,
   onDismiss,
@@ -130,6 +146,7 @@ function SpectrumExportActions({
   onFigureTheme,
 }: {
   readonly exportState: SpectrumExportState;
+  readonly scientificExportBusy: boolean;
   readonly onExport: (format: SpectrumExportFormat) => void;
   readonly onCopyPlot: () => void;
   readonly onDismiss: () => void;
@@ -139,10 +156,17 @@ function SpectrumExportActions({
   readonly onFigureSetting: (field: FigureSettingsField, value: string) => void;
   readonly onFigureTheme: (theme: FigureTheme) => void;
 }) {
+  // What this surface is doing, which is what its labels are allowed to say.
   const running = exportState.status === "running";
   // A figure nothing can be drawn from is not offered. The data formats stay
   // live: a width nobody could draw at says nothing about a list of numbers.
-  const figureBlocked = running || renderSettingsProblem !== null;
+  //
+  // The lane is asked about first, and it is the *shared* lane rather than this
+  // surface's own state. The settings rules below are unchanged and independent
+  // of it: an unusable width still closes only the figures, an unusable
+  // resolution still closes only the raster, and neither of them has anything
+  // to do with the chromatogram's settings.
+  const figureBlocked = scientificExportBusy || renderSettingsProblem !== null;
   // And a resolution nothing could record closes the one output that records
   // one. `Export SVG…` and `Copy plot` stay exactly where they were, because
   // neither of them has ever read this number.
@@ -163,9 +187,10 @@ function SpectrumExportActions({
           {FIGURE_FORMATS.map(({ format, label, recordsDpi }) => (
             <button
               className="secondary-button"
-              // Every figure action while one is running. Rust holds a single
-              // figure-operation lane and refuses a second, so leaving the
-              // others live would offer an action already known to fail. Then
+              // Every figure action while any scientific export is running --
+              // this panel's own or the chromatogram's. Rust holds a single
+              // lane across both surfaces and refuses a second, so leaving
+              // these live would offer an action already known to fail. Then
               // the resolution, for the one output that writes it.
               disabled={recordsDpi ? rasterBlocked : figureBlocked}
               key={format}
@@ -197,10 +222,10 @@ function SpectrumExportActions({
           {DATA_FORMATS.map(({ format, label }) => (
             <button
               className="secondary-button"
-              // Closed while a figure is running for the same reason: one lane.
-              // Not closed by a figure setting, because none of them reaches a
-              // data document.
-              disabled={running}
+              // Closed while any scientific export is running, for the same one
+              // lane. Not closed by a figure setting, because none of them
+              // reaches a data document.
+              disabled={scientificExportBusy}
               key={format}
               onClick={() => {
                 onExport(format);
