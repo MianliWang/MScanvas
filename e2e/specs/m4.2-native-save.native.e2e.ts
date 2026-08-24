@@ -148,7 +148,18 @@ describe("M4.2 saving a figure through the real dialog", () => {
 
   beforeEach(async () => {
     workspace = mkdtempSync(join(tmpdir(), "mscanvas-native-"));
-    await loadWith(tauriTable({ real: ["begin_selected_spectrum_export", "save_selected_spectrum_export", "copy_selected_spectrum_plot"] }));
+    await loadWith(
+      tauriTable({
+        real: [
+          "begin_selected_spectrum_export",
+          "save_selected_spectrum_export",
+          "copy_selected_spectrum_plot",
+          "begin_chromatogram_export",
+          "save_chromatogram_export",
+          "copy_chromatogram_plot",
+        ],
+      }),
+    );
     await selectFirstSpectrum();
   });
 
@@ -235,6 +246,69 @@ describe("M4.2 saving a figure through the real dialog", () => {
     expect(svg).toContain('height="500"');
     // A vector figure has no physical resolution, and says nothing about one.
     expect(svg).not.toContain("600 DPI");
+  });
+
+  it("writes a chromatogram data file through the same real dialog", async () => {
+    /*
+     * The other scientific export surface, through the same boundary. Rust owns
+     * the path, the suggested name comes from the request rather than from
+     * anything about the source, and what lands on disk is the document the
+     * retained facts describe -- so this is where the schema stops being a unit
+     * test and becomes a file.
+     */
+    const destination = join(workspace, "chromatogram.csv");
+    await browser.$("button#chromatogram-export-toggle").click();
+    await browser.$("#chromatogram-export-panel").waitForDisplayed({ timeout: 30_000 });
+
+    const dialog = handleDialog("save", destination);
+    await browser.$("#chromatogram-export-panel").$("button=Export CSV…").click();
+    const handled = await dialog;
+
+    expect(handled.result?.found).toBe(true);
+    expect(handled.result?.invoked).toBe(true);
+
+    const status = await waitForOutcome();
+    expect(status).toContain("Saved");
+    expect(existsSync(destination)).toBe(true);
+
+    // The document Rust wrote, read back from disk.
+    const written = readFileSync(destination, "utf8");
+    expect(written).toContain("#format,mscanvas_chromatogram_export");
+    expect(written).toContain("#schema_version,1");
+    expect(written).toContain("#source,per_scan_spectrum_table");
+    expect(written).toContain("#range_scope,full");
+    expect(written).toContain(
+      "spectrum_index,scan_number,ms_level,retention_time,total_ion_current,base_peak_intensity",
+    );
+    // Both measured columns, and one record per scan of the seeded run.
+    const records = written
+      .split("\n")
+      .filter((line) => line.length > 0 && !line.startsWith("#"))
+      .slice(1);
+    expect(records.length).toBeGreaterThan(0);
+    for (const record of records) {
+      expect(record.split(",").length).toBe(6);
+    }
+    // Nothing about where it came from reached the file.
+    expect(written).not.toContain("mzML");
+    expect(written).not.toContain(workspace);
+  });
+
+  it("treats a dismissed chromatogram dialog as an outcome and writes nothing", async () => {
+    await browser.$("button#chromatogram-export-toggle").click();
+    await browser.$("#chromatogram-export-panel").waitForDisplayed({ timeout: 30_000 });
+
+    const dialog = handleDialog("cancel");
+    await browser.$("#chromatogram-export-panel").$("button=Export SVG…").click();
+    const handled = await dialog;
+
+    expect(handled.result?.found).toBe(true);
+    expect(handled.result?.invoked).toBe(true);
+
+    const status = await waitForOutcome();
+    expect(status).toContain("cancelled");
+    expect(status).not.toContain("Saved");
+    expect(existsSync(join(workspace, "chromatogram.svg"))).toBe(false);
   });
 
   it("treats a dismissed dialog as an outcome and writes nothing", async () => {
