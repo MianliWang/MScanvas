@@ -108,9 +108,9 @@ use super::dto::{
     adoption_superseded, outputs_not_adoptable,
 };
 use super::export::{
-    BeginExportRefusal, ClaimedChromatogramExport, ClaimedExport, ClaimedSpectrumExport,
-    FigureFailure, ScientificExportSlots, SpectrumExportFormat, data_document, figure_raster,
-    png_document, png_of, raster_of, svg_document,
+    BeginExportRefusal, ClaimedChromatogramExport, ClaimedSpectrumExport, FigureFailure,
+    ScientificExportSlots, SpectrumExportFormat, data_document, figure_raster, png_document,
+    png_of, raster_of, svg_document,
 };
 use super::figure::{
     FigureRenderSettings, PngDpi, RasterFailure, SettingsRefusal, validate_raster_budget,
@@ -2348,17 +2348,13 @@ impl PreviewService {
         &self,
         reservation: &str,
     ) -> Result<ClaimedSpectrumExport, PreviewErrorDto> {
-        match self
-            .spectrum_export_slot()
-            .claim(reservation)
-            .ok_or_else(spectrum_export_stale)?
-        {
-            ClaimedExport::Spectrum(claimed) => Ok(claimed),
-            // A reservation of the other kind, claimed through this command.
-            // The webview holds both, and answering with the wrong one would
-            // open a spectrum's dialog over a chromatogram's export.
-            ClaimedExport::Chromatogram(_) => Err(spectrum_export_stale()),
-        }
+        // A reservation of the other kind is refused here, and refused
+        // *without* the lane having been claimed for it -- see
+        // `claim_matching`. The webview holds both identifiers and they come
+        // from one counter, so this is a state a reloaded document can reach.
+        self.spectrum_export_slot()
+            .claim_spectrum(reservation)
+            .ok_or_else(spectrum_export_stale)
     }
 
     /// Returns one reservation to idle without writing anything.
@@ -2523,14 +2519,9 @@ impl PreviewService {
         &self,
         reservation: &str,
     ) -> Result<ClaimedChromatogramExport, PreviewErrorDto> {
-        match self
-            .spectrum_export_slot()
-            .claim(reservation)
-            .ok_or_else(chromatogram_export_stale)?
-        {
-            ClaimedExport::Chromatogram(claimed) => Ok(claimed),
-            ClaimedExport::Spectrum(_) => Err(chromatogram_export_stale()),
-        }
+        self.spectrum_export_slot()
+            .claim_chromatogram(reservation)
+            .ok_or_else(chromatogram_export_stale)
     }
 
     /// Returns one chromatogram reservation to idle without writing anything.

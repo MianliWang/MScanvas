@@ -435,21 +435,6 @@ impl ClaimedSpectrumExport {
     }
 }
 
-#[cfg(test)]
-impl ClaimedExport {
-    /// The spectrum claim, for tests written about that surface.
-    ///
-    /// Panics on the other variant rather than answering `None`: a test that
-    /// claimed a chromatogram reservation and read it as a spectrum has already
-    /// gone wrong, and a quiet `None` would make it look like an empty lane.
-    fn as_spectrum(&self) -> &ClaimedSpectrumExport {
-        match self {
-            Self::Spectrum(claimed) => claimed,
-            Self::Chromatogram(_) => panic!("this reservation is a chromatogram export"),
-        }
-    }
-}
-
 impl Default for ScientificExportSlots {
     fn default() -> Self {
         Self {
@@ -736,7 +721,24 @@ impl ScientificExportSlots {
     /// Claiming once is the rule. A second claim of the same reservation is a
     /// second dialog for one export, and answering it would leave two windows
     /// able to publish the same file.
-    pub(super) fn claim(&mut self, reservation: &str) -> Option<ClaimedExport> {
+    ///
+    /// **The surface is checked before the claim is committed**, and that order
+    /// is the whole of this function. Each save command names its own kind, and
+    /// a reservation of the other one is not its to open a dialog for -- but
+    /// marking the lane claimed on the way to refusing it would leave the lane
+    /// committed with no dialog, no writer and nothing to cancel it. Every later
+    /// scientific export of the session would then be refused as "already
+    /// exporting", for a reason nothing on screen could explain, until the
+    /// application was restarted.
+    ///
+    /// The two kinds share one reservation counter, so a chromatogram's
+    /// reservation is a perfectly well-formed spectrum reservation: a document
+    /// that reloaded and replayed a stored identifier reaches exactly this.
+    fn claim_matching<Claimed>(
+        &mut self,
+        reservation: &str,
+        of_this_kind: impl FnOnce(&ClaimedExport) -> Option<Claimed>,
+    ) -> Option<Claimed> {
         let requested = SpectrumReservationId::from_wire(reservation)?;
         let ExportState::AwaitingDestination {
             reservation: held,
@@ -749,8 +751,28 @@ impl ScientificExportSlots {
         if *held != requested || *claimed {
             return None;
         }
+        let picked = of_this_kind(export)?;
         *claimed = true;
-        Some(export.clone())
+        Some(picked)
+    }
+
+    /// Claims one issued reservation as a selected-spectrum export.
+    pub(super) fn claim_spectrum(&mut self, reservation: &str) -> Option<ClaimedSpectrumExport> {
+        self.claim_matching(reservation, |export| match export {
+            ClaimedExport::Spectrum(claimed) => Some(claimed.clone()),
+            ClaimedExport::Chromatogram(_) => None,
+        })
+    }
+
+    /// Claims one issued reservation as a chromatogram export.
+    pub(super) fn claim_chromatogram(
+        &mut self,
+        reservation: &str,
+    ) -> Option<ClaimedChromatogramExport> {
+        self.claim_matching(reservation, |export| match export {
+            ClaimedExport::Chromatogram(claimed) => Some(claimed.clone()),
+            ClaimedExport::Spectrum(_) => None,
+        })
     }
 
     /// Returns an unclaimed or open reservation to idle.
@@ -1591,17 +1613,17 @@ mod tests {
             )
             .expect("a reservation");
         let claimed = slot
-            .claim(&reservation.as_wire())
+            .claim_spectrum(&reservation.as_wire())
             .expect("the reservation is claimable once");
         // The user is now in a save dialog. Two more selections land.
         slot.install(owner(1), spectrum(2, vec![300.0], vec![3.0]));
         slot.install(owner(1), spectrum(3, Vec::new(), Vec::new()));
         assert_eq!(
-            claimed.as_spectrum().snapshot.point_count(),
+            claimed.snapshot.point_count(),
             2,
             "the claim still holds the spectrum it was invoked for",
         );
-        assert_eq!(claimed.as_spectrum().snapshot.index(), 1);
+        assert_eq!(claimed.snapshot.index(), 1);
     }
 
     /// Claiming happens once, and a superseded reservation cannot claim at all.
@@ -1620,12 +1642,12 @@ mod tests {
             .begin(&token, SpectrumExportFormat::Csv, defaults(), None)
             .expect("an unclaimed reservation is superseded");
         assert!(
-            slot.claim(&first.as_wire()).is_none(),
+            slot.claim_spectrum(&first.as_wire()).is_none(),
             "the superseded reservation can no longer open a dialog",
         );
-        assert!(slot.claim(&second.as_wire()).is_some());
+        assert!(slot.claim_spectrum(&second.as_wire()).is_some());
         assert!(
-            slot.claim(&second.as_wire()).is_none(),
+            slot.claim_spectrum(&second.as_wire()).is_none(),
             "and a claimed one cannot be claimed twice",
         );
     }
@@ -1639,7 +1661,8 @@ mod tests {
         let reservation = slot
             .begin(&token, SpectrumExportFormat::Svg, defaults(), None)
             .expect("a reservation");
-        slot.claim(&reservation.as_wire()).expect("claimed");
+        slot.claim_spectrum(&reservation.as_wire())
+            .expect("claimed");
         assert_eq!(
             slot.begin(&token, SpectrumExportFormat::Csv, defaults(), None),
             Err(BeginExportRefusal::AlreadyExporting),
@@ -1781,7 +1804,8 @@ mod tests {
                 Some(PngDpi::default()),
             )
             .expect("the first export begins");
-        slot.claim(&reservation.as_wire()).expect("claimed");
+        slot.claim_spectrum(&reservation.as_wire())
+            .expect("claimed");
 
         // The spectrum is replaced while the dialog stands open.
         let second = slot.install(owner(1), spectrum(2, vec![200.0], vec![2.0]));
@@ -1830,9 +1854,10 @@ mod tests {
             )
             .expect("the export begins");
 
-        let claimed = slot.claim(&reservation.as_wire()).expect("claimed");
+        let claimed = slot
+            .claim_spectrum(&reservation.as_wire())
+            .expect("claimed");
 
-        let claimed = claimed.as_spectrum();
         assert_eq!(claimed.settings, defaults());
         assert_ne!(claimed.settings, other_settings());
         assert_eq!(claimed.dpi, Some(PngDpi::default()));
@@ -2230,7 +2255,9 @@ mod tests {
         let reservation = slots
             .begin(&spectrum, SpectrumExportFormat::Csv, defaults(), None)
             .expect("a first export");
-        slots.claim(&reservation.as_wire()).expect("its dialog");
+        slots
+            .claim_spectrum(&reservation.as_wire())
+            .expect("its dialog");
 
         assert_eq!(
             slots.begin_chromatogram(
@@ -2274,7 +2301,9 @@ mod tests {
                 None,
             )
             .expect("a first export");
-        slots.claim(&reservation.as_wire()).expect("its dialog");
+        slots
+            .claim_chromatogram(&reservation.as_wire())
+            .expect("its dialog");
 
         assert_eq!(
             slots.begin(&spectrum, SpectrumExportFormat::Csv, defaults(), None),
@@ -2350,10 +2379,10 @@ mod tests {
             .expect("a chromatogram reservation supersedes an unclaimed one");
 
         assert!(
-            slots.claim(&first.as_wire()).is_none(),
+            slots.claim_spectrum(&first.as_wire()).is_none(),
             "the superseded reservation can no longer open a dialog"
         );
-        assert!(slots.claim(&second.as_wire()).is_some());
+        assert!(slots.claim_chromatogram(&second.as_wire()).is_some());
     }
 
     /// A claim answers with the kind it was made for, and no other.
@@ -2375,10 +2404,9 @@ mod tests {
             )
             .expect("a reservation");
 
-        let claimed = slots.claim(&reservation.as_wire()).expect("its claim");
-        let ClaimedExport::Chromatogram(chromatogram) = claimed else {
-            panic!("a chromatogram reservation claims a chromatogram export");
-        };
+        let chromatogram = slots
+            .claim_chromatogram(&reservation.as_wire())
+            .expect("its claim");
         assert_eq!(chromatogram.format, ChromatogramExportFormat::Tsv);
         assert_eq!(chromatogram.range.scope(), RangeScope::Full);
         assert_eq!(
@@ -2447,14 +2475,13 @@ mod tests {
                 None,
             )
             .expect("a reservation");
-        let claimed = slots.claim(&reservation.as_wire()).expect("its claim");
+        let claimed = slots
+            .claim_chromatogram(&reservation.as_wire())
+            .expect("its claim");
 
         // A newer preview lands while the picker is open.
         slots.install_chromatogram(owner(1), seeded_chromatogram());
 
-        let ClaimedExport::Chromatogram(claimed) = claimed else {
-            panic!("a chromatogram claim");
-        };
         assert_eq!(claimed.snapshot.token(), token);
     }
 
@@ -2555,5 +2582,76 @@ mod tests {
             ),
             Err(BeginExportRefusal::RangeOutsideSource),
         );
+    }
+
+    /// A reservation claimed through the other surface's command leaves the lane
+    /// exactly as it was.
+    ///
+    /// Round 1 of M4.3's review found this, and it is the failure mode that
+    /// makes the ordering worth stating: the two kinds share one reservation
+    /// counter, so a chromatogram's identifier is a perfectly well-formed
+    /// spectrum reservation, and a document that reloaded and replayed a stored
+    /// one reaches this. Marking the lane claimed on the way to refusing it
+    /// would leave it committed with no dialog, no writer and nothing to cancel
+    /// it -- and every later scientific export of the session would be refused
+    /// as "already exporting" for a reason nothing on screen could explain.
+    #[test]
+    fn a_claim_through_the_wrong_command_does_not_wedge_the_lane() {
+        let mut slots = ScientificExportSlots::default();
+        let spectrum = slots.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
+        let chromatogram = slots.install_chromatogram(owner(1), seeded_chromatogram());
+        let reservation = slots
+            .begin_chromatogram(
+                &chromatogram.token().as_wire(),
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                defaults(),
+                None,
+            )
+            .expect("a chromatogram reservation");
+
+        // The spectrum's save command, handed the chromatogram's reservation.
+        assert!(slots.claim_spectrum(&reservation.as_wire()).is_none());
+
+        // The lane is not committed: the reservation it holds can still be
+        // claimed by the command it belongs to.
+        assert!(
+            slots.claim_chromatogram(&reservation.as_wire()).is_some(),
+            "the refused claim left the reservation intact"
+        );
+        slots.cancel(&reservation.as_wire());
+
+        // And a later export of either surface still begins.
+        assert!(
+            slots
+                .begin(
+                    &spectrum.token().as_wire(),
+                    SpectrumExportFormat::Csv,
+                    defaults(),
+                    None,
+                )
+                .is_ok(),
+            "a mismatched claim did not wedge the session"
+        );
+    }
+
+    /// The same, in the other direction.
+    #[test]
+    fn a_spectrum_reservation_claimed_as_a_chromatogram_leaves_the_lane_open() {
+        let mut slots = ScientificExportSlots::default();
+        let spectrum = slots.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
+        slots.install_chromatogram(owner(1), seeded_chromatogram());
+        let reservation = slots
+            .begin(
+                &spectrum.token().as_wire(),
+                SpectrumExportFormat::Csv,
+                defaults(),
+                None,
+            )
+            .expect("a spectrum reservation");
+
+        assert!(slots.claim_chromatogram(&reservation.as_wire()).is_none());
+        assert!(slots.claim_spectrum(&reservation.as_wire()).is_some());
     }
 }
