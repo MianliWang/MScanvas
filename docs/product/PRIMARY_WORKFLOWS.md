@@ -124,10 +124,13 @@ pointer reports the nearest scan without selecting it, a click or a table row or
 the spectrum all follow that one commit. A scan selected again after being
 scrolled or panned out of view is brought back; a viewport the user chose is
 never reset to do it. The plot zooms, pans and resets by wheel, drag, keyboard
-and visible button, and none of that reads the backend. A wheel notch the range
-cannot use — outward when the whole run is already shown, inward at the narrowest
-viewport, either direction for a run of one scan — is left to the page, so the
-same wheel goes on scrolling the column to the panels below the plot.
+and visible button, and none of that reads the backend. How far one wheel event
+zooms follows how far it says it turned, in whatever unit it reports, so the same
+gesture asks for the same thing whether a device sends it as one large event or a
+stream of small ones. A wheel event the range cannot use — outward when the whole
+run is already shown, inward at the narrowest viewport, either direction for a run
+of one scan — is left to the page at any size, so the same wheel goes on scrolling
+the column to the panels below the plot.
 
 Still missing from the acquisition view: XIC, spectrum zoom and pan, multi-layer
 comparison, and any export of the chromatogram or of the range on screen. See

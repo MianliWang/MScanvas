@@ -170,7 +170,10 @@ would leave the rule standing where the scan no longer is, with nothing to clear
 it. So the marker is derived from the scan's own retention time at draw time,
 every time, and a test pins its position across a viewport change.
 
-**Wheel.** One notch is planned before it is claimed. `planWheelGesture` asks
+**Wheel.** The event's own `deltaY` and `deltaMode` are read -- nothing else about
+it, `ctrlKey` included -- and normalized to a zoom factor by `wheelInput.ts`. An
+event that cannot be read at all is left alone before anything is measured.
+Otherwise it is planned before it is claimed: `planWheelGesture` asks
 `zoomDomain` for the candidate range about the pointer and then asks the reducer
 what that gesture would leave on screen once it settles; if that is the range
 already shown, the adapter cancels nothing and dispatches nothing. Otherwise it
@@ -179,7 +182,9 @@ calls `preventDefault`, then `gesture-started` if no gesture is active and
 dispatch's own answer. A 120ms timer then emits `gesture-settled(epoch)`.
 Resetting that timer is an efficiency; a stale settle is a reducer no-op by
 identity, so correctness does not rest on `clearTimeout`. Why the claim comes
-second, and never before the plan, is [below](#who-owns-a-pointer-gesture).
+second, and never before the plan, is [below](#who-owns-a-pointer-gesture); how
+far one event asks the viewport to move is
+[after that](#how-far-one-wheel-event-zooms).
 
 **Drag.** A press is not yet a pan. Past a 4px slop threshold on the **x** axis
 the first move dispatches `gesture-started` and keeps the reducer-assigned epoch;
@@ -420,12 +425,13 @@ nothing and take the same path unchanged.
 
 ### Where the wheel is and is not the buttons
 
-Shared: the productivity question, and nothing else. A wheel keeps its own step
-(0.85 per notch against the buttons' 0.6), its own anchor — the retention time
+Shared: the productivity question, and nothing else. A button carries a fixed
+step because a press is one decision; a wheel has no step at all, and reads how
+far it turned from the event itself. It keeps its own anchor — the retention time
 under the pointer stays under the pointer, where a button always zooms about the
 centre — and its own transient-gesture lifecycle with a reducer-assigned epoch
 and a 120ms settle. The epoch is read out of the state, never allocated by the
-adapter, so a notch cannot address a gesture that is not its own.
+adapter, so an event cannot address a gesture that is not its own.
 
 | State | Wheel in | Wheel out |
 |---|---|---|
@@ -435,8 +441,11 @@ adapter, so a notch cannot address a gesture that is not its own.
 | a run whose scans share one retention time | released | released |
 | no run loaded | released | released |
 
-A notch with `deltaY === 0` is not a zoom in either direction and is left alone
-before anything is planned.
+The table is about direction, and holds at every magnitude: a delta of one pixel
+is claimed at full range because it moves the axis, and a delta of a whole page
+is released there because nothing is wider than the run. An event with
+`deltaY === 0` asks for nothing in either direction and is left alone before
+anything is measured.
 
 ### The boundary converges rather than latching
 
@@ -480,6 +489,131 @@ performs a native scroll for one however the listener answers. No test here
 claims a synthetic wheel scrolled anything. What is left is the browser's own
 contract for an uncancelled wheel over a scrollable ancestor, and the measured
 overflow is what gives that contract something to act on.
+
+## How far one wheel event zooms
+
+Ownership settles *whether* an event is the viewer's. What it asks for is a
+separate question, and R1 through R1.2 answered it with one bit:
+
+```
+factor = event.deltaY < 0 ? 0.85 : 1 / 0.85
+```
+
+A `WheelEvent` carries two numbers, and neither was read. `deltaY` of -1, -20 and
+-240 produced the identical candidate range from the same state and anchor, and
+`deltaMode` never reached the viewport at all. What governed the zoom rate was
+therefore **how many event objects a device chose to emit for one gesture**:
+from the whole run to the narrowest viewport took 57 events, whatever those
+events said they were. A device that reports a gesture as a stream of small
+deltas and one that reports the same travel as a few large ones were asking for
+the same thing and getting answers orders of magnitude apart.
+
+The rule that replaces it:
+
+> **The zoom magnitude is a continuous function of the normalized wheel delta,
+> not of the number of `WheelEvent` objects it arrived in.**
+
+### The delta is normalized before it is used
+
+`deltaY` is not a length until `deltaMode` says what its unit is, so both are
+read and neither is assumed. `wheelInput.ts` maps one event to an **exponent**,
+in units where one page of wheel is 1:
+
+| `deltaMode` | one unit is worth |
+|---|---|
+| `DOM_DELTA_PIXEL` (0) | 0.002 |
+| `DOM_DELTA_LINE` (1) | 0.05 |
+| `DOM_DELTA_PAGE` (2) | 1 |
+
+These are this product's coefficients, defined to agree with each other: 25
+pixels is one line, and 500 pixels is twenty lines is one page. The absolute
+scale is the third row — one page of wheel halves or doubles the visible span —
+and everything else follows from it continuously, with no step and no floor.
+
+The shape is a normalization every web zoom implementation ends up with, and the
+constants are ours rather than a library's. **No dependency was added, and none
+is needed for four lines of arithmetic.**
+
+An event the module cannot read is declined rather than guessed at, and
+declining means the wheel is not claimed and the page keeps it:
+
+- `deltaY` of zero asks for nothing;
+- a non-finite `deltaY` is not a request an adapter can turn into viewport
+  arithmetic;
+- an unknown `deltaMode` **fails open**. Reading it as pixels would turn some
+  future device's ordinary scroll into a wild zoom, which is a worse failure
+  than not zooming;
+- an exponent so extreme that `2^exponent` is no longer a finite positive number
+  is declined for the same reason. Nothing a device emits comes near it.
+
+### Why exponential, and not linear
+
+A zoom multiplies the visible span, so the thing that must accumulate is the
+exponent:
+
+```
+factor(a + b) = factor(a) · factor(b)
+```
+
+That identity is the whole repair. With the same anchor, no clamp boundary
+reached and one unit, splitting a gesture into more events cannot change where it
+lands: one event of -100 pixels and a hundred of -1 arrive at the same span,
+because `2^-0.2` and `(2^-0.002)^100` are the same number. Event count stops
+being a variable at all rather than being compensated for.
+
+A linear `1 + k·delta` has no such property — `(1 + k·d/2)²` is not `1 + k·d`, and
+at the magnitudes a wheel actually carries the difference is large. It would be
+the same defect written a second way, so it is rejected explicitly and a test
+pins the reason.
+
+The invariant is asserted at two levels, because they can fail separately: the
+algebra in `wheelInput.test.ts`, and the **rendered domain** after a settled
+gesture in `viewportAction.test.ts` and at the production adapter. A planner that
+read the magnitude and then dropped it on the way to `zoomDomain` would pass the
+first and fail the others. The tolerance in those comparisons is ordinary
+double-precision drift over the multiplications — the same number computed two
+ways — and is emphatically not a user-facing epsilon for viewport equality.
+
+### Ownership is untouched
+
+`planWheelGesture` now receives `deltaY` and `deltaMode` instead of a direction,
+and asks the same question it asked before: would applying this through the
+canonical contract change the settled rendered domain? Magnitude decides **what
+the wheel asks for**; productivity decides **who owns the event**. They are not
+allowed to borrow from each other, and both directions are tested:
+
+- a delta far too small to be a notch — one pixel, a 0.14% change — is **claimed**,
+  because it moves the axis;
+- an outward delta of any size at full range, up to a page and beyond, is
+  **released**, because there is nothing wider to show.
+
+Every boundary in the ownership table above is unchanged.
+
+### `ctrlKey` is not given a meaning
+
+Some web zoom implementations accelerate wheel input when `ctrlKey` is set, on
+the theory that the browser synthesises it for a trackpad pinch. This viewer
+assigns the modifier nothing: an identical `deltaY` and `deltaMode` produce an
+identical zoom with or without it, and a test pins that.
+
+The inference is a guess about hardware from a modifier key, and pinch semantics
+need their own evidence and their own product decision — the same reason touch is
+deferred rather than improvised. Ctrl-wheel over the plot is a zoom of the run,
+like any other wheel.
+
+### What is and is not claimed about devices
+
+**Claimed, and tested:** an event's magnitude and unit now contribute
+continuously, and equivalent normalized travel is no longer sensitive to how the
+device packetised it.
+
+**Not claimed:** that a physical mouse and a physical precision touchpad now feel
+the same, or that physical displacement is normalized exactly. That would need
+both devices, measured on real hardware — event counts, `deltaY` values,
+`deltaMode`, and the resulting span. **No such measurement was made**, no
+telemetry was added and no input data is persisted; the input shapes in the tests
+are deterministic synthetic streams, described as shapes rather than as
+hardware.
 
 ## The R1 consumer set
 
@@ -541,9 +675,10 @@ this slice does not claim:
 - the table stays windowed;
 - nearest-scan is a binary search over the full model;
 - pointer motion issues **zero** backend calls; so do zoom, pan and reset;
-- deciding whether the viewer owns a wheel notch costs one reducer application
-  and one settle of the result, both pure and both over a handful of numbers;
-  nothing is measured, allocated per scan, or read from the DOM to answer it;
+- one wheel event costs a normalization of two numbers, one reducer application
+  and one settle of the result, all pure and all over a handful of numbers;
+  nothing is measured, allocated per scan, cached, or read from the DOM to
+  answer it, and an event the adapter cannot read costs not even a layout;
 - the linear walk Previous and Next need to find the selected row is memoized on
   the table and the selected index, so it stays off the cursor's path — a
   selection near the end of a large table would otherwise have put two
@@ -604,7 +739,7 @@ cannot be drawn still has rows to step through.
 
 ## Evidence
 
-**Frontend suite:** 924 tests, counted at the close of R1.2. From R1: the
+**Frontend suite:** 959 tests, counted at the close of R1.3. From R1: the
 adapter's field mapping and every refusal; the controller's synchronous answer,
 its ref/state agreement and its identity no-op; one-selection-authority, the
 in-flight repeat, the refused index, the preview lifecycle and vendor-row focus
@@ -619,9 +754,14 @@ including the state no component can be put in — a viewer with no run loaded,
 which draws no plot for a wheel to arrive at — and eleven cases at the
 production adapter that assert the interaction state and
 `WheelEvent.defaultPrevented` separately, because whether the viewport moved and
-who the input belonged to are different failures.
+who the input belonged to are different failures. From R1.3: fifteen cases on
+the normalization itself — composition, reciprocity, monotonicity, the three
+units it reads and everything it declines — the same chunking invariant
+re-asserted on the rendered domain after a settled gesture, and nine more at the
+production adapter, where a hundred one-pixel events have to land where one
+hundred-pixel event does.
 
-**Browser QA:** 46 rendered viewer cases at 1366×768, 1920×1080 and 960×640,
+**Browser QA:** 53 rendered viewer cases at 1366×768, 1920×1080 and 960×640,
 with real hover, click, wheel, drag, keyboard and table interaction — including
 the gesture-versus-selection race driven inside one script so it fits inside the
 debounce, the hover invariant and its clamped-domain companion, and reveal
@@ -629,21 +769,30 @@ geometry measured against real rectangles rather than through the driver's own
 `scrollIntoView`. R1.2 adds the wheel's ownership at every boundary and every
 productive notch, taken from `WheelEvent.defaultPrevented` against the built
 bundle, with `.viewer-stack`'s overflow measured at 1366×768 so the claim has a
-column it would actually cost something. Zero newly introduced console errors,
-warnings, unhandled rejections or uncaught exceptions.
+column it would actually cost something. R1.3 adds its magnitude: a small delta
+against a large one, a hundred one-pixel events against one of a hundred, a
+line-mode event against the pixels it is worth, and an unreadable unit left to
+the page. Zero newly introduced console errors, warnings, unhandled rejections
+or uncaught exceptions.
 
 **Scale QA:** the measured representative 36,319 scans. Observations, not SLAs:
 21 rendered table rows, 1 trace path, 1,921 drawn vertices, 15 SVG nodes, ~0.6s
 from activation to a drawn viewer, ~0.2s from click to a selected row, and zero
 backend calls from any pointer or viewport interaction.
 
-**Real Tauri QA:** 20 cases — the shipped bundle in WebView2 inside the real Rust
-process, with `load_selected_spectrum` left real: the chromatogram drawn from the
-document's own preview, both traces toggled, a click in the plot crossing the
-production IPC boundary with the right index and settling, Previous/Next using
-the same transport, the viewport moving without a single IPC call, and one
-bounded wheel-ownership case whose only instrument is a dispatched event and its
-own `defaultPrevented`.
+**Real Tauri QA:** 21 cases — the shipped bundle in WebView2 inside the real
+Rust process, with `load_selected_spectrum` left real: the chromatogram drawn
+from the document's own preview, both traces toggled, a click in the plot
+crossing the production IPC boundary with the right index and settling,
+Previous/Next using the same transport, the viewport moving without a single IPC
+call, and two bounded wheel cases whose only instruments are a dispatched event,
+its own `defaultPrevented` and the range caption: one for ownership at a
+boundary, one for two magnitudes producing two ranges.
+
+**Physical input devices: NOT MEASURED.** No mouse-against-touchpad comparison
+was made on real hardware, so no claim of device parity is made anywhere above.
+See [what is and is not claimed about
+devices](#what-is-and-is-not-claimed-about-devices).
 
 **Live ProteoWizard evidence:** see BOOTSTRAP_STATUS for what was and was not run
 in this environment.

@@ -4506,6 +4506,37 @@ which is a declared intent rather than a per-event claim, and deciding what a
 touch drag over a chromatogram means is product semantics this slice does not
 open.
 
+### The wheel, read rather than counted
+
+R1.2's pull request was frozen at its reviewed head in turn, and **Viewer Closure
+R1.3** was branched directly from it. Its whole-diff review found one real,
+reachable problem in the same adapter, a layer beneath ownership: the wheel read
+the sign of `deltaY` and nothing else, applying a fixed 0.85 step to every
+non-zero event. `deltaMode` never reached the viewport at all, and -1, -20 and
+-240 pixels produced the identical candidate range from the same state and
+anchor.
+
+The consequence is that zoom rate was a property of packetisation rather than of
+the gesture. Measured on this branch before the repair: 57 events took the viewer
+from the whole run to the narrowest viewport, whatever those events carried. A
+device that reports one gesture as a stream of small deltas therefore compounded
+0.85 per event and reached maximum zoom almost immediately, while a device
+reporting the same travel as a few large deltas barely moved.
+
+R1.3 normalizes the event before using it — `deltaY` scaled by a coefficient for
+its `deltaMode`, then an exponential map — so that the factor of a sum is the
+product of the factors, and cutting one gesture into more events cannot change
+where it lands. Eighty one-pixel events now ask for 2^-0.16 of the span rather
+than 0.85^80 of it. An unknown `deltaMode` fails open rather than being read as
+pixels, and `ctrlKey` is given no meaning: inferring a trackpad pinch from a
+modifier is a guess about hardware, and pinch semantics belong with the touch
+work already deferred to M5.
+
+What is not claimed is device parity. That would need a physical mouse and a
+physical precision touchpad measured on real hardware, and no such measurement
+was made here: the input shapes in the tests are deterministic synthetic streams,
+recorded as shapes rather than as hardware.
+
 ### Still not implemented
 
 XIC, spectrum zoom and pan, multi-layer comparison, chromatogram data or figure

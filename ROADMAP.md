@@ -114,6 +114,22 @@ and dispatches nothing, and ordinary scrolling stays available. Touch scrolling
 over the plot remains statically suppressed and is recorded as open. See
 [ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
 
+**Viewer Closure R1.3 — wheel input normalization.** Closed with R1. R1.2's pull
+request was frozen at its reviewed head in turn, and R1.3 was taken from that
+head. Its review found that the wheel read one bit of the event — the sign of
+`deltaY` — and applied a fixed step per event, so the zoom rate was decided by how
+many `WheelEvent` objects a device chose to emit rather than by how far the user
+scrolled: from the whole run to the narrowest viewport took 57 events whatever
+those events said, and a device that reports a gesture as a stream of small
+deltas reached maximum zoom from one flick.
+
+R1.3 reads both `deltaY` and `deltaMode` and maps them continuously, so that
+splitting one gesture into more events cannot change where it lands. R1.2's
+ownership rule is untouched: magnitude decides what the wheel asks for, and
+productivity still decides whether MSCanvas may claim the event. Parity between
+physical devices is not claimed — no such measurement was made. See
+[ADR 0033](docs/architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
+
 Still outside it, and unchanged:
 
 - Current-range export. The committed viewport R0 defined is now a range a user
