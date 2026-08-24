@@ -1034,6 +1034,39 @@ button:disabled {
   gap: 4px;
 }
 
+/* The export surface, opened from the chromatogram's own header.
+
+   Closed it costs nothing: the control that opens it sits in the header row
+   that already exists, so the measured floors of the three-panel column are
+   unchanged. Open, it takes the width of the panel and pushes the plot down
+   inside a column that scrolls, which is the honest trade for a surface the
+   user asked for. */
+.chromatogram-export-panel {
+  border-top: 1px solid var(--border-subtle, #d5d9e0);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0 0;
+}
+
+.chromatogram-export-range {
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+}
+
+/* One sentence per thing a reader would otherwise have to guess: which traces a
+   figure draws, that data carries both columns, and what the current range
+   currently is. */
+.chromatogram-export-note {
+  color: var(--text-muted, #56606e);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
 .chromatogram-svg {
   /* Low enough that the axis caption and the readout below it are never the
      things a short panel clips: a plot that has shrunk is still a plot, and a

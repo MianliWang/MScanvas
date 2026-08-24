@@ -7,6 +7,7 @@ import type {
   SelectedSpectrum,
   SpectrumExportFormat,
 } from "./contracts";
+import { FigureSettingsFields } from "./FigureSettingsFields";
 import { formatCount, formatIntensity, formatMz, formatRetentionTime } from "./format";
 import { StickSpectrum } from "./StickSpectrum";
 import type {
@@ -46,25 +47,8 @@ const DATA_FORMATS: readonly { readonly format: SpectrumExportFormat; readonly l
   { format: "tsv", label: "Export TSV…" },
 ];
 
-const FIGURE_THEMES: readonly { readonly theme: FigureTheme; readonly label: string }[] = [
-  { theme: "light", label: "Light" },
-  { theme: "dark", label: "Dark" },
-];
-
-const SETTING_FIELDS: readonly {
-  readonly field: FigureSettingsField;
-  readonly label: string;
-  readonly hint: string;
-  /** Which of the two problem messages describes this field. */
-  readonly problem: "render" | "dpi";
-}[] = [
-  { field: "widthPx", label: "Width", hint: "px", problem: "render" },
-  { field: "heightPx", label: "Height", hint: "px", problem: "render" },
-  { field: "pngDpi", label: "PNG DPI", hint: "PNG metadata only", problem: "dpi" },
-];
-
-const RENDER_PROBLEM_ID = "spectrum-figure-problem";
-const DPI_PROBLEM_ID = "spectrum-figure-dpi-problem";
+/** What every identifier in this panel's figure settings is named after. */
+const FIGURE_PREFIX = "spectrum";
 
 export interface SelectedSpectrumPanelProps {
   readonly state: SpectrumState;
@@ -163,82 +147,18 @@ function SpectrumExportActions({
   // one. `Export SVG…` and `Copy plot` stay exactly where they were, because
   // neither of them has ever read this number.
   const rasterBlocked = figureBlocked || pngDpiProblem !== null;
-  const problems = { render: renderSettingsProblem, dpi: pngDpiProblem };
-  const problemIds = { render: RENDER_PROBLEM_ID, dpi: DPI_PROBLEM_ID };
-
   return (
     <div className="spectrum-export">
-      <fieldset className="spectrum-figure-settings">
-        <legend>Figure</legend>
-        {SETTING_FIELDS.map(({ field, label, hint, problem }) => (
-          <label className="spectrum-figure-field" key={field}>
-            <span>
-              {label} <span className="spectrum-figure-hint">{hint}</span>
-            </span>
-            <input
-              // Its own problem, not whichever one exists. A width that is
-              // perfectly fine must not be marked invalid because a resolution
-              // beside it is not, and a reader who lands on it must not be read
-              // a correction that belongs to another field.
-              aria-describedby={problems[problem] === null ? undefined : problemIds[problem]}
-              aria-invalid={problems[problem] === null ? undefined : true}
-              className="spectrum-figure-input"
-              inputMode="numeric"
-              // Text rather than `number`, so what the field holds is what the
-              // user typed. A number input silently discards what it cannot
-              // parse, which would leave the panel unable to say why an action
-              // is unavailable.
-              onChange={(event) => {
-                onFigureSetting(field, event.target.value);
-              }}
-              type="text"
-              value={figureSettings[field]}
-            />
-          </label>
-        ))}
-        <div className="spectrum-figure-field">
-          <span id="spectrum-figure-theme-label">Theme</span>
-          {/*
-            Two radios rather than a swatch. Which theme is selected has to be
-            readable without seeing colour, and the words are the same ones the
-            exported file records.
-          */}
-          <div aria-labelledby="spectrum-figure-theme-label" className="spectrum-figure-themes" role="radiogroup">
-            {FIGURE_THEMES.map(({ theme, label }) => (
-              <label className="spectrum-figure-theme" key={theme}>
-                <input
-                  checked={figureSettings.theme === theme}
-                  name="spectrum-figure-theme"
-                  onChange={() => {
-                    onFigureTheme(theme);
-                  }}
-                  type="radio"
-                  value={theme}
-                />
-                <span>{label}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-        {/*
-          A live region, but not a second `status` landmark: the export result
-          below is the panel's status, and two of them would leave a reader --
-          and a test -- asking which one "the status" is. The fields point at
-          this with `aria-describedby`, so it is read when focus reaches them,
-          and `aria-live` is what makes a correction announced as it happens.
-        */}
-        <p aria-live="polite" className="spectrum-figure-problem" id={RENDER_PROBLEM_ID}>
-          {renderSettingsProblem ?? ""}
-        </p>
-        {/*
-          The resolution's own region, for the same reason its fields point at
-          separate ones: it closes only `Export PNG…`, and a single sentence
-          naming every unusable field would be read out beside an SVG button
-          that nothing is stopping.
-        */}
-        <p aria-live="polite" className="spectrum-figure-problem" id={DPI_PROBLEM_ID}>
-          {pngDpiProblem ?? ""}
-        </p>
+      <FigureSettingsFields
+        idPrefix={FIGURE_PREFIX}
+        onFigureSetting={onFigureSetting}
+        onFigureTheme={onFigureTheme}
+        pngDpiProblem={pngDpiProblem}
+        renderSettingsProblem={renderSettingsProblem}
+        settings={figureSettings}
+      />
+      <fieldset className="spectrum-figure-actions">
+        <legend className="visually-hidden">Figure exports</legend>
         <div className="spectrum-export-actions">
           {FIGURE_FORMATS.map(({ format, label, recordsDpi }) => (
             <button
