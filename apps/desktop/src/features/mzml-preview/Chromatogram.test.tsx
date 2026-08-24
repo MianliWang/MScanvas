@@ -220,6 +220,35 @@ function shown(): RetentionTimeDomain {
   return domain;
 }
 
+/**
+ * Sends one real cancelable wheel event to the production listener.
+ *
+ * Returned rather than swallowed, because `defaultPrevented` is half of what
+ * every wheel case has to say: whether the viewport moved is the product's
+ * behaviour, and whether the event was claimed is who the input belonged to.
+ *
+ * `deltaMode` defaults to pixels, which is what nearly every device sends.
+ */
+function wheel(options: {
+  readonly deltaY: number;
+  readonly deltaMode?: number;
+  readonly clientX?: number;
+  readonly ctrlKey?: boolean;
+}): WheelEvent {
+  const event = new WheelEvent("wheel", {
+    bubbles: true,
+    cancelable: true,
+    clientX: options.clientX ?? 500,
+    ctrlKey: options.ctrlKey ?? false,
+    deltaMode: options.deltaMode ?? 0,
+    deltaY: options.deltaY,
+  });
+  act(() => {
+    plot().dispatchEvent(event);
+  });
+  return event;
+}
+
 beforeEach(() => {
   // Not `shouldAdvanceTime`. The wheel's settle is scheduled 120ms out, and a
   // clock that advances with real time could fire it between two lines of a
@@ -1109,20 +1138,6 @@ describe("the viewport control group", () => {
  * is who the input belonged to.
  */
 describe("who owns a wheel", () => {
-  /** Sends one real cancelable wheel event to the production listener. */
-  function wheel(options: { readonly deltaY: number; readonly clientX?: number }): WheelEvent {
-    const event = new WheelEvent("wheel", {
-      bubbles: true,
-      cancelable: true,
-      clientX: options.clientX ?? 500,
-      deltaY: options.deltaY,
-    });
-    act(() => {
-      plot().dispatchEvent(event);
-    });
-    return event;
-  }
-
   const IN = -240;
   const OUT = 240;
 
@@ -1340,5 +1355,200 @@ describe("who owns a wheel", () => {
     });
 
     expect(state()).toBe(afterSelection);
+  });
+});
+
+/*
+ * How far the wheel zooms, at the adapter that reads the event.
+ *
+ * The planner's own tests pin the arithmetic. What only the component can say is
+ * that the two numbers a `WheelEvent` actually carries reach it -- that the
+ * production listener passes `deltaY` and `deltaMode` through rather than
+ * reducing them to a direction on the way, which is exactly what it used to do.
+ *
+ * Every case still asserts both halves. Whether the viewport moved is the
+ * product's behaviour; whether the event was cancelled is who the input belonged
+ * to, and R1.3 must not have quietly bought one with the other.
+ */
+describe("how far the wheel zooms", () => {
+  const LINE_MODE = 1;
+
+  /** The whole run, which every span below is measured against. */
+  function fullSpan(): number {
+    return 49 * 0.0125;
+  }
+
+  function span(): number {
+    const domain = shown();
+    return domain.high - domain.low;
+  }
+
+  /** Sends a stream of identical events, the way one gesture arrives. */
+  function stream(count: number, deltaY: number): void {
+    for (let step = 0; step < count; step += 1) {
+      wheel({ deltaY });
+    }
+  }
+
+  /** Lets the wheel's settle commit whatever the stream asked for. */
+  function letItSettle(): void {
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+  }
+
+  it("zooms further for a larger delta than for a smaller one", () => {
+    // The defect in one line: under the old rule these two were the same
+    // request, because only the sign of the delta ever reached the viewport.
+    renderChromatogram();
+    const gentle = wheel({ deltaY: -1 });
+    const gentleSpan = span();
+
+    cleanup();
+    renderChromatogram();
+    const firm = wheel({ deltaY: -100 });
+    const firmSpan = span();
+
+    expect(gentle.defaultPrevented).toBe(true);
+    expect(firm.defaultPrevented).toBe(true);
+    expect(gentleSpan).toBeLessThan(fullSpan());
+    expect(firmSpan).toBeLessThan(gentleSpan);
+  });
+
+  it("lands in the same place whether one gesture arrives as one event or a hundred", () => {
+    /*
+     * The invariant that removes event count as a variable, through the real
+     * listener: same pointer position, same total travel, two packetings.
+     *
+     * The tolerance is ordinary double-precision drift over a hundred
+     * multiplications and nothing else -- these are the same number computed two
+     * ways, not two numbers close enough for a user.
+     */
+    renderChromatogram();
+    wheel({ deltaY: -100 });
+    letItSettle();
+    const once = shown();
+
+    cleanup();
+    renderChromatogram();
+    stream(100, -1);
+    letItSettle();
+    const many = shown();
+
+    const width = once.high - once.low;
+    expect(Math.abs(many.low - once.low) / width).toBeLessThan(1e-9);
+    expect(Math.abs(many.high - once.high) / width).toBeLessThan(1e-9);
+  });
+
+  it("does not slam a touchpad-shaped stream into the narrowest viewport", () => {
+    /*
+     * The reported defect, reproduced from outside. Eighty small events used to
+     * compound as 0.85^80 -- about two millionths of the run, far past the
+     * 1/10,000 floor -- so one flick of a precision touchpad arrived at maximum
+     * zoom. Their normalized total is now -80 x 0.002 = -0.16.
+     */
+    renderChromatogram();
+
+    stream(80, -1);
+    letItSettle();
+
+    expect(span() / fullSpan()).toBeCloseTo(2 ** -0.16, 6);
+    expect(span()).toBeGreaterThan(fullSpan() * 0.5);
+    expect(span()).toBeGreaterThan((fullSpan() / 10_000) * 1_000);
+  });
+
+  it("reads a line-mode event as the pixels this product says it is worth", () => {
+    // A device that reports in lines is not asking for a different zoom, and a
+    // viewer that ignored `deltaMode` would treat one line as one pixel.
+    renderChromatogram();
+    const inLines = wheel({ deltaY: -1, deltaMode: LINE_MODE });
+    const fromLines = shown();
+
+    cleanup();
+    renderChromatogram();
+    wheel({ deltaY: -25 });
+    const fromPixels = shown();
+
+    expect(inLines.defaultPrevented).toBe(true);
+    expect(fromLines).toEqual(fromPixels);
+  });
+
+  it("leaves a unit it cannot read to the browser", () => {
+    // Fails open. A mode this code has never heard of could mean anything, and
+    // reading it as pixels would turn an ordinary scroll into a wild zoom.
+    renderChromatogram();
+    const before = state();
+
+    const event = wheel({ deltaY: -100, deltaMode: 3 });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(state()).toBe(before);
+    expect(state().gesture).toBeNull();
+  });
+
+  it("leaves a delta that is not a number to the browser", () => {
+    /*
+     * No browser sends this -- `deltaY` is a restricted double, so it cannot
+     * even be constructed with one -- and the guard exists because an adapter
+     * that turns an event into viewport arithmetic has to be total. Defined onto
+     * the event rather than constructed, for that reason.
+     */
+    renderChromatogram();
+    const before = state();
+    const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -100 });
+    Object.defineProperty(event, "deltaY", { value: Number.NaN });
+
+    act(() => {
+      plot().dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(state()).toBe(before);
+  });
+
+  it("reads the same request whether or not ctrl is held", () => {
+    /*
+     * Some web zoom libraries accelerate wheel input under ctrl, on the theory
+     * that it means a trackpad pinch. This viewer assigns the modifier no
+     * meaning: that inference is a guess about hardware, and pinch semantics
+     * need their own evidence and their own product decision.
+     */
+    renderChromatogram();
+    const plain = wheel({ deltaY: -100 });
+    const withoutCtrl = shown();
+
+    cleanup();
+    renderChromatogram();
+    const held = wheel({ deltaY: -100, ctrlKey: true });
+    const withCtrl = shown();
+
+    expect(plain.defaultPrevented).toBe(true);
+    expect(held.defaultPrevented).toBe(true);
+    expect(withCtrl).toEqual(withoutCtrl);
+  });
+
+  it("still refuses an outward delta of any size at full range", () => {
+    // Magnitude decides how much is asked for; it never decides whether the
+    // viewer owns the event. R1.2's rule, unchanged, at four sizes.
+    renderChromatogram();
+    const before = state();
+
+    for (const deltaY of [1, 100, 240, 4_000]) {
+      const event = wheel({ deltaY });
+
+      expect(event.defaultPrevented, String(deltaY)).toBe(false);
+      expect(state(), String(deltaY)).toBe(before);
+    }
+    expect(state().gesture).toBeNull();
+  });
+
+  it("still claims a delta far too small to be a notch, because it moves the axis", () => {
+    renderChromatogram();
+
+    const event = wheel({ deltaY: -1 });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(span()).toBeLessThan(fullSpan());
+    expect(span()).toBeGreaterThan(fullSpan() * 0.99);
   });
 });

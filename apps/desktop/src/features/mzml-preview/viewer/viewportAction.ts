@@ -31,23 +31,20 @@ import {
 } from "./interactionState";
 import type { RetentionTimeDomain } from "./scanModel";
 import { zoomDomain } from "./viewport";
+import type { WheelDelta } from "./wheelInput";
+import { wheelZoomFactor } from "./wheelInput";
 
 /** The three actions the viewport control group offers. */
 export type ViewportAction = "zoom-in" | "zoom-out" | "reset";
 
-/** Which way a wheel notch is asking the viewport to go. */
-export type WheelDirection = "in" | "out";
-
 /**
  * How far one deliberate zoom moves.
  *
- * A larger step than a wheel notch, because a button press is one decision
- * rather than a stream of them.
+ * A button press is one decision rather than a stream of them, so it carries its
+ * own step. A wheel has no equivalent constant: what one wheel event asks for is
+ * read from the event, in `wheelInput.ts`.
  */
 export const ZOOM_STEP_FACTOR = 0.6;
-
-/** How far one wheel notch moves the visible span. */
-export const WHEEL_ZOOM_FACTOR = 0.85;
 
 /** What one event would leave on screen, once it has finished happening. */
 export interface RenderedDomainTransition {
@@ -177,14 +174,21 @@ export interface WheelGesturePlan {
 const UNHANDLED: WheelGesturePlan = { handled: false, event: null, nextDomain: null };
 
 /**
- * What one wheel notch would do, and whether the viewer owns it.
+ * What one wheel event would do, and whether the viewer owns it.
  *
  * Shares the productivity question with the buttons and nothing else, because
  * the two gestures are not the same thing. A button is one deliberate decision:
  * a fixed step, anchored at the centre, committed at once. A wheel is a stream:
- * a smaller factor, anchored under the pointer so the retention time there stays
- * there, carried as a transient gesture with a reducer-assigned epoch, and
- * settled a moment after the last notch.
+ * a magnitude read from the event itself, anchored under the pointer so the
+ * retention time there stays there, carried as a transient gesture with a
+ * reducer-assigned epoch, and settled a moment after the last event.
+ *
+ * **How much** the event asks for belongs to `wheelZoomFactor`, which reads both
+ * `deltaY` and `deltaMode` and maps them continuously. **Whether the viewer may
+ * claim** the event is this planner's question, and the answer is R1.2's rule
+ * unchanged: only if the resulting canonical interaction would change the
+ * settled rendered domain. A delta the arithmetic cannot use is not the viewer's
+ * event, however large it is.
  *
  * The epoch is read from the state rather than allocated here. An adapter that
  * invented one could address a gesture that is not its own, which is exactly the
@@ -192,20 +196,16 @@ const UNHANDLED: WheelGesturePlan = { handled: false, event: null, nextDomain: n
  */
 export function planWheelGesture(
   state: ViewerInteractionState,
-  direction: WheelDirection,
+  wheel: WheelDelta,
   anchor: number,
 ): WheelGesturePlan {
   const full = state.fullDomain;
   const shown = renderedDomain(state);
-  if (full === null || shown === null) {
+  const factor = wheelZoomFactor(wheel);
+  if (full === null || shown === null || factor === null) {
     return UNHANDLED;
   }
-  const candidate = zoomDomain(
-    shown,
-    full,
-    direction === "in" ? WHEEL_ZOOM_FACTOR : 1 / WHEEL_ZOOM_FACTOR,
-    anchor,
-  );
+  const candidate = zoomDomain(shown, full, factor, anchor);
   const epoch = activeGestureEpoch(state);
   const event: ViewerEvent =
     epoch === null

@@ -23,6 +23,7 @@ import {
   planViewportAction,
   planWheelGesture,
 } from "./viewer/viewportAction";
+import { normalizeWheelDelta } from "./viewer/wheelInput";
 import type { TraceVisibility } from "./usePreviewWorkspace";
 
 /**
@@ -521,6 +522,11 @@ function ChromatogramPlot({
    * a wheel cancelled and then not used is a wheel that neither zoomed nor
    * scrolled. So the claim is made *after* the contract has said the gesture
    * would move the axis, never before.
+   *
+   * Two questions, kept apart. `wheelInput.ts` decides **how much** the event
+   * asks for, from its own magnitude and unit; the planner decides **whether
+   * this viewer owns it**, which is unchanged. A large delta at a boundary is
+   * still not ours, and a small one that moves the axis still is.
    */
   useEffect(() => {
     const element = plotRef.current;
@@ -528,14 +534,26 @@ function ChromatogramPlot({
       return;
     }
     const onWheel = (event: WheelEvent) => {
-      if (event.deltaY === 0) {
+      /*
+       * Both numbers the event carries, and nothing else about it.
+       *
+       * `deltaY` is not a length until `deltaMode` says what its unit is, so
+       * neither is read without the other. `ctrlKey` is deliberately not read:
+       * this viewer has no pinch semantics, and treating a modifier as one
+       * would be a guess about the hardware rather than a reading of it.
+       */
+      const wheel = { deltaY: event.deltaY, deltaMode: event.deltaMode };
+      // Asked before anything is measured. An event this viewer cannot read is
+      // not worth a layout, and the answer is the same one the planner would
+      // give -- the same helper, asked the same question.
+      if (normalizeWheelDelta(wheel) === null) {
         return;
       }
       const state = readInteraction();
       // The centre when there is nothing to measure against, which is the same
       // anchor a keyboard zoom uses and the only honest guess available.
       const anchor = plotFractionAt(event.clientX) ?? 0.5;
-      const plan = planWheelGesture(state, event.deltaY < 0 ? "in" : "out", anchor);
+      const plan = planWheelGesture(state, wheel, anchor);
       if (plan.event === null) {
         // Not ours. The run cannot go any further this way, so the browser
         // keeps the event and the column below can still be scrolled with it.

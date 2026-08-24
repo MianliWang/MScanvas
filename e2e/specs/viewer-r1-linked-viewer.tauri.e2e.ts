@@ -76,6 +76,24 @@ async function pointAt(fraction: number): Promise<{ readonly x: number; readonly
   };
 }
 
+/** What the range caption says is on screen, as a width. */
+async function visibleSpan(): Promise<number> {
+  const [, low, high] = /Showing ([\d.]+) to ([\d.]+)/u.exec(await rangeCaption()) ?? [];
+  return Number(high) - Number(low);
+}
+
+/** Puts the whole run back on screen, so a case can start where the viewer opens. */
+async function backToFullRange(): Promise<void> {
+  if ((await rangeCaption()).includes("full range")) {
+    return;
+  }
+  await browser.$("button=Reset range").click();
+  await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
+    timeout: 30_000,
+    timeoutMsg: "the run never came back to full range",
+  });
+}
+
 /** Dispatches one cancelable wheel and reports whether the viewer took it. */
 async function wheelClaim(clientX: number, deltaY: number): Promise<boolean> {
   return browser.execute(
@@ -299,5 +317,32 @@ describe("the linked viewer on the real Tauri WebView", () => {
       timeout: 30_000,
       timeoutMsg: "a claimed wheel changed nothing in WebView2",
     });
+  });
+
+  it("reads how far the wheel turned, not merely which way", async () => {
+    /*
+     * The magnitude half, in the shell that ships. One bounded case using
+     * nothing but dispatched events: the same direction at two sizes has to
+     * produce two ranges, which is precisely what the adapter could not do when
+     * it reduced the event to a direction on the way in.
+     *
+     * The two sizes are far apart because the instrument is the caption, which
+     * prints four decimals over a fixture run 0.0625 wide. A single pixel of
+     * wheel is a real request and a real change -- pinned to the digit beside
+     * the planner -- and simply too small to read here.
+     */
+    await backToFullRange();
+    const at = await pointAt(0.5);
+    const full = await visibleSpan();
+
+    expect(await wheelClaim(at.x, -100)).toBe(true);
+    const gentle = await visibleSpan();
+
+    await backToFullRange();
+    expect(await wheelClaim(at.x, -1_000)).toBe(true);
+    const firm = await visibleSpan();
+
+    expect(gentle).toBeLessThan(full);
+    expect(firm).toBeLessThan(gentle);
   });
 });

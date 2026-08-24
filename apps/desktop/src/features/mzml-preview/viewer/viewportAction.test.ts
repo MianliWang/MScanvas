@@ -25,13 +25,10 @@ import {
 } from "./interactionState";
 import type { RetentionTimeDomain } from "./scanModel";
 import { minimumSpan, zoomDomain } from "./viewport";
-import type { ViewportAction, WheelDirection } from "./viewportAction";
-import {
-  WHEEL_ZOOM_FACTOR,
-  ZOOM_STEP_FACTOR,
-  planViewportAction,
-  planWheelGesture,
-} from "./viewportAction";
+import type { ViewportAction } from "./viewportAction";
+import { ZOOM_STEP_FACTOR, planViewportAction, planWheelGesture } from "./viewportAction";
+import type { WheelDelta } from "./wheelInput";
+import { DOM_DELTA_LINE, DOM_DELTA_PIXEL, wheelZoomFactor } from "./wheelInput";
 
 const ACTIONS: readonly ViewportAction[] = ["zoom-in", "zoom-out", "reset"];
 
@@ -289,41 +286,72 @@ describe("what a viewport control would do", () => {
   });
 });
 
+/** A pixel-mode event, which is what nearly every device sends. */
+function pixels(deltaY: number): WheelDelta {
+  return { deltaY, deltaMode: DOM_DELTA_PIXEL };
+}
+
+function lines(deltaY: number): WheelDelta {
+  return { deltaY, deltaMode: DOM_DELTA_LINE };
+}
+
+/** One ordinary mouse-sized notch, in each direction. */
+const INWARD = pixels(-100);
+const OUTWARD = pixels(100);
+
+/** Away from both edges, so nothing below is really testing the clamp. */
+const OFF_CENTRE = 0.35;
+
+/** Settles whatever gesture is in flight, so a range can be compared. */
+function settled(state: ViewerInteractionState): ViewerInteractionState {
+  const epoch = activeGestureEpoch(state);
+  return epoch === null
+    ? state
+    : viewerInteractionReducer(state, { type: "gesture-settled", epoch });
+}
+
+/** Sends one event, if the viewer would take it. */
+function turn(
+  state: ViewerInteractionState,
+  wheel: WheelDelta,
+  anchor: number,
+): ViewerInteractionState {
+  const plan = planWheelGesture(state, wheel, anchor);
+  return plan.event === null ? state : viewerInteractionReducer(state, plan.event);
+}
+
 /*
- * The same question, asked of a gesture instead of a press.
+ * The same question, asked of a gesture instead of a press -- and of a gesture
+ * that now says how far it turned.
  *
- * A wheel is not a button: a smaller factor, an anchor under the pointer rather
- * than at the centre, a transient gesture carrying a reducer-assigned epoch, and
- * a settle a moment later. What it shares is the only thing worth sharing --
- * whether putting it through the contract would change the range on screen --
- * because that is what decides whether MSCanvas may cancel the browser's default
- * action for it.
+ * Two rules meet in this planner and are deliberately not the same rule.
+ * `wheelInput.ts` decides **how much** one event asks for, from its own
+ * magnitude and unit. This planner decides **whether the viewer owns it**, which
+ * is R1.2's rule unchanged: only if the resulting canonical interaction would
+ * change the settled rendered domain. The cases that matter most are the ones
+ * where the two interact -- a large delta at a boundary is still not ours, and a
+ * very small one that moves the axis still is.
  *
  * The no-run case is here rather than at the component, because a viewer with no
  * run loaded draws no plot for a wheel to arrive at. The planner is where that
  * state can be asked the question at all.
  */
-describe("what one wheel notch would do", () => {
-  const DIRECTIONS: readonly WheelDirection[] = ["in", "out"];
+describe("whether the viewer owns one wheel event", () => {
   const ANCHORS = [0, 0.5, 1] as const;
 
-  /** Whether the notch would change the range on screen, worked out here. */
+  /** Whether the event would change the range on screen, worked out here. */
   function wouldMoveTheAxis(
     state: ViewerInteractionState,
-    direction: WheelDirection,
+    wheel: WheelDelta,
     anchor: number,
   ): boolean {
     const full = state.fullDomain;
     const shown = renderedDomain(state);
-    if (full === null || shown === null) {
+    const factor = wheelZoomFactor(wheel);
+    if (full === null || shown === null || factor === null) {
       return false;
     }
-    const candidate = zoomDomain(
-      shown,
-      full,
-      direction === "in" ? WHEEL_ZOOM_FACTOR : 1 / WHEEL_ZOOM_FACTOR,
-      anchor,
-    );
+    const candidate = zoomDomain(shown, full, factor, anchor);
     const epoch = activeGestureEpoch(state);
     const applied = viewerInteractionReducer(
       state,
@@ -333,12 +361,7 @@ describe("what one wheel notch would do", () => {
     );
     // Carried to its conclusion, because an unsettled gesture is not finished,
     // and what it settles to is what the reader is left looking at.
-    const settling = activeGestureEpoch(applied);
-    const finished =
-      settling === null
-        ? applied
-        : viewerInteractionReducer(applied, { type: "gesture-settled", epoch: settling });
-    const after = renderedDomain(finished);
+    const after = renderedDomain(settled(applied));
     return after !== null && (after.low !== shown.low || after.high !== shown.high);
   }
 
@@ -347,7 +370,7 @@ describe("what one wheel notch would do", () => {
    * anything.
    *
    * The anchor is a parameter because the narrowest viewport is not one range.
-   * `zoomDomain` floors the span it asks for, and the last notch before the
+   * `zoomDomain` floors the span it asks for, and the last event before the
    * floor lands wherever the pointer held it, so a wheel turned at the left edge
    * of the plot comes to rest against a slightly different pair of numbers than
    * one turned at the middle. Reaching the floor the same way it is then asked
@@ -356,12 +379,12 @@ describe("what one wheel notch would do", () => {
    */
   function atWheelFloor(full: RetentionTimeDomain, anchor: number): ViewerInteractionState {
     let state = loaded(full);
-    for (let step = 0; step < 400; step += 1) {
-      const plan = planWheelGesture(state, "in", anchor);
-      if (plan.event === null) {
+    for (let step = 0; step < 2_000; step += 1) {
+      const next = turn(state, INWARD, anchor);
+      if (next === state) {
         return state;
       }
-      state = viewerInteractionReducer(state, plan.event);
+      state = next;
     }
     throw new Error("the wheel never ran out of run");
   }
@@ -369,171 +392,341 @@ describe("what one wheel notch would do", () => {
   const cases: readonly {
     readonly name: string;
     readonly state: (anchor: number) => ViewerInteractionState;
-    readonly expected: Readonly<Record<WheelDirection, boolean>>;
+    readonly expected: { readonly inward: boolean; readonly outward: boolean };
   }[] = [
     {
       name: "a positive-span run, showing all of it",
       // The state the viewer opens in, and the one a reader is in when they
       // want to reach the panels below.
       state: () => loaded(RUN),
-      expected: { in: true, out: false },
+      expected: { inward: true, outward: false },
     },
     {
       name: "an ordinary subrange",
-      state: () => {
-        const state = loaded(RUN);
-        return viewerInteractionReducer(
-          state,
-          planWheelGesture(state, "in", 0.5).event as ViewerEvent,
-        );
-      },
-      expected: { in: true, out: true },
+      state: () => turn(loaded(RUN), INWARD, 0.5),
+      expected: { inward: true, outward: true },
     },
     {
       name: "the narrowest viewport the wheel can reach",
       state: (anchor) => atWheelFloor(RUN, anchor),
-      expected: { in: false, out: true },
+      expected: { inward: false, outward: true },
     },
     {
       name: "a run whose scans all share one retention time",
       // A real acquisition with a visible mark and no width to zoom.
       state: () => loaded({ low: 12.5, high: 12.5 }),
-      expected: { in: false, out: false },
+      expected: { inward: false, outward: false },
     },
     {
       name: "a run whose low edge does not survive being recovered exactly",
       /*
-       * The case that decides how the question is asked. Zooming out here
-       * produces a gesture domain whose low edge is 0.012499999999988631 --
-       * compared as a transient, a change of one part in a hundred million
-       * million, and the wheel would be claimed for it. Settled, the run comes
-       * back exactly, and the honest answer is that nothing moved.
+       * R1.2's case, and it still decides how the question is asked. Zooming out
+       * here produces a gesture domain whose low edge is 0.012499999999988631 --
+       * compared as a transient that is a change of one part in a hundred
+       * million million, and the wheel would be claimed for it. Settled, the run
+       * comes back exactly, and the honest answer is that nothing moved.
        */
       state: () => loaded({ low: 0.0125, high: 453.9875 }),
-      expected: { in: true, out: false },
+      expected: { inward: true, outward: false },
     },
     {
       name: "a viewport with no run loaded at all",
       state: () => initialViewerInteractionState,
-      expected: { in: false, out: false },
+      expected: { inward: false, outward: false },
     },
   ];
 
   for (const scenario of cases) {
-    for (const direction of DIRECTIONS) {
-      it(`${direction} in ${scenario.name}`, () => {
+    for (const [name, wheel] of [
+      ["inward", INWARD],
+      ["outward", OUTWARD],
+    ] as const) {
+      it(`${name} in ${scenario.name}`, () => {
         for (const anchor of ANCHORS) {
           const label = `anchor ${String(anchor)}`;
-          const plan = planWheelGesture(scenario.state(anchor), direction, anchor);
+          const plan = planWheelGesture(scenario.state(anchor), wheel, anchor);
 
-          expect(plan.handled, label).toBe(scenario.expected[direction]);
-          // An unclaimed notch offers nothing to dispatch, so an input the
+          expect(plan.handled, label).toBe(scenario.expected[name]);
+          // An unclaimed event offers nothing to dispatch, so an input the
           // viewer did not consume can leave nothing behind either.
-          expect(plan.event === null, label).toBe(!scenario.expected[direction]);
+          expect(plan.event === null, label).toBe(!scenario.expected[name]);
         }
       });
     }
 
     it(`agrees with what the reducer would settle to in ${scenario.name}`, () => {
-      for (const direction of DIRECTIONS) {
+      for (const wheel of [INWARD, OUTWARD]) {
         for (const anchor of ANCHORS) {
           const state = scenario.state(anchor);
 
           expect(
-            planWheelGesture(state, direction, anchor).handled,
-            `${direction} at ${String(anchor)}`,
-          ).toBe(wouldMoveTheAxis(state, direction, anchor));
+            planWheelGesture(state, wheel, anchor).handled,
+            `${String(wheel.deltaY)} at ${String(anchor)}`,
+          ).toBe(wouldMoveTheAxis(state, wheel, anchor));
         }
       }
     });
   }
 
-  it("lets go of the wheel at the boundary rather than holding it turn after turn", () => {
-    /*
-     * The defect this closes is a wheel the viewer keeps and does not use, so
-     * what matters at a boundary is not only that the claim stops but that it
-     * stops quickly, whatever the pointer was doing on the way in.
-     *
-     * A pointer that moves between notches can leave the viewport a few parts in
-     * a quadrillion off the range the floor was reached at, and `zoomDomain`
-     * floors the span rather than refusing, so the next notch is a real -- and
-     * completely invisible -- change. The rule claims it, once, and then the
-     * arithmetic has converged and every later notch is released. What is pinned
-     * here is that bound: the wheel comes free, and the range does not creep
-     * while it does.
-     */
-    const centred = atWheelFloor(RUN, 0.5);
-    const before = renderedDomain(centred) as RetentionTimeDomain;
-    let state = centred;
-    let claimed = 0;
+  it("owns a delta far too small to be a notch, if it moves the axis", () => {
+    // The half of the rule a magnitude-aware planner could get wrong in one
+    // direction: size is not what decides. One pixel is a real request, and it
+    // changes the range on screen.
+    const plan = planWheelGesture(loaded(RUN), pixels(-1), 0.5);
 
-    for (let notch = 0; notch < 20; notch += 1) {
-      // The pointer at the left edge, which is not where the floor was reached.
-      const plan = planWheelGesture(state, "in", 0);
-      if (plan.event === null) {
-        break;
-      }
-      claimed += 1;
-      state = viewerInteractionReducer(state, plan.event);
+    expect(plan.handled).toBe(true);
+    const width = (plan.nextDomain?.high ?? 0) - (plan.nextDomain?.low ?? 0);
+    expect(width).toBeLessThan(RUN.high - RUN.low);
+    expect(width).toBeGreaterThan((RUN.high - RUN.low) * 0.99);
+  });
+
+  it("does not own a delta of any size the arithmetic cannot use", () => {
+    // And the other direction, which is where a magnitude-aware planner could
+    // reopen the swallowed-scroll defect: a page of outward wheel at full range
+    // is an enormous request for something that does not exist.
+    for (const wheel of [pixels(1), pixels(240), pixels(4_000), lines(20)]) {
+      const plan = planWheelGesture(loaded(RUN), wheel, 0.5);
+
+      expect(plan.handled, String(wheel.deltaY)).toBe(false);
+      expect(plan.event, String(wheel.deltaY)).toBeNull();
     }
+  });
 
-    expect(claimed).toBeLessThanOrEqual(2);
-    expect(planWheelGesture(state, "in", 0).handled).toBe(false);
-    const after = renderedDomain(state) as RetentionTimeDomain;
-    // Nothing a screen, or a retention time, could tell apart.
-    const tolerance = (RUN.high - RUN.low) * 1e-12;
-    expect(Math.abs(after.low - before.low)).toBeLessThan(tolerance);
-    expect(Math.abs(after.high - before.high)).toBeLessThan(tolerance);
+  it("declines a unit it cannot read, whatever the magnitude says", () => {
+    for (const mode of [3, -1, Number.NaN]) {
+      const plan = planWheelGesture(loaded(RUN), { deltaY: -100, deltaMode: mode }, 0.5);
+
+      expect(plan.handled, String(mode)).toBe(false);
+      expect(plan.event, String(mode)).toBeNull();
+    }
+  });
+
+  it("declines a delta that is not a number, and one that is zero", () => {
+    for (const delta of [Number.NaN, Number.POSITIVE_INFINITY, 0]) {
+      expect(planWheelGesture(loaded(RUN), pixels(delta), 0.5).handled, String(delta)).toBe(
+        false,
+      );
+    }
   });
 
   it("starts a gesture where there is none, and moves the one there is", () => {
-    // The epoch is read from the state, never invented. An adapter that minted
-    // its own could address a gesture that is not its own, which is the race an
-    // epoch exists to remove.
+    // The epoch is read from the state, never invented, and one stream of
+    // events is one gesture however many events it is made of.
     const state = loaded(RUN);
-    const first = planWheelGesture(state, "in", 0.5);
+    const first = planWheelGesture(state, INWARD, 0.5);
     expect(first.event?.type).toBe("gesture-started");
 
     const moving = viewerInteractionReducer(state, first.event as ViewerEvent);
     const epoch = activeGestureEpoch(moving);
     expect(epoch).not.toBeNull();
 
-    expect(planWheelGesture(moving, "in", 0.5).event).toMatchObject({
+    expect(planWheelGesture(moving, INWARD, 0.5).event).toMatchObject({
       type: "gesture-moved",
       epoch,
     });
   });
 
-  it("holds the retention time under the pointer rather than the centre", () => {
-    // The button planner's centre anchor is a different gesture, and must not
-    // be substituted for this one.
+  it("reports the range the event would leave, not the one it asked for", () => {
     const state = loaded(RUN);
-    const left = planWheelGesture(state, "in", 0).nextDomain as RetentionTimeDomain;
-    const right = planWheelGesture(state, "in", 1).nextDomain as RetentionTimeDomain;
+    const plan = planWheelGesture(state, INWARD, 0.5);
+
+    expect(plan.handled).toBe(true);
+    expect(plan.nextDomain).toEqual(
+      renderedDomain(viewerInteractionReducer(state, plan.event as ViewerEvent)),
+    );
+  });
+
+  it("lets go of the wheel at the boundary rather than holding it turn after turn", () => {
+    /*
+     * R1.2's bound, re-checked under continuous magnitudes. `zoomDomain` floors
+     * the span it asks for, so a pointer that moves between events can leave the
+     * viewport a few parts in a quadrillion from where the floor was reached,
+     * and the next event is a real -- and completely invisible -- change that the
+     * rule claims. It claims it once, and then the arithmetic has converged.
+     */
+    const centred = atWheelFloor(RUN, 0.5);
+    const before = renderedDomain(settled(centred)) as RetentionTimeDomain;
+    let state = centred;
+    let claimed = 0;
+
+    for (let step = 0; step < 20; step += 1) {
+      // The pointer at the left edge, which is not where the floor was reached.
+      const next = turn(state, INWARD, 0);
+      if (next === state) {
+        break;
+      }
+      claimed += 1;
+      state = next;
+    }
+
+    expect(claimed).toBeLessThanOrEqual(2);
+    expect(planWheelGesture(state, INWARD, 0).handled).toBe(false);
+    const after = renderedDomain(settled(state)) as RetentionTimeDomain;
+    // Nothing a screen, or a retention time, could tell apart.
+    const tolerance = (RUN.high - RUN.low) * 1e-12;
+    expect(Math.abs(after.low - before.low)).toBeLessThan(tolerance);
+    expect(Math.abs(after.high - before.high)).toBeLessThan(tolerance);
+  });
+});
+
+/*
+ * How far the wheel zooms, which is the question R1.3 answers.
+ *
+ * Before it, the planner was handed a direction, so `deltaY` of -1, -20 and -240
+ * were one request: the same candidate range came back for all three. Zoom rate
+ * was therefore decided by how many `WheelEvent` objects a device chose to emit
+ * for one gesture, and from the whole run to the narrowest viewport took 57
+ * events whatever those events said they were.
+ *
+ * These properties replace event counting, and they are asserted at the viewport
+ * rather than in the arithmetic because that is where a reader meets them -- and
+ * because a planner that read the magnitude and then dropped it on the way to
+ * `zoomDomain` would pass every test in `wheelInput.test.ts`.
+ */
+describe("how far one wheel event zooms", () => {
+  /** Runs a whole stream of events through the planner and settles it. */
+  function afterTurning(stream: readonly WheelDelta[], anchor: number): RetentionTimeDomain {
+    let state = loaded(RUN);
+    for (const wheel of stream) {
+      state = turn(state, wheel, anchor);
+    }
+    return renderedDomain(settled(state)) as RetentionTimeDomain;
+  }
+
+  function width(domain: RetentionTimeDomain): number {
+    return domain.high - domain.low;
+  }
+
+  function repeated(count: number, wheel: WheelDelta): WheelDelta[] {
+    return Array.from({ length: count }, () => wheel);
+  }
+
+  it("lands in the same place however finely one gesture is cut into events", () => {
+    /*
+     * The invariant that removes event count as a variable. The same total
+     * travel, delivered as one event, as a hundred, and as uneven partitions,
+     * arrives at the same range -- within ordinary double-precision drift over
+     * the multiplications, which is the only tolerance here and is emphatically
+     * not a user-facing epsilon for viewport equality.
+     */
+    const once = afterTurning([pixels(-100)], OFF_CENTRE);
+    const partitions: readonly (readonly WheelDelta[])[] = [
+      repeated(100, pixels(-1)),
+      repeated(4, pixels(-25)),
+      [pixels(-10), pixels(-30), pixels(-60)],
+      [pixels(-0.5), pixels(-99.5)],
+    ];
+
+    for (const stream of partitions) {
+      const many = afterTurning(stream, OFF_CENTRE);
+      const label = `${String(stream.length)} events`;
+
+      expect(Math.abs(width(many) - width(once)) / width(once), label).toBeLessThan(1e-9);
+      expect(Math.abs(many.low - once.low) / width(once), label).toBeLessThan(1e-9);
+      expect(Math.abs(many.high - once.high) / width(once), label).toBeLessThan(1e-9);
+    }
+  });
+
+  it("does not slam a touchpad-shaped stream into the narrowest viewport", () => {
+    /*
+     * The reported defect, pinned as a number rather than as a feeling. Eighty
+     * small events used to compound as 0.85^80 -- about two millionths of the
+     * run, far past the 1/10,000 floor, so one flick arrived at maximum zoom.
+     * Their normalized total is now -80 x 0.002 = -0.16, and the run keeps
+     * 2^-0.16 of its span.
+     */
+    const after = afterTurning(repeated(80, pixels(-1)), OFF_CENTRE);
+    const full = RUN.high - RUN.low;
+
+    expect(width(after) / full).toBeCloseTo(2 ** -0.16, 9);
+    expect(width(after)).toBeGreaterThan(full * 0.5);
+    // Which is orders of magnitude clear of the floor it used to reach.
+    expect(width(after)).toBeGreaterThan(minimumSpan(RUN) * 1_000);
+  });
+
+  it("still lets a deliberate stream reach the narrowest viewport", () => {
+    // Normalization is not a speed limit. A reader who keeps scrolling still
+    // gets all the way in; it takes the travel it says it takes.
+    const after = afterTurning(repeated(400, pixels(-240)), 0.5);
+
+    expect(width(after)).toBeCloseTo(minimumSpan(RUN), 12);
+  });
+
+  it("makes a bigger turn of the wheel a bigger change", () => {
+    const inward = [-1, -20, -100, -240].map((delta) =>
+      width(afterTurning([pixels(delta)], OFF_CENTRE)),
+    );
+    for (let step = 1; step < inward.length; step += 1) {
+      expect(inward[step], String(step)).toBeLessThan(inward[step - 1]);
+    }
+
+    // And outward, from a subrange there is room to widen from.
+    const outward = [1, 20, 100, 240].map((delta) =>
+      width(afterTurning([pixels(-500), pixels(delta)], OFF_CENTRE)),
+    );
+    for (let step = 1; step < outward.length; step += 1) {
+      expect(outward[step], String(step)).toBeGreaterThan(outward[step - 1]);
+    }
+  });
+
+  it("reads the same request the same way whichever unit it arrives in", () => {
+    // Twenty-five pixels is one line and five hundred is twenty of them, so
+    // these are one gesture described three ways.
+    expect(afterTurning([pixels(-25)], OFF_CENTRE)).toEqual(
+      afterTurning([lines(-1)], OFF_CENTRE),
+    );
+    expect(afterTurning([pixels(-500)], OFF_CENTRE)).toEqual(
+      afterTurning([lines(-20)], OFF_CENTRE),
+    );
+  });
+
+  it("comes back to the range it started from when the wheel is turned back", () => {
+    // Away from every boundary, where the clamp has no say. Reciprocity at the
+    // viewport is not required at the edges of the run, and is not asserted
+    // there.
+    const there = afterTurning([pixels(-200)], OFF_CENTRE);
+    const andBack = afterTurning([pixels(-200), pixels(200)], OFF_CENTRE);
+
+    expect(width(there)).toBeLessThan(RUN.high - RUN.low);
+    expect(width(andBack)).toBeCloseTo(RUN.high - RUN.low, 9);
+  });
+
+  it("keeps the retention time under the pointer, at every magnitude", () => {
+    /*
+     * Pointer anchoring, unchanged by normalization and load-bearing: the
+     * magnitude decides how much the span shrinks, never what it shrinks
+     * towards.
+     */
+    for (const anchor of [0.1, 0.5, 0.9]) {
+      const held = RUN.low + (RUN.high - RUN.low) * anchor;
+
+      for (const delta of [-1, -20, -100, -240]) {
+        const after = afterTurning([pixels(delta)], anchor);
+
+        expect(
+          (held - after.low) / width(after),
+          `${String(delta)} at ${String(anchor)}`,
+        ).toBeCloseTo(anchor, 9);
+      }
+    }
+  });
+
+  it("uses the pointer's anchor rather than the button's centre", () => {
+    const left = afterTurning([pixels(-100)], 0);
+    const right = afterTurning([pixels(-100)], 1);
 
     expect(left.low).toBeCloseTo(RUN.low, 9);
     expect(right.high).toBeCloseTo(RUN.high, 9);
     expect(right.low).toBeGreaterThan(left.low);
   });
 
-  it("moves the viewport by less than one press of the button does", () => {
-    // A stream of notches and one deliberate decision are different gestures,
-    // and the step reflects that. Ownership is still one rule for both.
-    const state = loaded(RUN);
-    const notch = planWheelGesture(state, "in", 0.5).nextDomain as RetentionTimeDomain;
-    const press = planViewportAction(state, "zoom-in").nextDomain as RetentionTimeDomain;
+  it("moves less on one event than one press of the button does", () => {
+    // The two gestures still differ, and now for a reason that is read from the
+    // event rather than fixed: an ordinary notch is not a deliberate press.
+    const notch = width(afterTurning([INWARD], 0.5));
+    const press = planViewportAction(loaded(RUN), "zoom-in").nextDomain as RetentionTimeDomain;
 
-    expect(notch.high - notch.low).toBeGreaterThan(press.high - press.low);
-    expect(notch.high - notch.low).toBeLessThan(RUN.high - RUN.low);
-  });
-
-  it("reports the range the notch would leave, not the one it asked for", () => {
-    const state = loaded(RUN);
-    const plan = planWheelGesture(state, "in", 0.5);
-
-    expect(plan.handled).toBe(true);
-    expect(plan.nextDomain).toEqual(
-      renderedDomain(viewerInteractionReducer(state, plan.event as ViewerEvent)),
-    );
+    expect(notch).toBeGreaterThan(width(press));
+    expect(notch).toBeLessThan(RUN.high - RUN.low);
   });
 });

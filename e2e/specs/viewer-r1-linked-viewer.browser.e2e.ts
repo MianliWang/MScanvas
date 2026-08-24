@@ -92,6 +92,67 @@ async function keyThePlot(key: string): Promise<void> {
   );
 }
 
+/**
+ * Dispatches one cancelable wheel and reports whether the viewer took it.
+ *
+ * `deltaMode` defaults to pixels, which is what nearly every device sends.
+ */
+async function wheelClaim(
+  clientX: number,
+  deltaY: number,
+  deltaMode = 0,
+): Promise<boolean> {
+  return browser.execute(
+    (css: string, x: number, delta: number, mode: number) => {
+      const event = new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        deltaMode: mode,
+        deltaY: delta,
+      });
+      document.querySelector(css)?.dispatchEvent(event);
+      return event.defaultPrevented;
+    },
+    PLOT,
+    clientX,
+    deltaY,
+    deltaMode,
+  ) as Promise<boolean>;
+}
+
+/**
+ * Sends a whole stream of identical events the way one gesture arrives.
+ *
+ * Dispatched inside one script so the stream is not paced by the driver, and so
+ * it cannot be interrupted by the settle it schedules.
+ */
+async function wheelStream(clientX: number, deltaY: number, count: number): Promise<number> {
+  return browser.execute(
+    (css: string, x: number, delta: number, times: number) => {
+      const plot = document.querySelector(css);
+      let claimed = 0;
+      for (let step = 0; step < times; step += 1) {
+        const event = new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          deltaY: delta,
+        });
+        plot?.dispatchEvent(event);
+        if (event.defaultPrevented) {
+          claimed += 1;
+        }
+      }
+      return claimed;
+    },
+    PLOT,
+    clientX,
+    deltaY,
+    count,
+  ) as Promise<number>;
+}
+
 /** Sends one wheel notch without moving the pointer, so hover stays where it is. */
 async function wheelInPlace(clientX: number, deltaY: number): Promise<void> {
   await browser.execute(
@@ -959,25 +1020,6 @@ describe("the linked viewer, rendered", () => {
      * contract have something to act on.
      */
 
-    /** Dispatches one cancelable wheel and reports whether the viewer took it. */
-    async function wheelClaim(clientX: number, deltaY: number): Promise<boolean> {
-      return browser.execute(
-        (css: string, x: number, delta: number) => {
-          const event = new WheelEvent("wheel", {
-            bubbles: true,
-            cancelable: true,
-            clientX: x,
-            deltaY: delta,
-          });
-          document.querySelector(css)?.dispatchEvent(event);
-          return event.defaultPrevented;
-        },
-        PLOT,
-        clientX,
-        deltaY,
-      ) as Promise<boolean>;
-    }
-
     /** What the viewer column can scroll, in real pixels. */
     async function stackOverflow(): Promise<{
       readonly scrollHeight: number;
@@ -1063,6 +1105,155 @@ describe("the linked viewer, rendered", () => {
 
       // And the measurement is still drawn. Nothing to zoom is not nothing to
       // see, and releasing the wheel did not cost the glyph.
+      expect(
+        await browser.execute(
+          () => document.querySelectorAll("circle.chromatogram-point").length,
+        ),
+      ).toBe(1);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+  });
+
+  describe("how far a wheel zooms, rendered", () => {
+    /*
+     * The magnitude half of the wheel, in a real browser.
+     *
+     * What only this layer can settle is that the two numbers a `WheelEvent`
+     * carries survive the trip through the shipped bundle's own listener. The
+     * arithmetic is pinned beside the planner; here the question is whether the
+     * production adapter reads `deltaY` and `deltaMode` at all, or reduces them
+     * to a direction on the way in as it used to.
+     *
+     * Resolution note: the caption prints four decimals, so what these cases
+     * compare is the range a reader can actually see. The exact numeric identity
+     * of two chunkings is a unit-level claim and is made there.
+     *
+     * These are INPUT SHAPES, not hardware. A synthetic event is not a user
+     * gesture and this suite has no touchpad in it; nothing below claims parity
+     * between physical devices.
+     */
+    const LINE_MODE = 1;
+
+    it("makes a small delta a small zoom and a large one a large zoom", async () => {
+      // The defect, from outside: under the old rule these were one request.
+      await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+      const at = await pointAt(0.5);
+      const full = await visibleSpan();
+
+      expect(await wheelClaim(at.x, -1)).toBe(true);
+      const gentle = await visibleSpan();
+
+      await browser.$("button=Reset range").click();
+      await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
+        timeout: 10_000,
+        timeoutMsg: "Reset range did not return the whole run",
+      });
+
+      expect(await wheelClaim(at.x, -100)).toBe(true);
+      const firm = await visibleSpan();
+
+      expect(gentle).toBeLessThan(full);
+      expect(firm).toBeLessThan(gentle);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("lands in the same place whether one gesture arrives as one event or a hundred", async () => {
+      // Same pointer position, same total travel, two packetings of it.
+      await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+      const at = await pointAt(0.5);
+
+      expect(await wheelClaim(at.x, -100)).toBe(true);
+      const once = await visibleDomain();
+
+      await browser.$("button=Reset range").click();
+      await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
+        timeout: 10_000,
+        timeoutMsg: "Reset range did not return the whole run",
+      });
+
+      expect(await wheelStream(at.x, -1, 100)).toBe(100);
+      const many = await visibleDomain();
+
+      // Within what the caption can distinguish, which is a tenth of a
+      // thousandth of a minute-or-second of retention time.
+      expect(Math.abs(many.low - once.low)).toBeLessThan(2e-4);
+      expect(Math.abs(many.high - once.high)).toBeLessThan(2e-4);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("does not slam a touchpad-shaped stream into the narrowest viewport", async () => {
+      /*
+       * Eighty small events. Under the old fixed-per-event rule that compounded
+       * as 0.85^80 and reached the narrowest viewport the run allows; their
+       * normalized total is now -0.16 of a page.
+       */
+      await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+      const at = await pointAt(0.5);
+      const full = await visibleSpan();
+
+      expect(await wheelStream(at.x, -1, 80)).toBe(80);
+
+      const after = await visibleSpan();
+      expect(after / full).toBeCloseTo(2 ** -0.16, 3);
+      expect(after).toBeGreaterThan(full * 0.5);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("reads a line-mode event as the pixels this product says it is worth", async () => {
+      await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+      const at = await pointAt(0.5);
+
+      expect(await wheelClaim(at.x, -1, LINE_MODE)).toBe(true);
+      const fromLines = await visibleDomain();
+
+      await browser.$("button=Reset range").click();
+      await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
+        timeout: 10_000,
+        timeoutMsg: "Reset range did not return the whole run",
+      });
+
+      expect(await wheelClaim(at.x, -25)).toBe(true);
+      const fromPixels = await visibleDomain();
+
+      expect(fromLines).toEqual(fromPixels);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("leaves a unit it cannot read to the browser", async () => {
+      await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+      const at = await pointAt(0.5);
+      const before = await rangeCaption();
+
+      expect(await wheelClaim(at.x, -100, 3)).toBe(false);
+
+      expect(await rangeCaption()).toBe(before);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("refuses an outward delta of any size at full range", async () => {
+      // Magnitude decides how much is asked for. It never decides whether the
+      // viewer owns the event.
+      await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+      const at = await pointAt(0.5);
+      const before = await rangeCaption();
+
+      for (const deltaY of [1, 100, 240, 4_000]) {
+        expect(await wheelClaim(at.x, deltaY)).toBe(false);
+      }
+
+      expect(await rangeCaption()).toBe(before);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    it("claims neither magnitude for a run whose one scan has no width to zoom", async () => {
+      await openTheViewer({ width: 1_366, height: 768, scans: 1 });
+      const at = await pointAt(0.5);
+
+      for (const deltaY of [-1, -100, -4_000, 1, 100, 4_000]) {
+        expect(await wheelClaim(at.x, deltaY)).toBe(false);
+      }
+
+      // And the measurement is still drawn.
       expect(
         await browser.execute(
           () => document.querySelectorAll("circle.chromatogram-point").length,
