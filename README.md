@@ -106,9 +106,10 @@ percentage; cancelling one item of a queue while the rest carry on; resuming a
 stopped queue; a conversion queue that survives closing the application;
 diagnostics for anything but the latest attempt of each item, a diagnostics
 history, complete raw converter logs, and sending a diagnostics file anywhere;
-and every figure export but the selected spectrum's own SVG, PNG, CSV and TSV --
-there is no chromatogram export and no current-range export, and figure settings
-are not remembered across a restart. mzXML output stays disabled and fail-closed until
+and every figure export but the selected spectrum's own SVG, PNG, CSV and TSV
+and the chromatogram's -- there is no linked two-panel figure, no current-range
+export of a selected spectrum, and figure settings are not remembered across a
+restart. mzXML output stays disabled and fail-closed until
 representative multi-source integrity checks pass.
 
 A conversion queue is reachable, and its limits are the claim. `Add files…`
@@ -204,8 +205,9 @@ yet. See [What works today](#what-works-today).
   representative multi-source integrity checks;
 - queue, cancellation, retry and actionable errors;
 - SVG and PNG figure export, `Copy plot`, and underlying CSV/TSV export for the
-  selected spectrum, at a width, height, DPI and theme the user chooses
-  (shipped); chromatogram data export and a linked figure still to come.
+  selected spectrum and for the chromatogram -- the chromatogram over the whole
+  run or the range on screen -- at a width, height, DPI and theme the user
+  chooses (shipped); a linked two-panel figure still to come.
 
 Analysis is deferred rather than prohibited. MSCanvas should reuse mature algorithms from OpenMS/pyOpenMS, matchms and other reviewed packages instead of reimplementing them.
 

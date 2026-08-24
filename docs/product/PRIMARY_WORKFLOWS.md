@@ -132,8 +132,13 @@ run is already shown, inward at the narrowest viewport, either direction for a r
 of one scan — is left to the page at any size, so the same wheel goes on scrolling
 the column to the panels below the plot.
 
+The run itself can be exported: SVG, PNG or `Copy plot` for the figure and
+CSV/TSV for the per-scan data, over the whole run or over the range the viewer
+has committed to. A figure draws the traces that are visible; a data export
+carries both measured columns whichever of them is on screen.
+
 Still missing from the acquisition view: XIC, spectrum zoom and pan, multi-layer
-comparison, and any export of the chromatogram or of the range on screen. See
+comparison, and a linked two-panel figure. See
 [ADR 0032](../architecture/adr/0032-viewer-interaction-and-viewport-state.md) and
 [ADR 0033](../architecture/adr/0033-visible-linked-tic-bpc-viewer.md).
 

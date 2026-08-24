@@ -4537,6 +4537,50 @@ physical precision touchpad measured on real hardware, and no such measurement
 was made here: the input shapes in the tests are deterministic synthetic streams,
 recorded as shapes rather than as hardware.
 
+## M4.3 — chromatogram export and range scope, 2026-08-24
+
+The visible viewer draws a chromatogram from the spectrum table it was given.
+M4.3 makes that run exportable as a scientific document without letting the
+drawing become the authority.
+
+**Where the numbers come from.** The complete per-scan facts Rust retained when
+the preview was read, shared by handle rather than copied. Not the rows the
+webview received, which are a bounded prefix; not the clipped or reduced
+polyline; not an SVG path. Nothing rereads the file and nothing launches a
+backend process, and no `PreviewOperation::Tic` exists to issue.
+
+**A truncated viewer has no chromatogram export.** Rust holds more rows than the
+webview receives, and that is precisely why the export eligibility is the
+visible model's rather than "whatever Rust happens to have": complete,
+non-empty, finite retention times and intensities, and a unit posture this build
+can name.
+
+**Full run or current range.** Full needs no range from the interface at all.
+Current carries the viewer's committed domain and nothing else -- not the range
+a wheel or a drag is transiently showing -- and a viewer that has committed
+nothing has no narrower range, which resolves to the whole run while staying a
+current-range export. A range outside the run is refused rather than clamped.
+
+**Figure and data are siblings.** Both are built from one snapshot and one
+resolved range, and neither is read from the other. A data document contains
+scans, edges included, in retention-time-then-table-position order, always with
+both measured columns; a figure carries the complete source series and declares
+a window, so it can draw a segment crossing a range that holds no scans at all.
+A range with no scans is a successful export of no records.
+
+**Two contract extensions the figure needed.** A panel may now declare a visible
+value domain -- the range actually displayed, which does not claim the values
+outside it do not exist -- so a nine-million peak at another retention time
+cannot flatten the window a reader asked for. And a second measured series has
+its own role, `secondary_measurement`, drawn dashed as well as in its own
+colour, because a total ion current and a base peak intensity are two
+measurements rather than a measurement and a baseline. `plot-spec`'s schema
+version is 2 accordingly: every wire shape is `deny_unknown_fields`, so a
+version 1 reader genuinely cannot decode what this build writes.
+
+**One scientific export lane** now serves both surfaces, so two save dialogs
+cannot be open at once and a clipboard rasterization cannot race a file write.
+
 ### Still not implemented
 
 XIC, spectrum zoom and pan, multi-layer comparison, chromatogram data or figure
