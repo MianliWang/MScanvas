@@ -512,6 +512,23 @@ function ChromatogramPlot({
     [],
   );
 
+  /**
+   * A press that has not travelled yet.
+   *
+   * It may still become a click, so nothing is dispatched until it passes the
+   * slop threshold. Its own starting domain is kept so every later move is
+   * computed from the origin rather than from the previous move -- the same pan
+   * arrived at by a different route accumulates no drift.
+   */
+  const drag = useRef<{
+    readonly pointerId: number;
+    readonly originX: number;
+    readonly originY: number;
+    readonly start: RetentionTimeDomain;
+    epoch: number | null;
+    moved: boolean;
+  } | null>(null);
+
   /*
    * Attached by hand because React's own wheel listener is passive, so
    * `preventDefault` inside `onWheel` could not stop the page scrolling under a
@@ -542,6 +559,21 @@ function ChromatogramPlot({
        * this viewer has no pinch semantics, and treating a modifier as one
        * would be a guess about the hardware rather than a reading of it.
        */
+      /*
+       * A press owns the gesture, and this one is not it.
+       *
+       * `planWheelGesture` reads the active epoch out of the state, so a wheel
+       * arriving mid-pan would join the *pan's* gesture -- and then this
+       * adapter's 120ms timer would settle someone else's gesture, after which
+       * every later pointer move carries a dead epoch and the pan freezes until
+       * the button comes up. Whatever the wheel asked for would be overwritten
+       * by the next pan move anyway, which is computed from where the press
+       * began. So it is not this viewer's event: nothing is cancelled, nothing
+       * dispatched, nothing scheduled, and the pan is left exactly as it was.
+       */
+      if (drag.current !== null) {
+        return;
+      }
       const wheel = { deltaY: event.deltaY, deltaMode: event.deltaMode };
       // Asked before anything is measured. An event this viewer cannot read is
       // not worth a layout, and the answer is the same one the planner would
@@ -572,23 +604,6 @@ function ChromatogramPlot({
       element.removeEventListener("wheel", onWheel);
     };
   }, [dispatch, plotFractionAt, readInteraction, scheduleSettle]);
-
-  /**
-   * A press that has not travelled yet.
-   *
-   * It may still become a click, so nothing is dispatched until it passes the
-   * slop threshold. Its own starting domain is kept so every later move is
-   * computed from the origin rather than from the previous move -- the same pan
-   * arrived at by a different route accumulates no drift.
-   */
-  const drag = useRef<{
-    readonly pointerId: number;
-    readonly originX: number;
-    readonly originY: number;
-    readonly start: RetentionTimeDomain;
-    epoch: number | null;
-    moved: boolean;
-  } | null>(null);
 
   const handlePointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
     if (event.button !== 0) {

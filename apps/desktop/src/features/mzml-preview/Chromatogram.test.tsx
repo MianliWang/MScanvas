@@ -1552,3 +1552,105 @@ describe("how far the wheel zooms", () => {
     expect(span()).toBeGreaterThan(fullSpan() * 0.99);
   });
 });
+
+describe("a wheel that arrives during a press", () => {
+  /*
+   * Two gestures cannot be in flight at once, and the press has it.
+   *
+   * `planWheelGesture` reads the active epoch out of the state, so a wheel
+   * turned mid-pan used to join the pan's gesture and schedule this adapter's
+   * 120ms settle against it. A pause with the button still down then ended
+   * someone else's gesture: every later pointer move carried a dead epoch, the
+   * reducer answered each one by identity, and the pan froze until the button
+   * came up. Nothing on screen said why.
+   *
+   * The wheel is simply not the viewer's event while a press is down. That also
+   * settles the quieter half of it -- whatever the wheel asked for would have
+   * been overwritten by the next pan move, which is computed from where the
+   * press began.
+   */
+  function press(clientX: number): void {
+    fireEvent.pointerDown(plot(), { button: 0, clientX, clientY: 100, pointerId: 1 });
+  }
+
+  function movePointer(clientX: number): void {
+    fireEvent.pointerMove(plot(), { clientX, clientY: 100, pointerId: 1 });
+  }
+
+  /** A run zoomed in far enough that there is somewhere to pan within. */
+  function zoomedIn(): void {
+    renderChromatogram();
+    wheel({ deltaY: -500 });
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+  }
+
+  it("does not freeze the pan it would otherwise have settled", () => {
+    zoomedIn();
+    press(500);
+    movePointer(460);
+    const panning = state();
+    expect(panning.gesture).not.toBeNull();
+    const epoch = panning.gesture?.epoch;
+    const midPan = shown();
+
+    const event = wheel({ deltaY: -240 });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(state()).toBe(panning);
+
+    // The timer the wheel would have scheduled is the whole defect. Long past
+    // the settle, the pan is still the same gesture.
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(state().gesture?.epoch).toBe(epoch);
+
+    // And it still pans, which is what a dead epoch would have taken away.
+    movePointer(420);
+    expect(shown().low).toBeGreaterThan(midPan.low);
+    expect(state().gesture?.epoch).toBe(epoch);
+
+    fireEvent.pointerUp(plot(), { button: 0, clientX: 420, clientY: 100, pointerId: 1 });
+    expect(state().gesture).toBeNull();
+    expect(state().committedDomain).not.toBeNull();
+  });
+
+  it("leaves the press alone before it has travelled far enough to pan", () => {
+    // A press that has not passed the slop threshold has started no gesture
+    // yet, but it still owns what happens next: the pan it becomes is computed
+    // from the range at press time, so a zoom in between would be discarded.
+    zoomedIn();
+    const before = state();
+    press(500);
+
+    const event = wheel({ deltaY: -240 });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(state()).toBe(before);
+    expect(state().gesture).toBeNull();
+  });
+
+  it("takes the wheel back as soon as the press is over", () => {
+    zoomedIn();
+    press(500);
+    wheel({ deltaY: -240 });
+    fireEvent.pointerUp(plot(), { button: 0, clientX: 500, clientY: 100, pointerId: 1 });
+    const released = shown();
+
+    const event = wheel({ deltaY: -240 });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(shown().high - shown().low).toBeLessThan(released.high - released.low);
+  });
+
+  it("gives it back after a cancelled press too", () => {
+    zoomedIn();
+    press(500);
+    movePointer(460);
+    fireEvent.pointerCancel(plot(), { clientX: 460, clientY: 100, pointerId: 1 });
+
+    expect(wheel({ deltaY: -240 }).defaultPrevented).toBe(true);
+  });
+});

@@ -457,6 +457,28 @@ arithmetic has converged by the following notch, and every later one is released
 The bound is what matters for the defect, and it is pinned by a test rather than
 argued: the wheel comes free, and the range does not creep while it does.
 
+### A press owns the gesture, so a wheel during one is not ours
+
+`planWheelGesture` reads the active epoch out of the state rather than
+allocating one, which is what keeps a stream of wheel events one gesture. The
+same reading would make a wheel turned *during a pan* join the pan's gesture --
+and then the wheel adapter's 120ms timer would settle someone else's gesture. A
+pause with the button still down was enough: every later pointer move carried a
+dead epoch, the reducer answered each one by identity, and the pan froze until
+the button came up, with nothing on screen to say why.
+
+So while a press is down on the plot, a wheel is **not this viewer's event**:
+nothing is cancelled, nothing dispatched, nothing scheduled, and the pan is left
+exactly as it was. Two gestures cannot be in flight at once and the press has
+it. That also settles the quieter half of the problem -- whatever the wheel asked
+for would have been overwritten by the next pan move, which is computed from the
+range at press time, so claiming the event would have bought a flicker rather
+than a zoom.
+
+The alternative would be a second concurrent gesture with its own epoch, which
+is an ADR 0032 semantic change rather than adapter wiring, and is not one this
+slice may make.
+
 ### Drag, and touch
 
 **Drag is unchanged and needed no repair.** The pan adapter cancels nothing — it
@@ -499,9 +521,9 @@ separate question, and R1 through R1.2 answered it with one bit:
 factor = event.deltaY < 0 ? 0.85 : 1 / 0.85
 ```
 
-A `WheelEvent` carries two numbers, and neither was read. `deltaY` of -1, -20 and
--240 produced the identical candidate range from the same state and anchor, and
-`deltaMode` never reached the viewport at all. What governed the zoom rate was
+A `WheelEvent` carries two numbers, and only the sign of one of them was read.
+`deltaY` of -1, -20 and -240 produced the identical candidate range from the same
+state and anchor, and `deltaMode` never reached the viewport at all. What governed the zoom rate was
 therefore **how many event objects a device chose to emit for one gesture**:
 from the whole run to the narrowest viewport took 57 events, whatever those
 events said they were. A device that reports a gesture as a stream of small
@@ -530,9 +552,15 @@ pixels is one line, and 500 pixels is twenty lines is one page. The absolute
 scale is the third row — one page of wheel halves or doubles the visible span —
 and everything else follows from it continuously, with no step and no floor.
 
-The shape is a normalization every web zoom implementation ends up with, and the
-constants are ours rather than a library's. **No dependency was added, and none
-is needed for four lines of arithmetic.**
+The shape is the ordinary one for wheel zoom -- an exponent per unit of delta --
+and the constants are this product's rather than a library's. **No dependency was
+added, and none is needed for four lines of arithmetic.**
+
+The pixel coefficient is also chosen so that this is not a change of feel for
+coarse input: an event of 100 pixels asks for `2^-0.2`, about 0.871, against the
+fixed 0.85 it replaces. A device that already sent few large events is left
+almost exactly where it was; what changes is everything finer than that, which
+previously asked for the same 0.85 however small it was.
 
 An event the module cannot read is declined rather than guessed at, and
 declining means the wheel is not claimed and the page keeps it:
@@ -739,7 +767,7 @@ cannot be drawn still has rows to step through.
 
 ## Evidence
 
-**Frontend suite:** 959 tests, counted at the close of R1.3. From R1: the
+**Frontend suite:** 963 tests, counted at the close of R1.3. From R1: the
 adapter's field mapping and every refusal; the controller's synchronous answer,
 its ref/state agreement and its identity no-op; one-selection-authority, the
 in-flight repeat, the refused index, the preview lifecycle and vendor-row focus
@@ -759,7 +787,8 @@ the normalization itself — composition, reciprocity, monotonicity, the three
 units it reads and everything it declines — the same chunking invariant
 re-asserted on the rendered domain after a settled gesture, and nine more at the
 production adapter, where a hundred one-pixel events have to land where one
-hundred-pixel event does.
+hundred-pixel event does. Round 1 of R1.3's review added four more, for a wheel
+that arrives while a press owns the gesture.
 
 **Browser QA:** 53 rendered viewer cases at 1366×768, 1920×1080 and 960×640,
 with real hover, click, wheel, drag, keyboard and table interaction — including
