@@ -1654,3 +1654,260 @@ describe("a wheel that arrives during a press", () => {
     expect(wheel({ deltaY: -240 }).defaultPrevented).toBe(true);
   });
 });
+
+describe("who owns a press on the plot", () => {
+  /*
+   * One pointer owns the press until that same pointer ends it.
+   *
+   * The plot declares `touch-action: none`, so every contact reaches it as a
+   * pointer event: on a touchscreen or a pen-and-touch device a second finger
+   * arrives in the middle of a pan. The press record used to be replaced by it,
+   * and the damage was not one bug but three. The first pointer's moves fell
+   * through to hover and its pan froze. Its release found a record belonging to
+   * someone else and returned, leaving the reducer holding a transient gesture
+   * that nothing would ever settle -- a viewport stuck in a gesture nobody was
+   * performing. And a brief second contact could commit a selection, which is
+   * one ProteoWizard process, that nobody asked for.
+   *
+   * Every case below is the same sentence from a different angle: a pointer
+   * that is not the owner is ignored -- no capture, no dispatch, no hover, and
+   * above all no clearing of the record.
+   */
+  const OWNER = 1;
+  const STRAY = 2;
+
+  function down(clientX: number, pointerId: number): void {
+    fireEvent.pointerDown(plot(), { button: 0, clientX, clientY: 100, pointerId });
+  }
+
+  function move(clientX: number, pointerId: number): void {
+    fireEvent.pointerMove(plot(), { clientX, clientY: 100, pointerId });
+  }
+
+  function up(clientX: number, pointerId: number): void {
+    fireEvent.pointerUp(plot(), { button: 0, clientX, clientY: 100, pointerId });
+  }
+
+  function cancel(clientX: number, pointerId: number): void {
+    fireEvent.pointerCancel(plot(), { clientX, clientY: 100, pointerId });
+  }
+
+  /** A release and a cancel from a pointer that never owned anything. */
+  function strayEndings(): void {
+    up(700, STRAY);
+    cancel(700, STRAY);
+  }
+
+  /** Every shape of traffic a pointer that is not the owner can produce. */
+  function strayTraffic(): void {
+    down(300, STRAY);
+    move(320, STRAY);
+    move(700, STRAY);
+    up(700, STRAY);
+    down(200, STRAY);
+    cancel(200, STRAY);
+  }
+
+  /** Records which pointers the plot captures, which jsdom does not implement. */
+  function watchCapture(): ReturnType<typeof vi.fn> {
+    const captured = vi.fn();
+    Object.defineProperty(plot(), "setPointerCapture", {
+      configurable: true,
+      value: captured,
+    });
+    Object.defineProperty(plot(), "hasPointerCapture", {
+      configurable: true,
+      value: (pointerId: number) =>
+        captured.mock.calls.some((call: unknown[]) => call[0] === pointerId),
+    });
+    Object.defineProperty(plot(), "releasePointerCapture", { configurable: true, value: vi.fn() });
+    return captured;
+  }
+
+  /** A run zoomed in far enough that there is somewhere to pan within. */
+  function zoomedIn(): ReturnType<typeof renderChromatogram> {
+    const rendered = renderChromatogram();
+    wheel({ deltaY: -500 });
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    return rendered;
+  }
+
+  /** Presses at 500 and pans to 460, which is past the slop threshold. */
+  function startPanning(): void {
+    down(500, OWNER);
+    move(460, OWNER);
+    expect(state().gesture).not.toBeNull();
+  }
+
+  it("keeps the press with the pointer that started it when a second arrives", () => {
+    zoomedIn();
+    const captured = watchCapture();
+    startPanning();
+    const epoch = state().gesture?.epoch;
+    const midPan = shown();
+
+    down(300, STRAY);
+
+    // The second contact took nothing: not the record, not the capture.
+    expect(captured.mock.calls.map((call: unknown[]) => call[0])).toEqual([OWNER]);
+    expect(state().gesture?.epoch).toBe(epoch);
+
+    // And the owner is still panning, which is what a replaced record cost.
+    move(420, OWNER);
+    expect(shown().low).toBeGreaterThan(midPan.low);
+    expect(state().gesture?.epoch).toBe(epoch);
+  });
+
+  it("carries on panning after a stray pointer is released", () => {
+    zoomedIn();
+    startPanning();
+    const epoch = state().gesture?.epoch;
+    const midPan = shown();
+
+    down(300, STRAY);
+    up(300, STRAY);
+
+    move(420, OWNER);
+    expect(shown().low).toBeGreaterThan(midPan.low);
+    expect(state().gesture?.epoch).toBe(epoch);
+  });
+
+  it("carries on panning after a stray pointer is cancelled", () => {
+    zoomedIn();
+    startPanning();
+    const epoch = state().gesture?.epoch;
+    const midPan = shown();
+
+    down(300, STRAY);
+    cancel(300, STRAY);
+
+    move(420, OWNER);
+    expect(shown().low).toBeGreaterThan(midPan.low);
+    expect(state().gesture?.epoch).toBe(epoch);
+  });
+
+  it("does not let a stray pointer move the hover", () => {
+    // A second contact publishing an observation would drag the guide rule and
+    // the readout out from under the pan in progress.
+    zoomedIn();
+    startPanning();
+    const panning = state();
+    expect(panning.hover).toBeNull();
+
+    move(700, STRAY);
+    move(120, STRAY);
+
+    expect(state()).toBe(panning);
+    expect(state().hover).toBeNull();
+  });
+
+  it("settles once when the owner releases, whatever the strays did", () => {
+    const { onSelect } = zoomedIn();
+    startPanning();
+    strayTraffic();
+    move(420, OWNER);
+    const panned = shown();
+
+    up(420, OWNER);
+
+    expect(state().gesture).toBeNull();
+    expect(state().committedDomain).toEqual(panned);
+    // Nothing the strays did selected a scan, and nothing after the release
+    // moves the viewport again.
+    expect(onSelect).not.toHaveBeenCalled();
+    // A release or a cancel from a pointer that owns nothing ends nothing.
+    // (A fresh *press* would legitimately take ownership, which is its own
+    // case below -- ownership is exclusive, not permanent.)
+    const settledState = state();
+    strayEndings();
+    expect(state()).toBe(settledState);
+  });
+
+  it("cancels once when the owner is cancelled, whatever the strays did", () => {
+    const { onSelect } = zoomedIn();
+    const beforePan = state().committedDomain;
+    startPanning();
+    strayTraffic();
+
+    cancel(460, OWNER);
+
+    expect(state().gesture).toBeNull();
+    // Abandoned rather than committed: the viewport is where it was.
+    expect(state().committedDomain).toEqual(beforePan);
+    expect(onSelect).not.toHaveBeenCalled();
+    const cancelledState = state();
+    strayEndings();
+    expect(state()).toBe(cancelledState);
+  });
+
+  it("hands the plot to the next pointer once the owner has finished", () => {
+    // Ownership is exclusive, not permanent.
+    zoomedIn();
+    startPanning();
+    up(460, OWNER);
+    const afterFirst = shown();
+
+    down(500, STRAY);
+    move(440, STRAY);
+
+    expect(state().gesture).not.toBeNull();
+    expect(shown().low).toBeGreaterThan(afterFirst.low);
+  });
+
+  it("still selects exactly once for a press that never panned", () => {
+    const { onSelect } = renderChromatogram();
+    const target = 30;
+    const at = clientXFor(target * 0.0125, shown());
+
+    down(at, OWNER);
+    strayTraffic();
+    up(at, OWNER);
+
+    expect(onSelect.mock.calls).toEqual([[target]]);
+  });
+
+  it("still selects nothing when the owner drags vertically, strays or not", () => {
+    // The existing vertical-drag rule, under stray traffic. Only sideways
+    // travel pans, but a press dragged straight down is still a drag and must
+    // not commit a selection on release.
+    const { onSelect } = renderChromatogram();
+    const at = clientXFor(30 * 0.0125, shown());
+
+    fireEvent.pointerDown(plot(), { button: 0, clientX: at, clientY: 100, pointerId: OWNER });
+    strayTraffic();
+    fireEvent.pointerMove(plot(), { clientX: at, clientY: 160, pointerId: OWNER });
+    fireEvent.pointerUp(plot(), { button: 0, clientX: at, clientY: 160, pointerId: OWNER });
+
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("does not hand the wheel back while the owner is still pressing", () => {
+    /*
+     * R1.3 round 1 released the wheel while a press owns the gesture. A stray
+     * pointer's release used to clear the record, which would have made the
+     * wheel eligible again in the middle of someone's pan -- the same freeze,
+     * reached by a different route.
+     */
+    zoomedIn();
+    startPanning();
+    const panning = state();
+
+    down(300, STRAY);
+    up(300, STRAY);
+    cancel(300, STRAY);
+    const event = wheel({ deltaY: -240 });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(state()).toBe(panning);
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(state()).toBe(panning);
+
+    // And once the owner is done, the wheel is the viewer's again.
+    up(460, OWNER);
+    expect(wheel({ deltaY: -240 }).defaultPrevented).toBe(true);
+  });
+});

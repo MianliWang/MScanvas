@@ -513,12 +513,27 @@ function ChromatogramPlot({
   );
 
   /**
-   * A press that has not travelled yet.
+   * The press that owns this plot, if one does.
    *
    * It may still become a click, so nothing is dispatched until it passes the
    * slop threshold. Its own starting domain is kept so every later move is
    * computed from the origin rather than from the previous move -- the same pan
    * arrived at by a different route accumulates no drift.
+   *
+   * **One pointer owns the lifecycle until that same pointer ends it.** A plot
+   * with `touch-action: none` receives every contact as a pointer event, so on a
+   * touchscreen or a pen-and-touch device a second finger arrives mid-pan. This
+   * record used to be replaced by it, and the damage was not one bug but three:
+   * the first pointer's moves fell through to *hover* and its pan froze; its
+   * release found a record belonging to someone else and returned, leaving the
+   * reducer holding a transient gesture nothing would ever settle; and a brief
+   * second contact could commit a selection -- one ProteoWizard process -- that
+   * nobody asked for.
+   *
+   * So every pointer that is not the owner is ignored here entirely: no capture,
+   * no dispatch, no hover, and above all no clearing of this record. Ownership
+   * is local to this adapter and deliberately not in `ViewerInteractionState`,
+   * which knows about gestures and epochs rather than about fingers.
    */
   const drag = useRef<{
     readonly pointerId: number;
@@ -606,6 +621,11 @@ function ChromatogramPlot({
   }, [dispatch, plotFractionAt, readInteraction, scheduleSettle]);
 
   const handlePointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
+    // Someone already has it. A second pointer is not a second gesture, and it
+    // may not take the first one's place, its capture, or its record.
+    if (drag.current !== null) {
+      return;
+    }
     if (event.button !== 0) {
       return;
     }
@@ -630,8 +650,15 @@ function ChromatogramPlot({
 
   const handlePointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
     const active = drag.current;
-    if (active === null || active.pointerId !== event.pointerId) {
+    if (active === null) {
+      // Nobody is pressing: an ordinary pointer moving over the plot.
       showHover(event.clientX);
+      return;
+    }
+    if (active.pointerId !== event.pointerId) {
+      // A pointer that is not the owner. Not a pan, and not a hover either --
+      // publishing one would let a second contact move the guide rule and the
+      // readout out from under the pan in progress.
       return;
     }
     const moved = event.clientX - active.originX;
@@ -661,10 +688,13 @@ function ChromatogramPlot({
 
   const handlePointerUp = (event: React.PointerEvent<SVGSVGElement>) => {
     const active = drag.current;
-    drag.current = null;
+    // Read before anything is cleared. A stray pointer's release ends nothing:
+    // it must not drop the owner's record, and must not hand the wheel back
+    // while the owner is still pressing.
     if (active === null || active.pointerId !== event.pointerId) {
       return;
     }
+    drag.current = null;
     if (event.currentTarget.hasPointerCapture?.(event.pointerId) === true) {
       event.currentTarget.releasePointerCapture?.(event.pointerId);
     }
@@ -699,8 +729,13 @@ function ChromatogramPlot({
 
   const handlePointerCancel = (event: React.PointerEvent<SVGSVGElement>) => {
     const active = drag.current;
+    // The owner check comes before the clearing, for the same reason it does on
+    // release: a cancelled second contact cancels nothing here.
+    if (active === null || active.pointerId !== event.pointerId) {
+      return;
+    }
     drag.current = null;
-    if (active === null || active.pointerId !== event.pointerId || active.epoch === null) {
+    if (active.epoch === null) {
       return;
     }
     // Abandoned rather than committed: what the user was in the middle of doing

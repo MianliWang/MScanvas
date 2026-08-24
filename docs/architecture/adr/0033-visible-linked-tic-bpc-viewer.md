@@ -457,6 +457,40 @@ arithmetic has converged by the following notch, and every later one is released
 The bound is what matters for the defect, and it is pinned by a test rather than
 argued: the wheel comes free, and the range does not creep while it does.
 
+### One pointer owns the press
+
+The plot declares `touch-action: none`, so every contact reaches it as a pointer
+event. On a touchscreen or a pen-and-touch device that means a second contact can
+arrive in the middle of a pan, and the adapter's press record used to be replaced
+by it unconditionally. The damage was not one defect but three, from one
+assignment:
+
+- the first pointer's later moves no longer matched the record, fell through to
+  the hover branch, and **its pan froze** while its motion published
+  observations instead;
+- its release found a record belonging to someone else and returned, so the
+  reducer was **left holding a transient gesture nothing would ever settle** --
+  a viewport stuck in a gesture nobody was performing, recoverable only by a
+  wheel, a key, a button or a selection;
+- and a brief second contact released below the slop threshold **committed a
+  selection**, which is one ProteoWizard process, that nobody asked for.
+
+> **The first accepted pointer owns the press until that same pointer ends it
+> with `pointerup` or `pointercancel`.**
+
+While an owner exists every other pointer is ignored here: not captured, not
+dispatched for, not allowed to publish a hover, and -- the part that made the
+worst of the three failures -- **not allowed to clear the record**. Both endings
+check the owner *before* clearing anything, so a stray release or cancel ends
+nothing. Ownership is exclusive rather than permanent: once the owner is done,
+the next press is a new owner.
+
+This is local to the adapter and deliberately not in `ViewerInteractionState`,
+which knows about gestures and epochs rather than about fingers. Nothing here
+adds pinch, two-finger pan, multi-touch zoom or any device-specific behaviour;
+what a touch gesture over a chromatogram should *mean* is still the M5 question
+it was before.
+
 ### A press owns the gesture, so a wheel during one is not ours
 
 `planWheelGesture` reads the active epoch out of the state rather than
@@ -767,7 +801,7 @@ cannot be drawn still has rows to step through.
 
 ## Evidence
 
-**Frontend suite:** 963 tests, counted at the close of R1.3. From R1: the
+**Frontend suite:** 973 tests, counted at the close of R1.3. From R1: the
 adapter's field mapping and every refusal; the controller's synchronous answer,
 its ref/state agreement and its identity no-op; one-selection-authority, the
 in-flight repeat, the refused index, the preview lifecycle and vendor-row focus
@@ -788,7 +822,9 @@ units it reads and everything it declines — the same chunking invariant
 re-asserted on the rendered domain after a settled gesture, and nine more at the
 production adapter, where a hundred one-pixel events have to land where one
 hundred-pixel event does. Round 1 of R1.3's review added four more, for a wheel
-that arrives while a press owns the gesture.
+that arrives while a press owns the gesture. Its authorized pointer-ownership
+closure added ten, over every shape of traffic a pointer that is not the owner
+can produce.
 
 **Browser QA:** 53 rendered viewer cases at 1366×768, 1920×1080 and 960×640,
 with real hover, click, wheel, drag, keyboard and table interaction — including
