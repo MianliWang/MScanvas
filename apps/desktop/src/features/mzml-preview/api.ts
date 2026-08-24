@@ -4,6 +4,11 @@ import { createContext, useContext } from "react";
 import type {
   WorkspaceOutputAdoptionResult,
   BackendAvailability,
+  ChromatogramCopyOutcome,
+  ChromatogramExportFormat,
+  ChromatogramExportOutcome,
+  ChromatogramRange,
+  ChromatogramTraceSet,
   ConversionConflictPolicy,
   ConversionQueuePlan,
   FolderIngestionResult,
@@ -237,6 +242,41 @@ export interface PreviewApi {
     exportToken: string,
     settings: FigureSettings,
   ): Promise<SpectrumCopyOutcome>;
+
+  /**
+   * Exports the loaded run's chromatogram as one figure or one data document.
+   *
+   * Takes the opaque token the preview carried, the range to cover and the
+   * traces on screen. This side supplies no arrays, no path, no dataset handle
+   * and no screen geometry: what is written comes from the per-scan facts Rust
+   * retained when the preview was read, not from the rows or the polyline this
+   * document holds.
+   *
+   * The range is checked against that run rather than trusted, and refused
+   * rather than clamped where it does not fit. A token from an earlier preview
+   * is refused rather than answered with whichever run is loaded now.
+   */
+  exportChromatogram(
+    exportToken: string,
+    format: ChromatogramExportFormat,
+    range: ChromatogramRange,
+    traces: ChromatogramTraceSet,
+    settings: FigureSettings,
+  ): Promise<ChromatogramExportOutcome>;
+
+  /**
+   * Puts the chromatogram's figure on the system clipboard.
+   *
+   * The same figure a PNG export writes, drawn by the same Rust renderer from
+   * the same retained facts. No image crosses this boundary in either
+   * direction.
+   */
+  copyChromatogramPlot(
+    exportToken: string,
+    range: ChromatogramRange,
+    traces: ChromatogramTraceSet,
+    settings: FigureSettings,
+  ): Promise<ChromatogramCopyOutcome>;
 }
 
 export const tauriPreviewApi: PreviewApi = {
@@ -324,6 +364,23 @@ export const tauriPreviewApi: PreviewApi = {
     ),
   copySelectedSpectrumPlot: (exportToken, settings) =>
     invoke<SpectrumCopyOutcome>("copy_selected_spectrum_plot", { exportToken, settings }),
+  exportChromatogram: (exportToken, format, range, traces, settings) =>
+    invoke<string>("begin_chromatogram_export", {
+      exportToken,
+      format,
+      range,
+      traces,
+      settings,
+    }).then((reservationId) =>
+      invoke<ChromatogramExportOutcome>("save_chromatogram_export", { reservationId }),
+    ),
+  copyChromatogramPlot: (exportToken, range, traces, settings) =>
+    invoke<ChromatogramCopyOutcome>("copy_chromatogram_plot", {
+      exportToken,
+      range,
+      traces,
+      settings,
+    }),
 };
 
 const PreviewApiContext = createContext<PreviewApi>(tauriPreviewApi);

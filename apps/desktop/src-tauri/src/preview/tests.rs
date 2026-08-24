@@ -3589,6 +3589,16 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // never open one.
             "begin_selected_spectrum_export",
             "save_selected_spectrum_export",
+            // The chromatogram export, in the same two-phase shape. The first
+            // command binds which run, how much of it and which traces -- all of
+            // them fixed at that moment, so a viewport that moves while the
+            // dialog is open cannot change what is written -- and the second is
+            // the dialog. They share the one scientific export lane with the
+            // spectrum commands above, so two save dialogs cannot be open at
+            // once whichever surface asked.
+            "begin_chromatogram_export",
+            "save_chromatogram_export",
+            "copy_chromatogram_plot",
             // Copy plot needs neither phase: there is no destination to choose,
             // so there is no dialog to gate and nothing to come back from. It
             // takes the same token, shares the same one figure-operation lane,

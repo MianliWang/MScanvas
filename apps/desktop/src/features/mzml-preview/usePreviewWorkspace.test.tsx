@@ -193,6 +193,10 @@ function harness(
     getRoster: () => Promise.resolve(empty),
     copySelectedSpectrumPlot: () =>
       Promise.reject(new Error("this test never copies a plot")),
+    exportChromatogram: () =>
+      Promise.reject(new Error("this test never exports a chromatogram")),
+    copyChromatogramPlot: () =>
+      Promise.reject(new Error("this test never copies a chromatogram")),
     chooseFiles: () =>
       Promise.resolve<WorkspaceAddResult | null>({
         roster: { datasets: [selectedFile], capacity: FAKE_WORKSPACE_CAPACITY },

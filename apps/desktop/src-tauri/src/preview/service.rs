@@ -15,9 +15,14 @@ use mscanvas_proteowizard::{
     ConversionSourceKind, LocalFileWriteError, LocalFileWriteFailure, MetadataEntry,
     MetadataResult, MetadataSectionKind, MsLevelBucket, PreviewNoResult, PreviewOutcome,
     PreviewValue, Redactor, RunSummaryResult, SelectedSpectrumResult, Sha256Digest,
-    SpectrumIdentity, SpectrumTableResult, write_new_local_file,
+    SpectrumIdentity, SpectrumTableResult, UnitState as SourceUnitState, write_new_local_file,
 };
 
+use super::chromatogram::{
+    ChromatogramExportFormat, ChromatogramSource, RangeRequest, TraceSet,
+    data_document as chromatogram_data, figure_spec as chromatogram_figure,
+    svg_document as chromatogram_svg,
+};
 use super::conversion::conversion_source_kind;
 #[cfg(test)]
 use mscanvas_proteowizard::ConflictPolicy;
@@ -77,18 +82,21 @@ use super::dto::{
     require_finite, require_finite_option, workspace_full,
 };
 use super::dto::{
+    ChromatogramCopyOutcomeDto, ChromatogramExportOutcomeDto, ChromatogramRangeDto,
+    ChromatogramTracesDto, CopiedFigureDto, ExportedFigureDto, FigureSettingsDto,
+    SpectrumCopyOutcomeDto, SpectrumExportOutcomeDto, chromatogram_export_refused,
+    chromatogram_export_stale, chromatogram_no_visible_trace, chromatogram_range_outside_source,
+    figure_clipboard_unavailable, figure_font_unavailable, figure_not_rasterizable,
+    figure_settings_refused, scientific_export_in_progress, spectrum_destination_exists,
+    spectrum_destination_unusable, spectrum_export_in_progress, spectrum_export_refused,
+    spectrum_export_stale, spectrum_not_finalized, spectrum_not_written,
+};
+use super::dto::{
     ConversionDiagnosticsExportDto, ConversionDiagnosticsReservationDto,
     ConversionDiagnosticsStateDto, MAX_CANDIDATE_NAME_CHARS, diagnostics_destination_exists,
     diagnostics_destination_unusable, diagnostics_export_in_progress,
     diagnostics_export_superseded, diagnostics_not_finalized, diagnostics_not_written,
     diagnostics_too_large, diagnostics_unavailable, invalid_diagnostics_reservation,
-};
-use super::dto::{
-    CopiedFigureDto, ExportedFigureDto, FigureSettingsDto, SpectrumCopyOutcomeDto,
-    SpectrumExportOutcomeDto, figure_clipboard_unavailable, figure_font_unavailable,
-    figure_not_rasterizable, figure_settings_refused, spectrum_destination_exists,
-    spectrum_destination_unusable, spectrum_export_in_progress, spectrum_export_refused,
-    spectrum_export_stale, spectrum_not_finalized, spectrum_not_written,
 };
 use super::dto::{
     FolderDiscoverySummaryDto, FolderImportReservationDto, FolderIngestionResultDto,
@@ -100,8 +108,9 @@ use super::dto::{
     adoption_superseded, outputs_not_adoptable,
 };
 use super::export::{
-    BeginExportRefusal, ClaimedSpectrumExport, FigureFailure, SpectrumExportFormat,
-    SpectrumExportSlot, data_document, figure_raster, png_document, svg_document,
+    BeginExportRefusal, ClaimedChromatogramExport, ClaimedExport, ClaimedSpectrumExport,
+    FigureFailure, ScientificExportSlots, SpectrumExportFormat, data_document, figure_raster,
+    png_document, png_of, raster_of, svg_document,
 };
 use super::figure::{
     FigureRenderSettings, PngDpi, RasterFailure, SettingsRefusal, validate_raster_budget,
@@ -427,7 +436,16 @@ struct DatasetRuntimeState {
 #[derive(Debug, Clone)]
 struct DatasetPreviewState {
     opened: OpenedPreview,
-    table_rows: Vec<TableRowFacts>,
+    /// The complete per-scan facts this preview reported.
+    ///
+    /// Shared rather than owned outright. A run of tens of thousands of scans
+    /// is one allocation, and both readers of it -- a selected spectrum
+    /// reconciling against its own row, and a chromatogram export -- take a
+    /// handle instead of a copy. Immutable in practice as well as by
+    /// convention: nothing mutates the table after the preview is committed,
+    /// and an export holding a handle across a preview replacement keeps the
+    /// facts it was started with.
+    table_rows: Arc<Vec<TableRowFacts>>,
 }
 
 /// The narrow set of operations the desktop application exposes.
@@ -561,7 +579,7 @@ pub struct PreviewService {
     /// crosses to the webview is bounded at `MAX_SPECTRUM_POINTS` and exists to
     /// carry a drawing. A leaf of its own, like the diagnostics slot beside it,
     /// and taken last where more than one lock is needed.
-    spectrum_export: Mutex<SpectrumExportSlot>,
+    spectrum_export: Mutex<ScientificExportSlots>,
     /// Which backend the last look actually resolved to.
     ///
     /// Not the folder that was requested. A request names a configuration; what
@@ -609,7 +627,7 @@ impl PreviewService {
             publication_seam: Mutex::new(None),
             diagnostics_export: Mutex::new(DiagnosticsExportSlot::default()),
             diagnostics_exporting: AtomicBool::new(false),
-            spectrum_export: Mutex::new(SpectrumExportSlot::default()),
+            spectrum_export: Mutex::new(ScientificExportSlots::default()),
             installation_generation: AtomicU64::new(0),
             resolved: Mutex::new(ObservedBackend::default()),
         }
@@ -2014,7 +2032,7 @@ impl PreviewService {
     /// snapshot out of the slot first and work from that, so a selection that
     /// lands while a dialog is open changes what a *new* export would name
     /// without disturbing one already under way.
-    fn spectrum_export_slot(&self) -> std::sync::MutexGuard<'_, SpectrumExportSlot> {
+    fn spectrum_export_slot(&self) -> std::sync::MutexGuard<'_, ScientificExportSlots> {
         self.spectrum_export
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -2093,10 +2111,33 @@ impl PreviewService {
         self.spectrum_export_slot()
             .begin(token, format, settings, dpi)
             .map(|reservation| reservation.as_wire())
-            .map_err(|refusal| match refusal {
-                BeginExportRefusal::AlreadyExporting => spectrum_export_in_progress(),
-                BeginExportRefusal::Stale => spectrum_export_stale(),
-            })
+            .map_err(Self::spectrum_refusal)
+    }
+
+    /// How a lane refusal reads for the selected-spectrum surface.
+    ///
+    /// Exhaustive rather than wildcarded. The two range answers cannot arise on
+    /// this path -- a spectrum export carries no range and no trace set -- and
+    /// saying so here is what makes that a fact a reader can check instead of an
+    /// assumption. If a spectrum ever gains a range, this stops compiling.
+    fn spectrum_refusal(refusal: BeginExportRefusal) -> PreviewErrorDto {
+        match refusal {
+            BeginExportRefusal::AlreadyExporting => spectrum_export_in_progress(),
+            BeginExportRefusal::Stale => spectrum_export_stale(),
+            BeginExportRefusal::RangeOutsideSource | BeginExportRefusal::NoVisibleTrace => {
+                spectrum_export_refused()
+            }
+        }
+    }
+
+    /// How a lane refusal reads for the chromatogram surface.
+    fn chromatogram_refusal(refusal: BeginExportRefusal) -> PreviewErrorDto {
+        match refusal {
+            BeginExportRefusal::AlreadyExporting => scientific_export_in_progress(),
+            BeginExportRefusal::Stale => chromatogram_export_stale(),
+            BeginExportRefusal::RangeOutsideSource => chromatogram_range_outside_source(),
+            BeginExportRefusal::NoVisibleTrace => chromatogram_no_visible_trace(),
+        }
     }
 
     /// Reads what every figure output is drawn with: a size and a theme.
@@ -2236,10 +2277,7 @@ impl PreviewService {
         let snapshot = self
             .spectrum_export_slot()
             .begin_copy(token)
-            .map_err(|refusal| match refusal {
-                BeginExportRefusal::AlreadyExporting => spectrum_export_in_progress(),
-                BeginExportRefusal::Stale => spectrum_export_stale(),
-            })?;
+            .map_err(Self::spectrum_refusal)?;
         // Released however this ends, including a panic in the rasterizer. A
         // lane left claimed would refuse every later figure operation for the
         // rest of the session.
@@ -2273,9 +2311,17 @@ impl PreviewService {
         &self,
         reservation: &str,
     ) -> Result<ClaimedSpectrumExport, PreviewErrorDto> {
-        self.spectrum_export_slot()
+        match self
+            .spectrum_export_slot()
             .claim(reservation)
-            .ok_or_else(spectrum_export_stale)
+            .ok_or_else(spectrum_export_stale)?
+        {
+            ClaimedExport::Spectrum(claimed) => Ok(claimed),
+            // A reservation of the other kind, claimed through this command.
+            // The webview holds both, and answering with the wrong one would
+            // open a spectrum's dialog over a chromatogram's export.
+            ClaimedExport::Chromatogram(_) => Err(spectrum_export_stale()),
+        }
     }
 
     /// Returns one reservation to idle without writing anything.
@@ -2346,6 +2392,248 @@ impl PreviewService {
             figure: Self::exported_figure(claimed.format, claimed.settings, claimed.dpi),
             point_count: claimed.snapshot.point_count(),
         })
+    }
+
+    // ------------------------------------------------- chromatogram export
+
+    /// Retains, or revokes, the chromatogram one committed preview can export.
+    ///
+    /// The eligibility is the visible viewer's, deliberately and not
+    /// approximately: Rust holds every row the backend reported while the
+    /// webview receives a bounded prefix, so a run whose table could not be
+    /// transferred whole has no chromatogram on screen -- and issuing a token
+    /// for it would let an export reach science the product does not otherwise
+    /// show. A truncated viewer has no chromatogram and no chromatogram export.
+    ///
+    /// Answers the opaque name the webview receives, or `None` where there is
+    /// nothing to name. Either way the previous chromatogram is gone: a token
+    /// naming a run that is no longer loaded must fail as stale rather than
+    /// quietly export whatever is loaded now.
+    fn reconcile_chromatogram_export(
+        &self,
+        owner: DatasetId,
+        rows: &Arc<Vec<TableRowFacts>>,
+        truncated: bool,
+    ) -> Option<String> {
+        let source = ChromatogramSource::from_rows(rows, truncated);
+        let mut slots = self.spectrum_export_slot();
+        match source {
+            Some(source) => Some(slots.install_chromatogram(owner, source).token().as_wire()),
+            None => {
+                slots.forget_chromatogram();
+                None
+            }
+        }
+    }
+
+    /// Binds one chromatogram export and reserves the one scientific lane.
+    ///
+    /// The range is resolved here, against the run the token names, and what
+    /// this export writes is fixed from this moment: a viewport that moves, a
+    /// trace that is toggled or a settings change that lands while the picker
+    /// is open changes nothing about a file already being written.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a stale token, a lane another export has committed, a range
+    /// outside the run, a figure with no visible trace, and settings no figure
+    /// can be drawn at.
+    pub fn begin_chromatogram_export(
+        &self,
+        token: &str,
+        format: &str,
+        range: &ChromatogramRangeDto,
+        traces: ChromatogramTracesDto,
+        settings_wire: &FigureSettingsDto,
+    ) -> Result<String, PreviewErrorDto> {
+        let format =
+            ChromatogramExportFormat::from_wire(format).ok_or_else(chromatogram_export_stale)?;
+        let request = RangeRequest::from_wire(&range.scope, range.low, range.high)
+            .ok_or_else(chromatogram_range_outside_source)?;
+        let settings = Self::render_settings(settings_wire)?;
+        // The same order the spectrum path takes, and for the same reason: a
+        // figure both too large to hold as pixels and asked for at an unusable
+        // resolution is refused over the resolution first, because it is the
+        // smaller correction of the two.
+        let dpi = if matches!(format, ChromatogramExportFormat::Png) {
+            let dpi = Self::png_dpi(settings_wire)?;
+            Self::raster_budget(settings)?;
+            Some(dpi)
+        } else {
+            None
+        };
+        self.spectrum_export_slot()
+            .begin_chromatogram(
+                token,
+                format,
+                request,
+                TraceSet::from_wire(traces.tic, traces.bpc),
+                settings,
+                dpi,
+            )
+            .map(|reservation| reservation.as_wire())
+            .map_err(Self::chromatogram_refusal)
+    }
+
+    /// Claims one issued chromatogram reservation, so its dialog may be shown.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a reservation this session did not issue, one already claimed,
+    /// one that has since been cancelled, and one belonging to the other
+    /// surface.
+    pub fn claim_chromatogram_export(
+        &self,
+        reservation: &str,
+    ) -> Result<ClaimedChromatogramExport, PreviewErrorDto> {
+        match self
+            .spectrum_export_slot()
+            .claim(reservation)
+            .ok_or_else(chromatogram_export_stale)?
+        {
+            ClaimedExport::Chromatogram(claimed) => Ok(claimed),
+            ClaimedExport::Spectrum(_) => Err(chromatogram_export_stale()),
+        }
+    }
+
+    /// Returns one chromatogram reservation to idle without writing anything.
+    pub fn cancel_chromatogram_export(&self, reservation: &str) {
+        self.spectrum_export_slot().cancel(reservation);
+    }
+
+    /// Writes one claimed chromatogram export to the destination the user chose.
+    ///
+    /// The figure and the data document are siblings over the same snapshot and
+    /// the same resolved range. Neither is read from the other: the data file is
+    /// built from the scans inside the range, and the figure carries the
+    /// complete source series and declares the window, so the renderer can draw
+    /// a segment crossing a range that holds no scans at all.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a destination this boundary cannot admit, a write that failed,
+    /// and a figure the contract will not accept.
+    pub fn write_chromatogram_export(
+        &self,
+        claimed: &ClaimedChromatogramExport,
+        destination: &Path,
+    ) -> Result<ChromatogramExportOutcomeDto, PreviewErrorDto> {
+        self.spectrum_export_slot().begin_write();
+        let _in_flight = SpectrumExportInFlight(self);
+
+        let source = claimed.snapshot.source();
+        let mut row_count = None;
+        let bytes = match claimed.format {
+            ChromatogramExportFormat::Svg => {
+                chromatogram_svg(source, claimed.range, claimed.traces, claimed.settings)
+                    .map_err(|_| chromatogram_export_refused())?
+                    .into_bytes()
+            }
+            ChromatogramExportFormat::Png => {
+                let dpi = claimed.dpi.expect("a PNG export reserved a resolution");
+                let figure =
+                    chromatogram_figure(source, claimed.range, claimed.traces, claimed.settings)
+                        .map_err(|_| chromatogram_export_refused())?;
+                png_of(&figure, claimed.settings, dpi).map_err(Self::figure_failure)?
+            }
+            // The data documents, which no figure setting and no trace toggle
+            // reaches. Both measured columns are written whatever is on screen.
+            format => {
+                let (document, written) = chromatogram_data(source, claimed.range, format)
+                    .ok_or_else(chromatogram_export_refused)?;
+                row_count = Some(written);
+                document.into_bytes()
+            }
+        };
+
+        let (parent, file_name) = match (destination.parent(), destination.file_name()) {
+            (Some(parent), Some(file_name)) => (parent, file_name),
+            _ => return Err(spectrum_destination_unusable()),
+        };
+        let (root, _identity, _held) =
+            admit_destination_root(parent).map_err(|_| spectrum_destination_unusable())?;
+        write_new_local_file(&root, file_name, &bytes).map_err(spectrum_write_failure)?;
+
+        Ok(ChromatogramExportOutcomeDto::Saved {
+            format: claimed.format.stable_id().to_owned(),
+            file_name: bounded_text(&file_name.to_string_lossy(), MAX_CANDIDATE_NAME_CHARS),
+            figure: claimed
+                .format
+                .is_figure()
+                .then(|| Self::exported_chromatogram_figure(claimed)),
+            traces: claimed.format.is_figure().then(|| ChromatogramTracesDto {
+                tic: claimed.traces.tic(),
+                bpc: claimed.traces.bpc(),
+            }),
+            range_scope: claimed.range.scope().stable_id().to_owned(),
+            range_low: claimed.range.domain().low(),
+            range_high: claimed.range.domain().high(),
+            source_scan_count: source.scan_count(),
+            row_count,
+        })
+    }
+
+    /// Draws one chromatogram and puts it on the clipboard.
+    ///
+    /// The same figure a PNG export would write, through the same renderer and
+    /// the same rasterizer. No screenshot, no DOM, and no pixels cross back: the
+    /// webview learns what was copied, not what it looks like.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a stale token, a committed lane, a range outside the run, a
+    /// figure with no visible trace, settings no figure can be drawn at, and a
+    /// clipboard this platform would not accept the image on.
+    pub fn copy_chromatogram_plot(
+        &self,
+        app: &tauri::AppHandle,
+        token: &str,
+        range: &ChromatogramRangeDto,
+        traces: ChromatogramTracesDto,
+        settings_wire: &FigureSettingsDto,
+    ) -> Result<ChromatogramCopyOutcomeDto, PreviewErrorDto> {
+        let request = RangeRequest::from_wire(&range.scope, range.low, range.high)
+            .ok_or_else(chromatogram_range_outside_source)?;
+        let settings = Self::render_settings(settings_wire)?;
+        Self::raster_budget(settings)?;
+        let traces = TraceSet::from_wire(traces.tic, traces.bpc);
+        let (snapshot, resolved) = self
+            .spectrum_export_slot()
+            .begin_chromatogram_copy(token, request, traces)
+            .map_err(Self::chromatogram_refusal)?;
+        let _in_flight = SpectrumExportInFlight(self);
+
+        let figure = chromatogram_figure(snapshot.source(), resolved, traces, settings)
+            .map_err(|_| chromatogram_export_refused())?;
+        let raster = raster_of(&figure, settings).map_err(Self::figure_failure)?;
+        let (width, height) = (raster.width(), raster.height());
+        let image = tauri::image::Image::new_owned(raster.into_rgba(), width, height);
+
+        use tauri_plugin_clipboard_manager::ClipboardExt;
+        app.clipboard()
+            .write_image(&image)
+            .map_err(|_| figure_clipboard_unavailable())?;
+        Ok(ChromatogramCopyOutcomeDto::Copied {
+            figure: Self::copied_figure(settings),
+            traces: ChromatogramTracesDto {
+                tic: traces.tic(),
+                bpc: traces.bpc(),
+            },
+            range_scope: resolved.scope().stable_id().to_owned(),
+            range_low: resolved.domain().low(),
+            range_high: resolved.domain().high(),
+            source_scan_count: snapshot.source().scan_count(),
+        })
+    }
+
+    /// What a chromatogram figure export was drawn as.
+    fn exported_chromatogram_figure(claimed: &ClaimedChromatogramExport) -> ExportedFigureDto {
+        ExportedFigureDto {
+            width: claimed.settings.width(),
+            height: claimed.settings.height(),
+            dpi: claimed.dpi.map(PngDpi::get),
+            theme: Self::theme_name(claimed.settings),
+        }
     }
 
     /// Republishes the lock-free export mirror from the slot that owns it.
@@ -4016,9 +4304,12 @@ impl PreviewService {
         workspace.clear(RevocationReason::Cleared);
         let roster = roster_of(&workspace);
         drop(workspace);
-        // Every row is gone, so whatever the slot held is owned by a dataset
+        // Every row is gone, so whatever the slots held is owned by a dataset
         // this session no longer has.
-        self.spectrum_export_slot().forget();
+        let mut slots = self.spectrum_export_slot();
+        slots.forget();
+        slots.forget_chromatogram();
+        drop(slots);
         drop(batch);
         self.drop_updates.publish_terminal_with_busy(
             delivery,
@@ -4358,9 +4649,12 @@ impl PreviewService {
         // This path replaces the whole selection -- the clear below empties the
         // workspace -- so the dataset the retained spectrum came from is about
         // to stop existing. Revoked here, after the inspection that can refuse
-        // the path and before the workspace lock, because the export slot is a
+        // the path and before the workspace lock, because the export slots are a
         // leaf and this is the last point at which no other lock is held.
-        self.spectrum_export_slot().forget();
+        let mut slots = self.spectrum_export_slot();
+        slots.forget();
+        slots.forget_chromatogram();
+        drop(slots);
         let mut workspace = self.workspace();
         // Everything the previous selection owned goes at once: its row, its
         // preview facts, the identity lease that kept its file's identity its
@@ -4903,6 +5197,9 @@ impl PreviewService {
                                 identity: row.identity().clone(),
                                 ms_level: row.ms_level(),
                                 retention_time: row.retention_time().value(),
+                                retention_time_unit_known: reported_unit_known(
+                                    row.retention_time(),
+                                ),
                                 base_peak_mz: row.base_peak_mz(),
                                 base_peak_intensity: row.base_peak_intensity(),
                                 total_ion_current: row.total_ion_current(),
@@ -4962,13 +5259,14 @@ impl PreviewService {
         if !workspace.request_is_current(id, epoch) {
             return Err(superseded());
         }
+        let table_rows = Arc::new(table_rows);
         workspace.runtime.entry(id).or_default().preview = Some(DatasetPreviewState {
             opened: OpenedPreview {
                 source: before,
                 generation,
                 installation,
             },
-            table_rows,
+            table_rows: Arc::clone(&table_rows),
         });
         // Described as the roster describes it, so a preview header and the row
         // it belongs to cannot disagree about which of two identically named
@@ -4983,9 +5281,17 @@ impl PreviewService {
         let described =
             dataset_dto(&workspace, id).unwrap_or_else(|| selected_file_dto(id, &file, None));
         drop(workspace);
+        // After the workspace lock, because the export slots are a leaf.
+        //
+        // Install *or* revoke, never neither: opening a preview whose run has
+        // no chromatogram must take away the one that was there, or the webview
+        // would keep a token naming a run it is no longer looking at.
+        let chromatogram_export_token =
+            self.reconcile_chromatogram_export(id, &table_rows, spectrum_table.truncated);
 
         Ok(PreviewDto {
             installation_generation: generation,
+            chromatogram_export_token,
             file: described,
             metadata,
             run_summary,
@@ -5308,16 +5614,46 @@ pub(super) fn displayable_identifier(raw: &str, redactor: &Redactor) -> String {
 /// it: the two come from different formatters, and a highlighted row paired
 /// with a panel describing different measurements is worse than no panel.
 #[derive(Debug, Clone)]
-struct TableRowFacts {
+pub(super) struct TableRowFacts {
     identity: SpectrumIdentity,
     ms_level: u32,
     retention_time: f64,
+    /// Whether this boundary reports a unit for that retention time.
+    ///
+    /// Carried rather than assumed, so the viewer's refusal to draw a run whose
+    /// unit it cannot name and the export's refusal to write one are the same
+    /// fact read twice rather than two rules free to drift.
+    retention_time_unit_known: bool,
     base_peak_mz: f64,
     base_peak_intensity: f64,
     total_ion_current: f64,
 }
 
 impl TableRowFacts {
+    pub(super) const fn identity(&self) -> &SpectrumIdentity {
+        &self.identity
+    }
+
+    pub(super) const fn ms_level(&self) -> u32 {
+        self.ms_level
+    }
+
+    pub(super) const fn retention_time(&self) -> f64 {
+        self.retention_time
+    }
+
+    pub(super) const fn retention_time_unit_known(&self) -> bool {
+        self.retention_time_unit_known
+    }
+
+    pub(super) const fn base_peak_intensity(&self) -> f64 {
+        self.base_peak_intensity
+    }
+
+    pub(super) const fn total_ion_current(&self) -> f64 {
+        self.total_ion_current
+    }
+
     fn contradicts(&self, spectrum: &SelectedSpectrumResult) -> bool {
         self.ms_level != spectrum.ms_level()
             || differs(self.retention_time, spectrum.retention_time().value())
@@ -5630,9 +5966,26 @@ fn retention_time_dto(
 ) -> Result<RetentionTimeDto, PreviewErrorDto> {
     Ok(RetentionTimeDto {
         value: require_finite(value.value())?,
-        // The measured formatter emits no unit, so none is claimed.
-        unit_known: false,
+        unit_known: reported_unit_known(value),
     })
+}
+
+/// Whether this boundary reports a unit for one retention time.
+///
+/// Exhaustive, with no wildcard arm: a backend that starts emitting a real unit
+/// must arrive here as a compile error and be mapped from that evidence rather
+/// than falling into a default that happens to keep building.
+///
+/// One answer, read by the row the webview receives and by the export
+/// eligibility beside it. The viewer refuses to draw a run whose retention-time
+/// unit it cannot name, and the export refuses to write one; two hard-coded
+/// `false`s would have been two rules free to drift apart.
+const fn reported_unit_known(value: mscanvas_proteowizard::RetentionTime) -> bool {
+    match value.unit() {
+        // The measured formatter emits a numeric value without a unit, so none
+        // is claimed.
+        SourceUnitState::NotEmitted => false,
+    }
 }
 
 fn run_summary_dto(result: &RunSummaryResult) -> Result<RunSummaryDto, PreviewErrorDto> {

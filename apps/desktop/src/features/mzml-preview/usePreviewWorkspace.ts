@@ -13,6 +13,10 @@ import type { ConversionOperation } from "./useConversionOperation";
 import { useConversionOperation } from "./useConversionOperation";
 import type {
   BackendAvailability,
+  ChromatogramExportFormat,
+  ChromatogramRange,
+  ChromatogramRangeScope,
+  ChromatogramTraceSet,
   CopiedFigure,
   ExportedFigure,
   FigureSettings,
@@ -50,7 +54,7 @@ import {
 } from "./rosterSelection";
 import type { ViewerEvent, ViewerInteractionState } from "./viewer/interactionState";
 import { buildPreviewScanModel } from "./viewer/previewScanModel";
-import type { ScanModel, TraceKind } from "./viewer/scanModel";
+import type { RetentionTimeDomain, ScanModel, TraceKind } from "./viewer/scanModel";
 import { adjacentScan } from "./viewer/scanModel";
 import { useViewerInteraction } from "./viewer/useViewerInteraction";
 
@@ -214,6 +218,11 @@ function isFigureFormat(format: SpectrumExportFormat): boolean {
   return format === "svg" || format === "png";
 }
 
+/** Whether this chromatogram format is drawn rather than written. */
+function isChromatogramFigureFormat(format: ChromatogramExportFormat): boolean {
+  return format === "svg" || format === "png";
+}
+
 /**
  * What the one figure-operation lane is doing, named the way the panel says it.
  *
@@ -240,6 +249,43 @@ export type SpectrumExportState =
       /** A size and a theme. A clipboard image records no resolution. */
       readonly figure: CopiedFigure;
       readonly pointCount: number;
+    }
+  | {
+      readonly status: "failed";
+      readonly operation: FigureOperation;
+      readonly error: PreviewError;
+    };
+
+/**
+ * Where one chromatogram export is.
+ *
+ * The same shape a spectrum export has, plus the two facts that make a
+ * chromatogram export what it is: how much of the run it covered, and -- for a
+ * data document -- how many source scans that turned out to be.
+ */
+export type ChromatogramExportState =
+  | { readonly status: "idle" }
+  | { readonly status: "running"; readonly operation: FigureOperation }
+  | { readonly status: "cancelled" }
+  | {
+      readonly status: "saved";
+      readonly format: ChromatogramExportFormat;
+      readonly fileName: string;
+      readonly figure: ExportedFigure | null;
+      readonly rangeScope: ChromatogramRangeScope;
+      readonly rangeLow: number;
+      readonly rangeHigh: number;
+      readonly sourceScanCount: number;
+      /** How many source scans the data document holds. `null` for a figure. */
+      readonly rowCount: number | null;
+    }
+  | {
+      readonly status: "copied";
+      readonly figure: CopiedFigure;
+      readonly rangeScope: ChromatogramRangeScope;
+      readonly rangeLow: number;
+      readonly rangeHigh: number;
+      readonly sourceScanCount: number;
     }
   | {
       readonly status: "failed";
@@ -562,6 +608,29 @@ export interface PreviewWorkspace {
    * the measurement it describes.
    */
   readonly spectrumExport: SpectrumExportState;
+  /**
+   * The opaque name of the chromatogram this run may be exported as.
+   *
+   * `null` where Rust issued none, which is exactly where the viewer draws no
+   * chromatogram. Nothing on this side decides it.
+   */
+  readonly chromatogramExportToken: string | null;
+  /** How much of the run the next chromatogram export will cover. */
+  readonly chromatogramRangeScope: ChromatogramRangeScope;
+  readonly setChromatogramRangeScope: (scope: ChromatogramRangeScope) => void;
+  /**
+   * The committed retention-time range, or `null` where none is committed.
+   *
+   * The **committed** one, and deliberately not what a wheel or a drag is
+   * transiently showing: an export invoked mid-gesture writes the last range
+   * the user settled on, and the gesture is neither settled nor cancelled by
+   * having been exported over.
+   */
+  readonly chromatogramCommittedDomain: RetentionTimeDomain | null;
+  readonly chromatogramExport: ChromatogramExportState;
+  readonly exportChromatogram: (format: ChromatogramExportFormat) => void;
+  readonly copyChromatogramPlot: () => void;
+  readonly dismissChromatogramExport: () => void;
   /**
    * Exports the loaded selected spectrum as one file.
    *
@@ -2510,6 +2579,199 @@ export function usePreviewWorkspace(): PreviewWorkspace {
       });
   }, [api, resolvedPngDpi, resolvedRenderSettings, spectrum, spectrumExport.status]);
 
+  // ------------------------------------------------- chromatogram export
+
+  const [chromatogramExport, setChromatogramExport] = useState<ChromatogramExportState>({
+    status: "idle",
+  });
+  const [chromatogramRangeScope, setChromatogramRangeScope] =
+    useState<ChromatogramRangeScope>("full");
+  // Rust's answer, forwarded. `null` is a run with no chromatogram -- a table
+  // this session could not transfer whole, or one the model refuses -- and it
+  // is the same run the viewer draws nothing for.
+  const chromatogramExportToken = preview.status === "loaded" ? preview.preview.chromatogramExportToken : null;
+  // A result belongs to the run it describes, exactly as a spectrum result
+  // belongs to its spectrum.
+  const boundChromatogramToken = useRef<string | null>(null);
+  useEffect(() => {
+    boundChromatogramToken.current = chromatogramExportToken;
+    setChromatogramExport({ status: "idle" });
+  }, [chromatogramExportToken]);
+
+  const dismissChromatogramExport = useCallback(() => {
+    setChromatogramExport({ status: "idle" });
+  }, []);
+
+  /**
+   * What a current-range export would cover, as the viewer has committed it.
+   *
+   * Read from the reducer's committed domain and from nothing else. Not the
+   * rendered domain, which a gesture in flight owns; not the SVG's viewBox, not
+   * an axis end and not a pointer position. A viewer that has committed nothing
+   * has no narrower range, and `null` says exactly that rather than a subrange
+   * invented to make the option look different.
+   */
+  const chromatogramCommittedDomain = viewer.state.committedDomain;
+
+  /** The range one export is taken over, read at the moment it is invoked. */
+  const chromatogramRange = useCallback(
+    (): ChromatogramRange => {
+      // Through the controller's own reader rather than a render closure. The
+      // committed range can move between the render that drew a button and the
+      // press that reaches it -- a settling gesture is exactly that -- and what
+      // is exported is what the viewer has committed *now*.
+      const committed = viewer.current().committedDomain;
+      if (chromatogramRangeScope === "full" || committed === null) {
+        return { scope: chromatogramRangeScope, low: null, high: null };
+      }
+      return { scope: "current", low: committed.low, high: committed.high };
+    },
+    [chromatogramRangeScope, viewer],
+  );
+
+  /** Which traces a figure would draw: the ones on screen, at this moment. */
+  const visibleTraces = useCallback(
+    (): ChromatogramTraceSet => ({
+      tic: chromatogramTraces.tic,
+      bpc: chromatogramTraces.bpc,
+    }),
+    [chromatogramTraces],
+  );
+
+  const exportChromatogram = useCallback(
+    (format: ChromatogramExportFormat) => {
+      const token = chromatogramExportToken;
+      if (token === null) {
+        return;
+      }
+      // One scientific lane, and Rust owns it. Offering an action already known
+      // to be refused there would be offering something that cannot work.
+      if (chromatogramExport.status === "running" || spectrumExport.status === "running") {
+        return;
+      }
+      const drawing = isChromatogramFigureFormat(format);
+      // The same rule the spectrum panel follows: a figure the settings could
+      // not describe is not sent, and a data document is untouched by a figure
+      // setting it has no use for.
+      if (drawing && resolvedRenderSettings === null) {
+        return;
+      }
+      if (format === "png" && resolvedPngDpi === null) {
+        return;
+      }
+      const visible = visibleTraces();
+      // A figure of no series is refused by the contract, so it is not offered.
+      // The data exports stay available, because hiding a trace is a choice
+      // about a plot rather than a decision to leave measured science out.
+      if (drawing && !visible.tic && !visible.bpc) {
+        return;
+      }
+      const settings =
+        resolvedRenderSettings === null
+          ? DEFAULT_FIGURE_SETTINGS
+          : figureSettingsFor(resolvedRenderSettings, resolvedPngDpi);
+      const range = chromatogramRange();
+      setChromatogramExport({ status: "running", operation: format });
+      void api
+        .exportChromatogram(token, format, range, visible, settings)
+        .then((outcome) => {
+          if (boundChromatogramToken.current !== token) {
+            return;
+          }
+          setChromatogramExport(
+            outcome.status === "cancelled"
+              ? { status: "cancelled" }
+              : {
+                  status: "saved",
+                  format: outcome.format,
+                  fileName: outcome.fileName,
+                  figure: outcome.figure,
+                  rangeScope: outcome.rangeScope,
+                  rangeLow: outcome.rangeLow,
+                  rangeHigh: outcome.rangeHigh,
+                  sourceScanCount: outcome.sourceScanCount,
+                  rowCount: outcome.rowCount,
+                },
+          );
+        })
+        .catch((cause: unknown) => {
+          if (boundChromatogramToken.current !== token) {
+            return;
+          }
+          setChromatogramExport({
+            status: "failed",
+            operation: format,
+            error: toPreviewError(cause),
+          });
+        });
+    },
+    [
+      api,
+      chromatogramExport.status,
+      chromatogramExportToken,
+      chromatogramRange,
+      resolvedPngDpi,
+      resolvedRenderSettings,
+      spectrumExport.status,
+      visibleTraces,
+    ],
+  );
+
+  const copyChromatogramPlot = useCallback(() => {
+    const token = chromatogramExportToken;
+    if (token === null) {
+      return;
+    }
+    if (chromatogramExport.status === "running" || spectrumExport.status === "running") {
+      return;
+    }
+    const render = resolvedRenderSettings;
+    if (render === null) {
+      return;
+    }
+    const visible = visibleTraces();
+    if (!visible.tic && !visible.bpc) {
+      return;
+    }
+    const settings = figureSettingsFor(render, resolvedPngDpi);
+    const range = chromatogramRange();
+    setChromatogramExport({ status: "running", operation: "copy" });
+    void api
+      .copyChromatogramPlot(token, range, visible, settings)
+      .then((outcome) => {
+        if (boundChromatogramToken.current !== token) {
+          return;
+        }
+        setChromatogramExport({
+          status: "copied",
+          figure: outcome.figure,
+          rangeScope: outcome.rangeScope,
+          rangeLow: outcome.rangeLow,
+          rangeHigh: outcome.rangeHigh,
+          sourceScanCount: outcome.sourceScanCount,
+        });
+      })
+      .catch((cause: unknown) => {
+        if (boundChromatogramToken.current !== token) {
+          return;
+        }
+        setChromatogramExport({
+          status: "failed",
+          operation: "copy",
+          error: toPreviewError(cause),
+        });
+      });
+  }, [
+    api,
+    chromatogramExport.status,
+    chromatogramExportToken,
+    chromatogramRange,
+    resolvedPngDpi,
+    resolvedRenderSettings,
+    spectrumExport.status,
+    visibleTraces,
+  ]);
+
   // A conversion's report carries the installation sequence it ran at. If it is
   // newer than what this document has applied, the banner and everything read
   // from the previous installation are stale -- so the backend is re-read
@@ -2634,6 +2896,14 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     spectrum,
     scanModel,
     viewerInteraction: viewer.state,
+    chromatogramExportToken,
+    chromatogramRangeScope,
+    setChromatogramRangeScope,
+    chromatogramCommittedDomain,
+    chromatogramExport,
+    exportChromatogram,
+    copyChromatogramPlot,
+    dismissChromatogramExport,
     dispatchViewerEvent,
     readViewerInteraction,
     selectedIndex,

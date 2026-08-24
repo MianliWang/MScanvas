@@ -63,6 +63,10 @@ use mscanvas_proteowizard::{
     SelectedSpectrumResult, SpectrumRepresentationState, UnitState as SourceUnitState,
 };
 
+use super::chromatogram::{
+    ChromatogramExportFormat, ChromatogramSource, RangeRefusal, RangeRequest, ResolvedRange,
+    TraceSet,
+};
 use super::dialog::SaveDialogFacts;
 use super::figure::{FigureRenderSettings, PngDpi, RasterFailure, encode_png, rasterize};
 use super::selection::DatasetId;
@@ -257,22 +261,113 @@ impl SpectrumSnapshot {
     }
 }
 
-/// Where the session's one selected-spectrum export is.
+/// Which chromatogram one export writes.
 ///
-/// One slot, for the reason the diagnostics export has one: this is an action
-/// on the spectrum that is on screen, and a list of them would be a list
-/// nothing reads a second entry of. It holds no path at any point.
+/// The same shape as a spectrum snapshot and for the same reasons: the science
+/// is held by handle rather than copied, the owner is the minimum needed to
+/// answer "was this dataset removed", and the token is a counter that names
+/// nothing outside this session.
+#[derive(Debug, Clone)]
+pub(super) struct ChromatogramSnapshot {
+    token: ChromatogramExportToken,
+    owner: DatasetId,
+    source: ChromatogramSource,
+}
+
+impl ChromatogramSnapshot {
+    pub(super) const fn token(&self) -> ChromatogramExportToken {
+        self.token
+    }
+
+    pub(super) const fn source(&self) -> &ChromatogramSource {
+        &self.source
+    }
+
+    pub(super) const fn owner(&self) -> DatasetId {
+        self.owner
+    }
+}
+
+/// One session-scoped name for one retained chromatogram.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ChromatogramExportToken(u64);
+
+impl ChromatogramExportToken {
+    pub(super) fn as_wire(self) -> String {
+        self.0.to_string()
+    }
+
+    fn from_wire(value: &str) -> Option<Self> {
+        value.parse::<u64>().ok().map(Self)
+    }
+}
+
+/// What a claimed chromatogram reservation hands to the code that writes it.
+#[derive(Debug, Clone)]
+pub struct ClaimedChromatogramExport {
+    pub(super) snapshot: ChromatogramSnapshot,
+    pub(super) format: ChromatogramExportFormat,
+    pub(super) range: ResolvedRange,
+    pub(super) traces: TraceSet,
+    pub(super) settings: FigureRenderSettings,
+    pub(super) dpi: Option<PngDpi>,
+}
+
+impl ClaimedChromatogramExport {
+    /// How this export's save dialog presents itself.
+    #[must_use]
+    pub const fn dialog(&self) -> SaveDialogFacts {
+        self.format.dialog()
+    }
+
+    /// The name that dialog offers first.
+    #[must_use]
+    pub fn suggested_file_name(&self) -> String {
+        self.format.suggested_file_name(self.range.scope())
+    }
+}
+
+/// One export that has been claimed, whichever source it is of.
+///
+/// The lane below holds one of these at a time, which is the whole point: two
+/// scientific exports cannot be in flight because there is one place for the
+/// claim to live.
+#[derive(Debug, Clone)]
+pub enum ClaimedExport {
+    Spectrum(ClaimedSpectrumExport),
+    Chromatogram(ClaimedChromatogramExport),
+}
+
+/// Where every scientific export of this session is.
+///
+/// **One lane, two sources.** A selected spectrum and a chromatogram are
+/// separately visible surfaces with separately retained science, and each keeps
+/// its own snapshot -- but there is exactly one answer to "may another
+/// scientific export begin now", and it lives here rather than in a disabled
+/// button. Two native save dialogs for one window is not a state this
+/// application can be in, and a clipboard rasterization racing a file write is
+/// two claims on the same memory that nothing on screen would explain.
+///
+/// It holds no path at any point.
 #[derive(Debug)]
-pub(super) struct SpectrumExportSlot {
+pub(super) struct ScientificExportSlots {
+    /// One counter for both kinds. A token is an identity rather than an index,
+    /// so nothing needs them to be dense per source -- and one sequence makes it
+    /// impossible for a spectrum token and a chromatogram token to read the
+    /// same, which is one fewer way for a stale one to be mistaken for a live
+    /// one.
     next_token: u64,
     next_reservation: u64,
     /// The spectrum a new export may be started for.
+    spectrum: Option<SpectrumSnapshot>,
+    /// The chromatogram a new export may be started for.
     ///
-    /// Replaced whenever a newer selection is interpreted, and dropped when the
-    /// preview it belonged to closes. An export already under way does not read
-    /// this: it took its own handle when it claimed one.
-    current: Option<SpectrumSnapshot>,
-    state: ExportState,
+    /// Installed only for a preview the visible viewer would draw. A truncated
+    /// table has no chromatogram on screen, and Rust holding more rows than the
+    /// webview received is not a reason to open an export door onto a
+    /// capability the product does not otherwise have.
+    chromatogram: Option<ChromatogramSnapshot>,
+    lane: ExportState,
 }
 
 #[derive(Debug, Clone)]
@@ -284,23 +379,12 @@ enum ExportState {
     AwaitingDestination {
         reservation: SpectrumReservationId,
         claimed: bool,
-        /// The snapshot this export is for, taken when the reservation was
-        /// issued. Held here rather than read from `current` at claim time, so
-        /// a selection that lands in between cannot move an export that has
-        /// already been started onto a different spectrum.
-        snapshot: SpectrumSnapshot,
-        format: SpectrumExportFormat,
-        /// What the figure was asked to look like when the export began.
-        ///
-        /// Held here for the same reason the snapshot is: the user is about to
-        /// be in a modal dialog, and a settings change that lands in between
-        /// must not move an export that has already started onto a different
-        /// figure. What is written is what was asked for.
-        settings: FigureRenderSettings,
-        /// The physical resolution this export records, for the one format
-        /// that records one. `None` for every other format, because there is
-        /// nowhere in them for it to live.
-        dpi: Option<PngDpi>,
+        /// Everything this export writes, taken when the reservation was
+        /// issued. Held here rather than read from the slots at claim time, so
+        /// a selection, a preview, a viewport or a settings change that lands
+        /// in between cannot move an export that has already been started onto
+        /// different science.
+        export: ClaimedExport,
     },
     /// A destination was chosen and the bytes are being written.
     Writing,
@@ -351,19 +435,44 @@ impl ClaimedSpectrumExport {
     }
 }
 
-impl Default for SpectrumExportSlot {
+#[cfg(test)]
+impl ClaimedExport {
+    /// The spectrum claim, for tests written about that surface.
+    ///
+    /// Panics on the other variant rather than answering `None`: a test that
+    /// claimed a chromatogram reservation and read it as a spectrum has already
+    /// gone wrong, and a quiet `None` would make it look like an empty lane.
+    fn as_spectrum(&self) -> &ClaimedSpectrumExport {
+        match self {
+            Self::Spectrum(claimed) => claimed,
+            Self::Chromatogram(_) => panic!("this reservation is a chromatogram export"),
+        }
+    }
+}
+
+impl Default for ScientificExportSlots {
     fn default() -> Self {
         Self {
             // Both begin at one, so zero is never a live identifier.
             next_token: 1,
             next_reservation: 1,
-            current: None,
-            state: ExportState::Idle,
+            spectrum: None,
+            chromatogram: None,
+            lane: ExportState::Idle,
         }
     }
 }
 
-impl SpectrumExportSlot {
+impl ScientificExportSlots {
+    fn issue_token(&mut self) -> u64 {
+        let token = self.next_token;
+        self.next_token = self
+            .next_token
+            .checked_add(1)
+            .expect("a session retains fewer than u64::MAX exportable sources");
+        token
+    }
+
     /// Retains one interpreted spectrum as the one a new export may name.
     ///
     /// The previous snapshot is dropped here, which is the whole bound: one
@@ -375,17 +484,33 @@ impl SpectrumExportSlot {
         owner: DatasetId,
         spectrum: SelectedSpectrumResult,
     ) -> SpectrumSnapshot {
-        let token = SpectrumExportToken(self.next_token);
-        self.next_token = self
-            .next_token
-            .checked_add(1)
-            .expect("a session interprets fewer than u64::MAX selected spectra");
+        let token = SpectrumExportToken(self.issue_token());
         let snapshot = SpectrumSnapshot {
             token,
             owner,
             spectrum: Arc::new(spectrum),
         };
-        self.current = Some(snapshot.clone());
+        self.spectrum = Some(snapshot.clone());
+        snapshot
+    }
+
+    /// Retains one chromatogram as the one a new export may name.
+    ///
+    /// Takes the source already decided to be exportable rather than deciding
+    /// here: whether a run is one the viewer would draw is a scientific
+    /// question, and it is answered where the science is.
+    pub(super) fn install_chromatogram(
+        &mut self,
+        owner: DatasetId,
+        source: ChromatogramSource,
+    ) -> ChromatogramSnapshot {
+        let token = ChromatogramExportToken(self.issue_token());
+        let snapshot = ChromatogramSnapshot {
+            token,
+            owner,
+            source,
+        };
+        self.chromatogram = Some(snapshot.clone());
         snapshot
     }
 
@@ -396,7 +521,12 @@ impl SpectrumExportSlot {
     /// An export under way keeps its own handle and finishes; what this ends is
     /// the ability to start a *new* one against the old token.
     pub(super) fn forget(&mut self) {
-        self.current = None;
+        self.spectrum = None;
+    }
+
+    /// Forgets the retained chromatogram.
+    pub(super) fn forget_chromatogram(&mut self) {
+        self.chromatogram = None;
     }
 
     /// Which spectrum the slot holds, if it holds one.
@@ -405,7 +535,7 @@ impl SpectrumExportSlot {
     /// "the read I am revoking for is still the current one" from "something
     /// newer arrived while I was waiting".
     pub(super) fn current_token(&self) -> Option<SpectrumExportToken> {
-        self.current.as_ref().map(|snapshot| snapshot.token)
+        self.spectrum.as_ref().map(|snapshot| snapshot.token)
     }
 
     /// Forgets the retained spectrum only if it is still the one named here.
@@ -426,25 +556,35 @@ impl SpectrumExportSlot {
         if self.current_token() != Some(expected) {
             return false;
         }
-        self.current = None;
+        self.spectrum = None;
         true
     }
 
-    /// Forgets the retained spectrum only if one of these datasets owns it.
+    /// Forgets whatever these datasets own.
     ///
     /// Removing rows around the preview is not a reason to revoke what the user
     /// is reading -- the frontend keeps the preview open in exactly that case,
-    /// and a slot that forgot anyway would refuse the next export of a spectrum
+    /// and a slot that forgot anyway would refuse the next export of science
     /// still on screen. Answers whether it dropped anything.
     pub(super) fn forget_if_owned_by(&mut self, removed: &[DatasetId]) -> bool {
-        let owned = self
-            .current
+        let mut dropped = false;
+        if self
+            .spectrum
             .as_ref()
-            .is_some_and(|snapshot| removed.contains(&snapshot.owner()));
-        if owned {
-            self.current = None;
+            .is_some_and(|snapshot| removed.contains(&snapshot.owner()))
+        {
+            self.spectrum = None;
+            dropped = true;
         }
-        owned
+        if self
+            .chromatogram
+            .as_ref()
+            .is_some_and(|snapshot| removed.contains(&snapshot.owner()))
+        {
+            self.chromatogram = None;
+            dropped = true;
+        }
+        dropped
     }
 
     /// A handle that does not keep the spectrum alive.
@@ -456,7 +596,7 @@ impl SpectrumExportSlot {
     /// have produced it.
     #[cfg(test)]
     pub(super) fn weak_current(&self) -> Option<std::sync::Weak<SelectedSpectrumResult>> {
-        self.current
+        self.spectrum
             .as_ref()
             .map(|snapshot| Arc::downgrade(&snapshot.spectrum))
     }
@@ -467,44 +607,28 @@ impl SpectrumExportSlot {
     /// *unclaimed* reservation is neither: it is a document having asked and not
     /// yet followed through, and refusing on it is what would let one reload
     /// between the two commands wedge the slot for the rest of the session.
+    ///
+    /// Asked of the one lane, so the answer is the same whichever source is
+    /// asking. A chromatogram export cannot begin while a spectrum's picker is
+    /// open, and neither can the reverse.
     const fn is_committed(&self) -> bool {
         matches!(
-            self.state,
+            self.lane,
             ExportState::Writing | ExportState::AwaitingDestination { claimed: true, .. }
         )
     }
 
-    /// Issues one reservation for one named spectrum.
+    /// Issues one reservation for one already-bound export.
     ///
     /// Refuses while an export is committed, and supersedes an unclaimed
     /// reservation rather than refusing on it. Two dialogs for one session stay
     /// impossible -- claiming is what opens one, and a superseded reservation
     /// can no longer be claimed -- while a document that reloaded after asking
     /// leaves nothing behind that a later export has to wait for.
-    ///
-    /// The token is checked against the retained snapshot rather than trusted:
-    /// a webview that has been holding a token across a newer selection is
-    /// naming a spectrum this session no longer has, and the honest answer is
-    /// that it is gone rather than a file of whatever is current now.
-    pub(super) fn begin(
+    fn reserve(
         &mut self,
-        token: &str,
-        format: SpectrumExportFormat,
-        settings: FigureRenderSettings,
-        dpi: Option<PngDpi>,
+        export: ClaimedExport,
     ) -> Result<SpectrumReservationId, BeginExportRefusal> {
-        // Asked before whether anything else is running, because the two
-        // refusals send the user somewhere different. "Already exporting" means
-        // wait; "no longer loaded" means select the spectrum again. A stale
-        // token answered with the first would send someone to wait for an
-        // export whose finishing cannot help them.
-        let requested = SpectrumExportToken::from_wire(token).ok_or(BeginExportRefusal::Stale)?;
-        let snapshot = self
-            .current
-            .as_ref()
-            .filter(|snapshot| snapshot.token == requested)
-            .ok_or(BeginExportRefusal::Stale)?
-            .clone();
         if self.is_committed() {
             return Err(BeginExportRefusal::AlreadyExporting);
         }
@@ -512,16 +636,99 @@ impl SpectrumExportSlot {
         self.next_reservation = self
             .next_reservation
             .checked_add(1)
-            .expect("a session issues fewer than u64::MAX spectrum export reservations");
-        self.state = ExportState::AwaitingDestination {
+            .expect("a session issues fewer than u64::MAX export reservations");
+        self.lane = ExportState::AwaitingDestination {
             reservation,
             claimed: false,
+            export,
+        };
+        Ok(reservation)
+    }
+
+    /// Reads back the retained spectrum this token names.
+    ///
+    /// The token is checked against the snapshot rather than trusted: a webview
+    /// that has been holding one across a newer selection is naming science this
+    /// session no longer has, and the honest answer is that it is gone rather
+    /// than a file of whatever is current now.
+    fn spectrum_for(&self, token: &str) -> Result<SpectrumSnapshot, BeginExportRefusal> {
+        let requested = SpectrumExportToken::from_wire(token).ok_or(BeginExportRefusal::Stale)?;
+        self.spectrum
+            .as_ref()
+            .filter(|snapshot| snapshot.token == requested)
+            .ok_or(BeginExportRefusal::Stale)
+            .cloned()
+    }
+
+    /// Reads back the retained chromatogram this token names.
+    fn chromatogram_for(&self, token: &str) -> Result<ChromatogramSnapshot, BeginExportRefusal> {
+        let requested =
+            ChromatogramExportToken::from_wire(token).ok_or(BeginExportRefusal::Stale)?;
+        self.chromatogram
+            .as_ref()
+            .filter(|snapshot| snapshot.token == requested)
+            .ok_or(BeginExportRefusal::Stale)
+            .cloned()
+    }
+
+    /// Binds one selected-spectrum export and reserves the lane for it.
+    ///
+    /// Asked in this order deliberately. "Already exporting" means wait; "no
+    /// longer loaded" means select the spectrum again -- and a stale token
+    /// answered with the first would send someone to wait for an export whose
+    /// finishing cannot help them.
+    pub(super) fn begin(
+        &mut self,
+        token: &str,
+        format: SpectrumExportFormat,
+        settings: FigureRenderSettings,
+        dpi: Option<PngDpi>,
+    ) -> Result<SpectrumReservationId, BeginExportRefusal> {
+        let snapshot = self.spectrum_for(token)?;
+        self.reserve(ClaimedExport::Spectrum(ClaimedSpectrumExport {
             snapshot,
             format,
             settings,
             dpi,
-        };
-        Ok(reservation)
+        }))
+    }
+
+    /// Binds one chromatogram export and reserves the lane for it.
+    ///
+    /// The range is resolved here, against the snapshot the token named, and
+    /// the resolved range is what the export carries from this moment on. A
+    /// viewport that moves while the picker is open changes nothing about a file
+    /// already being written.
+    pub(super) fn begin_chromatogram(
+        &mut self,
+        token: &str,
+        format: ChromatogramExportFormat,
+        request: RangeRequest,
+        traces: TraceSet,
+        settings: FigureRenderSettings,
+        dpi: Option<PngDpi>,
+    ) -> Result<SpectrumReservationId, BeginExportRefusal> {
+        let snapshot = self.chromatogram_for(token)?;
+        let range = snapshot
+            .source()
+            .resolve(request)
+            .map_err(|refusal| match refusal {
+                RangeRefusal::OutsideSource => BeginExportRefusal::RangeOutsideSource,
+            })?;
+        // A figure of no series is not a figure of nothing, and the contract
+        // refuses one. Answered here rather than at the renderer so the refusal
+        // names what the user can change.
+        if format.is_figure() && !traces.any() {
+            return Err(BeginExportRefusal::NoVisibleTrace);
+        }
+        self.reserve(ClaimedExport::Chromatogram(ClaimedChromatogramExport {
+            snapshot,
+            format,
+            range,
+            traces,
+            settings,
+            dpi,
+        }))
     }
 
     /// Claims one issued reservation, so its save dialog may be shown.
@@ -529,16 +736,13 @@ impl SpectrumExportSlot {
     /// Claiming once is the rule. A second claim of the same reservation is a
     /// second dialog for one export, and answering it would leave two windows
     /// able to publish the same file.
-    pub(super) fn claim(&mut self, reservation: &str) -> Option<ClaimedSpectrumExport> {
+    pub(super) fn claim(&mut self, reservation: &str) -> Option<ClaimedExport> {
         let requested = SpectrumReservationId::from_wire(reservation)?;
         let ExportState::AwaitingDestination {
             reservation: held,
             claimed,
-            snapshot,
-            format,
-            settings,
-            dpi,
-        } = &mut self.state
+            export,
+        } = &mut self.lane
         else {
             return None;
         };
@@ -546,12 +750,7 @@ impl SpectrumExportSlot {
             return None;
         }
         *claimed = true;
-        Some(ClaimedSpectrumExport {
-            snapshot: snapshot.clone(),
-            format: *format,
-            settings: *settings,
-            dpi: *dpi,
-        })
+        Some(export.clone())
     }
 
     /// Returns an unclaimed or open reservation to idle.
@@ -565,23 +764,23 @@ impl SpectrumExportSlot {
         };
         let ExportState::AwaitingDestination {
             reservation: held, ..
-        } = &self.state
+        } = &self.lane
         else {
             return false;
         };
         if *held != requested {
             return false;
         }
-        self.state = ExportState::Idle;
+        self.lane = ExportState::Idle;
         true
     }
 
     /// Moves a claimed export from choosing a destination to writing one.
     pub(super) fn begin_write(&mut self) {
-        self.state = ExportState::Writing;
+        self.lane = ExportState::Writing;
     }
 
-    /// Claims the one figure-operation lane for an operation with no dialog.
+    /// Claims the one lane for an operation with no dialog.
     ///
     /// Copy plot renders the same figure a PNG export would and puts it on the
     /// clipboard, so it belongs in the same lane: two of these at once are two
@@ -594,29 +793,47 @@ impl SpectrumExportSlot {
         &mut self,
         token: &str,
     ) -> Result<SpectrumSnapshot, BeginExportRefusal> {
-        let requested = SpectrumExportToken::from_wire(token).ok_or(BeginExportRefusal::Stale)?;
-        let snapshot = self
-            .current
-            .as_ref()
-            .filter(|snapshot| snapshot.token == requested)
-            .ok_or(BeginExportRefusal::Stale)?
-            .clone();
+        let snapshot = self.spectrum_for(token)?;
         if self.is_committed() {
             return Err(BeginExportRefusal::AlreadyExporting);
         }
-        self.state = ExportState::Writing;
+        self.lane = ExportState::Writing;
         Ok(snapshot)
+    }
+
+    /// Claims the one lane for a chromatogram clipboard operation.
+    pub(super) fn begin_chromatogram_copy(
+        &mut self,
+        token: &str,
+        request: RangeRequest,
+        traces: TraceSet,
+    ) -> Result<(ChromatogramSnapshot, ResolvedRange), BeginExportRefusal> {
+        let snapshot = self.chromatogram_for(token)?;
+        let range = snapshot
+            .source()
+            .resolve(request)
+            .map_err(|refusal| match refusal {
+                RangeRefusal::OutsideSource => BeginExportRefusal::RangeOutsideSource,
+            })?;
+        if !traces.any() {
+            return Err(BeginExportRefusal::NoVisibleTrace);
+        }
+        if self.is_committed() {
+            return Err(BeginExportRefusal::AlreadyExporting);
+        }
+        self.lane = ExportState::Writing;
+        Ok((snapshot, range))
     }
 
     /// Ends this write, however it went.
     ///
-    /// Only a write. A successful export has already returned the slot to idle
+    /// Only a write. A successful export has already returned the lane to idle
     /// by the time the guard falls, and another export may have reserved it in
     /// between -- clearing that would refuse a file somebody else is in the
     /// middle of choosing.
     pub(super) fn release_write(&mut self) -> bool {
-        if matches!(self.state, ExportState::Writing) {
-            self.state = ExportState::Idle;
+        if matches!(self.lane, ExportState::Writing) {
+            self.lane = ExportState::Idle;
             return true;
         }
         false
@@ -628,8 +845,21 @@ impl SpectrumExportSlot {
 pub(super) enum BeginExportRefusal {
     /// Another export of this session has not finished.
     AlreadyExporting,
-    /// The named spectrum is not the one this session holds.
+    /// The named science is not what this session holds.
     Stale,
+    /// The requested range reaches outside the run it was asked of.
+    ///
+    /// Not clamped to the nearest range that does fit. A request for a window
+    /// this source does not have is a request about something else, and quietly
+    /// exporting the nearest thing would answer a question nobody asked.
+    RangeOutsideSource,
+    /// A figure was asked for with no measured trace visible.
+    ///
+    /// A panel of no series is refused by the contract, and rightly: a blank
+    /// plotting area cannot be told from a renderer that failed. The data
+    /// export beside it stays available, because hiding a trace is a
+    /// presentation choice rather than a decision to drop measured science.
+    NoVisibleTrace,
 }
 
 /// Builds the figure one selected spectrum exports as.
@@ -773,6 +1003,29 @@ pub(super) fn figure_raster(
 ) -> Result<super::figure::FigureRaster, FigureFailure> {
     let svg = svg_document(spectrum, settings).map_err(|_| FigureFailure::Unspecifiable)?;
     rasterize(&svg, settings.width(), settings.height()).map_err(FigureFailure::Raster)
+}
+
+/// Rasterizes one figure that has already been specified.
+///
+/// The pixels every figure surface produces come through here, so a raster of a
+/// chromatogram and a raster of a spectrum are the same renderer at the same
+/// size rather than two paths that happen to agree.
+pub(super) fn raster_of(
+    figure: &FigureSpec,
+    settings: FigureRenderSettings,
+) -> Result<super::figure::FigureRaster, FigureFailure> {
+    let svg = mscanvas_plot_spec::svg::render(figure);
+    rasterize(&svg, settings.width(), settings.height()).map_err(FigureFailure::Raster)
+}
+
+/// Encodes one already-specified figure as the PNG a user receives.
+pub(super) fn png_of(
+    figure: &FigureSpec,
+    settings: FigureRenderSettings,
+    dpi: PngDpi,
+) -> Result<Vec<u8>, FigureFailure> {
+    let raster = raster_of(figure, settings)?;
+    encode_png(&raster, dpi.get()).map_err(FigureFailure::Raster)
 }
 
 /// Renders one selected spectrum as the PNG document a user receives.
@@ -1300,7 +1553,7 @@ mod tests {
     /// A token names one retained spectrum, and a superseded one names nothing.
     #[test]
     fn a_stale_token_is_refused_rather_than_rebound() {
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let first = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let stale = first.token().as_wire();
         // A newer selection replaces the retained spectrum.
@@ -1326,7 +1579,7 @@ mod tests {
     /// A claimed export finishes from the spectrum it claimed.
     #[test]
     fn a_claimed_export_is_unaffected_by_a_later_selection() {
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let first = slot.install(owner(1), spectrum(1, vec![100.0, 200.0], vec![1.0, 2.0]));
         let reservation = slot
             .begin(
@@ -1343,17 +1596,17 @@ mod tests {
         slot.install(owner(1), spectrum(2, vec![300.0], vec![3.0]));
         slot.install(owner(1), spectrum(3, Vec::new(), Vec::new()));
         assert_eq!(
-            claimed.snapshot.point_count(),
+            claimed.as_spectrum().snapshot.point_count(),
             2,
             "the claim still holds the spectrum it was invoked for",
         );
-        assert_eq!(claimed.snapshot.index(), 1);
+        assert_eq!(claimed.as_spectrum().snapshot.index(), 1);
     }
 
     /// Claiming happens once, and a superseded reservation cannot claim at all.
     #[test]
     fn a_reservation_claims_once_and_a_superseded_one_never_does() {
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let snapshot = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let token = snapshot.token().as_wire();
         let first = slot
@@ -1379,7 +1632,7 @@ mod tests {
     /// An open dialog and a running write both refuse a second export.
     #[test]
     fn a_committed_export_refuses_another() {
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let snapshot = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let token = snapshot.token().as_wire();
         let reservation = slot
@@ -1407,7 +1660,7 @@ mod tests {
     /// Cancelling returns the slot to rest, and forgetting drops the spectrum.
     #[test]
     fn cancelling_frees_the_slot_and_forgetting_drops_the_spectrum() {
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let snapshot = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let token = snapshot.token().as_wire();
         let reservation = slot
@@ -1517,7 +1770,7 @@ mod tests {
         // exporting" means wait; "no longer loaded" means select the spectrum
         // again. A token that can never become valid must not be answered with
         // the one that says waiting will help.
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let first = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let reservation = slot
             .begin(
@@ -1565,7 +1818,7 @@ mod tests {
         // lands while they are standing in it must not move an export that has
         // already started onto a different figure: what is written is what was
         // asked for.
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let snapshot = slot.install(owner(1), spectrum(1, vec![100.0, 200.0], vec![1.0, 2.0]));
         let reservation = slot
             .begin(
@@ -1578,6 +1831,7 @@ mod tests {
 
         let claimed = slot.claim(&reservation.as_wire()).expect("claimed");
 
+        let claimed = claimed.as_spectrum();
         assert_eq!(claimed.settings, defaults());
         assert_ne!(claimed.settings, other_settings());
         assert_eq!(claimed.dpi, Some(PngDpi::default()));
@@ -1593,7 +1847,7 @@ mod tests {
 
     #[test]
     fn a_copy_takes_the_lane_and_holds_it_against_every_other_operation() {
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let snapshot = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let token = snapshot.token().as_wire();
 
@@ -1627,7 +1881,7 @@ mod tests {
 
     #[test]
     fn a_write_holds_the_lane_and_an_unclaimed_reservation_does_not() {
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let snapshot = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let token = snapshot.token().as_wire();
 
@@ -1901,7 +2155,7 @@ mod tests {
         // user is actually looking at -- the panel keeps showing it, because the
         // frontend discards the superseded answer, and only the export fails, as
         // stale, for a reason nothing on screen explains.
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let older = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
         let newer = slot.install(owner(1), spectrum(2, vec![200.0], vec![2.0]));
 
@@ -1929,7 +2183,7 @@ mod tests {
     fn revoking_against_nothing_revokes_nothing() {
         // A read that began when the slot was empty owns nothing, so a failure
         // afterwards must not take away whatever arrived in the meantime.
-        let mut slot = SpectrumExportSlot::default();
+        let mut slot = ScientificExportSlots::default();
         let arrived = slot.install(owner(1), spectrum(1, vec![100.0], vec![1.0]));
 
         assert!(!slot.forget_if_current(None));

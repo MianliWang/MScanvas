@@ -345,6 +345,21 @@ export interface Preview {
   readonly metadata: Metadata;
   readonly runSummary: RunSummary;
   readonly spectrumTable: SpectrumTable;
+  /**
+   * The opaque name of the chromatogram this run may be exported as.
+   *
+   * `null` where there is none, which is exactly where the viewer draws none: a
+   * table this session could not transfer whole, a run with no spectra, a
+   * retention time or an intensity that is not a finite number, or a unit this
+   * build cannot name. Rust retains every row the backend reported while this
+   * document receives a bounded prefix, so a token is issued only for a run the
+   * viewer itself would draw.
+   *
+   * Opaque, session-scoped, and meaningless to anything that did not receive it
+   * from Rust. Not a path, not a dataset handle, not an index — and never a
+   * reason for this side to believe it holds the science.
+   */
+  readonly chromatogramExportToken: string | null;
 }
 
 export interface Precursor {
@@ -461,6 +476,82 @@ export interface FigureSettings {
   readonly heightPx: number;
   readonly pngDpi: number;
   readonly theme: FigureTheme;
+}
+
+/** Which document a chromatogram export writes. */
+export type ChromatogramExportFormat = "svg" | "png" | "csv" | "tsv";
+
+/**
+ * How much of the run an export covers.
+ *
+ * `full` needs no range at all: Rust resolves it from the run it retained.
+ * `current` carries the viewer's **committed** domain, and nothing else — not
+ * the range a wheel or a drag is transiently showing, not the SVG viewBox, not
+ * an axis tick and not a pointer position.
+ */
+export type ChromatogramRangeScope = "full" | "current";
+
+export interface ChromatogramRange {
+  readonly scope: ChromatogramRangeScope;
+  /**
+   * The committed viewport, where there is one.
+   *
+   * `null` is not a missing answer: it is the viewer saying it has committed no
+   * narrower range, so the current range *is* the whole run. Rust resolves that
+   * rather than this side inventing a subrange to make the option look
+   * different.
+   */
+  readonly low: number | null;
+  readonly high: number | null;
+}
+
+/**
+ * Which measured traces a chromatogram figure draws.
+ *
+ * The figure shows what is on screen. A data export carries both columns
+ * whatever this says, because hiding a trace is a choice about a plot rather
+ * than a decision to leave measured science out of a file.
+ */
+export interface ChromatogramTraceSet {
+  readonly tic: boolean;
+  readonly bpc: boolean;
+}
+
+export type ChromatogramExportOutcome =
+  | { readonly status: "cancelled" }
+  | {
+      readonly status: "saved";
+      readonly format: ChromatogramExportFormat;
+      readonly fileName: string;
+      /** What the figure was rendered as. `null` for the data documents. */
+      readonly figure: ExportedFigure | null;
+      /** The traces the figure drew. `null` for the data documents. */
+      readonly traces: ChromatogramTraceSet | null;
+      /** `full` or `current`, as asked for rather than as it resolved. */
+      readonly rangeScope: ChromatogramRangeScope;
+      readonly rangeLow: number;
+      readonly rangeHigh: number;
+      /** How many scans the run holds, counted by Rust rather than here. */
+      readonly sourceScanCount: number;
+      /**
+       * How many source scans the data document carries. `null` for a figure.
+       *
+       * Zero is a successful export. A range can legitimately contain no scans
+       * while the figure still draws the segment crossing it, because that line
+       * is geometry the source asserts between its own samples and is not one.
+       */
+      readonly rowCount: number | null;
+    };
+
+/** What a chromatogram figure put on the clipboard was. */
+export interface ChromatogramCopyOutcome {
+  readonly status: "copied";
+  readonly figure: CopiedFigure;
+  readonly traces: ChromatogramTraceSet;
+  readonly rangeScope: ChromatogramRangeScope;
+  readonly rangeLow: number;
+  readonly rangeHigh: number;
+  readonly sourceScanCount: number;
 }
 
 /**
