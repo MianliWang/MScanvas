@@ -49,6 +49,14 @@ export const STATUS = ".spectrum-export-status";
  */
 export const SEEDED_TOKEN = "1";
 
+/**
+ * The token Rust's seeded chromatogram carries.
+ *
+ * The session's second install, from the one counter both kinds are named out
+ * of. Wrong, it would be refused as stale rather than exporting another run.
+ */
+export const SEEDED_CHROMATOGRAM_TOKEN = "2";
+
 export interface IpcCall {
   readonly command: string;
   readonly args: Record<string, unknown>;
@@ -79,8 +87,17 @@ export function tauriTable(options: {
   readonly real?: readonly string[];
   readonly extra?: Record<string, unknown>;
 } = {}): Record<string, unknown> {
+  const base = ipcTable();
   const table = {
-    ...ipcTable(),
+    ...base,
+    // The preview is answered from the table, so the token it carries has to be
+    // the one Rust's seeded snapshot actually holds -- otherwise the production
+    // command would refuse it as stale, which is the right answer to the wrong
+    // question.
+    open_mzml_preview: {
+      ...(base["open_mzml_preview"] as Record<string, unknown>),
+      chromatogramExportToken: SEEDED_CHROMATOGRAM_TOKEN,
+    },
     load_selected_spectrum: {
       outcome: "spectrum",
       spectrum: { ...spectrumWithPeaks(), exportToken: SEEDED_TOKEN },

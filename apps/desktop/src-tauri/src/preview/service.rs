@@ -2066,6 +2066,43 @@ impl PreviewService {
         self.spectrum_export_slot().install(owner, spectrum);
     }
 
+    /// Builds the retained per-scan facts one table read produces.
+    ///
+    /// The same mapping the preview commit uses, exposed so the rendered-test
+    /// seed reaches a snapshot through the production shape rather than through
+    /// a second one written for it.
+    #[cfg(feature = "e2e")]
+    pub(super) fn retained_rows_for_seed(
+        &self,
+        table: &SpectrumTableResult,
+    ) -> Arc<Vec<TableRowFacts>> {
+        Arc::new(
+            table
+                .rows()
+                .iter()
+                .map(|row| TableRowFacts {
+                    identity: row.identity().clone(),
+                    ms_level: row.ms_level(),
+                    retention_time: row.retention_time().value(),
+                    retention_time_unit_known: reported_unit_known(row.retention_time()),
+                    base_peak_mz: row.base_peak_mz(),
+                    base_peak_intensity: row.base_peak_intensity(),
+                    total_ion_current: row.total_ion_current(),
+                })
+                .collect(),
+        )
+    }
+
+    #[cfg(feature = "e2e")]
+    pub(super) fn install_seeded_chromatogram(
+        &self,
+        owner: super::selection::DatasetId,
+        source: super::chromatogram::ChromatogramSource,
+    ) {
+        self.spectrum_export_slot()
+            .install_chromatogram(owner, source);
+    }
+
     /// Starts one export of one named spectrum, answering with its reservation.
     ///
     /// # Errors

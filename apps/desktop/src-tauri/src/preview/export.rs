@@ -1124,6 +1124,7 @@ pub(super) fn data_document(
 
 #[cfg(test)]
 mod tests {
+    use super::super::chromatogram::RangeScope;
     use super::*;
     use mscanvas_plot_spec::spec::DataScope;
     use mscanvas_plot_spec::spec::FigureTheme;
@@ -2188,5 +2189,371 @@ mod tests {
 
         assert!(!slot.forget_if_current(None));
         assert_eq!(slot.current_token(), Some(arrived.token()));
+    }
+
+    // ------------------------------------------- one lane, two scientific sources
+
+    /// One exportable run, for the lane tests.
+    fn seeded_chromatogram() -> ChromatogramSource {
+        let rows = std::sync::Arc::new(vec![
+            super::super::service::TableRowFacts::for_test(0, Some(1), 1, 1.0, false, 100.0, 40.0),
+            super::super::service::TableRowFacts::for_test(1, Some(2), 1, 2.0, false, 300.0, 120.0),
+        ]);
+        ChromatogramSource::from_rows(&rows, false).expect("an exportable run")
+    }
+
+    fn full_range() -> RangeRequest {
+        RangeRequest::from_wire("full", None, None).expect("a full request")
+    }
+
+    fn tic_only() -> TraceSet {
+        TraceSet::from_wire(true, false)
+    }
+
+    /// A chromatogram export cannot begin while a spectrum's picker is open.
+    ///
+    /// One lane across both surfaces, and this is what having one means: a
+    /// claimed reservation is a dialog somebody is standing in front of, and a
+    /// second scientific export is refused there rather than by a disabled
+    /// button in a document that may have reloaded.
+    #[test]
+    fn a_claimed_spectrum_export_refuses_a_chromatogram_one() {
+        let mut slots = ScientificExportSlots::default();
+        let spectrum = slots
+            .install(owner(1), spectrum(1, vec![100.0], vec![1.0]))
+            .token()
+            .as_wire();
+        let chromatogram = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+        let reservation = slots
+            .begin(&spectrum, SpectrumExportFormat::Csv, defaults(), None)
+            .expect("a first export");
+        slots.claim(&reservation.as_wire()).expect("its dialog");
+
+        assert_eq!(
+            slots.begin_chromatogram(
+                &chromatogram,
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                defaults(),
+                None,
+            ),
+            Err(BeginExportRefusal::AlreadyExporting),
+        );
+        // And the clipboard operation is the same lane.
+        assert_eq!(
+            slots
+                .begin_chromatogram_copy(&chromatogram, full_range(), tic_only())
+                .err(),
+            Some(BeginExportRefusal::AlreadyExporting),
+        );
+    }
+
+    /// And the reverse, which is the half a second lane would have hidden.
+    #[test]
+    fn a_claimed_chromatogram_export_refuses_a_spectrum_one() {
+        let mut slots = ScientificExportSlots::default();
+        let spectrum = slots
+            .install(owner(1), spectrum(1, vec![100.0], vec![1.0]))
+            .token()
+            .as_wire();
+        let chromatogram = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+        let reservation = slots
+            .begin_chromatogram(
+                &chromatogram,
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                defaults(),
+                None,
+            )
+            .expect("a first export");
+        slots.claim(&reservation.as_wire()).expect("its dialog");
+
+        assert_eq!(
+            slots.begin(&spectrum, SpectrumExportFormat::Csv, defaults(), None),
+            Err(BeginExportRefusal::AlreadyExporting),
+        );
+        assert_eq!(
+            slots.begin_copy(&spectrum),
+            Err(BeginExportRefusal::AlreadyExporting),
+        );
+    }
+
+    /// A clipboard operation of either kind closes the lane while it runs.
+    #[test]
+    fn a_copy_of_either_kind_holds_the_lane() {
+        let mut slots = ScientificExportSlots::default();
+        let spectrum = slots
+            .install(owner(1), spectrum(1, vec![100.0], vec![1.0]))
+            .token()
+            .as_wire();
+        let chromatogram = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+
+        slots.begin_copy(&spectrum).expect("a spectrum copy");
+        assert_eq!(
+            slots
+                .begin_chromatogram_copy(&chromatogram, full_range(), tic_only())
+                .err(),
+            Some(BeginExportRefusal::AlreadyExporting),
+        );
+        assert!(slots.release_write());
+
+        slots
+            .begin_chromatogram_copy(&chromatogram, full_range(), tic_only())
+            .expect("a chromatogram copy");
+        assert_eq!(
+            slots.begin_copy(&spectrum),
+            Err(BeginExportRefusal::AlreadyExporting),
+        );
+        assert!(slots.release_write());
+    }
+
+    /// An unclaimed reservation is superseded rather than refused, across kinds.
+    ///
+    /// The accepted semantics, unchanged: a document that asked and then
+    /// reloaded leaves nothing behind for a later export to wait for. Two
+    /// dialogs stay impossible because claiming is what opens one.
+    #[test]
+    fn an_unclaimed_reservation_is_superseded_by_either_surface() {
+        let mut slots = ScientificExportSlots::default();
+        let spectrum = slots
+            .install(owner(1), spectrum(1, vec![100.0], vec![1.0]))
+            .token()
+            .as_wire();
+        let chromatogram = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+
+        let first = slots
+            .begin(&spectrum, SpectrumExportFormat::Csv, defaults(), None)
+            .expect("a spectrum reservation");
+        let second = slots
+            .begin_chromatogram(
+                &chromatogram,
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                defaults(),
+                None,
+            )
+            .expect("a chromatogram reservation supersedes an unclaimed one");
+
+        assert!(
+            slots.claim(&first.as_wire()).is_none(),
+            "the superseded reservation can no longer open a dialog"
+        );
+        assert!(slots.claim(&second.as_wire()).is_some());
+    }
+
+    /// A claim answers with the kind it was made for, and no other.
+    #[test]
+    fn a_claim_carries_the_surface_it_belongs_to() {
+        let mut slots = ScientificExportSlots::default();
+        let chromatogram = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+        let reservation = slots
+            .begin_chromatogram(
+                &chromatogram,
+                ChromatogramExportFormat::Tsv,
+                full_range(),
+                tic_only(),
+                defaults(),
+                None,
+            )
+            .expect("a reservation");
+
+        let claimed = slots.claim(&reservation.as_wire()).expect("its claim");
+        let ClaimedExport::Chromatogram(chromatogram) = claimed else {
+            panic!("a chromatogram reservation claims a chromatogram export");
+        };
+        assert_eq!(chromatogram.format, ChromatogramExportFormat::Tsv);
+        assert_eq!(chromatogram.range.scope(), RangeScope::Full);
+        assert_eq!(
+            chromatogram.suggested_file_name(),
+            "mscanvas-chromatogram-full.tsv"
+        );
+        assert_eq!(chromatogram.dialog().title, "Export chromatogram data");
+    }
+
+    // --------------------------------------------- what a token stops naming
+
+    /// A token from a preview this session has replaced is refused.
+    #[test]
+    fn a_replaced_chromatogram_is_no_longer_exportable() {
+        let mut slots = ScientificExportSlots::default();
+        let first = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+        let second = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+
+        assert_ne!(first, second);
+        assert_eq!(
+            slots.begin_chromatogram(
+                &first,
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                defaults(),
+                None,
+            ),
+            Err(BeginExportRefusal::Stale),
+            "an old token is never rebound to whatever is current now"
+        );
+        assert!(
+            slots
+                .begin_chromatogram(
+                    &second,
+                    ChromatogramExportFormat::Csv,
+                    full_range(),
+                    tic_only(),
+                    defaults(),
+                    None,
+                )
+                .is_ok()
+        );
+    }
+
+    /// An export already under way finishes against the run it started with.
+    #[test]
+    fn an_export_in_flight_keeps_the_run_it_claimed() {
+        let mut slots = ScientificExportSlots::default();
+        let token = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token();
+        let reservation = slots
+            .begin_chromatogram(
+                &token.as_wire(),
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                defaults(),
+                None,
+            )
+            .expect("a reservation");
+        let claimed = slots.claim(&reservation.as_wire()).expect("its claim");
+
+        // A newer preview lands while the picker is open.
+        slots.install_chromatogram(owner(1), seeded_chromatogram());
+
+        let ClaimedExport::Chromatogram(claimed) = claimed else {
+            panic!("a chromatogram claim");
+        };
+        assert_eq!(claimed.snapshot.token(), token);
+    }
+
+    /// Removing the dataset the run came from revokes it; removing another does
+    /// not.
+    #[test]
+    fn only_the_owning_dataset_revokes_a_chromatogram() {
+        let mut slots = ScientificExportSlots::default();
+        let token = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+
+        assert!(!slots.forget_if_owned_by(&[owner(2)]));
+        assert!(
+            slots
+                .begin_chromatogram(
+                    &token,
+                    ChromatogramExportFormat::Csv,
+                    full_range(),
+                    tic_only(),
+                    defaults(),
+                    None,
+                )
+                .is_ok()
+        );
+
+        assert!(slots.forget_if_owned_by(&[owner(1)]));
+        assert_eq!(
+            slots.begin_chromatogram(
+                &token,
+                ChromatogramExportFormat::Csv,
+                full_range(),
+                tic_only(),
+                defaults(),
+                None,
+            ),
+            Err(BeginExportRefusal::Stale),
+        );
+    }
+
+    /// A figure with no visible trace is refused before anything is reserved.
+    #[test]
+    fn a_figure_with_no_trace_is_refused_and_leaves_the_lane_alone() {
+        let mut slots = ScientificExportSlots::default();
+        let token = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+        let hidden = TraceSet::from_wire(false, false);
+
+        assert_eq!(
+            slots.begin_chromatogram(
+                &token,
+                ChromatogramExportFormat::Svg,
+                full_range(),
+                hidden,
+                defaults(),
+                None,
+            ),
+            Err(BeginExportRefusal::NoVisibleTrace),
+        );
+        // The data export beside it is untouched: hiding a trace is a choice
+        // about a plot, not a decision to leave measured science out of a file.
+        assert!(
+            slots
+                .begin_chromatogram(
+                    &token,
+                    ChromatogramExportFormat::Csv,
+                    full_range(),
+                    hidden,
+                    defaults(),
+                    None,
+                )
+                .is_ok()
+        );
+    }
+
+    /// A range the run does not have is refused at begin.
+    #[test]
+    fn a_forged_range_is_refused_at_begin() {
+        let mut slots = ScientificExportSlots::default();
+        let token = slots
+            .install_chromatogram(owner(1), seeded_chromatogram())
+            .token()
+            .as_wire();
+        let outside = RangeRequest::from_wire("current", Some(-50.0), Some(5_000.0))
+            .expect("a well-formed request");
+
+        assert_eq!(
+            slots.begin_chromatogram(
+                &token,
+                ChromatogramExportFormat::Csv,
+                outside,
+                tic_only(),
+                defaults(),
+                None,
+            ),
+            Err(BeginExportRefusal::RangeOutsideSource),
+        );
     }
 }

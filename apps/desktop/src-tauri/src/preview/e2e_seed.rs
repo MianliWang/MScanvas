@@ -38,6 +38,7 @@ use mscanvas_proteowizard::{
 };
 
 use super::backend::SELECTED_SPECTRUM_PRECISION;
+use super::chromatogram::ChromatogramSource;
 use super::selection::DatasetId;
 use super::service::PreviewService;
 
@@ -113,6 +114,62 @@ fn completed_process() -> ProcessOutput {
     }
 }
 
+/// How many scans the seeded run holds.
+///
+/// Enough that a current range can contain some of them and not others, and few
+/// enough that every document this produces is instant to write.
+const SEEDED_SCANS: u64 = 24;
+
+/// The backend output one spectrum-table read produces.
+///
+/// Shaped as `msaccess` writes it, and read by the production parser -- the same
+/// one a real preview goes through. The retention times ascend by a hundredth so
+/// a rendered test can name a range and know which scans are inside it.
+fn synthetic_table() -> String {
+    let mut text = String::from("# mscanvas-e2e.mzML\n");
+    text.push_str(
+        "index\tid\tevent\tanalyzer\tmsLevel\trt\tmzLow\tmzHigh\tbasePeakMZ\tbasePeakInt\tTIC\t\
+         charge\tprecursorMZ\tthermo_monoMZ\tfilterStringMZ\tionInjectionTime\n",
+    );
+    for index in 0..SEEDED_SCANS {
+        let retention_time = f64::from(u32::try_from(index).unwrap_or(0)) / 100.0;
+        let total_ion_current = 1_000 + index * 10;
+        let base_peak = 100 + index;
+        text.push_str(&format!(
+            "{index}\tscan={}\t1\tFTMS\tms1\t{retention_time}\t100\t1000\t500\t{base_peak}\t\
+             {total_ion_current}\t\t\t\t\t\n",
+            index + 1,
+        ));
+    }
+    text
+}
+
+/// Installs one synthetic chromatogram into the ordinary export slot.
+///
+/// The rows go through the production parser and then through the ordinary
+/// eligibility -- a truncated or unreadable run would be refused here exactly as
+/// a real one is -- so what a rendered test reaches is the shipped path with a
+/// real snapshot behind it, not a shortcut around one.
+fn install_chromatogram(service: &PreviewService) {
+    let manifest = PreviewOutputManifest::single_complete_file(synthetic_table().into_bytes());
+    let outcome = interpret_preview(
+        &PreviewOperation::SpectrumTable,
+        &completed_process(),
+        &manifest,
+    )
+    .expect("the seeded table parses through the production interpreter");
+    let PreviewOutcome::Value(value) = outcome else {
+        panic!("a seeded table read produces a value");
+    };
+    let PreviewValue::SpectrumTable(table) = *value else {
+        panic!("a seeded table read produces a spectrum table");
+    };
+    let rows = service.retained_rows_for_seed(&table);
+    let source = ChromatogramSource::from_rows(&rows, false)
+        .expect("the seeded run is one the viewer would draw");
+    service.install_seeded_chromatogram(seeded_owner(), source);
+}
+
 /// Installs one synthetic spectrum into the ordinary export slot.
 ///
 /// Called once, at startup, under this feature only. The token it produces is
@@ -137,4 +194,9 @@ pub(super) fn install(service: &PreviewService) {
         panic!("a seeded spectrum read produces a selected spectrum");
     };
     service.install_seeded_spectrum(seeded_owner(), spectrum);
+    // After the spectrum, so the tokens are the session's first and second and a
+    // rendered test can name both. If either were ever wrong the export would
+    // refuse it as stale rather than write something else, so the test fails
+    // loudly rather than quietly passing.
+    install_chromatogram(service);
 }
